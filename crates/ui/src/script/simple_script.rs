@@ -238,6 +238,27 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
     }
 }
 
+/// Retained stock audio requests awaiting the media backend.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UiGlueMediaIntent {
+    pub(crate) music: Option<String>,
+    pub(crate) ambience: Option<String>,
+}
+
+impl UiGlueMediaIntent {
+    /// Returns the most recently requested Glue music resource.
+    #[must_use]
+    pub fn music(&self) -> Option<&str> {
+        self.music.as_deref()
+    }
+
+    /// Returns the most recently requested Glue ambience resource.
+    #[must_use]
+    pub fn ambience(&self) -> Option<&str> {
+        self.ambience.as_deref()
+    }
+}
+
 /// Immutable process facts required by built-in Lua globals.
 #[derive(Clone)]
 pub struct UiScriptEnvironment {
@@ -247,6 +268,7 @@ pub struct UiScriptEnvironment {
     streaming_trial: bool,
     cvars: UiCVarRegistry,
     assets: Option<Rc<RefCell<AssetStore>>>,
+    media_intent: Rc<RefCell<UiGlueMediaIntent>>,
 }
 
 impl UiScriptEnvironment {
@@ -274,6 +296,7 @@ impl UiScriptEnvironment {
             streaming_trial,
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
+            media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
         })
     }
 
@@ -321,6 +344,10 @@ impl UiScriptEnvironment {
 
     fn assets(&self) -> Option<Rc<RefCell<AssetStore>>> {
         self.assets.clone()
+    }
+
+    pub(crate) fn media_intent(&self) -> Rc<RefCell<UiGlueMediaIntent>> {
+        self.media_intent.clone()
     }
 }
 
@@ -897,6 +924,12 @@ impl UiScriptRuntime {
             })
             .and_then(|()| table.raw_set(draw_layer_key(), "ARTWORK"))
             .and_then(|()| table.raw_set(draw_sub_level_key(), 0_i16))
+            .and_then(|()| {
+                table.raw_set(
+                    texture_color_key(),
+                    lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
+                )
+            })
             .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
             let script_handlers = lua
@@ -1387,6 +1420,10 @@ fn create_dynamic_object(
     object.raw_set(
         draw_sub_level_key(),
         record.raw_get::<i16>("draw_sub_level")?,
+    )?;
+    object.raw_set(
+        texture_color_key(),
+        lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
     )?;
     if !matches!(kind, "Texture" | "FontString") {
         object.raw_set(events_key(), lua.create_table()?)?;
@@ -2588,8 +2625,53 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             object.raw_set(anchors_key(), lua.create_table()?)
         })?,
     )?;
+    register_region_vertex_color_methods(lua, methods)?;
     register_region_visibility_methods(lua, methods)?;
     Ok(())
+}
+
+fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetVertexColor",
+        lua.create_function(|lua, (object, arguments): (Table, Variadic<Value>)| {
+            let mut color = [0.0, 0.0, 0.0, 1.0];
+            for (index, component) in color.iter_mut().take(3).enumerate() {
+                *component = arguments
+                    .get(index)
+                    .map(|value| lua.coerce_number(value.clone()))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(0.0);
+            }
+            color[3] = arguments
+                .get(3)
+                .map(|value| lua.coerce_number(value.clone()))
+                .transpose()?
+                .flatten()
+                .unwrap_or(1.0);
+            if color.iter().any(|value| !value.is_finite()) {
+                return Err(mlua::Error::runtime("invalid vertex color"));
+            }
+            let kind = object.raw_get::<String>(type_key())?;
+            let component_count = if kind == "Texture" { 16 } else { 4 };
+            object.raw_set(
+                texture_color_key(),
+                lua.create_sequence_from(color.into_iter().cycle().take(component_count))?,
+            )
+        })?,
+    )?;
+    methods.raw_set(
+        "GetVertexColor",
+        lua.create_function(|_, object: Table| {
+            let color: Table = object.raw_get(texture_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
+        })?,
+    )
 }
 
 fn parse_draw_layer_name(value: &str) -> Option<&'static str> {

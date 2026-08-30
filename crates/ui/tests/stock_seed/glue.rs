@@ -31,6 +31,8 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
       LIFECYCLE = LIFECYCLE .. "FRAMES_LOADED;"
     elseif event == "SET_GLUE_SCREEN" then
       SetCurrentScreen(arg1)
+      PlayGlueMusic("Sound\\Music\\GlueScreenMusic\\WotLK_main_title.mp3")
+      PlayGlueAmbience("Sound\\Ambience\\GlueScreen\\Dwarf.mp3", 4.0)
       LIFECYCLE = LIFECYCLE .. "SET_GLUE_SCREEN:" .. arg1 .. ";"
     end
   </OnEvent>
@@ -48,6 +50,15 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
     );
     let current_screen = globals.get::<mlua::Function>("GetCurrentScreen")?;
     assert_eq!(current_screen.call::<String>(())?, "login");
+    let media = manager.media_intent();
+    assert_eq!(
+        media.music(),
+        Some("Sound\\Music\\GlueScreenMusic\\WotLK_main_title.mp3")
+    );
+    assert_eq!(
+        media.ambience(),
+        Some("Sound\\Ambience\\GlueScreen\\Dwarf.mp3")
+    );
     Ok(())
 }
 

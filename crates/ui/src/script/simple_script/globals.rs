@@ -95,6 +95,7 @@ fn register_glue_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    register_glue_media_globals(lua, globals, environment)?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
     let current_screen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
@@ -179,6 +180,70 @@ fn register_glue_globals(
                 .ok_or_else(|| mlua::Error::runtime(format!("Couldn't find CVar named '{name}'")))
         })?,
     )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetCVarMin",
+        lua.create_function(move |lua, value: Value| {
+            let name = cvar_name(lua, value, "GetCVarMin")?;
+            Ok(cvars.minimum(&name))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetCVarMax",
+        lua.create_function(move |lua, value: Value| {
+            let name = cvar_name(lua, value, "GetCVarMax")?;
+            Ok(cvars.maximum(&name))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetCVarBool",
+        lua.create_function(move |lua, value: Value| {
+            let name = cvar_name(lua, value, "GetCVarBool")?;
+            Ok(cvars.boolean(&name))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetGamma",
+        lua.create_function(move |_, ()| {
+            let value = cvars
+                .get("gamma")
+                .and_then(|value| value.parse::<f64>().ok())
+                .ok_or_else(|| mlua::Error::runtime("stock gamma CVar is invalid"))?;
+            Ok(value - 1.0)
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetTerrainMip",
+        lua.create_function(move |_, ()| {
+            let shadow = cvars
+                .get("shadowLevel")
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            Ok(1.0 - shadow)
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetTerrainMip",
+        lua.create_function(move |lua, value: Value| {
+            let mip = lua.coerce_number(value)?.unwrap_or(0.0);
+            set_cvar(&cvars, "shadowLevel", (1.0 - mip.round()).to_string())
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetGamma",
+        lua.create_function(move |lua, value: Value| {
+            let value = lua
+                .coerce_number(value)?
+                .ok_or_else(|| mlua::Error::runtime("Usage: SetGamma(value)"))?;
+            set_cvar(&cvars, "gamma", (value + 1.0).to_string())
+        })?,
+    )?;
     globals.raw_set(
         "GetBuildInfo",
         lua.create_function(|lua, ()| {
@@ -201,21 +266,40 @@ fn register_glue_globals(
         "GetClientExpansionLevel",
         lua.create_function(|_, ()| Ok(3_u32))?,
     )?;
-    // The headless validation environment has no platform-enumerated display
-    // modes. Build 12340 explicitly selects the first entry in that state.
+    // The environment supplies one concrete logical display mode. Platform
+    // enumeration can widen this list without changing stock one-based indices.
+    let logical_extent = environment.logical_extent();
+    let resolution = format!("{}x{}", logical_extent.0, logical_extent.1);
     globals.raw_set(
         "GetCurrentResolution",
         lua.create_function(|_, ()| Ok(1_u32))?,
     )?;
-    globals.raw_set("GetScreenResolutions", lua.create_function(|_, ()| Ok(()))?)?;
-    globals.raw_set("GetRefreshRates", lua.create_function(|_, ()| Ok(()))?)?;
+    globals.raw_set(
+        "GetScreenResolutions",
+        lua.create_function(move |_, ()| Ok(resolution.clone()))?,
+    )?;
+    globals.raw_set(
+        "GetRefreshRates",
+        lua.create_function(|_, _arguments: Variadic<Value>| Ok(60_u32))?,
+    )?;
+    globals.raw_set(
+        "IsPlayerResolutionAvailable",
+        lua.create_function(|_, ()| Ok(true))?,
+    )?;
     globals.raw_set(
         "GetCurrentMultisampleFormat",
         lua.create_function(|_, ()| Ok(1_u32))?,
     )?;
     globals.raw_set(
         "GetMultisampleFormats",
-        lua.create_function(|_, ()| Ok(()))?,
+        lua.create_function(|_, ()| Ok((24_u32, 24_u32, 1_u32)))?,
+    )?;
+    // The validator has no attached Vulkan adapter. Stock still reports the
+    // four fixed effects flags, a one-sample anisotropy limit, and projected
+    // texture support when the adapter-specific anisotropy flag is absent.
+    globals.raw_set(
+        "GetVideoCaps",
+        lua.create_function(|_, ()| Ok((false, true, true, true, true, 1_u32, true)))?,
     )?;
     // No stereo-capable display surface is attached to the headless glue
     // validator, so build 12340 reports the feature as unavailable.
@@ -245,6 +329,58 @@ fn register_glue_globals(
         "SetCharCustomizeFrame",
         CHARACTER_CUSTOMIZE_MODEL_REGISTRY,
     )
+}
+
+fn register_glue_media_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    for name in ["PlayMusic", "PlayGlueMusic", "PlayCreditsMusic"] {
+        let state = environment.media_intent();
+        globals.raw_set(
+            name,
+            lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+                let resource = required_string(lua, value, "music resource")?;
+                state.borrow_mut().music = Some(resource);
+                Ok(())
+            })?,
+        )?;
+    }
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlayGlueAmbience",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let resource = required_string(lua, value, "ambience resource")?;
+            state.borrow_mut().ambience = Some(resource);
+            Ok(())
+        })?,
+    )?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "StopMusic",
+        lua.create_function(move |_, ()| {
+            state.borrow_mut().music = None;
+            Ok(())
+        })?,
+    )?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "StopGlueAmbience",
+        lua.create_function(move |_, ()| {
+            state.borrow_mut().ambience = None;
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set("StopAllSFX", lua.create_function(|_, ()| Ok(()))?)?;
+    Ok(())
+}
+
+fn required_string(lua: &Lua, value: Value, label: &str) -> mlua::Result<String> {
+    lua.coerce_string(value)?
+        .map(|value| value.to_string_lossy())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| mlua::Error::runtime(format!("missing {label}")))
 }
 
 fn register_model_frame_selector(

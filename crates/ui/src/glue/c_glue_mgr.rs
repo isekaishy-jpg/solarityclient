@@ -9,10 +9,10 @@ use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
-    UiFramePlan, UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
-    UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
-    UiTextureStatePlan,
+    UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiLayoutPlan, UiManifestKind,
+    UiObjectCatalog, UiObjectTree, UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -34,6 +34,7 @@ pub struct GlueManager {
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
     report: GlueStartupReport,
+    media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     _assets: Rc<RefCell<AssetStore>>,
     bundle: UiBundle,
 }
@@ -69,6 +70,7 @@ impl GlueManager {
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());
+        let media_intent = environment.media_intent();
         let ui_extent = environment.ui_extent();
         let runtime_plan = UiScriptRuntimePlan::new(
             &tree,
@@ -119,6 +121,7 @@ impl GlueManager {
             objects,
             child_indices,
             report,
+            media_intent,
             _assets: assets,
             bundle,
         })
@@ -177,6 +180,12 @@ impl GlueManager {
     #[must_use]
     pub const fn presentation(&self) -> &UiPresentationPlan {
         &self.presentation
+    }
+
+    /// Returns the stock music and ambience requests retained for `media`.
+    #[must_use]
+    pub fn media_intent(&self) -> UiGlueMediaIntent {
+        self.media_intent.borrow().clone()
     }
 
     /// Returns the archive-backed texture declaration plan.

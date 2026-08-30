@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
+    FontCatalog, FontRasterization, FontSystem, GlueManager, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
     UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
     UiTextureFile, UiTexturePlan, UiTextureStatePlan,
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         None => None,
     };
-    let mut store = AssetStore::mount(catalog)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
     let bundle = UiBundle::load(&mut store, kind)?;
     let xml_count = bundle
         .resources()
@@ -103,6 +103,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         &font_catalog,
         &texture_states,
     );
+    let manager_extent = execution_environment
+        .as_ref()
+        .map(UiScriptEnvironment::logical_extent);
     if let Some(environment) = execution_environment {
         let mut script_runtime = UiScriptRuntime::new(&bundle, &script_runtime_plan, environment)?;
         script_runtime.execute_all(&bundle, &object_tree, &script_plan)?;
@@ -112,6 +115,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             script_runtime.registered_object_count(),
             script_runtime.executed_chunk_count(),
             script_runtime.executed_load_handler_count()
+        );
+    }
+    if kind == UiManifestKind::Glue
+        && let Some(extent) = manager_extent
+    {
+        let manager = GlueManager::start(AssetStore::mount(catalog)?, extent, false)?;
+        println!(
+            "activated stock login lifecycle with {} presentation packets and {} texture members",
+            manager.presentation().packets().len(),
+            manager.presentation().member_count()
         );
     }
     let texture_paths = object_tree
