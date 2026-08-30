@@ -4,7 +4,11 @@ use std::error::Error;
 use std::ffi::OsString;
 
 use sdl3::event::{Event as SdlEvent, WindowEvent as SdlWindowEvent};
-use solarity_runtime::{ClientApplication, PlatformEvent, RuntimeConfiguration, WindowEvent};
+use solarity_rendering::VulkanError;
+use solarity_runtime::{
+    ApplicationError, ClientApplication, ConfigurationError, PlatformEvent, RuntimeConfiguration,
+    WindowEvent,
+};
 
 use crate::support::ClientFixture;
 
@@ -12,28 +16,9 @@ use crate::support::ClientFixture;
 #[test]
 fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn Error>> {
     let fixture = ClientFixture::new()?;
-    let configuration = RuntimeConfiguration::from_arguments([
-        OsString::from("--data-root"),
-        fixture.data_root().into_os_string(),
-        OsString::from("--locale"),
-        OsString::from("enUS"),
-        OsString::from("--cpu-workers"),
-        OsString::from("2"),
-        OsString::from("--cpu-capacity"),
-        OsString::from("8"),
-        OsString::from("--network-workers"),
-        OsString::from("1"),
-        OsString::from("--network-shutdown-ms"),
-        OsString::from("250"),
-        OsString::from("--window-width"),
-        OsString::from("960"),
-        OsString::from("--window-height"),
-        OsString::from("540"),
-        OsString::from("--window-mode"),
-        OsString::from("windowed"),
-    ])?;
+    let runtime_configuration = configuration(&fixture, 0)?;
 
-    let mut application = ClientApplication::start(configuration)?;
+    let mut application = ClientApplication::start(runtime_configuration)?;
     let report = application.report();
 
     assert_eq!(report.archive_count(), 10);
@@ -43,6 +28,11 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert_eq!(report.logical_window_extent(), (960, 540));
     assert!(report.pixel_window_extent().0 >= 960);
     assert!(report.pixel_window_extent().1 >= 540);
+    let vulkan = application.vulkan_report();
+    assert!(!vulkan.device_name().is_empty());
+    assert!(vulkan.api_version() >= ash::vk::API_VERSION_1_3);
+    assert!(vulkan.swapchain_image_count() >= 2);
+    assert_eq!(vulkan.extent(), report.pixel_window_extent());
 
     // Exercise SDL's real process queue so the test covers both translation
     // and the composition root's ownership of the sole event pump.
@@ -67,7 +57,47 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
         .then_some(event)
     });
     assert!(translated.is_some());
-
+    drop(sdl);
     application.shutdown()?;
+
+    // An impossible explicit index proves initialization does not scan for or
+    // silently substitute another adapter, and that partial owners clean up.
+    let invalid_adapter = ClientApplication::start(configuration(&fixture, usize::MAX)?);
+    assert!(matches!(
+        invalid_adapter,
+        Err(ApplicationError::Vulkan(VulkanError::AdapterUnavailable {
+            requested,
+            ..
+        })) if requested == usize::MAX
+    ));
     Ok(())
+}
+
+/// Builds the complete runtime profile with an explicit Vulkan adapter index.
+fn configuration(
+    fixture: &ClientFixture,
+    gpu_index: usize,
+) -> Result<RuntimeConfiguration, ConfigurationError> {
+    RuntimeConfiguration::from_arguments([
+        OsString::from("--data-root"),
+        fixture.data_root().into_os_string(),
+        OsString::from("--locale"),
+        OsString::from("enUS"),
+        OsString::from("--cpu-workers"),
+        OsString::from("2"),
+        OsString::from("--cpu-capacity"),
+        OsString::from("8"),
+        OsString::from("--network-workers"),
+        OsString::from("1"),
+        OsString::from("--network-shutdown-ms"),
+        OsString::from("250"),
+        OsString::from("--window-width"),
+        OsString::from("960"),
+        OsString::from("--window-height"),
+        OsString::from("540"),
+        OsString::from("--window-mode"),
+        OsString::from("windowed"),
+        OsString::from("--gpu-index"),
+        OsString::from(gpu_index.to_string()),
+    ])
 }

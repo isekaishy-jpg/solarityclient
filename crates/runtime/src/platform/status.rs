@@ -29,4 +29,16 @@ pub enum PlatformError {
         /// SDL's diagnostic text.
         message: String,
     },
+    /// SDL could not report the instance extensions required by this window.
+    #[error("failed to query SDL Vulkan instance extensions: {message}")]
+    VulkanExtensions {
+        /// SDL's diagnostic text.
+        message: String,
+    },
+    /// SDL could not construct a native Vulkan surface for its window.
+    #[error("failed to create SDL Vulkan surface: {message}")]
+    VulkanSurface {
+        /// SDL's diagnostic text.
+        message: String,
+    },
 }

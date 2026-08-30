@@ -28,6 +28,7 @@ fn main() -> ExitCode {
     };
 
     let report = application.report();
+    let vulkan = application.vulkan_report();
     info!(
         archive_count = report.archive_count(),
         cpu_workers = report.cpu_worker_count(),
@@ -37,6 +38,10 @@ fn main() -> ExitCode {
         logical_height = report.logical_window_extent().1,
         pixel_width = report.pixel_window_extent().0,
         pixel_height = report.pixel_window_extent().1,
+        vulkan_device = vulkan.device_name(),
+        swapchain_images = vulkan.swapchain_image_count(),
+        swapchain_width = vulkan.extent().0,
+        swapchain_height = vulkan.extent().1,
         "client foundation started"
     );
     if let Err(failure) = application.shutdown() {

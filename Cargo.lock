@@ -2185,6 +2185,7 @@ dependencies = [
 name = "solarity-runtime"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "sdl3",
  "solarity-asset",
  "solarity-cpu",

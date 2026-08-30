@@ -20,6 +20,7 @@ const NETWORK_SHUTDOWN_OPTION: &str = "--network-shutdown-ms";
 const WINDOW_WIDTH_OPTION: &str = "--window-width";
 const WINDOW_HEIGHT_OPTION: &str = "--window-height";
 const WINDOW_MODE_OPTION: &str = "--window-mode";
+const GPU_INDEX_OPTION: &str = "--gpu-index";
 
 /// Complete configuration required to construct the initial client services.
 #[derive(Clone, Debug)]
@@ -30,6 +31,7 @@ pub struct RuntimeConfiguration {
     network_workers: NonZeroUsize,
     network_shutdown_timeout: Duration,
     window: WindowConfiguration,
+    gpu_index: usize,
 }
 
 impl RuntimeConfiguration {
@@ -91,6 +93,10 @@ impl RuntimeConfiguration {
                     let value = next_value(&mut arguments, WINDOW_MODE_OPTION)?;
                     set_once(&mut values.window_mode, value, WINDOW_MODE_OPTION)?;
                 }
+                GPU_INDEX_OPTION => {
+                    let value = next_value(&mut arguments, GPU_INDEX_OPTION)?;
+                    set_once(&mut values.gpu_index, value, GPU_INDEX_OPTION)?;
+                }
                 _ => {
                     return Err(ConfigurationError::UnknownOption {
                         option: option.to_owned(),
@@ -107,7 +113,8 @@ impl RuntimeConfiguration {
     pub const fn usage() -> &'static str {
         "solarity-runtime --data-root <Data> --locale <locale> --cpu-workers <count> \
          --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds> \
-         --window-width <pixels> --window-height <pixels> --window-mode <windowed|fullscreen>"
+         --window-width <pixels> --window-height <pixels> --window-mode <windowed|fullscreen> \
+         --gpu-index <zero-based-index>"
     }
 
     /// Returns the validated client `Data` directory.
@@ -146,6 +153,12 @@ impl RuntimeConfiguration {
         self.window
     }
 
+    /// Returns the explicit zero-based Vulkan physical-device index.
+    #[must_use]
+    pub const fn gpu_index(&self) -> usize {
+        self.gpu_index
+    }
+
     /// Validates parsed operating-system strings into domain types.
     fn from_parsed(values: ParsedValues) -> Result<Self, ConfigurationError> {
         let data_root = required(values.data_root, DATA_ROOT_OPTION)?;
@@ -180,6 +193,10 @@ impl RuntimeConfiguration {
             .ok_or_else(|| ConfigurationError::InvalidWindowMode {
                 value: window_mode.to_string_lossy().into_owned(),
             })?;
+        let gpu_index = nonnegative_integer(
+            required(values.gpu_index, GPU_INDEX_OPTION)?,
+            GPU_INDEX_OPTION,
+        )?;
 
         let data_root = ClientDataRoot::new(PathBuf::from(data_root))
             .map_err(|source| ConfigurationError::InvalidDataRoot { source })?;
@@ -200,6 +217,7 @@ impl RuntimeConfiguration {
             network_workers,
             network_shutdown_timeout: Duration::from_millis(shutdown_milliseconds),
             window: WindowConfiguration::new(window_width, window_height, window_mode),
+            gpu_index,
         })
     }
 }
@@ -216,6 +234,7 @@ struct ParsedValues {
     window_width: Option<OsString>,
     window_height: Option<OsString>,
     window_mode: Option<OsString>,
+    gpu_index: Option<OsString>,
 }
 
 /// Reads the argument following an option.
@@ -282,4 +301,14 @@ fn positive_u32(value: OsString, option: &'static str) -> Result<u32, Configurat
         });
     }
     Ok(dimension)
+}
+
+/// Parses an index where zero identifies Vulkan's first enumerated adapter.
+fn nonnegative_integer(value: OsString, option: &'static str) -> Result<usize, ConfigurationError> {
+    let text = unicode(&value, option)?;
+    text.parse::<usize>()
+        .map_err(|_source| ConfigurationError::InvalidNonnegativeInteger {
+            option,
+            value: text.to_owned(),
+        })
 }

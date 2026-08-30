@@ -12,3 +12,11 @@ mod c_gx_device_d3d;
 mod c_gx_device_d3d9_ex;
 mod c_gx_device_open_gl;
 mod gfx_singleton_manager;
+mod status;
+mod vulkan_instance;
+mod vulkan_renderer;
+mod vulkan_selection;
+
+pub use status::VulkanError;
+pub use vulkan_instance::VulkanBootstrap;
+pub use vulkan_renderer::{VulkanRenderer, VulkanReport};

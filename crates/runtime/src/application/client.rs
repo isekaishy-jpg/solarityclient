@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
+use solarity_rendering::{VulkanError, VulkanReport};
 
 use crate::application::client_services::ClientServices;
 use crate::configuration::RuntimeConfiguration;
@@ -21,6 +22,9 @@ pub enum ApplicationError {
     /// SDL could not construct the primary window or event source.
     #[error(transparent)]
     Platform(#[from] PlatformError),
+    /// Vulkan 1.3 instance, device, or presentation initialization failed.
+    #[error(transparent)]
+    Vulkan(#[from] VulkanError),
     /// Tokio could not construct the private network runtime.
     #[error("failed to create network runtime: {message}")]
     NetworkRuntime {
@@ -120,6 +124,12 @@ impl ClientApplication {
     #[must_use]
     pub fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
         self.services.poll_platform_event()
+    }
+
+    /// Returns the physical adapter, queue, and swapchain selected at startup.
+    #[must_use]
+    pub fn vulkan_report(&self) -> &VulkanReport {
+        self.services.vulkan_report()
     }
 
     /// Drains owned executors in explicit shutdown order.

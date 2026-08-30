@@ -1,5 +1,7 @@
 //! Main-thread SDL context, window, and event-pump ownership.
 
+#![allow(unsafe_code)]
+
 use sdl3::video::Window;
 use sdl3::{EventPump, Sdl, VideoSubsystem};
 
@@ -86,5 +88,33 @@ impl SdlPlatform {
     /// Returns the physical drawable size required for swapchain construction.
     pub(crate) fn pixel_extent(&self) -> (u32, u32) {
         self.window.size_in_pixels()
+    }
+
+    /// Returns the platform-specific instance extensions required by SDL.
+    pub(crate) fn vulkan_instance_extensions(&self) -> Result<Vec<String>, PlatformError> {
+        self.window
+            .vulkan_instance_extensions()
+            .map_err(|source| PlatformError::VulkanExtensions {
+                message: source.to_string(),
+            })
+    }
+
+    /// Creates the native presentation surface owned by the supplied instance.
+    ///
+    /// # Safety
+    ///
+    /// `instance` must be live and must have enabled every extension returned by
+    /// [`Self::vulkan_instance_extensions`]. The caller assumes surface ownership.
+    pub(crate) unsafe fn create_vulkan_surface(
+        &self,
+        instance: ash::vk::Instance,
+    ) -> Result<ash::vk::SurfaceKHR, PlatformError> {
+        // SAFETY: The method contract binds the instance to SDL's exact required
+        // extension set, and this owner keeps the native window alive.
+        unsafe { self.window.vulkan_create_surface(instance) }.map_err(|source| {
+            PlatformError::VulkanSurface {
+                message: source.to_string(),
+            }
+        })
     }
 }

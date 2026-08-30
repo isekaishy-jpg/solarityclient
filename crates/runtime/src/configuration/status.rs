@@ -48,6 +48,14 @@ pub enum ConfigurationError {
         /// The rejected value.
         value: String,
     },
+    /// A zero-based index is malformed or negative.
+    #[error("value {value} for startup option {option} must be a nonnegative integer")]
+    InvalidNonnegativeInteger {
+        /// The option owning the value.
+        option: &'static str,
+        /// The rejected value.
+        value: String,
+    },
     /// An SDL window dimension is zero, malformed, or exceeds `i32::MAX`.
     #[error("value {value} for startup option {option} must be an SDL window dimension")]
     InvalidWindowDimension {

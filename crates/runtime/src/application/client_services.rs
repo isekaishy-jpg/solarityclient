@@ -1,9 +1,12 @@
 //! Concrete ownership and shutdown of initial client services.
 
+#![allow(unsafe_code)]
+
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
+use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 
 use crate::application::ApplicationError;
 use crate::configuration::RuntimeConfiguration;
@@ -11,6 +14,7 @@ use crate::platform::{PlatformEvent, SdlPlatform};
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
+    renderer: VulkanRenderer,
     platform: SdlPlatform,
     _assets: AssetStore,
     cpu: CpuExecutor,
@@ -30,6 +34,16 @@ impl ClientServices {
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
         let platform = SdlPlatform::start(configuration.window())?;
+        let instance_extensions = platform.vulkan_instance_extensions()?;
+        let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
+        // SAFETY: The bootstrap enabled SDL's exact extension list and remains
+        // live while SDL creates a surface for the owned window.
+        let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
+        // SAFETY: SDL created `surface` from this bootstrap's instance, and
+        // ownership transfers immediately to the rendering owner.
+        let renderer = unsafe {
+            bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
+        }?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
             .worker_threads(configuration.network_workers().get())
@@ -43,6 +57,7 @@ impl ClientServices {
 
         Ok((
             Self {
+                renderer,
                 platform,
                 _assets: assets,
                 cpu,
@@ -51,6 +66,11 @@ impl ClientServices {
             },
             archive_count,
         ))
+    }
+
+    /// Returns the concrete adapter and swapchain facts selected at startup.
+    pub(crate) fn vulkan_report(&self) -> &VulkanReport {
+        self.renderer.report()
     }
 
     /// Polls one translated main-thread platform event without allocating a batch.
@@ -69,10 +89,12 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
+        let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
             network.shutdown_timeout(self.network_shutdown_timeout);
         }
+        renderer_result?;
         cpu_result
     }
 }

@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+ash.workspace = true
 sdl3.workspace = true
 solarity-asset.workspace = true
 solarity-cpu.workspace = true

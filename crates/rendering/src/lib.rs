@@ -16,3 +16,5 @@ mod terrain;
 mod texture;
 mod weather;
 mod world_text;
+
+pub use device::{VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport};

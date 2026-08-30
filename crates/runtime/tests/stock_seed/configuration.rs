@@ -24,6 +24,7 @@ fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>
     assert_eq!(configuration.window().width(), 1280);
     assert_eq!(configuration.window().height(), 720);
     assert_eq!(configuration.window().mode(), WindowMode::Windowed);
+    assert_eq!(configuration.gpu_index(), 0);
     Ok(())
 }
 
@@ -131,6 +132,8 @@ fn arguments(fixture: &ClientFixture, cpu_options: &[&str]) -> Vec<OsString> {
         OsString::from("720"),
         OsString::from("--window-mode"),
         OsString::from("windowed"),
+        OsString::from("--gpu-index"),
+        OsString::from("0"),
     ]);
     arguments
 }
@@ -161,5 +164,7 @@ fn arguments_with_window(
         OsString::from(height),
         OsString::from("--window-mode"),
         OsString::from(mode),
+        OsString::from("--gpu-index"),
+        OsString::from("0"),
     ]
 }
