@@ -24,6 +24,7 @@ mod vulkan_renderer;
 mod vulkan_sampler;
 mod vulkan_selection;
 mod vulkan_texture;
+mod vulkan_ui_pipeline;
 
 pub use status::VulkanError;
 pub use vulkan_instance::VulkanBootstrap;
@@ -39,3 +40,4 @@ pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError,
 };
+pub use vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo};

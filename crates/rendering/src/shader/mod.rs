@@ -7,9 +7,11 @@
 mod m2_effect;
 mod m2_spirv;
 mod shader_effect_manager;
+mod ui_spirv;
 
 pub use m2_effect::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
 };
 pub use m2_spirv::{M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram};
+pub use ui_spirv::{UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram};

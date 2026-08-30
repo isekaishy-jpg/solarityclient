@@ -27,8 +27,8 @@ pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError, M2FrameReport,
     M2MeshHandle, M2MeshResourceInfo, M2PipelineHandle, M2PipelineInfo, M2PreparedDraw,
     M2SampledTexture, M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode, M2TextureSet,
-    M2TextureSetHandle, M2TextureSetInfo, VulkanBootstrap, VulkanError, VulkanRenderer,
-    VulkanReport,
+    M2TextureSetHandle, M2TextureSetInfo, UiPipelineHandle, UiPipelineInfo, VulkanBootstrap,
+    VulkanError, VulkanRenderer, VulkanReport,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
@@ -44,7 +44,8 @@ pub use model::{
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader,
+    M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader, UiShaderSource, UiSpirvCompiler,
+    UiSpirvError, UiSpirvProgram,
 };
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource,

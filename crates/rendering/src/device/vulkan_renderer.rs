@@ -21,10 +21,12 @@ use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
     BlpTextureUploadError, TextureUploadContext,
 };
+use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
+use crate::{UiRenderBlend, UiShaderSource};
 use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -95,6 +97,7 @@ pub struct VulkanRenderer {
     m2_meshes: M2MeshRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
+    ui_pipelines: UiPipelineRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -136,6 +139,7 @@ impl VulkanRenderer {
             m2_meshes: M2MeshRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
+            ui_pipelines: UiPipelineRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -271,6 +275,27 @@ impl VulkanRenderer {
     #[must_use]
     pub fn blp_texture_info(&self, handle: BlpTextureHandle) -> Option<&BlpTextureResourceInfo> {
         self.blp_textures.info(handle)
+    }
+
+    /// Creates or retrieves one exact simple-render source/blend pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when shader compilation, layout creation, or
+    /// driver pipeline creation fails.
+    pub fn prepare_ui_pipeline(
+        &mut self,
+        source: UiShaderSource,
+        blend: UiRenderBlend,
+    ) -> Result<UiPipelineHandle, VulkanError> {
+        self.ui_pipelines
+            .prepare(&self.device, self.color_format, source, blend)
+    }
+
+    /// Returns immutable diagnostics for one live UI pipeline.
+    #[must_use]
+    pub fn ui_pipeline_info(&self, handle: UiPipelineHandle) -> Option<UiPipelineInfo> {
+        self.ui_pipelines.info(handle)
     }
 
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
@@ -537,6 +562,7 @@ impl Drop for VulkanRenderer {
             self.m2_meshes.destroy(allocator);
         }
         self.m2_samplers.destroy(&self.device);
+        self.ui_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.

@@ -3,7 +3,7 @@
 use solarity_asset::AssetPath;
 
 /// Source-alpha or additive framebuffer composition selected by GlueXML.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UiRenderBlend {
     /// Source alpha over the existing framebuffer color.
     Alpha,

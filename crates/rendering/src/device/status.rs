@@ -102,6 +102,15 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit pipeline handle.
     #[error("M2 pipeline registry exhausted its 32-bit handle space")]
     M2PipelineCapacity,
+    /// The stock UI shader pair could not compile to the pinned target.
+    #[error("UI shader preparation failed: {message}")]
+    UiShader {
+        /// Stable shader compiler diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable 32-bit UI pipeline handle.
+    #[error("UI pipeline registry exhausted its 32-bit handle space")]
+    UiPipelineCapacity,
     /// The renderer cannot assign another stable 32-bit sampler handle.
     #[error("M2 sampler registry exhausted its 32-bit handle space")]
     M2SamplerCapacity,
