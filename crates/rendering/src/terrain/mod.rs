@@ -7,5 +7,10 @@
 mod detail_doodad;
 mod map_weather;
 mod mesh;
+mod tile_mesh;
 
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
+pub use tile_mesh::{
+    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
+    TerrainTileMeshPlan, TerrainTileMeshPlanError,
+};

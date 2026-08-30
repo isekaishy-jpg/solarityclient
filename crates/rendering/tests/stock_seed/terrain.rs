@@ -6,7 +6,10 @@ use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
-use solarity_rendering::{TerrainChunkMeshPlan, WorldCamera, WorldFrustum, WorldScreenWindow};
+use solarity_rendering::{
+    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainTileMeshPlan, WorldCamera,
+    WorldFrustum, WorldScreenWindow,
+};
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
 use wow_wdt::chunks::MwmoChunk;
@@ -90,6 +93,33 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     )
     .frame(1.0)?;
     assert!(!mesh.is_visible(WorldFrustum::new(hidden, WorldScreenWindow::FULL)?)?);
+
+    let tile_mesh = TerrainTileMeshPlan::prepare(&tile)?;
+    assert_eq!(tile_mesh.tile(), tile_index);
+    assert_eq!(tile_mesh.vertices().len(), 256 * 145);
+    assert_eq!(tile_mesh.indices().len(), 256 * 768);
+    assert_eq!(tile_mesh.chunks().len(), 256);
+    assert_eq!(tile_mesh.chunks()[0].first_index(), 0);
+    assert_eq!(tile_mesh.chunks()[0].index_count(), 768);
+    assert_eq!(tile_mesh.chunks()[1].first_index(), 768);
+    assert_eq!(tile_mesh.chunks()[0].atlas_chunk(), [0, 0]);
+    assert_eq!(tile_mesh.chunks()[255].atlas_chunk(), [15, 15]);
+    assert_eq!(tile_mesh.texture_flags(), Some([0_u32].as_slice()));
+    assert_eq!(
+        tile_mesh.vertex_bytes().len(),
+        256 * 145 * solarity_rendering::TerrainRenderVertex::BYTE_SIZE
+    );
+    assert_eq!(tile_mesh.index_bytes().len(), 256 * 768 * 2);
+    assert_eq!(
+        tile_mesh.material_atlas_rgba().len(),
+        TERRAIN_MATERIAL_ATLAS_BYTE_COUNT
+    );
+    assert!(
+        tile_mesh
+            .indices()
+            .iter()
+            .all(|index| usize::from(*index) < tile_mesh.vertices().len())
+    );
     Ok(())
 }
 

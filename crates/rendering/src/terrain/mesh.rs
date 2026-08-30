@@ -63,7 +63,7 @@ impl TerrainRenderVertex {
     }
 
     /// Appends the stable little-endian payload consumed by the terrain pipeline.
-    fn append_bytes(self, bytes: &mut Vec<u8>) {
+    pub(super) fn append_bytes(self, bytes: &mut Vec<u8>) {
         for value in self.position {
             bytes.extend_from_slice(&value.to_le_bytes());
         }

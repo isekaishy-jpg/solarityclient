@@ -5,7 +5,10 @@ use solarity_asset::{
     DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
-use solarity_rendering::{TerrainChunkMeshPlan, WorldCameraError, WorldFrustum};
+use solarity_rendering::{
+    TerrainChunkDrawPlan, TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldCameraError,
+    WorldFrustum,
+};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -18,6 +21,9 @@ pub enum RuntimeTerrainError {
     /// The active ECS world lost a required player invariant.
     #[error(transparent)]
     World(#[from] WorldStateError),
+    /// A decoded ADT could not enter the compact renderer mesh ABI.
+    #[error(transparent)]
+    Mesh(#[from] TerrainTileMeshPlanError),
     /// The server selected a map absent from the mounted build's `Map.dbc`.
     #[error("active world references unknown client map {map_id}")]
     UnknownMap {
@@ -190,11 +196,12 @@ impl RuntimeTerrainCoordinator {
     pub fn visible_chunks(
         &self,
         frustum: WorldFrustum,
-    ) -> Result<Vec<&TerrainChunkMeshPlan>, WorldCameraError> {
+    ) -> Result<Vec<&TerrainChunkDrawPlan>, WorldCameraError> {
         let Some(tile) = self.active.as_ref().and_then(|active| active.tile.as_ref()) else {
             return Ok(Vec::new());
         };
-        tile.meshes
+        tile.mesh
+            .chunks()
             .iter()
             .filter_map(|mesh| match mesh.is_visible(frustum) {
                 Ok(true) => Some(Ok(mesh)),
@@ -225,7 +232,7 @@ impl ResidentTerrainMap {
 struct ResidentTerrainTile {
     decoded: DecodedTerrainTile,
     textures: Vec<Arc<BlpTextureSource>>,
-    meshes: Vec<TerrainChunkMeshPlan>,
+    mesh: TerrainTileMeshPlan,
 }
 
 impl ResidentTerrainTile {
@@ -233,7 +240,7 @@ impl ResidentTerrainTile {
         decoded: DecodedTerrainTile,
         cache: &mut BlpTextureCache,
         store: &mut AssetStore,
-    ) -> Result<Self, AssetError> {
+    ) -> Result<Self, RuntimeTerrainError> {
         // Resolve each MTEX entry exactly once before accepting the tile. This
         // preserves authored layer indices while avoiding partial residency.
         let textures = decoded
@@ -241,15 +248,11 @@ impl ResidentTerrainTile {
             .iter()
             .map(|path| cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
-        let meshes = decoded
-            .chunks()
-            .iter()
-            .map(|chunk| TerrainChunkMeshPlan::prepare(&decoded, chunk.index()))
-            .collect();
+        let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         Ok(Self {
             decoded,
             textures,
-            meshes,
+            mesh,
         })
     }
 
