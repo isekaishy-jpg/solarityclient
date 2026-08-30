@@ -8,7 +8,9 @@ use solarity_asset::{
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
-    CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterEquipmentItem, CharacterTexturePlan,
+    CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
+    CharacterAttachmentPoint, CharacterEquipmentItem, CharacterRangedHand, CharacterTexturePlan,
+    CharacterWeaponPose, CharacterWeaponState,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -373,6 +375,115 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// Held items use stock folders, channel zero, and exact hand/sheath links.
+#[test]
+fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Error>> {
+    let items = held_equipment_tables();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &items.definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &items.displays,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let chest_definition = definitions.item(60_000).ok_or("chest item is absent")?;
+    let main_definition = definitions.item(60_001).ok_or("main-hand item is absent")?;
+    let off_definition = definitions.item(60_002).ok_or("off-hand item is absent")?;
+    let ranged_definition = definitions.item(60_003).ok_or("ranged item is absent")?;
+    let chest_display = displays.display(61_000).ok_or("chest display is absent")?;
+    let main_display = displays
+        .display(61_001)
+        .ok_or("main-hand display is absent")?;
+    let off_display = displays
+        .display(61_002)
+        .ok_or("off-hand display is absent")?;
+    let ranged_display = displays.display(61_003).ok_or("ranged display is absent")?;
+    let equipment = [
+        CharacterEquipmentItem::new(PlayerEquipmentSlot::Chest, chest_definition, chest_display),
+        CharacterEquipmentItem::new(PlayerEquipmentSlot::MainHand, main_definition, main_display),
+        CharacterEquipmentItem::new(PlayerEquipmentSlot::OffHand, off_definition, off_display),
+        CharacterEquipmentItem::new(
+            PlayerEquipmentSlot::Ranged,
+            ranged_definition,
+            ranged_display,
+        ),
+    ];
+
+    let ready = CharacterAttachmentPlan::held_items(
+        equipment,
+        CharacterWeaponState::new(CharacterWeaponPose::Ready, CharacterRangedHand::Left),
+    )?;
+    let ready_values = ready
+        .attachments()
+        .iter()
+        .map(|attachment| {
+            (
+                attachment.slot(),
+                attachment.point(),
+                attachment.model().as_str(),
+                attachment.texture().as_str(),
+                attachment.item_visual_id(),
+                attachment.particle_color_id(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ready_values,
+        [
+            (
+                PlayerEquipmentSlot::MainHand,
+                CharacterAttachmentPoint::HandRight,
+                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORD.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORDRED.BLP",
+                701,
+                801,
+            ),
+            (
+                PlayerEquipmentSlot::OffHand,
+                CharacterAttachmentPoint::Shield,
+                "ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELD.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELDBLUE.BLP",
+                702,
+                802,
+            ),
+            (
+                PlayerEquipmentSlot::Ranged,
+                CharacterAttachmentPoint::HandLeft,
+                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOW.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOWGREEN.BLP",
+                703,
+                803,
+            ),
+        ]
+    );
+
+    let sheathed = CharacterAttachmentPlan::held_items(
+        equipment,
+        CharacterWeaponState::new(CharacterWeaponPose::Sheathed, CharacterRangedHand::Left),
+    )?;
+    assert_eq!(
+        sheathed
+            .attachments()
+            .iter()
+            .map(|attachment| attachment.point())
+            .collect::<Vec<_>>(),
+        [
+            CharacterAttachmentPoint::SheathMainHand,
+            CharacterAttachmentPoint::SheathShield,
+            CharacterAttachmentPoint::LargeWeaponRight,
+        ]
+    );
+    Ok(())
+}
+
 /// Texture table bytes needed by one exact appearance lookup.
 struct CharacterTables {
     sections: Vec<u8>,
@@ -524,6 +635,74 @@ fn equipment_tables() -> EquipmentTables {
     }
 }
 
+/// Builds held items plus a dirty non-stock armor attachment candidate.
+fn held_equipment_tables() -> EquipmentTables {
+    let definitions = create_wdbc(
+        4,
+        8,
+        &[
+            60_000,
+            4,
+            0,
+            u32::MAX,
+            1,
+            61_000,
+            5,
+            0,
+            60_001,
+            2,
+            7,
+            u32::MAX,
+            1,
+            61_001,
+            13,
+            1,
+            60_002,
+            4,
+            6,
+            u32::MAX,
+            1,
+            61_002,
+            14,
+            4,
+            60_003,
+            2,
+            2,
+            u32::MAX,
+            1,
+            61_003,
+            15,
+            2,
+        ],
+        b"\0",
+    );
+    let mut strings = vec![0];
+    let dirty = append_string(&mut strings, "DirtyChest.mdx");
+    let sword = append_string(&mut strings, "Sword.mdx");
+    let sword_red = append_string(&mut strings, "SwordRed");
+    let shield = append_string(&mut strings, "Shield.mdx");
+    let shield_blue = append_string(&mut strings, "ShieldBlue");
+    let bow = append_string(&mut strings, "Bow.mdx");
+    let bow_green = append_string(&mut strings, "BowGreen");
+    let mut fields = Vec::with_capacity(100);
+    fields.extend(item_display_model_fields(61_000, dirty, 0, 700, 800));
+    fields.extend(item_display_model_fields(
+        61_001, sword, sword_red, 701, 801,
+    ));
+    fields.extend(item_display_model_fields(
+        61_002,
+        shield,
+        shield_blue,
+        702,
+        802,
+    ));
+    fields.extend(item_display_model_fields(61_003, bow, bow_green, 703, 803));
+    EquipmentTables {
+        definitions,
+        displays: create_wdbc(4, 25, &fields, &strings),
+    }
+}
+
 /// Produces one complete 25-field item-display row.
 fn item_display_fields(id: u32, geosets: [u32; 3], components: [u32; 8]) -> [u32; 25] {
     [
@@ -552,6 +731,43 @@ fn item_display_fields(id: u32, geosets: [u32; 3], components: [u32; 8]) -> [u32
         components[7],
         0,
         0,
+    ]
+}
+
+/// Produces one model-bearing item display row for attachment planning.
+fn item_display_model_fields(
+    id: u32,
+    model: u32,
+    texture: u32,
+    item_visual_id: u32,
+    particle_color_id: u32,
+) -> [u32; 25] {
+    [
+        id,
+        model,
+        0,
+        texture,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        item_visual_id,
+        particle_color_id,
     ]
 }
 

@@ -5,6 +5,14 @@ use thiserror::Error;
 
 use super::CharacterAtlasLayerKind;
 
+/// A failure while translating stock item display names into attachment paths.
+#[derive(Debug, Error)]
+pub enum CharacterAttachmentPlanError {
+    /// A nonempty DBC model or texture name violated archive-path invariants.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+}
+
 /// A failure to construct an exact stock character texture plan.
 #[derive(Debug, Error)]
 pub enum CharacterTexturePlanError {
