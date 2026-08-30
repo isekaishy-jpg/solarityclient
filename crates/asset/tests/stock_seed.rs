@@ -12,6 +12,8 @@ mod file_stack;
 mod model;
 #[path = "stock_seed/storage.rs"]
 mod storage;
+#[path = "stock_seed/support/mod.rs"]
+mod support;
 #[path = "stock_seed/terrain.rs"]
 mod terrain;
 #[path = "stock_seed/texture.rs"]

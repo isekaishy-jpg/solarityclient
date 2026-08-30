@@ -5,4 +5,11 @@
 //! modules that own each decoded asset.
 
 mod dependency;
+mod error;
 mod types;
+
+pub(crate) use dependency::MountedArchive;
+pub use error::{AssetError, AssetPathViolation};
+pub use types::{
+    ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetPath, ClientDataRoot, Locale,
+};

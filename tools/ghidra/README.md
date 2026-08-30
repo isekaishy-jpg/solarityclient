@@ -61,5 +61,10 @@ The exporter creates:
   and containing recovered functions;
 - `rtti_types.tsv`: MSVC RTTI descriptors and their addresses.
 
+`ExportStockArchiveEvidence.java` is a focused follow-up exporter. It records
+every embedded MPQ string together with its reference and containing recovered
+function, without exporting decompiled source. Run it against the same analyzed
+program when changing archive discovery or precedence behavior.
+
 The first command uses `-overwrite`. Point it only at a dedicated analysis
 project whose existing `Wow.exe` program may be replaced.

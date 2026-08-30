@@ -10,3 +10,5 @@ mod db_cache_instances;
 mod db_client;
 mod w_data_store;
 mod wow_client_db;
+
+pub use wow_client_db::{WdbcHeader, WdbcTable};

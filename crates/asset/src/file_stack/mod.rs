@@ -7,3 +7,6 @@
 mod file_cache;
 mod filestack_streaming;
 mod filestack_win32;
+
+pub use filestack_streaming::{AssetRead, AssetStore};
+pub use filestack_win32::ArchiveCatalog;
