@@ -56,6 +56,10 @@ impl UiPipelineLayout {
         self.handle
     }
 
+    pub(super) const fn texture_set(&self) -> vk::DescriptorSetLayout {
+        self.texture_set
+    }
+
     /// Releases the parent pipeline layout before its descriptor layout.
     pub(super) fn destroy(&mut self, device: &Device) {
         // SAFETY: Non-null handles belong to this device and are uniquely owned.

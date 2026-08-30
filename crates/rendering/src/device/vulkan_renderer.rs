@@ -23,6 +23,9 @@ use crate::device::vulkan_texture::{
 };
 use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
 use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSamplerRegistry};
+use crate::device::vulkan_ui_texture_set::{
+    UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
+};
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
@@ -100,6 +103,7 @@ pub struct VulkanRenderer {
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
     ui_samplers: UiSamplerRegistry,
+    ui_texture_sets: UiTextureSetRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -143,6 +147,7 @@ impl VulkanRenderer {
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
+            ui_texture_sets: UiTextureSetRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -318,6 +323,32 @@ impl VulkanRenderer {
     #[must_use]
     pub fn ui_sampler_info(&self, handle: UiSamplerHandle) -> Option<UiSamplerInfo> {
         self.ui_samplers.info(handle)
+    }
+
+    /// Creates persistent UI sampled-image descriptor sets in one exact batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, descriptor allocation
+    /// failures, or exhausted renderer-local handle space.
+    pub fn prepare_ui_texture_sets(
+        &mut self,
+        requested: &[UiSampledTexture],
+    ) -> Result<Vec<UiTextureSetHandle>, VulkanError> {
+        let layout = self.ui_pipelines.texture_set_layout(&self.device)?;
+        self.ui_texture_sets.prepare(
+            &self.device,
+            layout,
+            &self.blp_textures,
+            &self.ui_samplers,
+            requested,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live UI descriptor set.
+    #[must_use]
+    pub fn ui_texture_set_info(&self, handle: UiTextureSetHandle) -> Option<UiTextureSetInfo> {
+        self.ui_texture_sets.info(handle)
     }
 
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
@@ -579,6 +610,7 @@ impl Drop for VulkanRenderer {
         let _idle_result = self.wait_idle();
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_frames.destroy(&self.device, allocator);
+            self.ui_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
             self.m2_meshes.destroy(allocator);

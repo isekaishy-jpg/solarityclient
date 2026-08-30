@@ -44,6 +44,15 @@ impl Default for UiPipelineRegistry {
 }
 
 impl UiPipelineRegistry {
+    /// Returns the initialized sampled-image descriptor layout.
+    pub(in crate::device) fn texture_set_layout(
+        &mut self,
+        device: &Device,
+    ) -> Result<vk::DescriptorSetLayout, VulkanError> {
+        self.layout.ensure_created(device)?;
+        Ok(self.layout.texture_set())
+    }
+
     /// Returns an existing pipeline or compiles one exact source/blend variant.
     pub(in crate::device) fn prepare(
         &mut self,

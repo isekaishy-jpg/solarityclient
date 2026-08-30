@@ -91,6 +91,16 @@ impl UiSamplerRegistry {
             .map(|resource| resource.info)
     }
 
+    /// Resolves a renderer-local identity to its live Vulkan sampler.
+    pub(in crate::device) fn raw(&self, handle: UiSamplerHandle) -> Option<vk::Sampler> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.handle)
+    }
+
     /// Releases every sampler after submitted draws are idle.
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();

@@ -114,6 +114,12 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit UI sampler handle.
     #[error("UI sampler registry exhausted its 32-bit handle space")]
     UiSamplerCapacity,
+    /// A UI descriptor references a sampler from another renderer.
+    #[error("UI texture set references an unknown UI sampler handle")]
+    UnknownUiSamplerHandle,
+    /// The renderer cannot assign another stable 32-bit UI texture-set handle.
+    #[error("UI texture-set registry exhausted its 32-bit handle space")]
+    UiTextureSetCapacity,
     /// The renderer cannot assign another stable 32-bit sampler handle.
     #[error("M2 sampler registry exhausted its 32-bit handle space")]
     M2SamplerCapacity,
