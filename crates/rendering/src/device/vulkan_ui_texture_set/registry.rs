@@ -86,6 +86,16 @@ impl UiTextureSetRegistry {
             })
     }
 
+    /// Resolves one renderer-local identity to its live descriptor set.
+    pub(in crate::device) fn raw(&self, handle: UiTextureSetHandle) -> Option<vk::DescriptorSet> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.handle)
+    }
+
     /// Releases descriptor sets transitively through their owning pools.
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();

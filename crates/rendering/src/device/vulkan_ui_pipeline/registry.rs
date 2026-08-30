@@ -102,6 +102,19 @@ impl UiPipelineRegistry {
             .map(|resource| resource.info)
     }
 
+    /// Resolves one renderer-local pipeline to command-recording handles.
+    pub(in crate::device) fn raw(
+        &self,
+        handle: UiPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.handle, self.layout.handle()))
+    }
+
     /// Destroys pipelines before their common layout and descriptor layout.
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();

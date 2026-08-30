@@ -25,6 +25,7 @@ mod vulkan_sampler;
 mod vulkan_selection;
 mod vulkan_texture;
 mod vulkan_ui_draw;
+mod vulkan_ui_frame;
 mod vulkan_ui_mesh;
 mod vulkan_ui_pipeline;
 mod vulkan_ui_sampler;
@@ -45,6 +46,7 @@ pub use vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError,
 };
 pub use vulkan_ui_draw::UiPreparedDraw;
+pub use vulkan_ui_frame::UiFrameReport;
 pub use vulkan_ui_mesh::{UiMeshHandle, UiMeshResourceInfo};
 pub use vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo};
 pub use vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo};

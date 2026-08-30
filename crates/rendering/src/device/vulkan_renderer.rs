@@ -22,6 +22,7 @@ use crate::device::vulkan_texture::{
     BlpTextureUploadError, TextureUploadContext,
 };
 use crate::device::vulkan_ui_draw::{UiPreparedDraw, prepare_draw as prepare_ui_draw};
+use crate::device::vulkan_ui_frame::{UiFrameContext, UiFrameRenderer, UiFrameReport};
 use crate::device::vulkan_ui_mesh::{UiMeshHandle, UiMeshRegistry, UiMeshResourceInfo};
 use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
 use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSamplerRegistry};
@@ -104,6 +105,7 @@ pub struct VulkanRenderer {
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
+    ui_frames: UiFrameRenderer,
     ui_meshes: UiMeshRegistry,
     ui_samplers: UiSamplerRegistry,
     ui_texture_sets: UiTextureSetRegistry,
@@ -149,6 +151,7 @@ impl VulkanRenderer {
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
+            ui_frames: UiFrameRenderer::default(),
             ui_meshes: UiMeshRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
             ui_texture_sets: UiTextureSetRegistry::default(),
@@ -410,6 +413,44 @@ impl VulkanRenderer {
         )
     }
 
+    /// Records and presents one complete ordered UI batch list.
+    ///
+    /// Logical extent is the coordinate space used when the immutable mesh was
+    /// prepared. It is independent from the physical swapchain extent so stock
+    /// UI geometry scales without rebuilding or special-casing HD textures.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for an empty frame, invalid logical extent,
+    /// swapchain resource mismatch, command recording, submission, or present
+    /// failure.
+    pub fn present_ui(
+        &mut self,
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+    ) -> Result<UiFrameReport, VulkanError> {
+        let report = self.ui_frames.present(
+            UiFrameContext {
+                device: &self.device,
+                swapchain_loader: &self.swapchain_loader,
+                swapchain: self.swapchain,
+                swapchain_images: &self.swapchain_images,
+                image_views: &self.image_views,
+                graphics_queue: self.graphics_queue,
+                present_queue: self.present_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+                extent: self.report.extent,
+                pipelines: &self.ui_pipelines,
+                meshes: &self.ui_meshes,
+                texture_sets: &self.ui_texture_sets,
+            },
+            logical_extent,
+            draws,
+        )?;
+        self.is_idle = false;
+        Ok(report)
+    }
+
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
     ///
     /// # Errors
@@ -667,6 +708,7 @@ impl Drop for VulkanRenderer {
     /// Releases Vulkan children in reverse dependency order.
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
+        self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);

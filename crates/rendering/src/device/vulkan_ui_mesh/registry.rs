@@ -77,6 +77,19 @@ impl UiMeshRegistry {
             .map(|resource| resource.info)
     }
 
+    /// Resolves one renderer-local identity to its live vertex/index buffers.
+    pub(in crate::device) fn buffers(
+        &self,
+        handle: UiMeshHandle,
+    ) -> Option<(ash::vk::Buffer, ash::vk::Buffer)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.buffers.buffers())
+    }
+
     /// Releases every immutable generation before the VMA parent.
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         for resource in self.resources.iter_mut().rev() {

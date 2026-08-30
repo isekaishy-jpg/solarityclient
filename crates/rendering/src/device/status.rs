@@ -222,6 +222,18 @@ pub enum VulkanError {
     /// Image path, sampler state, or descriptor presence disagrees with the batch.
     #[error("UI draw sampled texture does not match its material batch")]
     UiDrawTextureMismatch,
+    /// Command recording requires at least one prepared UI material batch.
+    #[error("UI frame contains no prepared draws")]
+    EmptyUiFrame,
+    /// Swapchain-indexed frame resources cannot address the requested slot.
+    #[error("UI frame resources exceed swapchain capacity")]
+    UiFrameCapacity,
+    /// A live frame ring cannot silently change its swapchain image count.
+    #[error("UI frame swapchain image count changed without renderer recreation")]
+    UiFrameSwapchainChanged,
+    /// Logical UI coordinates require a finite, positive width and height.
+    #[error("UI frame logical extent must be finite and positive")]
+    UiFrameExtent,
     /// The selected adapter lacks the pinned stock-compatible depth format.
     #[error("selected Vulkan adapter lacks D24_UNORM_S8_UINT depth/stencil attachments")]
     DepthStencilFormat,
