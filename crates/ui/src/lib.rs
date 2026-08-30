@@ -22,8 +22,8 @@ pub use font::{
 };
 pub use frame::{
     UiDrawLayer, UiElementLayer, UiFrameError, UiFrameLayer, UiFrameNode, UiFramePlan,
-    UiFrameStrata, UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError,
-    UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
+    UiFrameState, UiFrameStatePlan, UiFrameStrata, UiInheritanceTarget, UiObjectCatalog,
+    UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
 };
 pub use region::{
     UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,

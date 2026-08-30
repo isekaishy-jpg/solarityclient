@@ -12,5 +12,7 @@ mod status;
 
 pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
 pub use c_simple_top::{UiDrawLayer, UiElementLayer, UiObjectNode, UiObjectRole, UiObjectTree};
-pub use properties::{UiFrameLayer, UiFrameNode, UiFramePlan, UiFrameStrata};
+pub use properties::{
+    UiFrameLayer, UiFrameNode, UiFramePlan, UiFrameState, UiFrameStatePlan, UiFrameStrata,
+};
 pub use status::{UiFrameError, UiObjectError};

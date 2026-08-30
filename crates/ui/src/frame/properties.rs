@@ -131,6 +131,177 @@ pub struct UiFramePlan {
     layers: Vec<UiFrameLayer>,
 }
 
+/// Resolved stock frame state after parenting and XML inheritance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiFrameState {
+    strata: UiFrameStrata,
+    level: i32,
+    id: i32,
+    top_level: bool,
+    movable: bool,
+    resizable: bool,
+    clamped_to_screen: bool,
+    keyboard_enabled: bool,
+    mouse_enabled: bool,
+    protected: bool,
+    position_persistence_disabled: bool,
+}
+
+impl UiFrameState {
+    /// Returns the resolved frame stratum.
+    #[must_use]
+    pub const fn strata(self) -> UiFrameStrata {
+        self.strata
+    }
+
+    /// Returns the resolved level within the frame stratum.
+    #[must_use]
+    pub const fn level(self) -> i32 {
+        self.level
+    }
+
+    /// Returns the resolved numeric identifier.
+    #[must_use]
+    pub const fn id(self) -> i32 {
+        self.id
+    }
+
+    /// Returns whether the frame has top-level interaction behavior.
+    #[must_use]
+    pub const fn top_level(self) -> bool {
+        self.top_level
+    }
+
+    /// Returns whether the frame is movable.
+    #[must_use]
+    pub const fn movable(self) -> bool {
+        self.movable
+    }
+
+    /// Returns whether the frame is resizable.
+    #[must_use]
+    pub const fn resizable(self) -> bool {
+        self.resizable
+    }
+
+    /// Returns whether the frame is clamped to the screen.
+    #[must_use]
+    pub const fn clamped_to_screen(self) -> bool {
+        self.clamped_to_screen
+    }
+
+    /// Returns whether keyboard input is enabled.
+    #[must_use]
+    pub const fn keyboard_enabled(self) -> bool {
+        self.keyboard_enabled
+    }
+
+    /// Returns whether mouse input is enabled.
+    #[must_use]
+    pub const fn mouse_enabled(self) -> bool {
+        self.mouse_enabled
+    }
+
+    /// Returns whether protected-frame restrictions apply.
+    #[must_use]
+    pub const fn protected(self) -> bool {
+        self.protected
+    }
+
+    /// Returns whether saved frame positions are disabled.
+    #[must_use]
+    pub const fn position_persistence_disabled(self) -> bool {
+        self.position_persistence_disabled
+    }
+
+    fn unparented() -> Self {
+        Self {
+            strata: UiFrameStrata::Medium,
+            level: 0,
+            id: 0,
+            top_level: false,
+            movable: false,
+            resizable: false,
+            clamped_to_screen: false,
+            keyboard_enabled: false,
+            mouse_enabled: false,
+            protected: false,
+            position_persistence_disabled: false,
+        }
+    }
+
+    fn child_of(parent: Self) -> Result<Self, UiFrameError> {
+        let level = parent
+            .level
+            .checked_add(1)
+            .ok_or_else(|| UiFrameError::Resolution {
+                message: "parent frame level cannot be incremented".to_owned(),
+            })?;
+        Ok(Self {
+            strata: parent.strata,
+            level,
+            ..Self::unparented()
+        })
+    }
+
+    fn apply(&mut self, layer: UiFrameLayer) {
+        if let Some(value) = layer.strata {
+            self.strata = value;
+        }
+        if let Some(value) = layer.level {
+            self.level = value;
+        }
+        if let Some(value) = layer.id {
+            self.id = value;
+        }
+        if let Some(value) = layer.top_level {
+            self.top_level = value;
+        }
+        if let Some(value) = layer.movable {
+            self.movable = value;
+        }
+        if let Some(value) = layer.resizable {
+            self.resizable = value;
+        }
+        if let Some(value) = layer.clamped_to_screen {
+            self.clamped_to_screen = value;
+        }
+        if let Some(value) = layer.keyboard_enabled {
+            self.keyboard_enabled = value;
+        }
+        if let Some(value) = layer.mouse_enabled {
+            self.mouse_enabled = value;
+        }
+        if let Some(value) = layer.protected {
+            self.protected = value;
+        }
+        if let Some(value) = layer.position_persistence_disabled {
+            self.position_persistence_disabled = value;
+        }
+    }
+}
+
+/// Compact resolved frame states indexed indirectly from object nodes.
+pub struct UiFrameStatePlan {
+    node_states: Vec<Option<u32>>,
+    states: Vec<UiFrameState>,
+}
+
+impl UiFrameStatePlan {
+    /// Returns resolved state for a frame-derived object node.
+    #[must_use]
+    pub fn state(&self, node_index: usize) -> Option<UiFrameState> {
+        let state_index = self.node_states.get(node_index)?.as_ref()?;
+        self.states.get(*state_index as usize).copied()
+    }
+
+    /// Returns the number of resolved frame-derived objects.
+    #[must_use]
+    pub fn state_count(&self) -> usize {
+        self.states.len()
+    }
+}
+
 impl UiFramePlan {
     /// Parses ordering and common interaction properties for frame-derived objects.
     ///
@@ -176,6 +347,92 @@ impl UiFramePlan {
     #[must_use]
     pub fn layer_count(&self) -> usize {
         self.layers.len()
+    }
+
+    /// Resolves stock parenting defaults followed by ordered XML overrides.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiFrameError::Resolution`] for parent cycles, non-frame
+    /// parents, index mismatches, or a frame-level overflow.
+    pub fn resolve(&self, tree: &UiObjectTree<'_>) -> Result<UiFrameStatePlan, UiFrameError> {
+        if self.nodes.len() != tree.nodes().len() {
+            return Err(UiFrameError::Resolution {
+                message: "frame plan and object tree have different node counts".to_owned(),
+            });
+        }
+        let mut resolved = vec![None; tree.nodes().len()];
+        let mut visiting = vec![false; tree.nodes().len()];
+        for index in 0..tree.nodes().len() {
+            let _state = self.resolve_node(tree, index, &mut resolved, &mut visiting)?;
+        }
+
+        let mut node_states = vec![None; resolved.len()];
+        let frame_count = resolved.iter().flatten().count();
+        let mut states = Vec::with_capacity(frame_count);
+        for (node_index, state) in resolved.into_iter().enumerate() {
+            let Some(state) = state else {
+                continue;
+            };
+            let state_index =
+                u32::try_from(states.len()).map_err(|error| UiFrameError::Resolution {
+                    message: format!("frame state index exceeds u32: {error}"),
+                })?;
+            states.push(state);
+            node_states[node_index] = Some(state_index);
+        }
+        Ok(UiFrameStatePlan {
+            node_states,
+            states,
+        })
+    }
+
+    fn resolve_node(
+        &self,
+        tree: &UiObjectTree<'_>,
+        index: usize,
+        resolved: &mut [Option<UiFrameState>],
+        visiting: &mut [bool],
+    ) -> Result<Option<UiFrameState>, UiFrameError> {
+        if let Some(state) = resolved[index] {
+            return Ok(Some(state));
+        }
+        let object = &tree.nodes()[index];
+        if !is_frame_kind(object.kind()) {
+            return Ok(None);
+        }
+        if std::mem::replace(&mut visiting[index], true) {
+            return Err(UiFrameError::Resolution {
+                message: format!(
+                    "frame parent cycle reaches {}",
+                    object.name().unwrap_or("<unnamed>")
+                ),
+            });
+        }
+        let result = (|| {
+            let mut state = if let Some(parent_index) = object.parent() {
+                let parent = self
+                    .resolve_node(tree, parent_index, resolved, visiting)?
+                    .ok_or_else(|| UiFrameError::Resolution {
+                        message: format!(
+                            "frame {} has a non-frame parent",
+                            object.name().unwrap_or("<unnamed>")
+                        ),
+                    })?;
+                UiFrameState::child_of(parent)?
+            } else {
+                UiFrameState::unparented()
+            };
+            let node = self.nodes[index];
+            for layer in self.layers_for(node) {
+                state.apply(*layer);
+            }
+            Ok(state)
+        })();
+        visiting[index] = false;
+        let state = result?;
+        resolved[index] = Some(state);
+        Ok(Some(state))
     }
 }
 
@@ -238,13 +495,20 @@ fn parse_optional_integer(
     element: &XmlElement,
     name: &str,
 ) -> Result<Option<i32>, UiFrameError> {
-    attribute(element, name)
+    let parsed = attribute(element, name)
         .map(|value| {
             value.parse::<i32>().map_err(|error| {
                 frame_error(path, format!("invalid {name} value {value}: {error}"))
             })
         })
-        .transpose()
+        .transpose()?;
+    if name == "frameLevel" && parsed.is_some_and(|value| value <= 0) {
+        return Err(frame_error(path, "frameLevel must be greater than zero"));
+    }
+    if name == "id" && parsed.is_some_and(|value| value < 0) {
+        return Err(frame_error(path, "id must be nonnegative"));
+    }
+    Ok(parsed)
 }
 
 fn parse_optional_bool(

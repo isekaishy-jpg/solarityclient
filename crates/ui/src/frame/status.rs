@@ -27,4 +27,10 @@ pub enum UiFrameError {
         /// Attribute and value context.
         message: String,
     },
+    /// The constructed ownership graph could not produce stock startup state.
+    #[error("cannot resolve UI frame state: {message}")]
+    Resolution {
+        /// Ownership, index, or level context.
+        message: String,
+    },
 }

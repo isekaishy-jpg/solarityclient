@@ -105,6 +105,66 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
     assert_eq!(layers[1].strata(), Some(UiFrameStrata::Dialog));
     assert_eq!(layers[1].level(), Some(11));
     assert_eq!(layers[1].mouse_enabled(), Some(true));
+    let states = plan.resolve(&tree)?;
+    let state = states.state(index).ok_or("missing Login frame state")?;
+    assert_eq!(state.strata(), UiFrameStrata::Dialog);
+    assert_eq!(state.level(), 11);
+    assert_eq!(state.id(), 7);
+    assert!(state.top_level());
+    assert!(state.movable());
+    assert!(state.resizable());
+    assert!(state.clamped_to_screen());
+    assert!(state.keyboard_enabled());
+    assert!(state.mouse_enabled());
+    assert!(state.protected());
+    assert!(state.position_persistence_disabled());
+    Ok(())
+}
+
+/// Parenting establishes stratum and level before XML overrides are applied.
+#[test]
+fn frame_state_resolves_deferred_parent_order() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Frames.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Frames.xml",
+            bytes: br#"<Ui>
+  <Frame name="Child" parent="LaterParent"/>
+  <Frame name="LaterParent" frameStrata="HIGH" frameLevel="20"/>
+  <Frame name="Unparented"/>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let plan = UiFramePlan::from_tree(&tree)?;
+    let states = plan.resolve(&tree)?;
+    let child_index = tree
+        .nodes()
+        .iter()
+        .position(|node| node.name() == Some("Child"))
+        .ok_or("missing Child")?;
+    let unparented_index = tree
+        .nodes()
+        .iter()
+        .position(|node| node.name() == Some("Unparented"))
+        .ok_or("missing Unparented")?;
+    let child = states.state(child_index).ok_or("missing Child state")?;
+    let unparented = states
+        .state(unparented_index)
+        .ok_or("missing Unparented state")?;
+
+    assert_eq!(child.strata(), UiFrameStrata::High);
+    assert_eq!(child.level(), 21);
+    assert_eq!(unparented.strata(), UiFrameStrata::Medium);
+    assert_eq!(unparented.level(), 0);
+    assert!(!unparented.mouse_enabled());
     Ok(())
 }
 

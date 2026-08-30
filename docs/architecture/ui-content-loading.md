@@ -182,6 +182,16 @@ per-object state here.
 Real-client validation retains 218 Glue and 1,604 Frame property-bearing
 layers in this plan.
 
+Resolved frame state follows the recovered `CSimpleFrame::SetParent` behavior:
+an unparented frame starts in `MEDIUM` at level zero, while a child copies its
+parent's stratum and starts one level higher. Ordered template and concrete XML
+layers then replace only explicitly authored values. Resolution follows the
+final ownership graph rather than construction order, which covers stock's
+deferred explicit parents without a second runtime name search. Cycles,
+non-frame parents, and level overflow are explicit startup failures.
+The installed client resolves 580 Glue and 4,938 FrameXML frame-derived
+objects through this pass.
+
 ## Typed texture plan
 
 Texture declarations are decoded into a flat plan parallel to the object tree.
