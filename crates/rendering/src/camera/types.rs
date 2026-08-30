@@ -14,6 +14,36 @@ pub const WORLD_DEPTH_MINIMUM: f32 = 0.0;
 /// End of the world interval before stock's horizon and sky depth ranges.
 pub const WORLD_DEPTH_MAXIMUM: f32 = 0.94;
 
+/// Followed-object positions retained separately from the projection basis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldCameraSubject {
+    orbit_pivot: Vec3,
+    position: Vec3,
+}
+
+impl WorldCameraSubject {
+    /// Identifies the elevated collision pivot and authoritative object origin.
+    #[must_use]
+    pub const fn new(orbit_pivot: Vec3, position: Vec3) -> Self {
+        Self {
+            orbit_pivot,
+            position,
+        }
+    }
+
+    /// Returns the height-adjusted pivot used by camera obstruction traces.
+    #[must_use]
+    pub const fn orbit_pivot(self) -> Vec3 {
+        self.orbit_pivot
+    }
+
+    /// Returns the followed object's authoritative world origin.
+    #[must_use]
+    pub const fn position(self) -> Vec3 {
+        self.position
+    }
+}
+
 /// Final camera state after gameplay orbit, collision, and transition policy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldCamera {
@@ -23,6 +53,7 @@ pub struct WorldCamera {
     vertical_field_of_view_radians: f32,
     near_clip: f32,
     far_clip: f32,
+    subject: Option<WorldCameraSubject>,
 }
 
 impl WorldCamera {
@@ -36,6 +67,28 @@ impl WorldCamera {
             vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
             near_clip: WORLD_NEAR_CLIP,
             far_clip,
+            subject: None,
+        }
+    }
+
+    /// Creates an ordinary player camera with stock's distinct followed points.
+    #[must_use]
+    pub const fn stock_following(
+        position: Vec3,
+        target: Vec3,
+        up: Vec3,
+        orbit_pivot: Vec3,
+        subject: Vec3,
+        far_clip: f32,
+    ) -> Self {
+        Self {
+            position,
+            target,
+            up,
+            vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
+            near_clip: WORLD_NEAR_CLIP,
+            far_clip,
+            subject: Some(WorldCameraSubject::new(orbit_pivot, subject)),
         }
     }
 
@@ -56,6 +109,7 @@ impl WorldCamera {
             vertical_field_of_view_radians,
             near_clip,
             far_clip,
+            subject: None,
         }
     }
 
@@ -93,6 +147,12 @@ impl WorldCamera {
     #[must_use]
     pub const fn far_clip(self) -> f32 {
         self.far_clip
+    }
+
+    /// Returns followed-object positions when this is a subject camera.
+    #[must_use]
+    pub const fn subject(self) -> Option<WorldCameraSubject> {
+        self.subject
     }
 }
 

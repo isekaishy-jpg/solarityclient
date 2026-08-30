@@ -74,6 +74,11 @@ impl WorldCamera {
         {
             return Err(WorldCameraError::ClipRange);
         }
+        if self.subject().is_some_and(|subject| {
+            !finite_vec3(subject.orbit_pivot()) || !finite_vec3(subject.position())
+        }) {
+            return Err(WorldCameraError::NonFiniteSubject);
+        }
         Ok(())
     }
 }

@@ -21,7 +21,7 @@ mod world_text;
 pub use camera::{
     WORLD_DEPTH_MAXIMUM, WORLD_DEPTH_MINIMUM, WORLD_NEAR_CLIP,
     WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS, WorldCamera, WorldCameraError, WorldCameraFrame,
-    WorldFrustum, WorldScreenWindow,
+    WorldCameraSubject, WorldFrustum, WorldScreenWindow,
 };
 pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError, M2FrameReport,

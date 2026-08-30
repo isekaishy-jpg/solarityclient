@@ -37,6 +37,27 @@ fn stock_world_camera_builds_vulkan_projection() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Player cameras keep stock's subject and collision pivot distinct from target.
+#[test]
+fn followed_world_camera_retains_distinct_subject_positions() -> Result<(), Box<dyn Error>> {
+    let camera = WorldCamera::stock_following(
+        Vec3::new(4.0, 2.0, 3.0),
+        Vec3::new(5.0, 2.0, 3.0),
+        Vec3::Z,
+        Vec3::new(10.0, 2.0, 3.8),
+        Vec3::new(10.0, 2.0, 2.0),
+        777.0,
+    );
+    let subject = camera
+        .subject()
+        .ok_or("player camera omitted its subject")?;
+
+    assert_eq!(subject.orbit_pivot(), Vec3::new(10.0, 2.0, 3.8));
+    assert_eq!(subject.position(), Vec3::new(10.0, 2.0, 2.0));
+    assert_eq!(camera.frame(1.0)?.camera(), camera);
+    Ok(())
+}
+
 /// The eye-based frustum rejects geometry behind or outside the view wedge.
 #[test]
 fn world_frustum_tests_spheres_and_oriented_boxes() -> Result<(), Box<dyn Error>> {
@@ -64,6 +85,18 @@ fn world_camera_rejects_degenerate_inputs() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         WorldFrustum::new(frame, WorldScreenWindow::new(1.0, -1.0, -1.0, 1.0)),
         Err(WorldCameraError::ScreenWindow)
+    );
+    let invalid_subject = WorldCamera::stock_following(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::Z,
+        Vec3::new(f32::NAN, 0.0, 0.0),
+        Vec3::ZERO,
+        100.0,
+    );
+    assert_eq!(
+        invalid_subject.frame(1.0),
+        Err(WorldCameraError::NonFiniteSubject)
     );
     Ok(())
 }

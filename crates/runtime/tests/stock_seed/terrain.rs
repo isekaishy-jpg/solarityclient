@@ -61,6 +61,8 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         RuntimePlayerPoll::Pending
     );
     assert!(player.resident_model().is_none());
+    assert!(player.camera_pose().is_none());
+    assert!(player.world_camera(777.0).is_none());
 
     assert_eq!(
         terrain.synchronize(Some(&world))?,

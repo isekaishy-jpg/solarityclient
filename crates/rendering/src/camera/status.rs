@@ -20,6 +20,9 @@ pub enum WorldCameraError {
     /// Near and far planes are not positive, finite, and ordered.
     #[error("world camera clipping planes are invalid")]
     ClipRange,
+    /// A followed subject origin or collision pivot contains NaN or infinity.
+    #[error("world camera subject contains a non-finite component")]
+    NonFiniteSubject,
     /// Viewport width divided by height is not positive and finite.
     #[error("world camera aspect ratio is invalid")]
     AspectRatio,

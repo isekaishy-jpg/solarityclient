@@ -7,9 +7,11 @@ use solarity_asset::{
     DecodedM2Model, M2ModelCache,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
+use solarity_rendering::WorldCamera;
 use solarity_systems::{
-    CameraSubjectHeight, CameraSubjectHeightError, UnitModelAppearanceError,
-    resolve_model_camera_subject_height, resolve_unit_model,
+    CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
+    UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
+    resolve_unit_model,
 };
 use thiserror::Error;
 
@@ -28,6 +30,9 @@ pub enum RuntimePlayerError {
     /// Authored M2 geometry cannot produce a finite stock camera height.
     #[error(transparent)]
     CameraHeight(#[from] CameraSubjectHeightError),
+    /// Authoritative movement and saved view state cannot form a finite orbit.
+    #[error(transparent)]
+    CameraPose(#[from] PlayerCameraPoseError),
 }
 
 /// Observable result of one local-player presentation synchronization pass.
@@ -102,20 +107,30 @@ impl RuntimePlayerPresentation {
         };
         let path = appearance.body().model_path();
         let scale = appearance.object_scale();
-        if self
-            .resident
-            .as_ref()
-            .is_some_and(|resident| resident.path() == path && resident.object_scale == scale)
-        {
+        if self.resident.as_ref().is_some_and(|resident| {
+            resident.guid == guid && resident.path() == path && resident.object_scale == scale
+        }) {
+            let transform = world.local_player_transform()?;
+            let view = world.local_player_view()?;
+            if let Some(resident) = self.resident.as_mut() {
+                resident.camera_pose =
+                    resolve_player_camera_pose(transform, view, resident.camera_height)?;
+            }
             return Ok(RuntimePlayerPoll::Current);
         }
 
         let model = self.models.load(&mut self.assets.borrow_mut(), path)?;
         let camera_height = resolve_model_camera_subject_height(&model, scale)?;
+        let camera_pose = resolve_player_camera_pose(
+            world.local_player_transform()?,
+            world.local_player_view()?,
+            camera_height,
+        )?;
         self.resident = Some(ResidentPlayerModel {
             guid,
             object_scale: scale,
             camera_height,
+            camera_pose,
             model,
         });
         self.models.collect_unused();
@@ -142,6 +157,30 @@ impl RuntimePlayerPresentation {
             .map(|resident| resident.camera_height)
     }
 
+    /// Returns the current pre-collision camera orbit for the resident player.
+    #[must_use]
+    pub fn camera_pose(&self) -> Option<PlayerCameraPose> {
+        self.resident.as_ref().map(|resident| resident.camera_pose)
+    }
+
+    /// Builds renderer-owned camera state after far-clip policy has resolved.
+    ///
+    /// This conversion intentionally requires the caller's final far clip;
+    /// player presentation does not own map/CVar visibility policy.
+    #[must_use]
+    pub fn world_camera(&self, far_clip: f32) -> Option<WorldCamera> {
+        self.camera_pose().map(|pose| {
+            WorldCamera::stock_following(
+                pose.eye(),
+                pose.target(),
+                pose.up(),
+                pose.orbit_pivot(),
+                pose.subject(),
+                far_clip,
+            )
+        })
+    }
+
     /// Releases local-player residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.resident = None;
@@ -153,6 +192,7 @@ struct ResidentPlayerModel {
     guid: u64,
     object_scale: f32,
     camera_height: CameraSubjectHeight,
+    camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
 }
 
