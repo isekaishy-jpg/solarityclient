@@ -9,7 +9,9 @@ use std::io;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale, WdbcTable};
+use solarity_asset::{
+    ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedBlpTexture, Locale, WdbcTable,
+};
 
 /// Mounts a real client archive set and reads every requested internal path.
 fn main() -> Result<(), Box<dyn Error>> {
@@ -44,6 +46,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 table.header().record_count(),
                 table.header().record_size(),
                 table.source().relative_path().display(),
+                path
+            );
+            continue;
+        }
+        if path.as_str().ends_with(".BLP") {
+            let texture = DecodedBlpTexture::load(&mut store, &path)?;
+            println!(
+                "{}x{} RGBA8\t{}\t{}",
+                texture.width(),
+                texture.height(),
+                texture.source().relative_path().display(),
                 path
             );
             continue;

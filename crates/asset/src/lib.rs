@@ -20,3 +20,4 @@ pub use archive::{
 };
 pub use database::{WdbcHeader, WdbcTable};
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
+pub use texture::DecodedBlpTexture;

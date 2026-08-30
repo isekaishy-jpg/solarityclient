@@ -107,4 +107,12 @@ pub enum AssetError {
         /// Decoder or structural validation context.
         message: String,
     },
+    /// A resolved client texture is not a decodable stock BLP image.
+    #[error("failed to decode client texture {path}: {message}")]
+    TextureDecode {
+        /// The normalized texture asset path.
+        path: AssetPath,
+        /// Parser or pixel-conversion context.
+        message: String,
+    },
 }

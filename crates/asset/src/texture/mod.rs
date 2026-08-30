@@ -9,3 +9,5 @@ mod texture_cache;
 mod texture_int;
 mod texture_source;
 mod tga;
+
+pub use blp::DecodedBlpTexture;
