@@ -19,7 +19,7 @@ pub use archive::{
     ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetError, AssetPath, AssetPathViolation,
     ClientDataRoot, Locale,
 };
-pub use cache::{BlpTextureCache, M2ModelCache};
+pub use cache::{BlpTextureCache, M2ModelCache, WmoModelCache};
 pub use database::{
     AppearanceError, AreaDefinition, AreaTableCatalog, CharacterAppearanceCatalog,
     CharacterClassCatalog, CharacterClassDefinition, CharacterCustomization,

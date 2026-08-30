@@ -13,6 +13,7 @@ use solarity_runtime::{
     RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
 };
 use wow_adt::AdtVersion;
+use wow_adt::WmoPlacement;
 use wow_adt::builder::AdtBuilder;
 use wow_wdt::chunks::MwmoChunk;
 use wow_wdt::version::WowVersion;
@@ -152,6 +153,71 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// MCNK references admit one shared MODF generation into camera collision.
+#[test]
+fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Error>> {
+    const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
+    let placement = WmoPlacement {
+        name_id: 0,
+        unique_id: 7,
+        position: [CLIENT_MAP_ORIGIN, 0.0, CLIENT_MAP_ORIGIN],
+        rotation: [0.0, 0.0, 0.0],
+        extents_min: [CLIENT_MAP_ORIGIN - 1.0, -1.0, CLIENT_MAP_ORIGIN - 1.0],
+        extents_max: [CLIENT_MAP_ORIGIN + 1.0, 1.0, CLIENT_MAP_ORIGIN + 1.0],
+        flags: 0,
+        doodad_set: 0,
+        name_set: 0,
+        scale: 1024,
+    };
+    let adt = add_last_chunk_wmo_reference(
+        AdtBuilder::new()
+            .with_version(AdtVersion::WotLK)
+            .add_texture("tileset/fixture/grass.blp")
+            .add_wmo("World/Wmo/Fixture.wmo")
+            .add_wmo_placement(placement)
+            .build()?
+            .to_bytes()?,
+        0,
+    )?;
+    let root_wmo = root_wmo_fixture();
+    let group_wmo = group_wmo_fixture();
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &map_table()),
+        ("World\\Maps\\Northrend\\Northrend.wdt", &terrain_wdt()?),
+        ("World\\Maps\\Northrend\\Northrend_30_21.adt", &adt),
+        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+        ("World\\Wmo\\Fixture.wmo", &root_wmo),
+        ("World\\Wmo\\Fixture_000.wmo", &group_wmo),
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let assets = AssetStoreHandle::new(store);
+    let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        0xF130_0000_0000_0001,
+        "WorldModelFixture",
+        Vec3::new(1_000.0, 5_800.0, 250.0),
+        0.0,
+    ));
+
+    terrain.synchronize(Some(&world))?;
+    assert_eq!(terrain.resident_world_model_count(), 1);
+    let hit = terrain
+        .trace_world_model_camera(
+            Vec3::new(-0.25, -0.25, 1.0),
+            Vec3::new(-0.25, -0.25, -1.0),
+            1.0,
+        )?
+        .ok_or("camera ray missed resident WMO")?;
+    assert!((hit - 0.5).abs() < 0.001);
+
+    terrain.disconnect();
+    assert_eq!(terrain.resident_world_model_count(), 0);
+    Ok(())
+}
+
 fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mwmo = Some(MwmoChunk::new());
@@ -262,4 +328,119 @@ fn set_u64(bytes: &mut [u8], offset: usize, value: u64) {
 
 fn set_f32(bytes: &mut [u8], offset: usize, value: f32) {
     set_u32(bytes, offset, value.to_bits());
+}
+
+/// Adds one MCRF MODF reference to the final generated MCNK without moving any
+/// later indexed terrain chunk. The fixture builder currently omits MCRF APIs.
+fn add_last_chunk_wmo_reference(
+    mut adt: Vec<u8>,
+    placement_index: u32,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let chunk_start = adt
+        .windows(4)
+        .rposition(|window| window == b"KNCM")
+        .ok_or("fixture ADT omits MCNK")?;
+    let old_size = read_u32(&adt, chunk_start + 4)? as usize;
+    let chunk_end = chunk_start + 8 + old_size;
+    set_u32(&mut adt, chunk_start + 8 + 0x20, (8 + old_size) as u32);
+    set_u32(&mut adt, chunk_start + 8 + 0x38, 1);
+    let mut reference = Vec::with_capacity(12);
+    reference.extend_from_slice(b"FRCM");
+    reference.extend_from_slice(&4_u32.to_le_bytes());
+    reference.extend_from_slice(&placement_index.to_le_bytes());
+    adt.splice(chunk_end..chunk_end, reference);
+    set_u32(&mut adt, chunk_start + 4, (old_size + 12) as u32);
+
+    let mcin_start = adt
+        .windows(4)
+        .position(|window| window == b"NICM")
+        .ok_or("fixture ADT omits MCIN")?;
+    set_u32(
+        &mut adt,
+        mcin_start + 8 + 255 * 16 + 4,
+        (old_size + 12) as u32,
+    );
+    Ok(adt)
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Box<dyn Error>> {
+    Ok(u32::from_le_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .ok_or("fixture u32 is out of range")?
+            .try_into()?,
+    ))
+}
+
+fn root_wmo_fixture() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_wmo_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
+    let mut header = vec![0_u8; 64];
+    set_u32(&mut header, 4, 1);
+    set_u32(&mut header, 32, 42);
+    set_vec3(&mut header, 36, [-1.0, -1.0, -1.0]);
+    set_vec3(&mut header, 48, [1.0, 1.0, 1.0]);
+    push_wmo_chunk(&mut bytes, *b"DHOM", &header);
+    let mut group = Vec::new();
+    group.extend_from_slice(&0_u32.to_le_bytes());
+    for value in [-1.0_f32, -1.0, -1.0, 1.0, 1.0, 1.0] {
+        group.extend_from_slice(&value.to_le_bytes());
+    }
+    group.extend_from_slice(&(-1_i32).to_le_bytes());
+    push_wmo_chunk(&mut bytes, *b"IGOM", &group);
+    bytes
+}
+
+fn group_wmo_fixture() -> Vec<u8> {
+    let mut nested = Vec::new();
+    push_wmo_chunk(&mut nested, *b"YPOM", &[0x08, 0xff]);
+    let mut indices = Vec::new();
+    for index in [0_u16, 1, 2] {
+        indices.extend_from_slice(&index.to_le_bytes());
+    }
+    push_wmo_chunk(&mut nested, *b"IVOM", &indices);
+    let mut vertices = Vec::new();
+    for vertex in [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for value in vertex {
+            vertices.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    push_wmo_chunk(&mut nested, *b"TVOM", &vertices);
+    let mut normals = Vec::new();
+    for _ in 0..3 {
+        for value in [0.0_f32, 0.0, 1.0] {
+            normals.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    push_wmo_chunk(&mut nested, *b"RNOM", &normals);
+    let mut node = Vec::new();
+    node.extend_from_slice(&4_u16.to_le_bytes());
+    node.extend_from_slice(&(-1_i16).to_le_bytes());
+    node.extend_from_slice(&(-1_i16).to_le_bytes());
+    node.extend_from_slice(&1_u16.to_le_bytes());
+    node.extend_from_slice(&0_u32.to_le_bytes());
+    node.extend_from_slice(&0.0_f32.to_le_bytes());
+    push_wmo_chunk(&mut nested, *b"NBOM", &node);
+    push_wmo_chunk(&mut nested, *b"RBOM", &0_u16.to_le_bytes());
+
+    let mut group = vec![0_u8; 68];
+    set_vec3(&mut group, 12, [-1.0, -1.0, -1.0]);
+    set_vec3(&mut group, 24, [1.0, 1.0, 1.0]);
+    group.extend_from_slice(&nested);
+    let mut bytes = Vec::new();
+    push_wmo_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
+    push_wmo_chunk(&mut bytes, *b"PGOM", &group);
+    bytes
+}
+
+fn push_wmo_chunk(bytes: &mut Vec<u8>, magic: [u8; 4], payload: &[u8]) {
+    bytes.extend_from_slice(&magic);
+    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(payload);
+}
+
+fn set_vec3(bytes: &mut [u8], offset: usize, value: [f32; 3]) {
+    for (axis, value) in value.into_iter().enumerate() {
+        set_f32(bytes, offset + axis * 4, value);
+    }
 }

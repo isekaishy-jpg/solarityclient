@@ -2,7 +2,8 @@
 
 use solarity_asset::{
     AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
-    DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex,
+    DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex, TerrainWorldModelPlacement,
+    WmoModelCache,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
@@ -10,9 +11,11 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
-    TerrainLiquidMesh, TerrainLiquidSample,
+    PlacedWorldModelCollision, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
+    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
+    WorldModelCollisionScene,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -34,6 +37,15 @@ pub enum RuntimeTerrainError {
     /// Decoded MH2O data could not enter strict liquid query geometry.
     #[error(transparent)]
     Liquid(#[from] TerrainLiquidError),
+    /// A referenced WMO could not enter strict placed collision geometry.
+    #[error(transparent)]
+    WorldModelCollision(#[from] WorldModelCollisionError),
+    /// One authored placement identity disagrees with another MODF record.
+    #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
+    ConflictingWorldModelPlacement {
+        /// MODF unique identifier shared across nearby chunks and ADTs.
+        unique_id: u32,
+    },
     /// The server selected a map absent from the mounted build's `Map.dbc`.
     #[error("active world references unknown client map {map_id}")]
     UnknownMap {
@@ -83,6 +95,7 @@ pub struct RuntimeTerrainCoordinator {
     assets: AssetStoreHandle,
     maps: MapCatalog,
     textures: BlpTextureCache,
+    world_models: WmoModelCache,
     active: Option<ResidentTerrainMap>,
 }
 
@@ -94,6 +107,7 @@ impl RuntimeTerrainCoordinator {
             assets,
             maps,
             textures: BlpTextureCache::new(),
+            world_models: WmoModelCache::new(),
             active: None,
         }
     }
@@ -115,6 +129,7 @@ impl RuntimeTerrainCoordinator {
         let Some(world) = world else {
             self.active = None;
             self.textures.collect_unused();
+            self.world_models.collect_unused();
             return Ok(RuntimeTerrainPoll::Idle);
         };
         let map_id = world.map_id().value();
@@ -131,6 +146,7 @@ impl RuntimeTerrainCoordinator {
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
             self.textures.collect_unused();
+            self.world_models.collect_unused();
         }
         let active = self
             .active
@@ -161,10 +177,12 @@ impl RuntimeTerrainCoordinator {
         let resident = ResidentTerrainTile::prepare(
             decoded,
             &mut self.textures,
+            &mut self.world_models,
             &mut self.assets.borrow_mut(),
         )?;
         active.tile = Some(resident);
         self.textures.collect_unused();
+        self.world_models.collect_unused();
         Ok(RuntimeTerrainPoll::TileLoaded {
             map_id,
             tile: tile_index,
@@ -275,10 +293,43 @@ impl RuntimeTerrainCoordinator {
         liquid.sample(world_x, world_y, reference_height)
     }
 
+    /// Returns the number of unique, chunk-referenced MODF placements resident.
+    #[must_use]
+    pub fn resident_world_model_count(&self) -> usize {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map_or(0, |tile| tile.world_model_collision.instance_count())
+    }
+
+    /// Traces camera-collidable faces in the resident tile's placed WMOs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldModelCollisionError`] when the segment or maximum
+    /// fraction is invalid.
+    pub fn trace_world_model_camera(
+        &mut self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        maximum_fraction: f32,
+    ) -> Result<Option<f32>, WorldModelCollisionError> {
+        let Some(collision) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.tile.as_mut())
+            .map(|tile| &mut tile.world_model_collision)
+        else {
+            return Ok(None);
+        };
+        collision.trace_camera(start, end, maximum_fraction)
+    }
+
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
         self.textures.collect_unused();
+        self.world_models.collect_unused();
     }
 }
 
@@ -299,12 +350,14 @@ struct ResidentTerrainTile {
     mesh: TerrainTileMeshPlan,
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
+    world_model_collision: WorldModelCollisionScene,
 }
 
 impl ResidentTerrainTile {
     fn prepare(
         decoded: DecodedTerrainTile,
-        cache: &mut BlpTextureCache,
+        texture_cache: &mut BlpTextureCache,
+        world_model_cache: &mut WmoModelCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
         // Resolve each MTEX entry exactly once before accepting the tile. This
@@ -312,21 +365,78 @@ impl ResidentTerrainTile {
         let textures = decoded
             .textures()
             .iter()
-            .map(|path| cache.load(store, path))
+            .map(|path| texture_cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
+        let world_model_collision =
+            prepare_world_model_collision(&decoded, world_model_cache, store)?;
         Ok(Self {
             decoded,
             textures,
             mesh,
             collision,
             liquid,
+            world_model_collision,
         })
     }
 
     const fn index(&self) -> TerrainTileIndex {
         self.decoded.index()
     }
+}
+
+fn prepare_world_model_collision(
+    tile: &DecodedTerrainTile,
+    cache: &mut WmoModelCache,
+    store: &mut AssetStore,
+) -> Result<WorldModelCollisionScene, RuntimeTerrainError> {
+    let mut referenced = vec![false; tile.world_models().len()];
+    for reference in tile
+        .chunks()
+        .iter()
+        .flat_map(|chunk| chunk.world_model_references())
+    {
+        // Strict ADT decoding has already proven every MCRF index is in range.
+        referenced[*reference as usize] = true;
+    }
+
+    let mut scene = WorldModelCollisionScene::new();
+    let mut placements = HashMap::<u32, usize>::new();
+    for (index, placement) in tile.world_models().iter().enumerate() {
+        if !referenced[index] {
+            continue;
+        }
+        if let Some(previous_index) = placements.insert(placement.unique_id(), index) {
+            if !same_world_model_placement(&tile.world_models()[previous_index], placement) {
+                return Err(RuntimeTerrainError::ConflictingWorldModelPlacement {
+                    unique_id: placement.unique_id(),
+                });
+            }
+            continue;
+        }
+        let model = cache.load(store, placement.path())?;
+        scene.add(PlacedWorldModelCollision::prepare(
+            model,
+            glam::Vec3::from_array(placement.position()),
+            glam::Vec3::from_array(placement.rotation()),
+            1.0,
+        )?);
+    }
+    Ok(scene)
+}
+
+fn same_world_model_placement(
+    left: &TerrainWorldModelPlacement,
+    right: &TerrainWorldModelPlacement,
+) -> bool {
+    left.path() == right.path()
+        && left.position().map(f32::to_bits) == right.position().map(f32::to_bits)
+        && left.rotation().map(f32::to_bits) == right.rotation().map(f32::to_bits)
+        && left.bounds().map(|point| point.map(f32::to_bits))
+            == right.bounds().map(|point| point.map(f32::to_bits))
+        && left.flags() == right.flags()
+        && left.doodad_set() == right.doodad_set()
+        && left.name_set() == right.name_set()
 }

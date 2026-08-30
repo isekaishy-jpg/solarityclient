@@ -7,6 +7,8 @@ mod types;
 
 mod blp_texture;
 mod m2_model;
+mod wmo_model;
 
 pub use blp_texture::BlpTextureCache;
 pub use m2_model::M2ModelCache;
+pub use wmo_model::WmoModelCache;

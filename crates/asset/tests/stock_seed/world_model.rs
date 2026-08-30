@@ -1,9 +1,11 @@
 //! External stock-compatibility tests for WMO root and group decoding.
 
 use std::error::Error;
+use std::sync::Arc;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
+    WmoModelCache,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -80,6 +82,41 @@ fn world_model_preserves_stock_no_camera_collision_flag() -> Result<(), Box<dyn 
 
     assert!(model.groups()[0].polygons()[0].is_collidable());
     assert!(!model.groups()[0].polygons()[0].is_camera_collidable());
+    Ok(())
+}
+
+/// Repeated placements retain one path-keyed root/group generation.
+#[test]
+fn world_model_cache_shares_and_collects_generations() -> Result<(), Box<dyn Error>> {
+    let root_wmo = root_fixture(1);
+    let group_wmo = group_fixture(0x08);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Wmo\\Fixture.wmo",
+            bytes: &root_wmo,
+        },
+        FixtureFile {
+            archive: "patch-2.MPQ",
+            path: "World\\Wmo\\Fixture_000.wmo",
+            bytes: &group_wmo,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let path = AssetPath::new("World\\Wmo\\Fixture.wmo")?;
+    let mut cache = WmoModelCache::new();
+
+    let first = cache.load(&mut store, &path)?;
+    let second = cache.load(&mut store, &path)?;
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.collect_unused(), 0);
+
+    drop(first);
+    drop(second);
+    assert_eq!(cache.collect_unused(), 1);
+    assert!(cache.is_empty());
     Ok(())
 }
 
