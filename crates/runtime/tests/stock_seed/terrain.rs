@@ -25,11 +25,13 @@ use crate::support::{ClientFixture, bootstrap_texture_blp};
 fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
     let wdt = terrain_wdt()?;
-    let adt = AdtBuilder::new()
-        .with_version(AdtVersion::WotLK)
-        .add_texture("tileset/fixture/grass.blp")
-        .build()?
-        .to_bytes()?;
+    let adt = append_stacked_liquid_fixture(
+        AdtBuilder::new()
+            .with_version(AdtVersion::WotLK)
+            .add_texture("tileset/fixture/grass.blp")
+            .build()?
+            .to_bytes()?,
+    );
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\Map.dbc", &map_table),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
@@ -100,6 +102,32 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
             .trace_collision(ray_end, ray_start, 0.0, 1.0)?
             .is_none()
     );
+    let liquid_x = (32.0 - 21.0 - 0.5 / 128.0) * 533.333_3;
+    let liquid_y = (32.0 - 30.0 - 0.5 / 128.0) * 533.333_3;
+    let highest = terrain
+        .sample_liquid(liquid_x, liquid_y, None)?
+        .ok_or("fixture liquid was not sampled")?;
+    assert!((highest.height() - 200.0).abs() < 0.001);
+    assert_eq!(highest.liquid_type(), 2);
+    assert!(highest.is_fishable());
+    assert!(!highest.is_deep());
+    assert_liquid_height(
+        terrain.sample_liquid(liquid_x, liquid_y, Some(50.0))?,
+        100.0,
+    )?;
+    assert_liquid_height(
+        terrain.sample_liquid(liquid_x, liquid_y, Some(150.0))?,
+        200.0,
+    )?;
+    assert_liquid_height(
+        terrain.sample_liquid(liquid_x, liquid_y, Some(250.0))?,
+        200.0,
+    )?;
+    assert!(
+        terrain
+            .sample_liquid(liquid_x + 100.0, liquid_y, None)?
+            .is_none()
+    );
     assert_eq!(
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::Current { map_id: 571, tile }
@@ -137,6 +165,15 @@ fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 
+fn assert_liquid_height(
+    sample: Option<solarity_systems::TerrainLiquidSample>,
+    expected: f32,
+) -> Result<(), Box<dyn Error>> {
+    let sample = sample.ok_or("fixture liquid was not sampled")?;
+    assert!((sample.height() - expected).abs() < 0.001);
+    Ok(())
+}
+
 fn map_table() -> Vec<u8> {
     let mut strings = vec![0_u8];
     let directory = append_string(&mut strings, "Northrend");
@@ -166,4 +203,63 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
     block.extend_from_slice(value.as_bytes());
     block.push(0);
     offset
+}
+
+/// Appends two overlapping planar MH2O layers for stacked-surface selection.
+fn append_stacked_liquid_fixture(mut adt: Vec<u8>) -> Vec<u8> {
+    const INSTANCE_OFFSET: usize = 256 * 12;
+    const ATTRIBUTES_OFFSET: usize = INSTANCE_OFFSET + 2 * 24;
+    const LOWER_VERTEX_OFFSET: usize = ATTRIBUTES_OFFSET + 16;
+    const UPPER_VERTEX_OFFSET: usize = LOWER_VERTEX_OFFSET + 20;
+    let mut payload = vec![0_u8; UPPER_VERTEX_OFFSET + 20];
+    set_u32(&mut payload, 0, INSTANCE_OFFSET as u32);
+    set_u32(&mut payload, 4, 2);
+    set_u32(&mut payload, 8, ATTRIBUTES_OFFSET as u32);
+    write_liquid_instance(&mut payload, INSTANCE_OFFSET, 100.0, LOWER_VERTEX_OFFSET);
+    write_liquid_instance(
+        &mut payload,
+        INSTANCE_OFFSET + 24,
+        200.0,
+        UPPER_VERTEX_OFFSET,
+    );
+    set_u64(&mut payload, ATTRIBUTES_OFFSET, 1);
+    write_height_depth_vertices(&mut payload, LOWER_VERTEX_OFFSET, 100.0);
+    write_height_depth_vertices(&mut payload, UPPER_VERTEX_OFFSET, 200.0);
+    adt.extend_from_slice(b"O2HM");
+    adt.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    adt.extend_from_slice(&payload);
+    adt
+}
+
+fn write_liquid_instance(bytes: &mut [u8], offset: usize, height: f32, vertices: usize) {
+    set_u16(bytes, offset, 2);
+    set_u16(bytes, offset + 2, 0);
+    set_f32(bytes, offset + 4, height);
+    set_f32(bytes, offset + 8, height);
+    bytes[offset + 14] = 1;
+    bytes[offset + 15] = 1;
+    set_u32(bytes, offset + 20, vertices as u32);
+}
+
+fn write_height_depth_vertices(bytes: &mut [u8], offset: usize, height: f32) {
+    for index in 0..4 {
+        set_f32(bytes, offset + index * 4, height);
+    }
+    bytes[offset + 16..offset + 20].fill(u8::MAX);
+}
+
+fn set_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_u64(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_f32(bytes: &mut [u8], offset: usize, value: f32) {
+    set_u32(bytes, offset, value.to_bits());
 }

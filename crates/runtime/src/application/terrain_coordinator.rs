@@ -9,7 +9,10 @@ use solarity_rendering::{
     TerrainChunkDrawPlan, TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldCameraError,
     WorldFrustum,
 };
-use solarity_systems::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};
+use solarity_systems::{
+    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
+    TerrainLiquidMesh, TerrainLiquidSample,
+};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -28,6 +31,9 @@ pub enum RuntimeTerrainError {
     /// Decoded terrain could not enter strict collision geometry.
     #[error(transparent)]
     Collision(#[from] TerrainCollisionError),
+    /// Decoded MH2O data could not enter strict liquid query geometry.
+    #[error(transparent)]
+    Liquid(#[from] TerrainLiquidError),
     /// The server selected a map absent from the mounted build's `Map.dbc`.
     #[error("active world references unknown client map {map_id}")]
     UnknownMap {
@@ -247,6 +253,28 @@ impl RuntimeTerrainCoordinator {
         collision.trace(start, end, collision_radius, maximum_fraction)
     }
 
+    /// Samples the preferred resident MH2O surface at a world-space point.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TerrainLiquidError`] when point or reference input is not finite.
+    pub fn sample_liquid(
+        &self,
+        world_x: f32,
+        world_y: f32,
+        reference_height: Option<f32>,
+    ) -> Result<Option<TerrainLiquidSample>, TerrainLiquidError> {
+        let Some(liquid) = self
+            .active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.liquid)
+        else {
+            return Ok(None);
+        };
+        liquid.sample(world_x, world_y, reference_height)
+    }
+
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
@@ -270,6 +298,7 @@ struct ResidentTerrainTile {
     textures: Vec<Arc<BlpTextureSource>>,
     mesh: TerrainTileMeshPlan,
     collision: TerrainCollisionMesh,
+    liquid: TerrainLiquidMesh,
 }
 
 impl ResidentTerrainTile {
@@ -287,11 +316,13 @@ impl ResidentTerrainTile {
             .collect::<Result<Vec<_>, _>>()?;
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
+        let liquid = TerrainLiquidMesh::prepare(&decoded)?;
         Ok(Self {
             decoded,
             textures,
             mesh,
             collision,
+            liquid,
         })
     }
 
