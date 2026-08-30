@@ -21,4 +21,10 @@ pub use connection::{
     WorldConnection, WorldQueue, WorldSession, WorldSessionInfo,
 };
 pub use protocol::{AddonManifestError, WorldAddon, WorldAddonManifest};
+pub use protocol::{
+    CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
+    CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,
+    CharacterRace, WorldServerPacket,
+};
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
+pub use session::{WorldSessionError, WorldSessionStage};
