@@ -9,8 +9,8 @@ use solarity_asset::{
     ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainTileMeshPlan, VulkanBootstrap,
-    WorldCamera, WorldFrustum, WorldScreenWindow,
+    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
+    TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrustum, WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -160,6 +160,22 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         material_info.byte_count(),
         TERRAIN_MATERIAL_ATLAS_BYTE_COUNT
     );
+    for layer_count in [
+        TerrainLayerCount::One,
+        TerrainLayerCount::Two,
+        TerrainLayerCount::Three,
+        TerrainLayerCount::Four,
+    ] {
+        let pipeline = renderer.prepare_terrain_pipeline(layer_count)?;
+        assert_eq!(renderer.prepare_terrain_pipeline(layer_count)?, pipeline);
+        assert_eq!(
+            renderer
+                .terrain_pipeline_info(pipeline)
+                .ok_or("uploaded terrain pipeline is absent")?
+                .layer_count(),
+            layer_count
+        );
+    }
     Ok(())
 }
 

@@ -23,6 +23,9 @@ use crate::device::vulkan_terrain_material::{
 use crate::device::vulkan_terrain_mesh::{
     TerrainMeshHandle, TerrainMeshRegistry, TerrainMeshResourceInfo,
 };
+use crate::device::vulkan_terrain_pipeline::{
+    TerrainPipelineHandle, TerrainPipelineInfo, TerrainPipelineRegistry,
+};
 use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
     BlpTextureUploadError, TextureUploadContext,
@@ -38,7 +41,7 @@ use crate::device::vulkan_ui_texture_set::{
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
-use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
+use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
 use crate::{TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource};
 use glam::Mat4;
 
@@ -117,6 +120,7 @@ pub struct VulkanRenderer {
     m2_meshes: M2MeshRegistry,
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
+    terrain_pipelines: TerrainPipelineRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
@@ -165,6 +169,7 @@ impl VulkanRenderer {
             m2_meshes: M2MeshRegistry::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
+            terrain_pipelines: TerrainPipelineRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
@@ -343,6 +348,33 @@ impl VulkanRenderer {
         handle: TerrainMaterialHandle,
     ) -> Option<TerrainMaterialResourceInfo> {
         self.terrain_materials.info(handle)
+    }
+
+    /// Creates or retrieves the opaque pipeline for one MCNK layer count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for shader compilation, layout creation, handle
+    /// exhaustion, or driver pipeline creation failure.
+    pub fn prepare_terrain_pipeline(
+        &mut self,
+        layer_count: TerrainLayerCount,
+    ) -> Result<TerrainPipelineHandle, VulkanError> {
+        self.terrain_pipelines.prepare(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            layer_count,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live terrain pipeline.
+    #[must_use]
+    pub fn terrain_pipeline_info(
+        &self,
+        handle: TerrainPipelineHandle,
+    ) -> Option<TerrainPipelineInfo> {
+        self.terrain_pipelines.info(handle)
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.
@@ -811,6 +843,7 @@ impl Drop for VulkanRenderer {
         self.m2_samplers.destroy(&self.device);
         self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);
+        self.terrain_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.

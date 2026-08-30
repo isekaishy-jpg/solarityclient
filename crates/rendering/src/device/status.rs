@@ -105,6 +105,15 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit terrain material handle.
     #[error("terrain material registry exhausted its 32-bit handle space")]
     TerrainMaterialCapacity,
+    /// The terrain shader translation failed for the requested layer count.
+    #[error("terrain shader preparation failed: {message}")]
+    TerrainShader {
+        /// Stable shader compiler diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable 32-bit terrain pipeline handle.
+    #[error("terrain pipeline registry exhausted its 32-bit handle space")]
+    TerrainPipelineCapacity,
     /// The stock M2 shader pair could not be translated to the pinned target.
     #[error("M2 shader preparation failed: {message}")]
     M2Shader {
