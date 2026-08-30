@@ -191,6 +191,26 @@ fn missing_asset_has_no_non_stock_fallback() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Presence probes use the mounted virtual namespace without reading payloads.
+#[test]
+fn asset_presence_uses_exact_archive_paths() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "patch-H.MPQ",
+        path: "Item\\TextureComponents\\HandTexture\\Glove_U.blp",
+        bytes: b"large replacement payload",
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert!(store.contains(&AssetPath::new(
+        "item/texturecomponents/handtexture/glove_u.blp"
+    )?)?);
+    assert!(!store.contains(&AssetPath::new(
+        "item/texturecomponents/handtexture/glove_f.blp"
+    )?)?);
+    Ok(())
+}
+
 /// A missing required file identifies the expected consolidated archive.
 #[test]
 fn missing_required_archive_fails_discovery() -> Result<(), Box<dyn Error>> {

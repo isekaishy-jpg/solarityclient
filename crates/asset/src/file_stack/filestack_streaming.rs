@@ -61,6 +61,23 @@ impl AssetStore {
         self.archives.iter().map(MountedArchive::descriptor)
     }
 
+    /// Reports whether the stock archive stack contains an exact virtual path.
+    ///
+    /// This performs the same ordered MPQ hash probes as [`Self::read`] without
+    /// allocating or decompressing the selected entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an archive lookup error when a mounted MPQ cannot be queried.
+    pub fn contains(&self, path: &AssetPath) -> Result<bool, AssetError> {
+        for archive in &self.archives {
+            if archive.contains(path)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolves and reads an arbitrary file through the complete stock stack.
     ///
     /// # Errors

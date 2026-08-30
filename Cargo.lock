@@ -2177,6 +2177,7 @@ dependencies = [
  "shaderc",
  "solarity-asset",
  "solarity-cpu",
+ "solarity-ecs",
  "thiserror",
  "tracing",
  "vk-mem",

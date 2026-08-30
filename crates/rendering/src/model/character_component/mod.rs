@@ -5,10 +5,12 @@
 
 mod atlas;
 mod composer;
+mod equipment;
 mod status;
 mod types;
 
 pub use atlas::CharacterTexturePlan;
+pub use equipment::CharacterEquipmentItem;
 pub use status::{CharacterTextureComposeError, CharacterTexturePlanError};
 pub use types::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

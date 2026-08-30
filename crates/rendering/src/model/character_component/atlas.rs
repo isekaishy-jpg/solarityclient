@@ -1,13 +1,57 @@
 //! Deterministic base-character atlas planning from resolved DBC appearance rows.
 
-use solarity_asset::{AssetPath, CharacterModelAppearance, CharacterSection};
+use std::array;
+
+use solarity_asset::{AssetPath, AssetStore, CharacterModelAppearance, CharacterSection};
+use solarity_ecs::PlayerEquipmentSlot;
 
 use super::types::STOCK_CHARACTER_ATLAS_SIZE;
 use super::{
-    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterTexturePlanError,
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterEquipmentItem,
+    CharacterTexturePlanError,
 };
 
 const SECTION_FLAG_NPC_SKIN: u32 = 0x08;
+const EQUIPMENT_PRIORITY_COUNT: usize = 7;
+const BODY_REGIONS: [CharacterAtlasRegion; 8] = [
+    CharacterAtlasRegion::ArmUpper,
+    CharacterAtlasRegion::ArmLower,
+    CharacterAtlasRegion::Hand,
+    CharacterAtlasRegion::TorsoUpper,
+    CharacterAtlasRegion::TorsoLower,
+    CharacterAtlasRegion::LegUpper,
+    CharacterAtlasRegion::LegLower,
+    CharacterAtlasRegion::Foot,
+];
+const COMPONENT_FOLDERS: [&str; 8] = [
+    "ArmUpperTexture",
+    "ArmLowerTexture",
+    "HandTexture",
+    "TorsoUpperTexture",
+    "TorsoLowerTexture",
+    "LegUpperTexture",
+    "LegLowerTexture",
+    "FootTexture",
+];
+
+// Recovered build-12340 CCharacterComponent table. Rows are the internal
+// head, shoulder, shirt, chest, waist, legs, feet, wrist, hands, and tabard
+// slots; columns are the eight body component regions above.
+const ITEM_PRIORITIES: [[i8; 8]; 10] = [
+    [-1, -1, -1, -1, -1, -1, -1, -1],
+    [-1, -1, -1, -1, -1, -1, -1, -1],
+    [0, 0, -1, 0, 0, -1, -1, -1],
+    [1, 1, -1, 1, 1, 1, 1, -1],
+    [-1, -1, -1, -1, 5, 2, -1, -1],
+    [-1, -1, -1, -1, -1, 0, 0, -1],
+    [-1, -1, -1, -1, -1, -1, 2, 0],
+    [-1, 2, -1, -1, -1, -1, -1, -1],
+    [-1, 3, 0, -1, -1, -1, -1, -1],
+    [-1, -1, -1, 4, 4, -1, -1, -1],
+];
+
+/// Item texture paths indexed by body region and paste priority.
+type EquipmentLayers = [[Option<AssetPath>; EQUIPMENT_PRIORITY_COUNT]; 8];
 
 /// Texture inputs for one stock character M2 before equipped-item composition.
 ///
@@ -33,78 +77,85 @@ impl CharacterTexturePlan {
     pub fn base(
         appearance: &CharacterModelAppearance<'_>,
     ) -> Result<Self, CharacterTexturePlanError> {
+        Self::build(appearance, None)
+    }
+
+    /// Builds base appearance and equipped body textures in stock priority order.
+    ///
+    /// The archive probe first selects each universal `_U` component. Only
+    /// when that exact path is absent does stock substitute `_M` or `_F`.
+    /// Higher-resolution packs require no separate path or item representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterTexturePlanError`] for invalid paths, archive lookup
+    /// failures, missing required base skin, or a non-player gender needed for
+    /// a sex-specific item texture.
+    pub fn equipped<'catalog, I>(
+        appearance: &CharacterModelAppearance<'_>,
+        store: &AssetStore,
+        equipment: I,
+    ) -> Result<Self, CharacterTexturePlanError>
+    where
+        I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+    {
+        let equipment = plan_equipment_layers(appearance.gender_id(), store, equipment)?;
+        Self::build(appearance, Some(&equipment))
+    }
+
+    /// Builds the shared region sequence with optional item-priority cells.
+    fn build(
+        appearance: &CharacterModelAppearance<'_>,
+        equipment: Option<&EquipmentLayers>,
+    ) -> Result<Self, CharacterTexturePlanError> {
         let skin_names = appearance.skin().texture_names();
         let skin = required_path(CharacterAtlasLayerKind::Skin, 0, skin_names[0])?;
-        let mut atlas_layers = Vec::with_capacity(18);
+        let mut atlas_layers = Vec::with_capacity(32);
 
         // Stock prepares sections in this exact physical order. Each region's
         // overlays follow its opaque skin paste, preserving alpha blend order.
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::ArmUpper,
-            &skin,
-        );
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::ArmLower,
-            &skin,
-        );
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::Hand,
-            &skin,
-        );
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::TorsoUpper,
-            &skin,
-        );
-        if let Some(underwear) = appearance.underwear() {
-            push_optional_layer(
+        for (section, region) in BODY_REGIONS.into_iter().enumerate() {
+            push_layer(
                 &mut atlas_layers,
-                CharacterAtlasLayerKind::Underwear,
-                CharacterAtlasRegion::TorsoUpper,
-                underwear,
-                1,
-            )?;
+                CharacterAtlasLayerKind::Skin,
+                region,
+                &skin,
+            );
+            if let Some(underwear) = appearance.underwear() {
+                let underwear_slot = match region {
+                    CharacterAtlasRegion::TorsoUpper
+                        if !has_item_priority(equipment, section, 0..3) =>
+                    {
+                        Some(1)
+                    }
+                    CharacterAtlasRegion::LegUpper
+                        if !has_item_priority(equipment, section, 0..2) =>
+                    {
+                        Some(0)
+                    }
+                    _ => None,
+                };
+                if let Some(slot) = underwear_slot {
+                    push_optional_layer(
+                        &mut atlas_layers,
+                        CharacterAtlasLayerKind::Underwear,
+                        region,
+                        underwear,
+                        slot,
+                    )?;
+                }
+            }
+            if let Some(equipment) = equipment {
+                for path in equipment[section].iter().flatten() {
+                    push_layer(
+                        &mut atlas_layers,
+                        CharacterAtlasLayerKind::Item,
+                        region,
+                        path,
+                    );
+                }
+            }
         }
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::TorsoLower,
-            &skin,
-        );
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::LegUpper,
-            &skin,
-        );
-        if let Some(underwear) = appearance.underwear() {
-            push_optional_layer(
-                &mut atlas_layers,
-                CharacterAtlasLayerKind::Underwear,
-                CharacterAtlasRegion::LegUpper,
-                underwear,
-                0,
-            )?;
-        }
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::LegLower,
-            &skin,
-        );
-        push_layer(
-            &mut atlas_layers,
-            CharacterAtlasLayerKind::Skin,
-            CharacterAtlasRegion::Foot,
-            &skin,
-        );
 
         push_head_layers(
             &mut atlas_layers,
@@ -153,6 +204,113 @@ impl CharacterTexturePlan {
     pub const fn extra_skin(&self) -> Option<&AssetPath> {
         self.extra_skin.as_ref()
     }
+}
+
+/// Plans all nonempty item component stems into their final priority cells.
+fn plan_equipment_layers<'catalog, I>(
+    gender_id: u32,
+    store: &AssetStore,
+    equipment: I,
+) -> Result<EquipmentLayers, CharacterTexturePlanError>
+where
+    I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+{
+    let mut layers = array::from_fn(|_| array::from_fn(|_| None));
+    for item in equipment {
+        let Some(slot) = internal_item_slot(item.slot()) else {
+            continue;
+        };
+        let display = item.display();
+        let stems = display.component_textures();
+        let geosets = display.geoset_groups();
+        for (section, stem) in stems.into_iter().enumerate() {
+            let base_priority = ITEM_PRIORITIES[slot][section];
+            if stem.is_empty() || base_priority < 0 {
+                continue;
+            }
+            let priority = adjusted_item_priority(slot, section, base_priority as usize, geosets);
+            layers[section][priority] = Some(item_texture_path(
+                store,
+                gender_id,
+                COMPONENT_FOLDERS[section],
+                stem,
+            )?);
+        }
+    }
+    Ok(layers)
+}
+
+/// Maps public player slots to CCharacterComponent's texture-bearing rows.
+const fn internal_item_slot(slot: PlayerEquipmentSlot) -> Option<usize> {
+    match slot {
+        PlayerEquipmentSlot::Head => Some(0),
+        PlayerEquipmentSlot::Shoulders => Some(1),
+        PlayerEquipmentSlot::Shirt => Some(2),
+        PlayerEquipmentSlot::Chest => Some(3),
+        PlayerEquipmentSlot::Waist => Some(4),
+        PlayerEquipmentSlot::Legs => Some(5),
+        PlayerEquipmentSlot::Feet => Some(6),
+        PlayerEquipmentSlot::Wrists => Some(7),
+        PlayerEquipmentSlot::Hands => Some(8),
+        PlayerEquipmentSlot::Tabard => Some(9),
+        PlayerEquipmentSlot::Neck
+        | PlayerEquipmentSlot::FingerOne
+        | PlayerEquipmentSlot::FingerTwo
+        | PlayerEquipmentSlot::TrinketOne
+        | PlayerEquipmentSlot::TrinketTwo
+        | PlayerEquipmentSlot::Back
+        | PlayerEquipmentSlot::MainHand
+        | PlayerEquipmentSlot::OffHand
+        | PlayerEquipmentSlot::Ranged => None,
+    }
+}
+
+/// Applies stock's geoset-dependent priority changes for sleeves and boots.
+const fn adjusted_item_priority(
+    slot: usize,
+    section: usize,
+    base_priority: usize,
+    geosets: [u32; 3],
+) -> usize {
+    match (slot, section) {
+        (3, 1) if geosets[0] != 0 => 5,
+        (8, 1) if geosets[0] != 0 => 6,
+        (3, 6) if geosets[2] != 0 => 4,
+        (6, 6) if geosets[0] != 0 => 3,
+        _ => base_priority,
+    }
+}
+
+/// Selects universal equipment art before stock's sex-specific substitution.
+fn item_texture_path(
+    store: &AssetStore,
+    gender_id: u32,
+    folder: &str,
+    stem: &str,
+) -> Result<AssetPath, CharacterTexturePlanError> {
+    let universal = AssetPath::new(format!("Item\\TextureComponents\\{folder}\\{stem}_U.blp"))?;
+    if store.contains(&universal)? {
+        return Ok(universal);
+    }
+    let suffix = match gender_id {
+        0 => 'M',
+        1 => 'F',
+        _ => {
+            return Err(CharacterTexturePlanError::UnsupportedEquipmentGender { gender_id });
+        }
+    };
+    Ok(AssetPath::new(format!(
+        "Item\\TextureComponents\\{folder}\\{stem}_{suffix}.blp"
+    ))?)
+}
+
+/// Tests whether any item occupies a stock underwear-coverage priority.
+fn has_item_priority(
+    equipment: Option<&EquipmentLayers>,
+    section: usize,
+    priorities: std::ops::Range<usize>,
+) -> bool {
+    equipment.is_some_and(|layers| layers[section][priorities].iter().any(Option::is_some))
 }
 
 /// Appends the stock skin/face/facial-hair/hair sequence for one head region.

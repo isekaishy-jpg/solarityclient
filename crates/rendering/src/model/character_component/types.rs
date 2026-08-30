@@ -181,6 +181,8 @@ pub enum CharacterAtlasLayerKind {
     Hair,
     /// Base underwear visible when equipment does not cover it.
     Underwear,
+    /// Equipped-item component texture pasted at its stock slot priority.
+    Item,
 }
 
 impl fmt::Display for CharacterAtlasLayerKind {
@@ -191,6 +193,7 @@ impl fmt::Display for CharacterAtlasLayerKind {
             Self::FacialHair => "facial-hair",
             Self::Hair => "hair",
             Self::Underwear => "underwear",
+            Self::Item => "item",
         };
         formatter.write_str(name)
     }

@@ -107,6 +107,8 @@ impl CharacterGeosetSelection {
 
 /// Exact texture sections and geometry choices for one player appearance.
 pub struct CharacterModelAppearance<'catalog> {
+    race_id: u32,
+    gender_id: u32,
     skin: &'catalog CharacterSection,
     face: Option<&'catalog CharacterSection>,
     facial_hair: &'catalog CharacterSection,
@@ -118,6 +120,18 @@ pub struct CharacterModelAppearance<'catalog> {
 }
 
 impl CharacterModelAppearance<'_> {
+    /// Returns the race identifier used for all resolved character rows.
+    #[must_use]
+    pub const fn race_id(&self) -> u32 {
+        self.race_id
+    }
+
+    /// Returns the gender identifier used for all resolved character rows.
+    #[must_use]
+    pub const fn gender_id(&self) -> u32 {
+        self.gender_id
+    }
+
     /// Returns the base skin section.
     #[must_use]
     pub const fn skin(&self) -> &CharacterSection {
@@ -254,6 +268,8 @@ impl CharacterAppearanceCatalog {
         });
 
         Ok(CharacterModelAppearance {
+            race_id,
+            gender_id,
             skin,
             face,
             facial_hair,

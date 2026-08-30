@@ -4,16 +4,19 @@ use std::error::Error;
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, Locale,
+    CharacterCustomization, ClientDataRoot, ItemDefinitionCatalog, ItemDisplayCatalog, Locale,
 };
-use solarity_rendering::{CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterTexturePlan};
+use solarity_ecs::PlayerEquipmentSlot;
+use solarity_rendering::{
+    CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterEquipmentItem, CharacterTexturePlan,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
 /// Base player customization produces stock atlas and M2 replacement bindings.
 #[test]
 fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<(), Box<dyn Error>> {
-    let tables = character_tables(0);
+    let tables = character_tables(0, 0);
     let skin = solid_raw3_blp(
         512,
         512,
@@ -216,6 +219,160 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
     Ok(())
 }
 
+/// Equipped textures follow stock priorities and universal-first suffix lookup.
+#[test]
+fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>> {
+    let characters = character_tables(0, 1);
+    let items = equipment_tables();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &characters.sections,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &characters.hair_geosets,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &characters.facial_hair,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &items.definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &items.displays,
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmUpperTexture\\ShirtAU_U.blp",
+            bytes: b"universal shirt",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmLowerTexture\\ShirtAL_U.blp",
+            bytes: b"universal shirt",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\TorsoUpperTexture\\ShirtTU_U.blp",
+            bytes: b"universal shirt",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmUpperTexture\\ChestAU_U.blp",
+            bytes: b"universal chest",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmUpperTexture\\ChestAU_F.blp",
+            bytes: b"female chest must lose to universal",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmLowerTexture\\ChestAL_U.blp",
+            bytes: b"universal chest",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\TorsoUpperTexture\\ChestTU_U.blp",
+            bytes: b"universal chest",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\ArmLowerTexture\\GloveAL_F.blp",
+            bytes: b"female gloves",
+        },
+        FixtureFile {
+            path: "Item\\TextureComponents\\HandTexture\\GloveHA_F.blp",
+            bytes: b"female gloves",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let character_catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let appearance =
+        character_catalog.resolve_player(1, 1, CharacterCustomization::new(2, 3, 4, 5, 6))?;
+    let shirt_definition = definitions.item(50_001).ok_or("shirt item is absent")?;
+    let chest_definition = definitions.item(50_002).ok_or("chest item is absent")?;
+    let glove_definition = definitions.item(50_003).ok_or("glove item is absent")?;
+    let shirt_display = displays.display(55_001).ok_or("shirt display is absent")?;
+    let chest_display = displays.display(55_002).ok_or("chest display is absent")?;
+    let glove_display = displays.display(55_003).ok_or("glove display is absent")?;
+
+    let plan = CharacterTexturePlan::equipped(
+        &appearance,
+        &store,
+        [
+            CharacterEquipmentItem::new(
+                PlayerEquipmentSlot::Shirt,
+                shirt_definition,
+                shirt_display,
+            ),
+            CharacterEquipmentItem::new(
+                PlayerEquipmentSlot::Chest,
+                chest_definition,
+                chest_display,
+            ),
+            CharacterEquipmentItem::new(
+                PlayerEquipmentSlot::Hands,
+                glove_definition,
+                glove_display,
+            ),
+        ],
+    )?;
+
+    let item_layers = plan
+        .atlas_layers()
+        .iter()
+        .filter(|layer| layer.kind() == CharacterAtlasLayerKind::Item)
+        .map(|layer| (layer.region(), layer.path().as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        item_layers,
+        [
+            (
+                CharacterAtlasRegion::ArmUpper,
+                "ITEM\\TEXTURECOMPONENTS\\ARMUPPERTEXTURE\\SHIRTAU_U.BLP",
+            ),
+            (
+                CharacterAtlasRegion::ArmUpper,
+                "ITEM\\TEXTURECOMPONENTS\\ARMUPPERTEXTURE\\CHESTAU_U.BLP",
+            ),
+            (
+                CharacterAtlasRegion::ArmLower,
+                "ITEM\\TEXTURECOMPONENTS\\ARMLOWERTEXTURE\\SHIRTAL_U.BLP",
+            ),
+            (
+                CharacterAtlasRegion::ArmLower,
+                "ITEM\\TEXTURECOMPONENTS\\ARMLOWERTEXTURE\\CHESTAL_U.BLP",
+            ),
+            (
+                CharacterAtlasRegion::ArmLower,
+                "ITEM\\TEXTURECOMPONENTS\\ARMLOWERTEXTURE\\GLOVEAL_F.BLP",
+            ),
+            (
+                CharacterAtlasRegion::Hand,
+                "ITEM\\TEXTURECOMPONENTS\\HANDTEXTURE\\GLOVEHA_F.BLP",
+            ),
+            (
+                CharacterAtlasRegion::TorsoUpper,
+                "ITEM\\TEXTURECOMPONENTS\\TORSOUPPERTEXTURE\\SHIRTTU_U.BLP",
+            ),
+            (
+                CharacterAtlasRegion::TorsoUpper,
+                "ITEM\\TEXTURECOMPONENTS\\TORSOUPPERTEXTURE\\CHESTTU_U.BLP",
+            ),
+        ]
+    );
+    assert!(!plan.atlas_layers().iter().any(|layer| {
+        layer.region() == CharacterAtlasRegion::TorsoUpper
+            && layer.kind() == CharacterAtlasLayerKind::Underwear
+    }));
+    assert!(plan.atlas_layers().iter().any(|layer| {
+        layer.region() == CharacterAtlasRegion::LegUpper
+            && layer.kind() == CharacterAtlasLayerKind::Underwear
+    }));
+    Ok(())
+}
+
 /// Texture table bytes needed by one exact appearance lookup.
 struct CharacterTables {
     sections: Vec<u8>,
@@ -224,7 +381,7 @@ struct CharacterTables {
 }
 
 /// Builds character DBC rows with a caller-selected skin flag word.
-fn character_tables(skin_flags: u32) -> CharacterTables {
+fn character_tables(skin_flags: u32, gender_id: u32) -> CharacterTables {
     let mut strings = vec![0];
     let skin = append_string(&mut strings, "Character\\Human\\Male\\Skin.blp");
     let extra = append_string(&mut strings, "Character\\Human\\Male\\SkinExtra.blp");
@@ -240,7 +397,7 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
     let fields = [
         10,
         1,
-        0,
+        gender_id,
         0,
         skin,
         extra,
@@ -250,7 +407,7 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
         2,
         11,
         1,
-        0,
+        gender_id,
         1,
         face_lower,
         face_upper,
@@ -260,7 +417,7 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
         2,
         12,
         1,
-        0,
+        gender_id,
         2,
         facial_lower,
         facial_upper,
@@ -270,7 +427,7 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
         5,
         13,
         1,
-        0,
+        gender_id,
         3,
         hair,
         hair_lower,
@@ -280,7 +437,7 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
         5,
         14,
         1,
-        0,
+        gender_id,
         4,
         underwear_lower,
         underwear_upper,
@@ -294,6 +451,108 @@ fn character_tables(skin_flags: u32) -> CharacterTables {
         hair_geosets: create_wdbc(0, 6, &[], b"\0"),
         facial_hair: create_wdbc(0, 8, &[], b"\0"),
     }
+}
+
+/// Exact item and item-display rows used by equipped texture planning.
+struct EquipmentTables {
+    definitions: Vec<u8>,
+    displays: Vec<u8>,
+}
+
+/// Builds shirt, chest, and glove rows with overlapping component regions.
+fn equipment_tables() -> EquipmentTables {
+    let definitions = create_wdbc(
+        3,
+        8,
+        &[
+            50_001,
+            4,
+            0,
+            u32::MAX,
+            1,
+            55_001,
+            4,
+            0,
+            50_002,
+            4,
+            0,
+            u32::MAX,
+            1,
+            55_002,
+            5,
+            0,
+            50_003,
+            4,
+            0,
+            u32::MAX,
+            1,
+            55_003,
+            10,
+            0,
+        ],
+        b"\0",
+    );
+
+    let mut strings = vec![0];
+    let shirt_au = append_string(&mut strings, "ShirtAU");
+    let shirt_al = append_string(&mut strings, "ShirtAL");
+    let shirt_tu = append_string(&mut strings, "ShirtTU");
+    let chest_au = append_string(&mut strings, "ChestAU");
+    let chest_al = append_string(&mut strings, "ChestAL");
+    let chest_tu = append_string(&mut strings, "ChestTU");
+    let glove_al = append_string(&mut strings, "GloveAL");
+    let glove_ha = append_string(&mut strings, "GloveHA");
+    let mut display_fields = Vec::with_capacity(75);
+    display_fields.extend(item_display_fields(
+        55_001,
+        [0, 0, 0],
+        [shirt_au, shirt_al, 0, shirt_tu, 0, 0, 0, 0],
+    ));
+    display_fields.extend(item_display_fields(
+        55_002,
+        [1, 0, 0],
+        [chest_au, chest_al, 0, chest_tu, 0, 0, 0, 0],
+    ));
+    display_fields.extend(item_display_fields(
+        55_003,
+        [1, 0, 0],
+        [0, glove_al, glove_ha, 0, 0, 0, 0, 0],
+    ));
+    EquipmentTables {
+        definitions,
+        displays: create_wdbc(3, 25, &display_fields, &strings),
+    }
+}
+
+/// Produces one complete 25-field item-display row.
+fn item_display_fields(id: u32, geosets: [u32; 3], components: [u32; 8]) -> [u32; 25] {
+    [
+        id,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        geosets[0],
+        geosets[1],
+        geosets[2],
+        0,
+        0,
+        0,
+        0,
+        0,
+        components[0],
+        components[1],
+        components[2],
+        components[3],
+        components[4],
+        components[5],
+        components[6],
+        components[7],
+        0,
+        0,
+    ]
 }
 
 /// Generates one fixed-layout WDBC table.

@@ -16,6 +16,12 @@ pub enum CharacterTexturePlanError {
         /// Zero-based `CharSections.dbc` texture-name column.
         slot: usize,
     },
+    /// A missing universal item texture requires an unsupported sex suffix.
+    #[error("character gender {gender_id} cannot select an equipment texture suffix")]
+    UnsupportedEquipmentGender {
+        /// Gender identifier resolved from the character appearance tables.
+        gender_id: u32,
+    },
     /// A nonempty DBC texture name violated archive-path invariants.
     #[error(transparent)]
     Asset(#[from] AssetError),

@@ -81,7 +81,8 @@ fn select_source_mip(
         CharacterAtlasLayerKind::Face
         | CharacterAtlasLayerKind::FacialHair
         | CharacterAtlasLayerKind::Hair
-        | CharacterAtlasLayerKind::Underwear => layer.region().rect(),
+        | CharacterAtlasLayerKind::Underwear
+        | CharacterAtlasLayerKind::Item => layer.region().rect(),
     };
 
     // PasteScale is a real stock path, but its filtering algorithm is not yet
@@ -133,7 +134,8 @@ fn paste_layer(
             CharacterAtlasLayerKind::Face
             | CharacterAtlasLayerKind::FacialHair
             | CharacterAtlasLayerKind::Hair
-            | CharacterAtlasLayerKind::Underwear => {
+            | CharacterAtlasLayerKind::Underwear
+            | CharacterAtlasLayerKind::Item => {
                 CharacterAtlasRect::new(0, 0, destination_rect.width(), destination_rect.height())
             }
         };
