@@ -90,6 +90,7 @@ wow_srp = { version = "=0.7.0", default-features = false, features = [
     "srp-default-math",
     "wrath-header",
 ] }
+zeroize = { version = "=1.9.0", default-features = false }
 
 [workspace.lints.rust]
 missing_docs = "warn"

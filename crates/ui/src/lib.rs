@@ -39,9 +39,10 @@ pub use render::{
     UiTextureSource,
 };
 pub use script::{
-    UiGlueMediaIntent, UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan,
-    UiScriptBinding, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
+    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRuntimeTemplate,
+    UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding, UiScriptEnvironment,
+    UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptRuntime,
+    UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

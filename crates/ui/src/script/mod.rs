@@ -5,16 +5,19 @@
 //! permission checks are behavior to reproduce, not bypass.
 
 mod handlers;
+mod network_intent;
 mod runtime_state;
 mod simple_script;
 mod status;
 mod templates;
 
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
+pub use network_intent::{UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest};
 pub use simple_script::{
     UiGlueMediaIntent, UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan,
 };
 pub use status::UiScriptError;
 pub use templates::{UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan};
 
+pub(crate) use network_intent::UiGlueNetworkBridge;
 pub(crate) use runtime_state::{UiRuntimeAnchor, UiRuntimeObject, UiRuntimeObjectPlan};

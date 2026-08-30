@@ -6,13 +6,15 @@ use std::rc::Rc;
 use solarity_asset::{AssetStore, BlpTextureCache};
 
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
+use crate::script::UiGlueNetworkBridge;
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
-    UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan,
-    UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
+    UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPresentationPlan,
+    UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -36,6 +38,7 @@ pub struct GlueManager {
     child_indices: Vec<usize>,
     report: GlueStartupReport,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
+    network: Rc<RefCell<UiGlueNetworkBridge>>,
     assets: Rc<RefCell<AssetStore>>,
     bundle: UiBundle,
 }
@@ -72,6 +75,7 @@ impl GlueManager {
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());
         let media_intent = environment.media_intent();
+        let network = environment.network();
         let ui_extent = environment.ui_extent();
         let runtime_plan = UiScriptRuntimePlan::new(
             &tree,
@@ -125,6 +129,7 @@ impl GlueManager {
             child_indices,
             report,
             media_intent,
+            network,
             assets,
             bundle,
         })
@@ -210,6 +215,17 @@ impl GlueManager {
     #[must_use]
     pub fn media_intent(&self) -> UiGlueMediaIntent {
         self.media_intent.borrow().clone()
+    }
+
+    /// Takes the oldest native network action emitted by built-in Glue Lua.
+    #[must_use]
+    pub fn take_network_action(&self) -> Option<UiGlueNetworkAction> {
+        self.network.borrow_mut().take()
+    }
+
+    /// Publishes runtime-owned server facts for synchronous Glue queries.
+    pub fn set_network_status(&self, status: UiGlueNetworkStatus) {
+        self.network.borrow_mut().set_status(status);
     }
 
     /// Returns the archive-backed texture declaration plan.

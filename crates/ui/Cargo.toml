@@ -14,6 +14,7 @@ solarity-asset.workspace = true
 solarity-rendering.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 wow-mpq.workspace = true

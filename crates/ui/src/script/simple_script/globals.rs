@@ -1,8 +1,8 @@
 //! Process-independent globals installed before built-in UI execution.
 
-use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
+use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
-use crate::UiManifestKind;
+use crate::{UiGlueNetworkAction, UiLoginRequest, UiManifestKind};
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
@@ -96,6 +96,7 @@ fn register_glue_globals(
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
     register_glue_media_globals(lua, globals, environment)?;
+    register_glue_network_globals(lua, globals, environment)?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
     let current_screen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
@@ -329,6 +330,54 @@ fn register_glue_globals(
         "SetCharCustomizeFrame",
         CHARACTER_CUSTOMIZE_MODEL_REGISTRY,
     )
+}
+
+fn register_glue_network_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let network = environment.network();
+    globals.raw_set(
+        "DefaultServerLogin",
+        lua.create_function(move |_, (account, password): (LuaString, LuaString)| {
+            let account_name = account.to_str()?.to_string();
+            let request = UiLoginRequest::new(account_name, password.as_bytes().to_vec());
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::Login(request));
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "CancelLogin",
+        lua.create_function(move |_, ()| {
+            network.borrow_mut().push(UiGlueNetworkAction::CancelLogin);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "DisconnectFromServer",
+        lua.create_function(move |_, ()| {
+            network.borrow_mut().push(UiGlueNetworkAction::Disconnect);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetServerName",
+        lua.create_function(move |_, ()| {
+            Ok(network.borrow().status().server_name().map(str::to_owned))
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "IsConnectedToServer",
+        lua.create_function(move |_, ()| Ok(network.borrow().status().is_connected()))?,
+    )?;
+    Ok(())
 }
 
 fn register_glue_media_globals(

@@ -2235,6 +2235,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "wow-mpq",
+ "zeroize",
 ]
 
 [[package]]

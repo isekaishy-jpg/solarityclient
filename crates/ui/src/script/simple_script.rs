@@ -13,6 +13,7 @@ use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
 use solarity_asset::{AssetPath, AssetStore};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_glue_event};
+use crate::script::UiGlueNetworkBridge;
 use crate::{
     FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBlendMode, UiBundle,
     UiDrawLayer, UiFrameStatePlan, UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch,
@@ -269,6 +270,7 @@ pub struct UiScriptEnvironment {
     cvars: UiCVarRegistry,
     assets: Option<Rc<RefCell<AssetStore>>>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
+    network: Rc<RefCell<UiGlueNetworkBridge>>,
 }
 
 impl UiScriptEnvironment {
@@ -297,6 +299,7 @@ impl UiScriptEnvironment {
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
+            network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
         })
     }
 
@@ -348,6 +351,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn media_intent(&self) -> Rc<RefCell<UiGlueMediaIntent>> {
         self.media_intent.clone()
+    }
+
+    pub(crate) fn network(&self) -> Rc<RefCell<UiGlueNetworkBridge>> {
+        self.network.clone()
     }
 }
 

@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    GlueError, GlueManager, UiEventArgument, UiEventError, UiEventPayload, UiLayoutError,
-    UiObjectKind,
+    GlueError, GlueManager, UiEventArgument, UiEventError, UiEventPayload, UiGlueNetworkAction,
+    UiGlueNetworkStatus, UiLayoutError, UiObjectKind,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -59,6 +59,62 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
         media.ambience(),
         Some("Sound\\Ambience\\GlueScreen\\Dwarf.mp3")
     );
+    Ok(())
+}
+
+/// Stock login globals preserve action order and expose runtime-owned status.
+#[test]
+fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Network.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Network.xml",
+            bytes: br#"<Ui><Frame name="Network"><Scripts><OnLoad>
+  DefaultServerLogin("Account", "Secret")
+  CancelLogin()
+  DisconnectFromServer()
+</OnLoad></Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let globals = manager.bundle().lua().globals();
+    let server_name = globals.get::<mlua::Function>("GetServerName")?;
+    let connected = globals.get::<mlua::Function>("IsConnectedToServer")?;
+
+    assert_eq!(server_name.call::<Option<String>>(())?, None);
+    assert!(!connected.call::<bool>(())?);
+    let UiGlueNetworkAction::Login(request) = manager
+        .take_network_action()
+        .ok_or("missing login action")?
+    else {
+        return Err("first network action was not login".into());
+    };
+    assert_eq!(request.account_name(), "Account");
+    assert_eq!(request.password_bytes(), b"Secret");
+    let diagnostic = format!("{request:?}");
+    assert!(diagnostic.contains("<redacted>"));
+    assert!(!diagnostic.contains("Secret"));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::CancelLogin)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::Disconnect)
+    ));
+    assert!(manager.take_network_action().is_none());
+
+    manager.set_network_status(UiGlueNetworkStatus::new(
+        Some("Local Realm".to_owned()),
+        true,
+    ));
+    assert_eq!(server_name.call::<String>(())?, "Local Realm");
+    assert!(connected.call::<bool>(())?);
     Ok(())
 }
 
