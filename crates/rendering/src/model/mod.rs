@@ -12,6 +12,7 @@ pub use character_component::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
     CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterItemAttachment, CharacterRangedHand, CharacterTextureComposeError,
-    CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemAttachment,
+    CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
+    CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState,
 };

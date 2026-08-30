@@ -7,6 +7,7 @@ mod atlas;
 mod attachment;
 mod composer;
 mod equipment;
+mod geoset;
 mod status;
 mod types;
 
@@ -16,8 +17,10 @@ pub use attachment::{
     CharacterRangedHand, CharacterWeaponPose, CharacterWeaponState,
 };
 pub use equipment::CharacterEquipmentItem;
+pub use geoset::{CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode};
 pub use status::{
-    CharacterAttachmentPlanError, CharacterTextureComposeError, CharacterTexturePlanError,
+    CharacterAttachmentPlanError, CharacterGeosetPlanError, CharacterTextureComposeError,
+    CharacterTexturePlanError,
 };
 pub use types::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

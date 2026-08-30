@@ -4,13 +4,15 @@ use std::error::Error;
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, ItemDefinitionCatalog, ItemDisplayCatalog, Locale,
+    CharacterCustomization, ClientDataRoot, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, Locale,
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
     CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
-    CharacterAttachmentPoint, CharacterEquipmentItem, CharacterRangedHand, CharacterTexturePlan,
-    CharacterWeaponPose, CharacterWeaponState,
+    CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
+    CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
+    CharacterWeaponState,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -372,6 +374,199 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
         layer.region() == CharacterAtlasRegion::LegUpper
             && layer.kind() == CharacterAtlasLayerKind::Underwear
     }));
+    Ok(())
+}
+
+/// Helmet masks and death-knight eyes follow the exact build-12340 slot order.
+#[test]
+fn character_geosets_apply_helmet_masks_before_eye_glow() -> Result<(), Box<dyn Error>> {
+    let mut characters = character_tables(0, 0);
+    characters.hair_geosets = create_wdbc(1, 6, &[90, 1, 0, 4, 12, 1], b"\0");
+    characters.facial_hair = create_wdbc(1, 8, &[91, 1, 0, 6, 4, 5, 6, 7], b"\0");
+    let definitions = create_wdbc(1, 8, &[70_001, 4, 0, u32::MAX, 1, 71_001, 1, 0], b"\0");
+    let mut head_display = item_display_fields(71_001, [0, 0, 0], [0; 8]);
+    head_display[13] = 72_001;
+    head_display[14] = 72_001;
+    let displays = create_wdbc(1, 25, &head_display, b"\0");
+    let race_one_bit = 1_u32 << 1;
+    let helmet_visibility = create_wdbc(
+        1,
+        8,
+        &[
+            72_001,
+            race_one_bit,
+            race_one_bit,
+            race_one_bit,
+            race_one_bit,
+            race_one_bit,
+            race_one_bit,
+            race_one_bit,
+        ],
+        b"\0",
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &characters.sections,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &characters.hair_geosets,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &characters.facial_hair,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &displays,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\HelmetGeosetVisData.dbc",
+            bytes: &helmet_visibility,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let character_catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let appearance =
+        character_catalog.resolve_player(1, 0, CharacterCustomization::new(2, 3, 4, 5, 6))?;
+    let head_definition = definitions.item(70_001).ok_or("head item is absent")?;
+    let head_display = displays.display(71_001).ok_or("head display is absent")?;
+
+    let plan = CharacterGeosetPlan::equipped(
+        &appearance,
+        CharacterGeosetContext::new(6, CharacterTabardMode::Equipment),
+        &helmet_visibility,
+        [CharacterEquipmentItem::new(
+            PlayerEquipmentSlot::Head,
+            head_definition,
+            head_display,
+        )],
+    )?;
+
+    for hidden in [12, 106, 205, 304, 702, 1606, 1707] {
+        assert!(!plan.visible_geosets().contains(&hidden));
+    }
+    for visible in [1, 101, 201, 301, 701, 1601, 1703] {
+        assert!(plan.visible_geosets().contains(&visible));
+    }
+    Ok(())
+}
+
+/// Equipped body geometry preserves stock priority, tabard, and robe branches.
+#[test]
+fn character_geosets_preserve_equipment_branching() -> Result<(), Box<dyn Error>> {
+    let characters = character_tables(0, 0);
+    let definitions = create_wdbc(1, 8, &[80_001, 4, 0, u32::MAX, 1, 81_001, 5, 0], b"\0");
+    let mut strings = vec![0];
+    let outer_arm = append_string(&mut strings, "OuterArm");
+    let rows = [
+        item_display_fields(81_001, [2, 3, 0], [0, outer_arm, 0, 0, 0, 0, 0, 0]),
+        item_display_fields(81_002, [4, 5, 0], [0, outer_arm, 0, 0, 0, 0, 0, 0]),
+        item_display_fields(81_003, [2, 3, 0], [0; 8]),
+        item_display_fields(81_004, [4, 0, 0], [0; 8]),
+        item_display_fields(81_005, [2, 0, 0], [0, outer_arm, 0, 0, 0, 0, 0, 0]),
+        item_display_fields(81_006, [1, 0, 0], [0; 8]),
+        item_display_fields(81_007, [2, 0, 0], [0; 8]),
+        item_display_fields(81_008, [3, 0, 0], [0; 8]),
+        item_display_fields(81_009, [4, 5, 6], [0, outer_arm, 0, 0, 0, 0, 0, 0]),
+    ];
+    let display_fields = rows.into_iter().flatten().collect::<Vec<_>>();
+    let displays = create_wdbc(9, 25, &display_fields, &strings);
+    let helmet_visibility = create_wdbc(0, 8, &[], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &characters.sections,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &characters.hair_geosets,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &characters.facial_hair,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &displays,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\HelmetGeosetVisData.dbc",
+            bytes: &helmet_visibility,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let character_catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let appearance =
+        character_catalog.resolve_player(1, 0, CharacterCustomization::new(2, 3, 4, 5, 6))?;
+    let definition = definitions.item(80_001).ok_or("item is absent")?;
+    let item = |slot, display_id| {
+        displays
+            .display(display_id)
+            .map(|display| CharacterEquipmentItem::new(slot, definition, display))
+            .ok_or("item display is absent")
+    };
+    let equipment = [
+        item(PlayerEquipmentSlot::Shirt, 81_001)?,
+        item(PlayerEquipmentSlot::Chest, 81_002)?,
+        item(PlayerEquipmentSlot::Legs, 81_003)?,
+        item(PlayerEquipmentSlot::Feet, 81_004)?,
+        item(PlayerEquipmentSlot::Hands, 81_005)?,
+        item(PlayerEquipmentSlot::Tabard, 81_006)?,
+        item(PlayerEquipmentSlot::Back, 81_007)?,
+        item(PlayerEquipmentSlot::Waist, 81_008)?,
+    ];
+    let plan = CharacterGeosetPlan::equipped(
+        &appearance,
+        CharacterGeosetContext::new(1, CharacterTabardMode::CustomGuild),
+        &helmet_visibility,
+        equipment,
+    )?;
+    for visible in [403, 505, 904, 1201, 1202, 1503, 1804] {
+        assert!(plan.visible_geosets().contains(&visible));
+    }
+    for hidden in [401, 501, 803, 1004, 1103, 1501, 1801] {
+        assert!(!plan.visible_geosets().contains(&hidden));
+    }
+
+    let robe_plan = CharacterGeosetPlan::equipped(
+        &appearance,
+        CharacterGeosetContext::new(1, CharacterTabardMode::CustomGuild),
+        &helmet_visibility,
+        [
+            item(PlayerEquipmentSlot::Shirt, 81_001)?,
+            item(PlayerEquipmentSlot::Chest, 81_009)?,
+            item(PlayerEquipmentSlot::Legs, 81_003)?,
+            item(PlayerEquipmentSlot::Tabard, 81_006)?,
+            item(PlayerEquipmentSlot::Back, 81_007)?,
+            item(PlayerEquipmentSlot::Waist, 81_008)?,
+        ],
+    )?;
+    for visible in [805, 1201, 1307, 1503, 1804] {
+        assert!(robe_plan.visible_geosets().contains(&visible));
+    }
+    for hidden in [501, 902, 1101, 1202, 1301] {
+        assert!(!robe_plan.visible_geosets().contains(&hidden));
+    }
     Ok(())
 }
 

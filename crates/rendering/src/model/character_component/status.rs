@@ -5,6 +5,17 @@ use thiserror::Error;
 
 use super::CharacterAtlasLayerKind;
 
+/// A failure while selecting visible character M2 geosets.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+pub enum CharacterGeosetPlanError {
+    /// A helmet visibility row cannot select a non-player gender column.
+    #[error("character gender {gender_id} cannot select helmet geoset visibility")]
+    UnsupportedHelmetGender {
+        /// Gender identifier resolved from the character appearance tables.
+        gender_id: u32,
+    },
+}
+
 /// A failure while translating stock item display names into attachment paths.
 #[derive(Debug, Error)]
 pub enum CharacterAttachmentPlanError {
