@@ -28,6 +28,12 @@ pub enum UiPoint {
     BottomRight,
 }
 
+impl UiPoint {
+    pub(crate) const fn index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Explicit absolute dimensions from one XML layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiDimensions {
@@ -200,6 +206,12 @@ impl UiLayoutPlan {
         self.nodes.get(index).copied()
     }
 
+    /// Returns the number of object nodes covered by the plan.
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     /// Returns typed layers for one node in inheritance order.
     #[must_use]
     pub fn layers_for(&self, node: UiNodeLayout) -> &[UiLayoutLayer] {
@@ -308,9 +320,11 @@ fn parse_anchors(
             .ok_or_else(|| layout_error(path, "Anchor has no point"))
             .and_then(|value| parse_point(path, value))?;
         let relative_to = attribute(anchor, "relativeTo")
+            .filter(|value| !value.is_empty())
             .map(|value| expand_parent(path, value, parent_context))
             .transpose()?;
         let relative_point = attribute(anchor, "relativePoint")
+            .filter(|value| !value.is_empty())
             .map(|value| parse_point(path, value))
             .transpose()?;
         let offset = child_named(document, anchor, "Offset")

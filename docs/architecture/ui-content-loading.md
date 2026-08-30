@@ -162,6 +162,25 @@ the parser does not manufacture size, anchor, alpha, scale, visibility, or
 Real-client validation retains 1,815 Glue layout layers with 1,441 anchors and
 18,168 Frame layout layers with 14,692 anchors.
 
+The resolved startup pass then applies those flat layers to every live object.
+Dimensions begin at the stock zero state and replace only the authored axis.
+Anchor declarations replace an earlier constraint only when they address the
+same one of the nine region points; an absent `relativePoint` uses the local
+point, while an absent `relativeTo` uses the layout parent or the `CSimpleTop`
+screen root. Empty stock attributes have the same absent meaning. Offsets begin
+at zero. If a layer contains `<Anchors>`, those declarations win even when the
+same layer also sets `setAllPoints`; otherwise `setAllPoints="true"` clears the
+current constraints and binds `TOPLEFT` plus `BOTTOMRIGHT` to the layout
+parent. Missing named targets and self-anchors are startup errors rather than
+requests for a nearby global or screen fallback.
+
+Visibility, alpha, and scale start at shown, 1.0, and 1.0. Ordered XML layers
+replace their local values, after which visibility is intersected and alpha
+and scale are multiplied through the final ownership graph. This graph pass is
+independent of construction order, so it includes deferred stock parents and
+rejects cycles. The installed client resolves all 2,552 Glue objects to 1,545
+final anchors and all 22,015 FrameXML objects to 17,020 final anchors.
+
 Nested textures and font strings also retain the `<Layer>` draw band from
 their declaration wrapper. Back-to-front order is typed as `BACKGROUND`,
 `BORDER`, `ARTWORK`, `OVERLAY`, and `HIGHLIGHT`. A missing `level` becomes

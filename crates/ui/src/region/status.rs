@@ -14,4 +14,10 @@ pub enum UiLayoutError {
         /// Element, attribute, number, or name-expansion context.
         message: String,
     },
+    /// Parsed layout properties could not be applied to the object tree.
+    #[error("could not resolve UI layout: {message}")]
+    Resolution {
+        /// Ownership, target, or startup-state failure.
+        message: String,
+    },
 }

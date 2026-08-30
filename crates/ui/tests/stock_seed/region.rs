@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiDrawLayer, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectError, UiObjectTree, UiPoint,
+    FontCatalog, UiAnchorTarget, UiBundle, UiDrawLayer, UiLayoutError, UiLayoutPlan,
+    UiManifestKind, UiObjectCatalog, UiObjectError, UiObjectTree, UiPoint, UiRegionStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -70,6 +70,117 @@ fn layout_plan_preserves_inherited_geometry_layers() -> Result<(), Box<dyn Error
     assert_eq!(concrete_anchor.relative_to(), Some("Root"));
     assert_eq!(concrete_anchor.relative_point(), Some(UiPoint::BottomLeft));
     assert_eq!(concrete_anchor.offset(), Some((5.0, -3.0)));
+    Ok(())
+}
+
+/// Startup resolution replaces anchors by point and inherits effective state.
+#[test]
+fn region_state_resolves_stock_layout_application_order() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layout.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layout.xml",
+            bytes: br#"<Ui>
+  <Button name="ButtonTemplate" virtual="true">
+    <Size x="100" y="20"/>
+    <Anchors><Anchor point="TOPLEFT"><Offset x="1" y="2"/></Anchor></Anchors>
+  </Button>
+  <Frame name="Root" setAllPoints="true" hidden="true" alpha="0.5" scale="0.5">
+    <Frames>
+      <Button name="$parentChild" inherits="ButtonTemplate" hidden="false" alpha="0.5" scale="0.5">
+        <Size x="120"/>
+        <Anchors>
+          <Anchor point="TOPLEFT" relativeTo="Root"><Offset x="5" y="6"/></Anchor>
+          <Anchor point="BOTTOMRIGHT" relativeTo="Root"/>
+        </Anchors>
+      </Button>
+      <Frame name="$parentAnchorWins" setAllPoints="true">
+        <Anchors><Anchor point="CENTER" relativeTo="" relativePoint=""/></Anchors>
+      </Frame>
+    </Frames>
+  </Frame>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let states = UiRegionStatePlan::resolve(&tree, &layout)?;
+
+    let root_index = tree.node_index("Root").ok_or("missing Root")?;
+    let root = states.state(root_index).ok_or("missing Root state")?;
+    assert!(!root.shown());
+    assert_eq!(states.anchors_for(root).len(), 2);
+    assert!(
+        states
+            .anchors_for(root)
+            .iter()
+            .all(|anchor| anchor.target() == UiAnchorTarget::Screen)
+    );
+
+    let child_index = tree.node_index("RootChild").ok_or("missing child")?;
+    let child = states.state(child_index).ok_or("missing child state")?;
+    assert_eq!((child.width(), child.height()), (120.0, 20.0));
+    assert!(child.shown());
+    assert!(!child.effectively_shown());
+    assert_eq!((child.alpha(), child.effective_alpha()), (0.5, 0.25));
+    assert_eq!((child.scale(), child.effective_scale()), (0.5, 0.25));
+    let child_anchors = states.anchors_for(child);
+    assert_eq!(child_anchors.len(), 2);
+    assert_eq!(child_anchors[0].point(), UiPoint::TopLeft);
+    assert_eq!(
+        child_anchors[0].target(),
+        UiAnchorTarget::Object(root_index)
+    );
+    assert_eq!(child_anchors[0].relative_point(), UiPoint::TopLeft);
+    assert_eq!(child_anchors[0].offset(), (5.0, 6.0));
+    assert_eq!(child_anchors[1].point(), UiPoint::BottomRight);
+
+    let anchor_wins_index = tree
+        .node_index("RootAnchorWins")
+        .ok_or("missing anchor-wins frame")?;
+    let anchor_wins = states
+        .state(anchor_wins_index)
+        .ok_or("missing anchor-wins state")?;
+    let anchors = states.anchors_for(anchor_wins);
+    assert_eq!(anchors.len(), 1);
+    assert_eq!(anchors[0].point(), UiPoint::Center);
+    assert_eq!(anchors[0].target(), UiAnchorTarget::Object(root_index));
+    assert_eq!(anchors[0].relative_point(), UiPoint::Center);
+    Ok(())
+}
+
+/// Explicit anchor names must resolve exactly; no alternate owner is guessed.
+#[test]
+fn region_state_rejects_missing_anchor_target() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layout.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layout.xml",
+            bytes: br#"<Ui><Frame name="Root"><Anchors>
+  <Anchor point="CENTER" relativeTo="Unavailable"/>
+</Anchors></Frame></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+
+    let result = UiRegionStatePlan::resolve(&tree, &layout);
+
+    assert!(matches!(result, Err(UiLayoutError::Resolution { .. })));
     Ok(())
 }
 

@@ -195,6 +195,12 @@ impl<'bundle> UiObjectTree<'bundle> {
             .and_then(|index| self.nodes.get(*index))
     }
 
+    /// Returns the arena index registered for an expanded global name.
+    #[must_use]
+    pub fn node_index(&self, name: &str) -> Option<usize> {
+        self.by_name.get(name).copied()
+    }
+
     fn instantiate_root(
         &mut self,
         catalog: &UiObjectCatalog<'bundle>,

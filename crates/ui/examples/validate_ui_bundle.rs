@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
-    UiManifestKind, UiObjectCatalog, UiObjectTree, UiResourceContent, UiTextureFile, UiTexturePlan,
+    UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
+    UiTextureFile, UiTexturePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -53,6 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let frame_plan = UiFramePlan::from_tree(&object_tree)?;
     let frame_states = frame_plan.resolve(&object_tree)?;
     let layout_plan = UiLayoutPlan::from_tree(&object_tree)?;
+    let region_states = UiRegionStatePlan::resolve(&object_tree, &layout_plan)?;
     let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
     let texture_paths = object_tree
         .nodes()
@@ -90,7 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} authored anchors resolving to {} region states and {} final anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
@@ -103,6 +105,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         frame_plan.layer_count(),
         layout_plan.layer_count(),
         layout_plan.anchor_count(),
+        region_states.state_count(),
+        region_states.anchor_count(),
         texture_plan.layer_count(),
         texture_paths.len(),
         glyph.width(),

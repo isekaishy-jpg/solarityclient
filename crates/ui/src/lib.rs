@@ -26,7 +26,8 @@ pub use frame::{
     UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
 };
 pub use region::{
-    UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
+    UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
+    UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionState, UiRegionStatePlan,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
