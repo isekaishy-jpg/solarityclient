@@ -8,6 +8,7 @@ mod addon_manifest;
 mod addon_policy;
 mod character_directory;
 mod server_packet;
+mod world_entry;
 mod wow_svcs_client_services;
 
 pub use addon_manifest::{AddonManifestError, WorldAddon, WorldAddonManifest};
@@ -18,3 +19,6 @@ pub use character_directory::{
     CharacterRace,
 };
 pub use server_packet::WorldServerPacket;
+pub use world_entry::{
+    CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,
+};

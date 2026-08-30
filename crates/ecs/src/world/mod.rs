@@ -7,3 +7,6 @@
 mod registry;
 mod state;
 mod types;
+
+pub use state::ActiveWorld;
+pub use types::{WorldBootstrap, WorldMapId};

@@ -5,3 +5,5 @@
 //! only the state vocabulary shared by movement systems.
 
 mod movement_c;
+
+pub use movement_c::WorldTransform;

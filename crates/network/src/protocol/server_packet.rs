@@ -1,11 +1,13 @@
 //! Owned wrapper around one decrypted server packet.
 
 use super::{
-    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, WorldAddonManifest,
-    WorldAddonPolicy,
+    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
+    WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError, WorldLocation,
 };
 
 const SMSG_CHAR_ENUM: u16 = 0x003B;
+const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
+const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
 const SMSG_ADDON_INFO: u16 = 0x02EF;
 
 /// A decoded world packet that retains unsupported payloads for later dispatch.
@@ -30,8 +32,10 @@ impl WorldServerPacket {
     pub const fn name(&self) -> Option<&'static str> {
         match self.opcode {
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
+            SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
             0x01DD => Some("SMSG_PONG"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
+            SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
             SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
             _ => None,
         }
@@ -73,6 +77,33 @@ impl WorldServerPacket {
             return Ok(None);
         }
         WorldAddonPolicy::decode(&self.payload, manifest).map(Some)
+    }
+
+    /// Decodes `SMSG_LOGIN_VERIFY_WORLD`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldEntryPacketError`] when the location body is not exactly
+    /// the build-12340 20-byte representation.
+    pub fn world_location(&self) -> Result<Option<WorldLocation>, WorldEntryPacketError> {
+        if self.opcode != SMSG_LOGIN_VERIFY_WORLD {
+            return Ok(None);
+        }
+        WorldLocation::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_CHARACTER_LOGIN_FAILED`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldEntryPacketError`] unless the result body is exactly one byte.
+    pub fn character_login_rejection(
+        &self,
+    ) -> Result<Option<CharacterLoginRejection>, WorldEntryPacketError> {
+        if self.opcode != SMSG_CHARACTER_LOGIN_FAILED {
+            return Ok(None);
+        }
+        CharacterLoginRejection::decode(&self.payload).map(Some)
     }
 }
 

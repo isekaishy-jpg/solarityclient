@@ -17,3 +17,8 @@ mod unit;
 mod vehicle;
 mod view;
 mod world;
+
+pub use movement::WorldTransform;
+pub use object::ObjectGuid;
+pub use player::{LocalPlayer, PlayerIdentity};
+pub use world::{ActiveWorld, WorldBootstrap, WorldMapId};

@@ -6,7 +6,7 @@ use wow_world_messages::Guid;
 use wow_world_messages::wrath::CMSG_PLAYER_LOGIN;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 
-use crate::connection::{CharacterLogin, WorldSession};
+use crate::connection::{CharacterLogin, CharacterLoginProgress, InWorldSession, WorldSession};
 use crate::protocol::{CharacterEntry, WorldServerPacket};
 
 use super::{WorldSessionError, WorldSessionStage};
@@ -88,6 +88,60 @@ where
     /// cannot be read and decoded.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
         receive_packet(&mut self.session.stream, &mut self.session.crypto).await
+    }
+
+    /// Advances world entry by one encrypted server packet.
+    ///
+    /// Setup packets received before the terminal result are retained in
+    /// [`CharacterLoginProgress::Awaiting`] for normal subsystem dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when packet I/O or terminal-result decoding fails.
+    pub async fn advance(mut self) -> Result<CharacterLoginProgress<S>, WorldSessionError> {
+        let packet = receive_packet(&mut self.session.stream, &mut self.session.crypto).await?;
+        if let Some(location) = packet.world_location().map_err(world_entry_decode_error)? {
+            return Ok(CharacterLoginProgress::Entered(InWorldSession {
+                session: self.session,
+                character_guid: self.character_guid,
+                character_name: self.character_name,
+                location,
+            }));
+        }
+        if let Some(rejection) = packet
+            .character_login_rejection()
+            .map_err(world_entry_decode_error)?
+        {
+            return Ok(CharacterLoginProgress::Rejected {
+                session: self.session,
+                rejection,
+            });
+        }
+        Ok(CharacterLoginProgress::Awaiting {
+            login: self,
+            packet,
+        })
+    }
+}
+
+impl<S> InWorldSession<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    /// Receives one encrypted active-world packet without discarding unsupported opcodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted header or body cannot be read.
+    pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
+        receive_packet(&mut self.session.stream, &mut self.session.crypto).await
+    }
+}
+
+fn world_entry_decode_error(error: crate::protocol::WorldEntryPacketError) -> WorldSessionError {
+    WorldSessionError::Decode {
+        stage: WorldSessionStage::Receive,
+        message: error.to_string(),
     }
 }
 

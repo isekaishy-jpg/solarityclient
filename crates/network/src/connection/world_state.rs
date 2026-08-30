@@ -3,7 +3,9 @@
 use tokio::io::{AsyncRead, AsyncWrite};
 use wow_srp::wrath_header::ClientCrypto;
 
-use crate::protocol::WorldAddonManifest;
+use crate::protocol::{
+    CharacterLoginRejection, WorldAddonManifest, WorldLocation, WorldServerPacket,
+};
 
 use super::{WorldAuthError, wow_connection::WorldHandshake};
 
@@ -102,6 +104,78 @@ impl<S> CharacterLogin<S> {
     }
 
     /// Returns the exact add-on manifest sent during world authentication.
+    #[must_use]
+    pub const fn addon_manifest(&self) -> &WorldAddonManifest {
+        self.session.addon_manifest()
+    }
+}
+
+/// The next state reached while waiting for selected-character world entry.
+pub enum CharacterLoginProgress<S> {
+    /// A normal setup packet arrived before the terminal login result.
+    Awaiting {
+        /// Pending selected-character login with live transport ownership.
+        login: CharacterLogin<S>,
+        /// Retained setup packet for normal subsystem dispatch.
+        packet: WorldServerPacket,
+    },
+    /// The server accepted the character and supplied its initial world location.
+    Entered(InWorldSession<S>),
+    /// The server rejected the character and returned to character selection.
+    Rejected {
+        /// Restored authenticated character-screen session.
+        session: WorldSession<S>,
+        /// Exact server rejection result.
+        rejection: CharacterLoginRejection,
+    },
+}
+
+/// Authenticated transport after the selected character has entered a map.
+pub struct InWorldSession<S> {
+    pub(crate) session: WorldSession<S>,
+    pub(crate) character_guid: u64,
+    pub(crate) character_name: String,
+    pub(crate) location: WorldLocation,
+}
+
+impl<S> InWorldSession<S> {
+    /// Returns the active local player's world object GUID.
+    #[must_use]
+    pub const fn character_guid(&self) -> u64 {
+        self.character_guid
+    }
+
+    /// Returns the active local player's display name.
+    #[must_use]
+    pub fn character_name(&self) -> &str {
+        &self.character_name
+    }
+
+    /// Returns the initial authoritative map and transform.
+    #[must_use]
+    pub const fn location(&self) -> WorldLocation {
+        self.location
+    }
+
+    /// Returns the authenticated account name.
+    #[must_use]
+    pub fn account_name(&self) -> &str {
+        self.session.account_name()
+    }
+
+    /// Returns the selected realmd realm identifier.
+    #[must_use]
+    pub const fn realm_id(&self) -> u8 {
+        self.session.realm_id()
+    }
+
+    /// Returns billing and expansion state for the world session.
+    #[must_use]
+    pub const fn info(&self) -> WorldSessionInfo {
+        self.session.info()
+    }
+
+    /// Returns the add-on manifest sent during authentication.
     #[must_use]
     pub const fn addon_manifest(&self) -> &WorldAddonManifest {
         self.session.addon_manifest()

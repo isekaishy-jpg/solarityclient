@@ -17,8 +17,9 @@ pub use authentication::{
     LoginError, LoginFailure, LoginLocale, LoginStage, WorldIdentity, WorldSessionKey,
 };
 pub use connection::{
-    AccountExpansion, CharacterLogin, WorldAuthError, WorldAuthFailure, WorldAuthProgress,
-    WorldAuthStage, WorldConnection, WorldQueue, WorldSession, WorldSessionInfo,
+    AccountExpansion, CharacterLogin, CharacterLoginProgress, InWorldSession, WorldAuthError,
+    WorldAuthFailure, WorldAuthProgress, WorldAuthStage, WorldConnection, WorldQueue, WorldSession,
+    WorldSessionInfo,
 };
 pub use protocol::{
     AddonManifestError, AddonPolicyError, BannedAddon, WorldAddon, WorldAddonManifest,
@@ -26,8 +27,9 @@ pub use protocol::{
 };
 pub use protocol::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
-    CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,
-    CharacterRace, WorldServerPacket,
+    CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation,
+    CharacterLoginRejection, CharacterLoginRejectionReason, CharacterPet, CharacterRace,
+    WorldEntryPacketError, WorldLocation, WorldServerPacket,
 };
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};

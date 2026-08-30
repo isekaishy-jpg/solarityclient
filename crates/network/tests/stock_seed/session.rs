@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use solarity_network::{
-    CharacterClass, CharacterGender, CharacterRace, WorldAddon, WorldAddonManifest,
-    WorldAuthProgress, WorldConnection,
+    CharacterClass, CharacterGender, CharacterLoginProgress, CharacterLoginRejectionReason,
+    CharacterRace, WorldAddon, WorldAddonManifest, WorldAuthProgress, WorldConnection,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -128,7 +128,72 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(login.account_name(), "TESTACCOUNT");
         assert_eq!(login.realm_id(), realm.id());
         assert_eq!(login.addon_manifest().addons().len(), 2);
+        let login = match login.advance().await? {
+            CharacterLoginProgress::Awaiting { login, packet } => {
+                assert_eq!(packet.opcode(), 0x0123);
+                assert_eq!(packet.payload(), &[0x5A, 0xA5]);
+                login
+            }
+            _ => return Err("interleaved world-entry packet was not retained".into()),
+        };
+        let world = match login.advance().await? {
+            CharacterLoginProgress::Entered(world) => world,
+            _ => return Err("login verification did not enter the world".into()),
+        };
+        assert_eq!(world.character_guid(), 0xF130_0000_0000_0042);
+        assert_eq!(world.character_name(), "Solarion");
+        assert_eq!(world.location().map_id(), 571);
+        assert_eq!(world.location().x(), 5_812.25);
+        assert_eq!(world.location().y(), 647.5);
+        assert_eq!(world.location().z(), 647.9);
+        assert_eq!(world.location().orientation(), 1.75);
 
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
+
+/// A rejected selected character restores the authenticated character-screen state.
+#[test]
+fn character_login_rejection_restores_character_screen() -> Result<(), Box<dyn Error + Send + Sync>>
+{
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, server) = tokio::io::duplex(4_096);
+        let server_task = tokio::spawn(emulate_rejected_character_login(server, session_key));
+        let mut session = match WorldConnection::authenticate(
+            client,
+            identity,
+            &realm,
+            WorldAddonManifest::empty(),
+        )
+        .await?
+        {
+            WorldAuthProgress::Authenticated(session) => session,
+            WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
+        };
+        session.request_character_directory().await?;
+        let packet = session.receive_packet().await?;
+        let directory = packet
+            .character_directory()?
+            .ok_or("character directory was not returned")?;
+        let character = directory
+            .entries()
+            .first()
+            .ok_or("fixture character was not returned")?;
+        let login = session.login_character(character).await?;
+        match login.advance().await? {
+            CharacterLoginProgress::Rejected { session, rejection } => {
+                assert_eq!(rejection.result_code(), 0x54);
+                assert_eq!(
+                    rejection.reason(),
+                    Some(CharacterLoginRejectionReason::LockedForTransfer)
+                );
+                assert_eq!(session.account_name(), "TESTACCOUNT");
+                assert_eq!(session.realm_id(), realm.id());
+            }
+            _ => return Err("character login rejection did not restore selection".into()),
+        }
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
     })
@@ -203,6 +268,25 @@ async fn emulate_character_screen(
 
     write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &addon_policy_payload()).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x01F6, &[0xA7; 32_768]).await?;
+    let character = fixture_character();
+    ServerOpcodeMessage::from(SMSG_CHAR_ENUM {
+        characters: vec![character],
+    })
+    .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
+    .await?;
+    let login = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    match login {
+        ClientOpcodeMessage::CMSG_PLAYER_LOGIN(login) => {
+            assert_eq!(login.guid.guid(), 0xF130_0000_0000_0042);
+        }
+        message => return Err(format!("unexpected character selection packet: {message}").into()),
+    }
+    write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0x5A, 0xA5]).await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x0236, &world_location_payload()).await?;
+    Ok(())
+}
+
+fn fixture_character() -> Character {
     let mut character = Character {
         guid: Guid::new(0xF130_0000_0000_0042),
         name: "Solarion".to_owned(),
@@ -230,19 +314,7 @@ async fn emulate_character_screen(
     };
     character.equipment[0].equipment_display_id = 55_000;
     character.equipment[0].enchantment = 3_821;
-    ServerOpcodeMessage::from(SMSG_CHAR_ENUM {
-        characters: vec![character],
-    })
-    .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
-    .await?;
-    let login = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
-    match login {
-        ClientOpcodeMessage::CMSG_PLAYER_LOGIN(login) => {
-            assert_eq!(login.guid.guid(), 0xF130_0000_0000_0042);
-        }
-        message => return Err(format!("unexpected character selection packet: {message}").into()),
-    }
-    Ok(())
+    character
 }
 
 fn addon_policy_payload() -> Vec<u8> {
@@ -259,6 +331,16 @@ fn addon_policy_payload() -> Vec<u8> {
     payload.extend_from_slice(&[0x22; 16]);
     payload.extend_from_slice(&0x3344_5566_u32.to_le_bytes());
     payload.extend_from_slice(&0x7788_99AA_u32.to_le_bytes());
+    payload
+}
+
+fn world_location_payload() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(20);
+    payload.extend_from_slice(&571_u32.to_le_bytes());
+    payload.extend_from_slice(&5_812.25_f32.to_le_bytes());
+    payload.extend_from_slice(&647.5_f32.to_le_bytes());
+    payload.extend_from_slice(&647.9_f32.to_le_bytes());
+    payload.extend_from_slice(&1.75_f32.to_le_bytes());
     payload
 }
 
@@ -298,6 +380,25 @@ async fn emulate_truncated_addon_policy(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &[2, 1, 1, 0xA5]).await?;
+    Ok(())
+}
+
+async fn emulate_rejected_character_login(
+    mut stream: DuplexStream,
+    session_key: [u8; 40],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
+    let request =
+        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    assert!(matches!(request, ClientOpcodeMessage::CMSG_CHAR_ENUM));
+    ServerOpcodeMessage::from(SMSG_CHAR_ENUM {
+        characters: vec![fixture_character()],
+    })
+    .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
+    .await?;
+    let login = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    assert!(matches!(login, ClientOpcodeMessage::CMSG_PLAYER_LOGIN(_)));
+    write_encrypted_raw(&mut stream, &mut crypto, 0x0041, &[0x54]).await?;
     Ok(())
 }
 
