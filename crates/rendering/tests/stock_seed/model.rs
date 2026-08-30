@@ -18,8 +18,8 @@ use solarity_rendering::{
     CharacterWeaponState, M2DrawPushConstants, M2LocalLightCount, M2LocalLightState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SampledTexture,
     M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2SpirvCompiler, M2SpirvError, M2TextureAddressMode, M2TextureSet, M2VertexShader,
-    VulkanBootstrap,
+    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap,
+    VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -526,25 +526,67 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         push_constants.to_bytes(),
         [64, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0x20, 0, 0, 0]
     );
-    let spirv = M2SpirvCompiler::new()?.compile(specialized, lit_permutation)?;
+    let compiler = M2SpirvCompiler::new()?;
+    let spirv = compiler.compile(specialized, lit_permutation)?;
     assert_eq!(spirv.key().plan(), specialized);
     assert_spirv_1_6(spirv.vertex_words());
     assert_spirv_1_6(spirv.fragment_words());
+    let unlit_draw = &plan.draws()[2];
     let unlit_permutation = M2ShaderPermutation::resolve(
-        &plan.draws()[2],
+        unlit_draw,
         M2LocalLightCount::Four,
         M2ShadowPermutation::Mode3,
         M2ShadowFiltering::Pcf,
     );
     assert_eq!(unlit_permutation.vertex_index(), 70);
     assert_eq!(unlit_permutation.pixel_index(), 15);
-    assert!(matches!(
-        M2SpirvCompiler::new()?.compile(fallback, unlit_permutation),
-        Err(M2SpirvError::UnsupportedShadow {
-            vertex_index: 70,
-            pixel_index: 15,
-        })
-    ));
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(0),
+        Some(M2ShadowPermutation::Disabled)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(1),
+        Some(M2ShadowPermutation::Mode1)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(2),
+        Some(M2ShadowPermutation::Mode1)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(3),
+        Some(M2ShadowPermutation::Mode2)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(4),
+        Some(M2ShadowPermutation::Mode2)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(5),
+        Some(M2ShadowPermutation::Mode3)
+    );
+    assert_eq!(
+        M2ShadowPermutation::from_stock_quality(6),
+        Some(M2ShadowPermutation::Mode3)
+    );
+    assert_eq!(M2ShadowPermutation::from_stock_quality(7), None);
+    for shadow in [
+        M2ShadowPermutation::Disabled,
+        M2ShadowPermutation::Mode1,
+        M2ShadowPermutation::Mode2,
+        M2ShadowPermutation::Mode3,
+    ] {
+        for filtering in [M2ShadowFiltering::Direct, M2ShadowFiltering::Pcf] {
+            let permutation = M2ShaderPermutation::resolve(
+                unlit_draw,
+                M2LocalLightCount::Four,
+                shadow,
+                filtering,
+            );
+            let program = compiler.compile(fallback, permutation)?;
+            assert_spirv_1_6(program.vertex_words());
+            assert_spirv_1_6(program.fragment_words());
+        }
+    }
     assert!(matches!(
         M2MeshPlan::prepare(&model, 1),
         Err(M2MeshPlanError::MissingProfile {
@@ -677,6 +719,21 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             prepared_draw.required_bone_transforms()
         );
     }
+    let shadow_pipeline = renderer.prepare_m2_pipeline(fallback, unlit_permutation)?;
+    let shadow_draw = renderer.prepare_m2_draw(
+        handle,
+        shadow_pipeline,
+        texture_sets[0],
+        &plan,
+        2,
+        material_uniform,
+        0,
+        0,
+    )?;
+    assert!(matches!(
+        renderer.present_m2(scene_uniform, &bone_transforms, &[shadow_draw]),
+        Err(VulkanError::M2ShadowResourcesUnavailable)
+    ));
     renderer.shutdown()?;
     Ok(())
 }

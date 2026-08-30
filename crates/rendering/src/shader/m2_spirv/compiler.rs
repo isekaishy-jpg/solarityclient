@@ -8,9 +8,6 @@ use super::super::{M2PixelShader, M2ShaderPermutation, M2ShaderPlan, M2VertexSha
 use super::source::{M2_FRAGMENT_SOURCE, M2_VERTEX_SOURCE};
 use super::{M2SpirvError, M2SpirvKey, M2SpirvProgram};
 
-const SHADOW_VERTEX_STRIDE: usize = 30;
-const SHADOW_PIXEL_MODULUS: usize = 4;
-
 /// Reusable shaderc frontend pinned to the renderer's Vulkan/SPIR-V contract.
 pub struct M2SpirvCompiler {
     compiler: Compiler,
@@ -32,31 +29,14 @@ impl M2SpirvCompiler {
 
     /// Compiles one exact effect/permutation pair for Vulkan 1.3.
     ///
-    /// Direct and PCF selectors are equivalent while shadows are disabled.
-    /// Other shadow paths are rejected until their authored BLS sampling math
-    /// is translated; silently compiling an approximation would be a fallback
-    /// stock does not contain.
-    ///
     /// # Errors
     ///
-    /// Returns [`M2SpirvError::UnsupportedShadow`] for a shadowed permutation,
-    /// or [`M2SpirvError::Compilation`] with shaderc's stage diagnostic.
+    /// Returns [`M2SpirvError::Compilation`] with shaderc's stage diagnostic.
     pub fn compile(
         &self,
         plan: M2ShaderPlan,
         permutation: M2ShaderPermutation,
     ) -> Result<M2SpirvProgram, M2SpirvError> {
-        let vertex_index = permutation.vertex_index();
-        let pixel_index = permutation.pixel_index();
-        if vertex_index / SHADOW_VERTEX_STRIDE != 0
-            || !pixel_index.is_multiple_of(SHADOW_PIXEL_MODULUS)
-        {
-            return Err(M2SpirvError::UnsupportedShadow {
-                vertex_index,
-                pixel_index,
-            });
-        }
-
         let key = M2SpirvKey::new(plan, permutation);
         let vertex_words = self.compile_stage(
             M2_VERTEX_SOURCE,
@@ -96,11 +76,13 @@ impl M2SpirvCompiler {
         let pixel_effect = pixel_effect_index(plan.pixel_shader()).to_string();
         let vertex_permutation = permutation.vertex_index().to_string();
         let pixel_permutation = permutation.pixel_index().to_string();
+        let shadow_filtering = ((permutation.pixel_index() / 4) % 2).to_string();
         let texture_count = plan.texture_count().to_string();
         options.add_macro_definition("M2_VERTEX_EFFECT", Some(&vertex_effect));
         options.add_macro_definition("M2_PIXEL_EFFECT", Some(&pixel_effect));
         options.add_macro_definition("M2_VERTEX_PERMUTATION", Some(&vertex_permutation));
         options.add_macro_definition("M2_PIXEL_PERMUTATION", Some(&pixel_permutation));
+        options.add_macro_definition("M2_SHADOW_FILTERING", Some(&shadow_filtering));
         options.add_macro_definition("M2_TEXTURE_COUNT", Some(&texture_count));
 
         self.compiler

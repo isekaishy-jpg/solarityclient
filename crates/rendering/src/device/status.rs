@@ -160,6 +160,9 @@ pub enum VulkanError {
         /// Transform count supplied for this frame.
         available: usize,
     },
+    /// Shadowed M2 draws require four rendered and bound stock shadow maps.
+    #[error("M2 frame contains a shadowed draw before shadow-map resources are available")]
+    M2ShadowResourcesUnavailable,
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,

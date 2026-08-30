@@ -11,14 +11,6 @@ pub enum M2SpirvError {
         /// Compiler diagnostic.
         message: String,
     },
-    /// A stock shadow permutation has not yet been translated faithfully.
-    #[error("M2 shadow permutation is not translated: vertex {vertex_index}, pixel {pixel_index}")]
-    UnsupportedShadow {
-        /// Index into the selected vertex BLS.
-        vertex_index: usize,
-        /// Index into the selected pixel BLS.
-        pixel_index: usize,
-    },
     /// GLSL-to-SPIR-V compilation rejected one translated stage.
     #[error("M2 {stage} shader compilation failed: {message}")]
     Compilation {

@@ -18,5 +18,6 @@ pub use character_component::{
 };
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan,
-    M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2TextureBinding,
+    M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState,
+    M2TextureBinding,
 };

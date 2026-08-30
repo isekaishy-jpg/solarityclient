@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3, Vec4};
 
 use super::M2DrawCall;
+use super::shadow::M2ShadowState;
 
 /// One directional or positional local light in the stock four-light bound.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,11 +67,12 @@ pub struct M2SceneUniform {
     light_direction: Vec3,
     fog_parameters: Vec4,
     local_lights: [M2LocalLightState; 4],
+    shadow: M2ShadowState,
 }
 
 impl M2SceneUniform {
     /// Byte size of the exact std140 scene descriptor block.
-    pub const BYTE_SIZE: usize = 400;
+    pub const BYTE_SIZE: usize = 752;
 
     /// Creates one bounded scene-lighting and fog snapshot.
     #[allow(clippy::too_many_arguments)]
@@ -92,7 +94,15 @@ impl M2SceneUniform {
             light_direction,
             fog_parameters,
             local_lights,
+            shadow: M2ShadowState::disabled(),
         }
+    }
+
+    /// Adds the constants required by a stock shadowed M2 permutation.
+    #[must_use]
+    pub const fn with_shadow(mut self, shadow: M2ShadowState) -> Self {
+        self.shadow = shadow;
+        self
     }
 
     /// Serializes without depending on Rust or glam's in-memory representation.
@@ -109,6 +119,7 @@ impl M2SceneUniform {
         for light in self.local_lights {
             light.write_bytes(&mut bytes, &mut offset);
         }
+        self.shadow.write_bytes(&mut bytes, &mut offset);
         bytes
     }
 }
@@ -215,7 +226,7 @@ fn write_mat4<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, matrix: M
 }
 
 /// Writes one tightly packed 16-byte std140 vector.
-fn write_vec4<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, vector: Vec4) {
+pub(super) fn write_vec4<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, vector: Vec4) {
     for value in vector.to_array() {
         write_f32(bytes, offset, value);
     }

@@ -32,7 +32,7 @@ pub use model::{
     CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
     CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState, M2DrawCall,
     M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
-    M2RenderVertex, M2SceneUniform, M2TextureBinding,
+    M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding,
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,

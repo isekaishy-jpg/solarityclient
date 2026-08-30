@@ -60,6 +60,16 @@ impl M2FrameRenderer {
         if draws.is_empty() {
             return Err(VulkanError::EmptyM2Frame);
         }
+        // Shader translation can be validated independently, but recording a
+        // shadowed draw without set four would violate the Vulkan pipeline ABI.
+        if draws.iter().any(|draw| {
+            context
+                .pipelines
+                .info(draw.pipeline())
+                .is_some_and(|pipeline| pipeline.permutation().has_shadows())
+        }) {
+            return Err(VulkanError::M2ShadowResourcesUnavailable);
+        }
         let required_bones = draws
             .iter()
             .map(|draw| draw.required_bone_transforms())

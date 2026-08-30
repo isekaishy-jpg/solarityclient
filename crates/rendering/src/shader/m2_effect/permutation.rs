@@ -52,6 +52,21 @@ pub enum M2ShadowPermutation {
 }
 
 impl M2ShadowPermutation {
+    /// Resolves the selector table indexed by stock's effective shadow quality.
+    ///
+    /// The executable contains seven entries: `0, 1, 1, 2, 2, 3, 3`.
+    /// Values outside that table are not stock configuration states.
+    #[must_use]
+    pub const fn from_stock_quality(quality: usize) -> Option<Self> {
+        match quality {
+            0 => Some(Self::Disabled),
+            1 | 2 => Some(Self::Mode1),
+            3 | 4 => Some(Self::Mode2),
+            5 | 6 => Some(Self::Mode3),
+            _ => None,
+        }
+    }
+
     /// Returns the exact pixel-side selector value.
     const fn value(self) -> usize {
         match self {
@@ -126,5 +141,11 @@ impl M2ShaderPermutation {
     #[must_use]
     pub const fn pixel_index(self) -> usize {
         self.pixel_index
+    }
+
+    /// Reports whether this pair statically consumes the shadow descriptor set.
+    #[must_use]
+    pub const fn has_shadows(self) -> bool {
+        !self.pixel_index.is_multiple_of(4)
     }
 }

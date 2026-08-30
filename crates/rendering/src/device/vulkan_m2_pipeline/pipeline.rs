@@ -8,7 +8,7 @@ use crate::device::VulkanError;
 use crate::model::M2RenderVertex;
 use crate::shader::{M2BlendFactor, M2MaterialState, M2SpirvProgram};
 
-const DESCRIPTOR_SET_COUNT: usize = 4;
+const DESCRIPTOR_SET_COUNT: usize = 5;
 const DRAW_PUSH_CONSTANT_BYTES: u32 = 16;
 
 /// Common descriptor/push-constant ABI shared by every M2 variant.
@@ -48,6 +48,28 @@ impl M2PipelineLayout {
                 ),
                 descriptor_binding(
                     1,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    vk::ShaderStageFlags::FRAGMENT,
+                ),
+            ],
+            vec![
+                descriptor_binding(
+                    0,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    vk::ShaderStageFlags::FRAGMENT,
+                ),
+                descriptor_binding(
+                    1,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    vk::ShaderStageFlags::FRAGMENT,
+                ),
+                descriptor_binding(
+                    2,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    vk::ShaderStageFlags::FRAGMENT,
+                ),
+                descriptor_binding(
+                    3,
                     vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                     vk::ShaderStageFlags::FRAGMENT,
                 ),
