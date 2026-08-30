@@ -4,4 +4,10 @@
 //! This module exposes transport outcomes without inventing retries that the
 //! target client does not perform.
 
+mod endpoint;
+mod error;
 mod os_tcp;
+
+pub use endpoint::TcpEndpoint;
+pub use error::TransportError;
+pub use os_tcp::TcpTransport;
