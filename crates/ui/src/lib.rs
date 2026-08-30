@@ -33,7 +33,7 @@ pub use region::{
 pub use script::{
     UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,
     UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan,
-    UiScriptRuntime, UiScriptTarget,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

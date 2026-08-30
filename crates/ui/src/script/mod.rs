@@ -11,6 +11,6 @@ mod status;
 mod templates;
 
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
-pub use simple_script::{UiScriptEnvironment, UiScriptRuntime};
+pub use simple_script::{UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan};
 pub use status::UiScriptError;
 pub use templates::{UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan};

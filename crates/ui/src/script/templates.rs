@@ -3,8 +3,9 @@
 use mlua::{Lua, RegistryKey};
 
 use crate::{
-    FontCatalog, UiLayoutPlan, UiObjectCatalog, UiObjectKind, UiObjectTree, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptTarget,
+    FontCatalog, HorizontalJustification, UiLayoutPlan, UiObjectCatalog, UiObjectKind,
+    UiObjectTree, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan,
+    VerticalJustification,
 };
 
 /// One named XML template and its contiguous runtime-prototype range.
@@ -57,6 +58,11 @@ pub struct UiRuntimeTemplateNode {
     construction_children: Vec<usize>,
     dimensions: (f64, f64),
     shown: bool,
+    font_assigned: bool,
+    font_object_name: Option<String>,
+    justify_h: String,
+    justify_v: String,
+    texture_coords: [f64; 8],
     load_target: Option<UiScriptTarget>,
 }
 
@@ -140,6 +146,8 @@ impl UiRuntimeTemplatePlan {
                 .map_err(|error| template_error(template_name, error))?;
             let scripts = UiScriptPlan::from_tree(&tree, lua)
                 .map_err(|error| template_error(template_name, error))?;
+            let textures = UiTexturePlan::from_tree(&tree)
+                .map_err(|error| template_error(template_name, error))?;
             let first_node = plan.nodes.len();
             for (local_index, object) in tree.nodes().iter().enumerate() {
                 let (dimensions, shown) =
@@ -156,6 +164,10 @@ impl UiRuntimeTemplatePlan {
                         )
                     })
                     .transpose()?;
+                let (font_assigned, font_object_name, justify_h, justify_v) =
+                    initial_font(object, fonts);
+                let texture_coords = initial_texture_coords(&tree, &textures, local_index)
+                    .map_err(|error| template_error(template_name, error))?;
                 plan.nodes.push(UiRuntimeTemplateNode {
                     name: runtime_name(template_name, object.name()),
                     kind: object.kind(),
@@ -168,6 +180,11 @@ impl UiRuntimeTemplatePlan {
                         .collect(),
                     dimensions,
                     shown,
+                    font_assigned,
+                    font_object_name,
+                    justify_h,
+                    justify_v,
+                    texture_coords,
                     load_target,
                 });
             }
@@ -258,6 +275,16 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("width", node.dimensions.0)?;
                 record.raw_set("height", node.dimensions.1)?;
                 record.raw_set("shown", node.shown)?;
+                record.raw_set("font_assigned", node.font_assigned)?;
+                if let Some(name) = &node.font_object_name {
+                    record.raw_set("font_object_name", name.as_str())?;
+                }
+                record.raw_set("justify_h", node.justify_h.as_str())?;
+                record.raw_set("justify_v", node.justify_v.as_str())?;
+                record.raw_set(
+                    "texture_coords",
+                    lua.create_sequence_from(node.texture_coords)?,
+                )?;
                 if let Some(target) = node.load_target() {
                     match target {
                         UiScriptTarget::Compiled(index) => {
@@ -275,6 +302,101 @@ impl UiRuntimeTemplatePlan {
         }
         lua.set_named_registry_value(TEMPLATE_REGISTRY, templates)
     }
+}
+
+fn initial_font(
+    node: &crate::UiObjectNode<'_>,
+    fonts: &FontCatalog,
+) -> (bool, Option<String>, String, String) {
+    if node.kind() != UiObjectKind::FontString {
+        return (false, None, "CENTER".to_owned(), "MIDDLE".to_owned());
+    }
+    let mut assigned = false;
+    let mut object_name = None;
+    let mut justify_h = "CENTER".to_owned();
+    let mut justify_v = "MIDDLE".to_owned();
+    for layer in node.layers() {
+        if let Some(inherits) = attribute(layer.element(), "inherits") {
+            for name in inherits.split(',').map(str::trim) {
+                if let Some(definition) = fonts.definition(name) {
+                    assigned = true;
+                    object_name = Some(name.to_owned());
+                    apply_justification(definition, &mut justify_h, &mut justify_v);
+                }
+            }
+        }
+        if let Some(font) = attribute(layer.element(), "font") {
+            assigned = !font.is_empty();
+            let definition = fonts.definition(font);
+            object_name = definition.map(|definition| definition.name().to_owned());
+            if let Some(definition) = definition {
+                apply_justification(definition, &mut justify_h, &mut justify_v);
+            }
+        }
+        if let Some(value) = attribute(layer.element(), "justifyH") {
+            justify_h = value.to_ascii_uppercase();
+        }
+        if let Some(value) = attribute(layer.element(), "justifyV") {
+            justify_v = value.to_ascii_uppercase();
+        }
+    }
+    (assigned, object_name, justify_h, justify_v)
+}
+
+fn apply_justification(
+    definition: &crate::FontDefinition,
+    justify_h: &mut String,
+    justify_v: &mut String,
+) {
+    if let Some(value) = definition.horizontal_justification() {
+        *justify_h = match value {
+            HorizontalJustification::Left => "LEFT",
+            HorizontalJustification::Center => "CENTER",
+            HorizontalJustification::Right => "RIGHT",
+        }
+        .to_owned();
+    }
+    if let Some(value) = definition.vertical_justification() {
+        *justify_v = match value {
+            VerticalJustification::Top => "TOP",
+            VerticalJustification::Middle => "MIDDLE",
+            VerticalJustification::Bottom => "BOTTOM",
+        }
+        .to_owned();
+    }
+}
+
+fn initial_texture_coords(
+    tree: &UiObjectTree<'_>,
+    textures: &UiTexturePlan,
+    index: usize,
+) -> Result<[f64; 8], &'static str> {
+    let mut coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+    if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
+        return Ok(coords);
+    }
+    let texture = textures
+        .node(index)
+        .ok_or("texture is outside the template texture plan")?;
+    for layer in textures.layers_for(texture) {
+        let Some(value) = layer.tex_coords() else {
+            continue;
+        };
+        let left = value.left().map(f64::from).unwrap_or(coords[0]);
+        let right = value.right().map(f64::from).unwrap_or(coords[4]);
+        let top = value.top().map(f64::from).unwrap_or(coords[1]);
+        let bottom = value.bottom().map(f64::from).unwrap_or(coords[3]);
+        coords = [left, top, left, bottom, right, top, right, bottom];
+    }
+    Ok(coords)
+}
+
+fn attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes()
+        .iter()
+        .find(|attribute| attribute.name() == name)
+        .map(|attribute| attribute.value())
 }
 
 fn object_kind_name(kind: UiObjectKind) -> &'static str {

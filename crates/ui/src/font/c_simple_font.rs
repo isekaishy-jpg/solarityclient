@@ -97,6 +97,7 @@ impl FontShadow {
 /// One globally named font after ordered inheritance has been applied.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontDefinition {
+    action_index: usize,
     name: String,
     inherited_from: Vec<String>,
     face: Option<AssetPath>,
@@ -112,6 +113,12 @@ pub struct FontDefinition {
 }
 
 impl FontDefinition {
+    /// Returns the expanded XML action that constructs this global font.
+    #[must_use]
+    pub const fn action_index(&self) -> usize {
+        self.action_index
+    }
+
     /// Returns the global font-object name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -184,8 +191,9 @@ impl FontDefinition {
         self.virtual_object
     }
 
-    fn empty(name: String) -> Self {
+    fn empty(action_index: usize, name: String) -> Self {
         Self {
+            action_index,
             name,
             inherited_from: Vec::new(),
             face: None,
@@ -234,7 +242,7 @@ impl FontCatalog {
             definitions: Vec::new(),
             by_name: HashMap::new(),
         };
-        for action in bundle.actions() {
+        for (action_index, action) in bundle.actions().iter().enumerate() {
             let UiLoadAction::XmlElement {
                 resource_index,
                 element_index,
@@ -260,7 +268,7 @@ impl FontCatalog {
                     "XML action element index is outside the arena",
                 ));
             };
-            catalog.read_element(resource.path(), document, element)?;
+            catalog.read_element(action_index, resource.path(), document, element)?;
         }
         Ok(catalog)
     }
@@ -279,8 +287,17 @@ impl FontCatalog {
             .and_then(|index| self.definitions.get(*index))
     }
 
+    /// Finds the font constructed by one expanded XML action.
+    #[must_use]
+    pub fn definition_for_action(&self, action_index: usize) -> Option<&FontDefinition> {
+        self.definitions
+            .iter()
+            .find(|definition| definition.action_index == action_index)
+    }
+
     fn read_element(
         &mut self,
+        action_index: usize,
         path: &AssetPath,
         document: &XmlDocument,
         element: &XmlElement,
@@ -288,7 +305,7 @@ impl FontCatalog {
         if element.name() != "Font" {
             return Ok(());
         }
-        let definition = self.parse_definition(path, document, element)?;
+        let definition = self.parse_definition(action_index, path, document, element)?;
         if self.by_name.contains_key(definition.name()) {
             return Err(definition_error(
                 path,
@@ -303,6 +320,7 @@ impl FontCatalog {
 
     fn parse_definition(
         &self,
+        action_index: usize,
         path: &AssetPath,
         document: &XmlDocument,
         element: &XmlElement,
@@ -310,7 +328,7 @@ impl FontCatalog {
         let name = attribute(element, "name")
             .ok_or_else(|| definition_error(path, "root-level Font has no name"))?
             .to_owned();
-        let mut definition = FontDefinition::empty(name.clone());
+        let mut definition = FontDefinition::empty(action_index, name.clone());
 
         if let Some(parents) = attribute(element, "inherits") {
             for parent_name in parents.split(',').map(str::trim) {

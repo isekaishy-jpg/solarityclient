@@ -6,7 +6,8 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
     UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptTarget,
+    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
+    UiTexturePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -175,6 +176,7 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
   assert(GetScreenHeight() == 768)
   assert(abs(GetScreenWidth() - 1365.3333333333) &lt; 0.001)
+  assert(GetNumCharacters() == 0)
   assert(format("%s:%d", "screen", 7) == "screen:7")
   local values = { retained = true }
   assert(wipe(values) == values and next(values) == nil)
@@ -225,8 +227,11 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
     let environment = UiScriptEnvironment::new(1920, 1080)?;
-    let mut runtime = UiScriptRuntime::new(&bundle, &frames, &regions, &templates, environment)?;
+    let runtime_plan =
+        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     assert!(
         bundle
@@ -270,6 +275,103 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     Ok(())
 }
 
+/// Global font objects appear at their XML action and remain typed button state.
+#[test]
+fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Fonts.xml\nButton.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Fonts.xml",
+            bytes: br#"<Ui><Font name="GlueFontTest" font="Fonts\FRIZQT__.TTF" justifyH="RIGHT" justifyV="BOTTOM">
+  <FontHeight><AbsValue val="12"/></FontHeight>
+</Font></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Button.xml",
+            bytes: br#"<Ui>
+<FontString name="FontLabel" inherits="GlueFontTest"/>
+<Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
+<Button name="FontButton"><Scripts><OnLoad>
+  FontLabel:SetText("Label")
+  assert(FontLabel:GetText() == "Label")
+  assert(FontLabel:GetFontObject() == GlueFontTest)
+  assert(FontLabel:GetJustifyH() == "RIGHT")
+  assert(FontLabel:GetJustifyV() == "BOTTOM")
+  FontLabel:SetJustifyH("left")
+  FontLabel:SetJustifyV("middle")
+  assert(FontLabel:GetJustifyH() == "LEFT")
+  assert(FontLabel:GetJustifyV() == "MIDDLE")
+  local ulX, ulY, llX, llY, urX, urY, lrX, lrY = CoordinateTexture:GetTexCoord()
+  assert(ulX == 0.25 and ulY == 0.5 and llX == 0.25 and llY == 0.875)
+  assert(urX == 0.75 and urY == 0.5 and lrX == 0.75 and lrY == 0.875)
+  CoordinateTexture:SetTexCoord(0.125, 0.625, 0, 1)
+  ulX, ulY, llX, llY, urX, urY, lrX, lrY = CoordinateTexture:GetTexCoord()
+  assert(ulX == 0.125 and ulY == 0 and llX == 0.125 and llY == 1)
+  assert(urX == 0.625 and urY == 0 and lrX == 0.625 and lrY == 1)
+  assert(GlueFontTest:GetName() == "GlueFontTest")
+  assert(GlueFontTest:GetObjectType() == "Font")
+  assert(GlueFontTest:IsObjectType("Font"))
+  self:SetNormalFontObject(GlueFontTest)
+  self:SetDisabledFontObject("GlueFontTest")
+  self:SetHighlightFontObject(GlueFontTest)
+  assert(self:GetNormalFontObject() == GlueFontTest)
+  assert(self:GetDisabledFontObject() == GlueFontTest)
+  assert(self:GetHighlightFontObject() == GlueFontTest)
+  self:SetText("Player")
+  assert(self:GetText() == "Player")
+  self:SetFormattedText("%s %d", "Player", 2)
+  assert(self:GetText() == "Player 2")
+  self:SetText("")
+  assert(self:GetText() == nil)
+  self:LockHighlight()
+  self:UnlockHighlight()
+  local bare = CreateFrame("FontString", "BareLabel", self)
+  assert(bare:GetJustifyH() == "CENTER" and bare:GetJustifyV() == "MIDDLE")
+  assert(not pcall(function() bare:SetText("invalid") end))
+</OnLoad></Scripts></Button>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
+    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let runtime_plan =
+        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
+
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<Option<mlua::Table>>("GlueFontTest")?
+            .is_none()
+    );
+    assert!(runtime.execute_next(&bundle, &tree, &scripts)?);
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<Option<mlua::Table>>("GlueFontTest")?
+            .is_some()
+    );
+    runtime.execute_all(&bundle, &tree, &scripts)?;
+
+    assert_eq!(runtime.executed_load_handler_count(), 1);
+    Ok(())
+}
+
 /// A missing API remains an execution error at its manifest action.
 #[test]
 fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn Error>> {
@@ -293,8 +395,11 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
     let environment = UiScriptEnvironment::new(1920, 1080)?;
-    let mut runtime = UiScriptRuntime::new(&bundle, &frames, &regions, &templates, environment)?;
+    let runtime_plan =
+        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     let result = runtime.execute_next(&bundle, &tree, &scripts);
 

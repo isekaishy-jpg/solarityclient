@@ -9,8 +9,8 @@ use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Loca
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiTextureFile,
-    UiTexturePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiTextureFile, UiTexturePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -87,14 +87,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let script_plan = UiScriptPlan::from_tree(&object_tree, bundle.lua())?;
     let runtime_templates =
         UiRuntimeTemplatePlan::from_catalog(&object_catalog, &font_catalog, bundle.lua())?;
+    let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
+    let script_runtime_plan = UiScriptRuntimePlan::new(
+        &object_tree,
+        &frame_states,
+        &region_states,
+        &runtime_templates,
+        &font_catalog,
+        &texture_plan,
+    );
     if let Some(environment) = execution_environment {
-        let mut script_runtime = UiScriptRuntime::new(
-            &bundle,
-            &frame_states,
-            &region_states,
-            &runtime_templates,
-            environment,
-        )?;
+        let mut script_runtime = UiScriptRuntime::new(&bundle, &script_runtime_plan, environment)?;
         script_runtime.execute_all(&bundle, &object_tree, &script_plan)?;
         println!(
             "executed {} actions, registered {} objects, ran {} Lua chunks and {} OnLoad handlers",
@@ -104,7 +107,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             script_runtime.executed_load_handler_count()
         );
     }
-    let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
     let texture_paths = object_tree
         .nodes()
         .iter()

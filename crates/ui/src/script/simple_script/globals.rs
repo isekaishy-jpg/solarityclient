@@ -2,6 +2,8 @@
 
 use mlua::{Function, Lua, Table, Value};
 
+use crate::UiManifestKind;
+
 use super::UiScriptEnvironment;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
@@ -9,6 +11,7 @@ const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 pub(super) fn register_base_globals(
     lua: &Lua,
     environment: UiScriptEnvironment,
+    manifest_kind: UiManifestKind,
 ) -> mlua::Result<()> {
     let globals = lua.globals();
     let (screen_width, screen_height) = environment.ui_extent();
@@ -20,6 +23,13 @@ pub(super) fn register_base_globals(
         "GetScreenHeight",
         lua.create_function(move |_, ()| Ok(screen_height))?,
     )?;
+    if manifest_kind == UiManifestKind::Glue {
+        let character_count = environment.initial_character_count();
+        globals.raw_set(
+            "GetNumCharacters",
+            lua.create_function(move |_, ()| Ok(character_count))?,
+        )?;
+    }
     globals.raw_set(
         "seterrorhandler",
         lua.create_function(|lua, handler: Value| {
