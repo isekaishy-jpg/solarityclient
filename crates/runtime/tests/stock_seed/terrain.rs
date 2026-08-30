@@ -212,6 +212,12 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         )?
         .ok_or("camera ray missed resident WMO")?;
     assert!((hit - 0.5).abs() < 0.001);
+    let liquid = terrain
+        .sample_world_model_liquid(-1.0, -1.0, Some(1.0))?
+        .ok_or("resident WMO liquid was not sampled")?;
+    assert!((liquid.height() - 2.0).abs() < 0.001);
+    assert_eq!(liquid.liquid_type(), 14);
+    assert!(liquid.is_fishable());
 
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);
@@ -378,12 +384,13 @@ fn root_wmo_fixture() -> Vec<u8> {
     let mut header = vec![0_u8; 64];
     set_u32(&mut header, 4, 1);
     set_u32(&mut header, 32, 42);
-    set_vec3(&mut header, 36, [-1.0, -1.0, -1.0]);
-    set_vec3(&mut header, 48, [1.0, 1.0, 1.0]);
+    set_vec3(&mut header, 36, [-5.0, -5.0, -1.0]);
+    set_vec3(&mut header, 48, [5.0, 5.0, 3.0]);
+    set_u16(&mut header, 60, 0x4);
     push_wmo_chunk(&mut bytes, *b"DHOM", &header);
     let mut group = Vec::new();
     group.extend_from_slice(&0_u32.to_le_bytes());
-    for value in [-1.0_f32, -1.0, -1.0, 1.0, 1.0, 1.0] {
+    for value in [-5.0_f32, -5.0, -1.0, 5.0, 5.0, 3.0] {
         group.extend_from_slice(&value.to_le_bytes());
     }
     group.extend_from_slice(&(-1_i32).to_le_bytes());
@@ -422,10 +429,22 @@ fn group_wmo_fixture() -> Vec<u8> {
     node.extend_from_slice(&0.0_f32.to_le_bytes());
     push_wmo_chunk(&mut nested, *b"NBOM", &node);
     push_wmo_chunk(&mut nested, *b"RBOM", &0_u16.to_le_bytes());
+    let mut liquid = vec![0_u8; 30];
+    set_u32(&mut liquid, 0, 2);
+    set_u32(&mut liquid, 4, 2);
+    set_u32(&mut liquid, 8, 1);
+    set_u32(&mut liquid, 12, 1);
+    for _ in 0..4 {
+        liquid.extend_from_slice(&[0, 0, 0, 0]);
+        liquid.extend_from_slice(&2.0_f32.to_le_bytes());
+    }
+    liquid.push(0x41);
+    push_wmo_chunk(&mut nested, *b"QILM", &liquid);
 
     let mut group = vec![0_u8; 68];
-    set_vec3(&mut group, 12, [-1.0, -1.0, -1.0]);
-    set_vec3(&mut group, 24, [1.0, 1.0, 1.0]);
+    set_vec3(&mut group, 12, [-5.0, -5.0, -1.0]);
+    set_vec3(&mut group, 24, [5.0, 5.0, 3.0]);
+    set_u32(&mut group, 52, 2);
     group.extend_from_slice(&nested);
     let mut bytes = Vec::new();
     push_wmo_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());

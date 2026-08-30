@@ -7,7 +7,10 @@ use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
 };
-use solarity_systems::{PlacedWorldModelCollision, WorldModelCollisionScene};
+use solarity_systems::{
+    PlacedWorldModelCollision, PlacedWorldModelLiquid, WorldModelCollisionScene,
+    WorldModelLiquidScene,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -64,6 +67,46 @@ fn placed_world_model_uses_stock_camera_collision_faces() -> Result<(), Box<dyn 
         1.0,
     )?);
     assert!(filtered.trace_camera(start, end, 1.0)?.is_none());
+    Ok(())
+}
+
+/// Placed MLIQ tiles use the MODF transform and authored tile behavior.
+#[test]
+fn placed_world_model_samples_stock_liquid_tiles() -> Result<(), Box<dyn Error>> {
+    let mut root = root_fixture();
+    set_u16(&mut root, 80, 0x4);
+    let group = group_liquid_fixture();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "World\\Wmo\\Liquid.wmo",
+            bytes: &root,
+        },
+        FixtureFile {
+            path: "World\\Wmo\\Liquid_000.wmo",
+            bytes: &group,
+        },
+    ])?;
+    let data_root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
+    let model = Arc::new(DecodedWorldModel::load(
+        &mut store,
+        &AssetPath::new("World\\Wmo\\Liquid.wmo")?,
+    )?);
+    let mut scene = WorldModelLiquidScene::new();
+    scene.add(PlacedWorldModelLiquid::prepare(
+        model,
+        Vec3::new(10.0, 20.0, 30.0),
+        Vec3::new(0.0, -180.0, 0.0),
+        1.0,
+    )?);
+
+    let sample = scene
+        .sample(11.0, 21.0, Some(31.0))?
+        .ok_or("placed MLIQ surface was not sampled")?;
+    assert!((sample.height() - 32.0).abs() < 0.001);
+    assert_eq!(sample.liquid_type(), 14);
+    assert!(sample.is_fishable());
+    assert!(scene.sample(20.0, 20.0, None)?.is_none());
     Ok(())
 }
 
@@ -126,6 +169,29 @@ fn group_fixture(polygon_flags: u8) -> Vec<u8> {
     bytes
 }
 
+fn group_liquid_fixture() -> Vec<u8> {
+    let mut bytes = group_fixture(0x08);
+    let mut liquid = vec![0_u8; 30];
+    set_u32(&mut liquid, 0, 2);
+    set_u32(&mut liquid, 4, 2);
+    set_u32(&mut liquid, 8, 1);
+    set_u32(&mut liquid, 12, 1);
+    set_vec3(&mut liquid, 16, [0.0, 0.0, 0.0]);
+    for _ in 0..4 {
+        liquid.extend_from_slice(&[0, 0, 0, 0]);
+        liquid.extend_from_slice(&2.0_f32.to_le_bytes());
+    }
+    liquid.push(0x41);
+    let mut chunk = Vec::new();
+    push_chunk(&mut chunk, *b"QILM", &liquid);
+    let old_size = u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    bytes.extend_from_slice(&chunk);
+    set_u32(&mut bytes, 16, old_size + chunk.len() as u32);
+    // MVER occupies 12 bytes and the MOGP header occupies another 8.
+    set_u32(&mut bytes, 20 + 52, 2);
+    bytes
+}
+
 fn push_chunk(bytes: &mut Vec<u8>, magic: [u8; 4], payload: &[u8]) {
     bytes.extend_from_slice(&magic);
     bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -134,6 +200,10 @@ fn push_chunk(bytes: &mut Vec<u8>, magic: [u8; 4], payload: &[u8]) {
 
 fn set_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
 fn set_vec3(bytes: &mut [u8], offset: usize, value: [f32; 3]) {

@@ -11,9 +11,10 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    PlacedWorldModelCollision, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
-    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
-    WorldModelCollisionScene,
+    PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit,
+    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
+    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
+    WorldModelLiquidSample, WorldModelLiquidScene,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,6 +41,9 @@ pub enum RuntimeTerrainError {
     /// A referenced WMO could not enter strict placed collision geometry.
     #[error(transparent)]
     WorldModelCollision(#[from] WorldModelCollisionError),
+    /// A referenced WMO could not enter strict placed liquid geometry.
+    #[error(transparent)]
+    WorldModelLiquid(#[from] WorldModelLiquidError),
     /// One authored placement identity disagrees with another MODF record.
     #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
     ConflictingWorldModelPlacement {
@@ -325,6 +329,29 @@ impl RuntimeTerrainCoordinator {
         collision.trace_camera(start, end, maximum_fraction)
     }
 
+    /// Samples the preferred resident placed-WMO liquid surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldModelLiquidError`] when point or reference input is not
+    /// finite.
+    pub fn sample_world_model_liquid(
+        &self,
+        world_x: f32,
+        world_y: f32,
+        reference_height: Option<f32>,
+    ) -> Result<Option<WorldModelLiquidSample>, WorldModelLiquidError> {
+        let Some(liquid) = self
+            .active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.world_model_liquid)
+        else {
+            return Ok(None);
+        };
+        liquid.sample(world_x, world_y, reference_height)
+    }
+
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
@@ -351,6 +378,7 @@ struct ResidentTerrainTile {
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
     world_model_collision: WorldModelCollisionScene,
+    world_model_liquid: WorldModelLiquidScene,
 }
 
 impl ResidentTerrainTile {
@@ -370,8 +398,8 @@ impl ResidentTerrainTile {
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
-        let world_model_collision =
-            prepare_world_model_collision(&decoded, world_model_cache, store)?;
+        let (world_model_collision, world_model_liquid) =
+            prepare_world_models(&decoded, world_model_cache, store)?;
         Ok(Self {
             decoded,
             textures,
@@ -379,6 +407,7 @@ impl ResidentTerrainTile {
             collision,
             liquid,
             world_model_collision,
+            world_model_liquid,
         })
     }
 
@@ -387,11 +416,11 @@ impl ResidentTerrainTile {
     }
 }
 
-fn prepare_world_model_collision(
+fn prepare_world_models(
     tile: &DecodedTerrainTile,
     cache: &mut WmoModelCache,
     store: &mut AssetStore,
-) -> Result<WorldModelCollisionScene, RuntimeTerrainError> {
+) -> Result<(WorldModelCollisionScene, WorldModelLiquidScene), RuntimeTerrainError> {
     let mut referenced = vec![false; tile.world_models().len()];
     for reference in tile
         .chunks()
@@ -403,6 +432,7 @@ fn prepare_world_model_collision(
     }
 
     let mut scene = WorldModelCollisionScene::new();
+    let mut liquids = WorldModelLiquidScene::new();
     let mut placements = HashMap::<u32, usize>::new();
     for (index, placement) in tile.world_models().iter().enumerate() {
         if !referenced[index] {
@@ -418,13 +448,19 @@ fn prepare_world_model_collision(
         }
         let model = cache.load(store, placement.path())?;
         scene.add(PlacedWorldModelCollision::prepare(
+            Arc::clone(&model),
+            glam::Vec3::from_array(placement.position()),
+            glam::Vec3::from_array(placement.rotation()),
+            1.0,
+        )?);
+        liquids.add(PlacedWorldModelLiquid::prepare(
             model,
             glam::Vec3::from_array(placement.position()),
             glam::Vec3::from_array(placement.rotation()),
             1.0,
         )?);
     }
-    Ok(scene)
+    Ok((scene, liquids))
 }
 
 fn same_world_model_placement(

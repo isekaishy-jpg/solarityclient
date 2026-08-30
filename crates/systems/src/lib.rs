@@ -49,9 +49,10 @@ pub use camera::{
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{
-    PlacedWorldModelCollision, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
-    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
-    WorldModelCollisionScene,
+    PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit,
+    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
+    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
+    WorldModelLiquidSample, WorldModelLiquidScene,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,

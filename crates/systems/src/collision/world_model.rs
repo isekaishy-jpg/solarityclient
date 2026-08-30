@@ -53,20 +53,7 @@ impl PlacedWorldModelCollision {
         {
             return Err(WorldModelCollisionError::InvalidPlacement);
         }
-        let radians = Vec3::new(
-            rotation_degrees.x.to_radians(),
-            rotation_degrees.y.to_radians(),
-            rotation_degrees.z.to_radians(),
-        );
-        let transform = Mat4::from_translation(position)
-            * Mat4::from_rotation_z(radians.y + std::f32::consts::PI)
-            * Mat4::from_rotation_y(radians.x)
-            * Mat4::from_rotation_x(radians.z)
-            * Mat4::from_scale(Vec3::splat(scale));
-        let determinant = transform.determinant();
-        if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
-            return Err(WorldModelCollisionError::InvalidPlacement);
-        }
+        let transform = placement_transform(position, rotation_degrees, scale)?;
         let inverse_transform = transform.inverse();
         if !inverse_transform.is_finite() {
             return Err(WorldModelCollisionError::InvalidPlacement);
@@ -289,7 +276,33 @@ fn triangle_fraction(
     Some(fraction.clamp(0.0, maximum_fraction))
 }
 
-fn transformed_bounds(
+pub(super) fn placement_transform(
+    position: Vec3,
+    rotation_degrees: Vec3,
+    scale: f32,
+) -> Result<Mat4, WorldModelCollisionError> {
+    if !position.is_finite() || !rotation_degrees.is_finite() || !scale.is_finite() || scale <= 0.0
+    {
+        return Err(WorldModelCollisionError::InvalidPlacement);
+    }
+    let radians = Vec3::new(
+        rotation_degrees.x.to_radians(),
+        rotation_degrees.y.to_radians(),
+        rotation_degrees.z.to_radians(),
+    );
+    let transform = Mat4::from_translation(position)
+        * Mat4::from_rotation_z(radians.y + std::f32::consts::PI)
+        * Mat4::from_rotation_y(radians.x)
+        * Mat4::from_rotation_x(radians.z)
+        * Mat4::from_scale(Vec3::splat(scale));
+    let determinant = transform.determinant();
+    if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+        return Err(WorldModelCollisionError::InvalidPlacement);
+    }
+    Ok(transform)
+}
+
+pub(super) fn transformed_bounds(
     bounds: [[f32; 3]; 2],
     transform: Mat4,
 ) -> Result<[Vec3; 2], WorldModelCollisionError> {
