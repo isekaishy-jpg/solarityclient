@@ -86,6 +86,11 @@ impl ClientServices {
         self.platform.poll_event()
     }
 
+    /// Blocks without spinning until one translated client event is admitted.
+    pub(crate) fn wait_platform_event(&mut self) -> PlatformEvent {
+        self.platform.wait_event()
+    }
+
     /// Returns startup facts that prove the configured window exists.
     pub(crate) fn window_facts(&self) -> (u32, (u32, u32), (u32, u32)) {
         (

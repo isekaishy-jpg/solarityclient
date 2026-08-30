@@ -7,6 +7,8 @@
 mod client;
 mod client_services;
 mod gameplay_session;
+mod run;
 
 pub use client::{ApplicationError, ClientApplication, StartupReport};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};
+pub use run::{ApplicationExitReason, ApplicationRunReport};

@@ -6,8 +6,8 @@ use std::ffi::OsString;
 use sdl3::event::{Event as SdlEvent, WindowEvent as SdlWindowEvent};
 use solarity_rendering::VulkanError;
 use solarity_runtime::{
-    ApplicationError, ClientApplication, ConfigurationError, PlatformEvent, RuntimeConfiguration,
-    WindowEvent,
+    ApplicationError, ApplicationExitReason, ClientApplication, ConfigurationError, PlatformEvent,
+    RuntimeConfiguration, WindowEvent,
 };
 
 use crate::support::ClientFixture;
@@ -58,6 +58,31 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
         .then_some(event)
     });
     assert!(translated.is_some());
+
+    // Another SDL window cannot terminate the primary client lifetime.
+    sdl.event()?.push_event(SdlEvent::Window {
+        timestamp: 2,
+        window_id: report.window_id().saturating_add(1),
+        win_event: SdlWindowEvent::CloseRequested,
+    })?;
+    sdl.event()?.push_event(SdlEvent::Window {
+        timestamp: 3,
+        window_id: report.window_id(),
+        win_event: SdlWindowEvent::CloseRequested,
+    })?;
+    let run_report = application.run();
+    assert_eq!(
+        run_report.exit_reason(),
+        ApplicationExitReason::PrimaryWindowCloseRequested
+    );
+    assert!(run_report.admitted_event_count() >= 2);
+
+    // The process-wide route ends a subsequent loop without window identity.
+    sdl.event()?.push_event(SdlEvent::Quit { timestamp: 4 })?;
+    assert_eq!(
+        application.run().exit_reason(),
+        ApplicationExitReason::QuitRequested
+    );
     drop(sdl);
     application.shutdown()?;
 

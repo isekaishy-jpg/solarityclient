@@ -17,7 +17,8 @@ mod telemetry;
 mod time;
 
 pub use application::{
-    ApplicationError, ClientApplication, GameplaySession, GameplayUpdateError, StartupReport,
+    ApplicationError, ApplicationExitReason, ApplicationRunReport, ClientApplication,
+    GameplaySession, GameplayUpdateError, StartupReport,
 };
 pub use configuration::{
     ConfigurationError, RuntimeConfiguration, WindowConfiguration, WindowMode,

@@ -1,10 +1,10 @@
 # Runtime configuration and composition
 
 The runtime crate is the only workspace boundary allowed to construct concrete
-cross-crate services. The initial executable mounts client archives, creates
-the bounded CPU executor, creates the Tokio network runtime, reports the
-started foundation, and shuts both executors down in ownership order. SDL will
-extend this lifecycle with the interactive loop in the next unit.
+cross-crate services. The executable mounts client archives, creates the SDL
+window, Vulkan renderer, bounded CPU executor, and Tokio network runtime, then
+remains in the main-thread SDL event loop until process or primary-window
+termination. It finally drains owned services in explicit ownership order.
 
 ## Stock evidence
 
@@ -55,9 +55,9 @@ blocking asset work on its workers.
 
 ## Current executable behavior
 
-Before SDL exists, `solarity-runtime` is an honest foundation bootstrap: it
-starts real asset/CPU/network owners, emits a structured startup report, and
-drains them. It does not simulate an event loop or claim the client is
-interactive. The generated integration fixture proves startup with all ten
-required consolidated archives, while the local uncommitted client validation
-has exercised the executable against the 16-archive enUS installation.
+`solarity-runtime` presents the stock missing-icon BLP as its initialized
+bootstrap frame, reveals the window, and blocks on SDL rather than spinning or
+exiting immediately. Global quit, host termination, and a close request for the
+primary window end the loop; a close event for another window does not. The
+generated integration fixture proves startup, a real queued SDL termination,
+and shutdown with all ten required consolidated archives.

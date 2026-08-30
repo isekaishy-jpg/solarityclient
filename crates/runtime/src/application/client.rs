@@ -7,6 +7,7 @@ use solarity_cpu::CpuError;
 use solarity_rendering::{VulkanError, VulkanReport};
 
 use crate::application::client_services::ClientServices;
+use crate::application::run::{self, ApplicationRunReport};
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformError, PlatformEvent};
 
@@ -124,6 +125,24 @@ impl ClientApplication {
     #[must_use]
     pub fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
         self.services.poll_platform_event()
+    }
+
+    /// Keeps the process alive on the main thread until stock termination.
+    ///
+    /// SDL waiting is blocking rather than a polling spin. The loop admits
+    /// translated input and lifecycle events in source order; subsystem event
+    /// routing can extend the non-termination arm without changing ownership.
+    #[must_use]
+    pub fn run(&mut self) -> ApplicationRunReport {
+        let primary_window = self.report.window_id;
+        let mut admitted_event_count = 0_u64;
+        loop {
+            let event = self.services.wait_platform_event();
+            admitted_event_count = admitted_event_count.saturating_add(1);
+            if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
+                return ApplicationRunReport::new(exit_reason, admitted_event_count);
+            }
+        }
     }
 
     /// Returns the physical adapter, queue, and swapchain selected at startup.

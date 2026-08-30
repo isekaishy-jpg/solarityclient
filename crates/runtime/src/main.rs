@@ -46,6 +46,13 @@ fn main() -> ExitCode {
         texture_height = vulkan.presented_texture_extent().map(|extent| extent.1),
         "client foundation started"
     );
+    let mut application = application;
+    let run_report = application.run();
+    info!(
+        exit_reason = ?run_report.exit_reason(),
+        admitted_events = run_report.admitted_event_count(),
+        "client event loop stopped"
+    );
     if let Err(failure) = application.shutdown() {
         error!(error = %failure, "client foundation shutdown failed");
         return ExitCode::FAILURE;
