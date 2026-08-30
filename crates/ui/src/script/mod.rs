@@ -4,5 +4,10 @@
 //! this boundary. `mlua` is configured for stock Lua 5.1.5 semantics; API
 //! permission checks are behavior to reproduce, not bypass.
 
+mod handlers;
 mod script_events;
 mod simple_script;
+mod status;
+
+pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
+pub use status::UiScriptError;

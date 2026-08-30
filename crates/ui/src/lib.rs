@@ -29,6 +29,9 @@ pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
     UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionState, UiRegionStatePlan,
 };
+pub use script::{
+    UiScriptBinding, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget,
+};
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
     UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan,

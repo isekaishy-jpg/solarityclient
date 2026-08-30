@@ -58,6 +58,33 @@ The bundle retains both the source files and its Lua state. This gives the next
 stage a single owner for API registration and ordered execution without reading
 the archives a second time.
 
+## Typed XML callbacks
+
+Object construction converts each `<Scripts>` child into a callback slot from
+the concrete build-12340 widget table. Common frame callbacks, button clicks,
+edit-box input, scrolling, models, sliders, status bars, hyperlinks, movies,
+color selection, and tooltip notifications each retain their exact stock
+parameter names. A callback belonging to another widget type is an error; an
+unknown `On*` element never becomes a permissive generic hook.
+
+Every inline body is compiled as `return function(...) ... end` with its real
+callback signature. This catches context errors that compiling the text as a
+top-level Lua chunk cannot detect, such as using varargs in `OnLoad`; `OnEvent`
+deliberately remains variadic. A `function="Name"` declaration is retained for
+global lookup when ordered execution reaches the object. An empty handler
+clears the inherited slot, matching the stock loader's explicit registry
+unreference behavior.
+
+The recovered client stores the compiled function on the XML handler node and
+copies a registry reference into every instance. Solarity applies the same
+ownership more compactly: one Lua registry function is compiled per unique XML
+element, while flat per-object bindings reference it by `u32` index. This
+avoids recompiling callback bodies across thousands of template instances
+without sharing mutable callback slots. Real-client validation processes 1,443
+Glue declarations into 1,363 active bindings and 482 unique inline functions;
+FrameXML processes 14,506 declarations into 13,590 bindings and 1,883 unique
+functions.
+
 ## Font boundary
 
 Root-level `<Font>` objects are constructed in XML load order. Their face,
