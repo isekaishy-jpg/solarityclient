@@ -108,6 +108,19 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.bounds().minimum(), glam::Vec3::new(-1.0, -2.0, -3.0));
     assert_eq!(model.bounds().maximum(), glam::Vec3::new(4.0, 5.0, 6.0));
     assert_eq!(model.bounds().sphere_radius(), 7.25);
+    let collision = model
+        .collision_mesh()
+        .ok_or("fixture collision mesh is absent")?;
+    assert_eq!(collision.indices(), &[0, 1, 2]);
+    assert_eq!(
+        collision.vertices(),
+        &[glam::Vec3::ZERO, glam::Vec3::X * 2.0, glam::Vec3::Y * 2.0]
+    );
+    assert_eq!(
+        collision.bounds().minimum(),
+        glam::Vec3::new(0.0, 0.0, -0.1)
+    );
+    assert_eq!(collision.bounds().maximum(), glam::Vec3::new(2.0, 2.0, 0.1));
     let breath = model
         .attachment(17)
         .ok_or("fixture Breath attachment is absent")?;
@@ -448,6 +461,23 @@ fn m2_bytes_inner(
         model.attachments = vec![breath];
         model.raw_data.attachment_lookup_table = vec![u16::MAX; 18];
         model.raw_data.attachment_lookup_table[17] = 0;
+        model.header.collision_box_min = [0.0, 0.0, -0.1];
+        model.header.collision_box_max = [2.0, 2.0, 0.1];
+        model.header.collision_sphere_radius = 2.0_f32.sqrt();
+        for index in [0_u16, 1, 2] {
+            model
+                .raw_data
+                .bounding_triangles
+                .extend_from_slice(&index.to_le_bytes());
+        }
+        for vertex in [[0.0_f32, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
+            for component in vertex {
+                model
+                    .raw_data
+                    .bounding_vertices
+                    .extend_from_slice(&component.to_le_bytes());
+            }
+        }
     }
     if !combiners.is_empty() {
         model.header.flags |= M2ModelFlags::USE_TEXTURE_COMBINERS;

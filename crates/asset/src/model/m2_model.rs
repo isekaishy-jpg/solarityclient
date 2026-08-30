@@ -143,6 +143,12 @@ impl DecodedM2Model {
         &self.blob.vertices
     }
 
+    /// Returns the dedicated unanimated collision mesh when authored.
+    #[must_use]
+    pub const fn collision_mesh(&self) -> Option<&crate::M2CollisionMesh> {
+        self.blob.collision.as_ref()
+    }
+
     /// Returns every external view/LOD profile in header order.
     #[must_use]
     pub fn skins(&self) -> &[M2SkinProfile] {
