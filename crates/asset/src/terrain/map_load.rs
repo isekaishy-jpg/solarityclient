@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 
+use wow_adt::{AdtVersion, ParsedAdt, RootAdt, parse_adt};
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtReader};
 
@@ -9,8 +10,14 @@ use crate::archive::{AssetError, AssetPath};
 use crate::database::MapDefinition;
 use crate::file_stack::AssetStore;
 
-use super::map::TerrainMap;
+use super::map::{DecodedTerrainTile, TerrainMap};
 use super::map_area::{TerrainTile, TerrainTileIndex};
+use super::map_chunk::{
+    TERRAIN_CHUNK_VERTEX_COUNT, TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement,
+    TerrainSoundEmitter, TerrainTextureLayer, TerrainWorldModelPlacement,
+};
+
+const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
 
 impl TerrainMap {
     /// Loads and validates the selected map's exact WDT manifest.
@@ -52,6 +59,483 @@ impl TerrainMap {
             tiles,
         )
     }
+
+    /// Decodes one ADT declared by this map's WDT.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError`] when the tile is absent, resolves incorrectly, is
+    /// not a WotLK root ADT, or violates chunk, material, or placement bounds.
+    pub fn load_tile(
+        &self,
+        store: &mut AssetStore,
+        index: TerrainTileIndex,
+    ) -> Result<DecodedTerrainTile, AssetError> {
+        let path = self.adt_path(index)?;
+        if !self.tile(index).exists() {
+            return Err(terrain_message(
+                &path,
+                "WDT does not declare an ADT at this tile",
+            ));
+        }
+        let read = store.read(&path)?;
+        let parsed = parse_adt(&mut Cursor::new(read.bytes()))
+            .map_err(|error| terrain_error(&path, error))?;
+        let ParsedAdt::Root(root) = parsed else {
+            return Err(terrain_message(
+                &path,
+                "build-12340 terrain requires a monolithic root ADT",
+            ));
+        };
+        decode_adt(index, read.source().clone(), *root, &path)
+    }
+}
+
+fn decode_adt(
+    index: TerrainTileIndex,
+    source: crate::archive::ArchiveDescriptor,
+    root: RootAdt,
+    path: &AssetPath,
+) -> Result<DecodedTerrainTile, AssetError> {
+    if root.version != AdtVersion::WotLK {
+        return Err(terrain_message(
+            path,
+            format!("expected WotLK ADT; decoder identified {:?}", root.version),
+        ));
+    }
+    validate_string_offsets(path, "MMID", &root.models, &root.model_indices)?;
+    validate_string_offsets(path, "MWID", &root.wmos, &root.wmo_indices)?;
+    let textures = root
+        .textures
+        .iter()
+        .map(|texture| terrain_asset_path(path, "terrain texture", texture))
+        .collect::<Result<Vec<_>, _>>()?;
+    let doodads = decode_doodads(path, &root)?;
+    let world_models = decode_world_models(path, &root)?;
+    let chunks = decode_chunks(
+        path,
+        root.mcnk_chunks,
+        textures.len(),
+        doodads.len(),
+        world_models.len(),
+    )?;
+    Ok(DecodedTerrainTile::new(
+        index,
+        source,
+        textures,
+        chunks,
+        doodads,
+        world_models,
+        root.water_data.is_some(),
+    ))
+}
+
+fn decode_chunks(
+    path: &AssetPath,
+    source: Vec<wow_adt::McnkChunk>,
+    texture_count: usize,
+    doodad_count: usize,
+    world_model_count: usize,
+) -> Result<Vec<TerrainChunk>, AssetError> {
+    if source.len() != 256 {
+        return Err(terrain_message(
+            path,
+            format!("root ADT requires 256 MCNK chunks; found {}", source.len()),
+        ));
+    }
+    let mut chunks = source
+        .into_iter()
+        .map(|chunk| decode_chunk(path, chunk, texture_count, doodad_count, world_model_count))
+        .collect::<Result<Vec<_>, _>>()?;
+    chunks.sort_unstable_by_key(|chunk| (chunk.index().y(), chunk.index().x()));
+    for (expected, chunk) in chunks.iter().enumerate() {
+        let actual = usize::from(chunk.index().y()) * 16 + usize::from(chunk.index().x());
+        if actual != expected {
+            return Err(terrain_message(
+                path,
+                format!("MCNK grid duplicates or omits row-major index {expected}"),
+            ));
+        }
+    }
+    Ok(chunks)
+}
+
+fn decode_chunk(
+    path: &AssetPath,
+    chunk: wow_adt::McnkChunk,
+    texture_count: usize,
+    doodad_count: usize,
+    world_model_count: usize,
+) -> Result<TerrainChunk, AssetError> {
+    // The file names these fields `[zpos, xpos, ypos]`: the first two are
+    // horizontal client-view axes and `ypos` is elevation. Normalize that
+    // viewer `[X, Y-up, Z]` basis to the server/ECS `[X, Y, Z-up]` basis.
+    let world_position = [
+        chunk.header.position[1],
+        chunk.header.position[0],
+        chunk.header.position[2],
+    ];
+    let chunk_x = u8::try_from(chunk.header.index_x)
+        .ok()
+        .and_then(|x| {
+            u8::try_from(chunk.header.index_y)
+                .ok()
+                .and_then(|y| TerrainChunkIndex::new(x, y))
+        })
+        .ok_or_else(|| {
+            terrain_message(
+                path,
+                format!(
+                    "MCNK index [{}, {}] is outside the 16-by-16 grid",
+                    chunk.header.index_x, chunk.header.index_y
+                ),
+            )
+        })?;
+    let heights = chunk
+        .heights
+        .ok_or_else(|| terrain_message(path, format!("MCNK {:?} omits MCVT", chunk_x)))?
+        .heights
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|values: Box<[f32]>| {
+            terrain_message(
+                path,
+                format!(
+                    "MCNK {:?} requires {TERRAIN_CHUNK_VERTEX_COUNT} heights; found {}",
+                    chunk_x,
+                    values.len()
+                ),
+            )
+        })?;
+    let normals = chunk
+        .normals
+        .ok_or_else(|| terrain_message(path, format!("MCNK {:?} omits MCNR", chunk_x)))?
+        .normals
+        .into_iter()
+        .map(|normal| {
+            let decoded = normal.to_normalized();
+            // The decoder reports client-view `[X, vertical Y, Z]`. Convert
+            // to the network/ECS `[map X, map Y, vertical Z]` convention.
+            [decoded[0], decoded[2], decoded[1]]
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|values: Box<[[f32; 3]]>| {
+            terrain_message(
+                path,
+                format!(
+                    "MCNK {:?} requires {TERRAIN_CHUNK_VERTEX_COUNT} normals; found {}",
+                    chunk_x,
+                    values.len()
+                ),
+            )
+        })?;
+    let vertex_colors_bgra = chunk
+        .vertex_colors
+        .map(|colors| {
+            colors
+                .colors
+                .into_iter()
+                .map(|color| [color.b, color.g, color.r, color.a])
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+                .try_into()
+                .map_err(|values: Box<[[u8; 4]]>| {
+                    terrain_message(
+                        path,
+                        format!(
+                            "MCNK {:?} requires {TERRAIN_CHUNK_VERTEX_COUNT} vertex colors; found {}",
+                            chunk_x,
+                            values.len()
+                        ),
+                    )
+                })
+        })
+        .transpose()?;
+    let layer_source = chunk
+        .layers
+        .ok_or_else(|| terrain_message(path, format!("MCNK {:?} omits MCLY", chunk_x)))?;
+    if layer_source.layers.is_empty()
+        || layer_source.layers.len() > 4
+        || layer_source.layers.len() != chunk.header.n_layers as usize
+    {
+        return Err(terrain_message(
+            path,
+            format!(
+                "MCNK {:?} declares {} layers but decodes {} (expected 1..=4)",
+                chunk_x,
+                chunk.header.n_layers,
+                layer_source.layers.len()
+            ),
+        ));
+    }
+    let alpha_bytes = chunk.alpha.map_or_else(Vec::new, |alpha| alpha.data);
+    let shadow_bytes = chunk
+        .shadow
+        .map(|shadow| {
+            shadow
+                .shadow_map
+                .into_boxed_slice()
+                .try_into()
+                .map_err(|values: Box<[u8]>| {
+                    terrain_message(
+                        path,
+                        format!(
+                            "MCNK {:?} requires 512 shadow bytes; found {}",
+                            chunk_x,
+                            values.len()
+                        ),
+                    )
+                })
+        })
+        .transpose()?;
+    let mut layers = Vec::with_capacity(layer_source.layers.len());
+    for (layer_index, layer) in layer_source.layers.into_iter().enumerate() {
+        if layer.texture_id as usize >= texture_count {
+            return Err(terrain_message(
+                path,
+                format!(
+                    "MCNK {:?} layer {layer_index} references texture {} of {texture_count}",
+                    chunk_x, layer.texture_id
+                ),
+            ));
+        }
+        if layer_index > 0 && layer.offset_in_mcal as usize >= alpha_bytes.len() {
+            return Err(terrain_message(
+                path,
+                format!(
+                    "MCNK {:?} layer {layer_index} alpha offset {} exceeds {} bytes",
+                    chunk_x,
+                    layer.offset_in_mcal,
+                    alpha_bytes.len()
+                ),
+            ));
+        }
+        layers.push(TerrainTextureLayer::new(
+            layer.texture_id,
+            layer.flags.value,
+            layer.offset_in_mcal,
+            layer.effect_id,
+        ));
+    }
+    let references = chunk.refs.map_or_else(Vec::new, |refs| refs.references);
+    let expected_references = chunk
+        .header
+        .n_doodad_refs
+        .checked_add(chunk.header.n_map_obj_refs)
+        .ok_or_else(|| {
+            terrain_message(path, format!("MCNK {:?} reference count overflow", chunk_x))
+        })? as usize;
+    if references.len() != expected_references {
+        return Err(terrain_message(
+            path,
+            format!(
+                "MCNK {:?} declares {expected_references} object references but decodes {}",
+                chunk_x,
+                references.len()
+            ),
+        ));
+    }
+    let split = chunk.header.n_doodad_refs as usize;
+    let (doodad_references, world_model_references) = references.split_at(split);
+    validate_references(path, chunk_x, "doodad", doodad_references, doodad_count)?;
+    validate_references(
+        path,
+        chunk_x,
+        "world model",
+        world_model_references,
+        world_model_count,
+    )?;
+    let sound_emitters = chunk
+        .sound_emitters
+        .map_or_else(Vec::new, |emitters| emitters.emitters)
+        .into_iter()
+        .map(|emitter| {
+            TerrainSoundEmitter::new(emitter.sound_entry_id, emitter.position, emitter.size_min)
+        })
+        .collect::<Vec<_>>();
+    if sound_emitters.len() != chunk.header.n_snd_emitters as usize {
+        return Err(terrain_message(
+            path,
+            format!(
+                "MCNK {:?} declares {} sound emitters but decodes {}",
+                chunk_x,
+                chunk.header.n_snd_emitters,
+                sound_emitters.len()
+            ),
+        ));
+    }
+    Ok(TerrainChunk::new(
+        chunk_x,
+        chunk.header.flags.value,
+        chunk.header.area_id,
+        world_position,
+        chunk.header.holes_low_res,
+        heights,
+        normals,
+        vertex_colors_bgra,
+        layers,
+        alpha_bytes,
+        shadow_bytes,
+        doodad_references.to_vec(),
+        world_model_references.to_vec(),
+        sound_emitters,
+    ))
+}
+
+fn validate_references(
+    path: &AssetPath,
+    chunk: TerrainChunkIndex,
+    kind: &str,
+    references: &[u32],
+    count: usize,
+) -> Result<(), AssetError> {
+    if let Some(reference) = references
+        .iter()
+        .find(|reference| **reference as usize >= count)
+    {
+        return Err(terrain_message(
+            path,
+            format!("MCNK {:?} references {kind} {reference} of {count}", chunk),
+        ));
+    }
+    Ok(())
+}
+
+fn decode_doodads(
+    path: &AssetPath,
+    root: &RootAdt,
+) -> Result<Vec<TerrainDoodadPlacement>, AssetError> {
+    root.doodad_placements
+        .iter()
+        .enumerate()
+        .map(|(index, placement)| {
+            let model = root.models.get(placement.name_id as usize).ok_or_else(|| {
+                terrain_message(
+                    path,
+                    format!(
+                        "MDDF placement {index} references model {} of {}",
+                        placement.name_id,
+                        root.models.len()
+                    ),
+                )
+            })?;
+            Ok(TerrainDoodadPlacement::new(
+                terrain_asset_path(path, "doodad", model)?,
+                placement.unique_id,
+                placement_position(placement.position),
+                placement.rotation,
+                placement.get_scale(),
+                placement.flags,
+            ))
+        })
+        .collect()
+}
+
+fn decode_world_models(
+    path: &AssetPath,
+    root: &RootAdt,
+) -> Result<Vec<TerrainWorldModelPlacement>, AssetError> {
+    root.wmo_placements
+        .iter()
+        .enumerate()
+        .map(|(index, placement)| {
+            let model = root.wmos.get(placement.name_id as usize).ok_or_else(|| {
+                terrain_message(
+                    path,
+                    format!(
+                        "MODF placement {index} references WMO {} of {}",
+                        placement.name_id,
+                        root.wmos.len()
+                    ),
+                )
+            })?;
+            Ok(TerrainWorldModelPlacement::new(
+                terrain_asset_path(path, "world model", model)?,
+                placement.unique_id,
+                placement_position(placement.position),
+                placement.rotation,
+                placement_bounds(placement.extents_min, placement.extents_max),
+                placement.flags,
+                placement.doodad_set,
+                placement.name_set,
+            ))
+        })
+        .collect()
+}
+
+/// Converts the client renderer's offset X/Y-up/Z placement basis to the
+/// server/ECS map X/Y/Z-up basis carried in world packets.
+const fn placement_position(position: [f32; 3]) -> [f32; 3] {
+    [
+        CLIENT_MAP_ORIGIN - position[0],
+        CLIENT_MAP_ORIGIN - position[2],
+        position[1],
+    ]
+}
+
+/// Converts both corners while preserving lower/upper ordering after the two
+/// horizontal axes are reflected around the client map origin.
+const fn placement_bounds(minimum: [f32; 3], maximum: [f32; 3]) -> [[f32; 3]; 2] {
+    [
+        [
+            CLIENT_MAP_ORIGIN - maximum[0],
+            CLIENT_MAP_ORIGIN - maximum[2],
+            minimum[1],
+        ],
+        [
+            CLIENT_MAP_ORIGIN - minimum[0],
+            CLIENT_MAP_ORIGIN - minimum[2],
+            maximum[1],
+        ],
+    ]
+}
+
+fn validate_string_offsets(
+    path: &AssetPath,
+    table: &str,
+    strings: &[String],
+    offsets: &[u32],
+) -> Result<(), AssetError> {
+    if strings.len() != offsets.len() {
+        return Err(terrain_message(
+            path,
+            format!(
+                "{table} has {} offsets for {} strings",
+                offsets.len(),
+                strings.len()
+            ),
+        ));
+    }
+    let mut expected = 0_u32;
+    for (index, (string, offset)) in strings.iter().zip(offsets).enumerate() {
+        if *offset != expected {
+            return Err(terrain_message(
+                path,
+                format!("{table} offset {index} is {offset}; expected {expected}"),
+            ));
+        }
+        expected = expected
+            .checked_add(
+                u32::try_from(string.len() + 1).map_err(|error| terrain_error(path, error))?,
+            )
+            .ok_or_else(|| terrain_message(path, format!("{table} string extent overflow")))?;
+    }
+    Ok(())
+}
+
+fn terrain_asset_path(
+    terrain_path: &AssetPath,
+    kind: &str,
+    value: &str,
+) -> Result<AssetPath, AssetError> {
+    AssetPath::new(value).map_err(|error| {
+        terrain_message(
+            terrain_path,
+            format!("invalid {kind} path {value:?}: {error}"),
+        )
+    })
 }
 
 fn validate_chunk_stream(path: &AssetPath, bytes: &[u8]) -> Result<(), AssetError> {

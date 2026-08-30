@@ -38,5 +38,9 @@ pub use model::{
     M2TrackChannel, M2Vertex,
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
-pub use terrain::{TerrainMap, TerrainTile, TerrainTileIndex};
+pub use terrain::{
+    DecodedTerrainTile, TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement, TerrainMap,
+    TerrainSoundEmitter, TerrainTextureLayer, TerrainTile, TerrainTileIndex,
+    TerrainWorldModelPlacement,
+};
 pub use texture::{BlpTextureSource, DecodedBlpTexture};

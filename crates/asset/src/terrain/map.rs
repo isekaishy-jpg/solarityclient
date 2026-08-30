@@ -4,6 +4,7 @@ use crate::archive::{ArchiveDescriptor, AssetError, AssetPath};
 use crate::database::MapDefinition;
 
 use super::map_area::{TERRAIN_MAP_WIDTH, TerrainTile, TerrainTileIndex};
+use super::map_chunk::{TerrainChunk, TerrainDoodadPlacement, TerrainWorldModelPlacement};
 
 const TERRAIN_TILE_COUNT: usize = 4_096;
 const TILE_SIZE: f32 = 533.333_3;
@@ -17,6 +18,81 @@ pub struct TerrainMap {
     flags: u32,
     global_world_model: Option<AssetPath>,
     tiles: Vec<TerrainTile>,
+}
+
+/// One decoded WotLK ADT with renderable chunks and resolved placements.
+pub struct DecodedTerrainTile {
+    index: TerrainTileIndex,
+    source: ArchiveDescriptor,
+    textures: Vec<AssetPath>,
+    chunks: Vec<TerrainChunk>,
+    doodads: Vec<TerrainDoodadPlacement>,
+    world_models: Vec<TerrainWorldModelPlacement>,
+    has_liquid_table: bool,
+}
+
+impl DecodedTerrainTile {
+    pub(super) fn new(
+        index: TerrainTileIndex,
+        source: ArchiveDescriptor,
+        textures: Vec<AssetPath>,
+        chunks: Vec<TerrainChunk>,
+        doodads: Vec<TerrainDoodadPlacement>,
+        world_models: Vec<TerrainWorldModelPlacement>,
+        has_liquid_table: bool,
+    ) -> Self {
+        Self {
+            index,
+            source,
+            textures,
+            chunks,
+            doodads,
+            world_models,
+            has_liquid_table,
+        }
+    }
+
+    /// Returns this ADT's coordinates in the parent WDT.
+    #[must_use]
+    pub const fn index(&self) -> TerrainTileIndex {
+        self.index
+    }
+
+    /// Returns the archive selected by same-path precedence.
+    #[must_use]
+    pub const fn source(&self) -> &ArchiveDescriptor {
+        &self.source
+    }
+
+    /// Returns normalized terrain texture paths indexed by MCLY layers.
+    #[must_use]
+    pub fn textures(&self) -> &[AssetPath] {
+        &self.textures
+    }
+
+    /// Returns the complete row-major 16-by-16 MCNK grid.
+    #[must_use]
+    pub fn chunks(&self) -> &[TerrainChunk] {
+        &self.chunks
+    }
+
+    /// Returns all resolved MDDF placements in file order.
+    #[must_use]
+    pub fn doodads(&self) -> &[TerrainDoodadPlacement] {
+        &self.doodads
+    }
+
+    /// Returns all resolved MODF placements in file order.
+    #[must_use]
+    pub fn world_models(&self) -> &[TerrainWorldModelPlacement] {
+        &self.world_models
+    }
+
+    /// Returns whether the tile carries an MH2O liquid table.
+    #[must_use]
+    pub const fn has_liquid_table(&self) -> bool {
+        self.has_liquid_table
+    }
 }
 
 impl TerrainMap {
@@ -91,8 +167,8 @@ impl TerrainMap {
     /// Maps stock world X/Y coordinates to the clamped ADT grid.
     #[must_use]
     pub fn tile_at_world_position(world_x: f32, world_y: f32) -> TerrainTileIndex {
-        let tile_x = ((MAP_OFFSET - world_y) / TILE_SIZE).floor() as i32;
-        let tile_y = ((MAP_OFFSET - world_x) / TILE_SIZE).floor() as i32;
+        let tile_x = ((MAP_OFFSET - world_x) / TILE_SIZE).floor() as i32;
+        let tile_y = ((MAP_OFFSET - world_y) / TILE_SIZE).floor() as i32;
         // The server can briefly report coordinates beyond a map boundary
         // during transfers. Stock clamps these only for tile addressing.
         TerrainTileIndex::clamped(tile_x, tile_y)

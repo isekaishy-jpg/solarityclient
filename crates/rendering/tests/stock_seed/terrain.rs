@@ -1,1 +1,110 @@
-//! External stock-compatibility tests for `rendering/terrain` belong here.
+//! External stock-compatibility tests for terrain mesh preparation.
+
+use std::error::Error;
+
+use solarity_asset::{
+    ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
+};
+use solarity_rendering::TerrainChunkMeshPlan;
+use wow_adt::AdtVersion;
+use wow_adt::builder::AdtBuilder;
+use wow_wdt::chunks::MwmoChunk;
+use wow_wdt::version::WowVersion;
+use wow_wdt::{WdtFile, WdtWriter};
+
+use crate::support::{Fixture, FixtureFile};
+
+/// The 145-vertex MCNK grid becomes 256 stock fan triangles with no holes.
+#[test]
+fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
+    let map_table = map_table();
+    let wdt = terrain_wdt()?;
+    let adt = AdtBuilder::new()
+        .with_version(AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .build()?
+        .to_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\Map.dbc",
+            bytes: &map_table,
+        },
+        FixtureFile {
+            path: "World\\Maps\\Northrend\\Northrend.wdt",
+            bytes: &wdt,
+        },
+        FixtureFile {
+            path: "World\\Maps\\Northrend\\Northrend_32_32.adt",
+            bytes: &adt,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let definition = maps.map(571).ok_or("Northrend map is absent")?;
+    let map = TerrainMap::load(&mut store, definition)?;
+    let tile_index = TerrainTileIndex::new(32, 32).ok_or("fixture tile is invalid")?;
+    let tile = map.load_tile(&mut store, tile_index)?;
+    let chunk_index =
+        solarity_asset::TerrainChunkIndex::new(0, 0).ok_or("fixture chunk is invalid")?;
+
+    let mesh = TerrainChunkMeshPlan::prepare(&tile, chunk_index);
+    assert_eq!(mesh.tile(), tile_index);
+    assert_eq!(mesh.chunk(), chunk_index);
+    assert_eq!(mesh.vertices().len(), 145);
+    assert_eq!(mesh.indices().len(), 768);
+    assert_eq!(mesh.triangle_count(), 256);
+    assert_eq!(mesh.layers().len(), 1);
+    assert!(mesh.indices().iter().all(|index| *index < 145));
+    assert_eq!(mesh.vertices()[0].texture_coordinates(), [0.0, 0.0]);
+    assert_eq!(mesh.vertices()[9].texture_coordinates(), [0.0625, 0.0625]);
+    assert_eq!(mesh.vertices()[144].texture_coordinates(), [1.0, 1.0]);
+    assert_eq!(
+        mesh.vertex_bytes().len(),
+        145 * solarity_rendering::TerrainRenderVertex::BYTE_SIZE
+    );
+    assert_eq!(mesh.index_bytes().len(), 768 * size_of::<u16>());
+    assert_eq!(mesh.bounds(), [[-33.333_332, -33.333_332, 0.0], [0.0; 3]]);
+    Ok(())
+}
+
+fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut wdt = WdtFile::new(WowVersion::WotLK);
+    wdt.mwmo = Some(MwmoChunk::new());
+    let entry = wdt.main.get_mut(32, 32).ok_or("fixture tile is invalid")?;
+    entry.set_has_adt(true);
+    let mut bytes = Vec::new();
+    WdtWriter::new(&mut bytes).write(&wdt)?;
+    Ok(bytes)
+}
+
+fn map_table() -> Vec<u8> {
+    let mut strings = vec![0_u8];
+    let directory = append_string(&mut strings, "Northrend");
+    let name = append_string(&mut strings, "Northrend");
+    let mut fields = [0_u32; 66];
+    fields[0] = 571;
+    fields[1] = directory;
+    fields[5] = name;
+    fields[22] = 571;
+    fields[59] = u32::MAX;
+    fields[63] = 2;
+    let mut bytes = Vec::with_capacity(20 + fields.len() * 4 + strings.len());
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&66_u32.to_le_bytes());
+    bytes.extend_from_slice(&(66_u32 * 4).to_le_bytes());
+    bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+    for field in fields {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.extend_from_slice(&strings);
+    bytes
+}
+
+fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
+    let offset = block.len() as u32;
+    block.extend_from_slice(value.as_bytes());
+    block.push(0);
+    offset
+}

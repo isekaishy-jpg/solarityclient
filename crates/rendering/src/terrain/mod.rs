@@ -6,3 +6,6 @@
 
 mod detail_doodad;
 mod map_weather;
+mod mesh;
+
+pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};

@@ -2183,8 +2183,10 @@ dependencies = [
  "thiserror",
  "tracing",
  "vk-mem",
+ "wow-adt",
  "wow-m2",
  "wow-mpq",
+ "wow-wdt",
 ]
 
 [[package]]

@@ -13,5 +13,9 @@ mod map_low_detail;
 mod map_mem;
 mod map_shadow;
 
-pub use map::TerrainMap;
+pub use map::{DecodedTerrainTile, TerrainMap};
 pub use map_area::{TerrainTile, TerrainTileIndex};
+pub use map_chunk::{
+    TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement, TerrainSoundEmitter,
+    TerrainTextureLayer, TerrainWorldModelPlacement,
+};

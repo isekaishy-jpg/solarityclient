@@ -49,6 +49,7 @@ pub use shader::{
     M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader, UiShaderSource, UiSpirvCompiler,
     UiSpirvError, UiSpirvProgram,
 };
+pub use terrain::{TerrainChunkMeshPlan, TerrainRenderVertex};
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource,
     UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
