@@ -1,19 +1,29 @@
 //! External stock-compatibility tests for character-model render preparation.
 
 use std::error::Error;
+use std::io::Cursor;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
-    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, HelmetGeosetVisibilityCatalog,
-    ItemDefinitionCatalog, ItemDisplayCatalog, Locale,
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
+    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, DecodedM2Model,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2BlendMode,
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
     CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState,
+    CharacterWeaponState, M2MeshPlan, M2MeshPlanError,
 };
+use wow_m2::chunks::material::{
+    M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
+};
+use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2TextureType};
+use wow_m2::chunks::vertex::M2Vertex as RawM2Vertex;
+use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
+use wow_m2::header::M2Header;
+use wow_m2::skin::{OldSkinHeader, SkinBatch, SkinSubmesh};
+use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -374,6 +384,64 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
         layer.region() == CharacterAtlasRegion::LegUpper
             && layer.kind() == CharacterAtlasLayerKind::Underwear
     }));
+    Ok(())
+}
+
+/// M2 mesh preparation resolves SKIN indirection and material texture stages.
+#[test]
+fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
+    let model = render_m2_bytes("Renderable", 1)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Renderable.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Renderable00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Renderable.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    let plan = M2MeshPlan::prepare(&model, 0)?;
+    assert_eq!(plan.path(), &path);
+    assert_eq!(plan.profile_index(), 0);
+    assert_eq!(plan.vertices().len(), 3);
+    assert_eq!(plan.vertex_bytes().len(), 3 * 48);
+    assert_eq!(plan.indices(), &[2, 0, 1]);
+    assert_eq!(plan.index_bytes(), [2, 0, 0, 0, 1, 0]);
+    let draw = plan.draws().first().ok_or("M2 draw is absent")?;
+    assert_eq!(draw.geoset_id(), 402);
+    assert_eq!(draw.first_index(), 0);
+    assert_eq!(draw.index_count(), 3);
+    assert_eq!(draw.batch().shader_id, 0x8001);
+    assert_eq!(draw.batch().priority_plane, -2);
+    assert_eq!(draw.material().blend_mode(), M2BlendMode::Alpha);
+    assert_eq!(
+        draw.texture_bindings()
+            .iter()
+            .map(|binding| {
+                (
+                    binding.stage(),
+                    binding.texture_index(),
+                    binding.texture_coordinate(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [(0, 0, 0), (1, 1, 1)]
+    );
+    assert!(matches!(
+        M2MeshPlan::prepare(&model, 1),
+        Err(M2MeshPlanError::MissingProfile {
+            profile_index: 1,
+            ..
+        })
+    ));
     Ok(())
 }
 
@@ -1119,6 +1187,128 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
     block.extend_from_slice(value.as_bytes());
     block.push(0);
     offset
+}
+
+/// Serializes one deterministic WotLK M2 with two texture stages.
+fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut model = M2Model {
+        header: M2Header::new(M2Version::WotLK),
+        name: Some(name.to_owned()),
+        ..M2Model::default()
+    };
+    model.header.num_skin_profiles = Some(skin_profiles);
+    let texture_name = b"Creature\\Solarity\\Renderable.blp";
+    model.textures = vec![
+        RawTexture {
+            texture_type: M2TextureType::Hardcoded,
+            flags: M2TextureFlags::WRAP_X,
+            filename: M2ArrayString {
+                string: FixedString {
+                    data: texture_name.to_vec(),
+                },
+                array: M2Array::new(u32::try_from(texture_name.len() + 1)?, 1),
+            },
+        },
+        RawTexture {
+            texture_type: M2TextureType::Monster1,
+            flags: M2TextureFlags::empty(),
+            filename: M2ArrayString::default(),
+        },
+    ];
+    model.materials = vec![RawMaterial {
+        flags: M2RenderFlags::DEPTH_TEST | M2RenderFlags::DEPTH_WRITE,
+        blend_mode: RawBlendMode::ALPHA,
+    }];
+    model.raw_data.texture_lookup_table = vec![0, 1];
+    model.raw_data.texture_units = vec![0, 1];
+    for index in 0..3 {
+        model.vertices.push(RawM2Vertex {
+            position: C3Vector {
+                x: index as f32,
+                y: index as f32 + 0.25,
+                z: index as f32 + 0.5,
+            },
+            bone_weights: [255, 0, 0, 0],
+            bone_indices: [0, 1, 2, 3],
+            normal: C3Vector {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+            tex_coords: C2Vector { x: 0.0, y: 0.5 },
+            tex_coords2: Some(C2Vector { x: 1.0, y: 0.5 }),
+        });
+    }
+
+    let mut cursor = Cursor::new(Vec::new());
+    model.write(&mut cursor)?;
+    let mut bytes = cursor.into_inner();
+    let texture_offset = m2_array_offset(&bytes, 0x50)?;
+    let filename_offset = u32::try_from(bytes.len())?;
+    bytes[texture_offset + 8..texture_offset + 12]
+        .copy_from_slice(&u32::try_from(texture_name.len() + 1)?.to_le_bytes());
+    bytes[texture_offset + 12..texture_offset + 16].copy_from_slice(&filename_offset.to_le_bytes());
+    bytes.extend_from_slice(texture_name);
+    bytes.push(0);
+    Ok(bytes)
+}
+
+/// Serializes one non-identity SKIN lookup and two-stage material batch.
+fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let skin = OldSkin {
+        header: OldSkinHeader {
+            bone_count_max: 32,
+            ..OldSkinHeader::new()
+        },
+        indices: vec![2, 0, 1],
+        triangles: vec![0, 1, 2],
+        bone_indices: vec![0; 12],
+        submeshes: vec![SkinSubmesh {
+            id: 402,
+            level: 0,
+            vertex_start: 0,
+            vertex_count: 3,
+            triangle_start: 0,
+            triangle_count: 3,
+            bone_count: 1,
+            bone_start: 0,
+            bone_influence: 1,
+            center: [0.0; 3],
+            sort_center: [0.0; 3],
+            bounding_radius: 1.0,
+        }],
+        batches: vec![SkinBatch {
+            flags: 1,
+            priority_plane: -2,
+            shader_id: 0x8001,
+            skin_section_index: 0,
+            geoset_index: 0,
+            color_index: 3,
+            material_index: 0,
+            material_layer: 1,
+            texture_count: 2,
+            texture_combo_index: 0,
+            texture_coord_combo_index: 0,
+            texture_weight_combo_index: 0,
+            texture_transform_combo_index: 0,
+        }],
+    };
+    let mut cursor = Cursor::new(Vec::new());
+    skin.write(&mut cursor)?;
+    let mut bytes = cursor.into_inner();
+    let submesh_offset = u32::from_le_bytes(bytes[32..36].try_into()?) as usize;
+    bytes[submesh_offset + 18..submesh_offset + 20].copy_from_slice(&5_u16.to_le_bytes());
+    // wow-m2 0.7 advances its synthetic SKIN writer by 40 bytes even though
+    // the WotLK submesh it emits occupies 48 bytes. Repair the fixture's batch
+    // offset so the decoder sees the values written after the whole submesh.
+    let batch_offset = u32::try_from(submesh_offset + 48)?;
+    bytes[40..44].copy_from_slice(&batch_offset.to_le_bytes());
+    Ok(bytes)
+}
+
+/// Reads one M2 header array's physical byte offset for fixture repair.
+fn m2_array_offset(bytes: &[u8], pair_offset: usize) -> Result<usize, Box<dyn Error>> {
+    Ok(u32::from_le_bytes(bytes[pair_offset + 4..pair_offset + 8].try_into()?) as usize)
 }
 
 /// Builds a BLP2/RAW3 authored mip chain with one solid color per level.

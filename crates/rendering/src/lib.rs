@@ -24,5 +24,6 @@ pub use model::{
     CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterEquipmentItem,
     CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemAttachment,
     CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState,
+    CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState, M2DrawCall, M2MeshPlan,
+    M2MeshPlanError, M2RenderVertex, M2TextureBinding,
 };

@@ -2181,6 +2181,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "vk-mem",
+ "wow-m2",
  "wow-mpq",
 ]
 

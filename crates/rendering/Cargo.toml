@@ -20,4 +20,5 @@ vk-mem.workspace = true
 workspace = true
 
 [dev-dependencies]
+wow-m2.workspace = true
 wow-mpq.workspace = true

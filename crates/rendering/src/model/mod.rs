@@ -16,3 +16,4 @@ pub use character_component::{
     CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
     CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState,
 };
+pub use m2_scene::{M2DrawCall, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2TextureBinding};
