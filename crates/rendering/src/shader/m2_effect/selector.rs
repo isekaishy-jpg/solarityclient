@@ -14,7 +14,7 @@ const ENVIRONMENT_BIT: u16 = 0x8;
 const STOCK_SIMPLE_FALLBACK: u16 = 0x11;
 
 /// Resolved shader names and material state for one exact M2 batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct M2ShaderPlan {
     requested_shader_id: u16,
     resolved_shader_id: u16,

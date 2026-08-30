@@ -5,9 +5,11 @@
 //! Vulkan 1.3 backend; unsupported stock shader forms fail explicitly.
 
 mod m2_effect;
+mod m2_spirv;
 mod shader_effect_manager;
 
 pub use m2_effect::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
 };
+pub use m2_spirv::{M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram};

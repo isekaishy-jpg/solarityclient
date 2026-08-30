@@ -14,8 +14,8 @@ use solarity_rendering::{
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
     CharacterWeaponState, M2LocalLightCount, M2MeshPlan, M2MeshPlanError, M2PixelShader,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
-    VulkanBootstrap,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2SpirvError, M2VertexShader, VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -484,6 +484,10 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(draw.bone_influence(), 1);
     assert_eq!(lit_permutation.vertex_index(), 17);
     assert_eq!(lit_permutation.pixel_index(), 8);
+    let spirv = M2SpirvCompiler::new()?.compile(specialized, lit_permutation)?;
+    assert_eq!(spirv.key().plan(), specialized);
+    assert_spirv_1_6(spirv.vertex_words());
+    assert_spirv_1_6(spirv.fragment_words());
     let unlit_permutation = M2ShaderPermutation::resolve(
         &plan.draws()[2],
         M2LocalLightCount::Four,
@@ -492,6 +496,13 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(unlit_permutation.vertex_index(), 70);
     assert_eq!(unlit_permutation.pixel_index(), 15);
+    assert!(matches!(
+        M2SpirvCompiler::new()?.compile(fallback, unlit_permutation),
+        Err(M2SpirvError::UnsupportedShadow {
+            vertex_index: 70,
+            pixel_index: 15,
+        })
+    ));
     assert!(matches!(
         M2MeshPlan::prepare(&model, 1),
         Err(M2MeshPlanError::MissingProfile {
@@ -526,6 +537,13 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.index_byte_count(), 6);
     renderer.shutdown()?;
     Ok(())
+}
+
+/// Confirms shaderc emitted the pinned SPIR-V binary header, not its default.
+fn assert_spirv_1_6(words: &[u32]) {
+    assert!(words.len() >= 5);
+    assert_eq!(words[0], 0x0723_0203);
+    assert_eq!(words[1], 0x0001_0600);
 }
 
 /// Helmet masks and death-knight eyes follow the exact build-12340 slot order.

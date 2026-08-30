@@ -31,5 +31,6 @@ pub use model::{
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
-    M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
+    M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader,
 };
