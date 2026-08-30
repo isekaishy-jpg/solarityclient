@@ -8,6 +8,7 @@ mod character_model_base;
 mod component_utils;
 mod m2_animation;
 mod m2_scene;
+mod world_model_scene;
 
 pub use character_component::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
@@ -22,4 +23,8 @@ pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan,
     M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState,
     M2TextureBinding,
+};
+pub use world_model_scene::{
+    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMeshPlan,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
 };

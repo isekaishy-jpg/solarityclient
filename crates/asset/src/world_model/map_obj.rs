@@ -131,6 +131,7 @@ impl WorldModelShader {
 }
 
 /// One exact WotLK MOMT record with resolved archive texture paths.
+#[derive(Clone, Debug)]
 pub struct WorldModelMaterial {
     flags: u32,
     authored_shader: WorldModelShader,

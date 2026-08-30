@@ -34,5 +34,7 @@ mod texture;
 mod ui;
 #[path = "stock_seed/weather.rs"]
 mod weather;
+#[path = "stock_seed/world_model.rs"]
+mod world_model;
 #[path = "stock_seed/world_text.rs"]
 mod world_text;
