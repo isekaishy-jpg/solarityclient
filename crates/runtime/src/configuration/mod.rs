@@ -6,3 +6,6 @@
 
 mod profile;
 mod status;
+
+pub use profile::RuntimeConfiguration;
+pub use status::ConfigurationError;

@@ -22,6 +22,8 @@ mod platform;
 mod platform_lcd;
 #[path = "stock_seed/security.rs"]
 mod security;
+#[path = "stock_seed/support/mod.rs"]
+mod support;
 #[path = "stock_seed/telemetry.rs"]
 mod telemetry;
 #[path = "stock_seed/time.rs"]

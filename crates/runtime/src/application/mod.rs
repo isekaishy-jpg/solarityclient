@@ -6,3 +6,5 @@
 
 mod client;
 mod client_services;
+
+pub use client::{ApplicationError, ClientApplication, StartupReport};

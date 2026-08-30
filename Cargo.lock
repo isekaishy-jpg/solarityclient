@@ -2198,6 +2198,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wow-mpq",
 ]
 
 [[package]]
