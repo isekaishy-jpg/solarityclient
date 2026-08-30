@@ -1,0 +1,14 @@
+//! Vulkan 1.3 device, queue, allocator, swapchain, and presentation ownership.
+//!
+//! Stock groups equivalent responsibilities under `CGxDevice.cpp` and its D3D
+//! and OpenGL backends. Solarity has one explicit Vulkan backend through `ash`;
+//! it does not add an unobserved runtime renderer fallback.
+
+mod c_gx_d3d9_ex_device;
+mod c_gx_d3d9_ex_texture;
+mod c_gx_d3d_device;
+mod c_gx_device;
+mod c_gx_device_d3d;
+mod c_gx_device_d3d9_ex;
+mod c_gx_device_open_gl;
+mod gfx_singleton_manager;

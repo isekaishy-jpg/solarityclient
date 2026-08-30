@@ -1,0 +1,22 @@
+[package]
+name = "solarity-asset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+glam.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wow-adt.workspace = true
+wow-blp.workspace = true
+wow-cdbc.workspace = true
+wow-m2.workspace = true
+wow-mpq.workspace = true
+wow-wdl.workspace = true
+wow-wdt.workspace = true
+wow-wmo.workspace = true
+
+[lints]
+workspace = true

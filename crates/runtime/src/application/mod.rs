@@ -1,0 +1,8 @@
+//! Process startup, client lifecycle, subsystem wiring, and orderly shutdown.
+//!
+//! `Client.cpp` and `ClientServices.cpp` provide the stock composition-root
+//! evidence. This is the only module permitted to construct and connect all
+//! concrete workspace subsystems.
+
+mod client;
+mod client_services;

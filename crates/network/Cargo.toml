@@ -1,0 +1,17 @@
+[package]
+name = "solarity-network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+wow_login_messages.workspace = true
+wow_world_messages.workspace = true
+wow_srp.workspace = true
+
+[lints]
+workspace = true

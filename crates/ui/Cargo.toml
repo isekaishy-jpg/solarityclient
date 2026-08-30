@@ -1,0 +1,19 @@
+[package]
+name = "solarity-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+freetype-rs.workspace = true
+glam.workspace = true
+mlua.workspace = true
+quick-xml.workspace = true
+solarity-asset.workspace = true
+solarity-rendering.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

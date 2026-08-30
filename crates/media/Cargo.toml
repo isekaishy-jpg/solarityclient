@@ -1,0 +1,18 @@
+[package]
+name = "solarity-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ffmpeg-next.workspace = true
+sdl3.workspace = true
+solarity-asset.workspace = true
+solarity-cpu.workspace = true
+solarity-rendering.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

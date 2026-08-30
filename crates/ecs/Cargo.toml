@@ -1,0 +1,15 @@
+[package]
+name = "solarity-ecs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+glam.workspace = true
+shipyard.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

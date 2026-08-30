@@ -1,0 +1,24 @@
+[package]
+name = "solarity-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+sdl3.workspace = true
+solarity-asset.workspace = true
+solarity-cpu.workspace = true
+solarity-ecs.workspace = true
+solarity-media.workspace = true
+solarity-network.workspace = true
+solarity-rendering.workspace = true
+solarity-systems.workspace = true
+solarity-ui.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

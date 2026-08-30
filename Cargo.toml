@@ -1,0 +1,101 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/asset",
+    "crates/cpu",
+    "crates/ecs",
+    "crates/media",
+    "crates/network",
+    "crates/rendering",
+    "crates/runtime",
+    "crates/systems",
+    "crates/ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[workspace.dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
+ffmpeg-next = { version = "=9.0.0", default-features = false, features = [
+    "codec",
+    "format",
+    "software-resampling",
+    "software-scaling",
+] }
+freetype-rs = { version = "=0.38.0", default-features = false }
+glam = { version = "=0.31.1", default-features = false, features = ["std"] }
+mlua = { version = "=0.12.0", default-features = false, features = [
+    "lua51",
+    "vendored",
+] }
+quick-xml = { version = "=0.42.0", default-features = false }
+rayon = { version = "=1.12.0" }
+sdl3 = { version = "=0.18.4", default-features = false, features = [
+    "ash",
+    "build-from-source-static",
+    "mixer",
+] }
+shaderc = { version = "=0.10.1", features = ["build-from-source"] }
+shipyard = { version = "=0.11.5", default-features = false, features = [
+    "parallel",
+    "proc",
+    "std",
+] }
+solarity-asset = { path = "crates/asset" }
+solarity-cpu = { path = "crates/cpu" }
+solarity-ecs = { path = "crates/ecs" }
+solarity-media = { path = "crates/media" }
+solarity-network = { path = "crates/network" }
+solarity-rendering = { path = "crates/rendering" }
+solarity-systems = { path = "crates/systems" }
+solarity-ui = { path = "crates/ui" }
+tokio = { version = "=1.53.1", default-features = false, features = [
+    "io-util",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+thiserror = { version = "=2.0.20", default-features = false, features = ["std"] }
+tracing = { version = "=0.1.44", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = [
+    "env-filter",
+    "fmt",
+    "tracing-log",
+] }
+vk-mem = { version = "=0.5.0", default-features = false, features = ["loaded"] }
+wow-adt = { version = "=0.7.0", default-features = false }
+wow-blp = { version = "=0.7.0", default-features = false }
+wow-cdbc = { version = "=0.7.0", default-features = false }
+wow-m2 = { version = "=0.7.0", default-features = false }
+wow-mpq = { version = "=0.7.0", default-features = false }
+wow-wdl = { version = "=0.7.0", default-features = false }
+wow-wdt = { version = "=0.7.0", default-features = false }
+wow-wmo = { version = "=0.7.0", default-features = false }
+wow_login_messages = { version = "=0.5.0", default-features = false, features = ["tokio"] }
+wow_world_messages = { version = "=0.3.0", default-features = false, features = [
+    "encryption",
+    "tokio",
+    "wrath",
+] }
+wow_srp = { version = "=0.7.0", default-features = false, features = [
+    "srp-default-math",
+    "wrath-header",
+] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

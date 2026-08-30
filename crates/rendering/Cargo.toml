@@ -1,0 +1,19 @@
+[package]
+name = "solarity-rendering"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ash.workspace = true
+glam.workspace = true
+shaderc.workspace = true
+solarity-asset.workspace = true
+solarity-cpu.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+vk-mem.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,4 @@
+/dev-server/
+/scripts/playerbots-server.ps1
+/target/
+/vcpkg_installed/
