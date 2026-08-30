@@ -177,4 +177,14 @@ impl WdbcTable {
         let length = bytes.iter().position(|byte| *byte == 0)?;
         bytes.get(..length)
     }
+
+    /// Reads one four-byte field from a fixed WDBC record.
+    ///
+    /// Typed table decoders use this checked boundary so packed or mismatched
+    /// schemas cannot index beyond the layout validated by the table header.
+    pub(super) fn field_u32(&self, record: u32, field: u32) -> Option<u32> {
+        let offset = usize::try_from(field).ok()?.checked_mul(4)?;
+        let bytes = self.record(record)?.get(offset..offset.checked_add(4)?)?;
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    }
 }

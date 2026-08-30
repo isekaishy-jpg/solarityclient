@@ -18,6 +18,8 @@ pub use archive::{
     ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetError, AssetPath, AssetPathViolation,
     ClientDataRoot, Locale,
 };
-pub use database::{WdbcHeader, WdbcTable};
+pub use database::{
+    CreatureCatalog, CreatureDisplayInfo, CreatureModelData, WdbcHeader, WdbcTable,
+};
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use texture::DecodedBlpTexture;

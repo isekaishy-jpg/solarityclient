@@ -5,10 +5,12 @@
 //! behavior that consumes a table belongs to its owning domain crate.
 
 mod c_data_store;
+mod creature;
 mod db_cache;
 mod db_cache_instances;
 mod db_client;
 mod w_data_store;
 mod wow_client_db;
 
+pub use creature::{CreatureCatalog, CreatureDisplayInfo, CreatureModelData};
 pub use wow_client_db::{WdbcHeader, WdbcTable};
