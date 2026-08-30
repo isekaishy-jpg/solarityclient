@@ -1,13 +1,16 @@
 //! Process-independent globals installed before built-in UI execution.
 
-use mlua::{Function, Lua, Table, Value};
+use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
 
 use crate::UiManifestKind;
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
+use super::type_key;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
+const CHARACTER_SELECT_MODEL_REGISTRY: &str = "solarity.ui.character_select_model";
+const CHARACTER_CUSTOMIZE_MODEL_REGISTRY: &str = "solarity.ui.character_customize_model";
 
 pub(super) fn register_base_globals(
     lua: &Lua,
@@ -23,6 +26,26 @@ pub(super) fn register_base_globals(
     globals.raw_set(
         "GetScreenHeight",
         lua.create_function(move |_, ()| Ok(screen_height))?,
+    )?;
+    globals.raw_set(
+        "IsWindowsClient",
+        lua.create_function(|_, ()| Ok(cfg!(target_os = "windows").then_some(1_u32)))?,
+    )?;
+    globals.raw_set(
+        "IsMacClient",
+        lua.create_function(|_, ()| Ok(cfg!(target_os = "macos").then_some(1_u32)))?,
+    )?;
+    globals.raw_set(
+        "IsLinuxClient",
+        lua.create_function(|_, ()| Ok(cfg!(target_os = "linux").then_some(1_u32)))?,
+    )?;
+    // Manifest-owned FrameXML and GlueXML execute in the stock secure context.
+    // Add-on provenance will extend this state when untrusted manifests load.
+    globals.raw_set("issecure", lua.create_function(|_, ()| Ok(true))?)?;
+    globals.raw_set("securecall", create_secure_call(lua, "securecall")?)?;
+    globals.raw_set(
+        "securecallfunction",
+        create_secure_call(lua, "securecallfunction")?,
     )?;
     if manifest_kind == UiManifestKind::Glue {
         register_glue_globals(lua, &globals, environment)?;
@@ -47,6 +70,24 @@ pub(super) fn register_base_globals(
         .set_name("compat.lua")
         .exec()?;
     Ok(())
+}
+
+fn create_secure_call(lua: &Lua, name: &'static str) -> mlua::Result<Function> {
+    lua.create_function(move |lua, (target, arguments): (Value, Variadic<Value>)| {
+        let function = match target {
+            Value::Function(function) => function,
+            Value::String(global_name) => lua
+                .globals()
+                .raw_get::<Function>(global_name.to_str()?)
+                .map_err(|_| mlua::Error::runtime(format!("Usage: {name}(function, ...)")))?,
+            _ => {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {name}(function, ...)"
+                )));
+            }
+        };
+        function.call::<MultiValue>(arguments)
+    })
 }
 
 fn register_glue_globals(
@@ -141,6 +182,78 @@ fn register_glue_globals(
     globals.raw_set(
         "GetClientExpansionLevel",
         lua.create_function(|_, ()| Ok(3_u32))?,
+    )?;
+    // The headless validation environment has no platform-enumerated display
+    // modes. Build 12340 explicitly selects the first entry in that state.
+    globals.raw_set(
+        "GetCurrentResolution",
+        lua.create_function(|_, ()| Ok(1_u32))?,
+    )?;
+    globals.raw_set("GetScreenResolutions", lua.create_function(|_, ()| Ok(()))?)?;
+    globals.raw_set("GetRefreshRates", lua.create_function(|_, ()| Ok(()))?)?;
+    globals.raw_set(
+        "GetCurrentMultisampleFormat",
+        lua.create_function(|_, ()| Ok(1_u32))?,
+    )?;
+    globals.raw_set(
+        "GetMultisampleFormats",
+        lua.create_function(|_, ()| Ok(()))?,
+    )?;
+    // No stereo-capable display surface is attached to the headless glue
+    // validator, so build 12340 reports the feature as unavailable.
+    globals.raw_set(
+        "IsStereoVideoAvailable",
+        lua.create_function(|_, ()| Ok(None::<u32>))?,
+    )?;
+    // The platform audio service has not attached devices to this headless
+    // environment. Stock represents that state as an empty indexed list.
+    globals.raw_set(
+        "Sound_GameSystem_GetNumOutputDrivers",
+        lua.create_function(|_, ()| Ok(0_u32))?,
+    )?;
+    globals.raw_set(
+        "Sound_GameSystem_GetOutputDriverNameByIndex",
+        lua.create_function(|_, _index: u32| Ok(None::<String>))?,
+    )?;
+    register_model_frame_selector(
+        lua,
+        globals,
+        "SetCharSelectModelFrame",
+        CHARACTER_SELECT_MODEL_REGISTRY,
+    )?;
+    register_model_frame_selector(
+        lua,
+        globals,
+        "SetCharCustomizeFrame",
+        CHARACTER_CUSTOMIZE_MODEL_REGISTRY,
+    )
+}
+
+fn register_model_frame_selector(
+    lua: &Lua,
+    globals: &Table,
+    function: &'static str,
+    registry: &'static str,
+) -> mlua::Result<()> {
+    globals.raw_set(
+        function,
+        lua.create_function(move |lua, value: Value| {
+            let Some(name) = lua.coerce_string(value)? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {function}(\"frameName\")"
+                )));
+            };
+            let globals = lua.globals();
+            let frame = globals.raw_get::<Option<Table>>(name.to_str()?)?;
+            let Some(frame) = frame else {
+                return Ok(());
+            };
+            let kind = frame.raw_get::<String>(type_key())?;
+            if matches!(kind.as_str(), "Model" | "ModelFFX") {
+                lua.set_named_registry_value(registry, frame)?;
+            }
+            Ok(())
+        })?,
     )
 }
 

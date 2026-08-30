@@ -314,9 +314,19 @@ impl<'bundle> UiObjectTree<'bundle> {
         fonts: &FontCatalog,
         definition: &UiObjectDefinition<'bundle>,
     ) -> Result<usize, UiObjectError> {
-        let requested_parent = definition.parent_name();
-        let parent = requested_parent.and_then(|name| self.by_name.get(name).copied());
         let layers = definition_layers(catalog, definition)?;
+        // Root template properties apply before the concrete declaration, so
+        // an inherited `parent` remains effective unless a later layer replaces
+        // it. OptionsFrameTemplate relies on this to sit above GlueParent.
+        let requested_parent = layers
+            .iter()
+            .filter_map(|layer| attribute(layer.element, "parent"))
+            .next_back()
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        let parent = requested_parent
+            .as_deref()
+            .and_then(|name| self.by_name.get(name).copied());
         let (node_index, first_new_layer) = self.create_or_merge(
             Some(definition.name().to_owned()),
             definition.kind(),
@@ -325,7 +335,7 @@ impl<'bundle> UiObjectTree<'bundle> {
             None,
             layers,
         )?;
-        if let Some(parent_name) = requested_parent.filter(|_| parent.is_none()) {
+        if let Some(parent_name) = requested_parent.as_deref().filter(|_| parent.is_none()) {
             self.pending_parents.push((
                 node_index,
                 parent_name.to_owned(),

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use freetype::bitmap::PixelMode;
-use freetype::face::LoadFlag;
+use freetype::face::{KerningMode, LoadFlag};
 use freetype::{Face, Library};
 use solarity_asset::{AssetPath, AssetStore};
 
@@ -63,17 +63,7 @@ impl FontSystem {
         character: char,
         rasterization: FontRasterization,
     ) -> Result<RasterizedGlyph, FontError> {
-        if !self.faces.contains_key(path) {
-            let bytes = store.read(path)?.into_bytes();
-            let face = self
-                .library
-                .new_memory_face(bytes, 0)
-                .map_err(|error| FontError::Face {
-                    path: path.clone(),
-                    message: error.to_string(),
-                })?;
-            self.faces.insert(path.clone(), face);
-        }
+        self.ensure_face(store, path)?;
 
         let Some(face) = self.faces.get(path) else {
             return Err(FontError::Face {
@@ -111,10 +101,93 @@ impl FontSystem {
         glyph_from_slot(path, face)
     }
 
+    /// Measures one line using the same hinted face metrics as glyph loading.
+    ///
+    /// Additional XML spacing and shadow extent remain string-object concerns,
+    /// so callers apply those after converting the returned 26.6-pixel value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an asset, face, size, glyph, or kerning error without replacing
+    /// a missing stock glyph or font face.
+    pub fn measure_line_width_26_6(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+        pixel_height: u32,
+        text: &str,
+        rasterization: FontRasterization,
+    ) -> Result<i64, FontError> {
+        self.ensure_face(store, path)?;
+        let Some(face) = self.faces.get(path) else {
+            return Err(FontError::Face {
+                path: path.clone(),
+                message: "loaded face was not retained".to_owned(),
+            });
+        };
+        face.set_pixel_sizes(0, pixel_height)
+            .map_err(|error| FontError::PixelSize {
+                path: path.clone(),
+                pixel_height,
+                message: error.to_string(),
+            })?;
+
+        let flags = match rasterization {
+            FontRasterization::Antialiased => LoadFlag::TARGET_NORMAL,
+            FontRasterization::Monochrome => LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO,
+        };
+        let mut previous = None;
+        let mut width = 0_i64;
+        for character in text.chars() {
+            let Some(index) = face.get_char_index(character as usize) else {
+                return Err(FontError::Glyph {
+                    path: path.clone(),
+                    character,
+                    message: "font face does not contain the requested character".to_owned(),
+                });
+            };
+            if let Some(previous) = previous {
+                let kerning = face
+                    .get_kerning(previous, index, KerningMode::KerningDefault)
+                    .map_err(|error| FontError::Glyph {
+                        path: path.clone(),
+                        character,
+                        message: format!("failed to read kerning: {error}"),
+                    })?;
+                width = width.saturating_add(i64::from(kerning.x));
+            }
+            face.load_glyph(index, flags)
+                .map_err(|error| FontError::Glyph {
+                    path: path.clone(),
+                    character,
+                    message: error.to_string(),
+                })?;
+            width = width.saturating_add(i64::from(face.glyph().advance().x));
+            previous = Some(index);
+        }
+        Ok(width)
+    }
+
     /// Returns the number of distinct archive-backed faces retained in memory.
     #[must_use]
     pub fn loaded_face_count(&self) -> usize {
         self.faces.len()
+    }
+
+    fn ensure_face(&mut self, store: &mut AssetStore, path: &AssetPath) -> Result<(), FontError> {
+        if self.faces.contains_key(path) {
+            return Ok(());
+        }
+        let bytes = store.read(path)?.into_bytes();
+        let face = self
+            .library
+            .new_memory_face(bytes, 0)
+            .map_err(|error| FontError::Face {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+        self.faces.insert(path.clone(), face);
+        Ok(())
     }
 }
 

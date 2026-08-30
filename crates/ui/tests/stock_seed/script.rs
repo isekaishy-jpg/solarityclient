@@ -154,7 +154,9 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(self:GetParent():GetName() == "Dynamic")
 </OnLoad></Scripts></Button></Frames><Scripts><OnLoad>
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
-</OnLoad></Scripts></Button>
+  assert(self:HasScript("OnUpdate"))
+  assert(type(self:GetScript("OnUpdate")) == "function")
+</OnLoad><OnUpdate>self.elapsed = elapsed</OnUpdate></Scripts></Button>
 <Frame name="First"><Frames>
   <Button name="$parentChild"><Size x="40" y="20"/><Scripts><OnLoad>
     LOAD_ORDER = (LOAD_ORDER or "") .. self:GetName() .. ";"
@@ -175,6 +177,9 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
 </Frames><Scripts><OnLoad>
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
   assert(GetScreenHeight() == 768)
+  assert(issecure())
+  local secureValue, secureExtra = securecall(function(value) return value, "secure", 4 end, 3)
+  assert(secureValue == 3 and secureExtra == "secure")
   assert(abs(GetScreenWidth() - 1365.3333333333) &lt; 0.001)
   assert(GetNumCharacters() == 0)
   assert(GetSavedAccountName() == "")
@@ -197,6 +202,15 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(self:IsEventRegistered("SET_GLUE_SCREEN"))
   self:RegisterEvent("NOT_A_STOCK_EVENT")
   assert(self:IsEventRegistered("NOT_A_STOCK_EVENT") == nil)
+  assert(self:HasScript("OnLoad"))
+  assert(type(self:GetScript("OnLoad")) == "function")
+  local show = function(frame) frame.wasShown = true end
+  self:SetScript("OnShow", show)
+  assert(self:HasScript("OnShow") and self:GetScript("OnShow") == show)
+  self:SetScript("OnShow", nil)
+  assert(not self:HasScript("OnShow") and self:GetScript("OnShow") == nil)
+  assert(not pcall(function() self:SetScript("NotAHandler", show) end))
+  assert(not pcall(function() self:SetScript("OnShow", "not a function") end))
 </OnLoad></Scripts></Frame></Ui>"#,
         },
         FixtureFile {
@@ -351,6 +365,8 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   local model = CreateFrame("ModelFFX", "DynamicModel", self)
   model:SetCamera(0)
   model:SetSequence(505)
+  model:SetSequenceTime(0, 250)
+  model:SetModelScale(1.25)
   assert(not pcall(function() model:SetSequence(506) end))
 </OnLoad></Scripts></Button>
 </Ui>"#,

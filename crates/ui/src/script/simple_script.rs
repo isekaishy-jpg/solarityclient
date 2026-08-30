@@ -1,9 +1,11 @@
 //! Ordered Lua source execution and stock object identity methods.
 
+mod buttons;
 mod cvars;
 mod globals;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -12,13 +14,15 @@ use solarity_asset::{AssetPath, AssetStore};
 
 use crate::{
     FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBundle,
-    UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectTree,
-    UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan, VerticalJustification,
+    UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
+    UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
+    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan,
+    VerticalJustification, XmlContent,
 };
 
 use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
+use super::handlers::handler_for;
 use super::script_events::glue_event;
 use super::templates::TEMPLATE_REGISTRY;
 
@@ -63,6 +67,18 @@ static MODEL_CAMERA_TOKEN: u8 = 34;
 static MODEL_SEQUENCE_TOKEN: u8 = 35;
 static MODEL_FILE_TOKEN: u8 = 36;
 static CLICK_ACTION_TOKEN: u8 = 37;
+static MODEL_SEQUENCE_TIME_SEQUENCE_TOKEN: u8 = 38;
+static MODEL_SEQUENCE_TIME_TOKEN: u8 = 39;
+static FRAME_LEVEL_TOKEN: u8 = 40;
+static MODEL_SCALE_TOKEN: u8 = 41;
+static KEYBOARD_ENABLED_TOKEN: u8 = 42;
+static TEXTURE_COLOR_TOKEN: u8 = 43;
+static NORMAL_TEXTURE_TOKEN: u8 = 44;
+static PUSHED_TEXTURE_TOKEN: u8 = 45;
+static DISABLED_TEXTURE_TOKEN: u8 = 46;
+static HIGHLIGHT_TEXTURE_TOKEN: u8 = 47;
+static SCRIPT_HANDLERS_TOKEN: u8 = 48;
+static BUTTON_TEXT_TOKEN: u8 = 49;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -114,6 +130,14 @@ impl Default for InitialFont {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct InitialButton {
+    text_reference: Option<String>,
+    normal_font: Option<String>,
+    disabled_font: Option<String>,
+    highlight_font: Option<String>,
+}
+
 /// Incremental executor for one built-in UI bundle.
 ///
 /// Object tables are registered at their exact XML action rather than before
@@ -128,8 +152,12 @@ pub struct UiScriptRuntime {
     region_shown: Vec<bool>,
     region_anchors: Vec<Vec<InitialAnchor>>,
     font_strings: Vec<InitialFont>,
+    buttons: Vec<InitialButton>,
     texture_coords: Vec<[f64; 8]>,
+    texture_colors: Vec<[f64; 4]>,
     frame_ids: Vec<Option<i32>>,
+    frame_levels: Vec<Option<i32>>,
+    frame_keyboard_enabled: Vec<Option<bool>>,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
@@ -272,6 +300,30 @@ impl UiScriptRuntime {
         let metatables = lua
             .create_table()
             .map_err(|error| execution_error("object metatables", error))?;
+        let font_definitions = Rc::new(
+            plan.fonts
+                .definitions()
+                .iter()
+                .cloned()
+                .map(|definition| (definition.name().to_owned(), definition))
+                .collect::<HashMap<_, _>>(),
+        );
+        let button_measurement = environment
+            .assets()
+            .map(|assets| {
+                buttons::ButtonTextMeasurement::new(
+                    assets,
+                    font_definitions.clone(),
+                    environment.logical_extent().1,
+                )
+            })
+            .transpose()
+            .map_err(|error| {
+                execution_error(
+                    "button text measurement",
+                    mlua::Error::runtime(error.to_string()),
+                )
+            })?;
         let object_metatables = OBJECT_KINDS
             .into_iter()
             .map(|kind| {
@@ -280,6 +332,7 @@ impl UiScriptRuntime {
                     bundle.manifest().kind(),
                     kind,
                     environment.assets(),
+                    button_measurement.clone(),
                 )
                 .map_err(|error| execution_error("object metatable", error))?;
                 metatables
@@ -355,8 +408,20 @@ impl UiScriptRuntime {
         let frame_ids = (0..plan.regions.state_count())
             .map(|index| plan.frames.state(index).map(|state| state.id()))
             .collect();
+        let frame_levels = (0..plan.regions.state_count())
+            .map(|index| plan.frames.state(index).map(|state| state.level()))
+            .collect();
+        let frame_keyboard_enabled = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.frames
+                    .state(index)
+                    .map(|state| state.keyboard_enabled())
+            })
+            .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
+        let buttons = tree_buttons(plan.tree);
         let texture_coords = tree_texture_coords(plan.tree, plan.textures)?;
+        let texture_colors = tree_texture_colors(plan.tree, plan.textures)?;
         let registered_objects = Rc::new(Cell::new(0));
         register_create_frame(lua, plan.regions.state_count(), registered_objects.clone())
             .map_err(|error| execution_error("CreateFrame", error))?;
@@ -369,8 +434,12 @@ impl UiScriptRuntime {
             region_shown,
             region_anchors,
             font_strings,
+            buttons,
             texture_coords,
+            texture_colors,
             frame_ids,
+            frame_levels,
+            frame_keyboard_enabled,
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
@@ -526,7 +595,7 @@ impl UiScriptRuntime {
                 ),
             });
         }
-        self.register_object(lua, tree, node_index)?;
+        self.register_object(lua, tree, scripts, node_index)?;
         *visited += 1;
         let children = tree
             .nodes()
@@ -538,13 +607,14 @@ impl UiScriptRuntime {
         for child in children {
             self.execute_object(lua, tree, scripts, batch, *child, visited)?;
         }
-        self.execute_load_handler(lua, tree, scripts, node_index)
+        self.execute_load_handler(lua, tree, node_index)
     }
 
     fn register_object(
         &mut self,
         lua: &Lua,
         tree: &UiObjectTree<'_>,
+        scripts: &UiScriptPlan,
         node_index: usize,
     ) -> Result<(), UiScriptError> {
         let object = tree
@@ -574,6 +644,34 @@ impl UiScriptRuntime {
                     .flatten()
                     .ok_or_else(|| UiScriptError::Plan {
                         message: format!("frame object {node_index} has no resolved frame state"),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let frame_level = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_levels
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!("frame object {node_index} has no resolved frame level"),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let keyboard_enabled = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_keyboard_enabled
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!(
+                            "frame object {node_index} has no resolved keyboard-input state"
+                        ),
                     })?,
             )
         } else {
@@ -620,6 +718,30 @@ impl UiScriptRuntime {
             .and_then(|()| table.raw_set(shown_key(), shown))
             .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
+            let script_handlers = lua
+                .create_table()
+                .map_err(|error| execution_error("object registration", error))?;
+            let script_node = scripts
+                .node(node_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("frame object {node_index} has no script state"),
+                })?;
+            for binding in scripts.bindings_for(script_node) {
+                let value = match binding.target() {
+                    UiScriptTarget::Compiled(index) => Value::Function(
+                        scripts
+                            .compiled_function(lua, *index)
+                            .map_err(|error| execution_error("object registration", error))?,
+                    ),
+                    UiScriptTarget::Global(name) => Value::String(
+                        lua.create_string(name)
+                            .map_err(|error| execution_error("object registration", error))?,
+                    ),
+                };
+                script_handlers
+                    .raw_set(binding.handler().name(), value)
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
             table
                 .raw_set(
                     events_key(),
@@ -628,6 +750,9 @@ impl UiScriptRuntime {
                 )
                 .and_then(|()| table.raw_set(all_events_key(), false))
                 .and_then(|()| table.raw_set(id_key(), frame_id))
+                .and_then(|()| table.raw_set(frame_level_key(), frame_level))
+                .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
+                .and_then(|()| table.raw_set(script_handlers_key(), script_handlers))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if is_enabled_control(object.kind()) {
@@ -639,10 +764,46 @@ impl UiScriptRuntime {
             object.kind(),
             UiObjectKind::Button | UiObjectKind::CheckButton
         ) {
+            let button = self
+                .buttons
+                .get(node_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("button {node_index} has no initial button state"),
+                })?;
             table
                 .raw_set(highlight_locked_key(), false)
                 .and_then(|()| table.raw_set(click_action_key(), 0_u64))
                 .map_err(|error| execution_error("object registration", error))?;
+            set_initial_font(
+                lua,
+                &table,
+                normal_font_key(),
+                button.normal_font.as_deref(),
+            )
+            .and_then(|()| {
+                set_initial_font(
+                    lua,
+                    &table,
+                    disabled_font_key(),
+                    button.disabled_font.as_deref(),
+                )
+            })
+            .and_then(|()| {
+                set_initial_font(
+                    lua,
+                    &table,
+                    highlight_font_key(),
+                    button.highlight_font.as_deref(),
+                )
+            })
+            .map_err(|error| execution_error("object registration", error))?;
+            if let Some(reference) = &button.text_reference {
+                let text = stock_text(lua, reference)
+                    .map_err(|error| execution_error("object registration", error))?;
+                table
+                    .raw_set(text_key(), text)
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
         }
         if object.kind() == UiObjectKind::CheckButton {
             table
@@ -669,6 +830,9 @@ impl UiScriptRuntime {
             table
                 .raw_set(model_camera_key(), 0)
                 .and_then(|()| table.raw_set(model_sequence_key(), 0_u32))
+                .and_then(|()| table.raw_set(model_sequence_time_sequence_key(), 0_u32))
+                .and_then(|()| table.raw_set(model_sequence_time_key(), 0_i32))
+                .and_then(|()| table.raw_set(model_scale_key(), 1.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::FontString {
@@ -712,6 +876,19 @@ impl UiScriptRuntime {
                         .map_err(|error| execution_error("object registration", error))?,
                 )
                 .map_err(|error| execution_error("object registration", error))?;
+            let color = self
+                .texture_colors
+                .get(node_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("texture {node_index} has no initial vertex color"),
+                })?;
+            table
+                .raw_set(
+                    texture_color_key(),
+                    lua.create_sequence_from(*color)
+                        .map_err(|error| execution_error("object registration", error))?,
+                )
+                .map_err(|error| execution_error("object registration", error))?;
         }
         let metatable_key = self
             .object_metatables
@@ -734,6 +911,26 @@ impl UiScriptRuntime {
         objects
             .raw_set(node_index + 1, table.clone())
             .map_err(|error| execution_error("object registration", error))?;
+        if let Some(key) = widget_region_key(object.role())
+            && let Some(parent) = object.parent()
+        {
+            let owner: Table = objects
+                .raw_get(parent + 1)
+                .map_err(|error| execution_error("object registration", error))?;
+            owner
+                .raw_set(key, table.clone())
+                .map_err(|error| execution_error("object registration", error))?;
+            if object.role() == UiObjectRole::ButtonText
+                && let Some(font) = owner
+                    .raw_get::<Option<Table>>(normal_font_key())
+                    .map_err(|error| execution_error("object registration", error))?
+            {
+                table
+                    .raw_set(font_object_key(), font)
+                    .and_then(|()| table.raw_set(font_set_key(), true))
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
+        }
 
         if let Some(name) = object.name() {
             let globals = lua.globals();
@@ -755,49 +952,34 @@ impl UiScriptRuntime {
         &mut self,
         lua: &Lua,
         tree: &UiObjectTree<'_>,
-        scripts: &UiScriptPlan,
         node_index: usize,
     ) -> Result<(), UiScriptError> {
-        let Some(binding) = scripts.binding(node_index, UiScriptHandler::Load) else {
-            return Ok(());
-        };
         let object = tree
             .nodes()
             .get(node_index)
             .ok_or_else(|| UiScriptError::Plan {
                 message: format!("OnLoad object index {node_index} is outside the arena"),
             })?;
+        if !is_frame_object(object.kind()) {
+            return Ok(());
+        }
         let label = format!(
             "{}<{}>:OnLoad",
             object.name().unwrap_or("<unnamed>"),
             object_type_name(object.kind())
         );
-        let function = match binding.target() {
-            UiScriptTarget::Compiled(index) => scripts
-                .compiled_function(lua, *index)
-                .map_err(|error| execution_error(&label, error))?,
-            UiScriptTarget::Global(name) => {
-                let value: Value = lua
-                    .globals()
-                    .raw_get(name.as_str())
-                    .map_err(|error| execution_error(&label, error))?;
-                let Value::Function(function) = value else {
-                    return Err(UiScriptError::Execution {
-                        label,
-                        message: format!("global handler {name} is not a function"),
-                    });
-                };
-                function
-            }
-        };
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error(&label, error))?;
         let table: Table = objects
             .raw_get(node_index + 1)
             .map_err(|error| execution_error(&label, error))?;
-        function
-            .call::<()>(table)
+        let Some(function) = object_script_function(lua, &table, UiScriptHandler::Load)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_object_handler(lua, &function, table)
             .map_err(|error| execution_error(&label, error))?;
         self.executed_load_handlers += 1;
         Ok(())
@@ -863,6 +1045,7 @@ fn create_dynamic_frame(
         let records = lua.create_table()?;
         let record = lua.create_table()?;
         record.raw_set("kind", requested_kind)?;
+        record.raw_set("role", "object")?;
         record.raw_set("root_name", true)?;
         record.raw_set("children", lua.create_table()?)?;
         record.raw_set("width", 0.0)?;
@@ -874,6 +1057,10 @@ fn create_dynamic_frame(
         record.raw_set(
             "texture_coords",
             lua.create_sequence_from([0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0])?,
+        )?;
+        record.raw_set(
+            "texture_color",
+            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
         )?;
         records.raw_set(1, record)?;
         records
@@ -888,7 +1075,10 @@ fn create_dynamic_frame(
             "CreateFrame type {requested_kind} does not match template type {template_kind}"
         )));
     }
-    let base_name = requested_name.map(str::to_owned).or_else(|| {
+    let requested_name = requested_name
+        .map(|name| expand_dynamic_parent_name(lua, name, requested_parent.as_ref()))
+        .transpose()?;
+    let base_name = requested_name.clone().or_else(|| {
         requested_parent
             .as_ref()
             .and_then(|parent| parent.raw_get(name_key()).ok())
@@ -898,7 +1088,7 @@ fn create_dynamic_frame(
     for local_index in 1..=count {
         let record: Table = records.raw_get(local_index)?;
         let kind = record.raw_get::<String>("kind")?;
-        let name = dynamic_name(&record, requested_name, base_name.as_deref())?;
+        let name = dynamic_name(&record, requested_name.as_deref(), base_name.as_deref())?;
         let parent = if local_index == root_local {
             requested_parent.clone()
         } else if let Some(parent_index) = record.raw_get::<Option<usize>>("parent")? {
@@ -919,6 +1109,34 @@ fn create_dynamic_frame(
         .get(root_local - 1)
         .cloned()
         .ok_or_else(|| mlua::Error::runtime("CreateFrame root is outside its template"))
+}
+
+fn expand_dynamic_parent_name(
+    lua: &Lua,
+    source: &str,
+    parent: Option<&Table>,
+) -> mlua::Result<String> {
+    let Some(prefix) = source.get(..7) else {
+        return Ok(source.to_owned());
+    };
+    if !prefix.eq_ignore_ascii_case("$parent") {
+        return Ok(source.to_owned());
+    }
+
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut cursor = parent.cloned();
+    while let Some(candidate) = cursor {
+        if let Some(name) = candidate.raw_get::<Option<String>>(name_key())?
+            && !name.is_empty()
+        {
+            return Ok(format!("{name}{}", &source[7..]));
+        }
+        cursor = candidate
+            .raw_get::<Option<usize>>(parent_key())?
+            .map(|index| objects.raw_get::<Table>(index))
+            .transpose()?;
+    }
+    Ok(source[7..].to_owned())
 }
 
 fn dynamic_name(
@@ -961,6 +1179,20 @@ fn create_dynamic_object(
         object.raw_set(events_key(), lua.create_table()?)?;
         object.raw_set(all_events_key(), false)?;
         object.raw_set(id_key(), 0)?;
+        let level = parent
+            .map(|parent| parent.raw_get::<i32>(frame_level_key()))
+            .transpose()?
+            .map_or(0, |level| level.saturating_add(1));
+        object.raw_set(frame_level_key(), level)?;
+        object.raw_set(keyboard_enabled_key(), false)?;
+        let handlers = lua.create_table()?;
+        if let Some(initial) = record.raw_get::<Option<Table>>("scripts")? {
+            for pair in initial.pairs::<String, Value>() {
+                let (name, value) = pair?;
+                handlers.raw_set(name, value)?;
+            }
+        }
+        object.raw_set(script_handlers_key(), handlers)?;
     }
     if matches!(kind, "Button" | "CheckButton" | "Slider") {
         object.raw_set(enabled_key(), true)?;
@@ -987,6 +1219,9 @@ fn create_dynamic_object(
     if matches!(kind, "Model" | "ModelFFX") {
         object.raw_set(model_camera_key(), 0)?;
         object.raw_set(model_sequence_key(), 0_u32)?;
+        object.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
+        object.raw_set(model_sequence_time_key(), 0_i32)?;
+        object.raw_set(model_scale_key(), 1.0)?;
     }
     if kind == "FontString" {
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
@@ -999,11 +1234,26 @@ fn create_dynamic_object(
     }
     if kind == "Texture" {
         object.raw_set(tex_coord_key(), record.raw_get::<Table>("texture_coords")?)?;
+        object.raw_set(
+            texture_color_key(),
+            record.raw_get::<Table>("texture_color")?,
+        )?;
     }
     let metatables: Table = lua.named_registry_value(METATABLE_REGISTRY)?;
     object.set_metatable(Some(metatables.raw_get(kind)?))?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     objects.raw_set(index, object.clone())?;
+    if let Some(parent) = parent
+        && let Some(key) = dynamic_widget_region_key(record.raw_get::<String>("role")?.as_str())
+    {
+        parent.raw_set(key, object.clone())?;
+        if key == button_text_key()
+            && let Some(font) = parent.raw_get::<Option<Table>>(normal_font_key())?
+        {
+            object.raw_set(font_object_key(), font)?;
+            object.raw_set(font_set_key(), true)?;
+        }
+    }
     if let Some(name) = name
         && matches!(lua.globals().raw_get::<Value>(name)?, Value::Nil)
     {
@@ -1023,19 +1273,30 @@ fn run_dynamic_load(
     for child in children.sequence_values::<usize>() {
         run_dynamic_load(lua, records, objects, child?)?;
     }
-    let function = if let Some(function) = record.raw_get::<Option<mlua::Function>>("on_load")? {
-        Some(function)
-    } else if let Some(name) = record.raw_get::<Option<String>>("on_load_global")? {
-        Some(lua.globals().raw_get::<mlua::Function>(name)?)
-    } else {
-        None
-    };
-    if let Some(function) = function {
-        function.call::<()>(objects.get(local - 1).cloned().ok_or_else(|| {
-            mlua::Error::runtime("dynamic OnLoad object is outside its template")
-        })?)?;
+    let object = objects
+        .get(local - 1)
+        .cloned()
+        .ok_or_else(|| mlua::Error::runtime("dynamic OnLoad object is outside its template"))?;
+    if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Load)? {
+        call_object_handler(lua, &function, object)?;
     }
     Ok(())
+}
+
+/// Installs and restores build 12340's legacy global `this` around callbacks.
+fn call_object_handler(lua: &Lua, function: &mlua::Function, object: Table) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous = globals.raw_get::<Value>("this")?;
+    globals.raw_set("this", object.clone())?;
+    let result = function.call::<()>(object);
+    let restore = globals.raw_set("this", previous);
+    match result {
+        Ok(()) => restore,
+        Err(error) => {
+            let _ = restore;
+            Err(error)
+        }
+    }
 }
 
 fn register_font(
@@ -1097,6 +1358,7 @@ fn create_object_metatable(
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
     assets: Option<Rc<RefCell<AssetStore>>>,
+    button_measurement: Option<buttons::ButtonTextMeasurement>,
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
     methods.raw_set(
@@ -1129,15 +1391,16 @@ fn create_object_metatable(
         register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
         register_frame_visibility_methods(lua, &methods)?;
+        register_frame_script_methods(lua, &methods, kind)?;
     }
     if is_enabled_control(kind) {
         register_enabled_methods(lua, &methods, kind)?;
     }
     if matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton) {
-        register_button_font_methods(lua, &methods)?;
+        buttons::register_button_methods(lua, &methods, button_measurement)?;
     }
     if kind == UiObjectKind::CheckButton {
-        register_check_button_methods(lua, &methods)?;
+        buttons::register_check_button_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::FontString {
         register_font_string_methods(lua, &methods)?;
@@ -1157,6 +1420,73 @@ fn create_object_metatable(
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
     Ok(metatable)
+}
+
+fn register_frame_script_methods(
+    lua: &Lua,
+    methods: &Table,
+    kind: UiObjectKind,
+) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetScript",
+        lua.create_function(move |_, (object, name, value): (Table, String, Value)| {
+            let handler = handler_for(kind, &name)
+                .ok_or_else(|| mlua::Error::runtime(format!("Unknown script handler: {name}")))?;
+            if !matches!(value, Value::Nil | Value::Function(_)) {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetScript(\"scriptType\", function)",
+                    object_type_name(kind)
+                )));
+            }
+            let handlers: Table = object.raw_get(script_handlers_key())?;
+            handlers.raw_set(handler.name(), value)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetScript",
+        lua.create_function(move |lua, (object, name): (Table, String)| {
+            let handler = handler_for(kind, &name)
+                .ok_or_else(|| mlua::Error::runtime(format!("Unknown script handler: {name}")))?;
+            object_script_function(lua, &object, handler)
+        })?,
+    )?;
+    methods.raw_set(
+        "HasScript",
+        lua.create_function(move |_, (object, name): (Table, String)| {
+            let handler = handler_for(kind, &name)
+                .ok_or_else(|| mlua::Error::runtime(format!("Unknown script handler: {name}")))?;
+            let handlers: Table = object.raw_get(script_handlers_key())?;
+            Ok(!matches!(
+                handlers.raw_get::<Value>(handler.name())?,
+                Value::Nil
+            ))
+        })?,
+    )
+}
+
+fn object_script_function(
+    lua: &Lua,
+    object: &Table,
+    handler: UiScriptHandler,
+) -> mlua::Result<Option<mlua::Function>> {
+    let Some(handlers) = object.raw_get::<Option<Table>>(script_handlers_key())? else {
+        return Ok(None);
+    };
+    match handlers.raw_get::<Value>(handler.name())? {
+        Value::Nil => Ok(None),
+        Value::Function(function) => Ok(Some(function)),
+        Value::String(name) => {
+            let name = name.to_str()?;
+            match lua.globals().raw_get::<Value>(&name)? {
+                Value::Nil => Ok(None),
+                Value::Function(function) => Ok(Some(function)),
+                _ => Err(mlua::Error::runtime(format!(
+                    "global handler {name} is not a function"
+                ))),
+            }
+        }
+        _ => Err(mlua::Error::runtime("script handler slot is invalid")),
+    }
 }
 
 fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -1304,6 +1634,41 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 .map(|value| value.map(Value::Number))
                 .collect::<mlua::Result<Variadic<Value>>>()
         })?,
+    )?;
+    methods.raw_set(
+        "SetVertexColor",
+        lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
+            let current: Table = texture.raw_get(texture_color_key())?;
+            let mut color = [0.0_f64; 4];
+            for (index, component) in color.iter_mut().take(3).enumerate() {
+                *component = arguments
+                    .get(index)
+                    .map(|value| lua.coerce_number(value.clone()))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
+            }
+            color[3] = arguments
+                .get(3)
+                .map(|value| lua.coerce_number(value.clone()))
+                .transpose()?
+                .flatten()
+                .map_or(current.raw_get::<f64>(4)?, |value| value.clamp(0.0, 1.0));
+            texture.raw_set(texture_color_key(), lua.create_sequence_from(color)?)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetVertexColor",
+        lua.create_function(|_, texture: Table| {
+            let color: Table = texture.raw_get(texture_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
+        })?,
     )
 }
 
@@ -1359,107 +1724,44 @@ fn register_model_methods(
             }
             model.raw_set(model_sequence_key(), value as u32)
         })?,
-    )
-}
-
-fn register_button_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
-    register_button_font_pair(
-        lua,
-        methods,
-        "SetNormalFontObject",
-        "GetNormalFontObject",
-        normal_font_key(),
-    )?;
-    register_button_font_pair(
-        lua,
-        methods,
-        "SetDisabledFontObject",
-        "GetDisabledFontObject",
-        disabled_font_key(),
-    )?;
-    register_button_font_pair(
-        lua,
-        methods,
-        "SetHighlightFontObject",
-        "GetHighlightFontObject",
-        highlight_font_key(),
     )?;
     methods.raw_set(
-        "SetText",
-        lua.create_function(|lua, (button, value): (Table, Value)| {
-            button.raw_set(text_key(), lua_text(lua, value)?)
+        "SetSequenceTime",
+        lua.create_function(|lua, (model, sequence, time): (Table, Value, Value)| {
+            let sequence = lua.coerce_number(sequence)?.ok_or_else(|| {
+                mlua::Error::runtime("Usage: Model:SetSequenceTime(sequence, time)")
+            })?;
+            let time = lua.coerce_number(time)?.ok_or_else(|| {
+                mlua::Error::runtime("Usage: Model:SetSequenceTime(sequence, time)")
+            })?;
+            model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
+            model.raw_set(model_sequence_time_key(), time as i32)
         })?,
     )?;
     methods.raw_set(
-        "SetFormattedText",
-        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
-            let library: Table = lua.globals().raw_get("string")?;
-            let format: mlua::Function = library.raw_get("format")?;
-            let text = format.call::<String>(arguments)?;
-            button.raw_set(text_key(), text)
-        })?,
-    )?;
-    methods.raw_set(
-        "GetText",
-        lua.create_function(|_, button: Table| {
-            let text = button.raw_get::<Option<String>>(text_key())?;
-            Ok(text.filter(|text| !text.is_empty()))
-        })?,
-    )?;
-    methods.raw_set(
-        "LockHighlight",
-        lua.create_function(|_, button: Table| button.raw_set(highlight_locked_key(), true))?,
-    )?;
-    methods.raw_set(
-        "UnlockHighlight",
-        lua.create_function(|_, button: Table| button.raw_set(highlight_locked_key(), false))?,
-    )?;
-    methods.raw_set(
-        "RegisterForClicks",
-        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
-            let mut action = 0_u64;
-            for value in arguments {
-                let Some(value) = lua.coerce_string(value)? else {
-                    break;
-                };
-                action |= click_action(value.to_string_lossy().as_str());
-            }
-            button.raw_set(click_action_key(), action)
+        "SetModelScale",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            let value = lua
+                .coerce_number(value)?
+                .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetModelScale(scale)"))?;
+            model.raw_set(model_scale_key(), value)
         })?,
     )
 }
 
-/// Reproduces build 12340's recognized `StringToClickAction` names.
-fn click_action(value: &str) -> u64 {
-    if value.eq_ignore_ascii_case("LeftButtonDown") {
-        1
-    } else if value.eq_ignore_ascii_case("LeftButtonUp") {
-        0x8000_0000
-    } else if value.eq_ignore_ascii_case("MiddleButtonDown") {
-        2
-    } else if value.eq_ignore_ascii_case("RightButtonDown") {
-        4
-    } else {
-        0
-    }
+fn resolve_font_object(lua: &Lua, value: Value) -> Option<Table> {
+    let table = match value {
+        Value::String(name) => lua.globals().raw_get::<Table>(name.to_str().ok()?).ok()?,
+        Value::Table(table) => table,
+        _ => return None,
+    };
+    let kind = table.raw_get::<String>(type_key()).ok()?;
+    kind.eq_ignore_ascii_case("Font").then_some(table)
 }
 
-fn register_check_button_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
-    methods.raw_set(
-        "SetChecked",
-        lua.create_function(|_, (button, arguments): (Table, Variadic<Value>)| {
-            let checked = arguments.first().is_none_or(|value| lua_bool(value, true));
-            button.raw_set(checked_key(), checked)
-        })?,
-    )?;
-    methods.raw_set(
-        "GetChecked",
-        lua.create_function(|_, button: Table| {
-            Ok(button
-                .raw_get::<bool>(checked_key())?
-                .then_some(Value::Number(1.0)))
-        })?,
-    )
+fn lua_text(lua: &Lua, value: Value) -> mlua::Result<Option<String>> {
+    lua.coerce_string(value)
+        .map(|value| value.map(|value| value.to_string_lossy()))
 }
 
 fn lua_bool(value: &Value, default: bool) -> bool {
@@ -1491,50 +1793,6 @@ fn lua_bool(value: &Value, default: bool) -> bool {
     }
 }
 
-fn register_button_font_pair(
-    lua: &Lua,
-    methods: &Table,
-    setter: &'static str,
-    getter: &'static str,
-    key: LightUserData,
-) -> mlua::Result<()> {
-    methods.raw_set(
-        setter,
-        lua.create_function(move |lua, (button, font): (Table, Value)| {
-            let font = resolve_font_object(lua, font).ok_or_else(|| {
-                mlua::Error::runtime(format!(
-                    "Usage: {}:{setter}(\"fontname\" or fontObject)",
-                    button
-                        .raw_get::<Option<String>>(name_key())
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| "<unnamed>".to_owned())
-                ))
-            })?;
-            button.raw_set(key, font)
-        })?,
-    )?;
-    methods.raw_set(
-        getter,
-        lua.create_function(move |_, button: Table| button.raw_get::<Option<Table>>(key))?,
-    )
-}
-
-fn resolve_font_object(lua: &Lua, value: Value) -> Option<Table> {
-    let table = match value {
-        Value::String(name) => lua.globals().raw_get::<Table>(name.to_str().ok()?).ok()?,
-        Value::Table(table) => table,
-        _ => return None,
-    };
-    let kind = table.raw_get::<String>(type_key()).ok()?;
-    kind.eq_ignore_ascii_case("Font").then_some(table)
-}
-
-fn lua_text(lua: &Lua, value: Value) -> mlua::Result<Option<String>> {
-    lua.coerce_string(value)
-        .map(|value| value.map(|value| value.to_string_lossy()))
-}
-
 fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "GetID",
@@ -1543,6 +1801,40 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
     methods.raw_set(
         "SetID",
         lua.create_function(|_, (object, id): (Table, i32)| object.raw_set(id_key(), id))?,
+    )?;
+    methods.raw_set(
+        "GetFrameLevel",
+        lua.create_function(|_, object: Table| object.raw_get::<i32>(frame_level_key()))?,
+    )?;
+    methods.raw_set(
+        "SetFrameLevel",
+        lua.create_function(|lua, (object, value): (Table, Value)| {
+            let value = lua
+                .coerce_number(value)?
+                .ok_or_else(|| mlua::Error::runtime("Usage: Frame:SetFrameLevel(level)"))?
+                as i32;
+            if value < 0 {
+                return Err(mlua::Error::runtime(format!(
+                    "Frame:SetFrameLevel(): Passed negative frame level: {value}"
+                )));
+            }
+            object.raw_set(frame_level_key(), value)
+        })?,
+    )?;
+    methods.raw_set(
+        "EnableKeyboard",
+        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+            let enabled = arguments.first().is_none_or(|value| lua_bool(value, true));
+            object.raw_set(keyboard_enabled_key(), enabled)
+        })?,
+    )?;
+    methods.raw_set(
+        "IsKeyboardEnabled",
+        lua.create_function(|_, object: Table| {
+            Ok(object
+                .raw_get::<bool>(keyboard_enabled_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
     )
 }
 
@@ -1809,8 +2101,8 @@ fn set_all_region_points(lua: &Lua, object: &Table, relative: Option<Value>) -> 
         None => object.raw_get::<Option<usize>>(parent_key())?,
         Some(Value::Nil) => None,
         Some(Value::String(name)) => {
-            let name = name.to_str()?;
-            let table = lua.globals().raw_get::<Table>(name.as_ref()).map_err(|_| {
+            let name = resolve_region_name(lua, object, name.to_str()?.as_ref())?;
+            let table = lua.globals().raw_get::<Table>(name.as_str()).map_err(|_| {
                 mlua::Error::runtime(format!(
                     "SetAllPoints(): Couldn't find region named '{name}'"
                 ))
@@ -1853,8 +2145,8 @@ fn set_region_point(
     if let Some(argument) = arguments.first() {
         match argument {
             Value::String(name) => {
-                let name = name.to_str()?;
-                let relative: Value = lua.globals().raw_get(name.as_ref())?;
+                let name = resolve_region_name(lua, object, name.to_str()?.as_ref())?;
+                let relative: Value = lua.globals().raw_get(name.as_str())?;
                 let Value::Table(relative) = relative else {
                     return Err(mlua::Error::runtime(format!(
                         "SetPoint(): Couldn't find region named '{name}'"
@@ -1896,6 +2188,15 @@ fn set_region_point(
     let record = create_anchor_record(lua, point, target, relative_point, offset)?;
     let anchors: Table = object.raw_get(anchors_key())?;
     anchors.raw_set(point_index(point), record)
+}
+
+fn resolve_region_name(lua: &Lua, object: &Table, source: &str) -> mlua::Result<String> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let parent = object
+        .raw_get::<Option<usize>>(parent_key())?
+        .map(|index| objects.raw_get::<Table>(index))
+        .transpose()?;
+    expand_dynamic_parent_name(lua, source, parent.as_ref())
 }
 
 fn create_anchor_record(
@@ -2117,6 +2418,67 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
         .collect()
 }
 
+fn tree_buttons(tree: &UiObjectTree<'_>) -> Vec<InitialButton> {
+    tree.nodes()
+        .iter()
+        .map(|node| {
+            if !matches!(
+                node.kind(),
+                UiObjectKind::Button | UiObjectKind::CheckButton
+            ) {
+                return InitialButton::default();
+            }
+            let mut initial = InitialButton::default();
+            for layer in node.layers() {
+                if let Some(reference) = xml_attribute(layer.element(), "text") {
+                    initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
+                }
+                for content in layer.element().content() {
+                    let XmlContent::Element(index) = content else {
+                        continue;
+                    };
+                    let Some(child) = layer.document().element(*index) else {
+                        continue;
+                    };
+                    let target = match child.name() {
+                        "NormalFont" => &mut initial.normal_font,
+                        "DisabledFont" => &mut initial.disabled_font,
+                        "HighlightFont" => &mut initial.highlight_font,
+                        _ => continue,
+                    };
+                    if let Some(style) = xml_attribute(child, "style") {
+                        *target = (!style.is_empty()).then(|| style.to_owned());
+                    }
+                }
+            }
+            initial
+        })
+        .collect()
+}
+
+fn set_initial_font(
+    lua: &Lua,
+    button: &Table,
+    key: LightUserData,
+    name: Option<&str>,
+) -> mlua::Result<()> {
+    let Some(name) = name else {
+        return Ok(());
+    };
+    let font = lua.globals().raw_get::<Option<Table>>(name)?;
+    if let Some(font) = font {
+        button.raw_set(key, font)?;
+    }
+    Ok(())
+}
+
+fn stock_text(lua: &Lua, reference: &str) -> mlua::Result<String> {
+    let localized = lua.globals().raw_get::<Option<String>>(reference)?;
+    Ok(localized
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| reference.to_owned()))
+}
+
 fn apply_font_justification(initial: &mut InitialFont, definition: &FontDefinition) {
     if let Some(value) = definition.horizontal_justification() {
         initial.justify_h = match value {
@@ -2166,12 +2528,64 @@ fn tree_texture_coords(
         .collect()
 }
 
+fn tree_texture_colors(
+    tree: &UiObjectTree<'_>,
+    textures: &UiTexturePlan,
+) -> Result<Vec<[f64; 4]>, UiScriptError> {
+    tree.nodes()
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            let mut color = [1.0, 1.0, 1.0, 1.0];
+            if node.kind() != UiObjectKind::Texture {
+                return Ok(color);
+            }
+            let texture = textures.node(index).ok_or_else(|| UiScriptError::Plan {
+                message: format!("texture {index} is outside the texture plan"),
+            })?;
+            for layer in textures.layers_for(texture) {
+                if let Some(value) = layer.color() {
+                    color = [
+                        f64::from(value.red()),
+                        f64::from(value.green()),
+                        f64::from(value.blue()),
+                        f64::from(value.alpha().unwrap_or(1.0)),
+                    ];
+                }
+            }
+            Ok(color)
+        })
+        .collect()
+}
+
 fn xml_attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> {
     element
         .attributes()
         .iter()
         .find(|attribute| attribute.name() == name)
         .map(|attribute| attribute.value())
+}
+
+fn widget_region_key(role: UiObjectRole) -> Option<LightUserData> {
+    match role {
+        UiObjectRole::ButtonText => Some(button_text_key()),
+        UiObjectRole::NormalTexture => Some(normal_texture_key()),
+        UiObjectRole::PushedTexture => Some(pushed_texture_key()),
+        UiObjectRole::DisabledTexture => Some(disabled_texture_key()),
+        UiObjectRole::HighlightTexture => Some(highlight_texture_key()),
+        _ => None,
+    }
+}
+
+fn dynamic_widget_region_key(role: &str) -> Option<LightUserData> {
+    match role {
+        "button_text" => Some(button_text_key()),
+        "normal_texture" => Some(normal_texture_key()),
+        "pushed_texture" => Some(pushed_texture_key()),
+        "disabled_texture" => Some(disabled_texture_key()),
+        "highlight_texture" => Some(highlight_texture_key()),
+        _ => None,
+    }
 }
 
 fn object_type_name(kind: UiObjectKind) -> &'static str {
@@ -2396,6 +2810,54 @@ fn model_file_key() -> LightUserData {
 
 fn click_action_key() -> LightUserData {
     hidden_key(&CLICK_ACTION_TOKEN)
+}
+
+fn model_sequence_time_sequence_key() -> LightUserData {
+    hidden_key(&MODEL_SEQUENCE_TIME_SEQUENCE_TOKEN)
+}
+
+fn model_sequence_time_key() -> LightUserData {
+    hidden_key(&MODEL_SEQUENCE_TIME_TOKEN)
+}
+
+fn frame_level_key() -> LightUserData {
+    hidden_key(&FRAME_LEVEL_TOKEN)
+}
+
+fn model_scale_key() -> LightUserData {
+    hidden_key(&MODEL_SCALE_TOKEN)
+}
+
+fn keyboard_enabled_key() -> LightUserData {
+    hidden_key(&KEYBOARD_ENABLED_TOKEN)
+}
+
+fn texture_color_key() -> LightUserData {
+    hidden_key(&TEXTURE_COLOR_TOKEN)
+}
+
+fn normal_texture_key() -> LightUserData {
+    hidden_key(&NORMAL_TEXTURE_TOKEN)
+}
+
+fn pushed_texture_key() -> LightUserData {
+    hidden_key(&PUSHED_TEXTURE_TOKEN)
+}
+
+fn disabled_texture_key() -> LightUserData {
+    hidden_key(&DISABLED_TEXTURE_TOKEN)
+}
+
+fn highlight_texture_key() -> LightUserData {
+    hidden_key(&HIGHLIGHT_TEXTURE_TOKEN)
+}
+
+fn script_handlers_key() -> LightUserData {
+    hidden_key(&SCRIPT_HANDLERS_TOKEN)
+}
+
+fn button_text_key() -> LightUserData {
+    hidden_key(&BUTTON_TEXT_TOKEN)
 }
 
 fn hidden_key(token: &'static u8) -> LightUserData {

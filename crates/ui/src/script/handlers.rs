@@ -451,7 +451,7 @@ fn compile_target(
     Ok(Some(UiScriptTarget::Compiled(function_index)))
 }
 
-fn handler_for(kind: UiObjectKind, name: &str) -> Option<UiScriptHandler> {
+pub(super) fn handler_for(kind: UiObjectKind, name: &str) -> Option<UiScriptHandler> {
     let specific = match kind {
         UiObjectKind::Button | UiObjectKind::CheckButton => match_name(
             name,

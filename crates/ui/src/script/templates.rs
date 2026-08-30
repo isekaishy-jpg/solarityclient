@@ -53,6 +53,7 @@ pub(super) enum UiRuntimeName {
 pub struct UiRuntimeTemplateNode {
     name: Option<UiRuntimeName>,
     kind: UiObjectKind,
+    role: crate::UiObjectRole,
     parent: Option<usize>,
     external_parent: Option<String>,
     construction_children: Vec<usize>,
@@ -63,7 +64,8 @@ pub struct UiRuntimeTemplateNode {
     justify_h: String,
     justify_v: String,
     texture_coords: [f64; 8],
-    load_target: Option<UiScriptTarget>,
+    texture_color: [f64; 4],
+    script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
 impl UiRuntimeTemplateNode {
@@ -105,10 +107,6 @@ impl UiRuntimeTemplateNode {
 
     pub(super) fn name(&self) -> Option<&UiRuntimeName> {
         self.name.as_ref()
-    }
-
-    pub(super) fn load_target(&self) -> Option<&UiScriptTarget> {
-        self.load_target.as_ref()
     }
 }
 
@@ -152,8 +150,16 @@ impl UiRuntimeTemplatePlan {
             for (local_index, object) in tree.nodes().iter().enumerate() {
                 let (dimensions, shown) =
                     resolve_local_region(&layout, local_index, template_name)?;
-                let load_target = scripts
-                    .binding(local_index, UiScriptHandler::Load)
+                let script_node =
+                    scripts
+                        .node(local_index)
+                        .ok_or_else(|| UiScriptError::Template {
+                            template: template_name.to_owned(),
+                            message: format!("object {local_index} has no script state"),
+                        })?;
+                let script_targets = scripts
+                    .bindings_for(script_node)
+                    .iter()
                     .map(|binding| {
                         remap_target(
                             &mut plan.functions,
@@ -162,15 +168,19 @@ impl UiRuntimeTemplatePlan {
                             binding.target(),
                             template_name,
                         )
+                        .map(|target| (binding.handler(), target))
                     })
-                    .transpose()?;
+                    .collect::<Result<Vec<_>, _>>()?;
                 let (font_assigned, font_object_name, justify_h, justify_v) =
                     initial_font(object, fonts);
                 let texture_coords = initial_texture_coords(&tree, &textures, local_index)
                     .map_err(|error| template_error(template_name, error))?;
+                let texture_color = initial_texture_color(&tree, &textures, local_index)
+                    .map_err(|error| template_error(template_name, error))?;
                 plan.nodes.push(UiRuntimeTemplateNode {
                     name: runtime_name(template_name, object.name()),
                     kind: object.kind(),
+                    role: object.role(),
                     parent: object.parent().map(|index| first_node + index),
                     external_parent: tree.pending_parent_name(local_index).map(str::to_owned),
                     construction_children: object
@@ -185,7 +195,8 @@ impl UiRuntimeTemplatePlan {
                     justify_h,
                     justify_v,
                     texture_coords,
-                    load_target,
+                    texture_color,
+                    script_targets,
                 });
             }
             plan.templates.push(UiRuntimeTemplate {
@@ -235,6 +246,7 @@ impl UiRuntimeTemplatePlan {
                 })?;
                 let record = lua.create_table()?;
                 record.raw_set("kind", object_kind_name(node.kind))?;
+                record.raw_set("role", object_role_name(node.role))?;
                 match node.name() {
                     Some(UiRuntimeName::Root) => record.raw_set("root_name", true)?,
                     Some(UiRuntimeName::RootSuffix(suffix)) => {
@@ -285,16 +297,23 @@ impl UiRuntimeTemplatePlan {
                     "texture_coords",
                     lua.create_sequence_from(node.texture_coords)?,
                 )?;
-                if let Some(target) = node.load_target() {
+                record.raw_set(
+                    "texture_color",
+                    lua.create_sequence_from(node.texture_color)?,
+                )?;
+                let scripts = lua.create_table()?;
+                for (handler, target) in &node.script_targets {
                     match target {
                         UiScriptTarget::Compiled(index) => {
-                            record.raw_set("on_load", self.compiled_function(lua, *index)?)?;
+                            scripts
+                                .raw_set(handler.name(), self.compiled_function(lua, *index)?)?;
                         }
                         UiScriptTarget::Global(name) => {
-                            record.raw_set("on_load_global", name.as_str())?;
+                            scripts.raw_set(handler.name(), name.as_str())?;
                         }
                     }
                 }
+                record.raw_set("scripts", scripts)?;
                 nodes.raw_set(local_index + 1, record)?;
             }
             descriptor.raw_set("nodes", nodes)?;
@@ -391,6 +410,31 @@ fn initial_texture_coords(
     Ok(coords)
 }
 
+fn initial_texture_color(
+    tree: &UiObjectTree<'_>,
+    textures: &UiTexturePlan,
+    index: usize,
+) -> Result<[f64; 4], &'static str> {
+    let mut color = [1.0, 1.0, 1.0, 1.0];
+    if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
+        return Ok(color);
+    }
+    let texture = textures
+        .node(index)
+        .ok_or("texture is outside the template texture plan")?;
+    for layer in textures.layers_for(texture) {
+        if let Some(value) = layer.color() {
+            color = [
+                f64::from(value.red()),
+                f64::from(value.green()),
+                f64::from(value.blue()),
+                f64::from(value.alpha().unwrap_or(1.0)),
+            ];
+        }
+    }
+    Ok(color)
+}
+
 fn attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> {
     element
         .attributes()
@@ -421,6 +465,20 @@ fn object_kind_name(kind: UiObjectKind) -> &'static str {
         UiObjectKind::StatusBar => "StatusBar",
         UiObjectKind::Texture => "Texture",
         UiObjectKind::WorldFrame => "WorldFrame",
+    }
+}
+
+fn object_role_name(role: crate::UiObjectRole) -> &'static str {
+    match role {
+        crate::UiObjectRole::Object => "object",
+        crate::UiObjectRole::ButtonText => "button_text",
+        crate::UiObjectRole::NormalTexture => "normal_texture",
+        crate::UiObjectRole::PushedTexture => "pushed_texture",
+        crate::UiObjectRole::DisabledTexture => "disabled_texture",
+        crate::UiObjectRole::HighlightTexture => "highlight_texture",
+        crate::UiObjectRole::CheckedTexture => "checked_texture",
+        crate::UiObjectRole::DisabledCheckedTexture => "disabled_checked_texture",
+        crate::UiObjectRole::ThumbTexture => "thumb_texture",
     }
 }
 

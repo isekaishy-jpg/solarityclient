@@ -24,6 +24,8 @@ impl UiCVarRegistry {
         registry.register("accountName", "", false);
         registry.register("accountList", "", false);
         registry.register("showToolsUI", "-1", false);
+        registry.register("gxRefresh", "75", false);
+        registry.register("Sound_OutputDriverIndex", "0", false);
         registry
     }
 
