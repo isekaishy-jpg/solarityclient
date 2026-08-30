@@ -9,7 +9,9 @@ mod client_services;
 mod gameplay_session;
 mod login_coordinator;
 mod login_ui;
+mod realm_directory;
 mod run;
+mod world_coordinator;
 
 pub use client::{ApplicationError, ClientApplication, StartupReport};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};
@@ -18,3 +20,6 @@ pub use login_coordinator::{
     RuntimeLoginState,
 };
 pub use run::{ApplicationExitReason, ApplicationRunReport};
+pub use world_coordinator::{
+    RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
+};

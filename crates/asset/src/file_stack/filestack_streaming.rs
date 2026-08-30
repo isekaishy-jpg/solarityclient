@@ -1,6 +1,6 @@
 //! Mounted archive lookup without an eager full-file index.
 
-use crate::archive::{ArchiveDescriptor, AssetError, AssetPath, MountedArchive};
+use crate::archive::{ArchiveDescriptor, AssetError, AssetPath, Locale, MountedArchive};
 use crate::file_stack::ArchiveCatalog;
 
 /// Bytes returned with the exact archive selected by stock precedence.
@@ -37,6 +37,7 @@ impl AssetRead {
 /// millions of filenames. Runtime loading can later give this owner a dedicated
 /// asset thread without changing the public archive model.
 pub struct AssetStore {
+    locale: Locale,
     archives: Vec<MountedArchive>,
 }
 
@@ -48,12 +49,19 @@ impl AssetStore {
     /// Returns [`AssetError::ArchiveOpen`] when any present stock archive is
     /// corrupt or unsupported.
     pub fn mount(catalog: ArchiveCatalog) -> Result<Self, AssetError> {
+        let locale = catalog.locale();
         let descriptors = catalog.into_descriptors();
         let mut archives = Vec::with_capacity(descriptors.len());
         for descriptor in descriptors {
             archives.push(MountedArchive::open(descriptor)?);
         }
-        Ok(Self { archives })
+        Ok(Self { locale, archives })
+    }
+
+    /// Returns the locale whose archive set and localized tables are mounted.
+    #[must_use]
+    pub const fn locale(&self) -> Locale {
+        self.locale
     }
 
     /// Returns mounted archive metadata in resolution order.

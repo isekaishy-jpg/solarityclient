@@ -39,7 +39,8 @@ pub use render::{
     UiTextureSource,
 };
 pub use script::{
-    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRuntimeTemplate,
+    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRealmCategory,
+    UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion, UiRuntimeTemplate,
     UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding, UiScriptEnvironment,
     UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptRuntime,
     UiScriptRuntimePlan, UiScriptTarget,

@@ -5,7 +5,8 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     GlueError, GlueManager, UiEventArgument, UiEventError, UiEventPayload, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiLayoutError, UiObjectKind,
+    UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiRealmCategory, UiRealmDirectory,
+    UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -109,13 +110,182 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
     ));
     assert!(manager.take_network_action().is_none());
 
-    manager.set_network_status(UiGlueNetworkStatus::new(
-        Some("Local Realm".to_owned()),
-        true,
-    ));
-    assert_eq!(server_name.call::<String>(())?, "Local Realm");
+    manager.set_network_status(
+        UiGlueNetworkStatus::new(Some("Local Realm".to_owned()), true)
+            .with_realm_rules(true, false, true),
+    );
+    let server_values = server_name.call::<mlua::MultiValue>(())?;
+    assert_eq!(server_values.len(), 4);
+    assert_eq!(
+        server_values[0]
+            .as_string()
+            .map(|value| value.to_string_lossy()),
+        Some("Local Realm".to_owned())
+    );
+    assert_eq!(lua_numeric(&server_values[1]), Some(1.0));
+    assert!(server_values[2].is_nil());
+    assert_eq!(lua_numeric(&server_values[3]), Some(1.0));
     assert!(connected.call::<bool>(())?);
     Ok(())
+}
+
+/// Stock RealmList globals retain one-based category semantics and fourteen row values.
+#[test]
+fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Realm.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Realm.xml",
+            bytes: br#"<Ui><Frame name="RealmBridge"/></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    manager.set_realm_directory(UiRealmDirectory::new(
+        vec![
+            UiRealmCategory::new(1, "Empty".to_owned(), Vec::new()),
+            UiRealmCategory::new(
+                2,
+                "United States".to_owned(),
+                vec![UiRealmInfo::new(
+                    41,
+                    "Azeroth".to_owned(),
+                    5,
+                    UiRealmFlags::new(false, false, false, true, false),
+                    -3.0,
+                    None,
+                )],
+            ),
+            UiRealmCategory::new(
+                3,
+                "Oceanic".to_owned(),
+                vec![UiRealmInfo::new(
+                    42,
+                    "Kalimdor".to_owned(),
+                    0,
+                    UiRealmFlags::new(true, true, true, true, true),
+                    2.0,
+                    Some(UiRealmVersion::new(3, 3, 5, 12_340, 1)),
+                )],
+            )
+            .with_eligibility(true, true, true),
+        ],
+        Some(42),
+    ));
+    let globals = manager.bundle().lua().globals();
+
+    let categories = globals.get::<mlua::Function>("GetRealmCategories")?;
+    let categories = categories.call::<mlua::MultiValue>(())?;
+    assert_eq!(categories.len(), 2);
+    assert_eq!(
+        categories[0]
+            .as_string()
+            .map(|value| value.to_string_lossy()),
+        Some("United States".to_owned())
+    );
+    assert_eq!(
+        categories[1]
+            .as_string()
+            .map(|value| value.to_string_lossy()),
+        Some("Oceanic".to_owned())
+    );
+    let count = globals.get::<mlua::Function>("GetNumRealms")?;
+    assert_eq!(count.call::<usize>(())?, 2);
+    assert_eq!(count.call::<usize>(1_u32)?, 1);
+    let selected = globals.get::<mlua::Function>("GetSelectedCategory")?;
+    assert_eq!(selected.call::<u32>(())?, 2);
+
+    let realm_info = globals.get::<mlua::Function>("GetRealmInfo")?;
+    let values = realm_info.call::<mlua::MultiValue>((2_u32, 1_u32))?;
+    assert_eq!(values.len(), 14);
+    assert_eq!(
+        values[0].as_string().map(|value| value.to_string_lossy()),
+        Some("Kalimdor".to_owned())
+    );
+    assert_eq!(lua_numeric(&values[1]), Some(0.0));
+    assert_eq!(lua_numeric(&values[2]), Some(1.0));
+    assert_eq!(lua_numeric(&values[3]), Some(1.0));
+    assert_eq!(lua_numeric(&values[4]), Some(1.0));
+    assert_eq!(lua_numeric(&values[5]), Some(1.0));
+    assert_eq!(lua_numeric(&values[6]), Some(1.0));
+    assert_eq!(lua_numeric(&values[7]), Some(2.0));
+    assert_eq!(lua_numeric(&values[8]), Some(1.0));
+    assert_eq!(lua_numeric(&values[9]), Some(3.0));
+    assert_eq!(lua_numeric(&values[12]), Some(12_340.0));
+    assert_eq!(lua_numeric(&values[13]), Some(1.0));
+    let invalid_locale = globals.get::<mlua::Function>("IsInvalidLocale")?;
+    assert!(invalid_locale.call::<bool>(2_u32)?);
+
+    globals.raw_set("REALM_LIST_IN_PROGRESS", "Retrieving realm list")?;
+    globals
+        .get::<mlua::Function>("RequestRealmList")?
+        .call::<()>(true)?;
+    globals
+        .get::<mlua::Function>("CancelRealmListQuery")?
+        .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("ChangeRealm")?
+        .call::<()>((1_u32, 1_u32))?;
+    globals
+        .get::<mlua::Function>("SetPreferredInfo")?
+        .call::<()>((2_u32, true, true))?;
+    globals
+        .get::<mlua::Function>("SortRealms")?
+        .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("SetCurrentScreen")?
+        .call::<()>("login")?;
+    globals
+        .get::<mlua::Function>("RealmListDialogCancelled")?
+        .call::<()>(())?;
+
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::RequestRealmList {
+            show_progress_dialog: true,
+            status_message: Some(message),
+        }) if message == "Retrieving realm list"
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::CancelRealmListQuery)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::ChangeRealm { realm_id: 41 })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::SetPreferredRealmInfo {
+            category_index: 2,
+            player_killing_allowed: true,
+            roleplaying: true,
+        })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::SortRealms)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::RealmListDialogCancelled {
+            from_login_screen: true
+        })
+    ));
+    Ok(())
+}
+
+/// Reads either Lua numeric representation without changing value semantics.
+fn lua_numeric(value: &mlua::Value) -> Option<f64> {
+    match value {
+        mlua::Value::Integer(value) => i32::try_from(*value).ok().map(f64::from),
+        mlua::Value::Number(value) => Some(*value),
+        _ => None,
+    }
 }
 
 /// The manager retains executable state after temporary XML plans are gone.

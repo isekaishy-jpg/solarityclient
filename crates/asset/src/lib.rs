@@ -26,7 +26,8 @@ pub use database::{
     CharacterRaceCatalog, CharacterSection, CharacterSectionKind, CreatureCatalog,
     CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelAppearance, CreatureModelData,
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, WdbcHeader, WdbcTable,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, RealmCategoryCatalog,
+    RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{

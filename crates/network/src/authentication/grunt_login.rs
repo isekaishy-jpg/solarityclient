@@ -41,6 +41,7 @@ pub struct AuthenticatedGrunt<S> {
     stream: S,
     account_name: wow_srp::normalized_string::NormalizedString,
     session_key: WorldSessionKey,
+    tournament_access: bool,
 }
 
 /// Account identity transferred from realmd to one selected world server.
@@ -78,6 +79,12 @@ impl<S> AuthenticatedGrunt<S> {
     #[must_use]
     pub const fn session_key(&self) -> &WorldSessionKey {
         &self.session_key
+    }
+
+    /// Reports whether realmd granted the account's arena Pro Pass flag.
+    #[must_use]
+    pub const fn has_tournament_access(&self) -> bool {
+        self.tournament_access
     }
 
     /// Consumes login state and returns the underlying transport.
@@ -255,11 +262,12 @@ impl GruntLogin {
             })?;
 
         let message = read_server_message(&mut stream, LoginStage::Proof).await?;
-        let server_proof = match message {
+        let (server_proof, tournament_access) = match message {
             ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(CMD_AUTH_LOGON_PROOF_Server::Success {
+                account_flag,
                 server_proof,
                 ..
-            }) => server_proof,
+            }) => (server_proof, account_flag.is_propass()),
             ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(message) => {
                 return Err(LoginError::Rejected {
                     stage: LoginStage::Proof,
@@ -281,6 +289,7 @@ impl GruntLogin {
             stream,
             account_name: credentials.username,
             session_key: WorldSessionKey(*client.session_key()),
+            tournament_access,
         })
     }
 }

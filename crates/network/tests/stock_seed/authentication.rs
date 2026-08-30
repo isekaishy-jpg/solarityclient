@@ -114,6 +114,7 @@ fn grunt_login_authenticates_and_loads_realms() -> Result<(), Box<dyn Error + Se
         let mut login =
             GruntLogin::authenticate(client, credentials, options, &TestIntegrity).await?;
         assert_eq!(login.account_name(), "TESTACCOUNT");
+        assert!(login.has_tournament_access());
         assert_eq!(login.session_key().as_bytes().len(), 40);
         assert_eq!(
             format!("{:?}", login.session_key()),
@@ -273,7 +274,7 @@ async fn emulate_realmd(
     let public_key = PublicKey::from_le_bytes(client_proof.client_public_key)?;
     let (server, server_proof) = proof.into_server(public_key, client_proof.client_proof)?;
     CMD_AUTH_LOGON_PROOF_Server::Success {
-        account_flag: AccountFlag::empty(),
+        account_flag: AccountFlag::new_propass(),
         hardware_survey_id: 0,
         server_proof,
         unknown: 0,

@@ -2,7 +2,7 @@
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
-use crate::{UiGlueNetworkAction, UiLoginRequest, UiManifestKind};
+use crate::{UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
@@ -99,7 +99,7 @@ fn register_glue_globals(
     register_glue_network_globals(lua, globals, environment)?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
-    let current_screen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let current_screen = environment.current_screen();
     let setter_state = current_screen.clone();
     globals.raw_set(
         "SetCurrentScreen",
@@ -369,7 +369,14 @@ fn register_glue_network_globals(
     globals.raw_set(
         "GetServerName",
         lua.create_function(move |_, ()| {
-            Ok(network.borrow().status().server_name().map(str::to_owned))
+            let network = network.borrow();
+            let status = network.status();
+            Ok((
+                status.server_name().map(str::to_owned),
+                status.player_killing_allowed().then_some(1.0_f64),
+                status.roleplaying().then_some(1.0_f64),
+                status.is_server_down().then_some(1.0_f64),
+            ))
         })?,
     )?;
     let network = environment.network();
@@ -377,7 +384,313 @@ fn register_glue_network_globals(
         "IsConnectedToServer",
         lua.create_function(move |_, ()| Ok(network.borrow().status().is_connected()))?,
     )?;
+    register_realm_list_globals(lua, globals, environment)?;
     Ok(())
+}
+
+/// Registers the synchronous realm-list surface consumed by `RealmList.lua`.
+fn register_realm_list_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let network = environment.network();
+    globals.raw_set(
+        "RequestRealmList",
+        lua.create_function(move |lua, show_progress_dialog: Option<bool>| {
+            let show_progress_dialog = show_progress_dialog.unwrap_or(false);
+            let status_message = show_progress_dialog
+                .then(|| lua.globals().raw_get::<String>("REALM_LIST_IN_PROGRESS"))
+                .transpose()?;
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::RequestRealmList {
+                    show_progress_dialog,
+                    status_message,
+                });
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "RealmListUpdateRate",
+        lua.create_function(|_, ()| Ok(5.0_f64))?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "CancelRealmListQuery",
+        lua.create_function(move |_, ()| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::CancelRealmListQuery);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetNumRealms",
+        lua.create_function(move |_, category_index: Option<u32>| {
+            let network = network.borrow();
+            let realms = network.realms();
+            Ok(category_index.map_or_else(
+                || {
+                    realms
+                        .categories()
+                        .iter()
+                        .map(|category| category.realms().len())
+                        .sum()
+                },
+                |index| {
+                    realms
+                        .displayed_category(index)
+                        .map_or(0, |category| category.realms().len())
+                },
+            ))
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetRealmInfo",
+        lua.create_function(move |lua, arguments: Variadic<Value>| {
+            let (category_index, realm_index) = realm_indices(lua, &arguments, "GetRealmInfo")?;
+            let network = network.borrow();
+            let realms = network.realms();
+            let realm = realms.realm(category_index, realm_index).cloned();
+            realm_info_values(lua, realm.as_ref(), realms.selected_realm_id())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "ChangeRealm",
+        lua.create_function(move |lua, arguments: Variadic<Value>| {
+            let (category_index, realm_index) = realm_indices(lua, &arguments, "ChangeRealm")?;
+            let mut network = network.borrow_mut();
+            if let Some(category_index) = category_index {
+                network.realms_mut().select_category(category_index);
+            }
+            let realm_id = network
+                .realms()
+                .realm(category_index, realm_index)
+                .map(UiRealmInfo::id);
+            if let Some(realm_id) = realm_id {
+                network.push(UiGlueNetworkAction::ChangeRealm { realm_id });
+            }
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetRealmCategories",
+        lua.create_function(move |lua, ()| {
+            let network = network.borrow();
+            let realms = network.realms();
+            let mut names = realms
+                .displayed_categories()
+                .map(|category| category.name().to_owned())
+                .collect::<Vec<_>>();
+            if names.is_empty() {
+                names.extend(
+                    realms
+                        .categories()
+                        .first()
+                        .map(|category| category.name().to_owned()),
+                );
+            }
+            names
+                .into_iter()
+                .map(|name| lua.create_string(name).map(Value::String))
+                .collect::<mlua::Result<Vec<_>>>()
+                .map(MultiValue::from_vec)
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "SetPreferredInfo",
+        lua.create_function(move |lua, arguments: Variadic<Value>| {
+            let category_index = required_one_based_index(
+                lua,
+                arguments.first(),
+                "Usage: SetPreferredInfo(index, pvp, rp)",
+            )?;
+            let player_killing_allowed = arguments.get(1).is_some_and(lua_truthy);
+            let roleplaying = arguments.get(2).is_some_and(lua_truthy);
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::SetPreferredRealmInfo {
+                    category_index,
+                    player_killing_allowed,
+                    roleplaying,
+                });
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "SortRealms",
+        lua.create_function(move |_, _arguments: Variadic<Value>| {
+            network.borrow_mut().push(UiGlueNetworkAction::SortRealms);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetSelectedCategory",
+        lua.create_function(move |_, ()| {
+            Ok(network.borrow().realms().selected_displayed_category())
+        })?,
+    )?;
+    let network = environment.network();
+    let current_screen = environment.current_screen();
+    globals.raw_set(
+        "RealmListDialogCancelled",
+        lua.create_function(move |_, ()| {
+            let from_login_screen = current_screen.borrow().eq_ignore_ascii_case("login");
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen });
+            Ok(())
+        })?,
+    )?;
+    register_category_predicate(
+        lua,
+        globals,
+        environment,
+        "IsInvalidTournamentRealmCategory",
+        |category| category.is_invalid_tournament(),
+    )?;
+    register_category_predicate(
+        lua,
+        globals,
+        environment,
+        "IsTournamentRealmCategory",
+        |category| category.is_tournament(),
+    )?;
+    register_category_predicate(lua, globals, environment, "IsInvalidLocale", |category| {
+        category.is_invalid_locale()
+    })
+}
+
+/// Registers one category predicate while preserving stock one-based indices.
+fn register_category_predicate(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+    name: &'static str,
+    predicate: fn(&crate::UiRealmCategory) -> bool,
+) -> mlua::Result<()> {
+    let network = environment.network();
+    globals.raw_set(
+        name,
+        lua.create_function(move |_, category_index: u32| {
+            Ok(network
+                .borrow()
+                .realms()
+                .displayed_category(category_index)
+                .is_some_and(predicate))
+        })?,
+    )
+}
+
+/// Parses stock's one-argument flat index or two-argument category/index form.
+fn realm_indices(
+    lua: &Lua,
+    arguments: &[Value],
+    function: &'static str,
+) -> mlua::Result<(Option<u32>, u32)> {
+    let usage = match function {
+        "GetRealmInfo" => "Usage: GetRealmInfo(category, index)",
+        _ => "Usage: ChangeRealm(category, index)",
+    };
+    let first = required_one_based_index(lua, arguments.first(), usage)?;
+    let second = arguments
+        .get(1)
+        .and_then(|value| lua.coerce_number(value.clone()).ok().flatten())
+        .and_then(number_to_one_based_index);
+    Ok(second.map_or((None, first), |second| (Some(first), second)))
+}
+
+/// Converts a Lua numeric argument to stock's positive one-based index domain.
+fn required_one_based_index(
+    lua: &Lua,
+    value: Option<&Value>,
+    usage: &'static str,
+) -> mlua::Result<u32> {
+    value
+        .and_then(|value| lua.coerce_number(value.clone()).ok().flatten())
+        .and_then(number_to_one_based_index)
+        .ok_or_else(|| mlua::Error::runtime(usage))
+}
+
+/// Matches Lua 5.1 integer truncation while rejecting non-positive indices.
+fn number_to_one_based_index(number: f64) -> Option<u32> {
+    if !number.is_finite() || number < 1.0 || number > f64::from(u32::MAX) {
+        return None;
+    }
+    Some(number.trunc() as u32)
+}
+
+/// Applies Lua's native Boolean conversion used by stock `StringToBOOL`.
+fn lua_truthy(value: &Value) -> bool {
+    !matches!(value, Value::Nil | Value::Boolean(false))
+}
+
+/// Produces all fourteen return values of stock `GetRealmInfo`.
+fn realm_info_values(
+    lua: &Lua,
+    realm: Option<&UiRealmInfo>,
+    selected_realm_id: Option<u32>,
+) -> mlua::Result<MultiValue> {
+    let Some(realm) = realm else {
+        return Ok(MultiValue::from_vec(vec![
+            Value::Nil,
+            Value::Number(0.0),
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Number(0.0),
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+        ]));
+    };
+
+    let flags = realm.flags();
+    let mut values = vec![
+        Value::String(lua.create_string(realm.name())?),
+        Value::Number(f64::from(realm.character_count())),
+        lua_flag(flags.is_invalid()),
+        lua_flag(flags.is_offline()),
+        lua_flag(selected_realm_id == Some(realm.id())),
+        lua_flag(flags.player_killing_allowed()),
+        lua_flag(flags.roleplaying()),
+        Value::Number(realm.load()),
+        lua_flag(flags.is_locked()),
+    ];
+    if let Some(version) = realm.version() {
+        values.extend([
+            Value::Number(f64::from(version.major())),
+            Value::Number(f64::from(version.minor())),
+            Value::Number(f64::from(version.revision())),
+            Value::Number(f64::from(version.build())),
+            Value::Number(f64::from(version.realm_type())),
+        ]);
+    } else {
+        values.extend([Value::Nil, Value::Nil, Value::Nil, Value::Nil, Value::Nil]);
+    }
+    Ok(MultiValue::from_vec(values))
+}
+
+/// Stock represents a false realm-list flag as nil and true as numeric one.
+fn lua_flag(value: bool) -> Value {
+    if value {
+        Value::Number(1.0)
+    } else {
+        Value::Nil
+    }
 }
 
 fn register_glue_media_globals(

@@ -12,7 +12,7 @@ use crate::{
     FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
     UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus,
     UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPresentationPlan,
-    UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
+    UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
     UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
     UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
@@ -226,6 +226,11 @@ impl GlueManager {
     /// Publishes runtime-owned server facts for synchronous Glue queries.
     pub fn set_network_status(&self, status: UiGlueNetworkStatus) {
         self.network.borrow_mut().set_status(status);
+    }
+
+    /// Publishes the complete runtime-owned realm directory for Glue queries.
+    pub fn set_realm_directory(&self, realms: UiRealmDirectory) {
+        self.network.borrow_mut().set_realms(realms);
     }
 
     /// Returns the archive-backed texture declaration plan.

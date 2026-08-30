@@ -19,7 +19,8 @@ mod time;
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, ClientApplication,
     GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin, RuntimeLoginCoordinator,
-    RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState, StartupReport,
+    RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState, RuntimeWorldCoordinator,
+    RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,

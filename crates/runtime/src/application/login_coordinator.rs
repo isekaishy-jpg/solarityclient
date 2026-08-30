@@ -22,6 +22,8 @@ pub enum RuntimeLoginState {
     Authenticating,
     /// The realmd stream, SRP identity, and realm directory are retained.
     Authenticated,
+    /// The authenticated stream is fetching a newer realm directory.
+    RefreshingRealms,
 }
 
 /// Result of polling the coordinator at one main-thread service boundary.
@@ -33,6 +35,10 @@ pub enum RuntimeLoginPoll {
     Pending,
     /// Authentication and the first realm directory completed.
     Authenticated,
+    /// An authenticated realm-directory refresh completed.
+    RealmDirectoryUpdated,
+    /// A realm-directory refresh was cancelled without dropping realmd.
+    RealmDirectoryCancelled,
 }
 
 /// A failure to start or complete the runtime-owned login exchange.
@@ -44,6 +50,9 @@ pub enum RuntimeLoginError {
     /// A new login was requested while an authenticated stream was retained.
     #[error("an authenticated login connection is already active")]
     AlreadyAuthenticated,
+    /// A realm refresh was requested without an authenticated realmd stream.
+    #[error("realm-list refresh requires an authenticated login connection")]
+    NotAuthenticated,
     /// Glue supplied password bytes that are not valid UTF-8.
     #[error("login password is not valid UTF-8")]
     PasswordEncoding,
@@ -77,6 +86,12 @@ impl RuntimeAuthenticatedLogin {
         &self.realms
     }
 
+    /// Reports whether realmd granted this account arena-tournament access.
+    #[must_use]
+    pub const fn has_tournament_access(&self) -> bool {
+        self.login.has_tournament_access()
+    }
+
     /// Transfers authenticated identity and realm rows to realm selection.
     #[must_use]
     pub fn into_parts(self) -> (AuthenticatedGrunt<TcpStream>, RealmDirectory) {
@@ -107,8 +122,11 @@ impl RuntimeLoginCoordinator {
     pub const fn state(&self) -> RuntimeLoginState {
         if self.authenticated.is_some() {
             RuntimeLoginState::Authenticated
-        } else if self.active.is_some() {
-            RuntimeLoginState::Authenticating
+        } else if let Some(active) = &self.active {
+            match active.kind {
+                ActiveLoginKind::Authentication => RuntimeLoginState::Authenticating,
+                ActiveLoginKind::RealmRefresh => RuntimeLoginState::RefreshingRealms,
+            }
         } else {
             RuntimeLoginState::Idle
         }
@@ -139,13 +157,67 @@ impl RuntimeLoginCoordinator {
         let configuration = self.configuration.clone();
         let (sender, receiver) = oneshot::channel();
         let task = runtime.spawn(async move {
-            let result = authenticate(configuration, credentials).await;
+            let result = authenticate(configuration, credentials)
+                .await
+                .map(|authenticated| ActiveLoginOutput {
+                    authenticated,
+                    completion: ActiveLoginCompletion::Authentication,
+                });
             // A dropped receiver means the main thread cancelled or shut down;
             // the owned result is then dropped on this network worker.
             let _send_result = sender.send(result);
         });
-        self.active = Some(ActiveLogin { receiver, task });
+        self.active = Some(ActiveLogin {
+            kind: ActiveLoginKind::Authentication,
+            cancellation: None,
+            receiver,
+            task,
+        });
         Ok(())
+    }
+
+    /// Starts one realm-directory refresh on the authenticated realmd stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeLoginError::AlreadyActive`] while another task owns the
+    /// stream or [`RuntimeLoginError::NotAuthenticated`] before login succeeds.
+    pub fn refresh_realms(&mut self, runtime: &Handle) -> Result<(), RuntimeLoginError> {
+        if self.active.is_some() {
+            return Err(RuntimeLoginError::AlreadyActive);
+        }
+        let Some(authenticated) = self.authenticated.take() else {
+            return Err(RuntimeLoginError::NotAuthenticated);
+        };
+        let (sender, receiver) = oneshot::channel();
+        let (cancellation, cancelled) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = refresh_realm_directory(authenticated, cancelled).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveLogin {
+            kind: ActiveLoginKind::RealmRefresh,
+            cancellation: Some(cancellation),
+            receiver,
+            task,
+        });
+        Ok(())
+    }
+
+    /// Cancels only an in-flight realm query while retaining its realmd stream.
+    ///
+    /// Returns `true` when cancellation was delivered to a realm refresh.
+    pub fn cancel_realm_refresh(&mut self) -> bool {
+        let Some(active) = self.active.as_mut() else {
+            return false;
+        };
+        if !matches!(active.kind, ActiveLoginKind::RealmRefresh) {
+            return false;
+        }
+        active
+            .cancellation
+            .take()
+            .is_some_and(|cancellation| cancellation.send(()).is_ok())
     }
 
     /// Polls without blocking the main thread and retains successful ownership.
@@ -159,7 +231,9 @@ impl RuntimeLoginCoordinator {
             return Ok(match self.state() {
                 RuntimeLoginState::Idle => RuntimeLoginPoll::Idle,
                 RuntimeLoginState::Authenticated => RuntimeLoginPoll::Authenticated,
-                RuntimeLoginState::Authenticating => unreachable!("active state was inspected"),
+                RuntimeLoginState::Authenticating | RuntimeLoginState::RefreshingRealms => {
+                    unreachable!("active state was inspected")
+                }
             });
         };
         let result = match active.receiver.try_recv() {
@@ -169,9 +243,15 @@ impl RuntimeLoginCoordinator {
         };
         self.active = None;
         match result {
-            Ok(authenticated) => {
-                self.authenticated = Some(authenticated);
-                Ok(RuntimeLoginPoll::Authenticated)
+            Ok(output) => {
+                self.authenticated = Some(output.authenticated);
+                Ok(match output.completion {
+                    ActiveLoginCompletion::Authentication => RuntimeLoginPoll::Authenticated,
+                    ActiveLoginCompletion::RealmRefresh => RuntimeLoginPoll::RealmDirectoryUpdated,
+                    ActiveLoginCompletion::RealmRefreshCancelled => {
+                        RuntimeLoginPoll::RealmDirectoryCancelled
+                    }
+                })
             }
             Err(error) => Err(error),
         }
@@ -212,8 +292,28 @@ impl Drop for RuntimeLoginCoordinator {
 }
 
 struct ActiveLogin {
-    receiver: Receiver<Result<RuntimeAuthenticatedLogin, RuntimeLoginError>>,
+    kind: ActiveLoginKind,
+    cancellation: Option<oneshot::Sender<()>>,
+    receiver: Receiver<Result<ActiveLoginOutput, RuntimeLoginError>>,
     task: JoinHandle<()>,
+}
+
+#[derive(Clone, Copy)]
+enum ActiveLoginKind {
+    Authentication,
+    RealmRefresh,
+}
+
+struct ActiveLoginOutput {
+    authenticated: RuntimeAuthenticatedLogin,
+    completion: ActiveLoginCompletion,
+}
+
+#[derive(Clone, Copy)]
+enum ActiveLoginCompletion {
+    Authentication,
+    RealmRefresh,
+    RealmRefreshCancelled,
 }
 
 async fn authenticate(
@@ -230,4 +330,21 @@ async fn authenticate(
     .await?;
     let realms = login.request_realms().await?;
     Ok(RuntimeAuthenticatedLogin { login, realms })
+}
+
+async fn refresh_realm_directory(
+    mut authenticated: RuntimeAuthenticatedLogin,
+    mut cancellation: oneshot::Receiver<()>,
+) -> Result<ActiveLoginOutput, RuntimeLoginError> {
+    let completion = tokio::select! {
+        realms = authenticated.login.request_realms() => {
+            authenticated.realms = realms?;
+            ActiveLoginCompletion::RealmRefresh
+        }
+        _cancelled = &mut cancellation => ActiveLoginCompletion::RealmRefreshCancelled,
+    };
+    Ok(ActiveLoginOutput {
+        authenticated,
+        completion,
+    })
 }

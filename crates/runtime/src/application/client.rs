@@ -6,11 +6,12 @@ use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
 use solarity_network::RealmDirectory;
 use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
-use solarity_ui::{GlueError, GlueStartupReport, UiRenderError};
+use solarity_ui::{GlueError, GlueStartupReport, UiEventError, UiRenderError};
 
 use crate::application::client_services::ClientServices;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::run::{self, ApplicationRunReport};
+use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformError, PlatformEvent};
 
@@ -35,6 +36,9 @@ pub enum ApplicationError {
     /// Live UI assets or geometry could not enter the renderer boundary.
     #[error(transparent)]
     UiRender(#[from] UiRenderError),
+    /// A runtime-owned stock Glue event could not be delivered.
+    #[error(transparent)]
+    UiEvent(#[from] UiEventError),
     /// A selected UI BLP could not decode or enter device-local storage.
     #[error(transparent)]
     BlpTextureUpload(#[from] BlpTextureUploadError),
@@ -166,7 +170,7 @@ impl ClientApplication {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
             }
-            self.services.service_login();
+            self.services.service_login()?;
             self.services.present_login_frame()?;
         }
     }
@@ -192,6 +196,17 @@ impl ClientApplication {
     /// Takes the oldest terminal login failure observed by the main thread.
     pub fn take_login_failure(&mut self) -> Option<RuntimeLoginError> {
         self.services.take_login_failure()
+    }
+
+    /// Returns synchronous ownership of the selected world-server phase.
+    #[must_use]
+    pub const fn world_state(&self) -> RuntimeWorldState {
+        self.services.world_state()
+    }
+
+    /// Takes the oldest terminal world-authentication failure.
+    pub fn take_world_failure(&mut self) -> Option<RuntimeWorldError> {
+        self.services.take_world_failure()
     }
 
     /// Drains owned executors in explicit shutdown order.

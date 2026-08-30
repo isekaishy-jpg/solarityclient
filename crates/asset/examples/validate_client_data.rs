@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlsShaderStage, ClientDataRoot, DecodedBlpTexture,
-    DecodedBlsShader, Locale, WdbcTable,
+    DecodedBlsShader, Locale, RealmCategoryCatalog, RealmConfigurationCatalog, WdbcTable,
 };
 
 /// Mounts a real client archive set and reads every requested internal path.
@@ -40,6 +40,44 @@ fn main() -> Result<(), Box<dyn Error>> {
             io::Error::new(io::ErrorKind::InvalidInput, "asset path is not UTF-8")
         })?;
         let path = AssetPath::new(requested_path)?;
+        if path.as_str() == "DBFILESCLIENT\\CFG_CATEGORIES.DBC" {
+            let categories = RealmCategoryCatalog::load(&mut store)?;
+            println!(
+                "{} typed realm categories\t{}",
+                categories.categories().len(),
+                path
+            );
+            for category in categories.categories() {
+                println!(
+                    "  id={} locale={:#010x} charset={:#010x} flags={:#010x} name_flags={:#010x} name={}",
+                    category.id(),
+                    category.locale_mask(),
+                    category.character_set_mask(),
+                    category.flags(),
+                    category.name_flags(),
+                    category.name()
+                );
+            }
+            continue;
+        }
+        if path.as_str() == "DBFILESCLIENT\\CFG_CONFIGS.DBC" {
+            let configurations = RealmConfigurationCatalog::load(&mut store)?;
+            println!(
+                "{} typed realm configurations\t{}",
+                configurations.configurations().len(),
+                path
+            );
+            for configuration in configurations.configurations() {
+                println!(
+                    "  id={} realm_type={} pvp={} rp={}",
+                    configuration.id(),
+                    configuration.realm_type(),
+                    configuration.player_killing_allowed(),
+                    configuration.roleplaying()
+                );
+            }
+            continue;
+        }
         if path.as_str().ends_with(".DBC") {
             let table = WdbcTable::load(&mut store, &path)?;
             println!(

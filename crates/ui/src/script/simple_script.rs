@@ -271,6 +271,7 @@ pub struct UiScriptEnvironment {
     assets: Option<Rc<RefCell<AssetStore>>>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
+    current_screen: Rc<RefCell<String>>,
 }
 
 impl UiScriptEnvironment {
@@ -300,6 +301,7 @@ impl UiScriptEnvironment {
             assets: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
+            current_screen: Rc::new(RefCell::new(String::new())),
         })
     }
 
@@ -355,6 +357,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn network(&self) -> Rc<RefCell<UiGlueNetworkBridge>> {
         self.network.clone()
+    }
+
+    pub(crate) fn current_screen(&self) -> Rc<RefCell<String>> {
+        self.current_screen.clone()
     }
 }
 

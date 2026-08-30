@@ -17,6 +17,19 @@ pub enum RealmType {
     RoleplayingPlayerVsPlayer,
 }
 
+impl RealmType {
+    /// Returns the numeric rule-set identifier used by `Cfg_Configs.dbc`.
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        match self {
+            Self::PlayerVsEnvironment => 0,
+            Self::PlayerVsPlayer => 1,
+            Self::Roleplaying => 6,
+            Self::RoleplayingPlayerVsPlayer => 8,
+        }
+    }
+}
+
 /// The region/category byte carried by the legacy realm list.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RealmCategory {
@@ -30,6 +43,20 @@ pub enum RealmCategory {
     Three,
     /// Category value five.
     Five,
+}
+
+impl RealmCategory {
+    /// Returns the category identifier used by `Cfg_Categories.dbc`.
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        match self {
+            Self::Default => 0,
+            Self::One => 1,
+            Self::Two => 2,
+            Self::Three => 3,
+            Self::Five => 5,
+        }
+    }
 }
 
 /// Stock color recommendation encoded by population and realm flags.

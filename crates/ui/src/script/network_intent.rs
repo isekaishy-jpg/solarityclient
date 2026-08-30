@@ -5,6 +5,10 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
+mod realm;
+
+pub use realm::{UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion};
+
 /// One credential submission emitted by stock `DefaultServerLogin`.
 pub struct UiLoginRequest {
     account_name: String,
@@ -57,6 +61,36 @@ pub enum UiGlueNetworkAction {
     CancelLogin,
     /// Close an authenticated login or world-server connection.
     Disconnect,
+    /// Refresh the authenticated login server's realm directory.
+    RequestRealmList {
+        /// Whether stock Glue requested the modal progress dialog.
+        show_progress_dialog: bool,
+        /// Localized `REALM_LIST_IN_PROGRESS` text captured by Glue.
+        status_message: Option<String>,
+    },
+    /// Cancel an outstanding realm-directory refresh.
+    CancelRealmListQuery,
+    /// Begin the world-server handoff for one stable realm identifier.
+    ChangeRealm {
+        /// Identifier carried by the authenticated realm-list response.
+        realm_id: u32,
+    },
+    /// Select a stock-preferred category and rule-set combination.
+    SetPreferredRealmInfo {
+        /// One-based index among categories visible to Glue.
+        category_index: u32,
+        /// Requested player-killing rule.
+        player_killing_allowed: bool,
+        /// Requested roleplaying rule.
+        roleplaying: bool,
+    },
+    /// Apply the stock realm-list sort criteria.
+    SortRealms,
+    /// Report that the player closed the realm-list dialog.
+    RealmListDialogCancelled {
+        /// Whether the active Glue screen was the account-login screen.
+        from_login_screen: bool,
+    },
 }
 
 /// Main-thread network facts queried synchronously by Glue Lua.
@@ -64,6 +98,9 @@ pub enum UiGlueNetworkAction {
 pub struct UiGlueNetworkStatus {
     server_name: Option<String>,
     connected: bool,
+    player_killing_allowed: bool,
+    roleplaying: bool,
+    server_down: bool,
 }
 
 impl UiGlueNetworkStatus {
@@ -73,7 +110,24 @@ impl UiGlueNetworkStatus {
         Self {
             server_name,
             connected,
+            player_killing_allowed: false,
+            roleplaying: false,
+            server_down: false,
         }
+    }
+
+    /// Attaches the selected realm properties returned by `GetServerName`.
+    #[must_use]
+    pub const fn with_realm_rules(
+        mut self,
+        player_killing_allowed: bool,
+        roleplaying: bool,
+        server_down: bool,
+    ) -> Self {
+        self.player_killing_allowed = player_killing_allowed;
+        self.roleplaying = roleplaying;
+        self.server_down = server_down;
+        self
     }
 
     /// Returns the selected server label, if a realm has supplied one.
@@ -87,6 +141,24 @@ impl UiGlueNetworkStatus {
     pub const fn is_connected(&self) -> bool {
         self.connected
     }
+
+    /// Reports whether the selected realm permits player killing.
+    #[must_use]
+    pub const fn player_killing_allowed(&self) -> bool {
+        self.player_killing_allowed
+    }
+
+    /// Reports whether the selected realm uses roleplaying rules.
+    #[must_use]
+    pub const fn roleplaying(&self) -> bool {
+        self.roleplaying
+    }
+
+    /// Reports whether the selected realm is currently down.
+    #[must_use]
+    pub const fn is_server_down(&self) -> bool {
+        self.server_down
+    }
 }
 
 /// Ordered action mailbox plus synchronously readable connection status.
@@ -94,6 +166,7 @@ impl UiGlueNetworkStatus {
 pub(crate) struct UiGlueNetworkBridge {
     actions: VecDeque<UiGlueNetworkAction>,
     status: UiGlueNetworkStatus,
+    realms: UiRealmDirectory,
 }
 
 impl UiGlueNetworkBridge {
@@ -111,5 +184,17 @@ impl UiGlueNetworkBridge {
 
     pub(crate) fn set_status(&mut self, status: UiGlueNetworkStatus) {
         self.status = status;
+    }
+
+    pub(crate) const fn realms(&self) -> &UiRealmDirectory {
+        &self.realms
+    }
+
+    pub(crate) fn realms_mut(&mut self) -> &mut UiRealmDirectory {
+        &mut self.realms
+    }
+
+    pub(crate) fn set_realms(&mut self, realms: UiRealmDirectory) {
+        self.realms = realms;
     }
 }

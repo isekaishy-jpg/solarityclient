@@ -63,6 +63,9 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
             "Solarity\\RuntimeFixture.txt",
         );
     if archive == "enUS/locale-enUS.MPQ" {
+        builder = builder.add_file_data(realm_category_dbc(), "DBFilesClient\\Cfg_Categories.dbc");
+        builder =
+            builder.add_file_data(realm_configuration_dbc(), "DBFilesClient\\Cfg_Configs.dbc");
         builder = builder.add_file_data(
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",
@@ -93,6 +96,36 @@ GLUE_READY = true"#
     }
     builder.build(path)?;
     Ok(())
+}
+
+/// Builds one exact-layout enUS realm category for composition startup.
+fn realm_category_dbc() -> Vec<u8> {
+    let mut fields = [0_u32; 21];
+    fields[0] = 1;
+    fields[1] = 1;
+    fields[2] = 1;
+    fields[4] = 1;
+    wdbc(&fields, b"\0United States\0")
+}
+
+/// Builds one exact-layout PvE realm configuration for composition startup.
+fn realm_configuration_dbc() -> Vec<u8> {
+    wdbc(&[1, 0, 0, 0], b"\0")
+}
+
+/// Serializes one-row build-12340 WDBC fixture without runtime crate helpers.
+fn wdbc(fields: &[u32], strings: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(20 + fields.len() * 4 + strings.len());
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&((fields.len() as u32) * 4).to_le_bytes());
+    bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+    for field in fields {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.extend_from_slice(strings);
+    bytes
 }
 
 /// Builds a two-pixel BLP2/RAW3 texture for the asset-backed startup frame.
