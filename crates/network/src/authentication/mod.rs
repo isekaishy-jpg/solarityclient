@@ -12,4 +12,4 @@ mod grunt_login;
 
 pub use error::{LoginError, LoginFailure, LoginStage};
 pub use grunt::{GruntCredentials, GruntIntegrity, GruntLoginOptions, LoginLocale};
-pub use grunt_login::{AuthenticatedGrunt, GruntLogin, WorldSessionKey};
+pub use grunt_login::{AuthenticatedGrunt, GruntLogin, WorldIdentity, WorldSessionKey};

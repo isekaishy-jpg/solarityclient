@@ -4,4 +4,7 @@
 //! `wow_world_messages` crates into stable Solarity types. Opcode dispatch and
 //! malformed-packet behavior must remain build-12340 specific.
 
+mod addon_manifest;
 mod wow_svcs_client_services;
+
+pub use addon_manifest::{AddonManifestError, WorldAddon, WorldAddonManifest};

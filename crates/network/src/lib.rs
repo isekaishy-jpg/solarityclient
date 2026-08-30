@@ -14,6 +14,11 @@ mod transport;
 
 pub use authentication::{
     AuthenticatedGrunt, GruntCredentials, GruntIntegrity, GruntLogin, GruntLoginOptions,
-    LoginError, LoginFailure, LoginLocale, LoginStage, WorldSessionKey,
+    LoginError, LoginFailure, LoginLocale, LoginStage, WorldIdentity, WorldSessionKey,
 };
+pub use connection::{
+    AccountExpansion, WorldAuthError, WorldAuthFailure, WorldAuthProgress, WorldAuthStage,
+    WorldConnection, WorldQueue, WorldSession, WorldSessionInfo,
+};
+pub use protocol::{AddonManifestError, WorldAddon, WorldAddonManifest};
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};

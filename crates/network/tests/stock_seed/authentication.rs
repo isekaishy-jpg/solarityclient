@@ -5,7 +5,8 @@ use std::net::Ipv4Addr;
 
 use solarity_network::{
     GruntCredentials, GruntIntegrity, GruntLogin, GruntLoginOptions, LoginError, LoginFailure,
-    LoginLocale, LoginStage, RealmCategory, RealmRecommendation, RealmType,
+    LoginLocale, LoginStage, RealmCategory, RealmEntry, RealmRecommendation, RealmType,
+    WorldIdentity,
 };
 use tokio::io::DuplexStream;
 use wow_login_messages::Message;
@@ -20,7 +21,7 @@ use wow_srp::normalized_string::NormalizedString;
 use wow_srp::server::SrpVerifier;
 use wow_srp::{GENERATOR, LARGE_SAFE_PRIME_LITTLE_ENDIAN, PublicKey};
 
-struct TestIntegrity;
+pub(super) struct TestIntegrity;
 
 impl GruntIntegrity for TestIntegrity {
     fn proof(&self, crc_salt: [u8; 16]) -> Result<[u8; 20], LoginError> {
@@ -152,7 +153,26 @@ fn grunt_login_preserves_challenge_rejection() -> Result<(), Box<dyn Error + Sen
     })
 }
 
-async fn emulate_realmd(mut stream: DuplexStream) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(super) async fn authenticated_identity_and_realm()
+-> Result<(WorldIdentity, RealmEntry, [u8; 40]), Box<dyn Error + Send + Sync>> {
+    let (client, server) = tokio::io::duplex(4_096);
+    let server_task = tokio::spawn(emulate_realmd(server));
+    let credentials = GruntCredentials::new("testaccount", "hunter2")?;
+    let options = GruntLoginOptions::new(LoginLocale::EnUs, -240, Ipv4Addr::new(127, 0, 0, 1));
+    let mut login = GruntLogin::authenticate(client, credentials, options, &TestIntegrity).await?;
+    let directory = login.request_realms().await?;
+    let realm = directory
+        .by_id(7)
+        .ok_or("realmd fixture omitted realm 7")?
+        .clone();
+    let identity = login.into_world_identity();
+    let session_key = server_task.await??;
+    Ok((identity, realm, session_key))
+}
+
+async fn emulate_realmd(
+    mut stream: DuplexStream,
+) -> Result<[u8; 40], Box<dyn Error + Send + Sync>> {
     let challenge = match ClientOpcodeMessage::tokio_read(&mut stream).await? {
         ClientOpcodeMessage::CMD_AUTH_LOGON_CHALLENGE(challenge) => challenge,
         message => return Err(format!("unexpected initial message: {message}").into()),
@@ -238,8 +258,7 @@ async fn emulate_realmd(mut stream: DuplexStream) -> Result<(), Box<dyn Error + 
     }
     .tokio_write(&mut stream)
     .await?;
-    assert_eq!(server.session_key().len(), 40);
-    Ok(())
+    Ok(*server.session_key())
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, Box<dyn Error + Send + Sync>> {

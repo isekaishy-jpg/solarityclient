@@ -39,15 +39,39 @@ impl fmt::Debug for WorldSessionKey {
 /// Authenticated ownership of the login-server stream and session identity.
 pub struct AuthenticatedGrunt<S> {
     stream: S,
-    account_name: String,
+    account_name: wow_srp::normalized_string::NormalizedString,
     session_key: WorldSessionKey,
+}
+
+/// Account identity transferred from realmd to one selected world server.
+pub struct WorldIdentity {
+    pub(crate) account_name: wow_srp::normalized_string::NormalizedString,
+    pub(crate) session_key: WorldSessionKey,
+}
+
+impl WorldIdentity {
+    /// Returns the normalized account name included in world authentication.
+    #[must_use]
+    pub fn account_name(&self) -> &str {
+        self.account_name.as_ref()
+    }
+}
+
+impl fmt::Debug for WorldIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorldIdentity")
+            .field("account_name", &self.account_name())
+            .field("session_key", &"<redacted>")
+            .finish()
+    }
 }
 
 impl<S> AuthenticatedGrunt<S> {
     /// Returns the normalized account name used for world authentication.
     #[must_use]
     pub fn account_name(&self) -> &str {
-        &self.account_name
+        self.account_name.as_ref()
     }
 
     /// Returns the established world-session key.
@@ -60,6 +84,15 @@ impl<S> AuthenticatedGrunt<S> {
     #[must_use]
     pub fn into_stream(self) -> S {
         self.stream
+    }
+
+    /// Closes the realmd phase and transfers its identity to world login.
+    #[must_use]
+    pub fn into_world_identity(self) -> WorldIdentity {
+        WorldIdentity {
+            account_name: self.account_name,
+            session_key: self.session_key,
+        }
     }
 }
 
@@ -246,7 +279,7 @@ impl GruntLogin {
             .map_err(|_| LoginError::ServerProofMismatch)?;
         Ok(AuthenticatedGrunt {
             stream,
-            account_name: credentials.username.as_ref().to_owned(),
+            account_name: credentials.username,
             session_key: WorldSessionKey(*client.session_key()),
         })
     }
