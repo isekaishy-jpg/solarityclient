@@ -87,6 +87,14 @@ included by the recovered single-character patch wildcard and sorts through
 the same patch algorithm. The generated fixture suite includes a multi-sector
 HD replacement to keep this behavior explicit.
 
+Community distributions sometimes pair those MPQs with an executable patch,
+launcher, or proxy DLL. That companion changes the stock process or its graphics
+path; it is not another archive source and never enters `AssetStore`. Solarity
+can mount the compatible MPQ payloads directly. Any behavior supplied only by
+an injected DLL belongs in the corresponding native platform, rendering, or
+format implementation and must be implemented explicitly rather than loading
+foreign stock-client code into the 64-bit process.
+
 Archive reads currently return owned bytes because compressed MPQ entries must
 be reconstructed before their format decoder consumes them. Runtime loading
 must schedule those reads off the interactive thread and keep decoded/GPU
