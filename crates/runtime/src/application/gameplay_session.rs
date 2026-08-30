@@ -70,6 +70,13 @@ impl<S> GameplaySession<S> {
         &mut self.world
     }
 
+    /// Separates async network ownership from main-thread ECS ownership after
+    /// the authoritative bootstrap has been constructed.
+    #[must_use]
+    pub fn into_parts(self) -> (InWorldSession<S>, ActiveWorld) {
+        (self.network, self.world)
+    }
+
     /// Applies one decoded object-update batch in exact server order.
     ///
     /// Sparse update fields stream directly into dense component storage
@@ -82,53 +89,64 @@ impl<S> GameplaySession<S> {
         &mut self,
         batch: &WorldObjectUpdateBatch,
     ) -> Result<(), GameplayUpdateError> {
-        for update in batch.updates() {
-            match update {
-                WorldObjectUpdate::Values { guid, fields } => {
-                    self.world.update_fields(
-                        *guid,
-                        fields.iter().map(|field| (field.index(), field.value())),
-                    )?;
-                    project_object_fields(
-                        &mut self.world,
-                        *guid,
-                        fields.iter().map(|field| (field.index(), field.value())),
-                    )?;
-                }
-                WorldObjectUpdate::Movement { guid, movement } => {
-                    if let Some(transform) = movement_transform(*movement) {
-                        self.world.update_transform(*guid, transform)?;
-                    }
-                }
-                WorldObjectUpdate::Create {
-                    guid,
-                    kind,
-                    movement,
-                    fields,
-                    ..
-                } => {
-                    self.world.create_object(
-                        *guid,
-                        object_kind(*kind),
-                        movement_transform(*movement),
-                        fields.iter().map(|field| (field.index(), field.value())),
-                    )?;
-                    project_object_fields(
-                        &mut self.world,
-                        *guid,
-                        fields.iter().map(|field| (field.index(), field.value())),
-                    )?;
-                }
-                WorldObjectUpdate::OutOfRange(guids) => {
-                    for guid in guids {
-                        self.world.remove_object(*guid)?;
-                    }
-                }
-                WorldObjectUpdate::Near(_) => {}
-            }
-        }
-        Ok(())
+        apply_object_updates(&mut self.world, batch)
     }
+}
+
+/// Applies a decoded batch to a main-thread-owned ECS world.
+///
+/// This free boundary lets the active socket move to an asynchronous task
+/// without moving `ActiveWorld` or duplicating its GUID lifecycle rules.
+pub(crate) fn apply_object_updates(
+    world: &mut ActiveWorld,
+    batch: &WorldObjectUpdateBatch,
+) -> Result<(), GameplayUpdateError> {
+    for update in batch.updates() {
+        match update {
+            WorldObjectUpdate::Values { guid, fields } => {
+                world.update_fields(
+                    *guid,
+                    fields.iter().map(|field| (field.index(), field.value())),
+                )?;
+                project_object_fields(
+                    world,
+                    *guid,
+                    fields.iter().map(|field| (field.index(), field.value())),
+                )?;
+            }
+            WorldObjectUpdate::Movement { guid, movement } => {
+                if let Some(transform) = movement_transform(*movement) {
+                    world.update_transform(*guid, transform)?;
+                }
+            }
+            WorldObjectUpdate::Create {
+                guid,
+                kind,
+                movement,
+                fields,
+                ..
+            } => {
+                world.create_object(
+                    *guid,
+                    object_kind(*kind),
+                    movement_transform(*movement),
+                    fields.iter().map(|field| (field.index(), field.value())),
+                )?;
+                project_object_fields(
+                    world,
+                    *guid,
+                    fields.iter().map(|field| (field.index(), field.value())),
+                )?;
+            }
+            WorldObjectUpdate::OutOfRange(guids) => {
+                for guid in guids {
+                    world.remove_object(*guid)?;
+                }
+            }
+            WorldObjectUpdate::Near(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> {

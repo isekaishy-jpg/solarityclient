@@ -140,7 +140,7 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             }
             _ => return Err("interleaved world-entry packet was not retained".into()),
         };
-        let mut world = match login.advance().await? {
+        let world = match login.advance().await? {
             CharacterLoginProgress::Entered(world) => world,
             _ => return Err("login verification did not enter the world".into()),
         };
@@ -151,15 +151,16 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(world.location().y(), 647.5);
         assert_eq!(world.location().z(), 647.9);
         assert_eq!(world.location().orientation(), 1.75);
+        let (mut reader, mut writer) = world.split();
 
-        let object_packet = world.receive_packet().await?;
+        let object_packet = reader.receive_packet().await?;
         assert_eq!(object_packet.name(), Some("SMSG_UPDATE_OBJECT"));
         let object_updates = object_packet
             .object_updates()?
             .ok_or("object packet did not decode as an update batch")?;
         assert_create_player_update(&object_updates)?;
 
-        let compressed_packet = world.receive_packet().await?;
+        let compressed_packet = reader.receive_packet().await?;
         assert_eq!(
             compressed_packet.name(),
             Some("SMSG_COMPRESSED_UPDATE_OBJECT")
@@ -169,7 +170,7 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             .ok_or("compressed packet did not decode as an update batch")?;
         assert_eq!(compressed_updates, object_updates);
 
-        let oversized_packet = world.receive_packet().await?;
+        let oversized_packet = reader.receive_packet().await?;
         let error = match oversized_packet.object_updates() {
             Err(error) => error,
             Ok(_) => return Err("oversized compressed update was accepted".into()),
@@ -179,6 +180,19 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             error.message(),
             "decompressed update exceeds the world-packet bound"
         );
+
+        let time_sync = reader.receive_packet().await?;
+        assert_eq!(time_sync.name(), Some("SMSG_TIME_SYNC_REQ"));
+        assert_eq!(time_sync.time_sync_counter()?, Some(0x1122_3344));
+        assert!(time_sync.pong_sequence()?.is_none());
+        writer
+            .send_time_sync_response(0x1122_3344, 0x5566_7788)
+            .await?;
+        writer.send_ping(7, 41).await?;
+        let pong = reader.receive_packet().await?;
+        assert_eq!(pong.name(), Some("SMSG_PONG"));
+        assert_eq!(pong.pong_sequence()?, Some(7));
+        assert!(pong.time_sync_counter()?.is_none());
 
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
@@ -330,6 +344,31 @@ async fn emulate_character_screen(
         &0x0080_0000_u32.to_le_bytes(),
     )
     .await?;
+    write_encrypted_raw(
+        &mut stream,
+        &mut crypto,
+        0x0390,
+        &0x1122_3344_u32.to_le_bytes(),
+    )
+    .await?;
+    let time_sync =
+        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    match time_sync {
+        ClientOpcodeMessage::CMSG_TIME_SYNC_RESP(response) => {
+            assert_eq!(response.time_sync, 0x1122_3344);
+            assert_eq!(response.client_ticks, 0x5566_7788);
+        }
+        message => return Err(format!("unexpected time-sync response: {message}").into()),
+    }
+    let ping = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    match ping {
+        ClientOpcodeMessage::CMSG_PING(ping) => {
+            assert_eq!(ping.sequence_id, 7);
+            assert_eq!(ping.round_time_in_ms, 41);
+        }
+        message => return Err(format!("unexpected latency probe: {message}").into()),
+    }
+    write_encrypted_raw(&mut stream, &mut crypto, 0x01DD, &7_u32.to_le_bytes()).await?;
     Ok(())
 }
 

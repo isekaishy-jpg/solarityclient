@@ -11,6 +11,6 @@ mod wow_connection;
 pub use error::{WorldAuthError, WorldAuthFailure, WorldAuthStage};
 pub use world_state::{
     AccountExpansion, CharacterLogin, CharacterLoginProgress, InWorldSession, WorldAuthProgress,
-    WorldQueue, WorldSession, WorldSessionInfo,
+    WorldPacketReader, WorldPacketWriter, WorldQueue, WorldSession, WorldSessionInfo,
 };
 pub use wow_connection::WorldConnection;

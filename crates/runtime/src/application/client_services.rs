@@ -4,12 +4,11 @@
 
 use std::collections::VecDeque;
 
-use tokio::net::TcpStream;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
-use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest, WorldServerPacket};
+use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
@@ -18,7 +17,7 @@ use solarity_ui::{
 
 use crate::application::ApplicationError;
 use crate::application::character_directory::RuntimeCharacterMetadata;
-use crate::application::gameplay_session::GameplaySession;
+use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
@@ -41,8 +40,7 @@ pub(crate) struct ClientServices {
     network: Option<Runtime>,
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
-    gameplay: Option<GameplaySession<TcpStream>>,
-    pending_world_packets: Vec<WorldServerPacket>,
+    gameplay: RuntimeGameplayCoordinator,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -127,8 +125,7 @@ impl ClientServices {
                 network: Some(network),
                 login,
                 world,
-                gameplay: None,
-                pending_world_packets: Vec::new(),
+                gameplay: RuntimeGameplayCoordinator::new(),
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -197,8 +194,7 @@ impl ClientServices {
                 UiGlueNetworkAction::Disconnect => {
                     self.login.disconnect();
                     self.world.disconnect();
-                    self.gameplay = None;
-                    self.pending_world_packets.clear();
+                    self.gameplay.disconnect();
                     self.realm_directory_published = false;
                     self.world_session_published = false;
                     self.pending_realm_id = None;
@@ -339,15 +335,7 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
-                    let (network, setup_packets) = entry.into_parts();
-                    let mut gameplay = GameplaySession::enter(network);
-                    for packet in &setup_packets {
-                        if let Some(updates) = packet.object_updates()? {
-                            gameplay.apply_object_updates(&updates)?;
-                        }
-                    }
-                    self.pending_world_packets = setup_packets;
-                    self.gameplay = Some(gameplay);
+                    self.gameplay.begin(&handle, entry)?;
                 }
             }
             Ok(RuntimeWorldPoll::CharacterRejected(rejection)) => {
@@ -373,6 +361,7 @@ impl ClientServices {
             }
             Err(error) => self.publish_world_failure(error),
         }
+        self.gameplay.service()?;
         Ok(())
     }
 
@@ -388,7 +377,7 @@ impl ClientServices {
 
     /// Returns synchronous ownership of the selected world-server phase.
     pub(crate) const fn world_state(&self) -> RuntimeWorldState {
-        if self.gameplay.is_some() {
+        if self.gameplay.world().is_some() {
             RuntimeWorldState::InWorld
         } else {
             self.world.state()
@@ -418,8 +407,7 @@ impl ClientServices {
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
         self.login.disconnect();
         self.world.disconnect();
-        self.gameplay = None;
-        self.pending_world_packets.clear();
+        self.gameplay.disconnect();
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {

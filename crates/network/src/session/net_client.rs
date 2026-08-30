@@ -3,10 +3,13 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
-use wow_world_messages::wrath::CMSG_PLAYER_LOGIN;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
+use wow_world_messages::wrath::{CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_TIME_SYNC_RESP};
 
-use crate::connection::{CharacterLogin, CharacterLoginProgress, InWorldSession, WorldSession};
+use crate::connection::{
+    CharacterLogin, CharacterLoginProgress, InWorldSession, WorldPacketReader, WorldPacketWriter,
+    WorldSession,
+};
 use crate::protocol::{CharacterEntry, WorldServerPacket};
 
 use super::{WorldSessionError, WorldSessionStage};
@@ -136,6 +139,113 @@ where
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
         receive_packet(&mut self.session.stream, &mut self.session.crypto).await
     }
+
+    /// Sends stock's periodic encrypted latency probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn send_ping(
+        &mut self,
+        sequence_id: u32,
+        round_time_in_ms: u32,
+    ) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_PING {
+            sequence_id,
+            round_time_in_ms,
+        })
+        .tokio_write_encrypted_client(&mut self.session.stream, self.session.crypto.encrypter())
+        .await
+        .map_err(|error| WorldSessionError::Io {
+            stage: WorldSessionStage::Send,
+            message: error.to_string(),
+        })
+    }
+
+    /// Acknowledges one server time-sync counter with process-monotonic ticks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn send_time_sync_response(
+        &mut self,
+        counter: u32,
+        client_ticks: u32,
+    ) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
+            time_sync: counter,
+            client_ticks,
+        })
+        .tokio_write_encrypted_client(&mut self.session.stream, self.session.crypto.encrypter())
+        .await
+        .map_err(|error| WorldSessionError::Io {
+            stage: WorldSessionStage::Send,
+            message: error.to_string(),
+        })
+    }
+}
+
+impl<R> WorldPacketReader<R>
+where
+    R: AsyncRead + Unpin + Send,
+{
+    /// Receives one encrypted packet while the send half remains independent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the header or body cannot be read.
+    pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
+        receive_packet_from(&mut self.stream, &mut self.decrypter).await
+    }
+}
+
+impl<W> WorldPacketWriter<W>
+where
+    W: AsyncWrite + Unpin + Send,
+{
+    /// Sends stock's periodic encrypted latency probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the packet cannot be written.
+    pub async fn send_ping(
+        &mut self,
+        sequence_id: u32,
+        round_time_in_ms: u32,
+    ) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_PING {
+            sequence_id,
+            round_time_in_ms,
+        })
+        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+        .await
+        .map_err(|error| WorldSessionError::Io {
+            stage: WorldSessionStage::Send,
+            message: error.to_string(),
+        })
+    }
+
+    /// Acknowledges one server time-sync request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the packet cannot be written.
+    pub async fn send_time_sync_response(
+        &mut self,
+        counter: u32,
+        client_ticks: u32,
+    ) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
+            time_sync: counter,
+            client_ticks,
+        })
+        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+        .await
+        .map_err(|error| WorldSessionError::Io {
+            stage: WorldSessionStage::Send,
+            message: error.to_string(),
+        })
+    }
 }
 
 fn world_entry_decode_error(error: crate::protocol::WorldEntryPacketError) -> WorldSessionError {
@@ -152,6 +262,16 @@ async fn receive_packet<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    receive_packet_from(stream, crypto.decrypter()).await
+}
+
+async fn receive_packet_from<S>(
+    stream: &mut S,
+    decrypter: &mut wow_srp::wrath_header::ClientDecrypterHalf,
+) -> Result<WorldServerPacket, WorldSessionError>
+where
+    S: AsyncRead + Unpin + Send,
+{
     let mut header_bytes = [0_u8; 4];
     stream
         .read_exact(&mut header_bytes)
@@ -160,10 +280,7 @@ where
             stage: WorldSessionStage::Receive,
             message: error.to_string(),
         })?;
-    let header = match crypto
-        .decrypter()
-        .attempt_decrypt_server_header(header_bytes)
-    {
+    let header = match decrypter.attempt_decrypt_server_header(header_bytes) {
         WrathServerAttempt::Header(header) => header,
         WrathServerAttempt::AdditionalByteRequired => {
             let additional = stream
@@ -173,7 +290,7 @@ where
                     stage: WorldSessionStage::Receive,
                     message: error.to_string(),
                 })?;
-            crypto.decrypter().decrypt_large_server_header(additional)
+            decrypter.decrypt_large_server_header(additional)
         }
     };
     let body_size = header

@@ -4,13 +4,13 @@ use thiserror::Error;
 
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
-use solarity_network::{AddonManifestError, ObjectUpdateError, RealmDirectory};
+use solarity_network::{AddonManifestError, RealmDirectory};
 use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
 use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError, UiRenderError};
 
 use crate::application::character_directory::CharacterProjectionError;
 use crate::application::client_services::ClientServices;
-use crate::application::gameplay_session::GameplayUpdateError;
+use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::run::{self, ApplicationRunReport};
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
@@ -32,12 +32,9 @@ pub enum ApplicationError {
     /// A world character references metadata absent from the mounted client.
     #[error(transparent)]
     CharacterProjection(#[from] CharacterProjectionError),
-    /// An authoritative object-update packet was malformed.
+    /// Active-world packet I/O, decoding, or ECS projection failed.
     #[error(transparent)]
-    ObjectUpdate(#[from] ObjectUpdateError),
-    /// A decoded object update violated ECS projection invariants.
-    #[error(transparent)]
-    GameplayUpdate(#[from] GameplayUpdateError),
+    Gameplay(#[from] RuntimeGameplayError),
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),

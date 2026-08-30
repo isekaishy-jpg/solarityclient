@@ -1,7 +1,7 @@
 //! Owned world-authentication states independent of packet dependency types.
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use wow_srp::wrath_header::ClientCrypto;
+use wow_srp::wrath_header::{ClientCrypto, ClientDecrypterHalf, ClientEncrypterHalf};
 
 use crate::protocol::{
     CharacterLoginRejection, WorldAddonManifest, WorldLocation, WorldServerPacket,
@@ -138,6 +138,18 @@ pub struct InWorldSession<S> {
     pub(crate) location: WorldLocation,
 }
 
+/// Encrypted active-world receive half with independent header state.
+pub struct WorldPacketReader<R> {
+    pub(crate) stream: R,
+    pub(crate) decrypter: ClientDecrypterHalf,
+}
+
+/// Encrypted active-world send half with independent header state.
+pub struct WorldPacketWriter<W> {
+    pub(crate) stream: W,
+    pub(crate) encrypter: ClientEncrypterHalf,
+}
+
 impl<S> InWorldSession<S> {
     /// Returns the active local player's world object GUID.
     #[must_use]
@@ -179,6 +191,33 @@ impl<S> InWorldSession<S> {
     #[must_use]
     pub const fn addon_manifest(&self) -> &WorldAddonManifest {
         self.session.addon_manifest()
+    }
+
+    /// Separates full-duplex transport and header cryptography for a live pump.
+    ///
+    /// Reads may then remain pending while latency and clock packets are sent;
+    /// neither operation can cancel a partially consumed encrypted frame.
+    pub fn split(
+        self,
+    ) -> (
+        WorldPacketReader<tokio::io::ReadHalf<S>>,
+        WorldPacketWriter<tokio::io::WriteHalf<S>>,
+    )
+    where
+        S: AsyncRead + AsyncWrite,
+    {
+        let (reader, writer) = tokio::io::split(self.session.stream);
+        let (encrypter, decrypter) = self.session.crypto.split();
+        (
+            WorldPacketReader {
+                stream: reader,
+                decrypter,
+            },
+            WorldPacketWriter {
+                stream: writer,
+                encrypter,
+            },
+        )
     }
 }
 
