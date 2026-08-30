@@ -10,6 +10,7 @@ use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError,
 
 use crate::application::character_directory::CharacterProjectionError;
 use crate::application::client_services::ClientServices;
+use crate::application::environment_coordinator::RuntimeWorldEnvironmentError;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::player_coordinator::RuntimePlayerError;
@@ -38,6 +39,9 @@ pub enum ApplicationError {
     /// Active-world packet I/O, decoding, or ECS projection failed.
     #[error(transparent)]
     Gameplay(#[from] RuntimeGameplayError),
+    /// Active-world view or exterior-light composition failed.
+    #[error(transparent)]
+    WorldEnvironment(#[from] RuntimeWorldEnvironmentError),
     /// Local-player model residency or authored measurements failed.
     #[error(transparent)]
     Player(#[from] RuntimePlayerError),

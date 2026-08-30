@@ -7,6 +7,7 @@
 mod character_directory;
 mod client;
 mod client_services;
+mod environment_coordinator;
 mod gameplay_coordinator;
 mod gameplay_session;
 mod login_coordinator;
@@ -20,6 +21,9 @@ mod world_coordinator;
 
 pub use character_directory::CharacterProjectionError;
 pub use client::{ApplicationError, ClientApplication, StartupReport};
+pub use environment_coordinator::{
+    RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
+};
 pub use gameplay_coordinator::{RuntimeGameplayCoordinator, RuntimeGameplayError};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};
 pub use login_coordinator::{

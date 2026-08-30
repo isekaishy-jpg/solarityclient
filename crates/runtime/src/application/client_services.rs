@@ -8,7 +8,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    MapCatalog,
+    LightCatalog, MapCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
@@ -20,6 +20,7 @@ use solarity_ui::{
 
 use crate::application::ApplicationError;
 use crate::application::character_directory::RuntimeCharacterMetadata;
+use crate::application::environment_coordinator::RuntimeWorldEnvironment;
 use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
@@ -48,6 +49,7 @@ pub(crate) struct ClientServices {
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
     gameplay: RuntimeGameplayCoordinator,
+    environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
@@ -78,6 +80,7 @@ impl ClientServices {
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
+        let lights = LightCatalog::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -100,6 +103,7 @@ impl ClientServices {
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
         let mut platform = SdlPlatform::start(configuration.window())?;
+        let total_physical_memory_bytes = platform.total_physical_memory_bytes();
         let instance_extensions = platform.vulkan_instance_extensions()?;
         let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
         // SAFETY: The bootstrap enabled SDL's exact extension list and remains
@@ -140,6 +144,7 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
+                environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
                 player: RuntimePlayerPresentation::new(assets.clone(), creatures, characters),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
@@ -212,6 +217,7 @@ impl ClientServices {
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
+                    self.environment.disconnect();
                     self.player.disconnect();
                     self.terrain.disconnect();
                     self.terrain_frame = None;
@@ -382,6 +388,8 @@ impl ClientServices {
             Err(error) => self.publish_world_failure(error),
         }
         self.gameplay.service()?;
+        self.environment
+            .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
@@ -480,6 +488,7 @@ impl ClientServices {
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
+        self.environment.disconnect();
         self.player.disconnect();
         self.terrain.disconnect();
         self.terrain_frame = None;

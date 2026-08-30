@@ -17,6 +17,7 @@ pub(crate) struct SdlPlatform {
     // subsystem handles and finally the process-level SDL context.
     event_pump: EventPump,
     window: Window,
+    total_physical_memory_bytes: u64,
     _video: VideoSubsystem,
     _sdl: Sdl,
 }
@@ -56,10 +57,17 @@ impl SdlPlatform {
             .map_err(|source| PlatformError::EventPump {
                 message: source.to_string(),
             })?;
+        let system_ram_mebibytes = sdl3::cpuinfo::system_ram();
+        let total_physical_memory_bytes = u64::try_from(system_ram_mebibytes)
+            .ok()
+            .filter(|value| *value != 0)
+            .and_then(|value| value.checked_mul(1_024 * 1_024))
+            .ok_or(PlatformError::SystemRam)?;
 
         Ok(Self {
             event_pump,
             window,
+            total_physical_memory_bytes,
             _video: video,
             _sdl: sdl,
         })
@@ -88,6 +96,11 @@ impl SdlPlatform {
     /// Returns the physical drawable size required for swapchain construction.
     pub(crate) fn pixel_extent(&self) -> (u32, u32) {
         self.window.size_in_pixels()
+    }
+
+    /// Returns SDL's process-start total RAM report in bytes.
+    pub(crate) const fn total_physical_memory_bytes(&self) -> u64 {
+        self.total_physical_memory_bytes
     }
 
     /// Returns the platform-specific instance extensions required by SDL.

@@ -29,6 +29,9 @@ pub enum PlatformError {
         /// SDL's diagnostic text.
         message: String,
     },
+    /// SDL could not report the physical-memory fact used by stock far-clip policy.
+    #[error("SDL did not report positive system RAM")]
+    SystemRam,
     /// SDL could not report the instance extensions required by this window.
     #[error("failed to query SDL Vulkan instance extensions: {message}")]
     VulkanExtensions {

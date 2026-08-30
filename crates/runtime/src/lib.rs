@@ -25,7 +25,9 @@ pub use application::{
     RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState,
     RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator,
     RuntimeTerrainError, RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator,
-    RuntimeWorldEntry, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
+    RuntimeWorldEntry, RuntimeWorldEnvironment, RuntimeWorldEnvironmentError,
+    RuntimeWorldEnvironmentFrame, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
+    StartupReport,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,
