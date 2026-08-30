@@ -24,6 +24,8 @@ mod particle;
 mod scene;
 #[path = "stock_seed/shader.rs"]
 mod shader;
+#[path = "stock_seed/support.rs"]
+mod support;
 #[path = "stock_seed/terrain.rs"]
 mod terrain;
 #[path = "stock_seed/texture.rs"]

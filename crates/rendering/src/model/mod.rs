@@ -7,3 +7,8 @@ mod character_component;
 mod character_model_base;
 mod component_utils;
 mod m2_scene;
+
+pub use character_component::{
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRect, CharacterAtlasRegion,
+    CharacterTexturePlan, CharacterTexturePlanError,
+};

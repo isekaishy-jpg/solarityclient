@@ -2180,6 +2180,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "vk-mem",
+ "wow-mpq",
 ]
 
 [[package]]

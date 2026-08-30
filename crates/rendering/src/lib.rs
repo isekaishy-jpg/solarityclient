@@ -18,3 +18,7 @@ mod weather;
 mod world_text;
 
 pub use device::{VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport};
+pub use model::{
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRect, CharacterAtlasRegion,
+    CharacterTexturePlan, CharacterTexturePlanError,
+};
