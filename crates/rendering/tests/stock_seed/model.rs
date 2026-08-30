@@ -649,6 +649,23 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
         texture_sets[..2]
     );
+    let prepared_draw = renderer.prepare_m2_draw(
+        handle,
+        pipeline,
+        texture_sets[0],
+        &plan,
+        0,
+        material_uniform,
+        64,
+        0x20,
+    )?;
+    assert_eq!(prepared_draw.mesh(), handle);
+    assert_eq!(prepared_draw.pipeline(), pipeline);
+    assert_eq!(prepared_draw.texture_set(), texture_sets[0]);
+    assert_eq!(prepared_draw.first_index(), draw.first_index());
+    assert_eq!(prepared_draw.index_count(), draw.index_count());
+    assert_eq!(prepared_draw.material(), material_uniform);
+    assert_eq!(prepared_draw.push_constants(), push_constants);
     renderer.shutdown()?;
     Ok(())
 }

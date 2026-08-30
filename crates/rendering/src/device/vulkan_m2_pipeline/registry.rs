@@ -106,6 +106,7 @@ impl M2PipelineRegistry {
                 plan.vertex_shader(),
                 plan.pixel_shader(),
                 plan.texture_count(),
+                plan.material(),
                 permutation,
             ),
         });

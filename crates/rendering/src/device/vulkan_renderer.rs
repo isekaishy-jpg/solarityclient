@@ -6,6 +6,7 @@ use ash::{Device, vk};
 use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Texture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
+use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
 use crate::device::vulkan_m2_texture_set::{
     M2TextureSet, M2TextureSetHandle, M2TextureSetInfo, M2TextureSetRegistry,
@@ -20,7 +21,7 @@ use crate::device::vulkan_texture::{
     BlpTextureUploadError, TextureUploadContext,
 };
 use crate::device::{VulkanBootstrap, VulkanError};
-use crate::model::M2MeshPlan;
+use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -340,6 +341,43 @@ impl VulkanRenderer {
     #[must_use]
     pub fn m2_texture_set_info(&self, handle: M2TextureSetHandle) -> Option<M2TextureSetInfo> {
         self.m2_texture_sets.info(handle)
+    }
+
+    /// Joins one CPU material batch to compatible renderer-local resources.
+    ///
+    /// The returned packet is the only M2 draw form accepted by frame command
+    /// recording, preventing a mesh, pipeline, texture set, or index span from
+    /// being combined across unrelated models.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when any handle is foreign, the draw index/range
+    /// is invalid, or fixed pipeline/texture state disagrees with the CPU plan.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_m2_draw(
+        &self,
+        mesh: M2MeshHandle,
+        pipeline: M2PipelineHandle,
+        texture_set: M2TextureSetHandle,
+        plan: &M2MeshPlan,
+        draw_index: usize,
+        material: M2MaterialUniform,
+        bone_transform_offset: u32,
+        flags: u32,
+    ) -> Result<M2PreparedDraw, VulkanError> {
+        prepare_draw(
+            &self.m2_meshes,
+            &self.m2_pipelines,
+            &self.m2_texture_sets,
+            mesh,
+            pipeline,
+            texture_set,
+            plan,
+            draw_index,
+            material,
+            bone_transform_offset,
+            flags,
+        )
     }
 
     /// Creates the swapchain and one owned color view for each borrowed image.

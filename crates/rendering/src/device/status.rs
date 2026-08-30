@@ -114,6 +114,35 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit texture-set handle.
     #[error("M2 texture-set registry exhausted its 32-bit handle space")]
     M2TextureSetCapacity,
+    /// A mesh handle belongs to another renderer or no live allocation.
+    #[error("M2 draw references an unknown mesh handle")]
+    UnknownM2MeshHandle,
+    /// A pipeline handle belongs to another renderer or no live pipeline.
+    #[error("M2 draw references an unknown pipeline handle")]
+    UnknownM2PipelineHandle,
+    /// A texture-set handle belongs to another renderer or no live set.
+    #[error("M2 draw references an unknown texture-set handle")]
+    UnknownM2TextureSetHandle,
+    /// The uploaded geometry and CPU plan identify different model profiles.
+    #[error("M2 draw mesh does not match its CPU mesh plan")]
+    M2DrawMeshMismatch,
+    /// The requested material batch does not exist in the CPU plan.
+    #[error("M2 draw index {requested} is unavailable; plan has {available} draws")]
+    M2DrawIndex {
+        /// Requested zero-based material batch.
+        requested: usize,
+        /// Number of available plan draws.
+        available: usize,
+    },
+    /// The draw's index span exceeds its uploaded geometry allocation.
+    #[error("M2 draw index range exceeds the uploaded mesh")]
+    M2DrawIndexRange,
+    /// The compiled pipeline does not represent the draw's material state.
+    #[error("M2 draw pipeline does not match its material batch")]
+    M2DrawPipelineMismatch,
+    /// The sampled texture stages do not match the compiled shader count.
+    #[error("M2 draw texture set does not match its pipeline")]
+    M2DrawTextureSetMismatch,
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,

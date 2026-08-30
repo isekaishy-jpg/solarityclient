@@ -1,6 +1,6 @@
 //! Public typed pipeline identity and immutable effect diagnostics.
 
-use crate::shader::{M2PixelShader, M2ShaderPermutation, M2VertexShader};
+use crate::shader::{M2MaterialState, M2PixelShader, M2ShaderPermutation, M2VertexShader};
 
 /// Stable renderer-local handle to one Vulkan M2 graphics pipeline.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -15,6 +15,7 @@ pub struct M2PipelineInfo {
     vertex_shader: M2VertexShader,
     pixel_shader: M2PixelShader,
     texture_count: u16,
+    material: M2MaterialState,
     permutation: M2ShaderPermutation,
 }
 
@@ -24,12 +25,14 @@ impl M2PipelineInfo {
         vertex_shader: M2VertexShader,
         pixel_shader: M2PixelShader,
         texture_count: u16,
+        material: M2MaterialState,
         permutation: M2ShaderPermutation,
     ) -> Self {
         Self {
             vertex_shader,
             pixel_shader,
             texture_count,
+            material,
             permutation,
         }
     }
@@ -50,6 +53,12 @@ impl M2PipelineInfo {
     #[must_use]
     pub const fn texture_count(self) -> u16 {
         self.texture_count
+    }
+
+    /// Returns the fixed-function material state compiled into the pipeline.
+    #[must_use]
+    pub const fn material(self) -> M2MaterialState {
+        self.material
     }
 
     /// Returns the exact BLS vertex and pixel indices.
