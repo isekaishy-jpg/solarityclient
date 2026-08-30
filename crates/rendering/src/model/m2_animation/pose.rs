@@ -32,6 +32,13 @@ pub struct M2BonePose {
     transforms: Vec<Mat4>,
 }
 
+/// Precomputed camera transforms shared by every billboard bone in a pose.
+#[derive(Clone, Copy)]
+struct BillboardView {
+    model_view: Mat4,
+    inverse_model_view: Mat4,
+}
+
 impl M2BonePose {
     /// Samples and composes every non-billboard bone in parent order.
     ///
@@ -42,6 +49,46 @@ impl M2BonePose {
     pub fn compose(
         animations: &M2AnimationSet,
         clock: M2AnimationClock,
+    ) -> Result<Self, M2BonePoseError> {
+        Self::compose_inner(animations, clock, None)
+    }
+
+    /// Samples every bone and applies stock's camera-relative billboards.
+    ///
+    /// `model_view` must transform from model space into the active camera's
+    /// view space. Ordinary world callers form it as `frame.view() * model`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2BonePoseError`] for invalid animation selection or a
+    /// non-finite/non-invertible model-view transform.
+    pub fn compose_with_model_view(
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Mat4,
+    ) -> Result<Self, M2BonePoseError> {
+        if !finite_matrix(model_view) {
+            return Err(M2BonePoseError::InvalidModelView);
+        }
+        let determinant = model_view.determinant();
+        if !determinant.is_finite() || determinant.abs() <= 1.0e-8 {
+            return Err(M2BonePoseError::InvalidModelView);
+        }
+        Self::compose_inner(
+            animations,
+            clock,
+            Some(BillboardView {
+                model_view,
+                inverse_model_view: model_view.inverse(),
+            }),
+        )
+    }
+
+    /// Shares animation selection and hierarchy work between pose paths.
+    fn compose_inner(
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Option<BillboardView>,
     ) -> Result<Self, M2BonePoseError> {
         if !clock.animation_time_ms.is_finite() || !clock.global_time_ms.is_finite() {
             return Err(M2BonePoseError::NonFiniteTime);
@@ -63,11 +110,12 @@ impl M2BonePose {
                 available: animations.sequences().len(),
             },
         )?;
-        if let Some((bone, _)) = animations
-            .bones()
-            .iter()
-            .enumerate()
-            .find(|(_index, bone)| bone.flags() & 0x78 != 0)
+        if model_view.is_none()
+            && let Some((bone, _)) = animations
+                .bones()
+                .iter()
+                .enumerate()
+                .find(|(_index, bone)| bone.flags() & 0x78 != 0)
         {
             return Err(M2BonePoseError::BillboardViewRequired { bone });
         }
@@ -109,7 +157,14 @@ impl M2BonePose {
         let mut transforms = vec![Mat4::IDENTITY; local.len()];
         let mut states = vec![0_u8; local.len()];
         for index in 0..local.len() {
-            compose_bone(index, animations, &local, &mut transforms, &mut states);
+            compose_bone(
+                index,
+                animations,
+                &local,
+                &mut transforms,
+                &mut states,
+                model_view,
+            );
         }
         Ok(Self { transforms })
     }
@@ -128,6 +183,7 @@ fn compose_bone(
     local: &[Mat4],
     transforms: &mut [Mat4],
     states: &mut [u8],
+    model_view: Option<BillboardView>,
 ) {
     if states[index] == 2 {
         return;
@@ -135,7 +191,7 @@ fn compose_bone(
     states[index] = 1;
     if let Some(parent) = animations.bones()[index].parent().map(usize::from) {
         if states[parent] == 0 {
-            compose_bone(parent, animations, local, transforms, states);
+            compose_bone(parent, animations, local, transforms, states, model_view);
         }
         transforms[index] =
             inherited_parent_transform(transforms[parent], animations.bones()[index].flags())
@@ -143,7 +199,113 @@ fn compose_bone(
     } else {
         transforms[index] = local[index];
     }
+    if let Some(view) = model_view {
+        let flags = animations.bones()[index].flags() & 0x78;
+        if flags != 0 {
+            transforms[index] = billboard_transform(
+                transforms[index],
+                local[index],
+                animations.bones()[index].pivot(),
+                animations.bones()[index].flags(),
+                view,
+            );
+        }
+    }
     states[index] = 2;
+}
+
+/// Applies build-12340's spherical or axis-constrained view-space basis.
+fn billboard_transform(
+    model_bone: Mat4,
+    local_bone: Mat4,
+    pivot: Vec3,
+    flags: u32,
+    view: BillboardView,
+) -> Mat4 {
+    let mut view_bone = view.model_view * model_bone;
+    let original = view_bone;
+    let scales = Vec3::new(
+        view_bone.x_axis.truncate().length(),
+        view_bone.y_axis.truncate().length(),
+        view_bone.z_axis.truncate().length(),
+    );
+    let set_axis = |matrix: &mut Mat4, column: usize, axis: Vec3| {
+        let scale = scales[column];
+        *matrix.col_mut(column) = (axis * scale).extend(0.0);
+    };
+
+    match flags & 0x78 {
+        0x8 => {
+            // Animated cards preserve authored local orientation inside the
+            // stock view-space remap while cancelling parent/view rotation.
+            if flags & 0x280 != 0 {
+                for column in 0..3 {
+                    let authored = local_bone.col(column).truncate();
+                    let fallback = match column {
+                        0 => Vec3::new(0.0, 0.0, -1.0),
+                        1 => Vec3::X,
+                        _ => Vec3::Y,
+                    };
+                    set_axis(
+                        &mut view_bone,
+                        column,
+                        normalize_or(Vec3::new(authored.y, authored.z, -authored.x), fallback),
+                    );
+                }
+            } else {
+                set_axis(&mut view_bone, 0, Vec3::new(0.0, 0.0, -1.0));
+                set_axis(&mut view_bone, 1, Vec3::X);
+                set_axis(&mut view_bone, 2, Vec3::Y);
+            }
+        }
+        0x10 => {
+            let x = normalize_or(view_bone.x_axis.truncate(), Vec3::X);
+            let y = normalize_or(Vec3::new(x.y, -x.x, 0.0), Vec3::Y);
+            let z = normalize_or(y.cross(x), Vec3::Z);
+            set_axis(&mut view_bone, 0, x);
+            set_axis(&mut view_bone, 1, y);
+            set_axis(&mut view_bone, 2, z);
+        }
+        0x20 => {
+            let y = normalize_or(view_bone.y_axis.truncate(), Vec3::Y);
+            let x = normalize_or(Vec3::new(-y.y, y.x, 0.0), Vec3::X);
+            let z = normalize_or(y.cross(x), Vec3::Z);
+            set_axis(&mut view_bone, 0, x);
+            set_axis(&mut view_bone, 1, y);
+            set_axis(&mut view_bone, 2, z);
+        }
+        0x40 => {
+            let z = normalize_or(view_bone.z_axis.truncate(), Vec3::Z);
+            let y = normalize_or(Vec3::new(z.y, -z.x, 0.0), Vec3::Y);
+            let x = normalize_or(z.cross(y), Vec3::X);
+            set_axis(&mut view_bone, 0, x);
+            set_axis(&mut view_bone, 1, y);
+            set_axis(&mut view_bone, 2, z);
+        }
+        _ => {}
+    }
+
+    // Replacing orientation must not orbit the card around the model origin.
+    let transformed_pivot = original * pivot.extend(1.0);
+    let rotated_pivot = view_bone * pivot.extend(0.0);
+    view_bone.w_axis = transformed_pivot - rotated_pivot;
+    view_bone.w_axis.w = 1.0;
+    view.inverse_model_view * view_bone
+}
+
+/// Preserves stock's stable billboard axes when authored scale is zero.
+fn normalize_or(value: Vec3, fallback: Vec3) -> Vec3 {
+    let length_squared = value.length_squared();
+    if length_squared.is_finite() && length_squared > 1.0e-6 {
+        value / length_squared.sqrt()
+    } else {
+        fallback
+    }
+}
+
+/// Ensures matrix inversion cannot inject non-finite billboard transforms.
+fn finite_matrix(value: Mat4) -> bool {
+    value.to_cols_array().into_iter().all(f32::is_finite)
 }
 
 /// Removes parent translation, scale, or rotation selected by low bone flags.

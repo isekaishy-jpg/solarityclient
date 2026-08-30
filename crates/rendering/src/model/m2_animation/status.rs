@@ -28,4 +28,7 @@ pub enum M2BonePoseError {
         /// Zero-based bone index carrying one of stock's billboard flags.
         bone: usize,
     },
+    /// The model-to-view transform cannot be inverted for billboard recovery.
+    #[error("M2 billboard pose requires a finite, invertible model-view transform")]
+    InvalidModelView,
 }

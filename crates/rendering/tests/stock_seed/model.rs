@@ -744,6 +744,52 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Spherical billboard bones replace view rotation without moving the pivot.
+#[test]
+fn m2_bone_pose_applies_stock_view_space_billboard() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Billboard.blp", 1)?;
+    let bone_offset = usize::try_from(u32::from_le_bytes(bytes[0x30..0x34].try_into()?))?;
+    bytes[bone_offset + 4..bone_offset + 8].copy_from_slice(&0x8_u32.to_le_bytes());
+    let path = AssetPath::new("Creature\\Solarity\\Billboard.m2")?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Billboard.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Billboard00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    assert_eq!(
+        M2BonePose::compose(model.animations(), M2AnimationClock::new(0, 500.0, 0.0)),
+        Err(solarity_rendering::M2BonePoseError::BillboardViewRequired { bone: 0 })
+    );
+
+    let camera = solarity_rendering::WorldCamera::stock(
+        Vec3::new(0.0, -10.0, 0.0),
+        Vec3::ZERO,
+        Vec3::Z,
+        100.0,
+    )
+    .frame(1.0)?;
+    let pose = M2BonePose::compose_with_model_view(
+        model.animations(),
+        M2AnimationClock::new(0, 500.0, 0.0),
+        camera.view(),
+    )?;
+    let view_bone = camera.view() * pose.transforms()[0];
+    assert_eq!(view_bone.x_axis.truncate(), Vec3::new(0.0, 0.0, -1.0));
+    assert_eq!(view_bone.y_axis.truncate(), Vec3::X);
+    assert_eq!(view_bone.z_axis.truncate(), Vec3::Y);
+    Ok(())
+}
+
 /// Confirms shaderc emitted the pinned SPIR-V binary header, not its default.
 fn assert_spirv_1_6(words: &[u32]) {
     assert!(words.len() >= 5);
