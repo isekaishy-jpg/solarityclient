@@ -50,9 +50,6 @@ impl TerrainFrameRenderer {
         scene: TerrainSceneUniform,
         draws: &[TerrainPreparedDraw],
     ) -> Result<TerrainFrameReport, VulkanError> {
-        if draws.is_empty() {
-            return Err(VulkanError::EmptyTerrainFrame);
-        }
         self.resources.ensure(FrameCreateContext {
             device: context.device,
             allocator: context.allocator,

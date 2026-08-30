@@ -149,9 +149,6 @@ pub enum VulkanError {
     /// Atlas or ordered diffuse resources disagree with this MCNK.
     #[error("terrain draw texture set does not match its authored layers")]
     TerrainDrawTextureSetMismatch,
-    /// Terrain presentation requires at least one camera-selected MCNK.
-    #[error("terrain frame contains no prepared draws")]
-    EmptyTerrainFrame,
     /// Swapchain-indexed terrain resources cannot address the requested slot.
     #[error("terrain frame resources exceed swapchain capacity")]
     TerrainFrameCapacity,

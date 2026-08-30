@@ -208,6 +208,10 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(draw.push_bytes(), [0; 8]);
     let frame = renderer.present_terrain(scene, &[draw])?;
     assert_eq!(frame.draw_count(), 1);
+    // A valid frustum can reject every resident chunk. The terrain pass must
+    // still clear and present its attachments for that camera orientation.
+    let empty_frame = renderer.present_terrain(scene, &[])?;
+    assert_eq!(empty_frame.draw_count(), 0);
     for layer_count in [
         TerrainLayerCount::One,
         TerrainLayerCount::Two,

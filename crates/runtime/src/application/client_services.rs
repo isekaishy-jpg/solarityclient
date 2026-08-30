@@ -12,7 +12,7 @@ use solarity_asset::{
 };
 use solarity_cpu::CpuExecutor;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
-use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
+use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera};
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
     UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
@@ -179,9 +179,39 @@ impl ClientServices {
         self.platform.poll_event()
     }
 
-    /// Presents one FIFO-paced login frame after main-thread service polling.
-    pub(crate) fn present_login_frame(&mut self) -> Result<(), ApplicationError> {
-        self.login_ui.present(&mut self.renderer)?;
+    /// Presents one FIFO-paced Glue or resident-world frame.
+    pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        let (Some(environment), Some(pose)) =
+            (self.environment.current(), self.player.camera_pose())
+        else {
+            self.login_ui.present(&mut self.renderer)?;
+            return Ok(());
+        };
+        let (width, height) = self.platform.pixel_extent();
+        let aspect_ratio = width as f32 / height as f32;
+        // These are the registered build-12340 defaults. The settings owner
+        // will pass live CVar values through this same explicit boundary.
+        let pose = self
+            .terrain
+            .resolve_player_camera(pose, aspect_ratio, true, true)?;
+        let camera = WorldCamera::stock_following(
+            pose.eye(),
+            pose.target(),
+            pose.up(),
+            pose.orbit_pivot(),
+            pose.subject(),
+            environment.view_distance().value(),
+        )
+        .frame(aspect_ratio)?;
+        let Some(plan) = self.terrain.resident_mesh_plan() else {
+            self.login_ui.present(&mut self.renderer)?;
+            return Ok(());
+        };
+        let Some(frame) = self.terrain_frame.as_mut() else {
+            self.login_ui.present(&mut self.renderer)?;
+            return Ok(());
+        };
+        frame.present(&mut self.renderer, plan, environment, camera)?;
         Ok(())
     }
 

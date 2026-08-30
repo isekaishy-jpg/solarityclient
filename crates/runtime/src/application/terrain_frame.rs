@@ -4,10 +4,14 @@ use std::sync::Arc;
 
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadError, TerrainLayerCount, TerrainLayerCountError,
-    TerrainPreparedDraw, TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer,
+    BlpColorSpace, BlpTextureUploadError, TerrainFrameReport, TerrainLayerCount,
+    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
+    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
+    WorldFrustum, WorldScreenWindow,
 };
 use thiserror::Error;
+
+use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
 
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
@@ -21,6 +25,9 @@ pub enum RuntimeTerrainFrameError {
     /// An MCNK carried a diffuse-layer count outside stock's closed domain.
     #[error(transparent)]
     LayerCount(#[from] TerrainLayerCountError),
+    /// The final player camera could not form a valid frustum.
+    #[error(transparent)]
+    Camera(#[from] WorldCameraError),
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"
@@ -77,12 +84,25 @@ pub enum RuntimeTerrainFrameError {
         /// Resident ADT Y coordinate.
         tile_y: u8,
     },
+    /// A retained GPU generation was paired with another resident tile plan.
+    #[error("terrain GPU tile [{frame_x}, {frame_y}] does not match plan [{plan_x}, {plan_y}]")]
+    TileMismatch {
+        /// Retained GPU generation X coordinate.
+        frame_x: u8,
+        /// Retained GPU generation Y coordinate.
+        frame_y: u8,
+        /// Submitted CPU plan X coordinate.
+        plan_x: u8,
+        /// Submitted CPU plan Y coordinate.
+        plan_y: u8,
+    },
 }
 
 /// One immutable resident ADT generation ready for camera selection.
 pub(super) struct TerrainFrame {
     tile: TerrainTileIndex,
     draws: Vec<TerrainPreparedDraw>,
+    visible_draws: Vec<TerrainPreparedDraw>,
 }
 
 impl TerrainFrame {
@@ -168,7 +188,45 @@ impl TerrainFrame {
         Ok(Self {
             tile: plan.tile(),
             draws,
+            visible_draws: Vec::with_capacity(plan.chunks().len()),
         })
+    }
+
+    /// Culls, lights, records, and presents one resident terrain frame.
+    ///
+    /// The visible packet buffer is retained across frames. An empty result is
+    /// still presented as a cleared world attachment; looking away from the
+    /// resident ADT is valid camera state, not a rendering failure.
+    pub(super) fn present(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        plan: &TerrainTileMeshPlan,
+        environment: RuntimeWorldEnvironmentFrame,
+        camera: WorldCameraFrame,
+    ) -> Result<TerrainFrameReport, RuntimeTerrainFrameError> {
+        if self.tile != plan.tile() {
+            return Err(RuntimeTerrainFrameError::TileMismatch {
+                frame_x: self.tile.x(),
+                frame_y: self.tile.y(),
+                plan_x: plan.tile().x(),
+                plan_y: plan.tile().y(),
+            });
+        }
+        let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
+        self.visible_draws.clear();
+        for (chunk, draw) in plan.chunks().iter().zip(&self.draws) {
+            if chunk.is_visible(frustum)? {
+                self.visible_draws.push(*draw);
+            }
+        }
+        let light = environment.light();
+        let scene = TerrainSceneUniform::new(
+            camera.view_projection(),
+            light.ambient_color(),
+            light.diffuse_color(),
+            environment.light_direction(),
+        );
+        Ok(renderer.present_terrain(scene, &self.visible_draws)?)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

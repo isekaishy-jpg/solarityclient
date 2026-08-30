@@ -5,7 +5,7 @@ use thiserror::Error;
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
 use solarity_network::{AddonManifestError, RealmDirectory};
-use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
+use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport, WorldCameraError};
 use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError, UiRenderError};
 
 use crate::application::character_directory::CharacterProjectionError;
@@ -15,7 +15,7 @@ use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::player_coordinator::RuntimePlayerError;
 use crate::application::run::{self, ApplicationRunReport};
-use crate::application::terrain_coordinator::RuntimeTerrainError;
+use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::RuntimeConfiguration;
@@ -48,6 +48,12 @@ pub enum ApplicationError {
     /// Active-map or player-tile terrain residency failed.
     #[error(transparent)]
     Terrain(#[from] RuntimeTerrainError),
+    /// Final player camera composition against the resident scene failed.
+    #[error(transparent)]
+    Camera(#[from] RuntimeCameraError),
+    /// The resolved camera could not form renderer projection state.
+    #[error(transparent)]
+    WorldCamera(#[from] WorldCameraError),
     /// A resident ADT could not enter renderer-owned GPU state.
     #[error(transparent)]
     TerrainFrame(#[from] RuntimeTerrainFrameError),
@@ -209,7 +215,7 @@ impl ClientApplication {
                 }
             }
             self.services.service_login()?;
-            self.services.present_login_frame()?;
+            self.services.present_frame()?;
         }
     }
 
