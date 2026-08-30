@@ -46,6 +46,7 @@ pub use camera::{
     resolve_camera_subject_height, resolve_model_camera_subject_height, resolve_player_camera_pose,
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
+pub use collision::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
     resolve_player_equipment,

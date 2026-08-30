@@ -2,3 +2,6 @@
 
 mod aa_bsp;
 mod collide;
+mod terrain;
+
+pub use terrain::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};

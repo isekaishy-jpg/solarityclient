@@ -9,6 +9,7 @@ use solarity_rendering::{
     TerrainChunkDrawPlan, TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldCameraError,
     WorldFrustum,
 };
+use solarity_systems::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -24,6 +25,9 @@ pub enum RuntimeTerrainError {
     /// A decoded ADT could not enter the compact renderer mesh ABI.
     #[error(transparent)]
     Mesh(#[from] TerrainTileMeshPlanError),
+    /// Decoded terrain could not enter strict collision geometry.
+    #[error(transparent)]
+    Collision(#[from] TerrainCollisionError),
     /// The server selected a map absent from the mounted build's `Map.dbc`.
     #[error("active world references unknown client map {map_id}")]
     UnknownMap {
@@ -220,6 +224,29 @@ impl RuntimeTerrainCoordinator {
             .collect()
     }
 
+    /// Traces the resident ADT's one-sided, hole-aware collision surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TerrainCollisionError`] when query inputs are invalid.
+    pub fn trace_collision(
+        &self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        collision_radius: f32,
+        maximum_fraction: f32,
+    ) -> Result<Option<TerrainCollisionHit>, TerrainCollisionError> {
+        let Some(collision) = self
+            .active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.collision)
+        else {
+            return Ok(None);
+        };
+        collision.trace(start, end, collision_radius, maximum_fraction)
+    }
+
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
@@ -242,6 +269,7 @@ struct ResidentTerrainTile {
     decoded: DecodedTerrainTile,
     textures: Vec<Arc<BlpTextureSource>>,
     mesh: TerrainTileMeshPlan,
+    collision: TerrainCollisionMesh,
 }
 
 impl ResidentTerrainTile {
@@ -258,10 +286,12 @@ impl ResidentTerrainTile {
             .map(|path| cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
+        let collision = TerrainCollisionMesh::prepare(&decoded)?;
         Ok(Self {
             decoded,
             textures,
             mesh,
+            collision,
         })
     }
 

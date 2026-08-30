@@ -85,6 +85,21 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     assert_eq!(mesh.tile(), tile);
     assert_eq!(mesh.textures(), [textures[0].path().clone()]);
     assert_eq!(mesh.chunks().len(), 256);
+    let first_bounds = mesh.chunks()[0].bounds();
+    let ray_x = (first_bounds[0][0] + first_bounds[1][0]) * 0.5;
+    let ray_y = (first_bounds[0][1] + first_bounds[1][1]) * 0.5;
+    let ray_start = Vec3::new(ray_x, ray_y, first_bounds[1][2] + 10.0);
+    let ray_end = Vec3::new(ray_x, ray_y, first_bounds[0][2] - 10.0);
+    let collision = terrain
+        .trace_collision(ray_start, ray_end, 0.0, 1.0)?
+        .ok_or("vertical ray missed fixture terrain")?;
+    assert!(collision.fraction() > 0.0 && collision.fraction() < 1.0);
+    assert!(collision.normal().z > 0.0);
+    assert!(
+        terrain
+            .trace_collision(ray_end, ray_start, 0.0, 1.0)?
+            .is_none()
+    );
     assert_eq!(
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::Current { map_id: 571, tile }
