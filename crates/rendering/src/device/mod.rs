@@ -13,6 +13,7 @@ mod c_gx_device_d3d9_ex;
 mod c_gx_device_open_gl;
 mod gfx_singleton_manager;
 mod status;
+mod vulkan_frame;
 mod vulkan_instance;
 mod vulkan_renderer;
 mod vulkan_selection;

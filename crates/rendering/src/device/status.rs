@@ -74,6 +74,12 @@ pub enum VulkanError {
     /// Swapchain images cannot be used as color attachments.
     #[error("surface images do not support color-attachment usage")]
     ColorAttachmentUsage,
+    /// Swapchain images cannot receive the bootstrap texture transfer.
+    #[error("surface images do not support transfer-destination usage")]
+    TransferDestinationUsage,
+    /// CPU frame composition overflowed addressable memory.
+    #[error("bootstrap frame dimensions exceed addressable memory")]
+    FrameSize,
 }
 
 impl VulkanError {

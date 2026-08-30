@@ -56,12 +56,45 @@ impl Drop for ClientFixture {
 
 /// Creates one valid MPQ with a diagnostic marker.
 fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
-    ArchiveBuilder::new()
+    let mut builder = ArchiveBuilder::new()
         .listfile_option(ListfileOption::Generate)
         .add_file_data(
             format!("fixture:{archive}").into_bytes(),
             "Solarity\\RuntimeFixture.txt",
-        )
-        .build(path)?;
+        );
+    if archive == "enUS/locale-enUS.MPQ" {
+        builder = builder.add_file_data(
+            bootstrap_texture_blp(),
+            "Interface\\Icons\\INV_Misc_QuestionMark.blp",
+        );
+    }
+    builder.build(path)?;
     Ok(())
+}
+
+/// Builds a two-pixel BLP2/RAW3 texture for the asset-backed startup frame.
+fn bootstrap_texture_blp() -> Vec<u8> {
+    const HEADER_SIZE: u32 = 148;
+    const PALETTE_SIZE: u32 = 256 * 4;
+    const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
+    const PIXEL_BYTES: u32 = 8;
+
+    let mut bytes = Vec::with_capacity((PIXEL_OFFSET + PIXEL_BYTES) as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[3, 8, 8, 0]);
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&PIXEL_OFFSET.to_le_bytes());
+    for _unused in 1..16 {
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+    }
+    bytes.extend_from_slice(&PIXEL_BYTES.to_le_bytes());
+    for _unused in 1..16 {
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+    }
+    bytes.resize(PIXEL_OFFSET as usize, 0);
+    bytes.extend_from_slice(&0xFFFF_0000_u32.to_le_bytes());
+    bytes.extend_from_slice(&0xFF00_FF00_u32.to_le_bytes());
+    bytes
 }

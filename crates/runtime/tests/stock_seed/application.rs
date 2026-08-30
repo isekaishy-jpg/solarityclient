@@ -33,6 +33,7 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert!(vulkan.api_version() >= ash::vk::API_VERSION_1_3);
     assert!(vulkan.swapchain_image_count() >= 2);
     assert_eq!(vulkan.extent(), report.pixel_window_extent());
+    assert_eq!(vulkan.presented_texture_extent(), Some((2, 1)));
 
     // Exercise SDL's real process queue so the test covers both translation
     // and the composition root's ownership of the sole event pump.

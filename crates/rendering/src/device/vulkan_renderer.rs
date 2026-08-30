@@ -3,7 +3,9 @@
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
+use solarity_asset::DecodedBlpTexture;
 
+use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_selection::SelectedAdapter;
 use crate::device::{VulkanBootstrap, VulkanError};
 
@@ -16,6 +18,7 @@ pub struct VulkanReport {
     present_queue_family: u32,
     swapchain_image_count: usize,
     extent: (u32, u32),
+    presented_texture_extent: Option<(u32, u32)>,
 }
 
 impl VulkanReport {
@@ -54,6 +57,12 @@ impl VulkanReport {
     pub const fn extent(&self) -> (u32, u32) {
         self.extent
     }
+
+    /// Returns the decoded BLP extent after the first frame has been presented.
+    #[must_use]
+    pub const fn presented_texture_extent(&self) -> Option<(u32, u32)> {
+        self.presented_texture_extent
+    }
 }
 
 /// Sole owner of the initialized Vulkan presentation object graph.
@@ -65,9 +74,10 @@ pub struct VulkanRenderer {
     allocator: Option<vk_mem::Allocator>,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
+    swapchain_images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
-    _graphics_queue: vk::Queue,
-    _present_queue: vk::Queue,
+    graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
     report: VulkanReport,
     is_idle: bool,
 }
@@ -95,9 +105,10 @@ impl VulkanRenderer {
             allocator: None,
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
+            swapchain_images: Vec::new(),
             image_views: Vec::new(),
-            _graphics_queue: graphics_queue,
-            _present_queue: present_queue,
+            graphics_queue,
+            present_queue,
             report: VulkanReport {
                 // The selection remains borrowed until swapchain construction;
                 // the report independently owns its diagnostic adapter label.
@@ -107,6 +118,7 @@ impl VulkanRenderer {
                 present_queue_family: selected.present_family,
                 swapchain_image_count: 0,
                 extent: (extent.width, extent.height),
+                presented_texture_extent: None,
             },
             is_idle: false,
         };
@@ -131,6 +143,32 @@ impl VulkanRenderer {
         self.wait_idle()
     }
 
+    /// Uploads and presents one decoded stock BLP before the window is revealed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when frame composition, staging, command
+    /// submission, synchronization, or presentation fails.
+    pub fn present_blp(&mut self, texture: &DecodedBlpTexture) -> Result<(), VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        present_blp(FrameContext {
+            device: &self.device,
+            allocator,
+            swapchain_loader: &self.swapchain_loader,
+            swapchain: self.swapchain,
+            swapchain_images: &self.swapchain_images,
+            graphics_queue: self.graphics_queue,
+            present_queue: self.present_queue,
+            graphics_queue_family: self.report.graphics_queue_family,
+            frame_extent: self.report.extent,
+            texture,
+        })?;
+        self.report.presented_texture_extent = Some((texture.width(), texture.height()));
+        Ok(())
+    }
+
     /// Creates the swapchain and one owned color view for each borrowed image.
     fn create_swapchain(
         &mut self,
@@ -146,7 +184,7 @@ impl VulkanRenderer {
             .image_color_space(selected.surface_format.color_space)
             .image_extent(extent)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
             .pre_transform(selected.surface_capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(vk::PresentModeKHR::FIFO)
@@ -166,7 +204,7 @@ impl VulkanRenderer {
         let images = unsafe { self.swapchain_loader.get_swapchain_images(self.swapchain) }
             .map_err(|source| VulkanError::operation("enumerate swapchain images", source))?;
         self.image_views.reserve(images.len());
-        for image in images {
+        for &image in &images {
             let subresource_range = vk::ImageSubresourceRange::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(0)
@@ -185,6 +223,7 @@ impl VulkanRenderer {
                 .map_err(|source| VulkanError::operation("create swapchain image view", source))?;
             self.image_views.push(view);
         }
+        self.swapchain_images = images;
         self.report.swapchain_image_count = self.image_views.len();
         Ok(())
     }

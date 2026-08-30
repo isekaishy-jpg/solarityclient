@@ -117,4 +117,14 @@ impl SdlPlatform {
             }
         })
     }
+
+    /// Reveals the window after rendering has presented initialized contents.
+    pub(crate) fn show(&mut self) -> Result<(), PlatformError> {
+        if self.window.show() {
+            return Ok(());
+        }
+        Err(PlatformError::ShowWindow {
+            message: sdl3::get_error().to_string(),
+        })
+    }
 }

@@ -4,13 +4,15 @@
 
 use tokio::runtime::{Builder, Runtime};
 
-use solarity_asset::{ArchiveCatalog, AssetStore};
+use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, DecodedBlpTexture};
 use solarity_cpu::CpuExecutor;
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 
 use crate::application::ApplicationError;
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
+
+const BOOTSTRAP_TEXTURE: &str = "Interface\\Icons\\INV_Misc_QuestionMark.blp";
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
@@ -30,10 +32,14 @@ impl ClientServices {
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
-        let assets = AssetStore::mount(catalog)?;
+        let mut assets = AssetStore::mount(catalog)?;
+        // The stock missing-icon texture is a stable client asset and gives the
+        // bootstrap frame a real archive/decode path instead of synthetic pixels.
+        let texture_path = AssetPath::new(BOOTSTRAP_TEXTURE)?;
+        let texture = DecodedBlpTexture::load(&mut assets, &texture_path)?;
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
-        let platform = SdlPlatform::start(configuration.window())?;
+        let mut platform = SdlPlatform::start(configuration.window())?;
         let instance_extensions = platform.vulkan_instance_extensions()?;
         let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
         // SAFETY: The bootstrap enabled SDL's exact extension list and remains
@@ -41,9 +47,11 @@ impl ClientServices {
         let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
         // SAFETY: SDL created `surface` from this bootstrap's instance, and
         // ownership transfers immediately to the rendering owner.
-        let renderer = unsafe {
+        let mut renderer = unsafe {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
+        renderer.present_blp(&texture)?;
+        platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
             .worker_threads(configuration.network_workers().get())

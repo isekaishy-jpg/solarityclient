@@ -41,4 +41,10 @@ pub enum PlatformError {
         /// SDL's diagnostic text.
         message: String,
     },
+    /// SDL rejected revealing the window after the first valid presentation.
+    #[error("failed to show SDL window: {message}")]
+    ShowWindow {
+        /// SDL's diagnostic text.
+        message: String,
+    },
 }

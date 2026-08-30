@@ -42,6 +42,8 @@ fn main() -> ExitCode {
         swapchain_images = vulkan.swapchain_image_count(),
         swapchain_width = vulkan.extent().0,
         swapchain_height = vulkan.extent().1,
+        texture_width = vulkan.presented_texture_extent().map(|extent| extent.0),
+        texture_height = vulkan.presented_texture_extent().map(|extent| extent.1),
         "client foundation started"
     );
     if let Err(failure) = application.shutdown() {
