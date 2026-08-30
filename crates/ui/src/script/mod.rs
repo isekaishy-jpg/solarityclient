@@ -5,6 +5,7 @@
 //! permission checks are behavior to reproduce, not bypass.
 
 mod handlers;
+mod runtime_state;
 mod script_events;
 mod simple_script;
 mod status;
@@ -14,3 +15,5 @@ pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan,
 pub use simple_script::{UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan};
 pub use status::UiScriptError;
 pub use templates::{UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan};
+
+pub(crate) use runtime_state::{UiRuntimeAnchor, UiRuntimeObject, UiRuntimeObjectPlan};

@@ -1,6 +1,7 @@
 //! Owned pre-world object identity and startup diagnostics.
 
-use crate::{UiObjectKind, UiObjectNode, UiObjectRole};
+use crate::script::UiRuntimeObject;
+use crate::{UiObjectKind, UiObjectRole};
 
 /// Durable identity and hierarchy for one instantiated GlueXML object.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,15 +15,19 @@ pub struct GlueObject {
 }
 
 impl GlueObject {
-    /// Copies lifetime-independent state from the temporary XML-backed tree.
-    pub(super) fn from_node(node: &UiObjectNode<'_>, first_child: usize) -> Self {
+    /// Copies lifetime-independent state from one post-script Lua object.
+    pub(super) fn from_runtime(
+        object: &UiRuntimeObject,
+        first_child: usize,
+        child_count: usize,
+    ) -> Self {
         Self {
-            name: node.name().map(str::to_owned),
-            kind: node.kind(),
-            role: node.role(),
-            parent: node.parent(),
+            name: object.name.clone(),
+            kind: object.kind,
+            role: object.role,
+            parent: object.parent,
             first_child,
-            child_count: node.children().len(),
+            child_count,
         }
     }
 

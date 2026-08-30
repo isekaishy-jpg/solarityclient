@@ -6,11 +6,13 @@
 
 mod c_script_region;
 mod c_script_region_script;
+mod geometry;
 mod resolution;
 mod status;
 
 pub use c_script_region::{
     UiAnchor, UiDimensions, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
 };
+pub use geometry::{UiRegionGeometry, UiRegionGeometryPlan, UiScreenRect};
 pub use resolution::{UiAnchorTarget, UiRegionAnchor, UiRegionState, UiRegionStatePlan};
 pub use status::UiLayoutError;

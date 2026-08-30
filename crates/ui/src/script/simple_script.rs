@@ -26,7 +26,7 @@ use super::handlers::handler_for;
 use super::script_events::glue_event;
 use super::templates::TEMPLATE_REGISTRY;
 
-const OBJECT_REGISTRY: &str = "solarity.ui.objects";
+pub(super) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
@@ -79,6 +79,9 @@ static DISABLED_TEXTURE_TOKEN: u8 = 46;
 static HIGHLIGHT_TEXTURE_TOKEN: u8 = 47;
 static SCRIPT_HANDLERS_TOKEN: u8 = 48;
 static BUTTON_TEXT_TOKEN: u8 = 49;
+static ROLE_TOKEN: u8 = 50;
+static ALPHA_TOKEN: u8 = 51;
+static SCALE_TOKEN: u8 = 52;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -150,6 +153,8 @@ pub struct UiScriptRuntime {
     font_actions: Vec<Option<FontDefinition>>,
     region_dimensions: Vec<(f64, f64)>,
     region_shown: Vec<bool>,
+    region_alpha: Vec<f64>,
+    region_scale: Vec<f64>,
     region_anchors: Vec<Vec<InitialAnchor>>,
     font_strings: Vec<InitialFont>,
     buttons: Vec<InitialButton>,
@@ -388,6 +393,26 @@ impl UiScriptRuntime {
                     })
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
+        let region_alpha = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.regions
+                    .state(index)
+                    .map(|state| f64::from(state.alpha()))
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!("region state {index} is outside the arena"),
+                    })
+            })
+            .collect::<Result<Vec<_>, UiScriptError>>()?;
+        let region_scale = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.regions
+                    .state(index)
+                    .map(|state| f64::from(state.scale()))
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!("region state {index} is outside the arena"),
+                    })
+            })
+            .collect::<Result<Vec<_>, UiScriptError>>()?;
         let region_anchors = (0..plan.regions.state_count())
             .map(|index| {
                 let state = plan
@@ -430,8 +455,14 @@ impl UiScriptRuntime {
         let texture_coords = tree_texture_coords(plan.tree, plan.textures)?;
         let texture_colors = tree_texture_colors(plan.tree, plan.textures)?;
         let registered_objects = Rc::new(Cell::new(0));
-        register_create_frame(lua, plan.regions.state_count(), registered_objects.clone())
-            .map_err(|error| execution_error("CreateFrame", error))?;
+        let dynamic_objects = Rc::new(Cell::new(0));
+        register_create_frame(
+            lua,
+            plan.regions.state_count(),
+            registered_objects.clone(),
+            dynamic_objects,
+        )
+        .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
             next_action: 0,
             object_metatables,
@@ -439,6 +470,8 @@ impl UiScriptRuntime {
             font_actions,
             region_dimensions,
             region_shown,
+            region_alpha,
+            region_scale,
             region_anchors,
             font_strings,
             buttons,
@@ -550,6 +583,19 @@ impl UiScriptRuntime {
     #[must_use]
     pub fn registered_object_count(&self) -> usize {
         self.registered_objects.get()
+    }
+
+    /// Copies the authoritative post-script region state out of Lua.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiScriptError`] when a live object table is incomplete or
+    /// contains an invalid arena reference or non-finite layout value.
+    pub(crate) fn snapshot_objects(
+        &self,
+        bundle: &UiBundle,
+    ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
+        super::runtime_state::snapshot_runtime_objects(bundle.lua(), self.registered_object_count())
     }
 
     /// Returns the number of external and inline Lua chunks executed so far.
@@ -712,6 +758,7 @@ impl UiScriptRuntime {
         table
             .raw_set(name_key(), object.name())
             .and_then(|()| table.raw_set(type_key(), object_type_name(object.kind())))
+            .and_then(|()| table.raw_set(role_key(), object_role_name(object.role())))
             .and_then(|()| {
                 table.raw_set(
                     parent_key(),
@@ -723,6 +770,22 @@ impl UiScriptRuntime {
             .and_then(|()| table.raw_set(index_key(), node_index + 1))
             .and_then(|()| table.raw_set(anchors_key(), anchors))
             .and_then(|()| table.raw_set(shown_key(), shown))
+            .and_then(|()| {
+                table.raw_set(
+                    alpha_key(),
+                    self.region_alpha.get(node_index).copied().ok_or_else(|| {
+                        mlua::Error::runtime("object has no resolved alpha state")
+                    })?,
+                )
+            })
+            .and_then(|()| {
+                table.raw_set(
+                    scale_key(),
+                    self.region_scale.get(node_index).copied().ok_or_else(|| {
+                        mlua::Error::runtime("object has no resolved scale state")
+                    })?,
+                )
+            })
             .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
             let script_handlers = lua
@@ -997,6 +1060,7 @@ fn register_create_frame(
     lua: &Lua,
     static_object_count: usize,
     registered_objects: Rc<Cell<usize>>,
+    dynamic_objects: Rc<Cell<usize>>,
 ) -> mlua::Result<()> {
     lua.globals().raw_set(
         "CreateFrame",
@@ -1029,12 +1093,21 @@ fn register_create_frame(
                     name.as_deref(),
                     parent,
                     descriptor,
-                    static_object_count,
-                    &registered_objects,
+                    &DynamicArenaCounters {
+                        static_object_count,
+                        registered_objects: &registered_objects,
+                        dynamic_objects: &dynamic_objects,
+                    },
                 )
             },
         )?,
     )
+}
+
+struct DynamicArenaCounters<'state> {
+    static_object_count: usize,
+    registered_objects: &'state Cell<usize>,
+    dynamic_objects: &'state Cell<usize>,
 }
 
 fn create_dynamic_frame(
@@ -1043,8 +1116,7 @@ fn create_dynamic_frame(
     requested_name: Option<&str>,
     requested_parent: Option<Table>,
     descriptor: Option<Table>,
-    static_object_count: usize,
-    registered_objects: &Cell<usize>,
+    counters: &DynamicArenaCounters<'_>,
 ) -> mlua::Result<Table> {
     let records = if let Some(descriptor) = &descriptor {
         descriptor.raw_get::<Table>("nodes")?
@@ -1058,6 +1130,9 @@ fn create_dynamic_frame(
         record.raw_set("width", 0.0)?;
         record.raw_set("height", 0.0)?;
         record.raw_set("shown", true)?;
+        record.raw_set("alpha", 1.0)?;
+        record.raw_set("scale", 1.0)?;
+        record.raw_set("anchors", lua.create_table()?)?;
         record.raw_set("font_assigned", false)?;
         record.raw_set("justify_h", "CENTER")?;
         record.raw_set("justify_v", "MIDDLE")?;
@@ -1105,12 +1180,18 @@ fn create_dynamic_frame(
         } else {
             None
         };
-        let index = static_object_count + registered_objects.get() + 1;
+        let index = counters.static_object_count + counters.dynamic_objects.get() + 1;
         let object =
             create_dynamic_object(lua, &kind, name.as_deref(), parent.as_ref(), index, &record)?;
-        registered_objects.set(registered_objects.get() + 1);
+        counters
+            .dynamic_objects
+            .set(counters.dynamic_objects.get() + 1);
+        counters
+            .registered_objects
+            .set(counters.registered_objects.get() + 1);
         objects.push(object);
     }
+    apply_dynamic_anchors(lua, &records, &objects)?;
     run_dynamic_load(lua, &records, &objects, root_local)?;
     objects
         .get(root_local - 1)
@@ -1171,6 +1252,7 @@ fn create_dynamic_object(
     let object = lua.create_table()?;
     object.raw_set(name_key(), name)?;
     object.raw_set(type_key(), kind)?;
+    object.raw_set(role_key(), record.raw_get::<String>("role")?)?;
     object.raw_set(
         parent_key(),
         parent
@@ -1181,6 +1263,8 @@ fn create_dynamic_object(
     object.raw_set(width_key(), record.raw_get::<f64>("width")?)?;
     object.raw_set(height_key(), record.raw_get::<f64>("height")?)?;
     object.raw_set(shown_key(), record.raw_get::<bool>("shown")?)?;
+    object.raw_set(alpha_key(), record.raw_get::<f64>("alpha")?)?;
+    object.raw_set(scale_key(), record.raw_get::<f64>("scale")?)?;
     object.raw_set(anchors_key(), lua.create_table()?)?;
     if !matches!(kind, "Texture" | "FontString") {
         object.raw_set(events_key(), lua.create_table()?)?;
@@ -1267,6 +1351,70 @@ fn create_dynamic_object(
         lua.globals().raw_set(name, object.clone())?;
     }
     Ok(object)
+}
+
+fn apply_dynamic_anchors(lua: &Lua, records: &Table, objects: &[Table]) -> mlua::Result<()> {
+    for (local_index, object) in objects.iter().enumerate() {
+        let record: Table = records.raw_get(local_index + 1)?;
+        let prototypes: Table = record.raw_get("anchors")?;
+        let anchors = lua.create_table()?;
+        for point_index in 1..=9 {
+            let Some(prototype) = prototypes.raw_get::<Option<Table>>(point_index)? else {
+                continue;
+            };
+            let point_name = prototype.raw_get::<String>("point")?;
+            let point = parse_point(&point_name)
+                .ok_or_else(|| mlua::Error::runtime("runtime template has unknown anchor point"))?;
+            let relative_name = prototype.raw_get::<String>("relative_point")?;
+            let relative_point = parse_point(&relative_name).ok_or_else(|| {
+                mlua::Error::runtime("runtime template has unknown relative anchor point")
+            })?;
+            let target_kind = prototype.raw_get::<String>("target_kind")?;
+            let target = match target_kind.as_str() {
+                "parent" => object.raw_get::<Option<usize>>(parent_key())?,
+                "local" => {
+                    let target = prototype.raw_get::<usize>("target")?;
+                    Some(
+                        objects
+                            .get(target.saturating_sub(1))
+                            .ok_or_else(|| {
+                                mlua::Error::runtime(
+                                    "runtime template anchor target is outside its instance",
+                                )
+                            })?
+                            .raw_get::<usize>(index_key())?,
+                    )
+                }
+                "global" => {
+                    let name = prototype.raw_get::<String>("target")?;
+                    let target: Table = lua.globals().raw_get(name.as_str()).map_err(|_| {
+                        mlua::Error::runtime(format!(
+                            "runtime template anchor target {name} is unavailable"
+                        ))
+                    })?;
+                    Some(target.raw_get::<usize>(index_key())?)
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "runtime template has unknown anchor target kind",
+                    ));
+                }
+            };
+            let anchor = create_anchor_record(
+                lua,
+                point,
+                target,
+                relative_point,
+                (
+                    prototype.raw_get::<f64>("x")?,
+                    prototype.raw_get::<f64>("y")?,
+                ),
+            )?;
+            anchors.raw_set(point_index, anchor)?;
+        }
+        object.raw_set(anchors_key(), anchors)?;
+    }
+    Ok(())
 }
 
 fn run_dynamic_load(
@@ -1991,6 +2139,27 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
         })?,
     )?;
     methods.raw_set(
+        "GetAlpha",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(alpha_key()))?,
+    )?;
+    methods.raw_set(
+        "SetAlpha",
+        lua.create_function(|_, (object, alpha): (Table, f64)| object.raw_set(alpha_key(), alpha))?,
+    )?;
+    methods.raw_set(
+        "GetScale",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(scale_key()))?,
+    )?;
+    methods.raw_set(
+        "SetScale",
+        lua.create_function(|_, (object, scale): (Table, f64)| {
+            if scale <= 0.0 {
+                return Err(mlua::Error::runtime("SetScale(): scale must be positive"));
+            }
+            object.raw_set(scale_key(), scale)
+        })?,
+    )?;
+    methods.raw_set(
         "GetNumPoints",
         lua.create_function(|_, object: Table| {
             let anchors: Table = object.raw_get(anchors_key())?;
@@ -2230,7 +2399,7 @@ fn lua_number(value: &Value) -> Option<f64> {
     }
 }
 
-fn parse_point(value: &str) -> Option<UiPoint> {
+pub(super) fn parse_point(value: &str) -> Option<UiPoint> {
     if value.eq_ignore_ascii_case("TOPLEFT") {
         Some(UiPoint::TopLeft)
     } else if value.eq_ignore_ascii_case("TOP") {
@@ -2620,6 +2789,20 @@ fn object_type_name(kind: UiObjectKind) -> &'static str {
     }
 }
 
+fn object_role_name(role: UiObjectRole) -> &'static str {
+    match role {
+        UiObjectRole::Object => "object",
+        UiObjectRole::ButtonText => "button_text",
+        UiObjectRole::NormalTexture => "normal_texture",
+        UiObjectRole::PushedTexture => "pushed_texture",
+        UiObjectRole::DisabledTexture => "disabled_texture",
+        UiObjectRole::HighlightTexture => "highlight_texture",
+        UiObjectRole::CheckedTexture => "checked_texture",
+        UiObjectRole::DisabledCheckedTexture => "disabled_checked_texture",
+        UiObjectRole::ThumbTexture => "thumb_texture",
+    }
+}
+
 fn is_object_type(exact: &str, candidate: &str) -> bool {
     if exact.eq_ignore_ascii_case(candidate) {
         return true;
@@ -2671,15 +2854,19 @@ const fn object_kind_index(kind: UiObjectKind) -> usize {
     }
 }
 
-fn name_key() -> LightUserData {
+pub(super) fn name_key() -> LightUserData {
     hidden_key(&NAME_TOKEN)
 }
 
-fn type_key() -> LightUserData {
+pub(super) fn type_key() -> LightUserData {
     hidden_key(&TYPE_TOKEN)
 }
 
-fn parent_key() -> LightUserData {
+pub(super) fn role_key() -> LightUserData {
+    hidden_key(&ROLE_TOKEN)
+}
+
+pub(super) fn parent_key() -> LightUserData {
     hidden_key(&PARENT_TOKEN)
 }
 
@@ -2691,11 +2878,11 @@ fn all_events_key() -> LightUserData {
     hidden_key(&ALL_EVENTS_TOKEN)
 }
 
-fn width_key() -> LightUserData {
+pub(super) fn width_key() -> LightUserData {
     hidden_key(&WIDTH_TOKEN)
 }
 
-fn height_key() -> LightUserData {
+pub(super) fn height_key() -> LightUserData {
     hidden_key(&HEIGHT_TOKEN)
 }
 
@@ -2707,11 +2894,11 @@ fn backdrop_border_color_key() -> LightUserData {
     hidden_key(&BACKDROP_BORDER_COLOR_TOKEN)
 }
 
-fn index_key() -> LightUserData {
+pub(super) fn index_key() -> LightUserData {
     hidden_key(&INDEX_TOKEN)
 }
 
-fn anchors_key() -> LightUserData {
+pub(super) fn anchors_key() -> LightUserData {
     hidden_key(&ANCHORS_TOKEN)
 }
 
@@ -2751,8 +2938,16 @@ fn slider_step_key() -> LightUserData {
     hidden_key(&SLIDER_STEP_TOKEN)
 }
 
-fn shown_key() -> LightUserData {
+pub(super) fn shown_key() -> LightUserData {
     hidden_key(&SHOWN_TOKEN)
+}
+
+pub(super) fn alpha_key() -> LightUserData {
+    hidden_key(&ALPHA_TOKEN)
+}
+
+pub(super) fn scale_key() -> LightUserData {
+    hidden_key(&SCALE_TOKEN)
 }
 
 fn id_key() -> LightUserData {

@@ -29,7 +29,8 @@ pub use frame::{
 pub use glue::{GlueError, GlueManager, GlueObject, GlueStartupReport};
 pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
-    UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionState, UiRegionStatePlan,
+    UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionGeometry, UiRegionGeometryPlan, UiRegionState,
+    UiRegionStatePlan, UiScreenRect,
 };
 pub use script::{
     UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,

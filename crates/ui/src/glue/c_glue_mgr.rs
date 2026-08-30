@@ -6,10 +6,11 @@ use std::rc::Rc;
 use solarity_asset::AssetStore;
 
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
+use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiBundle, UiFramePlan, UiFrameStatePlan, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
+    UiObjectCatalog, UiObjectTree, UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -24,6 +25,7 @@ pub struct GlueManager {
     fonts: FontCatalog,
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
+    geometry: UiRegionGeometryPlan,
     textures: UiTexturePlan,
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
@@ -62,22 +64,15 @@ impl GlueManager {
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());
+        let ui_extent = environment.ui_extent();
         let runtime_plan =
             UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
 
-        let child_count = tree.nodes().iter().map(|node| node.children().len()).sum();
-        let mut child_indices = Vec::with_capacity(child_count);
-        let objects = tree
-            .nodes()
-            .iter()
-            .map(|node| {
-                let first_child = child_indices.len();
-                child_indices.extend_from_slice(node.children());
-                GlueObject::from_node(node, first_child)
-            })
-            .collect::<Vec<_>>();
+        let live = runtime.snapshot_objects(&bundle)?;
+        let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        let (objects, child_indices) = build_live_hierarchy(&live)?;
         let report = GlueStartupReport::new(
             bundle.resources().len(),
             bundle.actions().len(),
@@ -87,7 +82,7 @@ impl GlueManager {
                 .filter(|object| object.name().is_some())
                 .count(),
             frames.state_count(),
-            regions.state_count(),
+            geometry.region_count(),
             textures.layer_count(),
             runtime.executed_chunk_count(),
             runtime.executed_load_handler_count(),
@@ -99,6 +94,7 @@ impl GlueManager {
             fonts,
             frames,
             regions,
+            geometry,
             textures,
             objects,
             child_indices,
@@ -151,6 +147,12 @@ impl GlueManager {
         &self.regions
     }
 
+    /// Returns live rectangles resolved after startup Lua has run.
+    #[must_use]
+    pub const fn geometry(&self) -> &UiRegionGeometryPlan {
+        &self.geometry
+    }
+
     /// Returns the archive-backed texture declaration plan.
     #[must_use]
     pub const fn textures(&self) -> &UiTexturePlan {
@@ -174,4 +176,35 @@ impl GlueManager {
     pub const fn runtime_mut(&mut self) -> &mut UiScriptRuntime {
         &mut self.runtime
     }
+}
+
+fn build_live_hierarchy(
+    live: &UiRuntimeObjectPlan,
+) -> Result<(Vec<GlueObject>, Vec<usize>), GlueError> {
+    let mut children = vec![Vec::new(); live.objects().len()];
+    for (index, object) in live.objects().iter().enumerate() {
+        if let Some(parent) = object.parent {
+            let Some(owner) = children.get_mut(parent) else {
+                return Err(crate::UiScriptError::Plan {
+                    message: format!("live UI object {index} has unavailable parent {parent}"),
+                }
+                .into());
+            };
+            owner.push(index);
+        }
+    }
+    let child_count = children.iter().map(Vec::len).sum();
+    let mut child_indices = Vec::with_capacity(child_count);
+    let objects = live
+        .objects()
+        .iter()
+        .zip(children)
+        .map(|(object, children)| {
+            let first_child = child_indices.len();
+            let child_count = children.len();
+            child_indices.extend(children);
+            GlueObject::from_runtime(object, first_child, child_count)
+        })
+        .collect();
+    Ok((objects, child_indices))
 }

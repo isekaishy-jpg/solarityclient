@@ -4,9 +4,11 @@ use mlua::{Lua, RegistryKey};
 
 use crate::{
     FontCatalog, HorizontalJustification, UiLayoutPlan, UiObjectCatalog, UiObjectKind,
-    UiObjectTree, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan,
-    VerticalJustification,
+    UiObjectTree, UiPoint, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
+    UiTexturePlan, VerticalJustification,
 };
+
+const POINT_COUNT: usize = 9;
 
 /// One named XML template and its contiguous runtime-prototype range.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +61,9 @@ pub struct UiRuntimeTemplateNode {
     construction_children: Vec<usize>,
     dimensions: (f64, f64),
     shown: bool,
+    alpha: f64,
+    scale: f64,
+    anchors: Vec<UiRuntimeAnchorPrototype>,
     font_assigned: bool,
     font_object_name: Option<String>,
     justify_h: String,
@@ -66,6 +71,21 @@ pub struct UiRuntimeTemplateNode {
     texture_coords: [f64; 8],
     texture_color: [f64; 4],
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct UiRuntimeAnchorPrototype {
+    point: UiPoint,
+    target: UiRuntimeAnchorTarget,
+    relative_point: UiPoint,
+    offset: (f64, f64),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum UiRuntimeAnchorTarget {
+    Parent,
+    Object(usize),
+    Global(String),
 }
 
 impl UiRuntimeTemplateNode {
@@ -148,8 +168,8 @@ impl UiRuntimeTemplatePlan {
                 .map_err(|error| template_error(template_name, error))?;
             let first_node = plan.nodes.len();
             for (local_index, object) in tree.nodes().iter().enumerate() {
-                let (dimensions, shown) =
-                    resolve_local_region(&layout, local_index, template_name)?;
+                let region =
+                    resolve_local_region(&tree, &layout, local_index, first_node, template_name)?;
                 let script_node =
                     scripts
                         .node(local_index)
@@ -188,8 +208,11 @@ impl UiRuntimeTemplatePlan {
                         .iter()
                         .map(|index| first_node + index)
                         .collect(),
-                    dimensions,
-                    shown,
+                    dimensions: region.dimensions,
+                    shown: region.shown,
+                    alpha: region.alpha,
+                    scale: region.scale,
+                    anchors: region.anchors,
                     font_assigned,
                     font_object_name,
                     justify_h,
@@ -287,6 +310,37 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("width", node.dimensions.0)?;
                 record.raw_set("height", node.dimensions.1)?;
                 record.raw_set("shown", node.shown)?;
+                record.raw_set("alpha", node.alpha)?;
+                record.raw_set("scale", node.scale)?;
+                let anchors = lua.create_table()?;
+                for anchor in &node.anchors {
+                    let anchor_record = lua.create_table()?;
+                    anchor_record.raw_set("point", point_name(anchor.point))?;
+                    anchor_record.raw_set("relative_point", point_name(anchor.relative_point))?;
+                    anchor_record.raw_set("x", anchor.offset.0)?;
+                    anchor_record.raw_set("y", anchor.offset.1)?;
+                    match &anchor.target {
+                        UiRuntimeAnchorTarget::Parent => {
+                            anchor_record.raw_set("target_kind", "parent")?;
+                        }
+                        UiRuntimeAnchorTarget::Object(index) => {
+                            let local_target =
+                                index.checked_sub(template.first_node).ok_or_else(|| {
+                                    mlua::Error::runtime(
+                                        "runtime template anchor target precedes its template",
+                                    )
+                                })? + 1;
+                            anchor_record.raw_set("target_kind", "local")?;
+                            anchor_record.raw_set("target", local_target)?;
+                        }
+                        UiRuntimeAnchorTarget::Global(name) => {
+                            anchor_record.raw_set("target_kind", "global")?;
+                            anchor_record.raw_set("target", name.as_str())?;
+                        }
+                    }
+                    anchors.raw_set(anchor.point.index() + 1, anchor_record)?;
+                }
+                record.raw_set("anchors", anchors)?;
                 record.raw_set("font_assigned", node.font_assigned)?;
                 if let Some(name) = &node.font_object_name {
                     record.raw_set("font_object_name", name.as_str())?;
@@ -482,11 +536,21 @@ fn object_role_name(role: crate::UiObjectRole) -> &'static str {
     }
 }
 
+struct ResolvedLocalRegion {
+    dimensions: (f64, f64),
+    shown: bool,
+    alpha: f64,
+    scale: f64,
+    anchors: Vec<UiRuntimeAnchorPrototype>,
+}
+
 fn resolve_local_region(
+    tree: &UiObjectTree<'_>,
     layout: &UiLayoutPlan,
     node_index: usize,
+    first_node: usize,
     template: &str,
-) -> Result<((f64, f64), bool), UiScriptError> {
+) -> Result<ResolvedLocalRegion, UiScriptError> {
     let node = layout
         .node(node_index)
         .ok_or_else(|| UiScriptError::Template {
@@ -496,6 +560,10 @@ fn resolve_local_region(
     let mut width = 0.0;
     let mut height = 0.0;
     let mut shown = true;
+    let mut alpha = 1.0;
+    let mut scale = 1.0;
+    let mut anchors: [Option<UiRuntimeAnchorPrototype>; POINT_COUNT] =
+        std::array::from_fn(|_| None);
     for layer in layout.layers_for(node) {
         if let Some(dimensions) = layer.dimensions() {
             if let Some(value) = dimensions.width() {
@@ -508,8 +576,82 @@ fn resolve_local_region(
         if let Some(hidden) = layer.hidden() {
             shown = !hidden;
         }
+        if layer.anchors_present() {
+            for anchor in layout.anchors_for(*layer) {
+                let target = match anchor.relative_to() {
+                    Some(name) => tree.node_index(name).map_or_else(
+                        || UiRuntimeAnchorTarget::Global(name.to_owned()),
+                        |index| UiRuntimeAnchorTarget::Object(first_node + index),
+                    ),
+                    None => tree.nodes()[node_index]
+                        .parent()
+                        .map_or(UiRuntimeAnchorTarget::Parent, |index| {
+                            UiRuntimeAnchorTarget::Object(first_node + index)
+                        }),
+                };
+                anchors[anchor.point().index()] = Some(UiRuntimeAnchorPrototype {
+                    point: anchor.point(),
+                    target,
+                    relative_point: anchor.relative_point().unwrap_or(anchor.point()),
+                    offset: anchor.offset().map_or((0.0, 0.0), |offset| {
+                        (f64::from(offset.0), f64::from(offset.1))
+                    }),
+                });
+            }
+        } else if layer.set_all_points() == Some(true) {
+            let target = tree.nodes()[node_index]
+                .parent()
+                .map_or(UiRuntimeAnchorTarget::Parent, |index| {
+                    UiRuntimeAnchorTarget::Object(first_node + index)
+                });
+            anchors = std::array::from_fn(|_| None);
+            anchors[UiPoint::TopLeft.index()] = Some(UiRuntimeAnchorPrototype {
+                point: UiPoint::TopLeft,
+                target: target.clone(),
+                relative_point: UiPoint::TopLeft,
+                offset: (0.0, 0.0),
+            });
+            anchors[UiPoint::BottomRight.index()] = Some(UiRuntimeAnchorPrototype {
+                point: UiPoint::BottomRight,
+                target,
+                relative_point: UiPoint::BottomRight,
+                offset: (0.0, 0.0),
+            });
+        }
+        if let Some(value) = layer.alpha() {
+            alpha = f64::from(value);
+        }
+        if let Some(value) = layer.scale() {
+            if value <= 0.0 {
+                return Err(UiScriptError::Template {
+                    template: template.to_owned(),
+                    message: format!("object {node_index} has nonpositive scale {value}"),
+                });
+            }
+            scale = f64::from(value);
+        }
     }
-    Ok(((width, height), shown))
+    Ok(ResolvedLocalRegion {
+        dimensions: (width, height),
+        shown,
+        alpha,
+        scale,
+        anchors: anchors.into_iter().flatten().collect(),
+    })
+}
+
+const fn point_name(point: UiPoint) -> &'static str {
+    match point {
+        UiPoint::TopLeft => "TOPLEFT",
+        UiPoint::Top => "TOP",
+        UiPoint::TopRight => "TOPRIGHT",
+        UiPoint::Left => "LEFT",
+        UiPoint::Center => "CENTER",
+        UiPoint::Right => "RIGHT",
+        UiPoint::BottomLeft => "BOTTOMLEFT",
+        UiPoint::Bottom => "BOTTOM",
+        UiPoint::BottomRight => "BOTTOMRIGHT",
+    }
 }
 
 fn runtime_name(template: &str, name: Option<&str>) -> Option<UiRuntimeName> {
