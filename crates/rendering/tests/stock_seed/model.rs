@@ -15,11 +15,11 @@ use solarity_rendering::{
     BlpColorSpace, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2DrawPushConstants, M2LocalLightCount, M2LocalLightState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SampledTexture,
-    M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap,
-    VulkanError,
+    CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2LocalLightCount,
+    M2LocalLightState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader,
+    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    VulkanBootstrap, VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -423,6 +423,12 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     let model = DecodedM2Model::load(&mut store, &path)?;
     let texture_path = AssetPath::new("Creature\\Solarity\\Renderable.blp")?;
     let texture_source = BlpTextureSource::load(&mut store, &texture_path)?;
+    let pose = M2BonePose::compose(model.animations(), M2AnimationClock::new(0, 500.0, 0.0))?;
+    assert_eq!(pose.transforms().len(), 3);
+    assert_eq!(
+        pose.transforms()[2].transform_point3(Vec3::ZERO),
+        Vec3::new(2.0, 0.0, 0.0)
+    );
 
     let plan = M2MeshPlan::prepare(&model, 0)?;
     assert_eq!(plan.path(), &path);
@@ -1569,7 +1575,68 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
     for combiner in combiners {
         bytes.extend_from_slice(&combiner.to_le_bytes());
     }
+    append_render_animation(&mut bytes)?;
     Ok(bytes)
+}
+
+/// Completes the fixture with one internal sequence and a three-bone hierarchy.
+fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let sequence_offset = u32::try_from(bytes.len())?;
+    let mut sequence = [0_u8; 64];
+    sequence[4..8].copy_from_slice(&1_000_u32.to_le_bytes());
+    sequence[12..16].copy_from_slice(&0x20_u32.to_le_bytes());
+    sequence[16..18].copy_from_slice(&1_i16.to_le_bytes());
+    sequence[60..62].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes.extend_from_slice(&sequence);
+
+    let bone_offset = u32::try_from(bytes.len())?;
+    let mut bones = [[0_u8; 88]; 3];
+    for (index, bone) in bones.iter_mut().enumerate() {
+        bone[0..4].copy_from_slice(&(-1_i32).to_le_bytes());
+        let parent = if index == 0 {
+            -1_i16
+        } else {
+            (index - 1) as i16
+        };
+        bone[8..10].copy_from_slice(&parent.to_le_bytes());
+        bone[18..20].copy_from_slice(&u16::MAX.to_le_bytes());
+        bone[38..40].copy_from_slice(&u16::MAX.to_le_bytes());
+        bone[58..60].copy_from_slice(&u16::MAX.to_le_bytes());
+    }
+    bones[0][16..18].copy_from_slice(&1_u16.to_le_bytes());
+    for bone in bones {
+        bytes.extend_from_slice(&bone);
+    }
+
+    let timestamp_refs = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    let timestamp_offset_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let value_refs = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    let value_offset_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_000_u32.to_le_bytes());
+    let value_data = u32::try_from(bytes.len())?;
+    for value in [0.0_f32, 0.0, 0.0, 4.0, 0.0, 0.0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes[timestamp_offset_word..timestamp_offset_word + 4]
+        .copy_from_slice(&timestamp_data.to_le_bytes());
+    bytes[value_offset_word..value_offset_word + 4].copy_from_slice(&value_data.to_le_bytes());
+
+    let root = usize::try_from(bone_offset)?;
+    bytes[root + 20..root + 24].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[root + 24..root + 28].copy_from_slice(&timestamp_refs.to_le_bytes());
+    bytes[root + 28..root + 32].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[root + 32..root + 36].copy_from_slice(&value_refs.to_le_bytes());
+    bytes[0x1c..0x20].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[0x20..0x24].copy_from_slice(&sequence_offset.to_le_bytes());
+    bytes[0x2c..0x30].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
+    Ok(())
 }
 
 /// Serializes one non-identity SKIN lookup and two-stage material batch.

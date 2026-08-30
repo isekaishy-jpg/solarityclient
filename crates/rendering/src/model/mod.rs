@@ -6,6 +6,7 @@
 mod character_component;
 mod character_model_base;
 mod component_utils;
+mod m2_animation;
 mod m2_scene;
 
 pub use character_component::{
@@ -16,6 +17,7 @@ pub use character_component::{
     CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
     CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState,
 };
+pub use m2_animation::{M2AnimationClock, M2BonePose, M2BonePoseError};
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan,
     M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState,

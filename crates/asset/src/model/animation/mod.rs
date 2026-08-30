@@ -319,6 +319,19 @@ impl M2AnimationSet {
     pub fn is_sequence_available(&self, index: usize) -> Option<bool> {
         self.sequence_available.get(index).copied()
     }
+
+    /// Resolves an alias chain to the sequence that owns its track channels.
+    #[must_use]
+    pub fn resolve_sequence_alias(&self, index: usize) -> Option<usize> {
+        let mut current = index;
+        loop {
+            let sequence = self.sequences.get(current)?;
+            let Some(next) = sequence.alias_next else {
+                return Some(current);
+            };
+            current = usize::from(next);
+        }
+    }
     /// Returns the validated parent-linked model skeleton.
     #[must_use]
     pub fn bones(&self) -> &[M2Bone] {
