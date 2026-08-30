@@ -2,7 +2,8 @@
 
 use glam::Vec3;
 use solarity_asset::{
-    DecodedTerrainTile, TerrainChunk, TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex,
+    DecodedTerrainTile, TERRAIN_ALPHA_MAP_BYTE_COUNT, TerrainChunk, TerrainChunkIndex,
+    TerrainTextureLayer, TerrainTileIndex,
 };
 
 use crate::{WorldCameraError, WorldFrustum};
@@ -73,7 +74,7 @@ pub struct TerrainChunkMeshPlan {
     vertices: Vec<TerrainRenderVertex>,
     indices: Vec<u16>,
     layers: Vec<TerrainTextureLayer>,
-    alpha_bytes: Vec<u8>,
+    alpha_map_rgba: Option<Box<[u8; TERRAIN_ALPHA_MAP_BYTE_COUNT]>>,
     shadow_bytes: Option<Box<[u8; 512]>>,
     bounds: [[f32; 3]; 2],
 }
@@ -93,7 +94,9 @@ impl TerrainChunkMeshPlan {
             vertices,
             indices,
             layers: source.layers().to_vec(),
-            alpha_bytes: source.alpha_bytes().to_vec(),
+            alpha_map_rgba: source
+                .alpha_map()
+                .map(|alpha_map| Box::new(*alpha_map.rgba())),
             shadow_bytes: source.shadow_bytes().map(|bytes| Box::new(*bytes)),
             bounds,
         }
@@ -129,10 +132,10 @@ impl TerrainChunkMeshPlan {
         &self.layers
     }
 
-    /// Returns exact MCAL bytes addressed by the layer offsets.
+    /// Returns decoded RGB blend planes in one RGBA8 upload payload.
     #[must_use]
-    pub fn alpha_bytes(&self) -> &[u8] {
-        &self.alpha_bytes
+    pub fn alpha_map_rgba(&self) -> Option<&[u8; TERRAIN_ALPHA_MAP_BYTE_COUNT]> {
+        self.alpha_map_rgba.as_deref()
     }
 
     /// Returns the optional packed one-bit shadow map.

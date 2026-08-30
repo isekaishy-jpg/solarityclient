@@ -42,10 +42,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     let map = TerrainMap::load(&mut store, definition)?;
     println!(
-        "map={} name={:?} directory={} tiles={} global_wmo={} source={}",
+        "map={} name={:?} directory={} flags={:#X} tiles={} global_wmo={} source={}",
         map.map_id(),
         definition.name(),
         map.directory(),
+        map.flags(),
         map.existing_tiles().count(),
         map.global_world_model().is_some(),
         map.source().relative_path().display(),
@@ -83,13 +84,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .copied()
                 .fold(f32::NEG_INFINITY, f32::max);
             println!(
-                "first_chunk=[{}, {}] position={:?} relative_height=[{}, {}] layers={} sounds={}",
+                "first_chunk=[{}, {}] position={:?} relative_height=[{}, {}] layers={} alpha={} sounds={}",
                 first.index().x(),
                 first.index().y(),
                 first.position(),
                 minimum_height,
                 maximum_height,
                 first.layers().len(),
+                first.alpha_map().is_some(),
                 first.sound_emitters().len(),
             );
         }

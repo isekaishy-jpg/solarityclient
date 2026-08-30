@@ -2,6 +2,8 @@
 
 use crate::archive::AssetPath;
 
+use super::alpha_map::TerrainAlphaMap;
+
 /// Number of terrain chunks along either axis of one ADT.
 pub const TERRAIN_CHUNK_WIDTH: u8 = 16;
 
@@ -99,7 +101,7 @@ pub struct TerrainChunk {
     normals: Box<[[f32; 3]; TERRAIN_CHUNK_VERTEX_COUNT]>,
     vertex_colors_bgra: Option<Box<[[u8; 4]; TERRAIN_CHUNK_VERTEX_COUNT]>>,
     layers: Vec<TerrainTextureLayer>,
-    alpha_bytes: Vec<u8>,
+    alpha_map: Option<TerrainAlphaMap>,
     shadow_bytes: Option<Box<[u8; 512]>>,
     doodad_references: Vec<u32>,
     world_model_references: Vec<u32>,
@@ -118,7 +120,7 @@ impl TerrainChunk {
         normals: Box<[[f32; 3]; TERRAIN_CHUNK_VERTEX_COUNT]>,
         vertex_colors_bgra: Option<Box<[[u8; 4]; TERRAIN_CHUNK_VERTEX_COUNT]>>,
         layers: Vec<TerrainTextureLayer>,
-        alpha_bytes: Vec<u8>,
+        alpha_map: Option<TerrainAlphaMap>,
         shadow_bytes: Option<Box<[u8; 512]>>,
         doodad_references: Vec<u32>,
         world_model_references: Vec<u32>,
@@ -134,7 +136,7 @@ impl TerrainChunk {
             normals,
             vertex_colors_bgra,
             layers,
-            alpha_bytes,
+            alpha_map,
             shadow_bytes,
             doodad_references,
             world_model_references,
@@ -196,10 +198,10 @@ impl TerrainChunk {
         &self.layers
     }
 
-    /// Returns the exact combined MCAL payload addressed by layer offsets.
+    /// Returns the optional decoded RGB blend planes in an RGBA8 upload map.
     #[must_use]
-    pub fn alpha_bytes(&self) -> &[u8] {
-        &self.alpha_bytes
+    pub const fn alpha_map(&self) -> Option<&TerrainAlphaMap> {
+        self.alpha_map.as_ref()
     }
 
     /// Returns the optional 64-by-64 one-bit MCSH map.

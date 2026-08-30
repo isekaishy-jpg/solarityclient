@@ -10,6 +10,7 @@ use crate::archive::{AssetError, AssetPath};
 use crate::database::MapDefinition;
 use crate::file_stack::AssetStore;
 
+use super::alpha_map::decode_alpha_map;
 use super::map::{DecodedTerrainTile, TerrainMap};
 use super::map_area::{TerrainTile, TerrainTileIndex};
 use super::map_chunk::{
@@ -18,6 +19,7 @@ use super::map_chunk::{
 };
 
 const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
+const WDT_HAS_BIG_ALPHA: u32 = 0x0004;
 
 impl TerrainMap {
     /// Loads and validates the selected map's exact WDT manifest.
@@ -87,7 +89,13 @@ impl TerrainMap {
                 "build-12340 terrain requires a monolithic root ADT",
             ));
         };
-        decode_adt(index, read.source().clone(), *root, &path)
+        decode_adt(
+            index,
+            read.source().clone(),
+            *root,
+            self.flags() & WDT_HAS_BIG_ALPHA != 0,
+            &path,
+        )
     }
 }
 
@@ -95,6 +103,7 @@ fn decode_adt(
     index: TerrainTileIndex,
     source: crate::archive::ArchiveDescriptor,
     root: RootAdt,
+    big_alpha: bool,
     path: &AssetPath,
 ) -> Result<DecodedTerrainTile, AssetError> {
     if root.version != AdtVersion::WotLK {
@@ -118,6 +127,7 @@ fn decode_adt(
         textures.len(),
         doodads.len(),
         world_models.len(),
+        big_alpha,
     )?;
     Ok(DecodedTerrainTile::new(
         index,
@@ -136,6 +146,7 @@ fn decode_chunks(
     texture_count: usize,
     doodad_count: usize,
     world_model_count: usize,
+    big_alpha: bool,
 ) -> Result<Vec<TerrainChunk>, AssetError> {
     if source.len() != 256 {
         return Err(terrain_message(
@@ -145,7 +156,16 @@ fn decode_chunks(
     }
     let mut chunks = source
         .into_iter()
-        .map(|chunk| decode_chunk(path, chunk, texture_count, doodad_count, world_model_count))
+        .map(|chunk| {
+            decode_chunk(
+                path,
+                chunk,
+                texture_count,
+                doodad_count,
+                world_model_count,
+                big_alpha,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     chunks.sort_unstable_by_key(|chunk| (chunk.index().y(), chunk.index().x()));
     for (expected, chunk) in chunks.iter().enumerate() {
@@ -166,6 +186,7 @@ fn decode_chunk(
     texture_count: usize,
     doodad_count: usize,
     world_model_count: usize,
+    big_alpha: bool,
 ) -> Result<TerrainChunk, AssetError> {
     // The file names these fields `[zpos, xpos, ypos]`: the first two are
     // horizontal client-view axes and `ypos` is elevation. Normalize that
@@ -319,6 +340,14 @@ fn decode_chunk(
             layer.effect_id,
         ));
     }
+    let alpha_map = decode_alpha_map(
+        chunk_x,
+        chunk.header.flags.value,
+        &layers,
+        &alpha_bytes,
+        big_alpha,
+    )
+    .map_err(|message| terrain_message(path, message))?;
     let references = chunk.refs.map_or_else(Vec::new, |refs| refs.references);
     let expected_references = chunk
         .header
@@ -376,7 +405,7 @@ fn decode_chunk(
         normals,
         vertex_colors_bgra,
         layers,
-        alpha_bytes,
+        alpha_map,
         shadow_bytes,
         doodad_references.to_vec(),
         world_model_references.to_vec(),

@@ -9,7 +9,11 @@ use solarity_asset::{
     TerrainTileIndex,
 };
 use wow_adt::builder::{AdtBuilder, BuiltAdt};
-use wow_adt::{AdtVersion, DoodadPlacement, ParsedAdt, WmoPlacement, parse_adt};
+use wow_adt::{
+    AdtVersion, DoodadPlacement, McalChunk, MclyChunk, MclyFlags, MclyLayer, ParsedAdt,
+    WmoPlacement, parse_adt,
+};
+use wow_wdt::chunks::MphdFlags;
 use wow_wdt::chunks::MwmoChunk;
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
@@ -20,8 +24,8 @@ use crate::support::{Fixture, FixtureFile};
 #[test]
 fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
-    let base_wdt = terrain_wdt(None)?;
-    let patch_wdt = terrain_wdt(Some((32, 31, 4395)))?;
+    let base_wdt = terrain_wdt(None, false)?;
+    let patch_wdt = terrain_wdt(Some((32, 31, 4395)), false)?;
     let fixture = Fixture::new(&[
         FixtureFile {
             archive: "common.MPQ",
@@ -75,7 +79,7 @@ fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {
 #[test]
 fn terrain_map_rejects_non_build_12340_chunks() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
-    let mut wdt = terrain_wdt(None)?;
+    let mut wdt = terrain_wdt(None, false)?;
     wdt.extend_from_slice(b"DIAM");
     wdt.extend_from_slice(&0_u32.to_le_bytes());
     let fixture = Fixture::new(&[
@@ -107,7 +111,7 @@ fn terrain_map_rejects_non_build_12340_chunks() -> Result<(), Box<dyn Error>> {
 #[test]
 fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
-    let wdt = terrain_wdt(Some((32, 32, 1)))?;
+    let wdt = terrain_wdt(Some((32, 32, 1)), true)?;
     let adt = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
         .add_texture("tileset/fixture/grass.blp")
@@ -171,6 +175,12 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks()[0].normals().len(), 145);
     assert_eq!(tile.chunks()[0].position(), [1_000.0, 6_000.0, 200.0]);
     assert_eq!(tile.chunks()[0].normals()[0], [1.0, 0.0, 0.0]);
+    let alpha = tile.chunks()[0]
+        .alpha_map()
+        .ok_or("fixture blend layer has no decoded alpha map")?
+        .rgba();
+    assert_eq!(&alpha[0..8], &[0, 42, 0, 255, 1, 42, 0, 255]);
+    assert_eq!(&alpha[alpha.len() - 4..], &[255, 42, 0, 255]);
     assert_eq!(tile.chunks()[255].index().x(), 15);
     assert_eq!(tile.chunks()[255].index().y(), 15);
     assert_eq!(tile.doodads().len(), 1);
@@ -214,12 +224,43 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     first_normal.x = 127;
     first_normal.y = 0;
     first_normal.z = 0;
+    first.header.n_layers = 3;
+    first.header.flags.value |= 0x8000;
+    first.layers = Some(MclyChunk {
+        layers: vec![
+            MclyLayer::default(),
+            MclyLayer {
+                texture_id: 0,
+                flags: MclyFlags { value: 0x100 },
+                offset_in_mcal: 0,
+                effect_id: 0,
+            },
+            MclyLayer {
+                texture_id: 0,
+                flags: MclyFlags { value: 0x300 },
+                offset_in_mcal: 4_096,
+                effect_id: 0,
+            },
+        ],
+    });
+    let mut alpha = (0_u8..=u8::MAX).cycle().take(64 * 64).collect::<Vec<_>>();
+    for _run in 0..32 {
+        alpha.extend_from_slice(&[0x80 | 127, 42]);
+    }
+    alpha.extend_from_slice(&[0x80 | 32, 42]);
+    first.alpha = Some(McalChunk::new(alpha));
     Ok(BuiltAdt::from_root_adt(*root, None).to_bytes()?)
 }
 
-fn terrain_wdt(tile: Option<(usize, usize, u32)>) -> Result<Vec<u8>, Box<dyn Error>> {
+fn terrain_wdt(
+    tile: Option<(usize, usize, u32)>,
+    big_alpha: bool,
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mwmo = Some(MwmoChunk::new());
+    if big_alpha {
+        wdt.mphd.flags |= MphdFlags::ADT_HAS_BIG_ALPHA;
+    }
     if let Some((x, y, area_id)) = tile {
         let entry = wdt
             .main
