@@ -7,8 +7,9 @@ use solarity_asset::{
     AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError, AssetPath, AssetStore,
     CharacterAppearanceCatalog, CharacterClassCatalog, CharacterCustomization,
     CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
-    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, MapCatalog,
-    MapKind, WdbcTable,
+    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, LightCatalog, Locale, M2TextureKind,
+    MapCatalog, MapKind, WdbcTable, WorldLightQuery, WorldLightSampleError,
+    exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -846,6 +847,141 @@ fn map_catalog_decodes_build_12340_world_identity() -> Result<(), Box<dyn Error>
     assert_eq!(map.maximum_players(), 0);
     assert_eq!(catalog.map(572), None);
     Ok(())
+}
+
+/// Five exact light tables produce one shared exterior environment snapshot.
+#[test]
+fn light_catalog_samples_stock_color_and_float_channels() -> Result<(), Box<dyn Error>> {
+    let light_fields = [1, 571, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+    let light_table = create_wdbc(1, 15, &light_fields, &[0]);
+    let parameter_fields = [
+        1,
+        1,
+        0,
+        0.75_f32.to_bits(),
+        0.1_f32.to_bits(),
+        0.2_f32.to_bits(),
+        0.3_f32.to_bits(),
+        0.4_f32.to_bits(),
+        0x20,
+    ];
+    let parameter_table = create_wdbc(1, 9, &parameter_fields, &[0]);
+    let skybox_table = create_wdbc(0, 3, &[], &[0]);
+    let color_table = constant_light_color_bands();
+    let float_table = constant_light_float_bands();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Light.dbc",
+            bytes: &light_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightParams.dbc",
+            bytes: &parameter_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightSkybox.dbc",
+            bytes: &skybox_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightIntBand.dbc",
+            bytes: &color_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightFloatBand.dbc",
+            bytes: &float_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = LightCatalog::load(&mut store)?;
+    let sample = catalog.sample(WorldLightQuery::new(571, glam::Vec3::ZERO, 720))?;
+
+    assert_eq!(catalog.lights().len(), 1);
+    assert!(catalog.lights()[0].is_global());
+    assert!(
+        sample
+            .diffuse_color()
+            .abs_diff_eq(glam::Vec3::splat(128.0 / 255.0), 0.000_001,)
+    );
+    assert!(sample.ambient_color().abs_diff_eq(
+        glam::Vec3::new(16.0 / 255.0, 32.0 / 255.0, 48.0 / 255.0),
+        0.000_001,
+    ));
+    assert_eq!(sample.fog_range(), (50.0, 100.0));
+    assert_eq!(sample.highlight_sky(), 1.0);
+    assert_eq!(sample.glow(), 0.75);
+    assert_eq!(sample.sky_floats(), [0.25, 0.75, 1.25, 1.5]);
+    assert_eq!(sample.liquid_alphas(), [0.3, 0.4, 0.1, 0.2]);
+    assert_eq!(
+        catalog.sample(WorldLightQuery::new(0, glam::Vec3::ZERO, 720)),
+        Err(WorldLightSampleError::MissingGlobalLight {
+            map_id: 0,
+            condition: 0,
+        })
+    );
+    Ok(())
+}
+
+/// The native cubic day/night path wraps and retains recovered key vectors.
+#[test]
+fn exterior_light_direction_uses_the_executable_table() {
+    let midnight = exterior_light_direction(0);
+    let dawn = exterior_light_direction(720);
+
+    assert!((midnight.length() - 1.0).abs() < 0.000_01);
+    assert!((dawn.length() - 1.0).abs() < 0.000_01);
+    assert!(midnight.abs_diff_eq(glam::Vec3::new(0.561_309, 0.561_309, 0.608_165), 0.000_02,));
+    assert!((dawn.x - 0.664_877).abs() < 0.000_02);
+    assert!((dawn.z - 0.340_406).abs() < 0.000_02);
+    assert_eq!(exterior_light_direction(1_440), midnight);
+    assert_eq!(exterior_light_direction(2_880), midnight);
+}
+
+/// Builds all 18 one-key packed-color rows for LightParams ID one.
+fn constant_light_color_bands() -> Vec<u8> {
+    let mut fields = Vec::with_capacity(18 * 34);
+    for id in 1..=18_u32 {
+        let color = match id {
+            2 => 0x0010_2030,
+            8 => 0x0040_5060,
+            10 => 0x0070_8090,
+            _ => id * 0x0001_0101,
+        };
+        fields.push(id);
+        if id == 1 {
+            fields.push(2);
+            fields.extend([0, 1_440]);
+            fields.extend([0; 14]);
+            fields.extend([0x0000_0000, 0x00FF_FFFF]);
+            fields.extend([0; 14]);
+        } else {
+            fields.push(1);
+            fields.extend([0; 16]);
+            fields.push(color);
+            fields.extend([0; 15]);
+        }
+    }
+    create_wdbc(18, 34, &fields, &[0])
+}
+
+/// Builds all six one-key scalar rows for LightParams ID one.
+fn constant_light_float_bands() -> Vec<u8> {
+    let values = [3_600.0_f32, 0.5, 0.25, 0.75, 1.25, 1.5];
+    let mut fields = Vec::with_capacity(6 * 34);
+    for (index, value) in values.into_iter().enumerate() {
+        fields.push(index as u32 + 1);
+        fields.push(1);
+        fields.extend([0; 16]);
+        fields.push(value.to_bits());
+        fields.extend([0; 15]);
+    }
+    create_wdbc(6, 34, &fields, &[0])
 }
 
 /// Generates the fixed WDBC layout used by stock-era client tables.

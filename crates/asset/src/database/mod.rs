@@ -13,6 +13,7 @@ mod db_cache;
 mod db_cache_instances;
 mod db_client;
 mod item;
+mod light;
 mod localized;
 mod map;
 mod player_class;
@@ -35,6 +36,10 @@ pub use creature::{
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
+};
+pub use light::{
+    LightCatalog, LightDefinition, LightParameter, LightSkybox, SkyboxBlend, WorldLightCondition,
+    WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use map::{MapCatalog, MapDefinition, MapKind};
 pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};
