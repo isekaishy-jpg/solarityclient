@@ -4,12 +4,14 @@ use std::error::Error;
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale, MapCatalog,
-    TerrainTileIndex,
+    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, ClientDataRoot,
+    CreatureCatalog, Locale, MapCatalog, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
-use solarity_runtime::{RuntimeTerrainCoordinator, RuntimeTerrainPoll};
+use solarity_runtime::{
+    RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
+};
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
 use wow_wdt::chunks::MwmoChunk;
@@ -37,7 +39,10 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let maps = MapCatalog::load(&mut store)?;
+    let creatures = CreatureCatalog::load(&mut store)?;
+    let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let assets = AssetStoreHandle::new(store);
+    let mut player = RuntimePlayerPresentation::new(assets.clone(), creatures, characters);
     let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
     let player_position = Vec3::new(1_000.0, 5_800.0, 250.0);
     let world = ActiveWorld::enter(WorldBootstrap::new(
@@ -48,6 +53,14 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         0.0,
     ));
     let tile = TerrainTileIndex::new(30, 21).ok_or("fixture tile is invalid")?;
+
+    // World verification precedes the local player's create-object packet.
+    // Presentation waits for those fields instead of inventing a body model.
+    assert_eq!(
+        player.synchronize(Some(&world))?,
+        RuntimePlayerPoll::Pending
+    );
+    assert!(player.resident_model().is_none());
 
     assert_eq!(
         terrain.synchronize(Some(&world))?,
@@ -87,6 +100,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     assert!(!visible.is_empty());
 
     assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
+    assert_eq!(player.synchronize(None)?, RuntimePlayerPoll::Idle);
     assert!(terrain.active_map().is_none());
     assert!(terrain.resident_texture_sources().is_none());
     assert!(terrain.resident_mesh_plan().is_none());

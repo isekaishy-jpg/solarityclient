@@ -6,7 +6,10 @@ use std::collections::VecDeque;
 
 use tokio::runtime::{Builder, Runtime};
 
-use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, MapCatalog};
+use solarity_asset::{
+    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
+    MapCatalog,
+};
 use solarity_cpu::CpuExecutor;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
@@ -23,6 +26,7 @@ use crate::application::login_coordinator::{
     RuntimeLoginState,
 };
 use crate::application::login_ui::LoginUiFrame;
+use crate::application::player_coordinator::{RuntimePlayerPoll, RuntimePlayerPresentation};
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainPoll;
@@ -44,6 +48,7 @@ pub(crate) struct ClientServices {
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
     gameplay: RuntimeGameplayCoordinator,
+    player: RuntimePlayerPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
     realm_metadata: RuntimeRealmMetadata,
@@ -69,6 +74,8 @@ impl ClientServices {
         let mut assets = AssetStore::mount(catalog)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
+        let creatures = CreatureCatalog::load(&mut assets)?;
+        let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
@@ -133,6 +140,7 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
+                player: RuntimePlayerPresentation::new(assets.clone(), creatures, characters),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 realm_metadata,
@@ -204,6 +212,7 @@ impl ClientServices {
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
+                    self.player.disconnect();
                     self.terrain.disconnect();
                     self.terrain_frame = None;
                     self.realm_directory_published = false;
@@ -373,6 +382,22 @@ impl ClientServices {
             Err(error) => self.publish_world_failure(error),
         }
         self.gameplay.service()?;
+        match self.player.synchronize(self.gameplay.world())? {
+            RuntimePlayerPoll::ModelLoaded => {
+                if let (Some(model), Some(height)) = (
+                    self.player.resident_model(),
+                    self.player.camera_subject_height(),
+                ) {
+                    tracing::debug!(
+                        path = %model.path(),
+                        camera_height = height.value(),
+                        camera_height_source = ?height.source(),
+                        "local player model became resident"
+                    );
+                }
+            }
+            RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending | RuntimePlayerPoll::Current => {}
+        }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
                 let plan = self.terrain.resident_mesh_plan().ok_or(
@@ -455,6 +480,7 @@ impl ClientServices {
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
+        self.player.disconnect();
         self.terrain.disconnect();
         self.terrain_frame = None;
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);

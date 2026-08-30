@@ -95,6 +95,18 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(60), "DBFilesClient\\ChrClasses.dbc");
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
+        builder = builder.add_file_data(empty_wdbc(16), "DBFilesClient\\CreatureDisplayInfo.dbc");
+        builder = builder.add_file_data(
+            empty_wdbc(21),
+            "DBFilesClient\\CreatureDisplayInfoExtra.dbc",
+        );
+        builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\CreatureModelData.dbc");
+        builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\CharSections.dbc");
+        builder = builder.add_file_data(empty_wdbc(6), "DBFilesClient\\CharHairGeosets.dbc");
+        builder = builder.add_file_data(
+            empty_wdbc(8),
+            "DBFilesClient\\CharacterFacialHairStyles.dbc",
+        );
         builder = builder.add_file_data(
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",

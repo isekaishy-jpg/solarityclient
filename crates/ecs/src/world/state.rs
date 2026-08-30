@@ -52,6 +52,19 @@ impl ActiveWorld {
         self.local_player
     }
 
+    /// Returns the exact server GUID of the controlled player.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError::MissingLocalPlayerGuid`] if ECS storage no
+    /// longer satisfies the active-world bootstrap invariant.
+    pub fn local_player_guid(&self) -> Result<u64, WorldStateError> {
+        self.storage
+            .get::<&ObjectGuid>(self.local_player)
+            .map(|guid| guid.value())
+            .map_err(|_| WorldStateError::MissingLocalPlayerGuid)
+    }
+
     /// Returns the authoritative transform used by camera and terrain systems.
     ///
     /// # Errors
@@ -209,4 +222,7 @@ pub enum WorldStateError {
     /// The controlled player lost the transform seeded during world entry.
     #[error("active world's local player has no authoritative transform")]
     MissingLocalPlayerTransform,
+    /// The controlled player lost the GUID seeded during world entry.
+    #[error("active world's local player has no server GUID")]
+    MissingLocalPlayerGuid,
 }

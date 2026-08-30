@@ -11,6 +11,7 @@ mod gameplay_coordinator;
 mod gameplay_session;
 mod login_coordinator;
 mod login_ui;
+mod player_coordinator;
 mod realm_directory;
 mod run;
 mod terrain_coordinator;
@@ -25,6 +26,7 @@ pub use login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
 };
+pub use player_coordinator::{RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation};
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use terrain_coordinator::{RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainPoll};
 pub use terrain_frame::RuntimeTerrainFrameError;

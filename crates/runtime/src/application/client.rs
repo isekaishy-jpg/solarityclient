@@ -12,6 +12,7 @@ use crate::application::character_directory::CharacterProjectionError;
 use crate::application::client_services::ClientServices;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
+use crate::application::player_coordinator::RuntimePlayerError;
 use crate::application::run::{self, ApplicationRunReport};
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
@@ -37,6 +38,9 @@ pub enum ApplicationError {
     /// Active-world packet I/O, decoding, or ECS projection failed.
     #[error(transparent)]
     Gameplay(#[from] RuntimeGameplayError),
+    /// Local-player model residency or authored measurements failed.
+    #[error(transparent)]
+    Player(#[from] RuntimePlayerError),
     /// Active-map or player-tile terrain residency failed.
     #[error(transparent)]
     Terrain(#[from] RuntimeTerrainError),
