@@ -7,13 +7,18 @@ use solarity_asset::{AssetPath, BlpTextureSource};
 
 use super::status::BlpTextureUploadError;
 use super::types::{BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo};
-use super::upload::{GpuBlpTexture, TextureUploadContext, upload_texture};
+use super::upload::{
+    GpuBlpTexture, TextureUploadContext, upload_stock_world_model_green, upload_texture,
+};
 
 /// Image identity includes color interpretation because it fixes VkFormat.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct BlpTextureKey {
-    path: AssetPath,
-    color_space: BlpColorSpace,
+enum BlpTextureKey {
+    Authored {
+        path: AssetPath,
+        color_space: BlpColorSpace,
+    },
+    StockWorldModelGreen,
 }
 
 /// Owns every uploaded BLP image until the parent renderer is torn down.
@@ -44,7 +49,7 @@ impl BlpTextureRegistry {
         source: &BlpTextureSource,
         color_space: BlpColorSpace,
     ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
-        let key = BlpTextureKey {
+        let key = BlpTextureKey::Authored {
             path: source.path().clone(),
             color_space,
         };
@@ -54,6 +59,27 @@ impl BlpTextureRegistry {
         let slot = u32::try_from(self.resources.len())
             .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
         let resource = upload_texture(context, source, color_space)?;
+        let handle = BlpTextureHandle {
+            registry_id: self.registry_id,
+            slot,
+        };
+        self.resources.push(resource);
+        self.handles.insert(key, handle);
+        Ok(handle)
+    }
+
+    /// Returns or creates stock's one renderer-local WMO placeholder image.
+    pub(in crate::device) fn upload_stock_world_model_green(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        let key = BlpTextureKey::StockWorldModelGreen;
+        if let Some(handle) = self.handles.get(&key) {
+            return Ok(*handle);
+        }
+        let slot = u32::try_from(self.resources.len())
+            .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
+        let resource = upload_stock_world_model_green(context)?;
         let handle = BlpTextureHandle {
             registry_id: self.registry_id,
             slot,

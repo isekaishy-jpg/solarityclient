@@ -14,6 +14,15 @@ pub enum BlpColorSpace {
     Srgb,
 }
 
+/// Origin of one image admitted to the shared sampled-texture registry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BlpTextureSourceKind {
+    /// Pixels decoded from an authored BLP selected by archive precedence.
+    Authored,
+    /// Stock's opaque 8x8 green image for an empty WMO material stage.
+    StockWorldModelGreen,
+}
+
 /// Stable renderer-local handle to one uploaded BLP image and view.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BlpTextureHandle {
@@ -25,6 +34,7 @@ pub struct BlpTextureHandle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlpTextureResourceInfo {
     path: AssetPath,
+    source_kind: BlpTextureSourceKind,
     color_space: BlpColorSpace,
     extent: (u32, u32),
     mip_count: usize,
@@ -35,6 +45,7 @@ impl BlpTextureResourceInfo {
     /// Captures the exact image payload retained by one device allocation.
     pub(super) const fn new(
         path: AssetPath,
+        source_kind: BlpTextureSourceKind,
         color_space: BlpColorSpace,
         extent: (u32, u32),
         mip_count: usize,
@@ -42,6 +53,7 @@ impl BlpTextureResourceInfo {
     ) -> Self {
         Self {
             path,
+            source_kind,
             color_space,
             extent,
             mip_count,
@@ -49,7 +61,16 @@ impl BlpTextureResourceInfo {
         }
     }
 
-    /// Returns the normalized archive path used for resource deduplication.
+    /// Returns whether pixels came from an archive or a stock built-in image.
+    #[must_use]
+    pub const fn source_kind(&self) -> BlpTextureSourceKind {
+        self.source_kind
+    }
+
+    /// Returns the normalized logical identity used for diagnostics.
+    ///
+    /// Authored images return their archive path. Built-in stock images return
+    /// a reserved renderer identity and are distinguished by [`Self::source_kind`].
     #[must_use]
     pub const fn path(&self) -> &AssetPath {
         &self.path

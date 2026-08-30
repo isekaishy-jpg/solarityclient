@@ -4,7 +4,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use solarity_network::WorldTimeSpeed;
-use solarity_runtime::RealmClock;
+use solarity_runtime::{RealmClock, world_model_environment_emissive};
 
 /// The server rate advances minutes per real second and wraps each realm day.
 #[test]
@@ -17,6 +17,19 @@ fn realm_clock_advances_stock_half_minutes() -> Result<(), Box<dyn Error>> {
     assert_eq!(clock.half_minutes_after(Duration::from_secs(30)), 2_595);
     assert_eq!(clock.half_minutes_after(Duration::from_secs(8_580)), 0);
     Ok(())
+}
+
+/// MapObj additive color follows stock's one-hour dawn and dusk ramps.
+#[test]
+fn world_model_emissive_uses_stock_daynight_ramps() {
+    assert_eq!(world_model_environment_emissive(0), 1.0);
+    assert_eq!(world_model_environment_emissive(6 * 120), 1.0);
+    assert_eq!(world_model_environment_emissive(6 * 120 + 60), 0.5);
+    assert_eq!(world_model_environment_emissive(7 * 120), 0.0);
+    assert_eq!(world_model_environment_emissive(20 * 120 + 60), 0.0);
+    assert_eq!(world_model_environment_emissive(21 * 120), 0.5);
+    assert_eq!(world_model_environment_emissive(21 * 120 + 60), 1.0);
+    assert_eq!(world_model_environment_emissive(24 * 120), 1.0);
 }
 
 /// A stopped realm clock remains authoritative rather than reading local time.

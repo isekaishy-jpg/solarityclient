@@ -63,7 +63,8 @@ pub use vulkan_terrain_texture_set::{
     TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo,
 };
 pub use vulkan_texture::{
-    BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError,
+    BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureSourceKind,
+    BlpTextureUploadError,
 };
 pub use vulkan_ui_draw::UiPreparedDraw;
 pub use vulkan_ui_frame::UiFrameReport;

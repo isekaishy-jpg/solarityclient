@@ -596,6 +596,30 @@ impl VulkanRenderer {
         )
     }
 
+    /// Creates or retrieves stock's opaque 8x8 green WMO placeholder.
+    ///
+    /// This is the recovered MapObj image for a valid empty material stage,
+    /// not a general missing-file fallback. Failed authored BLP loads remain
+    /// errors before this boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlpTextureUploadError`] for Vulkan allocation or transfer failure.
+    pub fn upload_stock_world_model_green(
+        &mut self,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.blp_textures
+            .upload_stock_world_model_green(TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            })
+    }
+
     /// Returns immutable diagnostics for a live renderer-owned BLP image.
     #[must_use]
     pub fn blp_texture_info(&self, handle: BlpTextureHandle) -> Option<&BlpTextureResourceInfo> {

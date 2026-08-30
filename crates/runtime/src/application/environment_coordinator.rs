@@ -78,6 +78,34 @@ impl RuntimeWorldEnvironmentFrame {
     pub const fn light_direction(self) -> Vec3 {
         self.light_direction
     }
+
+    /// Returns stock's DayNight scalar for WMO MOMT additive color.
+    #[must_use]
+    pub fn world_model_emissive(self) -> f32 {
+        world_model_environment_emissive(self.half_minutes)
+    }
+}
+
+/// Resolves the cyclic DayNight scalar consumed by MapObj material color.
+///
+/// Stock is fully enabled through 06:00, fades out by 07:00, remains disabled
+/// through 20:30, and fades back to full by 21:30.
+#[must_use]
+pub fn world_model_environment_emissive(half_minutes: u32) -> f32 {
+    const DAY_LENGTH: u32 = 24 * 120;
+    const DAWN_START: u32 = 6 * 120;
+    const DAWN_END: u32 = 7 * 120;
+    const DUSK_START: u32 = 20 * 120 + 60;
+    const DUSK_END: u32 = 21 * 120 + 60;
+
+    let time = half_minutes % DAY_LENGTH;
+    match time {
+        ..DAWN_START => 1.0,
+        DAWN_START..DAWN_END => (DAWN_END - time) as f32 / (DAWN_END - DAWN_START) as f32,
+        DAWN_END..DUSK_START => 0.0,
+        DUSK_START..DUSK_END => (time - DUSK_START) as f32 / (DUSK_END - DUSK_START) as f32,
+        DUSK_END.. => 1.0,
+    }
 }
 
 /// Owns immutable exterior tables and the process-start hardware policy fact.

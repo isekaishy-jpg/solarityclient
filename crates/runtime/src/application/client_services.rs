@@ -12,7 +12,10 @@ use solarity_asset::{
 };
 use solarity_cpu::CpuExecutor;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
-use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera};
+use solarity_rendering::{
+    VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
+    WorldModelTextureFiltering,
+};
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
     UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
@@ -450,11 +453,28 @@ impl ClientServices {
                         tile_y: tile.y(),
                     },
                 )?;
-                let frame = TerrainFrame::prepare(&mut self.renderer, plan, sources)?;
+                let world_models = self.terrain.resident_world_models().ok_or(
+                    RuntimeTerrainFrameError::MissingWorldModelScene {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    },
+                )?;
+                // Registered build-12340 defaults: textureFilteringMode 3 is
+                // anisotropic 4x and BaseMip 0 begins at the authored top mip.
+                // A settings owner will pass live typed values here directly.
+                let frame = TerrainFrame::prepare(
+                    &mut self.renderer,
+                    plan,
+                    sources,
+                    world_models,
+                    WorldModelTextureFiltering::Anisotropic4x,
+                    WorldModelBaseMip::Zero,
+                )?;
                 tracing::debug!(
                     tile_x = tile.x(),
                     tile_y = tile.y(),
                     draw_count = frame.draw_count(),
+                    world_model_placement_count = frame.world_model_placement_count(),
                     "resident terrain entered renderer resources"
                 );
                 self.terrain_frame = Some(frame);

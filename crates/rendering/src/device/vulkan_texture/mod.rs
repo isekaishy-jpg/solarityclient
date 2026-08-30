@@ -7,5 +7,5 @@ mod upload;
 
 pub(in crate::device) use registry::BlpTextureRegistry;
 pub use status::BlpTextureUploadError;
-pub use types::{BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo};
+pub use types::{BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureSourceKind};
 pub(in crate::device) use upload::{GpuSampledImage, TextureUploadContext, upload_rgba8_image};

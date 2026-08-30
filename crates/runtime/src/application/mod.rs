@@ -23,6 +23,7 @@ pub use character_directory::CharacterProjectionError;
 pub use client::{ApplicationError, ClientApplication, StartupReport};
 pub use environment_coordinator::{
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
+    world_model_environment_emissive,
 };
 pub use gameplay_coordinator::{RuntimeGameplayCoordinator, RuntimeGameplayError};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};

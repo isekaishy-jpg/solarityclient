@@ -228,6 +228,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
 
     terrain.synchronize(Some(&world))?;
     assert_eq!(terrain.resident_world_model_count(), 1);
+    assert_eq!(terrain.resident_world_model_source_count(), 1);
     assert_eq!(terrain.resident_m2_collision_count(), 1);
     let m2_hit = terrain
         .trace_m2_camera(
@@ -262,6 +263,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
 
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);
+    assert_eq!(terrain.resident_world_model_source_count(), 0);
     assert_eq!(terrain.resident_m2_collision_count(), 0);
     Ok(())
 }

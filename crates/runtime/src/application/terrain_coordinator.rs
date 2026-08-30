@@ -3,7 +3,7 @@
 use solarity_asset::{
     AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     DecodedTerrainTile, M2ModelCache, MapCatalog, TerrainDoodadPlacement, TerrainMap,
-    TerrainTileIndex, TerrainWorldModelPlacement, WmoModelCache,
+    TerrainTileIndex, WmoModelCache,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
@@ -11,16 +11,20 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    M2CollisionError, M2CollisionScene, PlacedM2Collision, PlacedWorldModelCollision,
-    PlacedWorldModelLiquid, PlayerCameraObstructionError, PlayerCameraPose, PlayerCameraWaterError,
-    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
-    TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene,
-    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
-    resolve_player_camera_obstruction, resolve_player_camera_water_collision,
+    M2CollisionError, M2CollisionScene, PlacedM2Collision, PlayerCameraObstructionError,
+    PlayerCameraPose, PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit,
+    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
+    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
+    WorldModelLiquidSample, WorldModelLiquidScene, resolve_player_camera_obstruction,
+    resolve_player_camera_water_collision,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
+
+pub(in crate::application) mod world_model_residency;
+
+use world_model_residency::{ResidentWorldModelScene, prepare_world_models};
 
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
@@ -277,6 +281,25 @@ impl RuntimeTerrainCoordinator {
             .map(|tile| &tile.mesh)
     }
 
+    /// Returns the number of distinct root-WMO generations used by MODF.
+    ///
+    /// Several placements of one root share this source generation, including
+    /// its decoded groups and material texture sources.
+    #[must_use]
+    pub fn resident_world_model_source_count(&self) -> usize {
+        self.resident_world_models()
+            .map_or(0, ResidentWorldModelScene::source_count)
+    }
+
+    /// Returns the resident WMO presentation scene for renderer publication.
+    #[must_use]
+    pub(super) fn resident_world_models(&self) -> Option<&ResidentWorldModelScene> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.world_models)
+    }
+
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
     ///
     /// # Errors
@@ -348,10 +371,8 @@ impl RuntimeTerrainCoordinator {
     /// Returns the number of unique, chunk-referenced MODF placements resident.
     #[must_use]
     pub fn resident_world_model_count(&self) -> usize {
-        self.active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map_or(0, |tile| tile.world_model_collision.instance_count())
+        self.resident_world_models()
+            .map_or(0, ResidentWorldModelScene::placement_count)
     }
 
     /// Returns the number of unique, chunk-referenced MDDF placements resident.
@@ -512,6 +533,7 @@ struct ResidentTerrainTile {
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
     world_model_liquid: WorldModelLiquidScene,
+    world_models: ResidentWorldModelScene,
 }
 
 impl ResidentTerrainTile {
@@ -533,8 +555,8 @@ impl ResidentTerrainTile {
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
         let m2_collision = prepare_doodads(&decoded, model_cache, store)?;
-        let (world_model_collision, world_model_liquid) =
-            prepare_world_models(&decoded, world_model_cache, store)?;
+        let (world_models, world_model_collision, world_model_liquid) =
+            prepare_world_models(&decoded, world_model_cache, texture_cache, store)?;
         Ok(Self {
             decoded,
             textures,
@@ -544,6 +566,7 @@ impl ResidentTerrainTile {
             m2_collision,
             world_model_collision,
             world_model_liquid,
+            world_models,
         })
     }
 
@@ -598,67 +621,6 @@ fn same_doodad_placement(left: &TerrainDoodadPlacement, right: &TerrainDoodadPla
         && left.rotation().map(f32::to_bits) == right.rotation().map(f32::to_bits)
         && left.scale().to_bits() == right.scale().to_bits()
         && left.flags() == right.flags()
-}
-
-fn prepare_world_models(
-    tile: &DecodedTerrainTile,
-    cache: &mut WmoModelCache,
-    store: &mut AssetStore,
-) -> Result<(WorldModelCollisionScene, WorldModelLiquidScene), RuntimeTerrainError> {
-    let mut referenced = vec![false; tile.world_models().len()];
-    for reference in tile
-        .chunks()
-        .iter()
-        .flat_map(|chunk| chunk.world_model_references())
-    {
-        // Strict ADT decoding has already proven every MCRF index is in range.
-        referenced[*reference as usize] = true;
-    }
-
-    let mut scene = WorldModelCollisionScene::new();
-    let mut liquids = WorldModelLiquidScene::new();
-    let mut placements = HashMap::<u32, usize>::new();
-    for (index, placement) in tile.world_models().iter().enumerate() {
-        if !referenced[index] {
-            continue;
-        }
-        if let Some(previous_index) = placements.insert(placement.unique_id(), index) {
-            if !same_world_model_placement(&tile.world_models()[previous_index], placement) {
-                return Err(RuntimeTerrainError::ConflictingWorldModelPlacement {
-                    unique_id: placement.unique_id(),
-                });
-            }
-            continue;
-        }
-        let model = cache.load(store, placement.path())?;
-        scene.add(PlacedWorldModelCollision::prepare(
-            Arc::clone(&model),
-            glam::Vec3::from_array(placement.position()),
-            glam::Vec3::from_array(placement.rotation()),
-            1.0,
-        )?);
-        liquids.add(PlacedWorldModelLiquid::prepare(
-            model,
-            glam::Vec3::from_array(placement.position()),
-            glam::Vec3::from_array(placement.rotation()),
-            1.0,
-        )?);
-    }
-    Ok((scene, liquids))
-}
-
-fn same_world_model_placement(
-    left: &TerrainWorldModelPlacement,
-    right: &TerrainWorldModelPlacement,
-) -> bool {
-    left.path() == right.path()
-        && left.position().map(f32::to_bits) == right.position().map(f32::to_bits)
-        && left.rotation().map(f32::to_bits) == right.rotation().map(f32::to_bits)
-        && left.bounds().map(|point| point.map(f32::to_bits))
-            == right.bounds().map(|point| point.map(f32::to_bits))
-        && left.flags() == right.flags()
-        && left.doodad_set() == right.doodad_set()
-        && left.name_set() == right.name_set()
 }
 
 fn nearest_fraction(left: Option<f32>, right: Option<f32>) -> Option<f32> {

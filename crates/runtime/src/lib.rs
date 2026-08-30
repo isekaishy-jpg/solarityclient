@@ -28,6 +28,7 @@ pub use application::{
     RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator, RuntimeWorldEntry,
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
     RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
+    world_model_environment_emissive,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,

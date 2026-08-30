@@ -10,7 +10,7 @@ use crate::device::vulkan_world_model_pipeline::{
 use crate::device::vulkan_world_model_texture_set::{
     WorldModelTextureSetHandle, WorldModelTextureSetRegistry,
 };
-use crate::device::{BlpColorSpace, VulkanError};
+use crate::device::{BlpColorSpace, BlpTextureSourceKind, VulkanError};
 use crate::{
     WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelSpirvKey, WorldModelSurfacePassPlan,
 };
@@ -137,13 +137,17 @@ pub(in crate::device) fn prepare_draw(
         return Err(VulkanError::WorldModelDrawTextureSetMismatch);
     }
     for (slot, stage) in texture_request.stages().iter().copied().enumerate() {
-        let expected_path = material.textures()[slot]
-            .as_ref()
-            .ok_or(VulkanError::WorldModelDrawTextureSetMismatch)?;
         let actual = textures
             .info(stage.texture())
             .ok_or(VulkanError::UnknownWorldModelTextureHandle)?;
-        if actual.path() != expected_path || actual.color_space() != BlpColorSpace::Srgb {
+        let source_matches = material.textures()[slot].as_ref().map_or_else(
+            || actual.source_kind() == BlpTextureSourceKind::StockWorldModelGreen,
+            |expected_path| {
+                actual.source_kind() == BlpTextureSourceKind::Authored
+                    && actual.path() == expected_path
+            },
+        );
+        if !source_matches || actual.color_space() != BlpColorSpace::Srgb {
             return Err(VulkanError::WorldModelDrawTextureSetMismatch);
         }
     }

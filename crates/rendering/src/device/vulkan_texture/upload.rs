@@ -9,7 +9,7 @@ use vk_mem::Alloc;
 use crate::device::VulkanError;
 
 use super::status::BlpTextureUploadError;
-use super::types::{BlpColorSpace, BlpTextureResourceInfo};
+use super::types::{BlpColorSpace, BlpTextureResourceInfo, BlpTextureSourceKind};
 
 /// Borrowed renderer objects required for one synchronous texture transfer.
 #[derive(Clone, Copy)]
@@ -270,9 +270,35 @@ pub(super) fn upload_texture(
     )?;
     let info = BlpTextureResourceInfo::new(
         source.path().clone(),
+        BlpTextureSourceKind::Authored,
         color_space,
         (source.width(), source.height()),
         mips.len(),
+        bytes.len(),
+    );
+    Ok(GpuBlpTexture { image, info })
+}
+
+/// Uploads stock's opaque 8x8 green WMO placeholder as an sRGB image.
+pub(super) fn upload_stock_world_model_green(
+    context: TextureUploadContext<'_>,
+) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+    const EXTENT: (u32, u32) = (8, 8);
+    const PIXEL: [u8; 4] = [0, 255, 0, 255];
+    const BYTE_COUNT: usize = EXTENT.0 as usize * EXTENT.1 as usize * PIXEL.len();
+
+    let mut bytes = [0_u8; BYTE_COUNT];
+    for pixel in bytes.as_chunks_mut::<4>().0 {
+        pixel.copy_from_slice(&PIXEL);
+    }
+    let image = upload_rgba8_image_with_color_space(context, EXTENT, &bytes, BlpColorSpace::Srgb)?;
+    let path = solarity_asset::AssetPath::new("SOLARITY\\STOCK\\WMO_GREEN.BLP")?;
+    let info = BlpTextureResourceInfo::new(
+        path,
+        BlpTextureSourceKind::StockWorldModelGreen,
+        BlpColorSpace::Srgb,
+        EXTENT,
+        1,
         bytes.len(),
     );
     Ok(GpuBlpTexture { image, info })
@@ -283,6 +309,15 @@ pub(in crate::device) fn upload_rgba8_image(
     context: TextureUploadContext<'_>,
     extent: (u32, u32),
     bytes: &[u8],
+) -> Result<GpuSampledImage, VulkanError> {
+    upload_rgba8_image_with_color_space(context, extent, bytes, BlpColorSpace::Linear)
+}
+
+fn upload_rgba8_image_with_color_space(
+    context: TextureUploadContext<'_>,
+    extent: (u32, u32),
+    bytes: &[u8],
+    color_space: BlpColorSpace,
 ) -> Result<GpuSampledImage, VulkanError> {
     let expected = u64::from(extent.0)
         .checked_mul(u64::from(extent.1))
@@ -305,7 +340,11 @@ pub(in crate::device) fn upload_rgba8_image(
         width: extent.0,
         height: extent.1,
     }];
-    upload_sampled_image(context, vk::Format::R8G8B8A8_UNORM, extent, bytes, &mips)
+    let format = match color_space {
+        BlpColorSpace::Linear => vk::Format::R8G8B8A8_UNORM,
+        BlpColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
+    };
+    upload_sampled_image(context, format, extent, bytes, &mips)
 }
 
 fn upload_sampled_image(

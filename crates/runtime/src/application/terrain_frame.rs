@@ -8,11 +8,18 @@ use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2SceneUniform, TerrainLayerCount,
     TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
     TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
-    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
+    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
+    WorldScreenWindow,
 };
 use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
+
+mod world_model;
+
+use world_model::WorldModelFrame;
 
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
@@ -29,6 +36,12 @@ pub enum RuntimeTerrainFrameError {
     /// The final player camera could not form a valid frustum.
     #[error(transparent)]
     Camera(#[from] WorldCameraError),
+    /// A decoded WMO could not enter the combined direct-index mesh ABI.
+    #[error(transparent)]
+    WorldModelMesh(#[from] WorldModelMeshPlanError),
+    /// An authored MODF transform could not enter presentation state.
+    #[error(transparent)]
+    WorldModelPlacement(#[from] WorldModelPlacementError),
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"
@@ -77,6 +90,14 @@ pub enum RuntimeTerrainFrameError {
         /// Resident ADT Y coordinate.
         tile_y: u8,
     },
+    /// Terrain reported a new tile without its admitted WMO presentation scene.
+    #[error("resident terrain tile [{tile_x}, {tile_y}] has no WMO presentation scene")]
+    MissingWorldModelScene {
+        /// Resident ADT X coordinate.
+        tile_x: u8,
+        /// Resident ADT Y coordinate.
+        tile_y: u8,
+    },
     /// Terrain residency and the retained GPU generation became inconsistent.
     #[error("current terrain tile [{tile_x}, {tile_y}] has no matching GPU generation")]
     MissingGpuGeneration {
@@ -97,6 +118,16 @@ pub enum RuntimeTerrainFrameError {
         /// Submitted CPU plan Y coordinate.
         plan_y: u8,
     },
+    /// One retained MODF references no resident source-table slot.
+    #[error(
+        "resident WMO placement references source {source_index}, but only {source_count} sources exist"
+    )]
+    WorldModelSourceIndex {
+        /// Invalid source-table slot.
+        source_index: usize,
+        /// Number of retained root-WMO generations.
+        source_count: usize,
+    },
 }
 
 /// One immutable resident ADT generation ready for camera selection.
@@ -104,6 +135,7 @@ pub(super) struct TerrainFrame {
     tile: TerrainTileIndex,
     draws: Vec<TerrainPreparedDraw>,
     visible_draws: Vec<TerrainPreparedDraw>,
+    world_models: WorldModelFrame,
 }
 
 impl TerrainFrame {
@@ -112,6 +144,9 @@ impl TerrainFrame {
         renderer: &mut VulkanRenderer,
         plan: &TerrainTileMeshPlan,
         sources: &[Arc<BlpTextureSource>],
+        world_models: &ResidentWorldModelScene,
+        world_model_filtering: WorldModelTextureFiltering,
+        world_model_base_mip: WorldModelBaseMip,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -190,6 +225,12 @@ impl TerrainFrame {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            world_models: WorldModelFrame::prepare(
+                renderer,
+                world_models,
+                world_model_filtering,
+                world_model_base_mip,
+            )?,
         })
     }
 
@@ -247,7 +288,21 @@ impl TerrainFrame {
             [M2LocalLightState::disabled(); 4],
         );
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene);
-        Ok(renderer.present_world_frame(scene, &[], &self.visible_draws, &[], &[])?)
+        let world_model_draws = self.world_models.prepare_visible_draws(
+            renderer,
+            frustum,
+            environment.world_model_emissive(),
+            light.fog_color(),
+        )?;
+        Ok(
+            renderer.present_world_frame(
+                scene,
+                &[],
+                &self.visible_draws,
+                world_model_draws,
+                &[],
+            )?,
+        )
     }
 
     /// Returns the ADT whose renderer resources this generation represents.
@@ -258,6 +313,11 @@ impl TerrainFrame {
     /// Returns the complete row-major packet count retained for camera culling.
     pub(super) fn draw_count(&self) -> usize {
         self.draws.len()
+    }
+
+    /// Returns the number of independently transformed resident WMO owners.
+    pub(super) fn world_model_placement_count(&self) -> usize {
+        self.world_models.placement_count()
     }
 }
 

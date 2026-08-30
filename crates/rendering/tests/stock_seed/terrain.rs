@@ -4,16 +4,18 @@
 
 use std::error::Error;
 
-use glam::{Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, Locale, MapCatalog,
-    TerrainMap, TerrainTileIndex,
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, DecodedWorldModel,
+    Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    BlpColorSpace, M2LocalLightState, M2SceneUniform, TERRAIN_MATERIAL_ATLAS_BYTE_COUNT,
-    TerrainChunkMeshPlan, TerrainLayerCount, TerrainSceneUniform, TerrainTextureSet,
-    TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrameScene, WorldFrustum,
-    WorldModelSceneUniform, WorldScreenWindow,
+    BlpColorSpace, BlpTextureSourceKind, M2LocalLightState, M2SceneUniform,
+    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
+    TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera,
+    WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshPlan,
+    WorldModelSampledTexture, WorldModelSceneUniform, WorldModelSurfacePassPlan,
+    WorldModelTextureFiltering, WorldModelTextureSet, WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -29,6 +31,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     let map_table = map_table();
     let wdt = terrain_wdt()?;
     let grass = solid_raw3_blp(2, 2, 0xFF00_FF00);
+    let world_model_root = crate::world_model::root_fixture();
+    let world_model_group = crate::world_model::group_fixture();
     let adt = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
         .add_texture("tileset/fixture/grass.blp")
@@ -51,6 +55,14 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             path: "tileset\\fixture\\grass.blp",
             bytes: &grass,
         },
+        FixtureFile {
+            path: "World\\Wmo\\Render.wmo",
+            bytes: &world_model_root,
+        },
+        FixtureFile {
+            path: "World\\Wmo\\Render_000.wmo",
+            bytes: &world_model_group,
+        },
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -61,6 +73,10 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     let tile = map.load_tile(&mut store, tile_index)?;
     let grass_path = AssetPath::new("tileset\\fixture\\grass.blp")?;
     let grass_source = BlpTextureSource::load(&mut store, &grass_path)?;
+    let world_model =
+        DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Render.wmo")?)?;
+    assert!(world_model.materials()[0].textures()[0].is_none());
+    let world_model_plan = WorldModelMeshPlan::prepare(&world_model)?;
     let chunk_index =
         solarity_asset::TerrainChunkIndex::new(0, 0).ok_or("fixture chunk is invalid")?;
 
@@ -157,6 +173,56 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     // SAFETY: SDL created the surface from this exact instance and transfers
     // ownership immediately to the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    let stock_green = renderer.upload_stock_world_model_green()?;
+    assert_eq!(renderer.upload_stock_world_model_green()?, stock_green);
+    let stock_green_info = renderer
+        .blp_texture_info(stock_green)
+        .ok_or("stock WMO green image is absent")?;
+    assert_eq!(
+        stock_green_info.source_kind(),
+        BlpTextureSourceKind::StockWorldModelGreen
+    );
+    assert_eq!(stock_green_info.color_space(), BlpColorSpace::Srgb);
+    assert_eq!(stock_green_info.extent(), (8, 8));
+    assert_eq!(stock_green_info.mip_count(), 1);
+    assert_eq!(stock_green_info.decoded_byte_count(), 8 * 8 * 4);
+    let world_model_mesh = renderer.upload_world_model_mesh(&world_model_plan)?;
+    let world_model_material = &world_model_plan.materials()[0];
+    let world_model_sampler = renderer.prepare_world_model_sampler(
+        WorldModelMaterialState::from_material(world_model_material),
+        WorldModelTextureFiltering::Anisotropic4x,
+        WorldModelBaseMip::Zero,
+    )?;
+    let world_model_texture_request = WorldModelTextureSet::One(WorldModelSampledTexture::new(
+        stock_green,
+        world_model_sampler,
+    ));
+    let world_model_texture_set =
+        renderer.prepare_world_model_texture_sets(&[world_model_texture_request])?[0];
+    let world_model_draw = world_model_plan.draws()[0];
+    let world_model_passes = WorldModelSurfacePassPlan::prepare(
+        world_model_plan.root_flags(),
+        world_model_plan.groups()[0].flags(),
+        world_model_draw.class(),
+        world_model_material,
+    );
+    let mut world_model_prepared = Vec::with_capacity(world_model_passes.passes().len());
+    for (pass_index, pass) in world_model_passes.passes().iter().copied().enumerate() {
+        let pipeline =
+            renderer.prepare_world_model_pipeline(world_model_passes.is_unified(), pass)?;
+        world_model_prepared.push(renderer.prepare_world_model_draw(
+            world_model_mesh,
+            pipeline,
+            world_model_texture_set,
+            &world_model_plan,
+            0,
+            pass_index,
+            Mat4::IDENTITY,
+            0.5,
+            Vec3::new(0.1, 0.2, 0.3),
+        )?);
+    }
+    assert_eq!(world_model_prepared.len(), 2);
     let handle = renderer.upload_terrain_mesh(&tile_mesh)?;
     assert_eq!(renderer.upload_terrain_mesh(&tile_mesh)?, handle);
     let info = renderer
@@ -228,9 +294,10 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             [M2LocalLightState::disabled(); 4],
         ),
     );
-    let frame = renderer.present_world_frame(world_scene, &[], &[draw], &[], &[])?;
+    let frame =
+        renderer.present_world_frame(world_scene, &[], &[draw], &world_model_prepared, &[])?;
     assert_eq!(frame.terrain_draw_count(), 1);
-    assert_eq!(frame.world_model_draw_count(), 0);
+    assert_eq!(frame.world_model_draw_count(), 2);
     assert_eq!(frame.m2_draw_count(), 0);
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.

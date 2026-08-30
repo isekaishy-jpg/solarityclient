@@ -201,7 +201,7 @@ fn assert_vec3_bytes(actual: Vec3, expected: [u8; 3]) {
     }
 }
 
-fn root_fixture() -> Vec<u8> {
+pub(crate) fn root_fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     let mut header = vec![0_u8; 64];
@@ -211,7 +211,8 @@ fn root_fixture() -> Vec<u8> {
     set_vec3(&mut header, 36, [-2.0, -3.0, -4.0]);
     set_vec3(&mut header, 48, [2.0, 3.0, 4.0]);
     push_chunk(&mut bytes, *b"DHOM", &header);
-    push_chunk(&mut bytes, *b"XTOM", b"wall.blp\0");
+    // A valid empty primary string exercises stock's MapObj green image.
+    push_chunk(&mut bytes, *b"XTOM", b"\0");
     let mut material = vec![0_u8; 64];
     // MOMT 0x08 and 0x10 are deliberately present: unlike M2, neither changes
     // WMO depth state. 0x04 selects two-sided rendering and 0x40/0x80 clamp.
@@ -228,7 +229,7 @@ fn root_fixture() -> Vec<u8> {
     bytes
 }
 
-fn group_fixture() -> Vec<u8> {
+pub(crate) fn group_fixture() -> Vec<u8> {
     let mut nested = Vec::new();
     push_chunk(&mut nested, *b"YPOM", &[0x20, 0]);
     let mut indices = Vec::new();
