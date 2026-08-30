@@ -1,11 +1,115 @@
 //! Owned CPU-side model data independent of the selected M2 decoder.
 
 use glam::{Vec2, Vec3};
+use wow_m2::chunks::texture::M2TextureType as DependencyTextureType;
 use wow_m2::model::M2Model;
 use wow_m2::skin::{OldSkin, SkinBatch, SkinSubmesh};
 
 use crate::model::m2_shared::{ParsedSkin, model_decode};
 use crate::{ArchiveDescriptor, AssetError, AssetPath};
+
+/// Stock semantic source for one M2 texture slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum M2TextureKind {
+    /// A concrete filename embedded in the M2.
+    Hardcoded,
+    /// Character body and composited clothing texture.
+    Body,
+    /// Item or cape replacement texture.
+    Item,
+    /// Base weapon or armor replacement texture.
+    WeaponArmorBasic,
+    /// Weapon blade replacement texture.
+    WeaponBlade,
+    /// Weapon handle replacement texture.
+    WeaponHandle,
+    /// Environment-supplied texture.
+    Environment,
+    /// Character hair or beard texture.
+    Hair,
+    /// Character accessory texture.
+    SkinExtra,
+    /// Inventory-art texture.
+    UiSkin,
+    /// Tauren mane texture.
+    TaurenMane,
+    /// First creature display texture replacement.
+    Monster1,
+    /// Second creature display texture replacement.
+    Monster2,
+    /// Third creature display texture replacement.
+    Monster3,
+    /// Item icon texture.
+    ItemIcon,
+}
+
+/// One M2 texture declaration before display/customization replacement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct M2Texture {
+    kind: M2TextureKind,
+    flags: u32,
+    filename: Option<AssetPath>,
+}
+
+impl M2Texture {
+    /// Returns the stock replacement category.
+    #[must_use]
+    pub const fn kind(&self) -> M2TextureKind {
+        self.kind
+    }
+
+    /// Returns all authored texture flags, including currently unknown bits.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// Returns the embedded filename when this declaration carries one.
+    #[must_use]
+    pub const fn filename(&self) -> Option<&AssetPath> {
+        self.filename.as_ref()
+    }
+}
+
+/// Exact build-12340 M2 material blend operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum M2BlendMode {
+    /// Opaque replacement.
+    Opaque,
+    /// One-bit alpha test.
+    AlphaKey,
+    /// Conventional alpha blending.
+    Alpha,
+    /// Additive color while retaining source alpha behavior.
+    NoAlphaAdd,
+    /// Additive blending.
+    Add,
+    /// Multiplicative blending.
+    Mod,
+    /// Two-times multiplicative blending.
+    Mod2x,
+}
+
+/// One render-flags record referenced by SKIN batches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct M2Material {
+    flags: u16,
+    blend_mode: M2BlendMode,
+}
+
+impl M2Material {
+    /// Returns all stock render flags, including currently unknown bits.
+    #[must_use]
+    pub const fn flags(self) -> u16 {
+        self.flags
+    }
+
+    /// Returns the exact blend operation.
+    #[must_use]
+    pub const fn blend_mode(self) -> M2BlendMode {
+        self.blend_mode
+    }
+}
 
 /// One build-12340 M2 vertex in stock model coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,15 +319,24 @@ impl M2SkinProfile {
 pub(super) struct ModelBlob {
     pub(super) name: Option<String>,
     pub(super) vertices: Vec<M2Vertex>,
+    pub(super) textures: Vec<M2Texture>,
+    pub(super) materials: Vec<M2Material>,
+    pub(super) bone_lookup: Vec<u16>,
+    pub(super) texture_lookup: Vec<u16>,
+    pub(super) texture_units: Vec<u16>,
+    pub(super) transparency_lookup: Vec<u16>,
+    pub(super) texture_animation_lookup: Vec<u16>,
     pub(super) bone_count: usize,
     pub(super) animation_count: usize,
-    pub(super) texture_count: usize,
-    pub(super) material_count: usize,
 }
 
 impl ModelBlob {
     /// Converts every exposed vertex field without supplying absent values.
-    pub(super) fn from_model(path: &AssetPath, model: M2Model) -> Result<Self, AssetError> {
+    pub(super) fn from_model(
+        path: &AssetPath,
+        bytes: &[u8],
+        model: M2Model,
+    ) -> Result<Self, AssetError> {
         let mut vertices = Vec::with_capacity(model.vertices.len());
         for vertex in model.vertices {
             let texture_coordinates2 = vertex.tex_coords2.ok_or_else(|| {
@@ -244,15 +357,130 @@ impl ModelBlob {
             });
         }
 
+        let textures = model
+            .textures
+            .iter()
+            .enumerate()
+            .map(|(index, texture)| convert_texture(path, bytes, index, texture))
+            .collect::<Result<Vec<_>, _>>()?;
+        let materials = model
+            .materials
+            .iter()
+            .enumerate()
+            .map(|(index, material)| convert_material(path, index, material))
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             name: model.name,
             vertices,
+            textures,
+            materials,
+            bone_lookup: model.raw_data.bone_lookup_table,
+            texture_lookup: model.raw_data.texture_lookup_table,
+            texture_units: model.raw_data.texture_units,
+            transparency_lookup: model.raw_data.transparency_lookup_table,
+            texture_animation_lookup: model.raw_data.texture_animation_lookup,
             bone_count: model.bones.len(),
             animation_count: model.animations.len(),
-            texture_count: model.textures.len(),
-            material_count: model.materials.len(),
         })
     }
+}
+
+/// Converts one texture declaration and validates its nested archive path.
+fn convert_texture(
+    path: &AssetPath,
+    bytes: &[u8],
+    index: usize,
+    texture: &wow_m2::chunks::texture::M2Texture,
+) -> Result<M2Texture, AssetError> {
+    let kind = match texture.texture_type {
+        DependencyTextureType::Hardcoded => M2TextureKind::Hardcoded,
+        DependencyTextureType::Body => M2TextureKind::Body,
+        DependencyTextureType::Item => M2TextureKind::Item,
+        DependencyTextureType::WeaponArmorBasic => M2TextureKind::WeaponArmorBasic,
+        DependencyTextureType::WeaponBlade => M2TextureKind::WeaponBlade,
+        DependencyTextureType::WeaponHandle => M2TextureKind::WeaponHandle,
+        DependencyTextureType::Environment => M2TextureKind::Environment,
+        DependencyTextureType::Hair => M2TextureKind::Hair,
+        DependencyTextureType::SkinExtra => M2TextureKind::SkinExtra,
+        DependencyTextureType::UiSkin => M2TextureKind::UiSkin,
+        DependencyTextureType::TaurenMane => M2TextureKind::TaurenMane,
+        DependencyTextureType::Monster1 => M2TextureKind::Monster1,
+        DependencyTextureType::Monster2 => M2TextureKind::Monster2,
+        DependencyTextureType::Monster3 => M2TextureKind::Monster3,
+        DependencyTextureType::ItemIcon => M2TextureKind::ItemIcon,
+        DependencyTextureType::Unknown => {
+            return Err(model_decode(
+                path,
+                format!("texture {index} has an unsupported replacement type"),
+            ));
+        }
+    };
+    let filename = decode_texture_filename(path, bytes, index, texture)?;
+    Ok(M2Texture {
+        kind,
+        flags: texture.flags.bits(),
+        filename,
+    })
+}
+
+/// Reads a complete NUL-terminated ASCII path rather than the dependency's lossy string.
+fn decode_texture_filename(
+    path: &AssetPath,
+    bytes: &[u8],
+    index: usize,
+    texture: &wow_m2::chunks::texture::M2Texture,
+) -> Result<Option<AssetPath>, AssetError> {
+    let count = texture.filename.array.count as usize;
+    if count == 0 {
+        return Ok(None);
+    }
+    let offset = texture.filename.array.offset as usize;
+    let end = offset
+        .checked_add(count)
+        .ok_or_else(|| model_decode(path, "texture-name byte range overflows".to_owned()))?;
+    let raw = bytes
+        .get(offset..end)
+        .ok_or_else(|| model_decode(path, format!("texture {index} name exceeds the M2 file")))?;
+    if raw.last() != Some(&0) || raw[..raw.len() - 1].contains(&0) {
+        return Err(model_decode(
+            path,
+            format!("texture {index} name is not one complete C string"),
+        ));
+    }
+    let name = std::str::from_utf8(&raw[..raw.len() - 1]).map_err(|source| {
+        model_decode(path, format!("texture {index} name is not UTF-8: {source}"))
+    })?;
+    AssetPath::new(name)
+        .map(Some)
+        .map_err(|source| model_decode(path, format!("texture {index} name is invalid: {source}")))
+}
+
+/// Narrows the dependency bitfield to build 12340's seven blend values.
+fn convert_material(
+    path: &AssetPath,
+    index: usize,
+    material: &wow_m2::chunks::material::M2Material,
+) -> Result<M2Material, AssetError> {
+    let blend_mode = match material.blend_mode.bits() {
+        0 => M2BlendMode::Opaque,
+        1 => M2BlendMode::AlphaKey,
+        2 => M2BlendMode::Alpha,
+        3 => M2BlendMode::NoAlphaAdd,
+        4 => M2BlendMode::Add,
+        5 => M2BlendMode::Mod,
+        6 => M2BlendMode::Mod2x,
+        value => {
+            return Err(model_decode(
+                path,
+                format!("material {index} has unsupported blend mode {value}"),
+            ));
+        }
+    };
+    Ok(M2Material {
+        flags: material.flags.bits(),
+        blend_mode,
+    })
 }
 
 /// Rejects cross-array references that the stock renderer cannot consume.

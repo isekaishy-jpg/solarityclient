@@ -5,9 +5,14 @@ use std::io::Cursor;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
+    M2BlendMode, M2TextureKind,
 };
+use wow_m2::chunks::material::{
+    M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
+};
+use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2TextureType};
 use wow_m2::chunks::vertex::M2Vertex as RawM2Vertex;
-use wow_m2::common::{C2Vector, C3Vector};
+use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
 use wow_m2::header::M2Header;
 use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
@@ -88,6 +93,17 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.skins()[0].vertex_lookup(), &[0, 1, 2]);
     assert_eq!(model.skins()[0].triangle_lookup(), &[0, 1, 2]);
     assert_eq!(model.skins()[0].submeshes()[0].center_bone_index, 5);
+    assert_eq!(model.textures().len(), 2);
+    assert_eq!(model.textures()[0].kind(), M2TextureKind::Hardcoded);
+    assert_eq!(
+        model.textures()[0].filename().map(AssetPath::as_str),
+        Some("CREATURE\\SOLARITY\\SOLARITY.BLP")
+    );
+    assert_eq!(model.textures()[1].kind(), M2TextureKind::Monster1);
+    assert_eq!(model.textures()[1].filename(), None);
+    assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
+    assert_eq!(model.texture_lookup(), &[0, 1]);
+    assert_eq!(model.texture_units(), &[0, 1]);
     Ok(())
 }
 
@@ -110,6 +126,38 @@ fn later_m2_version_is_rejected_before_companion_lookup() -> Result<(), Box<dyn 
         DecodedM2Model::load(&mut store, &path),
         Err(AssetError::ModelDecode { path: failed, message })
             if failed == path && message.contains("expected M2 version 264")
+    ));
+    Ok(())
+}
+
+/// Unsupported texture replacement tags are not collapsed into an unknown type.
+#[test]
+fn invalid_m2_texture_type_has_no_compatibility_fallback() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("BadTexture", 1)?;
+    let texture_offset = m2_array_offset(&model, 0x50)?;
+    model[texture_offset..texture_offset + 4].copy_from_slice(&99_u32.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\BadTexture.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\BadTexture00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature/Solarity/BadTexture.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("unsupported replacement type")
     ));
     Ok(())
 }
@@ -211,6 +259,31 @@ fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
         ..M2Model::default()
     };
     model.header.num_skin_profiles = Some(skin_profiles);
+    let texture_name = b"Creature\\Solarity\\Solarity.blp";
+    model.textures = vec![
+        RawTexture {
+            texture_type: M2TextureType::Hardcoded,
+            flags: M2TextureFlags::WRAP_X,
+            filename: M2ArrayString {
+                string: FixedString {
+                    data: texture_name.to_vec(),
+                },
+                // The writer recalculates this nonzero sentinel offset.
+                array: M2Array::new(u32::try_from(texture_name.len() + 1)?, 1),
+            },
+        },
+        RawTexture {
+            texture_type: M2TextureType::Monster1,
+            flags: M2TextureFlags::empty(),
+            filename: M2ArrayString::default(),
+        },
+    ];
+    model.materials = vec![RawMaterial {
+        flags: M2RenderFlags::DEPTH_TEST | M2RenderFlags::DEPTH_WRITE,
+        blend_mode: RawBlendMode::ALPHA,
+    }];
+    model.raw_data.texture_lookup_table = vec![0, 1];
+    model.raw_data.texture_units = vec![0, 1];
     for index in 0..3 {
         model.vertices.push(RawM2Vertex {
             position: C3Vector {
@@ -232,7 +305,23 @@ fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
 
     let mut cursor = Cursor::new(Vec::new());
     model.write(&mut cursor)?;
-    Ok(cursor.into_inner())
+    let mut bytes = cursor.into_inner();
+
+    // Patch the dependency writer's unresolved nested filename reference so
+    // this fixture exercises the stock count/offset string layout directly.
+    let texture_offset = m2_array_offset(&bytes, 0x50)?;
+    let filename_offset = u32::try_from(bytes.len())?;
+    bytes[texture_offset + 8..texture_offset + 12]
+        .copy_from_slice(&u32::try_from(texture_name.len() + 1)?.to_le_bytes());
+    bytes[texture_offset + 12..texture_offset + 16].copy_from_slice(&filename_offset.to_le_bytes());
+    bytes.extend_from_slice(texture_name);
+    bytes.push(0);
+    Ok(bytes)
+}
+
+/// Reads the offset word of one M2 header array used by fixture mutation.
+fn m2_array_offset(bytes: &[u8], pair_offset: usize) -> Result<usize, Box<dyn Error>> {
+    Ok(u32::from_le_bytes(bytes[pair_offset + 4..pair_offset + 8].try_into()?) as usize)
 }
 
 /// Serializes WotLK's old external SKIN form without using format detection.

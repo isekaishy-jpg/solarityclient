@@ -2,7 +2,10 @@
 
 use crate::model::m2_shared::{model_decode, parse_model, parse_skin, skin_path};
 use crate::model::model_blob::ModelBlob;
-use crate::{ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2SkinProfile, M2Vertex};
+use crate::{
+    ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Material, M2SkinProfile, M2Texture,
+    M2Vertex,
+};
 
 /// A decoded M2 and every external SKIN profile named by its build-12340 header.
 #[derive(Debug)]
@@ -42,6 +45,7 @@ impl DecodedM2Model {
         }
 
         let model_vertex_count = model.vertices.len();
+        let blob = ModelBlob::from_model(path, read.bytes(), model)?;
         let mut skins = Vec::with_capacity(profile_count as usize);
         for profile in 0..profile_count {
             let profile_path = skin_path(path, profile)?;
@@ -56,7 +60,6 @@ impl DecodedM2Model {
             )?);
         }
 
-        let blob = ModelBlob::from_model(path, model)?;
         Ok(Self {
             path: path.clone(),
             source,
@@ -95,6 +98,48 @@ impl DecodedM2Model {
         &self.skins
     }
 
+    /// Returns texture declarations before display/customization replacement.
+    #[must_use]
+    pub fn textures(&self) -> &[M2Texture] {
+        &self.blob.textures
+    }
+
+    /// Returns render flags and blend modes referenced by SKIN batches.
+    #[must_use]
+    pub fn materials(&self) -> &[M2Material] {
+        &self.blob.materials
+    }
+
+    /// Returns the model bone palette selected by SKIN submesh ranges.
+    #[must_use]
+    pub fn bone_lookup(&self) -> &[u16] {
+        &self.blob.bone_lookup
+    }
+
+    /// Returns texture indices selected by SKIN batch texture combos.
+    #[must_use]
+    pub fn texture_lookup(&self) -> &[u16] {
+        &self.blob.texture_lookup
+    }
+
+    /// Returns stock texture-unit values parallel to texture combos.
+    #[must_use]
+    pub fn texture_units(&self) -> &[u16] {
+        &self.blob.texture_units
+    }
+
+    /// Returns transparency-animation indices selected by SKIN batches.
+    #[must_use]
+    pub fn transparency_lookup(&self) -> &[u16] {
+        &self.blob.transparency_lookup
+    }
+
+    /// Returns texture-animation indices selected by SKIN batches.
+    #[must_use]
+    pub fn texture_animation_lookup(&self) -> &[u16] {
+        &self.blob.texture_animation_lookup
+    }
+
     /// Returns the number of decoded model bones.
     #[must_use]
     pub const fn bone_count(&self) -> usize {
@@ -110,12 +155,12 @@ impl DecodedM2Model {
     /// Returns the number of model texture definitions.
     #[must_use]
     pub const fn texture_count(&self) -> usize {
-        self.blob.texture_count
+        self.blob.textures.len()
     }
 
     /// Returns the number of model render-flag records.
     #[must_use]
     pub const fn material_count(&self) -> usize {
-        self.blob.material_count
+        self.blob.materials.len()
     }
 }

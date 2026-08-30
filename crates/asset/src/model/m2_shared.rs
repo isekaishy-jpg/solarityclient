@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 
+use wow_m2::header::M2Header;
 use wow_m2::model::M2Model;
 use wow_m2::skin::OldSkin;
 
@@ -25,6 +26,7 @@ pub(super) struct ParsedSkin {
 /// Parses an exact build-12340 legacy M2 without retaining dependency types.
 pub(super) fn parse_model(path: &AssetPath, bytes: &[u8]) -> Result<M2Model, AssetError> {
     validate_model_prefix(path, bytes)?;
+    validate_model_texture_arrays(path, bytes)?;
 
     let mut cursor = Cursor::new(bytes);
     let mut model = M2Model::parse_legacy(&mut cursor)
@@ -43,6 +45,45 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &[u8]) -> Result<M2Model, Ass
     restore_vertex_influences(path, bytes, &mut model)?;
     validate_model_name(path, bytes, &model)?;
     Ok(model)
+}
+
+/// Preflights texture records and their nested strings before decoder allocation.
+fn validate_model_texture_arrays(path: &AssetPath, bytes: &[u8]) -> Result<(), AssetError> {
+    const TEXTURE_RECORD_SIZE: usize = 16;
+
+    let mut cursor = Cursor::new(bytes);
+    let header = M2Header::parse(&mut cursor)
+        .map_err(|source| model_decode(path, format!("invalid build-12340 header: {source}")))?;
+    let count = header.textures.count as usize;
+    let offset = header.textures.offset as usize;
+    let byte_count = count
+        .checked_mul(TEXTURE_RECORD_SIZE)
+        .ok_or_else(|| model_decode(path, "texture-record byte range overflows".to_owned()))?;
+    let end = offset
+        .checked_add(byte_count)
+        .ok_or_else(|| model_decode(path, "texture-record byte range overflows".to_owned()))?;
+    if end > bytes.len() {
+        return Err(model_decode(
+            path,
+            "texture-record array exceeds the M2 file".to_owned(),
+        ));
+    }
+
+    for index in 0..count {
+        let record = offset + index * TEXTURE_RECORD_SIZE;
+        let name_count = read_u32(path, bytes, record + 8, "texture name")? as usize;
+        let name_offset = read_u32(path, bytes, record + 12, "texture name")? as usize;
+        let name_end = name_offset
+            .checked_add(name_count)
+            .ok_or_else(|| model_decode(path, "texture-name byte range overflows".to_owned()))?;
+        if name_end > bytes.len() {
+            return Err(model_decode(
+                path,
+                format!("texture {index} name exceeds the M2 file"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parses WotLK's old external SKIN layout without heuristic format detection.

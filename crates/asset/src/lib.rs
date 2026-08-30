@@ -24,5 +24,8 @@ pub use database::{
     WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
-pub use model::{DecodedM2Model, M2Batch, M2SkinProfile, M2Submesh, M2Vertex};
+pub use model::{
+    DecodedM2Model, M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture,
+    M2TextureKind, M2Vertex,
+};
 pub use texture::DecodedBlpTexture;

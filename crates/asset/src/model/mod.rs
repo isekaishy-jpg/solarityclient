@@ -9,4 +9,6 @@ mod m2_shared;
 mod model_blob;
 
 pub use m2_model::DecodedM2Model;
-pub use model_blob::{M2Batch, M2SkinProfile, M2Submesh, M2Vertex};
+pub use model_blob::{
+    M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2Vertex,
+};
