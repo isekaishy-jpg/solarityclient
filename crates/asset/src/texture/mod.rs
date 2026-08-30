@@ -11,3 +11,4 @@ mod texture_source;
 mod tga;
 
 pub use blp::DecodedBlpTexture;
+pub use texture_source::BlpTextureSource;

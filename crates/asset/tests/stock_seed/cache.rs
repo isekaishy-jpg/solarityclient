@@ -3,10 +3,13 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale, M2ModelCache};
+use solarity_asset::{
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, Locale, M2ModelCache,
+};
 
 use crate::model::{m2_bytes, skin_bytes};
 use crate::support::{Fixture, FixtureFile};
+use crate::texture::raw3_blp;
 
 /// Repeated scene requests share one HD-sized decode until explicit collection.
 #[test]
@@ -79,6 +82,47 @@ fn m2_cache_does_not_retain_failed_loads() -> Result<(), Box<dyn Error>> {
     assert!(cache.load(&mut store, &path).is_err());
     assert!(cache.is_empty());
     assert!(cache.load(&mut store, &path).is_err());
+    assert!(cache.is_empty());
+    Ok(())
+}
+
+/// Texture cache identity remains the logical path when an HD patch wins.
+#[test]
+fn blp_cache_shares_selected_hd_source_and_collects_it() -> Result<(), Box<dyn Error>> {
+    let stock = raw3_blp(1, 1, &[0xFFFF_0000]);
+    let hd = raw3_blp(2, 1, &[0xFF00_FF00, 0xFF00_FF00]);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Character\\Solarity\\Cached.blp",
+            bytes: &stock,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Character\\Solarity\\Cached.blp",
+            bytes: &hd,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Character/Solarity/Cached.blp")?;
+    let mut cache = BlpTextureCache::new();
+
+    let first = cache.load(&mut store, &path)?;
+    let second = cache.load(&mut store, &path)?;
+
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!((first.width(), first.height()), (2, 1));
+    assert_eq!(
+        first.source().relative_path().to_string_lossy(),
+        "patch-A.MPQ"
+    );
+    assert_eq!(cache.collect_unused(), 0);
+
+    drop(first);
+    drop(second);
+    assert_eq!(cache.collect_unused(), 1);
     assert!(cache.is_empty());
     Ok(())
 }

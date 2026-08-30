@@ -18,7 +18,7 @@ pub use archive::{
     ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetError, AssetPath, AssetPathViolation,
     ClientDataRoot, Locale,
 };
-pub use cache::M2ModelCache;
+pub use cache::{BlpTextureCache, M2ModelCache};
 pub use database::{
     AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
     CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterSection,
@@ -30,4 +30,4 @@ pub use model::{
     DecodedM2Model, M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture,
     M2TextureKind, M2Vertex,
 };
-pub use texture::DecodedBlpTexture;
+pub use texture::{BlpTextureSource, DecodedBlpTexture};
