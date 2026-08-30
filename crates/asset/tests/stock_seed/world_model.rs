@@ -238,6 +238,45 @@ fn world_model_decodes_stock_presentation_tables() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// Root MODN/MODS/MODD tables retain exact paths, ranges, and transforms.
+#[test]
+fn world_model_decodes_stock_doodad_sets() -> Result<(), Box<dyn Error>> {
+    let root_wmo = doodad_root_fixture();
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "World\\Wmo\\Doodads.wmo",
+        bytes: &root_wmo,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Doodads.wmo")?)?;
+
+    assert_eq!(model.doodad_sets().len(), 2);
+    assert_eq!(model.doodad_sets()[0].name(), "Set_$DefaultGlobal");
+    assert_eq!(model.doodad_sets()[0].first_doodad(), 0);
+    assert_eq!(model.doodad_sets()[0].doodad_count(), 1);
+    assert_eq!(model.doodad_sets()[0].padding(), 0x1122_3344);
+    assert_eq!(model.doodad_sets()[1].name(), "FURNITURE");
+    assert_eq!(model.doodad_sets()[1].first_doodad(), 1);
+    assert_eq!(model.doodad_sets()[1].doodad_count(), 1);
+
+    assert_eq!(model.doodads().len(), 2);
+    let tree = &model.doodads()[0];
+    assert_eq!(tree.path().as_str(), "TREE.MDX");
+    assert_eq!(tree.name_offset(), 0);
+    assert_eq!(tree.flags(), 0x03);
+    assert_eq!(tree.position(), [1.0, 2.0, 3.0]);
+    assert_eq!(tree.orientation(), [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(tree.scale(), 1.5);
+    assert_eq!(tree.color(), [10, 20, 30, 40]);
+    let lamp = &model.doodads()[1];
+    assert_eq!(lamp.path().as_str(), "LAMP.M2");
+    assert_eq!(lamp.name_offset(), 9);
+    assert_eq!(lamp.flags(), 0x80);
+    assert_eq!(lamp.orientation(), [0.0, 0.0, 1.0, 0.0]);
+    Ok(())
+}
+
 /// Post-build chunks fail before the dependency can silently skip them.
 #[test]
 fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {
@@ -321,6 +360,76 @@ fn presentation_root_fixture() -> Vec<u8> {
     set_u32(&mut group, 28, u32::MAX);
     push_chunk(&mut bytes, *b"IGOM", &group);
     bytes
+}
+
+fn doodad_root_fixture() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
+    let mut header = vec![0_u8; 64];
+    set_u32(&mut header, 16, 2);
+    set_u32(&mut header, 20, 2);
+    set_u32(&mut header, 24, 2);
+    set_u32(&mut header, 32, 77);
+    set_vec3(&mut header, 36, [-2.0, -3.0, -4.0]);
+    set_vec3(&mut header, 48, [2.0, 3.0, 4.0]);
+    push_chunk(&mut bytes, *b"DHOM", &header);
+    push_chunk(&mut bytes, *b"NDOM", b"Tree.mdx\0Lamp.m2\0");
+
+    let mut doodads = Vec::new();
+    push_doodad(
+        &mut doodads,
+        0x0300_0000,
+        [1.0, 2.0, 3.0],
+        [0.0, 0.0, 0.0, 1.0],
+        1.5,
+        [10, 20, 30, 40],
+    );
+    push_doodad(
+        &mut doodads,
+        0x8000_0009,
+        [-1.0, -2.0, -3.0],
+        [0.0, 0.0, 1.0, 0.0],
+        0.5,
+        [50, 60, 70, 80],
+    );
+    push_chunk(&mut bytes, *b"DDOM", &doodads);
+
+    let mut sets = Vec::new();
+    push_doodad_set(&mut sets, "Set_$DefaultGlobal", 0, 1, 0x1122_3344);
+    push_doodad_set(&mut sets, "FURNITURE", 1, 1, 0);
+    push_chunk(&mut bytes, *b"SDOM", &sets);
+    bytes
+}
+
+fn push_doodad(
+    bytes: &mut Vec<u8>,
+    name_and_flags: u32,
+    position: [f32; 3],
+    orientation: [f32; 4],
+    scale: f32,
+    color: [u8; 4],
+) {
+    bytes.extend_from_slice(&name_and_flags.to_le_bytes());
+    for value in position.into_iter().chain(orientation) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&scale.to_le_bytes());
+    bytes.extend_from_slice(&color);
+}
+
+fn push_doodad_set(
+    bytes: &mut Vec<u8>,
+    name: &str,
+    first_doodad: u32,
+    doodad_count: u32,
+    padding: u32,
+) {
+    let mut encoded_name = [0_u8; 20];
+    encoded_name[..name.len()].copy_from_slice(name.as_bytes());
+    bytes.extend_from_slice(&encoded_name);
+    bytes.extend_from_slice(&first_doodad.to_le_bytes());
+    bytes.extend_from_slice(&doodad_count.to_le_bytes());
+    bytes.extend_from_slice(&padding.to_le_bytes());
 }
 
 fn presentation_group_fixture() -> Vec<u8> {

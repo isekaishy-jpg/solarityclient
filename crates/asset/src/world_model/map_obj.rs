@@ -3,6 +3,7 @@
 use crate::{ArchiveDescriptor, AssetPath};
 
 use super::map_obj_group::DecodedWorldModelGroup;
+use super::{WorldModelDoodad, WorldModelDoodadSet};
 
 /// One completely admitted WMO root and its independently resolved groups.
 pub struct DecodedWorldModel {
@@ -13,6 +14,8 @@ pub struct DecodedWorldModel {
     world_model_id: u32,
     bounds: [[f32; 3]; 2],
     materials: Vec<WorldModelMaterial>,
+    doodad_sets: Vec<WorldModelDoodadSet>,
+    doodads: Vec<WorldModelDoodad>,
     groups: Vec<DecodedWorldModelGroup>,
 }
 
@@ -26,6 +29,8 @@ impl DecodedWorldModel {
         world_model_id: u32,
         bounds: [[f32; 3]; 2],
         materials: Vec<WorldModelMaterial>,
+        doodad_sets: Vec<WorldModelDoodadSet>,
+        doodads: Vec<WorldModelDoodad>,
         groups: Vec<DecodedWorldModelGroup>,
     ) -> Self {
         Self {
@@ -36,6 +41,8 @@ impl DecodedWorldModel {
             world_model_id,
             bounds,
             materials,
+            doodad_sets,
+            doodads,
             groups,
         }
     }
@@ -80,6 +87,18 @@ impl DecodedWorldModel {
     #[must_use]
     pub fn materials(&self) -> &[WorldModelMaterial] {
         &self.materials
+    }
+
+    /// Returns root MODS ranges in exact authored table order.
+    #[must_use]
+    pub fn doodad_sets(&self) -> &[WorldModelDoodadSet] {
+        &self.doodad_sets
+    }
+
+    /// Returns root MODD placements in exact authored table order.
+    #[must_use]
+    pub fn doodads(&self) -> &[WorldModelDoodad] {
+        &self.doodads
     }
 
     /// Returns every group in exact numeric file order.

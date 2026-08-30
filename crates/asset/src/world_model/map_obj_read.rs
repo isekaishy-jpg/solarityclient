@@ -13,6 +13,7 @@ use super::map_obj_group::{
     DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
     WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,
 };
+use super::{WorldModelDoodad, WorldModelDoodadSet};
 
 const BUILD_12340_WMO_VERSION: u32 = 17;
 
@@ -38,6 +39,7 @@ impl DecodedWorldModel {
         validate_root(path, &root)?;
         let bounds = validate_bounds(path, root.bounding_box_min, root.bounding_box_max, "MOHD")?;
         let materials = decode_materials(path, read.bytes(), &root)?;
+        let (doodad_sets, doodads) = decode_doodads(path, read.bytes(), &root)?;
         if root.flags & 0x02 == 0
             && materials
                 .iter()
@@ -69,9 +71,133 @@ impl DecodedWorldModel {
             root.wmo_id,
             bounds,
             materials,
+            doodad_sets,
+            doodads,
             groups,
         ))
     }
+}
+
+fn decode_doodads(
+    path: &AssetPath,
+    bytes: &[u8],
+    root: &wow_wmo::root_parser::WmoRoot,
+) -> Result<(Vec<WorldModelDoodadSet>, Vec<WorldModelDoodad>), AssetError> {
+    let chunks = scan_chunks(path, bytes, "WMO root")?;
+    let names = chunks
+        .iter()
+        .find(|chunk| chunk.magic == *b"NDOM")
+        .and_then(|chunk| bytes.get(chunk.payload_start..chunk.payload_end))
+        .unwrap_or_default();
+    let mut doodads = Vec::with_capacity(root.doodad_defs.len());
+    for (index, doodad) in root.doodad_defs.iter().enumerate() {
+        let name_offset = doodad.name_index();
+        let model_path = decode_doodad_path(path, names, name_offset, index)?;
+        if doodad.position.into_iter().any(|value| !value.is_finite())
+            || doodad
+                .orientation
+                .into_iter()
+                .any(|value| !value.is_finite())
+            || !doodad.scale.is_finite()
+            || doodad.scale <= 0.0
+        {
+            return Err(world_model_message(
+                path,
+                format!("MODD doodad {index} has an invalid transform"),
+            ));
+        }
+        let orientation_length_squared = doodad
+            .orientation
+            .into_iter()
+            .map(|value| value * value)
+            .sum::<f32>();
+        if orientation_length_squared <= f32::EPSILON {
+            return Err(world_model_message(
+                path,
+                format!("MODD doodad {index} has a zero quaternion"),
+            ));
+        }
+        doodads.push(WorldModelDoodad::new(
+            model_path,
+            name_offset,
+            (doodad.name_index_and_flags >> 24) as u8,
+            doodad.position,
+            doodad.orientation,
+            doodad.scale,
+            doodad.color,
+        ));
+    }
+
+    let mut sets = Vec::with_capacity(root.doodad_sets.len());
+    for (index, set) in root.doodad_sets.iter().enumerate() {
+        let end = set
+            .start_index
+            .checked_add(set.count)
+            .and_then(|end| usize::try_from(end).ok())
+            .ok_or_else(|| {
+                world_model_message(path, format!("MODS set {index} range overflows"))
+            })?;
+        if end > doodads.len() {
+            return Err(world_model_message(
+                path,
+                format!("MODS set {index} references a doodad outside MODD"),
+            ));
+        }
+        let name_end = set
+            .name
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(set.name.len());
+        let name = std::str::from_utf8(&set.name[..name_end])
+            .map_err(|error| {
+                world_model_message(path, format!("MODS set {index} name is not UTF-8: {error}"))
+            })?
+            .to_owned();
+        sets.push(WorldModelDoodadSet::new(
+            name,
+            set.start_index,
+            set.count,
+            set.padding,
+        ));
+    }
+    Ok((sets, doodads))
+}
+
+fn decode_doodad_path(
+    root_path: &AssetPath,
+    names: &[u8],
+    offset: u32,
+    doodad_index: usize,
+) -> Result<AssetPath, AssetError> {
+    let offset = usize::try_from(offset).map_err(|error| world_model_error(root_path, error))?;
+    let tail = names.get(offset..).ok_or_else(|| {
+        world_model_message(
+            root_path,
+            format!(
+                "MODD doodad {doodad_index} references MODN offset {offset} outside {} bytes",
+                names.len()
+            ),
+        )
+    })?;
+    let end = tail.iter().position(|byte| *byte == 0).ok_or_else(|| {
+        world_model_message(
+            root_path,
+            format!("MODD doodad {doodad_index} model path is not null terminated"),
+        )
+    })?;
+    if end == 0 {
+        return Err(world_model_message(
+            root_path,
+            format!("MODD doodad {doodad_index} model path is empty"),
+        ));
+    }
+    let value = std::str::from_utf8(&tail[..end]).map_err(|error| {
+        world_model_message(
+            root_path,
+            format!("MODD doodad {doodad_index} model path is not UTF-8: {error}"),
+        )
+    })?;
+    AssetPath::new(value).map_err(|error| world_model_error(root_path, error))
 }
 
 fn load_group(
@@ -646,6 +772,7 @@ fn validate_root(path: &AssetPath, root: &wow_wmo::root_parser::WmoRoot) -> Resu
         || usize::try_from(root.n_materials).ok() != Some(root.materials.len())
         || usize::try_from(root.n_portals).ok() != Some(root.portals.len())
         || usize::try_from(root.n_lights).ok() != Some(root.lights.len())
+        || usize::try_from(root.n_doodad_names).ok() != Some(root.doodad_names.len())
         || usize::try_from(root.n_doodad_defs).ok() != Some(root.doodad_defs.len())
         || usize::try_from(root.n_doodad_sets).ok() != Some(root.doodad_sets.len())
     {
