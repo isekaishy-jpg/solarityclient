@@ -155,4 +155,12 @@ pub enum AssetError {
         /// Parser or build-12340 structural validation context.
         message: String,
     },
+    /// A resolved stock WMO root or group is malformed.
+    #[error("failed to decode client world model {path}: {message}")]
+    WorldModelDecode {
+        /// Normalized WMO root or group asset path.
+        path: AssetPath,
+        /// Parser or build-12340 structural validation context.
+        message: String,
+    },
 }

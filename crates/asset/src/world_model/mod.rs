@@ -7,3 +7,6 @@
 mod map_obj;
 mod map_obj_group;
 mod map_obj_read;
+
+pub use map_obj::DecodedWorldModel;
+pub use map_obj_group::{DecodedWorldModelGroup, WorldModelBspNode, WorldModelPolygon};
