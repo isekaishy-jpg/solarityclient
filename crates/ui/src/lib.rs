@@ -16,6 +16,7 @@ mod widget;
 mod world;
 mod xml;
 
+pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,

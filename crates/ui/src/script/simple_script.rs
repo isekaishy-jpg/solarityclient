@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::rc::Rc;
 
-use mlua::{LightUserData, Lua, RegistryKey, Table, Value, Variadic};
+use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
 use solarity_asset::{AssetPath, AssetStore};
 
+use crate::event::{UiEventArgument, UiEventPayload, canonical_glue_event};
 use crate::{
     FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBundle,
     UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
@@ -23,7 +24,6 @@ use crate::{
 use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
 use super::handlers::handler_for;
-use super::script_events::glue_event;
 use super::templates::TEMPLATE_REGISTRY;
 
 pub(super) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
@@ -608,6 +608,58 @@ impl UiScriptRuntime {
     #[must_use]
     pub const fn executed_load_handler_count(&self) -> usize {
         self.executed_load_handlers
+    }
+
+    /// Delivers one canonical Glue event to subscribers in creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiScriptError`] when Lua registry access or a subscribed
+    /// `OnEvent` callback fails. Dispatch stops at the first failed handler.
+    pub(crate) fn dispatch_glue_event(
+        &mut self,
+        bundle: &UiBundle,
+        event: &'static str,
+        payload: &UiEventPayload,
+    ) -> Result<usize, UiScriptError> {
+        let lua = bundle.lua();
+        let globals = lua.globals();
+        let previous_event = globals
+            .raw_get::<Value>("event")
+            .map_err(|error| execution_error(event, error))?;
+        let mut previous_arguments = Vec::with_capacity(crate::event::MAX_EVENT_ARGUMENTS);
+        for index in 1..=crate::event::MAX_EVENT_ARGUMENTS {
+            previous_arguments.push(
+                globals
+                    .raw_get::<Value>(format!("arg{index}"))
+                    .map_err(|error| execution_error(event, error))?,
+            );
+        }
+        let arguments = payload
+            .arguments()
+            .iter()
+            .map(|argument| event_argument(lua, argument))
+            .collect::<mlua::Result<Vec<_>>>()
+            .map_err(|error| execution_error(event, error))?;
+        globals
+            .raw_set("event", event)
+            .map_err(|error| execution_error(event, error))?;
+        for index in 1..=crate::event::MAX_EVENT_ARGUMENTS {
+            globals
+                .raw_set(
+                    format!("arg{index}"),
+                    arguments.get(index - 1).cloned().unwrap_or(Value::Nil),
+                )
+                .map_err(|error| execution_error(event, error))?;
+        }
+
+        let dispatch = dispatch_subscribers(lua, self.registered_object_count(), event, &arguments);
+        let restore = restore_event_globals(lua, previous_event, previous_arguments);
+        match (dispatch, restore) {
+            (Ok(count), Ok(())) => Ok(count),
+            (Err(error), _) => Err(execution_error(event, error)),
+            (Ok(_), Err(error)) => Err(execution_error(event, error)),
+        }
     }
 
     fn execute_batch(
@@ -1452,6 +1504,82 @@ fn call_object_handler(lua: &Lua, function: &mlua::Function, object: Table) -> m
             Err(error)
         }
     }
+}
+
+fn dispatch_subscribers(
+    lua: &Lua,
+    object_count: usize,
+    event: &str,
+    payload: &[Value],
+) -> mlua::Result<usize> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut dispatched = 0;
+    for index in 1..=object_count {
+        let object: Table = objects.raw_get(index)?;
+        let all_events = object
+            .raw_get::<Option<bool>>(all_events_key())?
+            .unwrap_or(false);
+        let subscribed = if all_events {
+            true
+        } else if let Some(events) = object.raw_get::<Option<Table>>(events_key())? {
+            events.raw_get::<Option<bool>>(event)? == Some(true)
+        } else {
+            false
+        };
+        if !subscribed {
+            continue;
+        }
+        let Some(function) = object_script_function(lua, &object, UiScriptHandler::Event)? else {
+            continue;
+        };
+        call_event_handler(lua, &function, object, event, payload)?;
+        dispatched += 1;
+    }
+    Ok(dispatched)
+}
+
+fn call_event_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    event: &str,
+    payload: &[Value],
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    globals.raw_set("this", object.clone())?;
+    let mut arguments = Vec::with_capacity(payload.len() + 2);
+    arguments.push(Value::Table(object));
+    arguments.push(Value::String(lua.create_string(event)?));
+    arguments.extend(payload.iter().cloned());
+    let result = function.call::<()>(MultiValue::from_vec(arguments));
+    let restore = globals.raw_set("this", previous_this);
+    match result {
+        Ok(()) => restore,
+        Err(error) => {
+            let _ = restore;
+            Err(error)
+        }
+    }
+}
+
+fn event_argument(lua: &Lua, argument: &UiEventArgument) -> mlua::Result<Value> {
+    match argument {
+        UiEventArgument::Nil => Ok(Value::Nil),
+        UiEventArgument::Boolean(value) => Ok(Value::Boolean(*value)),
+        UiEventArgument::Integer(value) => Ok(Value::Integer(*value)),
+        UiEventArgument::Number(value) => Ok(Value::Number(*value)),
+        UiEventArgument::String(value) => lua.create_string(value).map(Value::String),
+    }
+}
+
+fn restore_event_globals(lua: &Lua, event: Value, arguments: Vec<Value>) -> mlua::Result<()> {
+    let globals = lua.globals();
+    globals.raw_set("event", event)?;
+    for (index, value) in arguments.into_iter().enumerate() {
+        globals.raw_set(format!("arg{}", index + 1), value)?;
+    }
+    Ok(())
 }
 
 fn register_font(
@@ -2541,7 +2669,7 @@ fn registered_event(
     name: &str,
 ) -> mlua::Result<Option<&'static str>> {
     match manifest_kind {
-        UiManifestKind::Glue => Ok(glue_event(name)),
+        UiManifestKind::Glue => Ok(canonical_glue_event(name)),
         UiManifestKind::Frame => Err(mlua::Error::runtime(
             "FrameXML event registry is not implemented",
         )),

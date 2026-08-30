@@ -3,7 +3,10 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{GlueError, GlueManager, UiLayoutError, UiObjectKind};
+use solarity_ui::{
+    GlueError, GlueManager, UiEventArgument, UiEventError, UiEventPayload, UiLayoutError,
+    UiObjectKind,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -188,6 +191,72 @@ fn glue_manager_rejects_live_anchor_cycles() -> Result<(), Box<dyn Error>> {
     assert!(matches!(
         result,
         Err(GlueError::Layout(UiLayoutError::Resolution { .. }))
+    ));
+    Ok(())
+}
+
+/// Registered `OnEvent` handlers receive stock globals and creation ordering.
+#[test]
+fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Events.xml\nAfter.lua\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Events.xml",
+            bytes: br#"<Ui><Frame name="Root"><Layers>
+  <Layer><Texture name="Visual"/></Layer>
+</Layers><Frames>
+  <Frame name="Child"><Scripts>
+    <OnLoad>self:RegisterEvent("set_glue_screen")</OnLoad>
+    <OnEvent>
+      local screen, sequence = ...
+      assert(event == "SET_GLUE_SCREEN" and arg1 == screen and arg2 == sequence and arg3 == nil)
+      EVENT_ORDER = EVENT_ORDER .. self:GetName() .. ":" .. screen .. ":" .. sequence .. ";"
+    </OnEvent>
+  </Scripts></Frame>
+</Frames><Scripts>
+  <OnLoad>EVENT_ORDER = "" self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+  <OnEvent>
+    local screen, sequence = ...
+    assert(event == "SET_GLUE_SCREEN" and arg1 == screen and arg2 == sequence and arg3 == nil)
+    EVENT_ORDER = EVENT_ORDER .. self:GetName() .. ":" .. screen .. ":" .. sequence .. ";"
+  </OnEvent>
+</Scripts></Frame></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\After.lua",
+            bytes: b"event = 'previous' arg1 = 'old' arg2 = 99",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let payload = UiEventPayload::new([
+        UiEventArgument::String("login".to_owned()),
+        UiEventArgument::Integer(7),
+    ])?;
+
+    let dispatch = manager.dispatch_event("set_glue_screen", &payload)?;
+
+    assert_eq!(dispatch.subscriber_count(), 2);
+    let globals = manager.bundle().lua().globals();
+    assert_eq!(
+        globals.get::<String>("EVENT_ORDER")?,
+        "Root:login:7;Child:login:7;"
+    );
+    assert_eq!(globals.get::<String>("event")?, "previous");
+    assert_eq!(globals.get::<String>("arg1")?, "old");
+    assert_eq!(globals.get::<i64>("arg2")?, 99);
+    assert!(globals.get::<Option<String>>("arg3")?.is_none());
+    assert!(matches!(
+        manager.dispatch_event("NOT_A_GLUE_EVENT", &UiEventPayload::empty()),
+        Err(UiEventError::Unknown { .. })
+    ));
+    assert!(matches!(
+        UiEventPayload::new((0..10).map(UiEventArgument::Integer)),
+        Err(UiEventError::PayloadTooLarge { .. })
     ));
     Ok(())
 }

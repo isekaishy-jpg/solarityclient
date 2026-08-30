@@ -8,9 +8,10 @@ use solarity_asset::AssetStore;
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
-    FontCatalog, UiBundle, UiFramePlan, UiFrameStatePlan, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
+    FontCatalog, UiBundle, UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan,
+    UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
+    UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -175,6 +176,27 @@ impl GlueManager {
     #[must_use]
     pub const fn runtime_mut(&mut self) -> &mut UiScriptRuntime {
         &mut self.runtime
+    }
+
+    /// Delivers a stock Glue event to registered frames in creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError::Unknown`] for an event outside build 12340's
+    /// Glue registry or [`UiEventError::Script`] when a handler fails.
+    pub fn dispatch_event(
+        &mut self,
+        name: &str,
+        payload: &UiEventPayload,
+    ) -> Result<UiEventDispatch, UiEventError> {
+        let event =
+            crate::event::canonical_glue_event(name).ok_or_else(|| UiEventError::Unknown {
+                name: name.to_owned(),
+            })?;
+        let subscriber_count = self
+            .runtime
+            .dispatch_glue_event(&self.bundle, event, payload)?;
+        Ok(UiEventDispatch::new(subscriber_count))
     }
 }
 

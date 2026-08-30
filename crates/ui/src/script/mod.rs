@@ -6,7 +6,6 @@
 
 mod handlers;
 mod runtime_state;
-mod script_events;
 mod simple_script;
 mod status;
 mod templates;

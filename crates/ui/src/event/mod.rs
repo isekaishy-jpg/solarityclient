@@ -8,3 +8,9 @@ mod dispatch;
 mod payload;
 mod registry;
 mod types;
+
+pub use payload::{UiEventArgument, UiEventPayload};
+pub use types::{UiEventDispatch, UiEventError};
+
+pub(crate) use payload::MAX_EVENT_ARGUMENTS;
+pub(crate) use registry::canonical_glue_event;
