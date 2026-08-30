@@ -8,8 +8,8 @@ use solarity_asset::AssetStore;
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
-    FontCatalog, UiBundle, UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan,
-    UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
+    FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
+    UiFramePlan, UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
     UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan,
     UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
     UiTextureStatePlan,
@@ -80,6 +80,12 @@ impl GlueManager {
         );
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
+        runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
+        let login_payload = UiEventPayload::new([UiEventArgument::String("login".to_owned())])
+            .map_err(|error| crate::UiScriptError::Plan {
+                message: format!("could not construct stock login-screen event: {error}"),
+            })?;
+        runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &login_payload)?;
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
@@ -197,12 +203,6 @@ impl GlueManager {
         &self.templates
     }
 
-    /// Returns mutable Lua/object state for event and frame dispatch.
-    #[must_use]
-    pub const fn runtime_mut(&mut self) -> &mut UiScriptRuntime {
-        &mut self.runtime
-    }
-
     /// Delivers a stock Glue event to registered frames in creation order.
     ///
     /// # Errors
@@ -221,21 +221,33 @@ impl GlueManager {
         let subscriber_count = self
             .runtime
             .dispatch_glue_event(&self.bundle, event, payload)?;
+        self.refresh_live_state()?;
         Ok(UiEventDispatch::new(subscriber_count))
+    }
+
+    fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
+        let live = self.runtime.snapshot_objects(&self.bundle)?;
+        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let presentation = UiPresentationPlan::resolve(&live, &geometry);
+        let (objects, child_indices) = build_live_hierarchy(&live)?;
+        self.geometry = geometry;
+        self.presentation = presentation;
+        self.objects = objects;
+        self.child_indices = child_indices;
+        Ok(())
     }
 }
 
 fn build_live_hierarchy(
     live: &UiRuntimeObjectPlan,
-) -> Result<(Vec<GlueObject>, Vec<usize>), GlueError> {
+) -> Result<(Vec<GlueObject>, Vec<usize>), crate::UiScriptError> {
     let mut children = vec![Vec::new(); live.objects().len()];
     for (index, object) in live.objects().iter().enumerate() {
         if let Some(parent) = object.parent {
             let Some(owner) = children.get_mut(parent) else {
                 return Err(crate::UiScriptError::Plan {
                     message: format!("live UI object {index} has unavailable parent {parent}"),
-                }
-                .into());
+                });
             };
             owner.push(index);
         }

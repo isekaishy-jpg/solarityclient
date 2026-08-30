@@ -95,6 +95,24 @@ fn register_glue_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    // The executable owns the current scene name; GlueParent.lua mirrors it
+    // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
+    let current_screen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let setter_state = current_screen.clone();
+    globals.raw_set(
+        "SetCurrentScreen",
+        lua.create_function(move |lua, value: Value| {
+            let value = lua
+                .coerce_string(value)?
+                .map_or_else(String::new, |value| value.to_string_lossy());
+            *setter_state.borrow_mut() = value;
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "GetCurrentScreen",
+        lua.create_function(move |_, ()| Ok(current_screen.borrow().clone()))?,
+    )?;
     let character_count = environment.initial_character_count();
     globals.raw_set(
         "GetNumCharacters",

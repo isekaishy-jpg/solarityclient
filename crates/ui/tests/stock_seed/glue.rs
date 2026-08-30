@@ -10,6 +10,47 @@ use solarity_ui::{
 
 use crate::support::{Fixture, FixtureFile};
 
+/// Startup publishes the two stock lifecycle events before the first snapshot.
+#[test]
+fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Lifecycle.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Lifecycle.xml",
+            bytes: br#"<Ui><Frame name="GlueParent"><Scripts>
+  <OnLoad>
+    LIFECYCLE = ""
+    self:RegisterEvent("FRAMES_LOADED")
+    self:RegisterEvent("SET_GLUE_SCREEN")
+  </OnLoad>
+  <OnEvent>
+    if event == "FRAMES_LOADED" then
+      LIFECYCLE = LIFECYCLE .. "FRAMES_LOADED;"
+    elseif event == "SET_GLUE_SCREEN" then
+      SetCurrentScreen(arg1)
+      LIFECYCLE = LIFECYCLE .. "SET_GLUE_SCREEN:" .. arg1 .. ";"
+    end
+  </OnEvent>
+</Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let globals = manager.bundle().lua().globals();
+
+    assert_eq!(
+        globals.get::<String>("LIFECYCLE")?,
+        "FRAMES_LOADED;SET_GLUE_SCREEN:login;"
+    );
+    let current_screen = globals.get::<mlua::Function>("GetCurrentScreen")?;
+    assert_eq!(current_screen.call::<String>(())?, "login");
+    Ok(())
+}
+
 /// The manager retains executable state after temporary XML plans are gone.
 #[test]
 fn glue_manager_owns_executed_login_ui() -> Result<(), Box<dyn Error>> {
@@ -206,13 +247,14 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
         FixtureFile {
             path: "Interface\\GlueXML\\Events.xml",
             bytes: br#"<Ui><Frame name="Root"><Layers>
-  <Layer><Texture name="Visual"/></Layer>
+  <Layer><Texture name="Visual" file="Interface\Glues\Visual"/></Layer>
 </Layers><Frames>
   <Frame name="Child"><Scripts>
     <OnLoad>self:RegisterEvent("set_glue_screen")</OnLoad>
     <OnEvent>
       local screen, sequence = ...
       assert(event == "SET_GLUE_SCREEN" and arg1 == screen and arg2 == sequence and arg3 == nil)
+      if screen == "login" and sequence == nil then return end
       EVENT_ORDER = EVENT_ORDER .. self:GetName() .. ":" .. screen .. ":" .. sequence .. ";"
     </OnEvent>
   </Scripts></Frame>
@@ -221,6 +263,8 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
   <OnEvent>
     local screen, sequence = ...
     assert(event == "SET_GLUE_SCREEN" and arg1 == screen and arg2 == sequence and arg3 == nil)
+    if screen == "login" and sequence == nil then return end
+    Visual:Hide()
     EVENT_ORDER = EVENT_ORDER .. self:GetName() .. ":" .. screen .. ":" .. sequence .. ";"
   </OnEvent>
 </Scripts></Frame></Ui>"#,
@@ -237,10 +281,12 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
         UiEventArgument::String("login".to_owned()),
         UiEventArgument::Integer(7),
     ])?;
+    assert_eq!(manager.presentation().member_count(), 1);
 
     let dispatch = manager.dispatch_event("set_glue_screen", &payload)?;
 
     assert_eq!(dispatch.subscriber_count(), 2);
+    assert_eq!(manager.presentation().member_count(), 0);
     let globals = manager.bundle().lua().globals();
     assert_eq!(
         globals.get::<String>("EVENT_ORDER")?,

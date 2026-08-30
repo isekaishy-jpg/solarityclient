@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::UiScriptError;
+use crate::{UiLayoutError, UiScriptError};
 
 /// Result of delivering one canonical UI event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,4 +42,7 @@ pub enum UiEventError {
     /// A subscribed Lua handler failed.
     #[error(transparent)]
     Script(#[from] UiScriptError),
+    /// A handler left live anchors in an invalid geometry state.
+    #[error(transparent)]
+    Layout(#[from] UiLayoutError),
 }
