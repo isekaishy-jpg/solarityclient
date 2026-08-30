@@ -29,9 +29,10 @@ pub use device::{
     M2SampledTexture, M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode, M2TextureSet,
     M2TextureSetHandle, M2TextureSetInfo, TerrainMaterialHandle, TerrainMaterialResourceInfo,
     TerrainMeshHandle, TerrainMeshResourceInfo, TerrainPipelineHandle, TerrainPipelineInfo,
-    UiFrameReport, UiMeshHandle, UiMeshResourceInfo, UiPipelineHandle, UiPipelineInfo,
-    UiPreparedDraw, UiSampledTexture, UiSamplerHandle, UiSamplerInfo, UiTextureSetHandle,
-    UiTextureSetInfo, VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport,
+    TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo, UiFrameReport, UiMeshHandle,
+    UiMeshResourceInfo, UiPipelineHandle, UiPipelineInfo, UiPreparedDraw, UiSampledTexture,
+    UiSamplerHandle, UiSamplerInfo, UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap,
+    VulkanError, VulkanRenderer, VulkanReport,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

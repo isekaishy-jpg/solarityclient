@@ -40,6 +40,19 @@ impl Default for TerrainPipelineRegistry {
 }
 
 impl TerrainPipelineRegistry {
+    pub(in crate::device) fn material_set_layout(
+        &mut self,
+        device: &Device,
+    ) -> Result<vk::DescriptorSetLayout, VulkanError> {
+        self.layout.ensure_created(device)?;
+        self.layout.descriptor_set(1).ok_or_else(|| {
+            VulkanError::operation(
+                "access terrain material descriptor layout",
+                "layout is unavailable",
+            )
+        })
+    }
+
     pub(in crate::device) fn prepare(
         &mut self,
         device: &Device,

@@ -114,6 +114,12 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit terrain pipeline handle.
     #[error("terrain pipeline registry exhausted its 32-bit handle space")]
     TerrainPipelineCapacity,
+    /// A terrain descriptor references an atlas owned by another renderer.
+    #[error("terrain texture set references an unknown material atlas handle")]
+    UnknownTerrainMaterialHandle,
+    /// The renderer cannot assign another stable terrain texture-set handle.
+    #[error("terrain texture-set registry exhausted its 32-bit handle space")]
+    TerrainTextureSetCapacity,
     /// The stock M2 shader pair could not be translated to the pinned target.
     #[error("M2 shader preparation failed: {message}")]
     M2Shader {

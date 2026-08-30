@@ -26,6 +26,7 @@ mod vulkan_selection;
 mod vulkan_terrain_material;
 mod vulkan_terrain_mesh;
 mod vulkan_terrain_pipeline;
+mod vulkan_terrain_texture_set;
 mod vulkan_texture;
 mod vulkan_ui_draw;
 mod vulkan_ui_frame;
@@ -48,6 +49,9 @@ pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_terrain_material::{TerrainMaterialHandle, TerrainMaterialResourceInfo};
 pub use vulkan_terrain_mesh::{TerrainMeshHandle, TerrainMeshResourceInfo};
 pub use vulkan_terrain_pipeline::{TerrainPipelineHandle, TerrainPipelineInfo};
+pub use vulkan_terrain_texture_set::{
+    TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo,
+};
 pub use vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError,
 };

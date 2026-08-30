@@ -70,6 +70,18 @@ impl TerrainMaterialRegistry {
             .map(|resource| resource.info)
     }
 
+    pub(in crate::device) fn view(
+        &self,
+        handle: TerrainMaterialHandle,
+    ) -> Option<ash::vk::ImageView> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.image.view())
+    }
+
     pub(in crate::device) fn destroy(
         &mut self,
         device: &ash::Device,

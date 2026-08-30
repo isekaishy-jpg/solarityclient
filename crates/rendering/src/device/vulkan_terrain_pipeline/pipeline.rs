@@ -63,6 +63,10 @@ impl TerrainPipelineLayout {
         self.handle
     }
 
+    pub(super) fn descriptor_set(&self, index: usize) -> Option<vk::DescriptorSetLayout> {
+        self.descriptor_sets.get(index).copied()
+    }
+
     pub(super) fn destroy(&mut self, device: &Device) {
         // SAFETY: All handles are uniquely owned by this idle renderer.
         unsafe {

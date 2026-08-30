@@ -6,11 +6,13 @@ use std::error::Error;
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, Locale, MapCatalog,
+    TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
-    TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrustum, WorldScreenWindow,
+    BlpColorSpace, TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
+    TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrustum,
+    WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -25,6 +27,7 @@ use crate::support::{Fixture, FixtureFile};
 fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
     let wdt = terrain_wdt()?;
+    let grass = solid_raw3_blp(2, 2, 0xFF00_FF00);
     let adt = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
         .add_texture("tileset/fixture/grass.blp")
@@ -43,6 +46,10 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             path: "World\\Maps\\Northrend\\Northrend_32_32.adt",
             bytes: &adt,
         },
+        FixtureFile {
+            path: "tileset\\fixture\\grass.blp",
+            bytes: &grass,
+        },
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -51,6 +58,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     let map = TerrainMap::load(&mut store, definition)?;
     let tile_index = TerrainTileIndex::new(32, 32).ok_or("fixture tile is invalid")?;
     let tile = map.load_tile(&mut store, tile_index)?;
+    let grass_path = AssetPath::new("tileset\\fixture\\grass.blp")?;
+    let grass_source = BlpTextureSource::load(&mut store, &grass_path)?;
     let chunk_index =
         solarity_asset::TerrainChunkIndex::new(0, 0).ok_or("fixture chunk is invalid")?;
 
@@ -160,6 +169,19 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         material_info.byte_count(),
         TERRAIN_MATERIAL_ATLAS_BYTE_COUNT
     );
+    let grass_texture = renderer.upload_blp_texture(&grass_source, BlpColorSpace::Srgb)?;
+    let texture_set = TerrainTextureSet::new(material, &[grass_texture])?;
+    let texture_sets =
+        renderer.prepare_terrain_texture_sets(&[texture_set.clone(), texture_set.clone()])?;
+    assert_eq!(texture_sets.len(), 2);
+    assert_eq!(texture_sets[0], texture_sets[1]);
+    assert_eq!(
+        renderer
+            .terrain_texture_set_info(texture_sets[0])
+            .ok_or("terrain texture set is absent")?
+            .layer_count(),
+        TerrainLayerCount::One
+    );
     for layer_count in [
         TerrainLayerCount::One,
         TerrainLayerCount::Two,
@@ -218,4 +240,31 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
     block.extend_from_slice(value.as_bytes());
     block.push(0);
     offset
+}
+
+fn solid_raw3_blp(width: u32, height: u32, color: u32) -> Vec<u8> {
+    const PIXEL_OFFSET: u32 = 148 + 256 * 4;
+
+    let byte_count = width.saturating_mul(height).saturating_mul(4);
+    let mut offsets = [0_u32; 16];
+    let mut sizes = [0_u32; 16];
+    offsets[0] = PIXEL_OFFSET;
+    sizes[0] = byte_count;
+    let mut bytes = Vec::with_capacity((PIXEL_OFFSET + byte_count) as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[3, 8, 8, 0]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    for offset in offsets {
+        bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+    for size in sizes {
+        bytes.extend_from_slice(&size.to_le_bytes());
+    }
+    bytes.resize(PIXEL_OFFSET as usize, 0);
+    for _pixel in 0..width.saturating_mul(height) {
+        bytes.extend_from_slice(&color.to_le_bytes());
+    }
+    bytes
 }

@@ -26,6 +26,9 @@ use crate::device::vulkan_terrain_mesh::{
 use crate::device::vulkan_terrain_pipeline::{
     TerrainPipelineHandle, TerrainPipelineInfo, TerrainPipelineRegistry,
 };
+use crate::device::vulkan_terrain_texture_set::{
+    TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo, TerrainTextureSetRegistry,
+};
 use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
     BlpTextureUploadError, TextureUploadContext,
@@ -121,6 +124,7 @@ pub struct VulkanRenderer {
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
+    terrain_texture_sets: TerrainTextureSetRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
@@ -170,6 +174,7 @@ impl VulkanRenderer {
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
+            terrain_texture_sets: TerrainTextureSetRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
@@ -375,6 +380,38 @@ impl VulkanRenderer {
         handle: TerrainPipelineHandle,
     ) -> Option<TerrainPipelineInfo> {
         self.terrain_pipelines.info(handle)
+    }
+
+    /// Creates persistent terrain atlas/diffuse descriptor sets in one batch.
+    ///
+    /// Unique requests share a descriptor set, and pool capacity is derived
+    /// from this call's exact new-set count rather than a guessed global limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign image handles, handle exhaustion,
+    /// sampler/layout creation, pool creation, or descriptor allocation failure.
+    pub fn prepare_terrain_texture_sets(
+        &mut self,
+        requested: &[TerrainTextureSet],
+    ) -> Result<Vec<TerrainTextureSetHandle>, VulkanError> {
+        let layout = self.terrain_pipelines.material_set_layout(&self.device)?;
+        self.terrain_texture_sets.prepare(
+            &self.device,
+            layout,
+            &self.terrain_materials,
+            &self.blp_textures,
+            requested,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live terrain texture set.
+    #[must_use]
+    pub fn terrain_texture_set_info(
+        &self,
+        handle: TerrainTextureSetHandle,
+    ) -> Option<TerrainTextureSetInfo> {
+        self.terrain_texture_sets.info(handle)
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.
@@ -830,6 +867,7 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         self.ui_frames.destroy(&self.device);
+        self.terrain_texture_sets.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);
