@@ -89,6 +89,18 @@ impl DecodedM2Model {
         self.blob.name.as_deref()
     }
 
+    /// Returns every exact build-12340 model behavior flag.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.blob.flags
+    }
+
+    /// Reports whether stock substitutes shader combiners from the trailing table.
+    #[must_use]
+    pub const fn uses_texture_combiners(&self) -> bool {
+        self.blob.flags & 0x8 != 0
+    }
+
     /// Returns the exact decoded build-12340 vertices.
     #[must_use]
     pub fn vertices(&self) -> &[M2Vertex] {
@@ -141,6 +153,12 @@ impl DecodedM2Model {
     #[must_use]
     pub fn texture_animation_lookup(&self) -> &[u16] {
         &self.blob.texture_animation_lookup
+    }
+
+    /// Returns the optional stock texture-combiner selectors in table order.
+    #[must_use]
+    pub fn texture_combiner_combos(&self) -> &[u16] {
+        &self.blob.texture_combiner_combos
     }
 
     /// Returns the number of decoded model bones.

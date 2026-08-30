@@ -13,7 +13,7 @@ use wow_m2::chunks::material::{
 use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2TextureType};
 use wow_m2::chunks::vertex::M2Vertex as RawM2Vertex;
 use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
-use wow_m2::header::M2Header;
+use wow_m2::header::{M2Header, M2ModelFlags};
 use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
 
@@ -104,6 +104,35 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
     assert_eq!(model.texture_lookup(), &[0, 1]);
     assert_eq!(model.texture_units(), &[0, 1]);
+    Ok(())
+}
+
+/// Build-12340's optional shader-combiner table retains its exact `u16` values.
+#[test]
+fn m2_texture_combiner_table_is_preserved() -> Result<(), Box<dyn Error>> {
+    let model = m2_bytes_with_texture_combiners("Combiners", 1, &[0, 4, 7])?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Solarity.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Solarity00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Solarity.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(model.flags() & 0x8, 0x8);
+    assert!(model.uses_texture_combiners());
+    assert_eq!(model.texture_combiner_combos(), &[0, 4, 7]);
     Ok(())
 }
 
@@ -286,12 +315,34 @@ fn extended_triangle_start_loads_large_hd_profile() -> Result<(), Box<dyn Error>
 
 /// Serializes a deterministic legacy MD20 fixture with raw influence sentinels.
 pub(crate) fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
+    m2_bytes_inner(name, skin_profiles, &[])
+}
+
+/// Serializes a model carrying WotLK's optional trailing combiner table.
+fn m2_bytes_with_texture_combiners(
+    name: &str,
+    skin_profiles: u32,
+    combiners: &[u16],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    m2_bytes_inner(name, skin_profiles, combiners)
+}
+
+/// Serializes a deterministic legacy MD20 fixture with optional combiners.
+fn m2_bytes_inner(
+    name: &str,
+    skin_profiles: u32,
+    combiners: &[u16],
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
         name: Some(name.to_owned()),
         ..M2Model::default()
     };
     model.header.num_skin_profiles = Some(skin_profiles);
+    if !combiners.is_empty() {
+        model.header.flags |= M2ModelFlags::USE_TEXTURE_COMBINERS;
+        model.header.texture_combiner_combos = Some(M2Array::new(0, 0));
+    }
     let texture_name = b"Creature\\Solarity\\Solarity.blp";
     model.textures = vec![
         RawTexture {
@@ -349,6 +400,16 @@ pub(crate) fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dy
     bytes[texture_offset + 12..texture_offset + 16].copy_from_slice(&filename_offset.to_le_bytes());
     bytes.extend_from_slice(texture_name);
     bytes.push(0);
+    if !combiners.is_empty() {
+        // The dependency writer emits the optional header pair but not its
+        // pointed-to table, so complete that exact build-12340 layout here.
+        let combiner_offset = u32::try_from(bytes.len())?;
+        bytes[0x130..0x134].copy_from_slice(&u32::try_from(combiners.len())?.to_le_bytes());
+        bytes[0x134..0x138].copy_from_slice(&combiner_offset.to_le_bytes());
+        for combiner in combiners {
+            bytes.extend_from_slice(&combiner.to_le_bytes());
+        }
+    }
     Ok(bytes)
 }
 

@@ -318,6 +318,7 @@ impl M2SkinProfile {
 #[derive(Debug)]
 pub(super) struct ModelBlob {
     pub(super) name: Option<String>,
+    pub(super) flags: u32,
     pub(super) vertices: Vec<M2Vertex>,
     pub(super) textures: Vec<M2Texture>,
     pub(super) materials: Vec<M2Material>,
@@ -326,6 +327,7 @@ pub(super) struct ModelBlob {
     pub(super) texture_units: Vec<u16>,
     pub(super) transparency_lookup: Vec<u16>,
     pub(super) texture_animation_lookup: Vec<u16>,
+    pub(super) texture_combiner_combos: Vec<u16>,
     pub(super) bone_count: usize,
     pub(super) animation_count: usize,
 }
@@ -337,6 +339,8 @@ impl ModelBlob {
         bytes: &[u8],
         model: M2Model,
     ) -> Result<Self, AssetError> {
+        let flags = model.header.flags.bits();
+        let texture_combiner_combos = decode_texture_combiner_combos(path, bytes, &model)?;
         let mut vertices = Vec::with_capacity(model.vertices.len());
         for vertex in model.vertices {
             let texture_coordinates2 = vertex.tex_coords2.ok_or_else(|| {
@@ -372,6 +376,7 @@ impl ModelBlob {
 
         Ok(Self {
             name: model.name,
+            flags,
             vertices,
             textures,
             materials,
@@ -380,10 +385,48 @@ impl ModelBlob {
             texture_units: model.raw_data.texture_units,
             transparency_lookup: model.raw_data.transparency_lookup_table,
             texture_animation_lookup: model.raw_data.texture_animation_lookup,
+            texture_combiner_combos,
             bone_count: model.bones.len(),
             animation_count: model.animations.len(),
         })
     }
+}
+
+/// Reads WotLK's optional trailing `u16` combiner table exactly as `M2Data` stores it.
+fn decode_texture_combiner_combos(
+    path: &AssetPath,
+    bytes: &[u8],
+    model: &M2Model,
+) -> Result<Vec<u16>, AssetError> {
+    let Some(array) = model.header.texture_combiner_combos else {
+        return Ok(Vec::new());
+    };
+    let count = array.count as usize;
+    let offset = array.offset as usize;
+    let byte_count = count.checked_mul(size_of::<u16>()).ok_or_else(|| {
+        model_decode(
+            path,
+            "texture-combiner table byte count overflows".to_owned(),
+        )
+    })?;
+    let end = offset.checked_add(byte_count).ok_or_else(|| {
+        model_decode(
+            path,
+            "texture-combiner table byte range overflows".to_owned(),
+        )
+    })?;
+    let raw = bytes.get(offset..end).ok_or_else(|| {
+        model_decode(
+            path,
+            "texture-combiner table exceeds the M2 file".to_owned(),
+        )
+    })?;
+    Ok(raw
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|value| u16::from_le_bytes([value[0], value[1]]))
+        .collect())
 }
 
 /// Converts one texture declaration and validates its nested archive path.
