@@ -22,6 +22,7 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     let report = application.report();
 
     assert_eq!(report.archive_count(), 10);
+    assert_eq!(report.addon_count(), 1);
     assert_eq!(report.cpu_worker_count(), 2);
     assert_eq!(report.network_worker_count(), 1);
     assert_ne!(report.window_id(), 0);

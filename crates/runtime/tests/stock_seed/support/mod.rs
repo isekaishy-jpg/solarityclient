@@ -39,6 +39,12 @@ impl ClientFixture {
         for archive in REQUIRED_ARCHIVES {
             build_archive(&root.join("Data").join(archive), archive)?;
         }
+        let addon_root = root.join("Interface/AddOns/Blizzard_RuntimeFixture");
+        fs::create_dir_all(&addon_root)?;
+        fs::write(
+            addon_root.join("Blizzard_RuntimeFixture.pub"),
+            b"signature marker",
+        )?;
         Ok(Self { root })
     }
 
@@ -73,6 +79,10 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
         builder = builder.add_file_data(
             b"Bootstrap.xml\nAfter.lua\n".to_vec(),
             "Interface\\GlueXML\\GlueXML.toc",
+        );
+        builder = builder.add_file_data(
+            b"## Interface: 30300\n## LoadOnDemand: 1\nRuntime.lua\n".to_vec(),
+            "Interface\\AddOns\\Blizzard_RuntimeFixture\\Blizzard_RuntimeFixture.toc",
         );
         builder = builder.add_file_data(
             br#"<Ui><Frame name="GlueBootstrap" setAllPoints="true"><Layers>

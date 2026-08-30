@@ -32,6 +32,7 @@ fn main() -> ExitCode {
     let glue = report.glue();
     info!(
         archive_count = report.archive_count(),
+        addon_count = report.addon_count(),
         cpu_workers = report.cpu_worker_count(),
         network_workers = report.network_worker_count(),
         window_id = report.window_id(),

@@ -65,6 +65,22 @@ pub enum AssetError {
         /// Filesystem context.
         message: String,
     },
+    /// The stock loose `Interface\\AddOns` directory could not be enumerated.
+    #[error("failed to enumerate client AddOn directory {path}: {message}")]
+    AddonEnumeration {
+        /// Concrete install-relative directory being enumerated.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
+    /// A selected loose AddOn file could not be read.
+    #[error("failed to read loose client AddOn file {path}: {message}")]
+    AddonRead {
+        /// Concrete install-relative file selected by the AddOn stack.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
     /// An archive was present but could not be opened.
     #[error("failed to open client archive {path}: {message}")]
     ArchiveOpen {

@@ -37,6 +37,7 @@ impl AssetRead {
 /// millions of filenames. Runtime loading can later give this owner a dedicated
 /// asset thread without changing the public archive model.
 pub struct AssetStore {
+    pub(super) data_root: crate::archive::ClientDataRoot,
     locale: Locale,
     archives: Vec<MountedArchive>,
 }
@@ -49,13 +50,18 @@ impl AssetStore {
     /// Returns [`AssetError::ArchiveOpen`] when any present stock archive is
     /// corrupt or unsupported.
     pub fn mount(catalog: ArchiveCatalog) -> Result<Self, AssetError> {
+        let data_root = catalog.data_root().clone();
         let locale = catalog.locale();
         let descriptors = catalog.into_descriptors();
         let mut archives = Vec::with_capacity(descriptors.len());
         for descriptor in descriptors {
             archives.push(MountedArchive::open(descriptor)?);
         }
-        Ok(Self { locale, archives })
+        Ok(Self {
+            data_root,
+            locale,
+            archives,
+        })
     }
 
     /// Returns the locale whose archive set and localized tables are mounted.

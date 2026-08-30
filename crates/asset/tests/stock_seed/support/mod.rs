@@ -69,6 +69,25 @@ impl Fixture {
     pub(crate) fn data_root(&self) -> PathBuf {
         self.root.join("Data")
     }
+
+    /// Returns the generated client installation directory.
+    pub(crate) fn install_root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Writes one loose install-relative file for explicit source-stack tests.
+    pub(crate) fn write_loose_file(
+        &self,
+        relative_path: impl AsRef<Path>,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn Error>> {
+        let path = self.root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, bytes)?;
+        Ok(())
+    }
 }
 
 impl Drop for Fixture {

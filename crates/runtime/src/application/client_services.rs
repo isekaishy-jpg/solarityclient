@@ -8,11 +8,11 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
-use solarity_network::{RealmEntry, WorldAddonManifest};
+use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 use solarity_ui::{
-    GlueManager, GlueStartupReport, UiEventArgument, UiEventPayload, UiGlueNetworkAction,
-    UiGlueNetworkStatus,
+    AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
+    UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
 };
 
 use crate::application::ApplicationError;
@@ -39,6 +39,7 @@ pub(crate) struct ClientServices {
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
     realm_metadata: RuntimeRealmMetadata,
+    addon_manifest: WorldAddonManifest,
     realm_directory_published: bool,
     world_session_published: bool,
     pending_realm_id: Option<u32>,
@@ -52,12 +53,32 @@ impl ClientServices {
     /// Constructs services in dependency order after all configuration validates.
     pub(crate) fn start(
         configuration: &RuntimeConfiguration,
-    ) -> Result<(Self, usize), ApplicationError> {
+    ) -> Result<(Self, usize, usize), ApplicationError> {
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
         let mut assets = AssetStore::mount(catalog)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
+        let addon_catalog = AddonCatalog::discover(&mut assets)?;
+        let addon_manifest = WorldAddonManifest::new(
+            addon_catalog
+                .addons()
+                .iter()
+                .map(|addon| {
+                    WorldAddon::new(
+                        addon.name(),
+                        addon.is_initially_enabled(),
+                        if addon.is_signed() {
+                            STANDARD_ADDON_CRC
+                        } else {
+                            0
+                        },
+                        0,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        let addon_count = addon_manifest.addons().len();
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
         let mut platform = SdlPlatform::start(configuration.window())?;
@@ -100,6 +121,7 @@ impl ClientServices {
                 login,
                 world,
                 realm_metadata,
+                addon_manifest,
                 realm_directory_published: false,
                 world_session_published: false,
                 pending_realm_id: None,
@@ -109,6 +131,7 @@ impl ClientServices {
                 network_shutdown_timeout: configuration.network_shutdown_timeout(),
             },
             archive_count,
+            addon_count,
         ))
     }
 
@@ -366,7 +389,7 @@ impl ClientServices {
         let selected = SelectedRealmFacts::new(&self.realm_metadata, &realm);
         match self
             .world
-            .begin(runtime, authenticated, realm, WorldAddonManifest::empty())
+            .begin(runtime, authenticated, realm, self.addon_manifest.clone())
         {
             Ok(()) => {
                 self.pending_realm_id = None;

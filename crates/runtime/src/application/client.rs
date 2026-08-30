@@ -4,9 +4,9 @@ use thiserror::Error;
 
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
-use solarity_network::RealmDirectory;
+use solarity_network::{AddonManifestError, RealmDirectory};
 use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
-use solarity_ui::{GlueError, GlueStartupReport, UiEventError, UiRenderError};
+use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError, UiRenderError};
 
 use crate::application::client_services::ClientServices;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
@@ -21,6 +21,12 @@ pub enum ApplicationError {
     /// Client archive discovery, mount, or validation failed.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// AddOn discovery or TOC metadata validation failed.
+    #[error(transparent)]
+    AddonCatalog(#[from] AddonCatalogError),
+    /// AddOn identities could not be represented in world authentication.
+    #[error(transparent)]
+    AddonManifest(#[from] AddonManifestError),
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),
@@ -54,6 +60,7 @@ pub enum ApplicationError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StartupReport {
     archive_count: usize,
+    addon_count: usize,
     cpu_worker_count: usize,
     network_worker_count: usize,
     window_id: u32,
@@ -67,6 +74,12 @@ impl StartupReport {
     #[must_use]
     pub const fn archive_count(self) -> usize {
         self.archive_count
+    }
+
+    /// Returns the number of AddOn identities available to UI and auth.
+    #[must_use]
+    pub const fn addon_count(self) -> usize {
+        self.addon_count
     }
 
     /// Returns the configured CPU worker count.
@@ -122,7 +135,7 @@ impl ClientApplication {
     pub fn start(configuration: RuntimeConfiguration) -> Result<Self, ApplicationError> {
         let cpu_worker_count = configuration.cpu_pool().worker_count().get();
         let network_worker_count = configuration.network_workers().get();
-        let (services, archive_count) = ClientServices::start(&configuration)?;
+        let (services, archive_count, addon_count) = ClientServices::start(&configuration)?;
         let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
         let glue = services.glue_report();
 
@@ -130,6 +143,7 @@ impl ClientApplication {
             services,
             report: StartupReport {
                 archive_count,
+                addon_count,
                 cpu_worker_count,
                 network_worker_count,
                 window_id,

@@ -91,7 +91,7 @@ impl WorldAddon {
     }
 }
 
-/// Ordered enabled add-ons reported during world authentication.
+/// Ordered discovered add-ons and their enablement reported during world authentication.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorldAddonManifest {
     addons: Vec<WorldAddon>,

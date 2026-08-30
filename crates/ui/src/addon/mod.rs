@@ -5,3 +5,10 @@
 //! through the asset facade so load order stays consistent with stock.
 
 mod add_ons;
+mod catalog;
+mod error;
+mod toc;
+
+pub use add_ons::{AddonCompatibility, AddonDefinition};
+pub use catalog::{AddonCatalog, STANDARD_ADDON_CRC, STOCK_INTERFACE_VERSION};
+pub use error::AddonCatalogError;

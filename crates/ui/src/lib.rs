@@ -16,6 +16,10 @@ mod widget;
 mod world;
 mod xml;
 
+pub use addon::{
+    AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
+    STOCK_INTERFACE_VERSION,
+};
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,

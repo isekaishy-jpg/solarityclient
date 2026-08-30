@@ -5,6 +5,7 @@
 //! this module must not invent a missing-file fallback.
 
 mod file_cache;
+mod filestack_addons;
 mod filestack_streaming;
 mod filestack_win32;
 
