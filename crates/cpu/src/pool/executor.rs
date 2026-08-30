@@ -73,9 +73,12 @@ impl CpuExecutor {
                 Ok(value) => TaskOutcome::Completed(value),
                 Err(_panic_payload) => TaskOutcome::Panicked,
             };
-            let _completion_observed = sender.send(outcome);
-            finished_by_worker.store(true, Ordering::Release);
+            // Completion releases admission before publishing the result. A
+            // joining observer must never receive the value while a lifecycle
+            // snapshot can still count its work as running or queued.
             drop(lease);
+            finished_by_worker.store(true, Ordering::Release);
+            let _completion_observed = sender.send(outcome);
         });
 
         Ok(CpuTask::new(receiver, finished))
