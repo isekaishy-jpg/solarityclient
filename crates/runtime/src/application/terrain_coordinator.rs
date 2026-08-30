@@ -1,10 +1,12 @@
 //! Main-thread terrain map, tile residency, and explicit frustum selection.
 
 use solarity_asset::{
-    AssetError, AssetStoreHandle, DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex,
+    AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
+    DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{TerrainChunkMeshPlan, WorldCameraError, WorldFrustum};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Failure while synchronizing authored terrain with authoritative world state.
@@ -64,16 +66,18 @@ pub enum RuntimeTerrainPoll {
 pub struct RuntimeTerrainCoordinator {
     assets: AssetStoreHandle,
     maps: MapCatalog,
+    textures: BlpTextureCache,
     active: Option<ResidentTerrainMap>,
 }
 
 impl RuntimeTerrainCoordinator {
     /// Creates an empty terrain owner over the process-wide asset stack.
     #[must_use]
-    pub const fn new(assets: AssetStoreHandle, maps: MapCatalog) -> Self {
+    pub fn new(assets: AssetStoreHandle, maps: MapCatalog) -> Self {
         Self {
             assets,
             maps,
+            textures: BlpTextureCache::new(),
             active: None,
         }
     }
@@ -94,6 +98,7 @@ impl RuntimeTerrainCoordinator {
     ) -> Result<RuntimeTerrainPoll, RuntimeTerrainError> {
         let Some(world) = world else {
             self.active = None;
+            self.textures.collect_unused();
             return Ok(RuntimeTerrainPoll::Idle);
         };
         let map_id = world.map_id().value();
@@ -107,6 +112,9 @@ impl RuntimeTerrainCoordinator {
                 terrain,
                 tile: None,
             });
+            // A map replacement releases its tile before collecting cache-only
+            // texture sources. Shared sources remain available without reload.
+            self.textures.collect_unused();
         }
         let active = self
             .active
@@ -134,7 +142,13 @@ impl RuntimeTerrainCoordinator {
         let decoded = active
             .terrain
             .load_tile(&mut self.assets.borrow_mut(), tile_index)?;
-        active.tile = Some(ResidentTerrainTile::prepare(decoded));
+        let resident = ResidentTerrainTile::prepare(
+            decoded,
+            &mut self.textures,
+            &mut self.assets.borrow_mut(),
+        )?;
+        active.tile = Some(resident);
+        self.textures.collect_unused();
         Ok(RuntimeTerrainPoll::TileLoaded {
             map_id,
             tile: tile_index,
@@ -154,6 +168,18 @@ impl RuntimeTerrainCoordinator {
             .as_ref()
             .and_then(|active| active.tile.as_ref())
             .map(|tile| &tile.decoded)
+    }
+
+    /// Returns the resident tile's texture table in exact MTEX index order.
+    ///
+    /// Each source retains the archive selected by ordinary patch precedence,
+    /// so an identically named HD replacement requires no alternate code path.
+    #[must_use]
+    pub fn resident_texture_sources(&self) -> Option<&[Arc<BlpTextureSource>]> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| tile.textures.as_slice())
     }
 
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
@@ -181,6 +207,7 @@ impl RuntimeTerrainCoordinator {
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
+        self.textures.collect_unused();
     }
 }
 
@@ -197,17 +224,33 @@ impl ResidentTerrainMap {
 
 struct ResidentTerrainTile {
     decoded: DecodedTerrainTile,
+    textures: Vec<Arc<BlpTextureSource>>,
     meshes: Vec<TerrainChunkMeshPlan>,
 }
 
 impl ResidentTerrainTile {
-    fn prepare(decoded: DecodedTerrainTile) -> Self {
+    fn prepare(
+        decoded: DecodedTerrainTile,
+        cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<Self, AssetError> {
+        // Resolve each MTEX entry exactly once before accepting the tile. This
+        // preserves authored layer indices while avoiding partial residency.
+        let textures = decoded
+            .textures()
+            .iter()
+            .map(|path| cache.load(store, path))
+            .collect::<Result<Vec<_>, _>>()?;
         let meshes = decoded
             .chunks()
             .iter()
             .map(|chunk| TerrainChunkMeshPlan::prepare(&decoded, chunk.index()))
             .collect();
-        Self { decoded, meshes }
+        Ok(Self {
+            decoded,
+            textures,
+            meshes,
+        })
     }
 
     const fn index(&self) -> TerrainTileIndex {

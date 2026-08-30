@@ -174,7 +174,7 @@ fn wdbc(fields: &[u32], strings: &[u8]) -> Vec<u8> {
 }
 
 /// Builds a two-pixel BLP2/RAW3 texture for the asset-backed startup frame.
-fn bootstrap_texture_blp() -> Vec<u8> {
+pub(crate) fn bootstrap_texture_blp() -> Vec<u8> {
     const HEADER_SIZE: u32 = 148;
     const PALETTE_SIZE: u32 = 256 * 4;
     const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;

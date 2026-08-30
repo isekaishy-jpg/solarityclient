@@ -16,7 +16,7 @@ use wow_wdt::chunks::MwmoChunk;
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
-use crate::support::ClientFixture;
+use crate::support::{ClientFixture, bootstrap_texture_blp};
 
 /// World entry admits only the exact player ADT and prepares each MCNK once.
 #[test]
@@ -32,6 +32,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         ("DBFilesClient\\Map.dbc", &map_table),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
         ("World\\Maps\\Northrend\\Northrend_30_21.adt", &adt),
+        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -57,6 +58,12 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         terrain.resident_tile().map(|tile| tile.chunks().len()),
         Some(256)
     );
+    let textures = terrain
+        .resident_texture_sources()
+        .ok_or("resident tile omitted its MTEX sources")?;
+    assert_eq!(textures.len(), 1);
+    assert_eq!(textures[0].path().as_str(), "TILESET\\FIXTURE\\GRASS.BLP");
+    assert_eq!(textures[0].mip_dimensions(0), Some((2, 1)));
     assert_eq!(
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::Current { map_id: 571, tile }
@@ -75,6 +82,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
 
     assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
     assert!(terrain.active_map().is_none());
+    assert!(terrain.resident_texture_sources().is_none());
     Ok(())
 }
 
