@@ -39,8 +39,9 @@ pub use model::{
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
 pub use terrain::{
-    DecodedTerrainTile, TERRAIN_ALPHA_MAP_BYTE_COUNT, TERRAIN_ALPHA_MAP_WIDTH, TerrainAlphaMap,
-    TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement, TerrainMap, TerrainSoundEmitter,
+    DecodedTerrainTile, TERRAIN_ALPHA_MAP_BYTE_COUNT, TERRAIN_ALPHA_MAP_WIDTH,
+    TERRAIN_SHADOW_MAP_BYTE_COUNT, TERRAIN_SHADOW_MAP_WIDTH, TerrainAlphaMap, TerrainChunk,
+    TerrainChunkIndex, TerrainDoodadPlacement, TerrainMap, TerrainShadowMap, TerrainSoundEmitter,
     TerrainTextureLayer, TerrainTile, TerrainTileIndex, TerrainWorldModelPlacement,
 };
 pub use texture::{BlpTextureSource, DecodedBlpTexture};

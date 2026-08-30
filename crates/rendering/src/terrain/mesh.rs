@@ -2,8 +2,8 @@
 
 use glam::Vec3;
 use solarity_asset::{
-    DecodedTerrainTile, TERRAIN_ALPHA_MAP_BYTE_COUNT, TerrainChunk, TerrainChunkIndex,
-    TerrainTextureLayer, TerrainTileIndex,
+    DecodedTerrainTile, TERRAIN_ALPHA_MAP_BYTE_COUNT, TERRAIN_SHADOW_MAP_BYTE_COUNT, TerrainChunk,
+    TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex,
 };
 
 use crate::{WorldCameraError, WorldFrustum};
@@ -88,7 +88,7 @@ pub struct TerrainChunkMeshPlan {
     indices: Vec<u16>,
     layers: Vec<TerrainTextureLayer>,
     alpha_map_rgba: Option<Box<[u8; TERRAIN_ALPHA_MAP_BYTE_COUNT]>>,
-    shadow_bytes: Option<Box<[u8; 512]>>,
+    shadow_opacity: Option<Box<[u8; TERRAIN_SHADOW_MAP_BYTE_COUNT]>>,
     bounds: [[f32; 3]; 2],
 }
 
@@ -110,7 +110,9 @@ impl TerrainChunkMeshPlan {
             alpha_map_rgba: source
                 .alpha_map()
                 .map(|alpha_map| Box::new(*alpha_map.rgba())),
-            shadow_bytes: source.shadow_bytes().map(|bytes| Box::new(*bytes)),
+            shadow_opacity: source
+                .shadow_map()
+                .map(|shadow| Box::new(*shadow.opacity())),
             bounds,
         }
     }
@@ -151,10 +153,10 @@ impl TerrainChunkMeshPlan {
         self.alpha_map_rgba.as_deref()
     }
 
-    /// Returns the optional packed one-bit shadow map.
+    /// Returns the optional decoded R8 shadow-opacity plane.
     #[must_use]
-    pub fn shadow_bytes(&self) -> Option<&[u8; 512]> {
-        self.shadow_bytes.as_deref()
+    pub fn shadow_opacity(&self) -> Option<&[u8; TERRAIN_SHADOW_MAP_BYTE_COUNT]> {
+        self.shadow_opacity.as_deref()
     }
 
     /// Returns the world-space lower and upper corners used for chunk culling.

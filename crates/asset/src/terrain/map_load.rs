@@ -17,6 +17,7 @@ use super::map_chunk::{
     TERRAIN_CHUNK_VERTEX_COUNT, TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement,
     TerrainSoundEmitter, TerrainTextureLayer, TerrainWorldModelPlacement,
 };
+use super::map_shadow::TerrainShadowMap;
 
 const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
 const WDT_HAS_BIG_ALPHA: u32 = 0x0004;
@@ -280,6 +281,13 @@ fn decode_chunk(
                 ),
             )
         })?;
+    let shadow_map = decode_shadow_map(
+        path,
+        chunk_x,
+        chunk.header.size_shadow,
+        chunk.header.flags.value,
+        chunk.shadow.as_ref(),
+    )?;
     let heights = chunk
         .heights
         .ok_or_else(|| terrain_message(path, format!("MCNK {:?} omits MCVT", chunk_x)))?
@@ -360,25 +368,6 @@ fn decode_chunk(
         ));
     }
     let alpha_bytes = chunk.alpha.map_or_else(Vec::new, |alpha| alpha.data);
-    let shadow_bytes = chunk
-        .shadow
-        .map(|shadow| {
-            shadow
-                .shadow_map
-                .into_boxed_slice()
-                .try_into()
-                .map_err(|values: Box<[u8]>| {
-                    terrain_message(
-                        path,
-                        format!(
-                            "MCNK {:?} requires 512 shadow bytes; found {}",
-                            chunk_x,
-                            values.len()
-                        ),
-                    )
-                })
-        })
-        .transpose()?;
     let mut layers = Vec::with_capacity(layer_source.layers.len());
     for (layer_index, layer) in layer_source.layers.into_iter().enumerate() {
         if layer.texture_id as usize >= texture_count {
@@ -474,11 +463,49 @@ fn decode_chunk(
         vertex_colors_bgra,
         layers,
         alpha_map,
-        shadow_bytes,
+        shadow_map,
         doodad_references.to_vec(),
         world_model_references.to_vec(),
         sound_emitters,
     ))
+}
+
+fn decode_shadow_map(
+    path: &AssetPath,
+    chunk_index: TerrainChunkIndex,
+    declared_size: u32,
+    chunk_flags: u32,
+    shadow: Option<&wow_adt::McshChunk>,
+) -> Result<Option<TerrainShadowMap>, AssetError> {
+    // Stock treats sizeMCSH as authoritative because patched files can retain
+    // a stale flag and offset after removing the payload.
+    if declared_size == 0 {
+        return Ok(None);
+    }
+    if declared_size != 512 {
+        return Err(terrain_message(
+            path,
+            format!(
+                "MCNK {chunk_index:?} declares {} MCSH bytes; expected 512",
+                declared_size
+            ),
+        ));
+    }
+    let bytes = shadow
+        .ok_or_else(|| terrain_message(path, format!("MCNK {chunk_index:?} omits MCSH")))?
+        .shadow_map
+        .as_slice()
+        .try_into()
+        .map_err(|_source| {
+            terrain_message(
+                path,
+                format!("MCNK {chunk_index:?} MCSH does not contain 512 bytes"),
+            )
+        })?;
+    Ok(Some(TerrainShadowMap::from_packed(
+        bytes,
+        chunk_flags & 0x8000 != 0,
+    )))
 }
 
 fn validate_references(

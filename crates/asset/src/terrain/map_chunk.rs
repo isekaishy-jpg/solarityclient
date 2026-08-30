@@ -3,6 +3,7 @@
 use crate::archive::AssetPath;
 
 use super::alpha_map::TerrainAlphaMap;
+use super::map_shadow::TerrainShadowMap;
 
 /// Number of terrain chunks along either axis of one ADT.
 pub const TERRAIN_CHUNK_WIDTH: u8 = 16;
@@ -102,7 +103,7 @@ pub struct TerrainChunk {
     vertex_colors_bgra: Option<Box<[[u8; 4]; TERRAIN_CHUNK_VERTEX_COUNT]>>,
     layers: Vec<TerrainTextureLayer>,
     alpha_map: Option<TerrainAlphaMap>,
-    shadow_bytes: Option<Box<[u8; 512]>>,
+    shadow_map: Option<TerrainShadowMap>,
     doodad_references: Vec<u32>,
     world_model_references: Vec<u32>,
     sound_emitters: Vec<TerrainSoundEmitter>,
@@ -121,7 +122,7 @@ impl TerrainChunk {
         vertex_colors_bgra: Option<Box<[[u8; 4]; TERRAIN_CHUNK_VERTEX_COUNT]>>,
         layers: Vec<TerrainTextureLayer>,
         alpha_map: Option<TerrainAlphaMap>,
-        shadow_bytes: Option<Box<[u8; 512]>>,
+        shadow_map: Option<TerrainShadowMap>,
         doodad_references: Vec<u32>,
         world_model_references: Vec<u32>,
         sound_emitters: Vec<TerrainSoundEmitter>,
@@ -137,7 +138,7 @@ impl TerrainChunk {
             vertex_colors_bgra,
             layers,
             alpha_map,
-            shadow_bytes,
+            shadow_map,
             doodad_references,
             world_model_references,
             sound_emitters,
@@ -204,10 +205,10 @@ impl TerrainChunk {
         self.alpha_map.as_ref()
     }
 
-    /// Returns the optional 64-by-64 one-bit MCSH map.
+    /// Returns the optional decoded 64-by-64 MCSH opacity plane.
     #[must_use]
-    pub fn shadow_bytes(&self) -> Option<&[u8; 512]> {
-        self.shadow_bytes.as_deref()
+    pub const fn shadow_map(&self) -> Option<&TerrainShadowMap> {
+        self.shadow_map.as_ref()
     }
 
     /// Returns indices into the tile's doodad-placement table.

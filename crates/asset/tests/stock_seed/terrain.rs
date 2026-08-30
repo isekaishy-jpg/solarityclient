@@ -6,7 +6,7 @@ use std::path::Path;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap,
-    TerrainTileIndex,
+    TerrainShadowMap, TerrainTileIndex,
 };
 use wow_adt::builder::{AdtBuilder, BuiltAdt};
 use wow_adt::chunks::MtxfChunk;
@@ -318,4 +318,27 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
     block.extend_from_slice(value.as_bytes());
     block.push(0);
     offset
+}
+
+/// Packed MCSH bits expand to stock opacity and honor the shared edge flag.
+#[test]
+fn terrain_shadow_map_expands_stock_bits_and_edges() {
+    let mut packed = [0_u8; 512];
+    packed[0] = 0b0000_0001;
+    let penultimate_corner = 62 * 64 + 62;
+    packed[penultimate_corner / 8] |= 1 << (penultimate_corner % 8);
+    let final_corner = 63 * 64 + 63;
+    packed[final_corner / 8] |= 1 << (final_corner % 8);
+
+    let fixed = TerrainShadowMap::from_packed(&packed, false);
+    assert_eq!(fixed.opacity()[0], 85);
+    assert_eq!(fixed.opacity()[62 * 64 + 62], 85);
+    assert_eq!(fixed.opacity()[62 * 64 + 63], 85);
+    assert_eq!(fixed.opacity()[63 * 64 + 62], 85);
+    assert_eq!(fixed.opacity()[63 * 64 + 63], 85);
+
+    packed[penultimate_corner / 8] &= !(1 << (penultimate_corner % 8));
+    let authored = TerrainShadowMap::from_packed(&packed, true);
+    assert_eq!(authored.opacity()[62 * 64 + 62], 0);
+    assert_eq!(authored.opacity()[63 * 64 + 63], 85);
 }
