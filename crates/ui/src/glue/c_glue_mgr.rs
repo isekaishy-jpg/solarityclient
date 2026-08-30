@@ -11,7 +11,7 @@ use crate::{
     FontCatalog, UiBundle, UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan,
     UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
     UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -28,6 +28,7 @@ pub struct GlueManager {
     regions: UiRegionStatePlan,
     geometry: UiRegionGeometryPlan,
     textures: UiTexturePlan,
+    texture_states: UiTextureStatePlan,
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
     report: GlueStartupReport,
@@ -61,6 +62,7 @@ impl GlueManager {
         let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
         let templates = UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?;
         let textures = UiTexturePlan::from_tree(&tree)?;
+        let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
         let assets = Rc::new(RefCell::new(assets));
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
@@ -97,6 +99,7 @@ impl GlueManager {
             regions,
             geometry,
             textures,
+            texture_states,
             objects,
             child_indices,
             report,
@@ -158,6 +161,12 @@ impl GlueManager {
     #[must_use]
     pub const fn textures(&self) -> &UiTexturePlan {
         &self.textures
+    }
+
+    /// Returns declaration-resolved startup state for static texture objects.
+    #[must_use]
+    pub const fn texture_states(&self) -> &UiTextureStatePlan {
+        &self.texture_states
     }
 
     /// Returns compiled event and handler functions retained in Lua.

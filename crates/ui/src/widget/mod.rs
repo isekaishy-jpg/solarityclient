@@ -20,5 +20,6 @@ mod texture;
 
 pub use texture::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
-    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan,
+    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
+    UiTextureStatePlan,
 };

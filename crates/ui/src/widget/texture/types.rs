@@ -3,7 +3,7 @@
 use solarity_asset::AssetPath;
 use thiserror::Error;
 
-use crate::{UiObjectKind, UiObjectTree, XmlContent, XmlElement};
+use crate::{UiDrawLayer, UiObjectKind, UiObjectTree, XmlContent, XmlElement};
 
 /// A failure while decoding a stock texture declaration.
 #[derive(Debug, Error)]
@@ -14,6 +14,12 @@ pub enum UiTextureError {
         /// XML source containing the declaration.
         path: AssetPath,
         /// File, blend-mode, or coordinate context.
+        message: String,
+    },
+    /// Compact texture-state resolution failed after parsing.
+    #[error("could not resolve UI texture state: {message}")]
+    Resolution {
+        /// Arena or compact-index context.
         message: String,
     },
 }
@@ -152,6 +158,8 @@ pub struct UiTextureLayer {
     horizontal_tiling: Option<bool>,
     vertical_tiling: Option<bool>,
     non_blocking: Option<bool>,
+    draw_layer: Option<UiDrawLayer>,
+    draw_sub_level: Option<i16>,
 }
 
 impl UiTextureLayer {
@@ -202,6 +210,18 @@ impl UiTextureLayer {
     pub const fn non_blocking(&self) -> Option<bool> {
         self.non_blocking
     }
+
+    /// Returns the enclosing stock draw band when this layer supplies one.
+    #[must_use]
+    pub const fn draw_layer(&self) -> Option<UiDrawLayer> {
+        self.draw_layer
+    }
+
+    /// Returns the explicit ordering offset within the draw band.
+    #[must_use]
+    pub const fn draw_sub_level(&self) -> Option<i16> {
+        self.draw_sub_level
+    }
 }
 
 /// Flat layer range belonging to one texture object node.
@@ -241,9 +261,7 @@ impl UiTexturePlan {
             let first_layer = plan.layers.len();
             if node.kind() == UiObjectKind::Texture {
                 for source in node.layers() {
-                    if let Some(layer) =
-                        parse_layer(source.source_path(), source.document(), source.element())?
-                    {
+                    if let Some(layer) = parse_layer(source)? {
                         plan.layers.push(layer);
                     }
                 }
@@ -276,10 +294,11 @@ impl UiTexturePlan {
 }
 
 fn parse_layer(
-    path: &AssetPath,
-    document: &crate::XmlDocument,
-    element: &XmlElement,
+    source: &crate::UiElementLayer<'_>,
 ) -> Result<Option<UiTextureLayer>, UiTextureError> {
+    let path = source.source_path();
+    let document = source.document();
+    let element = source.element();
     let file = attribute(element, "file")
         .map(|value| canonical_texture_file(path, value))
         .transpose()?;
@@ -311,6 +330,8 @@ fn parse_layer(
         horizontal_tiling: parse_optional_bool(path, element, "horizTile")?,
         vertical_tiling: parse_optional_bool(path, element, "vertTile")?,
         non_blocking: parse_optional_bool(path, element, "nonBlocking")?,
+        draw_layer: source.draw_layer(),
+        draw_sub_level: parse_optional_integer(path, element, "subLevel")?,
     };
     let present = layer.file.is_some()
         || layer.blend_mode.is_some()
@@ -319,7 +340,9 @@ fn parse_layer(
         || layer.gradient.is_some()
         || layer.horizontal_tiling.is_some()
         || layer.vertical_tiling.is_some()
-        || layer.non_blocking.is_some();
+        || layer.non_blocking.is_some()
+        || layer.draw_layer.is_some()
+        || layer.draw_sub_level.is_some();
     Ok(present.then_some(layer))
 }
 
@@ -433,6 +456,20 @@ fn parse_optional_number(
                 ));
             }
             Ok(number)
+        })
+        .transpose()
+}
+
+fn parse_optional_integer(
+    path: &AssetPath,
+    element: &XmlElement,
+    name: &str,
+) -> Result<Option<i16>, UiTextureError> {
+    attribute(element, name)
+        .map(|value| {
+            value.parse::<i16>().map_err(|error| {
+                texture_error(path, format!("invalid {name} value {value}: {error}"))
+            })
         })
         .transpose()
 }

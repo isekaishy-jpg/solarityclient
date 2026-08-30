@@ -40,7 +40,8 @@ pub use script::{
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
-    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan,
+    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
+    UiTextureStatePlan,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

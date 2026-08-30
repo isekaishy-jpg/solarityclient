@@ -4,8 +4,9 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBlendMode, UiBundle, UiGradientOrientation, UiManifestKind, UiObjectCatalog,
-    UiObjectRole, UiObjectTree, UiTextureError, UiTextureFile, UiTexturePlan,
+    FontCatalog, UiBlendMode, UiBundle, UiDrawLayer, UiGradientOrientation, UiManifestKind,
+    UiObjectCatalog, UiObjectRole, UiObjectTree, UiTextureError, UiTextureFile, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -22,9 +23,9 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
             path: "Interface\\GlueXML\\Textures.xml",
             bytes: br#"<Ui>
   <Frame name="Root">
-    <Layers><Layer>
+    <Layers><Layer level="OVERLAY">
       <Texture name="$parentLogo" file="Interface\Glues\Logo" alphaMode="ADD"
-               horizTile="true" vertTile="false" nonBlocking="true">
+               horizTile="true" vertTile="false" nonBlocking="true" subLevel="-2">
         <TexCoords left="0.1" right="0.9"/>
         <Color r="1" g="0.8" b="0.6" a="0.5"/>
         <Gradient orientation="VERTICAL">
@@ -49,6 +50,7 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
     let plan = UiTexturePlan::from_tree(&tree)?;
+    let states = UiTextureStatePlan::resolve(&tree, &plan)?;
 
     let logo_index = tree
         .nodes()
@@ -82,6 +84,29 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
     assert_eq!(logo.horizontal_tiling(), Some(true));
     assert_eq!(logo.vertical_tiling(), Some(false));
     assert_eq!(logo.non_blocking(), Some(true));
+    assert_eq!(logo.draw_layer(), Some(UiDrawLayer::Overlay));
+    assert_eq!(logo.draw_sub_level(), Some(-2));
+    let logo_state = states.state(logo_index).ok_or("missing logo state")?;
+    assert_eq!(logo_state.file(), logo.file());
+    assert_eq!(logo_state.blend_mode(), UiBlendMode::Add);
+    assert_eq!(
+        logo_state.tex_coords(),
+        [0.1, 0.0, 0.1, 1.0, 0.9, 0.0, 0.9, 1.0]
+    );
+    assert_eq!(
+        logo_state.vertex_colors(),
+        [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ]
+    );
+    assert!(logo_state.horizontal_tiling());
+    assert!(!logo_state.vertical_tiling());
+    assert!(logo_state.non_blocking());
+    assert_eq!(logo_state.draw_layer(), UiDrawLayer::Overlay);
+    assert_eq!(logo_state.draw_sub_level(), -2);
 
     let dynamic_index = tree
         .nodes()
@@ -93,6 +118,13 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
         .ok_or("missing dynamic plan node")?;
     assert_eq!(
         plan.layers_for(dynamic_node)[0].file(),
+        Some(&UiTextureFile::Dynamic)
+    );
+    assert_eq!(
+        states
+            .state(dynamic_index)
+            .ok_or("missing dynamic state")?
+            .file(),
         Some(&UiTextureFile::Dynamic)
     );
 
@@ -112,6 +144,7 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
         plan.layers_for(pushed_node)[0].blend_mode(),
         Some(UiBlendMode::Blend)
     );
+    assert_eq!(states.state_count(), 3);
     Ok(())
 }
 
