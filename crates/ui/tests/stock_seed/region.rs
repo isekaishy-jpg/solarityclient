@@ -4,7 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPoint,
+    FontCatalog, UiBundle, UiDrawLayer, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectError, UiObjectTree, UiPoint,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -70,6 +71,77 @@ fn layout_plan_preserves_inherited_geometry_layers() -> Result<(), Box<dyn Error
     assert_eq!(concrete_anchor.relative_point(), Some(UiPoint::BottomLeft));
     assert_eq!(concrete_anchor.offset(), Some((5.0, -3.0)));
     Ok(())
+}
+
+/// Layer wrappers retain stock draw order, schema defaults, and one shipped typo.
+#[test]
+fn object_layers_preserve_stock_draw_bands() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layers.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layers.xml",
+            bytes: br#"<Ui><Frame name="Root"><Layers>
+  <Layer level="BACKGROUND"><Texture name="$parentBackground"/></Layer>
+  <Layer><FontString name="$parentLabel"/></Layer>
+  <Layer level="OVERLAY`"><Texture name="$parentGlow"/></Layer>
+</Layers></Frame></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+
+    assert_eq!(
+        tree.node("RootBackground").and_then(last_draw_layer),
+        Some(UiDrawLayer::Background)
+    );
+    assert_eq!(
+        tree.node("RootLabel").and_then(last_draw_layer),
+        Some(UiDrawLayer::Artwork)
+    );
+    assert_eq!(
+        tree.node("RootGlow").and_then(last_draw_layer),
+        Some(UiDrawLayer::Overlay)
+    );
+    Ok(())
+}
+
+/// Unknown draw bands fail instead of being folded into an arbitrary level.
+#[test]
+fn object_tree_rejects_unknown_draw_band() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layers.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layers.xml",
+            bytes: br#"<Ui><Frame name="Root"><Layers><Layer level="FRONT">
+  <Texture name="$parentInvalid"/>
+</Layer></Layers></Frame></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+
+    let result = UiObjectTree::from_catalog(&objects, &fonts);
+
+    assert!(matches!(result, Err(UiObjectError::Declaration { .. })));
+    Ok(())
+}
+
+fn last_draw_layer(node: &solarity_ui::UiObjectNode<'_>) -> Option<UiDrawLayer> {
+    node.layers()
+        .iter()
+        .filter_map(|layer| layer.draw_layer())
+        .next_back()
 }
 
 fn mount(fixture: &Fixture) -> Result<AssetStore, Box<dyn Error>> {

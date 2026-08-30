@@ -162,6 +162,15 @@ the parser does not manufacture size, anchor, alpha, scale, visibility, or
 Real-client validation retains 1,815 Glue layout layers with 1,441 anchors and
 18,168 Frame layout layers with 14,692 anchors.
 
+Nested textures and font strings also retain the `<Layer>` draw band from
+their declaration wrapper. Back-to-front order is typed as `BACKGROUND`,
+`BORDER`, `ARTWORK`, `OVERLAY`, and `HIGHLIGHT`. A missing `level` becomes
+`ARTWORK` because the archived build-12340 `UI.xsd` declares that exact
+default. `BNet.xml` ships one `OVERLAY\`` typo around `$parentGlow`; only that
+exact legacy spelling is normalized, while other unknown bands are errors.
+The instantiated local trees retain 668 Glue and 9,472 Frame declarations with
+an explicit or schema-defaulted draw band.
+
 ## Typed texture plan
 
 Texture declarations are decoded into a flat plan parallel to the object tree.

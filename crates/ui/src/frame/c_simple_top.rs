@@ -7,6 +7,21 @@ use solarity_asset::AssetPath;
 use crate::frame::{UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind};
 use crate::{FontCatalog, XmlContent, XmlDocument, XmlElement};
 
+/// Stock region draw bands in back-to-front order.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum UiDrawLayer {
+    /// Frame background artwork.
+    Background,
+    /// Frame border artwork.
+    Border,
+    /// Ordinary frame artwork and the stock XML default.
+    Artwork,
+    /// Foreground artwork and text.
+    Overlay,
+    /// Interaction highlight artwork.
+    Highlight,
+}
+
 /// The semantic slot occupied by a child object in its owning widget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiObjectRole {
@@ -36,6 +51,7 @@ pub struct UiElementLayer<'bundle> {
     source_path: &'bundle AssetPath,
     document: &'bundle XmlDocument,
     element: &'bundle XmlElement,
+    draw_layer: Option<UiDrawLayer>,
 }
 
 impl<'bundle> UiElementLayer<'bundle> {
@@ -55,6 +71,12 @@ impl<'bundle> UiElementLayer<'bundle> {
     #[must_use]
     pub const fn element(&self) -> &XmlElement {
         self.element
+    }
+
+    /// Returns the enclosing stock draw band for a layered region declaration.
+    #[must_use]
+    pub const fn draw_layer(&self) -> Option<UiDrawLayer> {
+        self.draw_layer
     }
 
     fn same_source(self, other: Self) -> bool {
@@ -352,12 +374,21 @@ impl<'bundle> UiObjectTree<'bundle> {
                         source_path: layer.source_path,
                         document: layer.document,
                         element: child,
+                        draw_layer: layer.draw_layer,
                     },
                     kind,
                     role,
                 )?;
             } else {
-                self.scan_descendants(catalog, fonts, parent, layer, child)?;
+                let descendant_layer = if child.name() == "Layer" {
+                    UiElementLayer {
+                        draw_layer: Some(parse_draw_layer(layer.source_path, child)?),
+                        ..layer
+                    }
+                } else {
+                    layer
+                };
+                self.scan_descendants(catalog, fonts, parent, descendant_layer, child)?;
             }
         }
         Ok(())
@@ -408,9 +439,28 @@ fn definition_layers<'bundle>(
                 source_path: layer.source_path(),
                 document: layer.document(),
                 element: layer.element(),
+                draw_layer: None,
             })
         })
         .collect()
+}
+
+fn parse_draw_layer(path: &AssetPath, element: &XmlElement) -> Result<UiDrawLayer, UiObjectError> {
+    match attribute(element, "level") {
+        Some("BACKGROUND") => Ok(UiDrawLayer::Background),
+        Some("BORDER") => Ok(UiDrawLayer::Border),
+        Some("ARTWORK") | None => Ok(UiDrawLayer::Artwork),
+        Some("OVERLAY") => Ok(UiDrawLayer::Overlay),
+        // Build 12340's BNet.xml contains this exact typo around its glow
+        // texture. Keep the compatibility rule exact rather than accepting
+        // arbitrary trailing characters as an invented fallback.
+        Some("OVERLAY`") => Ok(UiDrawLayer::Overlay),
+        Some("HIGHLIGHT") => Ok(UiDrawLayer::Highlight),
+        Some(value) => Err(object_error(
+            path,
+            format!("unsupported draw layer {value}"),
+        )),
+    }
 }
 
 fn classify_child(name: &str) -> Option<(UiObjectKind, UiObjectRole)> {

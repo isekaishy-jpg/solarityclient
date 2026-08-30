@@ -71,6 +71,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|node| node.name().is_some())
         .count();
+    let draw_layer_count = object_tree
+        .nodes()
+        .iter()
+        .flat_map(|node| node.layers())
+        .filter(|layer| layer.draw_layer().is_some())
+        .count();
     let font_path = AssetPath::new("Fonts\\FRIZQT__.TTF")?;
     let mut fonts = FontSystem::new()?;
     let glyph = fonts.rasterize(
@@ -82,7 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {} layout layers and {} anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {draw_layer_count} layered declarations, {} layout layers and {} anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
