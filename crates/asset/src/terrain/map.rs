@@ -5,6 +5,7 @@ use crate::database::MapDefinition;
 
 use super::map_area::{TERRAIN_MAP_WIDTH, TerrainTile, TerrainTileIndex};
 use super::map_chunk::{TerrainChunk, TerrainDoodadPlacement, TerrainWorldModelPlacement};
+use super::map_chunk_liquid::TerrainLiquidTable;
 
 const TERRAIN_TILE_COUNT: usize = 4_096;
 const TILE_SIZE: f32 = 533.333_3;
@@ -28,7 +29,7 @@ pub struct DecodedTerrainTile {
     chunks: Vec<TerrainChunk>,
     doodads: Vec<TerrainDoodadPlacement>,
     world_models: Vec<TerrainWorldModelPlacement>,
-    has_liquid_table: bool,
+    liquids: Option<TerrainLiquidTable>,
 }
 
 /// Parallel root-level MTEX and optional MTXF payloads.
@@ -45,7 +46,7 @@ impl DecodedTerrainTile {
         chunks: Vec<TerrainChunk>,
         doodads: Vec<TerrainDoodadPlacement>,
         world_models: Vec<TerrainWorldModelPlacement>,
-        has_liquid_table: bool,
+        liquids: Option<TerrainLiquidTable>,
     ) -> Self {
         Self {
             index,
@@ -54,7 +55,7 @@ impl DecodedTerrainTile {
             chunks,
             doodads,
             world_models,
-            has_liquid_table,
+            liquids,
         }
     }
 
@@ -103,7 +104,13 @@ impl DecodedTerrainTile {
     /// Returns whether the tile carries an MH2O liquid table.
     #[must_use]
     pub const fn has_liquid_table(&self) -> bool {
-        self.has_liquid_table
+        self.liquids.is_some()
+    }
+
+    /// Returns the normalized MH2O table when the root ADT authors one.
+    #[must_use]
+    pub const fn liquids(&self) -> Option<&TerrainLiquidTable> {
+        self.liquids.as_ref()
     }
 }
 

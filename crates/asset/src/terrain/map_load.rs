@@ -17,6 +17,7 @@ use super::map_chunk::{
     TERRAIN_CHUNK_VERTEX_COUNT, TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement,
     TerrainSoundEmitter, TerrainTextureLayer, TerrainWorldModelPlacement,
 };
+use super::map_chunk_liquid::{TerrainLiquidTable, decode_liquid_table};
 use super::map_shadow::TerrainShadowMap;
 
 const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
@@ -82,6 +83,8 @@ impl TerrainMap {
             ));
         }
         let read = store.read(&path)?;
+        let liquids =
+            decode_liquid_table(read.bytes()).map_err(|message| terrain_message(&path, message))?;
         let parsed = parse_adt(&mut Cursor::new(read.bytes()))
             .map_err(|error| terrain_error(&path, error))?;
         let ParsedAdt::Root(root) = parsed else {
@@ -97,6 +100,7 @@ impl TerrainMap {
             self.flags() & WDT_HAS_BIG_ALPHA != 0,
             &path,
             decode_texture_flags(read.bytes(), &path)?,
+            liquids,
         )
     }
 }
@@ -108,6 +112,7 @@ fn decode_adt(
     big_alpha: bool,
     path: &AssetPath,
     texture_flags: Option<Vec<u32>>,
+    liquids: Option<TerrainLiquidTable>,
 ) -> Result<DecodedTerrainTile, AssetError> {
     if root.version != AdtVersion::WotLK {
         return Err(terrain_message(
@@ -154,7 +159,7 @@ fn decode_adt(
         chunks,
         doodads,
         world_models,
-        root.water_data.is_some(),
+        liquids,
     ))
 }
 

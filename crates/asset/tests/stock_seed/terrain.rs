@@ -199,6 +199,83 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// MH2O layers retain stock planar arrays, masks, and null-vertex ocean rules.
+#[test]
+fn terrain_tile_decodes_stock_liquid_layers() -> Result<(), Box<dyn Error>> {
+    let map_table = map_table();
+    let wdt = terrain_wdt(Some((32, 32, 1)), false)?;
+    let adt = append_liquid_fixture(
+        AdtBuilder::new()
+            .with_version(AdtVersion::WotLK)
+            .add_texture("tileset/fixture/waterbed.blp")
+            .build()?
+            .to_bytes()?,
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Map.dbc",
+            bytes: &map_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend.wdt",
+            bytes: &wdt,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend_32_32.adt",
+            bytes: &adt,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let definition = maps.map(571).ok_or("Northrend map is absent")?;
+    let terrain = TerrainMap::load(&mut store, definition)?;
+    let index = TerrainTileIndex::new(32, 32).ok_or("fixture tile is invalid")?;
+
+    let tile = terrain.load_tile(&mut store, index)?;
+    assert!(tile.has_liquid_table());
+    let liquids = tile.liquids().ok_or("fixture MH2O was not retained")?;
+    assert_eq!(liquids.layer_count(), 2);
+    let chunk = &liquids.chunks()[0];
+    assert_eq!(chunk.fishable_mask(), 0x5);
+    assert_eq!(chunk.deep_mask(), 0x2);
+    let sloped = &chunk.layers()[0];
+    assert_eq!(sloped.liquid_type(), 2);
+    assert_eq!(sloped.vertex_format(), 3);
+    assert_eq!(sloped.minimum_height(), 10.0);
+    assert_eq!(sloped.maximum_height(), 15.0);
+    assert_eq!((sloped.x_offset(), sloped.y_offset()), (1, 2));
+    assert_eq!((sloped.width(), sloped.height()), (2, 1));
+    assert_eq!(sloped.exists(), &[1, 0]);
+    assert_eq!(sloped.heights(), &[10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+    assert_eq!(
+        sloped.texture_coordinates(),
+        Some(
+            [
+                [100, 200],
+                [101, 201],
+                [102, 202],
+                [103, 203],
+                [104, 204],
+                [105, 205],
+            ]
+            .as_slice()
+        )
+    );
+    assert_eq!(sloped.depths(), &[10, 20, 30, 40, 50, 60]);
+
+    let ocean = &chunk.layers()[1];
+    assert_eq!(ocean.liquid_type(), 1);
+    assert_eq!(ocean.vertex_format(), 2);
+    assert_eq!(ocean.heights(), &[0.0; 4]);
+    assert_eq!(ocean.depths(), &[u8::MAX; 4]);
+    assert_eq!(ocean.texture_coordinates(), None);
+    Ok(())
+}
+
 fn assert_position(actual: [f32; 3], expected: [f32; 3]) {
     for (actual, expected) in actual.into_iter().zip(expected) {
         assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
@@ -256,6 +333,73 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     alpha.extend_from_slice(&[0x80 | 32, 42]);
     first.alpha = Some(McalChunk::new(alpha));
     Ok(BuiltAdt::from_root_adt(*root, None).to_bytes()?)
+}
+
+/// Appends one direct build-12340 MH2O fixture.
+///
+/// This deliberately avoids the dependency's higher-level vertex model: the
+/// client stores each optional component as a complete planar array.
+fn append_liquid_fixture(mut adt: Vec<u8>) -> Vec<u8> {
+    const HEADER_BYTES: usize = 256 * 12;
+    const INSTANCE_OFFSET: usize = HEADER_BYTES;
+    const ATTRIBUTES_OFFSET: usize = INSTANCE_OFFSET + 2 * 24;
+    const EXISTS_OFFSET: usize = ATTRIBUTES_OFFSET + 16;
+    const VERTEX_OFFSET: usize = EXISTS_OFFSET + 1;
+    const VERTEX_COUNT: usize = 6;
+    let mut payload = vec![0_u8; VERTEX_OFFSET + VERTEX_COUNT * 9];
+
+    set_u32(&mut payload, 0, INSTANCE_OFFSET as u32);
+    set_u32(&mut payload, 4, 2);
+    set_u32(&mut payload, 8, ATTRIBUTES_OFFSET as u32);
+    set_u16(&mut payload, INSTANCE_OFFSET, 2);
+    set_u16(&mut payload, INSTANCE_OFFSET + 2, 3);
+    set_f32(&mut payload, INSTANCE_OFFSET + 4, 10.0);
+    set_f32(&mut payload, INSTANCE_OFFSET + 8, 15.0);
+    payload[INSTANCE_OFFSET + 12..INSTANCE_OFFSET + 16].copy_from_slice(&[1, 2, 2, 1]);
+    set_u32(&mut payload, INSTANCE_OFFSET + 16, EXISTS_OFFSET as u32);
+    set_u32(&mut payload, INSTANCE_OFFSET + 20, VERTEX_OFFSET as u32);
+
+    let ocean = INSTANCE_OFFSET + 24;
+    set_u16(&mut payload, ocean, 1);
+    set_u16(&mut payload, ocean + 2, 0);
+    set_f32(&mut payload, ocean + 4, 300.0);
+    set_f32(&mut payload, ocean + 8, 300.0);
+    payload[ocean + 12..ocean + 16].copy_from_slice(&[0, 0, 1, 1]);
+
+    set_u64(&mut payload, ATTRIBUTES_OFFSET, 0x5);
+    set_u64(&mut payload, ATTRIBUTES_OFFSET + 8, 0x2);
+    payload[EXISTS_OFFSET] = 0x1;
+    for index in 0..VERTEX_COUNT {
+        set_f32(&mut payload, VERTEX_OFFSET + index * 4, 10.0 + index as f32);
+    }
+    let uv_offset = VERTEX_OFFSET + VERTEX_COUNT * 4;
+    for index in 0..VERTEX_COUNT {
+        set_u16(&mut payload, uv_offset + index * 4, 100 + index as u16);
+        set_u16(&mut payload, uv_offset + index * 4 + 2, 200 + index as u16);
+    }
+    let depth_offset = uv_offset + VERTEX_COUNT * 4;
+    payload[depth_offset..depth_offset + VERTEX_COUNT].copy_from_slice(&[10, 20, 30, 40, 50, 60]);
+
+    adt.extend_from_slice(b"O2HM");
+    adt.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    adt.extend_from_slice(&payload);
+    adt
+}
+
+fn set_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_u64(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_f32(bytes: &mut [u8], offset: usize, value: f32) {
+    set_u32(bytes, offset, value.to_bits());
 }
 
 fn terrain_wdt(
