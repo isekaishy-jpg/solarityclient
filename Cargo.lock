@@ -2209,6 +2209,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wow-adt",
+ "wow-m2",
  "wow-mpq",
  "wow-wdt",
 ]
@@ -2223,6 +2224,7 @@ dependencies = [
  "solarity-ecs",
  "thiserror",
  "tracing",
+ "wow-m2",
  "wow-mpq",
 ]
 

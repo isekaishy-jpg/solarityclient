@@ -1,6 +1,7 @@
 //! External integration tests for active-world terrain residency.
 
 use std::error::Error;
+use std::io::Cursor;
 
 use glam::Vec3;
 use solarity_asset::{
@@ -16,8 +17,13 @@ use solarity_systems::{
     CameraSubjectGeometry, resolve_camera_subject_height, resolve_player_camera_pose,
 };
 use wow_adt::AdtVersion;
-use wow_adt::WmoPlacement;
 use wow_adt::builder::AdtBuilder;
+use wow_adt::{DoodadPlacement, WmoPlacement};
+use wow_m2::chunks::vertex::M2Vertex;
+use wow_m2::common::{C2Vector, C3Vector};
+use wow_m2::header::M2Header;
+use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
+use wow_m2::{M2Model, M2Version, OldSkin};
 use wow_wdt::chunks::MwmoChunk;
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
@@ -172,18 +178,31 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         name_set: 0,
         scale: 1024,
     };
-    let adt = add_last_chunk_wmo_reference(
+    let doodad = DoodadPlacement {
+        name_id: 0,
+        unique_id: 9,
+        position: [CLIENT_MAP_ORIGIN, 0.5, CLIENT_MAP_ORIGIN],
+        rotation: [0.0, 0.0, 0.0],
+        scale: 1_024,
+        flags: 0,
+    };
+    let adt = add_last_chunk_object_references(
         AdtBuilder::new()
             .with_version(AdtVersion::WotLK)
             .add_texture("tileset/fixture/grass.blp")
+            .add_model("World/Fixture/Collision.m2")
+            .add_doodad_placement(doodad)
             .add_wmo("World/Wmo/Fixture.wmo")
             .add_wmo_placement(placement)
             .build()?
             .to_bytes()?,
-        0,
+        &[0],
+        &[0],
     )?;
     let root_wmo = root_wmo_fixture();
     let group_wmo = group_wmo_fixture();
+    let m2 = m2_collision_fixture()?;
+    let skin = skin_fixture()?;
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\Map.dbc", &map_table()),
         ("World\\Maps\\Northrend\\Northrend.wdt", &terrain_wdt()?),
@@ -191,6 +210,8 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
         ("World\\Wmo\\Fixture.wmo", &root_wmo),
         ("World\\Wmo\\Fixture_000.wmo", &group_wmo),
+        ("World\\Fixture\\Collision.m2", &m2),
+        ("World\\Fixture\\Collision00.skin", &skin),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -207,6 +228,15 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
 
     terrain.synchronize(Some(&world))?;
     assert_eq!(terrain.resident_world_model_count(), 1);
+    assert_eq!(terrain.resident_m2_collision_count(), 1);
+    let m2_hit = terrain
+        .trace_m2_camera(
+            Vec3::new(-0.25, -0.25, 1.0),
+            Vec3::new(-0.25, -0.25, -1.0),
+            1.0,
+        )?
+        .ok_or("camera ray missed resident M2")?;
+    assert!((m2_hit - 0.25).abs() < 0.001);
     let hit = terrain
         .trace_world_model_camera(
             Vec3::new(-0.25, -0.25, 1.0),
@@ -232,6 +262,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
 
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);
+    assert_eq!(terrain.resident_m2_collision_count(), 0);
     Ok(())
 }
 
@@ -347,11 +378,12 @@ fn set_f32(bytes: &mut [u8], offset: usize, value: f32) {
     set_u32(bytes, offset, value.to_bits());
 }
 
-/// Adds one MCRF MODF reference to the final generated MCNK without moving any
-/// later indexed terrain chunk. The fixture builder currently omits MCRF APIs.
-fn add_last_chunk_wmo_reference(
+/// Adds MCRF MDDF and MODF references to the final generated MCNK without
+/// moving any later indexed terrain chunk. The fixture builder omits MCRF APIs.
+fn add_last_chunk_object_references(
     mut adt: Vec<u8>,
-    placement_index: u32,
+    doodads: &[u32],
+    world_models: &[u32],
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let chunk_start = adt
         .windows(4)
@@ -360,13 +392,30 @@ fn add_last_chunk_wmo_reference(
     let old_size = read_u32(&adt, chunk_start + 4)? as usize;
     let chunk_end = chunk_start + 8 + old_size;
     set_u32(&mut adt, chunk_start + 8 + 0x20, (8 + old_size) as u32);
-    set_u32(&mut adt, chunk_start + 8 + 0x38, 1);
-    let mut reference = Vec::with_capacity(12);
+    set_u32(
+        &mut adt,
+        chunk_start + 8 + 0x10,
+        u32::try_from(doodads.len())?,
+    );
+    set_u32(
+        &mut adt,
+        chunk_start + 8 + 0x38,
+        u32::try_from(world_models.len())?,
+    );
+    let payload_size = (doodads.len() + world_models.len()) * 4;
+    let mut reference = Vec::with_capacity(8 + payload_size);
     reference.extend_from_slice(b"FRCM");
-    reference.extend_from_slice(&4_u32.to_le_bytes());
-    reference.extend_from_slice(&placement_index.to_le_bytes());
+    reference.extend_from_slice(&u32::try_from(payload_size)?.to_le_bytes());
+    for index in doodads.iter().chain(world_models) {
+        reference.extend_from_slice(&index.to_le_bytes());
+    }
     adt.splice(chunk_end..chunk_end, reference);
-    set_u32(&mut adt, chunk_start + 4, (old_size + 12) as u32);
+    let added_size = 8 + payload_size;
+    set_u32(
+        &mut adt,
+        chunk_start + 4,
+        u32::try_from(old_size + added_size)?,
+    );
 
     let mcin_start = adt
         .windows(4)
@@ -375,9 +424,87 @@ fn add_last_chunk_wmo_reference(
     set_u32(
         &mut adt,
         mcin_start + 8 + 255 * 16 + 4,
-        (old_size + 12) as u32,
+        u32::try_from(old_size + added_size)?,
     );
     Ok(adt)
+}
+
+fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut model = M2Model {
+        header: M2Header::new(M2Version::WotLK),
+        name: Some("Collision".to_owned()),
+        ..M2Model::default()
+    };
+    model.header.num_skin_profiles = Some(1);
+    model.header.bounding_box_min = [-1.0; 3];
+    model.header.bounding_box_max = [2.0; 3];
+    model.header.bounding_sphere_radius = 3.0;
+    model.header.collision_box_min = [0.0, 0.0, -0.1];
+    model.header.collision_box_max = [2.0, 2.0, 0.1];
+    model.header.collision_sphere_radius = 2.0_f32.sqrt();
+    for index in [0_u16, 1, 2] {
+        model
+            .raw_data
+            .bounding_triangles
+            .extend_from_slice(&index.to_le_bytes());
+    }
+    for position in [[0.0_f32, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
+        for component in position {
+            model
+                .raw_data
+                .bounding_vertices
+                .extend_from_slice(&component.to_le_bytes());
+        }
+        model.vertices.push(M2Vertex {
+            position: C3Vector {
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            },
+            bone_weights: [0; 4],
+            bone_indices: [0; 4],
+            normal: C3Vector {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+            tex_coords: C2Vector { x: 0.0, y: 0.0 },
+            tex_coords2: Some(C2Vector { x: 0.0, y: 0.0 }),
+        });
+    }
+    let mut cursor = Cursor::new(Vec::new());
+    model.write(&mut cursor)?;
+    Ok(cursor.into_inner())
+}
+
+fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+    let skin = OldSkin {
+        header: OldSkinHeader {
+            bone_count_max: 1,
+            ..OldSkinHeader::new()
+        },
+        indices: vec![0, 1, 2],
+        triangles: vec![0, 1, 2],
+        bone_indices: vec![0; 12],
+        submeshes: vec![SkinSubmesh {
+            id: 0,
+            level: 0,
+            vertex_start: 0,
+            vertex_count: 3,
+            triangle_start: 0,
+            triangle_count: 3,
+            bone_count: 0,
+            bone_start: 0,
+            bone_influence: 0,
+            center: [0.0; 3],
+            sort_center: [0.0; 3],
+            bounding_radius: 1.0,
+        }],
+        batches: Vec::new(),
+    };
+    let mut cursor = Cursor::new(Vec::new());
+    skin.write(&mut cursor)?;
+    Ok(cursor.into_inner())
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Box<dyn Error>> {

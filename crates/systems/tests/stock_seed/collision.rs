@@ -1,16 +1,23 @@
 //! External stock-compatibility tests for stock scene collision.
 
 use std::error::Error;
+use std::io::Cursor;
 use std::sync::Arc;
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
+    ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, DecodedWorldModel,
+    Locale,
 };
 use solarity_systems::{
-    PlacedWorldModelCollision, PlacedWorldModelLiquid, WorldModelCollisionScene,
-    WorldModelLiquidScene,
+    M2CollisionScene, PlacedM2Collision, PlacedWorldModelCollision, PlacedWorldModelLiquid,
+    WorldModelCollisionScene, WorldModelLiquidScene,
 };
+use wow_m2::chunks::vertex::M2Vertex;
+use wow_m2::common::{C2Vector, C3Vector};
+use wow_m2::header::M2Header;
+use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
+use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -108,6 +115,134 @@ fn placed_world_model_samples_stock_liquid_tiles() -> Result<(), Box<dyn Error>>
     assert!(sample.is_fishable());
     assert!(scene.sample(20.0, 20.0, None)?.is_none());
     Ok(())
+}
+
+/// Placed M2 owners trace only the dedicated header collision triangle list.
+#[test]
+fn placed_m2_uses_dedicated_stock_collision_mesh() -> Result<(), Box<dyn Error>> {
+    let model_bytes = m2_collision_fixture()?;
+    let skin_bytes = skin_fixture()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "World\\Fixture\\Collision.m2",
+            bytes: &model_bytes,
+        },
+        FixtureFile {
+            path: "World\\Fixture\\Collision00.skin",
+            bytes: &skin_bytes,
+        },
+    ])?;
+    let data_root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
+    let model = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("World\\Fixture\\Collision.m2")?,
+    )?);
+    let mut scene = M2CollisionScene::new();
+    scene.add(PlacedM2Collision::prepare(
+        model,
+        Vec3::new(10.0, 20.0, 30.0),
+        Vec3::new(0.0, -180.0, 0.0),
+        2.0,
+    )?);
+
+    assert_eq!(scene.instance_count(), 1);
+    let hit = scene
+        .trace_camera(
+            Vec3::new(11.0, 21.0, 32.0),
+            Vec3::new(11.0, 21.0, 28.0),
+            1.0,
+        )?
+        .ok_or("camera ray missed placed M2 collision")?;
+    assert!((hit - 0.5).abs() < 0.001);
+    assert!(
+        scene
+            .trace_camera(
+                Vec3::new(13.0, 23.0, 32.0),
+                Vec3::new(13.0, 23.0, 28.0),
+                1.0,
+            )?
+            .is_none()
+    );
+    Ok(())
+}
+
+fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut model = M2Model {
+        header: M2Header::new(M2Version::WotLK),
+        name: Some("Collision".to_owned()),
+        ..M2Model::default()
+    };
+    model.header.num_skin_profiles = Some(1);
+    model.header.bounding_box_min = [-1.0; 3];
+    model.header.bounding_box_max = [2.0; 3];
+    model.header.bounding_sphere_radius = 3.0;
+    model.header.collision_box_min = [0.0, 0.0, -0.1];
+    model.header.collision_box_max = [2.0, 2.0, 0.1];
+    model.header.collision_sphere_radius = 2.0_f32.sqrt();
+    for index in [0_u16, 1, 2] {
+        model
+            .raw_data
+            .bounding_triangles
+            .extend_from_slice(&index.to_le_bytes());
+    }
+    for position in [[0.0_f32, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
+        for component in position {
+            model
+                .raw_data
+                .bounding_vertices
+                .extend_from_slice(&component.to_le_bytes());
+        }
+        model.vertices.push(M2Vertex {
+            position: C3Vector {
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            },
+            bone_weights: [0; 4],
+            bone_indices: [0; 4],
+            normal: C3Vector {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+            tex_coords: C2Vector { x: 0.0, y: 0.0 },
+            tex_coords2: Some(C2Vector { x: 0.0, y: 0.0 }),
+        });
+    }
+    let mut cursor = Cursor::new(Vec::new());
+    model.write(&mut cursor)?;
+    Ok(cursor.into_inner())
+}
+
+fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+    let skin = OldSkin {
+        header: OldSkinHeader {
+            bone_count_max: 1,
+            ..OldSkinHeader::new()
+        },
+        indices: vec![0, 1, 2],
+        triangles: vec![0, 1, 2],
+        bone_indices: vec![0; 12],
+        submeshes: vec![SkinSubmesh {
+            id: 0,
+            level: 0,
+            vertex_start: 0,
+            vertex_count: 3,
+            triangle_start: 0,
+            triangle_count: 3,
+            bone_count: 0,
+            bone_start: 0,
+            bone_influence: 0,
+            center: [0.0; 3],
+            sort_center: [0.0; 3],
+            bounding_radius: 1.0,
+        }],
+        batches: Vec::new(),
+    };
+    let mut cursor = Cursor::new(Vec::new());
+    skin.write(&mut cursor)?;
+    Ok(cursor.into_inner())
 }
 
 fn root_fixture() -> Vec<u8> {

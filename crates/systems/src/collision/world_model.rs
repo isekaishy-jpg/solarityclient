@@ -248,6 +248,17 @@ fn triangle_fraction(
     let first = Vec3::from_array(group.vertices()[usize::from(group.indices()[first_index])]);
     let second = Vec3::from_array(group.vertices()[usize::from(group.indices()[first_index + 1])]);
     let third = Vec3::from_array(group.vertices()[usize::from(group.indices()[first_index + 2])]);
+    segment_triangle_fraction(start, direction, first, second, third, maximum_fraction)
+}
+
+pub(super) fn segment_triangle_fraction(
+    start: Vec3,
+    direction: Vec3,
+    first: Vec3,
+    second: Vec3,
+    third: Vec3,
+    maximum_fraction: f32,
+) -> Option<f32> {
     let first_edge = second - first;
     let second_edge = third - first;
     let perpendicular = direction.cross(second_edge);
@@ -324,7 +335,7 @@ pub(super) fn transformed_bounds(
     Ok([world_minimum, world_maximum])
 }
 
-fn bounds_intersect(left: [Vec3; 2], right: [Vec3; 2]) -> bool {
+pub(super) fn bounds_intersect(left: [Vec3; 2], right: [Vec3; 2]) -> bool {
     (0..3).all(|axis| {
         left[0][axis] <= right[1][axis] + COLLISION_TOLERANCE
             && right[0][axis] <= left[1][axis] + COLLISION_TOLERANCE

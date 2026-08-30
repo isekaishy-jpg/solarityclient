@@ -18,4 +18,5 @@ workspace = true
 
 [dev-dependencies]
 glam.workspace = true
+wow-m2.workspace = true
 wow-mpq.workspace = true

@@ -2,8 +2,8 @@
 
 use solarity_asset::{
     AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
-    DecodedTerrainTile, MapCatalog, TerrainMap, TerrainTileIndex, TerrainWorldModelPlacement,
-    WmoModelCache,
+    DecodedTerrainTile, M2ModelCache, MapCatalog, TerrainDoodadPlacement, TerrainMap,
+    TerrainTileIndex, TerrainWorldModelPlacement, WmoModelCache,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
@@ -11,12 +11,12 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    PlacedWorldModelCollision, PlacedWorldModelLiquid, PlayerCameraObstructionError,
-    PlayerCameraPose, PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit,
-    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
-    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
-    WorldModelLiquidSample, WorldModelLiquidScene, resolve_player_camera_obstruction,
-    resolve_player_camera_water_collision,
+    M2CollisionError, M2CollisionScene, PlacedM2Collision, PlacedWorldModelCollision,
+    PlacedWorldModelLiquid, PlayerCameraObstructionError, PlayerCameraPose, PlayerCameraWaterError,
+    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
+    TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene,
+    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
+    resolve_player_camera_obstruction, resolve_player_camera_water_collision,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,10 +46,19 @@ pub enum RuntimeTerrainError {
     /// A referenced WMO could not enter strict placed liquid geometry.
     #[error(transparent)]
     WorldModelLiquid(#[from] WorldModelLiquidError),
+    /// A referenced M2 could not enter strict placed collision geometry.
+    #[error(transparent)]
+    M2Collision(#[from] M2CollisionError),
     /// One authored placement identity disagrees with another MODF record.
     #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
     ConflictingWorldModelPlacement {
         /// MODF unique identifier shared across nearby chunks and ADTs.
+        unique_id: u32,
+    },
+    /// One authored placement identity disagrees with another MDDF record.
+    #[error("terrain tile repeats M2 placement {unique_id} with conflicting fields")]
+    ConflictingDoodadPlacement {
+        /// MDDF unique identifier shared across nearby chunks and ADTs.
         unique_id: u32,
     },
     /// The server selected a map absent from the mounted build's `Map.dbc`.
@@ -79,6 +88,9 @@ pub enum RuntimeCameraSceneError {
     /// Resident placed-WMO collision rejected the trace.
     #[error(transparent)]
     WorldModelCollision(#[from] WorldModelCollisionError),
+    /// Resident placed-M2 collision rejected the trace.
+    #[error(transparent)]
+    M2Collision(#[from] M2CollisionError),
     /// Resident MH2O sampling rejected the point.
     #[error(transparent)]
     TerrainLiquid(#[from] TerrainLiquidError),
@@ -90,7 +102,7 @@ pub enum RuntimeCameraSceneError {
 /// Failure while composing the stock camera against the resident world scene.
 #[derive(Debug, Error)]
 pub enum RuntimeCameraError {
-    /// Terrain or placed-WMO obstruction resolution failed.
+    /// Terrain, placed-WMO, or placed-M2 obstruction resolution failed.
     #[error(transparent)]
     Obstruction(#[from] PlayerCameraObstructionError<RuntimeCameraSceneError>),
     /// Terrain or placed-WMO waterline resolution failed.
@@ -129,6 +141,7 @@ pub struct RuntimeTerrainCoordinator {
     assets: AssetStoreHandle,
     maps: MapCatalog,
     textures: BlpTextureCache,
+    models: M2ModelCache,
     world_models: WmoModelCache,
     active: Option<ResidentTerrainMap>,
 }
@@ -141,6 +154,7 @@ impl RuntimeTerrainCoordinator {
             assets,
             maps,
             textures: BlpTextureCache::new(),
+            models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
             active: None,
         }
@@ -163,6 +177,7 @@ impl RuntimeTerrainCoordinator {
         let Some(world) = world else {
             self.active = None;
             self.textures.collect_unused();
+            self.models.collect_unused();
             self.world_models.collect_unused();
             return Ok(RuntimeTerrainPoll::Idle);
         };
@@ -180,6 +195,7 @@ impl RuntimeTerrainCoordinator {
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
             self.textures.collect_unused();
+            self.models.collect_unused();
             self.world_models.collect_unused();
         }
         let active = self
@@ -211,11 +227,13 @@ impl RuntimeTerrainCoordinator {
         let resident = ResidentTerrainTile::prepare(
             decoded,
             &mut self.textures,
+            &mut self.models,
             &mut self.world_models,
             &mut self.assets.borrow_mut(),
         )?;
         active.tile = Some(resident);
         self.textures.collect_unused();
+        self.models.collect_unused();
         self.world_models.collect_unused();
         Ok(RuntimeTerrainPoll::TileLoaded {
             map_id,
@@ -336,6 +354,37 @@ impl RuntimeTerrainCoordinator {
             .map_or(0, |tile| tile.world_model_collision.instance_count())
     }
 
+    /// Returns the number of unique, chunk-referenced MDDF placements resident.
+    #[must_use]
+    pub fn resident_m2_collision_count(&self) -> usize {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map_or(0, |tile| tile.m2_collision.instance_count())
+    }
+
+    /// Traces dedicated collision triangles in resident placed M2s.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2CollisionError`] when the segment or maximum fraction is invalid.
+    pub fn trace_m2_camera(
+        &self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        maximum_fraction: f32,
+    ) -> Result<Option<f32>, M2CollisionError> {
+        let Some(collision) = self
+            .active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.m2_collision)
+        else {
+            return Ok(None);
+        };
+        collision.trace_camera(start, end, maximum_fraction)
+    }
+
     /// Traces camera-collidable faces in the resident tile's placed WMOs.
     ///
     /// # Errors
@@ -385,13 +434,12 @@ impl RuntimeTerrainCoordinator {
     /// Resolves one final player camera against all resident static providers.
     ///
     /// The caller supplies the current stock CVar state explicitly. This owner
-    /// contributes only admitted ADT and WMO geometry; M2 scene collision can
-    /// join the same nearest-fraction closure when its residency is available.
+    /// contributes only admitted ADT, WMO, and MDDF-owned M2 geometry.
     ///
     /// # Errors
     ///
     /// Returns [`RuntimeCameraError`] for invalid camera policy/input or a
-    /// rejected terrain/WMO query.
+    /// rejected terrain/WMO/M2 query.
     pub fn resolve_player_camera(
         &mut self,
         pose: PlayerCameraPose,
@@ -408,7 +456,11 @@ impl RuntimeTerrainCoordinator {
                     .trace_collision(start, end, 0.0, maximum_fraction)?
                     .map(|hit| hit.fraction());
                 let world_model = self.trace_world_model_camera(start, end, maximum_fraction)?;
-                Ok::<_, RuntimeCameraSceneError>(nearest_fraction(terrain, world_model))
+                let m2 = self.trace_m2_camera(start, end, maximum_fraction)?;
+                Ok::<_, RuntimeCameraSceneError>(nearest_fraction(
+                    nearest_fraction(terrain, world_model),
+                    m2,
+                ))
             },
         )?;
         Ok(resolve_player_camera_water_collision(
@@ -435,6 +487,7 @@ impl RuntimeTerrainCoordinator {
     pub fn disconnect(&mut self) {
         self.active = None;
         self.textures.collect_unused();
+        self.models.collect_unused();
         self.world_models.collect_unused();
     }
 }
@@ -456,6 +509,7 @@ struct ResidentTerrainTile {
     mesh: TerrainTileMeshPlan,
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
+    m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
     world_model_liquid: WorldModelLiquidScene,
 }
@@ -464,6 +518,7 @@ impl ResidentTerrainTile {
     fn prepare(
         decoded: DecodedTerrainTile,
         texture_cache: &mut BlpTextureCache,
+        model_cache: &mut M2ModelCache,
         world_model_cache: &mut WmoModelCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
@@ -477,6 +532,7 @@ impl ResidentTerrainTile {
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
+        let m2_collision = prepare_doodads(&decoded, model_cache, store)?;
         let (world_model_collision, world_model_liquid) =
             prepare_world_models(&decoded, world_model_cache, store)?;
         Ok(Self {
@@ -485,6 +541,7 @@ impl ResidentTerrainTile {
             mesh,
             collision,
             liquid,
+            m2_collision,
             world_model_collision,
             world_model_liquid,
         })
@@ -493,6 +550,54 @@ impl ResidentTerrainTile {
     const fn index(&self) -> TerrainTileIndex {
         self.decoded.index()
     }
+}
+
+fn prepare_doodads(
+    tile: &DecodedTerrainTile,
+    cache: &mut M2ModelCache,
+    store: &mut AssetStore,
+) -> Result<M2CollisionScene, RuntimeTerrainError> {
+    let mut referenced = vec![false; tile.doodads().len()];
+    for reference in tile
+        .chunks()
+        .iter()
+        .flat_map(|chunk| chunk.doodad_references())
+    {
+        // Strict ADT decoding has already proven every MCRF index is in range.
+        referenced[*reference as usize] = true;
+    }
+
+    let mut scene = M2CollisionScene::new();
+    let mut placements = HashMap::<u32, usize>::new();
+    for (index, placement) in tile.doodads().iter().enumerate() {
+        if !referenced[index] {
+            continue;
+        }
+        if let Some(previous_index) = placements.insert(placement.unique_id(), index) {
+            if !same_doodad_placement(&tile.doodads()[previous_index], placement) {
+                return Err(RuntimeTerrainError::ConflictingDoodadPlacement {
+                    unique_id: placement.unique_id(),
+                });
+            }
+            continue;
+        }
+        let model = cache.load(store, placement.path())?;
+        scene.add(PlacedM2Collision::prepare(
+            model,
+            glam::Vec3::from_array(placement.position()),
+            glam::Vec3::from_array(placement.rotation()),
+            placement.scale(),
+        )?);
+    }
+    Ok(scene)
+}
+
+fn same_doodad_placement(left: &TerrainDoodadPlacement, right: &TerrainDoodadPlacement) -> bool {
+    left.path() == right.path()
+        && left.position().map(f32::to_bits) == right.position().map(f32::to_bits)
+        && left.rotation().map(f32::to_bits) == right.rotation().map(f32::to_bits)
+        && left.scale().to_bits() == right.scale().to_bits()
+        && left.flags() == right.flags()
 }
 
 fn prepare_world_models(

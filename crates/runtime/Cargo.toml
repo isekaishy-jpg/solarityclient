@@ -27,5 +27,6 @@ workspace = true
 
 [dev-dependencies]
 wow-adt.workspace = true
+wow-m2.workspace = true
 wow-mpq.workspace = true
 wow-wdt.workspace = true
