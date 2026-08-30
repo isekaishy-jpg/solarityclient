@@ -8,8 +8,8 @@ mod map_obj;
 mod map_obj_group;
 mod map_obj_read;
 
-pub use map_obj::DecodedWorldModel;
+pub use map_obj::{DecodedWorldModel, WorldModelMaterial, WorldModelShader};
 pub use map_obj_group::{
-    DecodedWorldModelGroup, WorldModelBspNode, WorldModelLiquid, WorldModelLiquidVertex,
-    WorldModelPolygon,
+    DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
+    WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,
 };

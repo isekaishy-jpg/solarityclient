@@ -9,11 +9,25 @@ pub struct DecodedWorldModelGroup {
     source: ArchiveDescriptor,
     flags: u32,
     bounds: [[f32; 3]; 2],
+    portal_reference_start: u16,
+    portal_reference_count: u16,
+    transition_batch_count: u16,
+    interior_batch_count: u16,
+    exterior_batch_count: u16,
+    batch_type_d: u16,
+    fog_ids: [u8; 4],
     liquid_type: u32,
+    area_table_id: u32,
     liquid: Option<WorldModelLiquid>,
     vertices: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    texture_coordinates: Vec<Vec<[f32; 2]>>,
+    vertex_colors: Vec<Vec<[u8; 4]>>,
     indices: Vec<u16>,
     polygons: Vec<WorldModelPolygon>,
+    batches: Vec<WorldModelBatch>,
+    light_references: Vec<u16>,
+    doodad_references: Vec<u16>,
     bsp_nodes: Vec<WorldModelBspNode>,
     bsp_faces: Vec<u16>,
 }
@@ -26,11 +40,25 @@ impl DecodedWorldModelGroup {
         source: ArchiveDescriptor,
         flags: u32,
         bounds: [[f32; 3]; 2],
+        portal_reference_start: u16,
+        portal_reference_count: u16,
+        transition_batch_count: u16,
+        interior_batch_count: u16,
+        exterior_batch_count: u16,
+        batch_type_d: u16,
+        fog_ids: [u8; 4],
         liquid_type: u32,
+        area_table_id: u32,
         liquid: Option<WorldModelLiquid>,
         vertices: Vec<[f32; 3]>,
+        normals: Vec<[f32; 3]>,
+        texture_coordinates: Vec<Vec<[f32; 2]>>,
+        vertex_colors: Vec<Vec<[u8; 4]>>,
         indices: Vec<u16>,
         polygons: Vec<WorldModelPolygon>,
+        batches: Vec<WorldModelBatch>,
+        light_references: Vec<u16>,
+        doodad_references: Vec<u16>,
         bsp_nodes: Vec<WorldModelBspNode>,
         bsp_faces: Vec<u16>,
     ) -> Self {
@@ -40,11 +68,25 @@ impl DecodedWorldModelGroup {
             source,
             flags,
             bounds,
+            portal_reference_start,
+            portal_reference_count,
+            transition_batch_count,
+            interior_batch_count,
+            exterior_batch_count,
+            batch_type_d,
+            fog_ids,
             liquid_type,
+            area_table_id,
             liquid,
             vertices,
+            normals,
+            texture_coordinates,
+            vertex_colors,
             indices,
             polygons,
+            batches,
+            light_references,
+            doodad_references,
             bsp_nodes,
             bsp_faces,
         }
@@ -78,6 +120,41 @@ impl DecodedWorldModelGroup {
     #[must_use]
     pub const fn bounds(&self) -> [[f32; 3]; 2] {
         self.bounds
+    }
+
+    /// Returns the first root MOPR reference owned by this group.
+    #[must_use]
+    pub const fn portal_reference_start(&self) -> u16 {
+        self.portal_reference_start
+    }
+
+    /// Returns the number of consecutive root MOPR references.
+    #[must_use]
+    pub const fn portal_reference_count(&self) -> u16 {
+        self.portal_reference_count
+    }
+
+    /// Returns the three authored MOBA class counts and retained fourth word.
+    #[must_use]
+    pub const fn batch_counts(&self) -> [u16; 4] {
+        [
+            self.transition_batch_count,
+            self.interior_batch_count,
+            self.exterior_batch_count,
+            self.batch_type_d,
+        ]
+    }
+
+    /// Returns the four root MFOG indices selected by MOGP.
+    #[must_use]
+    pub const fn fog_ids(&self) -> [u8; 4] {
+        self.fog_ids
+    }
+
+    /// Returns the WMOAreaTable identifier stored by MOGP.
+    #[must_use]
+    pub const fn area_table_id(&self) -> u32 {
+        self.area_table_id
     }
 
     /// Returns the MOGP liquid identifier used by MLIQ resolution.
@@ -138,6 +215,24 @@ impl DecodedWorldModelGroup {
         &self.vertices
     }
 
+    /// Returns one MONR normal per MOVT vertex.
+    #[must_use]
+    pub fn normals(&self) -> &[[f32; 3]] {
+        &self.normals
+    }
+
+    /// Returns up to three complete MOTV layers in chunk order.
+    #[must_use]
+    pub fn texture_coordinates(&self) -> &[Vec<[f32; 2]>] {
+        &self.texture_coordinates
+    }
+
+    /// Returns up to two complete MOCV layers in chunk order as BGRA bytes.
+    #[must_use]
+    pub fn vertex_colors(&self) -> &[Vec<[u8; 4]>] {
+        &self.vertex_colors
+    }
+
     /// Returns the direct triangle-list MOVI stream.
     #[must_use]
     pub fn indices(&self) -> &[u16] {
@@ -150,6 +245,24 @@ impl DecodedWorldModelGroup {
         &self.polygons
     }
 
+    /// Returns every validated MOBA draw range in file order.
+    #[must_use]
+    pub fn batches(&self) -> &[WorldModelBatch] {
+        &self.batches
+    }
+
+    /// Returns root MOLT indices consulted by this group.
+    #[must_use]
+    pub fn light_references(&self) -> &[u16] {
+        &self.light_references
+    }
+
+    /// Returns root MODD indices admitted by this group.
+    #[must_use]
+    pub fn doodad_references(&self) -> &[u16] {
+        &self.doodad_references
+    }
+
     /// Returns the stock MOBN BSP nodes.
     #[must_use]
     pub fn bsp_nodes(&self) -> &[WorldModelBspNode] {
@@ -160,6 +273,97 @@ impl DecodedWorldModelGroup {
     #[must_use]
     pub fn bsp_faces(&self) -> &[u16] {
         &self.bsp_faces
+    }
+}
+
+/// Stock MapObj surface-lighting class derived from MOBA table position.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorldModelBatchClass {
+    /// Cross-fade surface submitted through two stock passes.
+    Transition,
+    /// Interior surface using authored or root-ambient light.
+    Interior,
+    /// Exterior surface using the map-global directional light.
+    Exterior,
+}
+
+/// One exact WotLK 24-byte MOBA indexed-draw record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorldModelBatch {
+    bounds: [[i16; 3]; 2],
+    first_index: u32,
+    index_count: u16,
+    first_vertex: u16,
+    last_vertex: u16,
+    flags: u8,
+    material_id: u8,
+    class: WorldModelBatchClass,
+}
+
+impl WorldModelBatch {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) const fn new(
+        bounds: [[i16; 3]; 2],
+        first_index: u32,
+        index_count: u16,
+        first_vertex: u16,
+        last_vertex: u16,
+        flags: u8,
+        material_id: u8,
+        class: WorldModelBatchClass,
+    ) -> Self {
+        Self {
+            bounds,
+            first_index,
+            index_count,
+            first_vertex,
+            last_vertex,
+            flags,
+            material_id,
+            class,
+        }
+    }
+
+    /// Returns the conservative integer-quantized local culling bounds.
+    #[must_use]
+    pub const fn bounds(self) -> [[i16; 3]; 2] {
+        self.bounds
+    }
+
+    /// Returns the first MOVI entry submitted by the batch.
+    #[must_use]
+    pub const fn first_index(self) -> u32 {
+        self.first_index
+    }
+
+    /// Returns the number of consecutive MOVI entries submitted.
+    #[must_use]
+    pub const fn index_count(self) -> u16 {
+        self.index_count
+    }
+
+    /// Returns the inclusive MOVT vertex range declared by MOBA.
+    #[must_use]
+    pub const fn vertex_range(self) -> [u16; 2] {
+        [self.first_vertex, self.last_vertex]
+    }
+
+    /// Returns the raw MOBA behavior flags.
+    #[must_use]
+    pub const fn flags(self) -> u8 {
+        self.flags
+    }
+
+    /// Returns the referenced root MOMT slot.
+    #[must_use]
+    pub const fn material_id(self) -> u8 {
+        self.material_id
+    }
+
+    /// Returns the stock table-position surface class.
+    #[must_use]
+    pub const fn class(self) -> WorldModelBatchClass {
+        self.class
     }
 }
 

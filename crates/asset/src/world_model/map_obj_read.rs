@@ -6,10 +6,10 @@ use wow_wmo::{ParsedWmo, parse_wmo};
 
 use crate::{AssetError, AssetPath, AssetStore};
 
-use super::map_obj::DecodedWorldModel;
+use super::map_obj::{DecodedWorldModel, WorldModelMaterial, WorldModelShader};
 use super::map_obj_group::{
-    DecodedWorldModelGroup, WorldModelBspNode, WorldModelLiquid, WorldModelLiquidVertex,
-    WorldModelPolygon,
+    DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
+    WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,
 };
 
 const BUILD_12340_WMO_VERSION: u32 = 17;
@@ -35,18 +35,28 @@ impl DecodedWorldModel {
         };
         validate_root(path, &root)?;
         let bounds = validate_bounds(path, root.bounding_box_min, root.bounding_box_max, "MOHD")?;
+        let materials = decode_materials(path, read.bytes(), &root)?;
         let group_count =
             usize::try_from(root.n_groups).map_err(|error| world_model_error(path, error))?;
         let mut groups = Vec::with_capacity(group_count);
         for index in 0..root.n_groups {
-            groups.push(load_group(store, path, index, root.materials.len())?);
+            groups.push(load_group(
+                store,
+                path,
+                index,
+                root.materials.len(),
+                root.lights.len(),
+                root.doodad_defs.len(),
+            )?);
         }
         Ok(Self::new(
             path.clone(),
             read.source().clone(),
             root.flags,
+            root.ambient_color,
             root.wmo_id,
             bounds,
+            materials,
             groups,
         ))
     }
@@ -57,6 +67,8 @@ fn load_group(
     root_path: &AssetPath,
     index: u32,
     material_count: usize,
+    light_count: usize,
+    doodad_count: usize,
 ) -> Result<DecodedWorldModelGroup, AssetError> {
     let group_path = group_path(root_path, index)?;
     let read = store.read(&group_path)?;
@@ -70,7 +82,13 @@ fn load_group(
             "expected a WMO group file",
         ));
     };
-    validate_group(&group_path, &group, material_count)?;
+    validate_group(
+        &group_path,
+        &group,
+        material_count,
+        light_count,
+        doodad_count,
+    )?;
     let bounds = validate_bounds(
         &group_path,
         [
@@ -90,6 +108,20 @@ fn load_group(
         .iter()
         .map(|vertex| [vertex.x, vertex.y, vertex.z])
         .collect();
+    let normals = group
+        .vertex_normals
+        .iter()
+        .map(|normal| [normal.x, normal.y, normal.z])
+        .collect();
+    let presentation = decode_group_presentation(
+        &group_path,
+        read.bytes(),
+        group.vertex_positions.len(),
+        group.vertex_indices.len(),
+        material_count,
+        group.trans_batch_count,
+        group.int_batch_count,
+    )?;
     let polygons = group
         .material_info
         .iter()
@@ -109,20 +141,340 @@ fn load_group(
             )
         })
         .collect();
+    let fog_ids = group
+        .fog_ids
+        .as_slice()
+        .try_into()
+        .map_err(|_| world_model_message(&group_path, "MOGP requires four fog IDs"))?;
     Ok(DecodedWorldModelGroup::new(
         index,
         group_path,
         read.source().clone(),
         group.flags,
         bounds,
+        group.portal_start,
+        group.portal_count,
+        group.trans_batch_count,
+        group.int_batch_count,
+        group.ext_batch_count,
+        group.batch_type_d,
+        fog_ids,
         group.group_liquid,
+        group.area_table_id,
         liquid,
         vertices,
+        normals,
+        presentation.texture_coordinates,
+        presentation.vertex_colors,
         group.vertex_indices,
         polygons,
+        presentation.batches,
+        group.light_refs,
+        group.doodad_refs,
         bsp_nodes,
         group.bsp_face_indices,
     ))
+}
+
+fn decode_materials(
+    path: &AssetPath,
+    bytes: &[u8],
+    root: &wow_wmo::root_parser::WmoRoot,
+) -> Result<Vec<WorldModelMaterial>, AssetError> {
+    let chunks = scan_chunks(path, bytes, "WMO root")?;
+    let texture_bytes = chunks
+        .iter()
+        .find(|chunk| chunk.magic == *b"XTOM")
+        .and_then(|chunk| bytes.get(chunk.payload_start..chunk.payload_end))
+        .unwrap_or_default();
+    let mut materials = Vec::with_capacity(root.materials.len());
+    for (index, material) in root.materials.iter().enumerate() {
+        let authored_shader = WorldModelShader::decode(material.shader).ok_or_else(|| {
+            world_model_message(
+                path,
+                format!(
+                    "MOMT material {index} shader {} is outside build-12340 range 0..6",
+                    material.shader
+                ),
+            )
+        })?;
+        let offsets = [material.texture_1, material.texture_2, material.texture_3];
+        let mut textures = [None, None, None];
+        for slot in 0..3 {
+            let required = slot == 0 || (slot == 1 && authored_shader.requires_secondary_texture());
+            textures[slot] =
+                decode_texture_path(path, texture_bytes, offsets[slot], required, index, slot)?;
+        }
+        // CWmo::FinishLoad at 0x007D7710 changes a two-texture effect with a
+        // valid empty second MOTX string to MapObjOpaque. It does not invent a
+        // replacement texture, and the authored selector remains observable.
+        let shader = if authored_shader.requires_secondary_texture() && textures[1].is_none() {
+            WorldModelShader::Opaque
+        } else {
+            authored_shader
+        };
+        let runtime_data: [u8; 16] = material.runtime_data.as_slice().try_into().map_err(|_| {
+            world_model_message(
+                path,
+                format!("MOMT material {index} runtime tail is not 16 bytes"),
+            )
+        })?;
+        materials.push(WorldModelMaterial::new(
+            material.flags,
+            authored_shader,
+            shader,
+            material.blend_mode,
+            offsets,
+            textures,
+            u32::from_le_bytes(material.emissive_color),
+            u32::from_le_bytes(material.diff_color),
+            material.ground_type,
+            material.color_2,
+            material.flags_2,
+            runtime_data,
+        ));
+    }
+    Ok(materials)
+}
+
+fn decode_texture_path(
+    root_path: &AssetPath,
+    texture_bytes: &[u8],
+    offset: u32,
+    required: bool,
+    material_index: usize,
+    slot: usize,
+) -> Result<Option<AssetPath>, AssetError> {
+    let offset = usize::try_from(offset).map_err(|error| world_model_error(root_path, error))?;
+    let Some(tail) = texture_bytes.get(offset..) else {
+        return if required {
+            Err(world_model_message(
+                root_path,
+                format!(
+                    "MOMT material {material_index} texture {slot} references MOTX offset {offset} outside {} bytes",
+                    texture_bytes.len()
+                ),
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    let Some(end) = tail.iter().position(|byte| *byte == 0) else {
+        return if required {
+            Err(world_model_message(
+                root_path,
+                format!("MOMT material {material_index} texture {slot} is not null terminated"),
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    if end == 0 {
+        return Ok(None);
+    }
+    let value = std::str::from_utf8(&tail[..end]).map_err(|error| {
+        world_model_message(
+            root_path,
+            format!("MOMT material {material_index} texture {slot} is not UTF-8: {error}"),
+        )
+    })?;
+    AssetPath::new(value).map(Some)
+}
+
+struct GroupPresentation {
+    texture_coordinates: Vec<Vec<[f32; 2]>>,
+    vertex_colors: Vec<Vec<[u8; 4]>>,
+    batches: Vec<WorldModelBatch>,
+}
+
+fn decode_group_presentation(
+    path: &AssetPath,
+    bytes: &[u8],
+    vertex_count: usize,
+    index_count: usize,
+    material_count: usize,
+    transition_batch_count: u16,
+    interior_batch_count: u16,
+) -> Result<GroupPresentation, AssetError> {
+    let outer = scan_chunks(path, bytes, "WMO group")?;
+    let container = require_chunk(path, &outer, *b"PGOM", "MOGP")?;
+    let payload = bytes
+        .get(container.payload_start..container.payload_end)
+        .ok_or_else(|| world_model_message(path, "MOGP payload exceeds its group file"))?;
+    let nested_bytes = payload
+        .get(68..)
+        .ok_or_else(|| world_model_message(path, "MOGP is smaller than its 68-byte header"))?;
+    let chunks = scan_chunks(path, nested_bytes, "MOGP")?;
+    let mut texture_coordinates = Vec::new();
+    let mut vertex_colors = Vec::new();
+    let mut batches = Vec::new();
+    for chunk in chunks {
+        let data = nested_bytes
+            .get(chunk.payload_start..chunk.payload_end)
+            .ok_or_else(|| world_model_message(path, "nested WMO chunk exceeds MOGP"))?;
+        match chunk.magic {
+            magic if magic == *b"VTOM" => {
+                if texture_coordinates.len() >= 3 {
+                    return Err(world_model_message(
+                        path,
+                        "MOGP contains more than three MOTV layers",
+                    ));
+                }
+                if !data.len().is_multiple_of(8) || data.len() / 8 != vertex_count {
+                    return Err(world_model_message(
+                        path,
+                        "each MOTV layer must contain one Vec2 per MOVT vertex",
+                    ));
+                }
+                let mut layer = Vec::with_capacity(vertex_count);
+                for offset in (0..data.len()).step_by(8) {
+                    layer.push([
+                        read_f32(path, data, offset, "MOTV U")?,
+                        read_f32(path, data, offset + 4, "MOTV V")?,
+                    ]);
+                }
+                texture_coordinates.push(layer);
+            }
+            magic if magic == *b"VCOM" => {
+                if vertex_colors.len() >= 2 {
+                    return Err(world_model_message(
+                        path,
+                        "MOGP contains more than two MOCV layers",
+                    ));
+                }
+                if !data.len().is_multiple_of(4) || data.len() / 4 != vertex_count {
+                    return Err(world_model_message(
+                        path,
+                        "each MOCV layer must contain one BGRA color per MOVT vertex",
+                    ));
+                }
+                vertex_colors.push(data.as_chunks::<4>().0.to_vec());
+            }
+            magic if magic == *b"ABOM" => {
+                if !data.len().is_multiple_of(24) {
+                    return Err(world_model_message(
+                        path,
+                        "MOBA size is not a whole number of 24-byte records",
+                    ));
+                }
+                for record in data.as_chunks::<24>().0 {
+                    let bounds = [
+                        [
+                            i16::from_le_bytes(
+                                record[0..2]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                            i16::from_le_bytes(
+                                record[2..4]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                            i16::from_le_bytes(
+                                record[4..6]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                        ],
+                        [
+                            i16::from_le_bytes(
+                                record[6..8]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                            i16::from_le_bytes(
+                                record[8..10]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                            i16::from_le_bytes(
+                                record[10..12]
+                                    .try_into()
+                                    .map_err(|error| world_model_error(path, error))?,
+                            ),
+                        ],
+                    ];
+                    let first_index = u32::from_le_bytes(
+                        record[12..16]
+                            .try_into()
+                            .map_err(|error| world_model_error(path, error))?,
+                    );
+                    let batch_index_count = u16::from_le_bytes(
+                        record[16..18]
+                            .try_into()
+                            .map_err(|error| world_model_error(path, error))?,
+                    );
+                    let first_vertex = u16::from_le_bytes(
+                        record[18..20]
+                            .try_into()
+                            .map_err(|error| world_model_error(path, error))?,
+                    );
+                    let last_vertex = u16::from_le_bytes(
+                        record[20..22]
+                            .try_into()
+                            .map_err(|error| world_model_error(path, error))?,
+                    );
+                    let material_id = record[23];
+                    let first = usize::try_from(first_index)
+                        .map_err(|error| world_model_error(path, error))?;
+                    let end = first
+                        .checked_add(usize::from(batch_index_count))
+                        .ok_or_else(|| world_model_message(path, "MOBA index range overflows"))?;
+                    if end > index_count
+                        || first_vertex > last_vertex
+                        || usize::from(last_vertex) >= vertex_count
+                    {
+                        return Err(world_model_message(
+                            path,
+                            "MOBA references geometry outside MOVI/MOVT",
+                        ));
+                    }
+                    if bounds[0]
+                        .iter()
+                        .zip(bounds[1])
+                        .any(|(minimum, maximum)| *minimum > maximum)
+                    {
+                        return Err(world_model_message(
+                            path,
+                            "MOBA has inverted culling bounds",
+                        ));
+                    }
+                    if usize::from(material_id) >= material_count {
+                        return Err(world_model_message(
+                            path,
+                            "MOBA references a material outside MOMT",
+                        ));
+                    }
+                    let index = batches.len();
+                    let transition_end = usize::from(transition_batch_count);
+                    let interior_end = transition_end + usize::from(interior_batch_count);
+                    let class = if index < transition_end {
+                        WorldModelBatchClass::Transition
+                    } else if index < interior_end {
+                        WorldModelBatchClass::Interior
+                    } else {
+                        WorldModelBatchClass::Exterior
+                    };
+                    batches.push(WorldModelBatch::new(
+                        bounds,
+                        first_index,
+                        batch_index_count,
+                        first_vertex,
+                        last_vertex,
+                        record[22],
+                        material_id,
+                        class,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(GroupPresentation {
+        texture_coordinates,
+        vertex_colors,
+        batches,
+    })
 }
 
 fn decode_group_liquid(
@@ -311,6 +663,8 @@ fn validate_group(
     path: &AssetPath,
     group: &wow_wmo::group_parser::WmoGroup,
     material_count: usize,
+    light_count: usize,
+    doodad_count: usize,
 ) -> Result<(), AssetError> {
     if group.version != BUILD_12340_WMO_VERSION {
         return Err(world_model_message(
@@ -358,6 +712,26 @@ fn validate_group(
         return Err(world_model_message(
             path,
             "MOVT or MONR contains a non-finite vector",
+        ));
+    }
+    if group
+        .light_refs
+        .iter()
+        .any(|reference| usize::from(*reference) >= light_count)
+    {
+        return Err(world_model_message(
+            path,
+            "MOLR references a light outside MOLT",
+        ));
+    }
+    if group
+        .doodad_refs
+        .iter()
+        .any(|reference| usize::from(*reference) >= doodad_count)
+    {
+        return Err(world_model_message(
+            path,
+            "MODR references a doodad outside MODD",
         ));
     }
     if group.vertex_normals.len() != group.vertex_positions.len() {

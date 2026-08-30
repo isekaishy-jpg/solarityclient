@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
-    WmoModelCache,
+    WmoModelCache, WorldModelBatchClass, WorldModelShader,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -163,6 +163,81 @@ fn world_model_decodes_group_liquid_grid() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Root MOMT and layered group chunks retain exact renderer-facing values.
+#[test]
+fn world_model_decodes_stock_presentation_tables() -> Result<(), Box<dyn Error>> {
+    let root_wmo = presentation_root_fixture();
+    let group_wmo = presentation_group_fixture();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Wmo\\Presentation.wmo",
+            bytes: &root_wmo,
+        },
+        FixtureFile {
+            archive: "patch-2.MPQ",
+            path: "World\\Wmo\\Presentation_000.wmo",
+            bytes: &group_wmo,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let model =
+        DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Presentation.wmo")?)?;
+
+    assert_eq!(model.ambient_color(), [0x40, 0x30, 0x20, 0xff]);
+    assert_eq!(model.materials().len(), 2);
+    let composite = &model.materials()[0];
+    assert_eq!(composite.flags(), 0xc1);
+    assert_eq!(composite.authored_shader(), WorldModelShader::Composite);
+    assert_eq!(composite.shader(), WorldModelShader::Composite);
+    assert_eq!(composite.blend_mode(), 2);
+    assert_eq!(composite.texture_offsets(), [0, 9, 20]);
+    assert_eq!(
+        composite.textures()[0].as_ref().map(AssetPath::as_str),
+        Some("WALL.BLP")
+    );
+    assert_eq!(
+        composite.textures()[1].as_ref().map(AssetPath::as_str),
+        Some("DETAIL.BLP")
+    );
+    assert!(composite.textures()[2].is_none());
+    assert_eq!(composite.emissive_color(), 0x1122_3344);
+    assert_eq!(composite.diffuse_color(), 0x5566_7788);
+    assert_eq!(composite.ground_type(), 19);
+    assert_eq!(composite.secondary_color(), 0x99aa_bbcc);
+    assert_eq!(composite.secondary_flags(), 0x1020_3040);
+    assert_eq!(composite.runtime_data(), [0xa5; 16]);
+    let normalized = &model.materials()[1];
+    assert_eq!(normalized.authored_shader(), WorldModelShader::Environment);
+    assert_eq!(normalized.shader(), WorldModelShader::Opaque);
+    assert!(normalized.textures()[1].is_none());
+
+    let group = &model.groups()[0];
+    assert_eq!(group.portal_reference_start(), 3);
+    assert_eq!(group.portal_reference_count(), 2);
+    assert_eq!(group.batch_counts(), [1, 0, 0, 7]);
+    assert_eq!(group.fog_ids(), [1, 2, 3, 4]);
+    assert_eq!(group.area_table_id(), 42);
+    assert_eq!(group.normals(), &[[0.0, 0.0, 1.0]; 3]);
+    assert_eq!(group.texture_coordinates().len(), 2);
+    assert!(group.texture_coordinates()[0][0][0].is_nan());
+    assert_eq!(group.texture_coordinates()[1][2], [0.25, 0.75]);
+    assert_eq!(group.vertex_colors().len(), 2);
+    assert_eq!(group.vertex_colors()[0][1], [128, 96, 64, 255]);
+    assert_eq!(group.vertex_colors()[1][2], [1, 2, 3, 4]);
+    assert_eq!(group.batches().len(), 1);
+    let batch = group.batches()[0];
+    assert_eq!(batch.bounds(), [[-1, -2, -3], [4, 5, 6]]);
+    assert_eq!(batch.first_index(), 0);
+    assert_eq!(batch.index_count(), 3);
+    assert_eq!(batch.vertex_range(), [0, 2]);
+    assert_eq!(batch.flags(), 0x12);
+    assert_eq!(batch.material_id(), 0);
+    assert_eq!(batch.class(), WorldModelBatchClass::Transition);
+    Ok(())
+}
+
 /// Post-build chunks fail before the dependency can silently skip them.
 #[test]
 fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {
@@ -204,6 +279,113 @@ fn root_fixture(group_count: u32) -> Vec<u8> {
         groups.extend_from_slice(&(-1_i32).to_le_bytes());
     }
     push_chunk(&mut bytes, *b"IGOM", &groups);
+    bytes
+}
+
+fn presentation_root_fixture() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
+    let mut header = vec![0_u8; 64];
+    set_u32(&mut header, 0, 2);
+    set_u32(&mut header, 4, 1);
+    set_u32(&mut header, 28, 0xff20_3040);
+    set_u32(&mut header, 32, 42);
+    set_vec3(&mut header, 36, [-2.0, -3.0, -4.0]);
+    set_vec3(&mut header, 48, [2.0, 3.0, 4.0]);
+    push_chunk(&mut bytes, *b"DHOM", &header);
+    let textures = b"wall.blp\0detail.blp\0\0";
+    push_chunk(&mut bytes, *b"XTOM", textures);
+
+    let mut materials = vec![0_u8; 128];
+    set_u32(&mut materials, 0, 0xc1);
+    set_u32(&mut materials, 4, 6);
+    set_u32(&mut materials, 8, 2);
+    set_u32(&mut materials, 12, 0);
+    set_u32(&mut materials, 16, 0x1122_3344);
+    set_u32(&mut materials, 24, 9);
+    set_u32(&mut materials, 28, 0x5566_7788);
+    set_u32(&mut materials, 32, 19);
+    set_u32(&mut materials, 36, 20);
+    set_u32(&mut materials, 40, 0x99aa_bbcc);
+    set_u32(&mut materials, 44, 0x1020_3040);
+    materials[48..64].fill(0xa5);
+    set_u32(&mut materials, 64 + 4, 3);
+    set_u32(&mut materials, 64 + 12, 0);
+    set_u32(&mut materials, 64 + 24, 20);
+    push_chunk(&mut bytes, *b"TMOM", &materials);
+
+    let mut group = vec![0_u8; 32];
+    set_vec3(&mut group, 4, [-1.0, -1.0, -1.0]);
+    set_vec3(&mut group, 16, [1.0, 1.0, 1.0]);
+    set_u32(&mut group, 28, u32::MAX);
+    push_chunk(&mut bytes, *b"IGOM", &group);
+    bytes
+}
+
+fn presentation_group_fixture() -> Vec<u8> {
+    let mut nested = Vec::new();
+    push_chunk(&mut nested, *b"YPOM", &[0x20, 0]);
+    let mut indices = Vec::new();
+    for index in [0_u16, 1, 2] {
+        indices.extend_from_slice(&index.to_le_bytes());
+    }
+    push_chunk(&mut nested, *b"IVOM", &indices);
+    let mut vertices = Vec::new();
+    for vertex in [[0.0_f32, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
+        for value in vertex {
+            vertices.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    push_chunk(&mut nested, *b"TVOM", &vertices);
+    let mut normals = Vec::new();
+    for _ in 0..3 {
+        for value in [0.0_f32, 0.0, 1.0] {
+            normals.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    push_chunk(&mut nested, *b"RNOM", &normals);
+    let mut first_uv = Vec::new();
+    for value in [f32::from_bits(0xffff_fc00), 0.0, 1.0, 0.0, 0.0, 1.0] {
+        first_uv.extend_from_slice(&value.to_le_bytes());
+    }
+    push_chunk(&mut nested, *b"VTOM", &first_uv);
+    let mut second_uv = Vec::new();
+    for value in [0.0_f32, 0.0, 0.5, 0.5, 0.25, 0.75] {
+        second_uv.extend_from_slice(&value.to_le_bytes());
+    }
+    push_chunk(&mut nested, *b"VTOM", &second_uv);
+    push_chunk(
+        &mut nested,
+        *b"VCOM",
+        &[255, 255, 255, 255, 128, 96, 64, 255, 32, 16, 8, 255],
+    );
+    push_chunk(&mut nested, *b"VCOM", &[4, 3, 2, 1, 8, 7, 6, 5, 1, 2, 3, 4]);
+    let mut batch = vec![0_u8; 24];
+    for (value, offset) in [(-1_i16, 0), (-2, 2), (-3, 4), (4, 6), (5, 8), (6, 10)] {
+        set_i16(&mut batch, offset, value);
+    }
+    set_u32(&mut batch, 12, 0);
+    set_u16(&mut batch, 16, 3);
+    set_u16(&mut batch, 18, 0);
+    set_u16(&mut batch, 20, 2);
+    batch[22] = 0x12;
+    batch[23] = 0;
+    push_chunk(&mut nested, *b"ABOM", &batch);
+
+    let mut group = vec![0_u8; 68];
+    set_u32(&mut group, 8, 0x3005);
+    set_vec3(&mut group, 12, [-1.0, -2.0, -3.0]);
+    set_vec3(&mut group, 24, [4.0, 5.0, 6.0]);
+    set_u16(&mut group, 36, 3);
+    set_u16(&mut group, 38, 2);
+    set_u16(&mut group, 40, 1);
+    set_u16(&mut group, 46, 7);
+    group[48..52].copy_from_slice(&[1, 2, 3, 4]);
+    set_u32(&mut group, 56, 42);
+    group.extend_from_slice(&nested);
+    let mut bytes = Vec::new();
+    push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
+    push_chunk(&mut bytes, *b"PGOM", &group);
     bytes
 }
 
@@ -285,6 +467,10 @@ fn push_chunk(bytes: &mut Vec<u8>, magic: [u8; 4], payload: &[u8]) {
 }
 
 fn set_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_i16(bytes: &mut [u8], offset: usize, value: i16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
