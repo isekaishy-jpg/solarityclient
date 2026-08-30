@@ -16,6 +16,7 @@ mod status;
 mod vulkan_frame;
 mod vulkan_instance;
 mod vulkan_m2_draw;
+mod vulkan_m2_frame;
 mod vulkan_m2_pipeline;
 mod vulkan_m2_texture_set;
 mod vulkan_mesh;
@@ -27,6 +28,7 @@ mod vulkan_texture;
 pub use status::VulkanError;
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_draw::M2PreparedDraw;
+pub use vulkan_m2_frame::M2FrameReport;
 pub use vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo};
 pub use vulkan_m2_texture_set::{
     M2SampledTexture, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,

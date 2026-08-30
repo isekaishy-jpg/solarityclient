@@ -77,6 +77,19 @@ impl M2MeshRegistry {
             .map(GpuM2Mesh::info)
     }
 
+    /// Resolves one renderer-local identity to its vertex and index buffers.
+    pub(in crate::device) fn buffers(
+        &self,
+        handle: M2MeshHandle,
+    ) -> Option<(ash::vk::Buffer, ash::vk::Buffer)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(GpuM2Mesh::buffers)
+    }
+
     /// Releases buffers in reverse upload order before their VMA parent.
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.handles.clear();

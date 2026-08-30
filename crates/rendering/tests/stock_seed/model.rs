@@ -577,6 +577,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.index_count(), 3);
     assert_eq!(info.vertex_byte_count(), 156);
     assert_eq!(info.index_byte_count(), 6);
+    assert_eq!(info.max_bone_index(), Some(2));
     let pipeline = renderer.prepare_m2_pipeline(specialized, lit_permutation)?;
     assert_eq!(
         renderer.prepare_m2_pipeline(specialized, lit_permutation)?,
@@ -666,6 +667,16 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(prepared_draw.index_count(), draw.index_count());
     assert_eq!(prepared_draw.material(), material_uniform);
     assert_eq!(prepared_draw.push_constants(), push_constants);
+    assert_eq!(prepared_draw.required_bone_transforms(), 67);
+    let bone_transforms = vec![Mat4::IDENTITY; prepared_draw.required_bone_transforms()];
+    for _ in 0..=renderer.report().swapchain_image_count() {
+        let frame = renderer.present_m2(scene_uniform, &bone_transforms, &[prepared_draw])?;
+        assert_eq!(frame.draw_count(), 1);
+        assert_eq!(
+            frame.bone_transform_count(),
+            prepared_draw.required_bone_transforms()
+        );
+    }
     renderer.shutdown()?;
     Ok(())
 }

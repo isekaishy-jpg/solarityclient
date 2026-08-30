@@ -77,6 +77,16 @@ impl M2MeshPlan {
         &self.draws
     }
 
+    /// Returns the greatest model-bone index referenced by a nonzero weight.
+    #[must_use]
+    pub fn max_bone_index(&self) -> Option<u16> {
+        self.vertices
+            .iter()
+            .flat_map(|vertex| vertex.bone_weights().into_iter().zip(vertex.bone_indices()))
+            .filter_map(|(weight, index)| (weight != 0).then_some(index))
+            .max()
+    }
+
     /// Iterates only draws whose character geoset remains enabled.
     pub fn character_draws<'plan>(
         &'plan self,

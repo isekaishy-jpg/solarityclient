@@ -13,10 +13,12 @@ pub struct M2PreparedDraw {
     index_count: u32,
     material: M2MaterialUniform,
     push_constants: M2DrawPushConstants,
+    required_bone_transforms: usize,
 }
 
 impl M2PreparedDraw {
     /// Constructs a packet after the renderer validates every resource join.
+    #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(
         mesh: M2MeshHandle,
         pipeline: M2PipelineHandle,
@@ -25,6 +27,7 @@ impl M2PreparedDraw {
         index_count: u32,
         material: M2MaterialUniform,
         push_constants: M2DrawPushConstants,
+        required_bone_transforms: usize,
     ) -> Self {
         Self {
             mesh,
@@ -34,6 +37,7 @@ impl M2PreparedDraw {
             index_count,
             material,
             push_constants,
+            required_bone_transforms,
         }
     }
 
@@ -77,5 +81,11 @@ impl M2PreparedDraw {
     #[must_use]
     pub const fn push_constants(self) -> M2DrawPushConstants {
         self.push_constants
+    }
+
+    /// Returns the minimum global transform count needed by this mesh instance.
+    #[must_use]
+    pub const fn required_bone_transforms(self) -> usize {
+        self.required_bone_transforms
     }
 }

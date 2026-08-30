@@ -15,6 +15,8 @@ pub(super) struct SelectedAdapter {
     pub(super) present_family: u32,
     pub(super) surface_format: vk::SurfaceFormatKHR,
     pub(super) depth_format: vk::Format,
+    pub(super) uniform_buffer_alignment: vk::DeviceSize,
+    pub(super) storage_buffer_alignment: vk::DeviceSize,
     pub(super) surface_capabilities: vk::SurfaceCapabilitiesKHR,
 }
 
@@ -94,6 +96,8 @@ impl SelectedAdapter {
             present_family,
             surface_format,
             depth_format,
+            uniform_buffer_alignment: properties.limits.min_uniform_buffer_offset_alignment,
+            storage_buffer_alignment: properties.limits.min_storage_buffer_offset_alignment,
             surface_capabilities,
         })
     }

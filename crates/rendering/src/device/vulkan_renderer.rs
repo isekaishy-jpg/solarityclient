@@ -7,6 +7,7 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Texture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
+use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
 use crate::device::vulkan_m2_texture_set::{
     M2TextureSet, M2TextureSetHandle, M2TextureSetInfo, M2TextureSetRegistry,
@@ -21,8 +22,10 @@ use crate::device::vulkan_texture::{
     BlpTextureUploadError, TextureUploadContext,
 };
 use crate::device::{VulkanBootstrap, VulkanError};
+use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
+use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,6 +91,7 @@ pub struct VulkanRenderer {
     device: Device,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
+    m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
@@ -102,6 +106,8 @@ pub struct VulkanRenderer {
     present_queue: vk::Queue,
     report: VulkanReport,
     is_idle: bool,
+    uniform_buffer_alignment: vk::DeviceSize,
+    storage_buffer_alignment: vk::DeviceSize,
 }
 
 impl VulkanRenderer {
@@ -126,6 +132,7 @@ impl VulkanRenderer {
             device,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
+            m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
@@ -150,6 +157,8 @@ impl VulkanRenderer {
                 presented_texture_extent: None,
             },
             is_idle: false,
+            uniform_buffer_alignment: selected.uniform_buffer_alignment,
+            storage_buffer_alignment: selected.storage_buffer_alignment,
         };
         renderer.create_allocator(selected.physical_device)?;
         renderer.create_swapchain(&selected, extent)?;
@@ -380,6 +389,54 @@ impl VulkanRenderer {
         )
     }
 
+    /// Records and presents one asset-backed M2 scene using reusable frame slots.
+    ///
+    /// Resources grow to the submitted high-water draw/bone counts and are then
+    /// reused without steady-state host or Vulkan allocation. One independently
+    /// fenced slot exists for each swapchain image.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for an empty frame, insufficient bone transforms,
+    /// resource growth/mapping, command recording, submission, or presentation.
+    pub fn present_m2(
+        &mut self,
+        scene: M2SceneUniform,
+        bone_transforms: &[Mat4],
+        draws: &[M2PreparedDraw],
+    ) -> Result<M2FrameReport, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let frame_layouts = self.m2_pipelines.frame_set_layouts(&self.device)?;
+        let report = self.m2_frames.present(
+            M2FrameContext {
+                device: &self.device,
+                allocator,
+                swapchain_loader: &self.swapchain_loader,
+                swapchain: self.swapchain,
+                swapchain_images: &self.swapchain_images,
+                image_views: &self.image_views,
+                graphics_queue: self.graphics_queue,
+                present_queue: self.present_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+                extent: self.report.extent,
+                depth_format: self.depth_format,
+                uniform_alignment: self.uniform_buffer_alignment,
+                storage_alignment: self.storage_buffer_alignment,
+                pipelines: &self.m2_pipelines,
+                meshes: &self.m2_meshes,
+                texture_sets: &self.m2_texture_sets,
+            },
+            frame_layouts,
+            scene,
+            bone_transforms,
+            draws,
+        )?;
+        self.is_idle = false;
+        Ok(report)
+    }
+
     /// Creates the swapchain and one owned color view for each borrowed image.
     fn create_swapchain(
         &mut self,
@@ -474,6 +531,7 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         if let Some(allocator) = self.allocator.as_ref() {
+            self.m2_frames.destroy(&self.device, allocator);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
             self.m2_meshes.destroy(allocator);

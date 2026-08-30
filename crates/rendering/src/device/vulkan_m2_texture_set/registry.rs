@@ -15,10 +15,6 @@ use super::types::{M2TextureSet, M2TextureSetHandle, M2TextureSetInfo};
 
 /// One live descriptor set owned transitively by a registry descriptor pool.
 struct GpuM2TextureSet {
-    #[expect(
-        dead_code,
-        reason = "retained for the immediately following indexed-draw binding boundary"
-    )]
     handle: vk::DescriptorSet,
     info: M2TextureSetInfo,
 }
@@ -86,6 +82,16 @@ impl M2TextureSetRegistry {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| resource.info)
+    }
+
+    /// Resolves one renderer-local identity to its live descriptor set.
+    pub(in crate::device) fn raw(&self, handle: M2TextureSetHandle) -> Option<vk::DescriptorSet> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.handle)
     }
 
     /// Releases descriptor sets transitively by destroying their owning pools.

@@ -143,6 +143,23 @@ pub enum VulkanError {
     /// The sampled texture stages do not match the compiled shader count.
     #[error("M2 draw texture set does not match its pipeline")]
     M2DrawTextureSetMismatch,
+    /// A draw's instance bone base cannot address its uploaded model indices.
+    #[error("M2 draw bone-transform range exceeds addressable memory")]
+    M2BoneTransformRange,
+    /// Command recording requires at least one prepared material draw.
+    #[error("M2 frame contains no prepared draws")]
+    EmptyM2Frame,
+    /// Frame buffer sizes or dynamic offsets exceed Vulkan-addressable ranges.
+    #[error("M2 frame resources exceed addressable capacity")]
+    M2FrameCapacity,
+    /// Submitted transforms do not cover every draw's resolved bone indices.
+    #[error("M2 frame requires {required} bone transforms but received {available}")]
+    M2FrameBoneTransforms {
+        /// Minimum transform count required by all submitted draws.
+        required: usize,
+        /// Transform count supplied for this frame.
+        available: usize,
+    },
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,

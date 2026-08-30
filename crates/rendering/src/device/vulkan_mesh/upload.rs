@@ -73,6 +73,11 @@ impl GpuM2Mesh {
         &self.info
     }
 
+    /// Returns both live device-local buffers for command recording.
+    pub(super) const fn buffers(&self) -> (vk::Buffer, vk::Buffer) {
+        (self.vertex_buffer.handle, self.index_buffer.handle)
+    }
+
     /// Releases both children before the renderer drops VMA.
     pub(super) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.index_buffer.destroy(allocator);
@@ -312,6 +317,7 @@ pub(super) fn upload_mesh(
         plan.indices().len(),
         vertex_bytes.len(),
         index_bytes.len(),
+        plan.max_bone_index(),
     );
     let guard = MeshGuard {
         allocator: context.allocator,

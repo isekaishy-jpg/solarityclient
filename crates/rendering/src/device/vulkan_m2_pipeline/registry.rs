@@ -44,6 +44,34 @@ impl Default for M2PipelineRegistry {
 }
 
 impl M2PipelineRegistry {
+    /// Returns the initialized scene, bone, and material layouts in set order.
+    pub(in crate::device) fn frame_set_layouts(
+        &mut self,
+        device: &Device,
+    ) -> Result<[vk::DescriptorSetLayout; 3], VulkanError> {
+        self.layout.ensure_created(device)?;
+        let mut layouts = [vk::DescriptorSetLayout::null(); 3];
+        for (index, layout) in layouts.iter_mut().enumerate() {
+            *layout = self.layout.descriptor_set(index).ok_or_else(|| {
+                VulkanError::operation("access M2 frame descriptor layout", "layout is unavailable")
+            })?;
+        }
+        Ok(layouts)
+    }
+
+    /// Resolves one renderer-local pipeline to command-recording handles.
+    pub(in crate::device) fn raw(
+        &self,
+        handle: M2PipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.handle, self.layout.handle()))
+    }
+
     /// Returns the initialized set-three sampled-texture layout.
     pub(in crate::device) fn texture_set_layout(
         &mut self,

@@ -62,6 +62,13 @@ pub(in crate::device) fn prepare_draw(
     if texture_info.stage_count() != pipeline_info.texture_count() {
         return Err(VulkanError::M2DrawTextureSetMismatch);
     }
+    let required_bone_transforms = mesh_info.max_bone_index().map_or(Ok(0), |index| {
+        usize::try_from(bone_transform_offset)
+            .ok()
+            .and_then(|offset| offset.checked_add(usize::from(index)))
+            .and_then(|last| last.checked_add(1))
+            .ok_or(VulkanError::M2BoneTransformRange)
+    })?;
 
     Ok(M2PreparedDraw::new(
         mesh,
@@ -71,5 +78,6 @@ pub(in crate::device) fn prepare_draw(
         draw.index_count(),
         material,
         M2DrawPushConstants::new(bone_transform_offset, draw, flags),
+        required_bone_transforms,
     ))
 }

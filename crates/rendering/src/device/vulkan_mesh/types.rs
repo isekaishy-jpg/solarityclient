@@ -21,6 +21,7 @@ pub struct M2MeshResourceInfo {
     index_count: usize,
     vertex_byte_count: usize,
     index_byte_count: usize,
+    max_bone_index: Option<u16>,
 }
 
 impl M2MeshResourceInfo {
@@ -32,6 +33,7 @@ impl M2MeshResourceInfo {
         index_count: usize,
         vertex_byte_count: usize,
         index_byte_count: usize,
+        max_bone_index: Option<u16>,
     ) -> Self {
         Self {
             path,
@@ -40,6 +42,7 @@ impl M2MeshResourceInfo {
             index_count,
             vertex_byte_count,
             index_byte_count,
+            max_bone_index,
         }
     }
 
@@ -77,5 +80,11 @@ impl M2MeshResourceInfo {
     #[must_use]
     pub const fn index_byte_count(&self) -> usize {
         self.index_byte_count
+    }
+
+    /// Returns the greatest model-bone index consumed by any weighted vertex.
+    #[must_use]
+    pub const fn max_bone_index(&self) -> Option<u16> {
+        self.max_bone_index
     }
 }
