@@ -4,8 +4,8 @@ use std::error::Error;
 use std::path::Path;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, CreatureCatalog, Locale,
-    WdbcTable,
+    ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog, ClientDataRoot,
+    CreatureCatalog, Locale, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -93,6 +93,33 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     ];
     let display_table = create_wdbc(1, 16, &display_fields, &display_strings);
 
+    let mut extra_strings = vec![0];
+    let baked_texture = append_string(&mut extra_strings, "Textures\\BakedNpc.blp");
+    let extra_fields = [
+        55,
+        4,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        0x20,
+        baked_texture,
+    ];
+    let extra_table = create_wdbc(1, 21, &extra_fields, &extra_strings);
+
     let mut model_strings = vec![0];
     let model_name = append_string(&mut model_strings, "Creature\\Bear\\Bear.m2");
     let model_fields = [
@@ -137,6 +164,11 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
             path: "DBFilesClient\\CreatureModelData.dbc",
             bytes: &model_table,
         },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CreatureDisplayInfoExtra.dbc",
+            bytes: &extra_table,
+        },
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -161,6 +193,23 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     assert_eq!(display.particle_color_id(), 5);
     assert_eq!(display.geoset_data(), 0x0012_0304);
     assert_eq!(display.object_effect_package_id(), 6);
+
+    let extra = catalog
+        .display_extra(display.extended_display_info_id())
+        .ok_or("extended display row was not indexed")?;
+    assert_eq!(extra.race_id(), 4);
+    assert_eq!(extra.gender_id(), 1);
+    assert_eq!(extra.skin_id(), 2);
+    assert_eq!(extra.face_id(), 3);
+    assert_eq!(extra.hair_style_id(), 4);
+    assert_eq!(extra.hair_color_id(), 5);
+    assert_eq!(extra.facial_hair_style_id(), 6);
+    assert_eq!(
+        extra.npc_item_display_ids(),
+        [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
+    );
+    assert_eq!(extra.flags(), 0x20);
+    assert_eq!(extra.baked_texture_name(), "Textures\\BakedNpc.blp");
 
     let model = catalog
         .model(display.model_id())
@@ -196,6 +245,7 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
 #[test]
 fn creature_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
     let display_table = create_wdbc(1, 15, &[0; 15], b"\0");
+    let extra_table = create_wdbc(0, 21, &[], b"\0");
     let model_table = create_wdbc(0, 28, &[], b"\0");
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -208,6 +258,11 @@ fn creature_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
             path: "DBFilesClient\\CreatureModelData.dbc",
             bytes: &model_table,
         },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CreatureDisplayInfoExtra.dbc",
+            bytes: &extra_table,
+        },
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -217,6 +272,111 @@ fn creature_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
         Err(AssetError::DatabaseDecode { path, message })
             if path == AssetPath::new("DBFilesClient/CreatureDisplayInfo.dbc")?
                 && message.contains("requires 16 fields")
+    ));
+    Ok(())
+}
+
+/// Player appearance bytes resolve to exact texture and geometry table keys.
+#[test]
+fn character_appearance_catalog_indexes_stock_customization_keys() -> Result<(), Box<dyn Error>> {
+    let mut section_strings = vec![0];
+    let upper = append_string(&mut section_strings, "Character\\NightElf\\Upper.blp");
+    let lower = append_string(&mut section_strings, "Character\\NightElf\\Lower.blp");
+    let sections = [
+        2, 4, 1, 3, upper, lower, 0, 4, 7, 5, 1, 4, 1, 3, upper, lower, 0, 1, 7, 5,
+    ];
+    let section_table = create_wdbc(2, 10, &sections, &section_strings);
+    let hair_table = create_wdbc(1, 6, &[90, 4, 1, 7, 12, 1], b"\0");
+    let facial_table = create_wdbc(1, 8, &[4, 1, 6, 1, 2, 3, 4, 5], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &section_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let matching = catalog.sections_for(4, 1, 3, 7, 5);
+    assert_eq!(matching.len(), 2);
+    assert_eq!(matching[0].id(), 1);
+    assert_eq!(matching[0].flags(), 1);
+    assert_eq!(matching[1].id(), 2);
+    assert_eq!(matching[1].flags(), 4);
+    assert_eq!(matching[0].race_id(), 4);
+    assert_eq!(matching[0].gender_id(), 1);
+    assert_eq!(matching[0].base_section(), 3);
+    assert_eq!(matching[0].variation_index(), 7);
+    assert_eq!(matching[0].color_index(), 5);
+    assert_eq!(
+        matching[0].texture_names(),
+        [
+            "Character\\NightElf\\Upper.blp",
+            "Character\\NightElf\\Lower.blp",
+            ""
+        ]
+    );
+    assert!(catalog.sections_for(4, 1, 3, 7, 6).is_empty());
+
+    let hair = catalog
+        .hair_geoset(4, 1, 7)
+        .ok_or("hair geoset was not indexed")?;
+    assert_eq!(hair.id(), 90);
+    assert_eq!(hair.geoset_id(), 12);
+    assert_eq!(hair.shows_scalp(), 1);
+    assert_eq!(catalog.hair_geoset(4, 1, 8), None);
+
+    let facial = catalog
+        .facial_hair_style(4, 1, 6)
+        .ok_or("facial-hair row was not indexed")?;
+    assert_eq!(facial.geosets(), [1, 2, 3, 4, 5]);
+    assert_eq!(catalog.facial_hair_style(4, 1, 7), None);
+    Ok(())
+}
+
+/// Packed later-client customization schemas are not accepted as build 12340.
+#[test]
+fn character_appearance_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
+    let section_table = create_wdbc(0, 9, &[], b"\0");
+    let hair_table = create_wdbc(0, 6, &[], b"\0");
+    let facial_table = create_wdbc(0, 8, &[], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &section_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert!(matches!(
+        CharacterAppearanceCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { path, message })
+            if path == AssetPath::new("DBFilesClient/CharSections.dbc")?
+                && message.contains("requires 10 fields")
     ));
     Ok(())
 }

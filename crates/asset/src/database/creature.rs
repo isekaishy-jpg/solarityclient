@@ -6,8 +6,10 @@ use crate::file_stack::AssetStore;
 use super::wow_client_db::WdbcTable;
 
 const DISPLAY_INFO_PATH: &str = "DBFilesClient\\CreatureDisplayInfo.dbc";
+const DISPLAY_INFO_EXTRA_PATH: &str = "DBFilesClient\\CreatureDisplayInfoExtra.dbc";
 const MODEL_DATA_PATH: &str = "DBFilesClient\\CreatureModelData.dbc";
 const DISPLAY_FIELD_COUNT: u32 = 16;
+const DISPLAY_EXTRA_FIELD_COUNT: u32 = 21;
 const MODEL_FIELD_COUNT: u32 = 28;
 
 /// One exact build-12340 `CreatureDisplayInfo.dbc` row.
@@ -112,6 +114,94 @@ impl CreatureDisplayInfo {
     #[must_use]
     pub const fn object_effect_package_id(&self) -> u32 {
         self.object_effect_package_id
+    }
+}
+
+/// One exact build-12340 `CreatureDisplayInfoExtra.dbc` appearance row.
+///
+/// Later clients add HD-specific file identifiers to this table. Build 12340
+/// does not: higher-quality replacements continue to resolve through the same
+/// baked texture path and normal MPQ precedence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatureDisplayInfoExtra {
+    id: u32,
+    race_id: u32,
+    gender_id: u32,
+    skin_id: u32,
+    face_id: u32,
+    hair_style_id: u32,
+    hair_color_id: u32,
+    facial_hair_style_id: u32,
+    npc_item_display_ids: [u32; 11],
+    flags: u32,
+    baked_texture_name: String,
+}
+
+impl CreatureDisplayInfoExtra {
+    /// Returns the identifier referenced by a creature display row.
+    #[must_use]
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Returns the ChrRaces.dbc identifier.
+    #[must_use]
+    pub const fn race_id(&self) -> u32 {
+        self.race_id
+    }
+
+    /// Returns the stock gender identifier.
+    #[must_use]
+    pub const fn gender_id(&self) -> u32 {
+        self.gender_id
+    }
+
+    /// Returns the skin customization identifier.
+    #[must_use]
+    pub const fn skin_id(&self) -> u32 {
+        self.skin_id
+    }
+
+    /// Returns the face customization identifier.
+    #[must_use]
+    pub const fn face_id(&self) -> u32 {
+        self.face_id
+    }
+
+    /// Returns the hair-style customization identifier.
+    #[must_use]
+    pub const fn hair_style_id(&self) -> u32 {
+        self.hair_style_id
+    }
+
+    /// Returns the hair-color customization identifier.
+    #[must_use]
+    pub const fn hair_color_id(&self) -> u32 {
+        self.hair_color_id
+    }
+
+    /// Returns the facial-hair customization identifier.
+    #[must_use]
+    pub const fn facial_hair_style_id(&self) -> u32 {
+        self.facial_hair_style_id
+    }
+
+    /// Returns all eleven NPC equipment display slots in stock order.
+    #[must_use]
+    pub const fn npc_item_display_ids(&self) -> [u32; 11] {
+        self.npc_item_display_ids
+    }
+
+    /// Returns the exact appearance flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// Returns the baked character texture name, preserving authored absence.
+    #[must_use]
+    pub fn baked_texture_name(&self) -> &str {
+        &self.baked_texture_name
     }
 }
 
@@ -273,6 +363,7 @@ impl CreatureModelData {
 /// Sorted render-facing creature tables loaded through ordinary MPQ precedence.
 pub struct CreatureCatalog {
     displays: Vec<CreatureDisplayInfo>,
+    display_extras: Vec<CreatureDisplayInfoExtra>,
     models: Vec<CreatureModelData>,
 }
 
@@ -285,12 +376,19 @@ impl CreatureCatalog {
     /// layout, contains an invalid string/path, or repeats a primary key.
     pub fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
         let display_path = AssetPath::new(DISPLAY_INFO_PATH)?;
+        let display_extra_path = AssetPath::new(DISPLAY_INFO_EXTRA_PATH)?;
         let model_path = AssetPath::new(MODEL_DATA_PATH)?;
         let display_table = WdbcTable::load(store, &display_path)?;
+        let display_extra_table = WdbcTable::load(store, &display_extra_path)?;
         let model_table = WdbcTable::load(store, &model_path)?;
         let displays = decode_displays(&display_table)?;
+        let display_extras = decode_display_extras(&display_extra_table)?;
         let models = decode_models(&model_table)?;
-        Ok(Self { displays, models })
+        Ok(Self {
+            displays,
+            display_extras,
+            models,
+        })
     }
 
     /// Finds a display row in logarithmic time by its exact identifier.
@@ -311,6 +409,15 @@ impl CreatureCatalog {
             .map(|index| &self.models[index])
     }
 
+    /// Finds an extended appearance row in logarithmic time.
+    #[must_use]
+    pub fn display_extra(&self, id: u32) -> Option<&CreatureDisplayInfoExtra> {
+        self.display_extras
+            .binary_search_by_key(&id, CreatureDisplayInfoExtra::id)
+            .ok()
+            .map(|index| &self.display_extras[index])
+    }
+
     /// Returns display rows sorted by primary key.
     #[must_use]
     pub fn displays(&self) -> &[CreatureDisplayInfo] {
@@ -321,6 +428,12 @@ impl CreatureCatalog {
     #[must_use]
     pub fn models(&self) -> &[CreatureModelData] {
         &self.models
+    }
+
+    /// Returns extended appearance rows sorted by primary key.
+    #[must_use]
+    pub fn display_extras(&self) -> &[CreatureDisplayInfoExtra] {
+        &self.display_extras
     }
 }
 
@@ -354,6 +467,35 @@ fn decode_displays(table: &WdbcTable) -> Result<Vec<CreatureDisplayInfo>, AssetE
         });
     }
     sort_unique(table, records, CreatureDisplayInfo::id)
+}
+
+/// Validates and decodes the exact 21-word extended appearance layout.
+fn decode_display_extras(table: &WdbcTable) -> Result<Vec<CreatureDisplayInfoExtra>, AssetError> {
+    require_layout(
+        table,
+        DISPLAY_EXTRA_FIELD_COUNT,
+        "CreatureDisplayInfoExtra.dbc",
+    )?;
+    let mut records = Vec::with_capacity(table.header().record_count() as usize);
+    for row in 0..table.header().record_count() {
+        let values = read_fields::<21>(table, row)?;
+        records.push(CreatureDisplayInfoExtra {
+            id: values[0],
+            race_id: values[1],
+            gender_id: values[2],
+            skin_id: values[3],
+            face_id: values[4],
+            hair_style_id: values[5],
+            hair_color_id: values[6],
+            facial_hair_style_id: values[7],
+            npc_item_display_ids: values[8..19].try_into().map_err(|_| {
+                database_error(table, format!("record {row} item slots are truncated"))
+            })?,
+            flags: values[19],
+            baked_texture_name: table_string(table, row, 20, values[20])?,
+        });
+    }
+    sort_unique(table, records, CreatureDisplayInfoExtra::id)
 }
 
 /// Validates and decodes the exact 28-word model layout.
@@ -463,7 +605,17 @@ fn table_string(
             format!("record {row} field {field} contains a non-ASCII asset name"),
         ));
     }
-    String::from_utf8(bytes.to_vec()).map_err(|error| database_error(table, error.to_string()))
+    let value = String::from_utf8(bytes.to_vec())
+        .map_err(|error| database_error(table, error.to_string()))?;
+    if !value.is_empty() {
+        AssetPath::new(&value).map_err(|error| {
+            database_error(
+                table,
+                format!("record {row} field {field} has invalid asset name: {error}"),
+            )
+        })?;
+    }
+    Ok(value)
 }
 
 /// Sorts a decoded catalog and rejects ambiguous primary-key ownership.

@@ -19,7 +19,9 @@ pub use archive::{
     ClientDataRoot, Locale,
 };
 pub use database::{
-    CreatureCatalog, CreatureDisplayInfo, CreatureModelData, WdbcHeader, WdbcTable,
+    CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
+    CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData, WdbcHeader,
+    WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use texture::DecodedBlpTexture;
