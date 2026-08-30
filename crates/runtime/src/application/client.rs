@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
-use solarity_rendering::{VulkanError, VulkanReport};
-use solarity_ui::{GlueError, GlueStartupReport};
+use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
+use solarity_ui::{GlueError, GlueStartupReport, UiRenderError};
 
 use crate::application::client_services::ClientServices;
 use crate::application::run::{self, ApplicationRunReport};
@@ -30,6 +30,12 @@ pub enum ApplicationError {
     /// Built-in GlueXML, FrameXML, fonts, layout, or Lua startup failed.
     #[error(transparent)]
     Ui(#[from] GlueError),
+    /// Live UI assets or geometry could not enter the renderer boundary.
+    #[error(transparent)]
+    UiRender(#[from] UiRenderError),
+    /// A selected UI BLP could not decode or enter device-local storage.
+    #[error(transparent)]
+    BlpTextureUpload(#[from] BlpTextureUploadError),
     /// Tokio could not construct the private network runtime.
     #[error("failed to create network runtime: {message}")]
     NetworkRuntime {

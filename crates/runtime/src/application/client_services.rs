@@ -4,16 +4,15 @@
 
 use tokio::runtime::{Builder, Runtime};
 
-use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, DecodedBlpTexture};
+use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 use solarity_ui::{GlueManager, GlueStartupReport};
 
 use crate::application::ApplicationError;
+use crate::application::login_ui;
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
-
-const BOOTSTRAP_TEXTURE: &str = "Interface\\Icons\\INV_Misc_QuestionMark.blp";
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
@@ -33,11 +32,7 @@ impl ClientServices {
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
-        let mut assets = AssetStore::mount(catalog)?;
-        // The stock missing-icon texture is a stable client asset and gives the
-        // bootstrap frame a real archive/decode path instead of synthetic pixels.
-        let texture_path = AssetPath::new(BOOTSTRAP_TEXTURE)?;
-        let texture = DecodedBlpTexture::load(&mut assets, &texture_path)?;
+        let assets = AssetStore::mount(catalog)?;
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
         let mut platform = SdlPlatform::start(configuration.window())?;
@@ -51,8 +46,8 @@ impl ClientServices {
         let mut renderer = unsafe {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
-        renderer.present_blp(&texture)?;
         let glue = GlueManager::start(assets, platform.logical_extent(), false)?;
+        login_ui::present(&mut renderer, &glue)?;
         platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()

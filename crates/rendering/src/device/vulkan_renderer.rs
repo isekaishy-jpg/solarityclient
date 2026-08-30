@@ -46,6 +46,7 @@ pub struct VulkanReport {
     swapchain_image_count: usize,
     extent: (u32, u32),
     presented_texture_extent: Option<(u32, u32)>,
+    presented_ui_draw_count: Option<usize>,
 }
 
 impl VulkanReport {
@@ -89,6 +90,12 @@ impl VulkanReport {
     #[must_use]
     pub const fn presented_texture_extent(&self) -> Option<(u32, u32)> {
         self.presented_texture_extent
+    }
+
+    /// Returns the number of batches in the most recently presented UI frame.
+    #[must_use]
+    pub const fn presented_ui_draw_count(&self) -> Option<usize> {
+        self.presented_ui_draw_count
     }
 }
 
@@ -174,6 +181,7 @@ impl VulkanRenderer {
                 swapchain_image_count: 0,
                 extent: (extent.width, extent.height),
                 presented_texture_extent: None,
+                presented_ui_draw_count: None,
             },
             is_idle: false,
             uniform_buffer_alignment: selected.uniform_buffer_alignment,
@@ -448,6 +456,7 @@ impl VulkanRenderer {
             draws,
         )?;
         self.is_idle = false;
+        self.report.presented_ui_draw_count = Some(report.draw_count());
         Ok(report)
     }
 

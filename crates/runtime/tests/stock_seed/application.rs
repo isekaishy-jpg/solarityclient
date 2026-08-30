@@ -33,10 +33,11 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert!(vulkan.api_version() >= ash::vk::API_VERSION_1_3);
     assert!(vulkan.swapchain_image_count() >= 2);
     assert_eq!(vulkan.extent(), report.pixel_window_extent());
-    assert_eq!(vulkan.presented_texture_extent(), Some((2, 1)));
+    assert_eq!(vulkan.presented_texture_extent(), None);
+    assert_eq!(vulkan.presented_ui_draw_count(), Some(1));
     assert_eq!(report.glue().resource_count(), 2);
     assert_eq!(report.glue().action_count(), 2);
-    assert_eq!(report.glue().object_count(), 2);
+    assert_eq!(report.glue().object_count(), 3);
     assert_eq!(report.glue().executed_chunk_count(), 1);
     assert_eq!(report.glue().executed_load_handler_count(), 1);
 

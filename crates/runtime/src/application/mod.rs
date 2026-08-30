@@ -7,6 +7,7 @@
 mod client;
 mod client_services;
 mod gameplay_session;
+mod login_ui;
 mod run;
 
 pub use client::{ApplicationError, ClientApplication, StartupReport};

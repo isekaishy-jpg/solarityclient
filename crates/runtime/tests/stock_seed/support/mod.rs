@@ -72,7 +72,9 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
             "Interface\\GlueXML\\GlueXML.toc",
         );
         builder = builder.add_file_data(
-            br#"<Ui><Frame name="GlueBootstrap"><Frames>
+            br#"<Ui><Frame name="GlueBootstrap" setAllPoints="true"><Layers>
+  <Layer level="BACKGROUND"><Texture name="$parentTexture" file="Interface\Icons\INV_Misc_QuestionMark" setAllPoints="true"/></Layer>
+</Layers><Frames>
   <Model name="$parentModel"/>
 </Frames><Scripts><OnLoad>
   GlueBootstrapModel:SetModel("Solarity\\RuntimeFixture.txt")
