@@ -33,6 +33,10 @@ pub use region::{
     UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionGeometry, UiRegionGeometryPlan, UiRegionState,
     UiRegionStatePlan, UiScreenRect,
 };
+pub use render::{
+    UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan, UiTexturePresentation,
+    UiTextureSource,
+};
 pub use script::{
     UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,
     UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan,

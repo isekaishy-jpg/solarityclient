@@ -3,9 +3,9 @@
 use mlua::{Lua, RegistryKey};
 
 use crate::{
-    FontCatalog, HorizontalJustification, UiLayoutPlan, UiObjectCatalog, UiObjectKind,
-    UiObjectTree, UiPoint, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
-    UiTexturePlan, UiTextureStatePlan, VerticalJustification,
+    FontCatalog, HorizontalJustification, UiBlendMode, UiDrawLayer, UiLayoutPlan, UiObjectCatalog,
+    UiObjectKind, UiObjectTree, UiPoint, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptTarget, UiTextureFile, UiTexturePlan, UiTextureStatePlan, VerticalJustification,
 };
 
 const POINT_COUNT: usize = 9;
@@ -70,6 +70,13 @@ pub struct UiRuntimeTemplateNode {
     justify_v: String,
     texture_coords: [f64; 8],
     texture_colors: [[f64; 4]; 4],
+    texture_file: Option<String>,
+    texture_blend_mode: &'static str,
+    horizontal_tiling: bool,
+    vertical_tiling: bool,
+    non_blocking: bool,
+    draw_layer: &'static str,
+    draw_sub_level: i16,
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
@@ -195,9 +202,7 @@ impl UiRuntimeTemplatePlan {
                     .collect::<Result<Vec<_>, _>>()?;
                 let (font_assigned, font_object_name, justify_h, justify_v) =
                     initial_font(object, fonts);
-                let texture_coords = initial_texture_coords(&tree, &texture_states, local_index)
-                    .map_err(|error| template_error(template_name, error))?;
-                let texture_colors = initial_texture_colors(&tree, &texture_states, local_index)
+                let texture = initial_texture(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
                 plan.nodes.push(UiRuntimeTemplateNode {
                     name: runtime_name(template_name, object.name()),
@@ -219,8 +224,15 @@ impl UiRuntimeTemplatePlan {
                     font_object_name,
                     justify_h,
                     justify_v,
-                    texture_coords,
-                    texture_colors,
+                    texture_coords: texture.coords,
+                    texture_colors: texture.colors,
+                    texture_file: texture.file,
+                    texture_blend_mode: texture.blend_mode,
+                    horizontal_tiling: texture.horizontal_tiling,
+                    vertical_tiling: texture.vertical_tiling,
+                    non_blocking: texture.non_blocking,
+                    draw_layer: texture.draw_layer,
+                    draw_sub_level: texture.draw_sub_level,
                     script_targets,
                 });
             }
@@ -357,6 +369,13 @@ impl UiRuntimeTemplatePlan {
                     "texture_color",
                     lua.create_sequence_from(node.texture_colors.iter().flatten().copied())?,
                 )?;
+                record.raw_set("texture_file", node.texture_file.as_deref())?;
+                record.raw_set("texture_blend_mode", node.texture_blend_mode)?;
+                record.raw_set("horizontal_tiling", node.horizontal_tiling)?;
+                record.raw_set("vertical_tiling", node.vertical_tiling)?;
+                record.raw_set("non_blocking", node.non_blocking)?;
+                record.raw_set("draw_layer", node.draw_layer)?;
+                record.raw_set("draw_sub_level", node.draw_sub_level)?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {
                     match target {
@@ -441,33 +460,61 @@ fn apply_justification(
     }
 }
 
-fn initial_texture_coords(
-    tree: &UiObjectTree<'_>,
-    textures: &UiTextureStatePlan,
-    index: usize,
-) -> Result<[f64; 8], &'static str> {
-    let coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
-    if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
-        return Ok(coords);
-    }
-    textures
-        .state(index)
-        .map(|state| state.tex_coords().map(f64::from))
-        .ok_or("texture is outside the template texture state plan")
+struct InitialTexture {
+    file: Option<String>,
+    coords: [f64; 8],
+    colors: [[f64; 4]; 4],
+    blend_mode: &'static str,
+    horizontal_tiling: bool,
+    vertical_tiling: bool,
+    non_blocking: bool,
+    draw_layer: &'static str,
+    draw_sub_level: i16,
 }
 
-fn initial_texture_colors(
+fn initial_texture(
     tree: &UiObjectTree<'_>,
     textures: &UiTextureStatePlan,
     index: usize,
-) -> Result<[[f64; 4]; 4], &'static str> {
-    let colors = [[1.0, 1.0, 1.0, 1.0]; 4];
+) -> Result<InitialTexture, &'static str> {
     if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
-        return Ok(colors);
+        return Ok(InitialTexture {
+            file: None,
+            coords: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
+            colors: [[1.0, 1.0, 1.0, 1.0]; 4],
+            blend_mode: "BLEND",
+            horizontal_tiling: false,
+            vertical_tiling: false,
+            non_blocking: false,
+            draw_layer: "ARTWORK",
+            draw_sub_level: 0,
+        });
     }
     textures
         .state(index)
-        .map(|state| state.vertex_colors().map(|color| color.map(f64::from)))
+        .map(|state| InitialTexture {
+            file: match state.file() {
+                Some(UiTextureFile::Asset(path)) => Some(path.as_str().to_owned()),
+                Some(UiTextureFile::Dynamic) | None => None,
+            },
+            coords: state.tex_coords().map(f64::from),
+            colors: state.vertex_colors().map(|color| color.map(f64::from)),
+            blend_mode: match state.blend_mode() {
+                UiBlendMode::Blend => "BLEND",
+                UiBlendMode::Add => "ADD",
+            },
+            horizontal_tiling: state.horizontal_tiling(),
+            vertical_tiling: state.vertical_tiling(),
+            non_blocking: state.non_blocking(),
+            draw_layer: match state.draw_layer() {
+                UiDrawLayer::Background => "BACKGROUND",
+                UiDrawLayer::Border => "BORDER",
+                UiDrawLayer::Artwork => "ARTWORK",
+                UiDrawLayer::Overlay => "OVERLAY",
+                UiDrawLayer::Highlight => "HIGHLIGHT",
+            },
+            draw_sub_level: state.draw_sub_level(),
+        })
         .ok_or("texture is outside the template texture state plan")
 }
 

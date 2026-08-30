@@ -350,6 +350,13 @@ fn canonical_texture_file(path: &AssetPath, value: &str) -> Result<UiTextureFile
     if value.is_empty() {
         return Ok(UiTextureFile::Dynamic);
     }
+    canonical_texture_asset(value)
+        .map(UiTextureFile::Asset)
+        .map_err(|message| texture_error(path, message))
+}
+
+/// Applies build 12340's archive texture-name rules to an XML or Lua value.
+pub(crate) fn canonical_texture_asset(value: &str) -> Result<AssetPath, String> {
     let lower = value.to_ascii_lowercase();
     let canonical = if lower.ends_with(".tga") {
         format!("{}.blp", &value[..value.len() - 4])
@@ -362,14 +369,9 @@ fn canonical_texture_file(path: &AssetPath, value: &str) -> Result<UiTextureFile
     {
         format!("{value}.blp")
     } else {
-        return Err(texture_error(
-            path,
-            format!("unsupported texture extension in {value}"),
-        ));
+        return Err(format!("unsupported texture extension in {value}"));
     };
-    AssetPath::new(canonical)
-        .map(UiTextureFile::Asset)
-        .map_err(|error| texture_error(path, error.to_string()))
+    AssetPath::new(canonical).map_err(|error| error.to_string())
 }
 
 fn parse_tex_coords(path: &AssetPath, element: &XmlElement) -> Result<UiTexCoords, UiTextureError> {

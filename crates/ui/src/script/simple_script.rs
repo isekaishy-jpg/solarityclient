@@ -14,11 +14,11 @@ use solarity_asset::{AssetPath, AssetStore};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_glue_event};
 use crate::{
-    FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBundle,
-    UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
-    UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
-    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTextureStatePlan,
-    VerticalJustification, XmlContent,
+    FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBlendMode, UiBundle,
+    UiDrawLayer, UiFrameStatePlan, UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch,
+    UiObjectKind, UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent,
+    UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
+    UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
 };
 
 use self::cvars::UiCVarRegistry;
@@ -82,6 +82,15 @@ static BUTTON_TEXT_TOKEN: u8 = 49;
 static ROLE_TOKEN: u8 = 50;
 static ALPHA_TOKEN: u8 = 51;
 static SCALE_TOKEN: u8 = 52;
+static TEXTURE_FILE_TOKEN: u8 = 53;
+static TEXTURE_SOLID_COLOR_TOKEN: u8 = 54;
+static TEXTURE_BLEND_MODE_TOKEN: u8 = 55;
+static HORIZONTAL_TILING_TOKEN: u8 = 56;
+static VERTICAL_TILING_TOKEN: u8 = 57;
+static NON_BLOCKING_TOKEN: u8 = 58;
+static DRAW_LAYER_TOKEN: u8 = 59;
+static DRAW_SUB_LEVEL_TOKEN: u8 = 60;
+static FRAME_STRATA_TOKEN: u8 = 61;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -141,6 +150,35 @@ struct InitialButton {
     highlight_font: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct InitialTexture {
+    file: Option<String>,
+    coords: [f64; 8],
+    colors: [[f64; 4]; 4],
+    blend_mode: &'static str,
+    horizontal_tiling: bool,
+    vertical_tiling: bool,
+    non_blocking: bool,
+    draw_layer: &'static str,
+    draw_sub_level: i16,
+}
+
+impl Default for InitialTexture {
+    fn default() -> Self {
+        Self {
+            file: None,
+            coords: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
+            colors: [[1.0, 1.0, 1.0, 1.0]; 4],
+            blend_mode: "BLEND",
+            horizontal_tiling: false,
+            vertical_tiling: false,
+            non_blocking: false,
+            draw_layer: "ARTWORK",
+            draw_sub_level: 0,
+        }
+    }
+}
+
 /// Incremental executor for one built-in UI bundle.
 ///
 /// Object tables are registered at their exact XML action rather than before
@@ -158,10 +196,10 @@ pub struct UiScriptRuntime {
     region_anchors: Vec<Vec<InitialAnchor>>,
     font_strings: Vec<InitialFont>,
     buttons: Vec<InitialButton>,
-    texture_coords: Vec<[f64; 8]>,
-    texture_colors: Vec<[[f64; 4]; 4]>,
+    textures: Vec<InitialTexture>,
     frame_ids: Vec<Option<i32>>,
     frame_levels: Vec<Option<i32>>,
+    frame_strata: Vec<Option<&'static str>>,
     frame_keyboard_enabled: Vec<Option<bool>>,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
@@ -443,6 +481,13 @@ impl UiScriptRuntime {
         let frame_levels = (0..plan.regions.state_count())
             .map(|index| plan.frames.state(index).map(|state| state.level()))
             .collect();
+        let frame_strata = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.frames
+                    .state(index)
+                    .map(|state| frame_strata_name(state.strata()))
+            })
+            .collect();
         let frame_keyboard_enabled = (0..plan.regions.state_count())
             .map(|index| {
                 plan.frames
@@ -452,8 +497,7 @@ impl UiScriptRuntime {
             .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
-        let texture_coords = tree_texture_coords(plan.tree, plan.texture_states)?;
-        let texture_colors = tree_texture_colors(plan.tree, plan.texture_states)?;
+        let textures = tree_textures(plan.tree, plan.texture_states)?;
         let registered_objects = Rc::new(Cell::new(0));
         let dynamic_objects = Rc::new(Cell::new(0));
         register_create_frame(
@@ -475,10 +519,10 @@ impl UiScriptRuntime {
             region_anchors,
             font_strings,
             buttons,
-            texture_coords,
-            texture_colors,
+            textures,
             frame_ids,
             frame_levels,
+            frame_strata,
             frame_keyboard_enabled,
             registered_objects,
             executed_chunks: 0,
@@ -782,6 +826,19 @@ impl UiScriptRuntime {
         } else {
             None
         };
+        let frame_strata = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_strata
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!("frame object {node_index} has no resolved frame strata"),
+                    })?,
+            )
+        } else {
+            None
+        };
         let initial_anchors =
             self.region_anchors
                 .get(node_index)
@@ -838,6 +895,8 @@ impl UiScriptRuntime {
                     })?,
                 )
             })
+            .and_then(|()| table.raw_set(draw_layer_key(), "ARTWORK"))
+            .and_then(|()| table.raw_set(draw_sub_level_key(), 0_i16))
             .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
             let script_handlers = lua
@@ -873,6 +932,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(all_events_key(), false))
                 .and_then(|()| table.raw_set(id_key(), frame_id))
                 .and_then(|()| table.raw_set(frame_level_key(), frame_level))
+                .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(script_handlers_key(), script_handlers))
                 .map_err(|error| execution_error("object registration", error))?;
@@ -985,31 +1045,32 @@ impl UiScriptRuntime {
             }
         }
         if object.kind() == UiObjectKind::Texture {
-            let coords =
-                self.texture_coords
-                    .get(node_index)
-                    .ok_or_else(|| UiScriptError::Plan {
-                        message: format!("texture {node_index} has no initial coordinate state"),
-                    })?;
-            table
-                .raw_set(
-                    tex_coord_key(),
-                    lua.create_sequence_from(*coords)
-                        .map_err(|error| execution_error("object registration", error))?,
-                )
-                .map_err(|error| execution_error("object registration", error))?;
-            let color = self
-                .texture_colors
+            let texture = self
+                .textures
                 .get(node_index)
                 .ok_or_else(|| UiScriptError::Plan {
-                    message: format!("texture {node_index} has no initial vertex color"),
+                    message: format!("texture {node_index} has no initial state"),
                 })?;
             table
                 .raw_set(
-                    texture_color_key(),
-                    lua.create_sequence_from(color.iter().flatten().copied())
+                    tex_coord_key(),
+                    lua.create_sequence_from(texture.coords)
                         .map_err(|error| execution_error("object registration", error))?,
                 )
+                .and_then(|()| {
+                    table.raw_set(
+                        texture_color_key(),
+                        lua.create_sequence_from(texture.colors.iter().flatten().copied())?,
+                    )
+                })
+                .and_then(|()| table.raw_set(texture_file_key(), texture.file.as_deref()))
+                .and_then(|()| table.raw_set(texture_solid_color_key(), Option::<Table>::None))
+                .and_then(|()| table.raw_set(texture_blend_mode_key(), texture.blend_mode))
+                .and_then(|()| table.raw_set(horizontal_tiling_key(), texture.horizontal_tiling))
+                .and_then(|()| table.raw_set(vertical_tiling_key(), texture.vertical_tiling))
+                .and_then(|()| table.raw_set(non_blocking_key(), texture.non_blocking))
+                .and_then(|()| table.raw_set(draw_layer_key(), texture.draw_layer))
+                .and_then(|()| table.raw_set(draw_sub_level_key(), texture.draw_sub_level))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         let metatable_key = self
@@ -1193,6 +1254,13 @@ fn create_dynamic_frame(
             lua.create_sequence_from([0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0])?,
         )?;
         record.raw_set("texture_color", lua.create_sequence_from([1.0; 16])?)?;
+        record.raw_set("texture_file", Option::<String>::None)?;
+        record.raw_set("texture_blend_mode", "BLEND")?;
+        record.raw_set("horizontal_tiling", false)?;
+        record.raw_set("vertical_tiling", false)?;
+        record.raw_set("non_blocking", false)?;
+        record.raw_set("draw_layer", "ARTWORK")?;
+        record.raw_set("draw_sub_level", 0_i16)?;
         records.raw_set(1, record)?;
         records
     };
@@ -1315,6 +1383,11 @@ fn create_dynamic_object(
     object.raw_set(alpha_key(), record.raw_get::<f64>("alpha")?)?;
     object.raw_set(scale_key(), record.raw_get::<f64>("scale")?)?;
     object.raw_set(anchors_key(), lua.create_table()?)?;
+    object.raw_set(draw_layer_key(), record.raw_get::<String>("draw_layer")?)?;
+    object.raw_set(
+        draw_sub_level_key(),
+        record.raw_get::<i16>("draw_sub_level")?,
+    )?;
     if !matches!(kind, "Texture" | "FontString") {
         object.raw_set(events_key(), lua.create_table()?)?;
         object.raw_set(all_events_key(), false)?;
@@ -1324,6 +1397,11 @@ fn create_dynamic_object(
             .transpose()?
             .map_or(0, |level| level.saturating_add(1));
         object.raw_set(frame_level_key(), level)?;
+        let strata = parent
+            .map(|parent| parent.raw_get::<String>(frame_strata_key()))
+            .transpose()?
+            .unwrap_or_else(|| "MEDIUM".to_owned());
+        object.raw_set(frame_strata_key(), strata)?;
         object.raw_set(keyboard_enabled_key(), false)?;
         let handlers = lua.create_table()?;
         if let Some(initial) = record.raw_get::<Option<Table>>("scripts")? {
@@ -1377,6 +1455,29 @@ fn create_dynamic_object(
         object.raw_set(
             texture_color_key(),
             record.raw_get::<Table>("texture_color")?,
+        )?;
+        object.raw_set(
+            texture_file_key(),
+            record.raw_get::<Option<String>>("texture_file")?,
+        )?;
+        object.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+        object.raw_set(
+            texture_blend_mode_key(),
+            record.raw_get::<String>("texture_blend_mode")?,
+        )?;
+        object.raw_set(
+            horizontal_tiling_key(),
+            record.raw_get::<bool>("horizontal_tiling")?,
+        )?;
+        object.raw_set(
+            vertical_tiling_key(),
+            record.raw_get::<bool>("vertical_tiling")?,
+        )?;
+        object.raw_set(non_blocking_key(), record.raw_get::<bool>("non_blocking")?)?;
+        object.raw_set(draw_layer_key(), record.raw_get::<String>("draw_layer")?)?;
+        object.raw_set(
+            draw_sub_level_key(),
+            record.raw_get::<i16>("draw_sub_level")?,
         )?;
     }
     let metatables: Table = lua.named_registry_value(METATABLE_REGISTRY)?;
@@ -1877,6 +1978,64 @@ fn require_font_string_font(font_string: &Table, method: &str) -> mlua::Result<(
 
 fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
+        "SetTexture",
+        lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
+            let first = arguments.first().cloned().unwrap_or(Value::Nil);
+            if let Some(red) = lua.coerce_number(first.clone())? {
+                let mut color = [red, 1.0, 1.0, 1.0];
+                for (index, component) in color.iter_mut().enumerate().skip(1) {
+                    if let Some(value) = arguments
+                        .get(index)
+                        .map(|value| lua.coerce_number(value.clone()))
+                        .transpose()?
+                        .flatten()
+                    {
+                        *component = value;
+                    }
+                }
+                if color.iter().any(|value| !value.is_finite()) {
+                    return Err(mlua::Error::runtime("SetTexture(): invalid color"));
+                }
+                texture.raw_set(texture_file_key(), Option::<String>::None)?;
+                texture.raw_set(texture_solid_color_key(), lua.create_sequence_from(color)?)?;
+                return Ok(());
+            }
+            let value = lua
+                .coerce_string(first)?
+                .map(|value| value.to_string_lossy())
+                .unwrap_or_default();
+            let file = (!value.is_empty()).then_some(value);
+            texture.raw_set(texture_file_key(), file)?;
+            texture.raw_set(texture_solid_color_key(), Option::<Table>::None)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetTexture",
+        lua.create_function(|_, texture: Table| {
+            texture.raw_get::<Option<String>>(texture_file_key())
+        })?,
+    )?;
+    methods.raw_set(
+        "SetBlendMode",
+        lua.create_function(|_, (texture, requested): (Table, String)| {
+            let mode = if requested.eq_ignore_ascii_case("BLEND") {
+                "BLEND"
+            } else if requested.eq_ignore_ascii_case("ADD") {
+                "ADD"
+            } else {
+                return Err(mlua::Error::runtime("invalid texture blend mode"));
+            };
+            texture.raw_set(texture_blend_mode_key(), mode)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetBlendMode",
+        lua.create_function(|_, texture: Table| {
+            texture.raw_get::<String>(texture_blend_mode_key())
+        })?,
+    )?;
+    register_texture_flag_methods(lua, methods)?;
+    methods.raw_set(
         "SetTexCoord",
         lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
             let values = arguments
@@ -1918,23 +2077,24 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "SetVertexColor",
         lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
-            let current: Table = texture.raw_get(texture_color_key())?;
-            let mut color = [0.0_f64; 4];
+            let mut color = [0.0, 0.0, 0.0, 1.0];
             for (index, component) in color.iter_mut().take(3).enumerate() {
                 *component = arguments
                     .get(index)
                     .map(|value| lua.coerce_number(value.clone()))
                     .transpose()?
                     .flatten()
-                    .unwrap_or(0.0)
-                    .clamp(0.0, 1.0);
+                    .unwrap_or(0.0);
             }
             color[3] = arguments
                 .get(3)
                 .map(|value| lua.coerce_number(value.clone()))
                 .transpose()?
                 .flatten()
-                .map_or(current.raw_get::<f64>(4)?, |value| value.clamp(0.0, 1.0));
+                .unwrap_or(1.0);
+            if color.iter().any(|value| !value.is_finite()) {
+                return Err(mlua::Error::runtime("invalid vertex color"));
+            }
             texture.raw_set(
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(16))?,
@@ -1952,6 +2112,80 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 color.raw_get::<f64>(4)?,
             ))
         })?,
+    )?;
+    methods.raw_set(
+        "SetGradient",
+        lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
+            set_texture_gradient(lua, &texture, arguments.as_slice(), false)
+        })?,
+    )?;
+    methods.raw_set(
+        "SetGradientAlpha",
+        lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
+            set_texture_gradient(lua, &texture, arguments.as_slice(), true)
+        })?,
+    )
+}
+
+fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    for (set_name, get_name, key) in [
+        ("SetHorizTile", "GetHorizTile", horizontal_tiling_key()),
+        ("SetVertTile", "GetVertTile", vertical_tiling_key()),
+        ("SetNonBlocking", "GetNonBlocking", non_blocking_key()),
+    ] {
+        methods.raw_set(
+            set_name,
+            lua.create_function(move |_, (texture, enabled): (Table, Option<bool>)| {
+                texture.raw_set(key, enabled.unwrap_or(true))
+            })?,
+        )?;
+        methods.raw_set(
+            get_name,
+            lua.create_function(move |_, texture: Table| {
+                Ok(texture.raw_get::<bool>(key)?.then_some(Value::Number(1.0)))
+            })?,
+        )?;
+    }
+    Ok(())
+}
+
+fn set_texture_gradient(
+    lua: &Lua,
+    texture: &Table,
+    arguments: &[Value],
+    includes_alpha: bool,
+) -> mlua::Result<()> {
+    let orientation = arguments
+        .first()
+        .and_then(|value| value.as_string())
+        .map(|value| value.to_string_lossy())
+        .ok_or_else(|| mlua::Error::runtime("invalid Texture gradient"))?;
+    let stride = if includes_alpha { 4 } else { 3 };
+    if arguments.len() != 1 + stride * 2 {
+        return Err(mlua::Error::runtime("invalid Texture gradient"));
+    }
+    let mut minimum = [0.0, 0.0, 0.0, 1.0];
+    let mut maximum = [0.0, 0.0, 0.0, 1.0];
+    for channel in 0..stride {
+        minimum[channel] = lua
+            .coerce_number(arguments[1 + channel].clone())?
+            .ok_or_else(|| mlua::Error::runtime("invalid Texture gradient"))?
+            .clamp(0.0, 1.0);
+        maximum[channel] = lua
+            .coerce_number(arguments[1 + stride + channel].clone())?
+            .ok_or_else(|| mlua::Error::runtime("invalid Texture gradient"))?
+            .clamp(0.0, 1.0);
+    }
+    let colors = if orientation.eq_ignore_ascii_case("VERTICAL") {
+        [maximum, minimum, maximum, minimum]
+    } else if orientation.eq_ignore_ascii_case("HORIZONTAL") {
+        [minimum, minimum, maximum, maximum]
+    } else {
+        return Err(mlua::Error::runtime("invalid Texture gradient"));
+    };
+    texture.raw_set(
+        texture_color_key(),
+        lua.create_sequence_from(colors.into_iter().flatten())?,
     )
 }
 
@@ -2102,6 +2336,18 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 )));
             }
             object.raw_set(frame_level_key(), value)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetFrameStrata",
+        lua.create_function(|_, object: Table| object.raw_get::<String>(frame_strata_key()))?,
+    )?;
+    methods.raw_set(
+        "SetFrameStrata",
+        lua.create_function(|_, (object, requested): (Table, String)| {
+            let strata = parse_frame_strata_name(&requested)
+                .ok_or_else(|| mlua::Error::runtime("invalid frame strata"))?;
+            object.raw_set(frame_strata_key(), strata)
         })?,
     )?;
     methods.raw_set(
@@ -2279,6 +2525,23 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
         lua.create_function(|_, object: Table| object.raw_get::<f64>(scale_key()))?,
     )?;
     methods.raw_set(
+        "SetDrawLayer",
+        lua.create_function(
+            |_, (object, requested, sub_level): (Table, String, Option<i32>)| {
+                let layer = parse_draw_layer_name(&requested)
+                    .ok_or_else(|| mlua::Error::runtime("invalid draw layer"))?;
+                let sub_level = i16::try_from(sub_level.unwrap_or(0))
+                    .map_err(|_| mlua::Error::runtime("invalid draw layer"))?;
+                object.raw_set(draw_layer_key(), layer)?;
+                object.raw_set(draw_sub_level_key(), sub_level)
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetDrawLayer",
+        lua.create_function(|_, object: Table| object.raw_get::<String>(draw_layer_key()))?,
+    )?;
+    methods.raw_set(
         "SetScale",
         lua.create_function(|_, (object, scale): (Table, f64)| {
             if scale <= 0.0 {
@@ -2327,6 +2590,22 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     )?;
     register_region_visibility_methods(lua, methods)?;
     Ok(())
+}
+
+fn parse_draw_layer_name(value: &str) -> Option<&'static str> {
+    if value.eq_ignore_ascii_case("BACKGROUND") {
+        Some("BACKGROUND")
+    } else if value.eq_ignore_ascii_case("BORDER") {
+        Some("BORDER")
+    } else if value.eq_ignore_ascii_case("ARTWORK") {
+        Some("ARTWORK")
+    } else if value.eq_ignore_ascii_case("OVERLAY") {
+        Some("OVERLAY")
+    } else if value.eq_ignore_ascii_case("HIGHLIGHT") {
+        Some("HIGHLIGHT")
+    } else {
+        None
+    }
 }
 
 fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -2802,21 +3081,34 @@ fn apply_font_justification(initial: &mut InitialFont, definition: &FontDefiniti
     }
 }
 
-fn tree_texture_coords(
+fn tree_textures(
     tree: &UiObjectTree<'_>,
     textures: &UiTextureStatePlan,
-) -> Result<Vec<[f64; 8]>, UiScriptError> {
+) -> Result<Vec<InitialTexture>, UiScriptError> {
     tree.nodes()
         .iter()
         .enumerate()
         .map(|(index, node)| {
-            let coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+            let initial = InitialTexture::default();
             if node.kind() != UiObjectKind::Texture {
-                return Ok(coords);
+                return Ok(initial);
             }
             textures
                 .state(index)
-                .map(|state| state.tex_coords().map(f64::from))
+                .map(|state| InitialTexture {
+                    file: match state.file() {
+                        Some(UiTextureFile::Asset(path)) => Some(path.as_str().to_owned()),
+                        Some(UiTextureFile::Dynamic) | None => None,
+                    },
+                    coords: state.tex_coords().map(f64::from),
+                    colors: state.vertex_colors().map(|color| color.map(f64::from)),
+                    blend_mode: blend_mode_name(state.blend_mode()),
+                    horizontal_tiling: state.horizontal_tiling(),
+                    vertical_tiling: state.vertical_tiling(),
+                    non_blocking: state.non_blocking(),
+                    draw_layer: draw_layer_name(state.draw_layer()),
+                    draw_sub_level: state.draw_sub_level(),
+                })
                 .ok_or_else(|| UiScriptError::Plan {
                     message: format!("texture {index} is outside the texture state plan"),
                 })
@@ -2824,26 +3116,56 @@ fn tree_texture_coords(
         .collect()
 }
 
-fn tree_texture_colors(
-    tree: &UiObjectTree<'_>,
-    textures: &UiTextureStatePlan,
-) -> Result<Vec<[[f64; 4]; 4]>, UiScriptError> {
-    tree.nodes()
-        .iter()
-        .enumerate()
-        .map(|(index, node)| {
-            let color = [[1.0, 1.0, 1.0, 1.0]; 4];
-            if node.kind() != UiObjectKind::Texture {
-                return Ok(color);
-            }
-            textures
-                .state(index)
-                .map(|state| state.vertex_colors().map(|color| color.map(f64::from)))
-                .ok_or_else(|| UiScriptError::Plan {
-                    message: format!("texture {index} is outside the texture state plan"),
-                })
-        })
-        .collect()
+fn blend_mode_name(value: UiBlendMode) -> &'static str {
+    match value {
+        UiBlendMode::Blend => "BLEND",
+        UiBlendMode::Add => "ADD",
+    }
+}
+
+fn draw_layer_name(value: UiDrawLayer) -> &'static str {
+    match value {
+        UiDrawLayer::Background => "BACKGROUND",
+        UiDrawLayer::Border => "BORDER",
+        UiDrawLayer::Artwork => "ARTWORK",
+        UiDrawLayer::Overlay => "OVERLAY",
+        UiDrawLayer::Highlight => "HIGHLIGHT",
+    }
+}
+
+fn frame_strata_name(value: UiFrameStrata) -> &'static str {
+    match value {
+        UiFrameStrata::Background => "BACKGROUND",
+        UiFrameStrata::Low => "LOW",
+        UiFrameStrata::Medium => "MEDIUM",
+        UiFrameStrata::High => "HIGH",
+        UiFrameStrata::Dialog => "DIALOG",
+        UiFrameStrata::Fullscreen => "FULLSCREEN",
+        UiFrameStrata::FullscreenDialog => "FULLSCREEN_DIALOG",
+        UiFrameStrata::Tooltip => "TOOLTIP",
+    }
+}
+
+fn parse_frame_strata_name(value: &str) -> Option<&'static str> {
+    if value.eq_ignore_ascii_case("BACKGROUND") {
+        Some("BACKGROUND")
+    } else if value.eq_ignore_ascii_case("LOW") {
+        Some("LOW")
+    } else if value.eq_ignore_ascii_case("MEDIUM") {
+        Some("MEDIUM")
+    } else if value.eq_ignore_ascii_case("HIGH") {
+        Some("HIGH")
+    } else if value.eq_ignore_ascii_case("DIALOG") {
+        Some("DIALOG")
+    } else if value.eq_ignore_ascii_case("FULLSCREEN") {
+        Some("FULLSCREEN")
+    } else if value.eq_ignore_ascii_case("FULLSCREEN_DIALOG") {
+        Some("FULLSCREEN_DIALOG")
+    } else if value.eq_ignore_ascii_case("TOOLTIP") {
+        Some("TOOLTIP")
+    } else {
+        None
+    }
 }
 
 fn xml_attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> {
@@ -3014,7 +3336,7 @@ pub(super) fn anchors_key() -> LightUserData {
     hidden_key(&ANCHORS_TOKEN)
 }
 
-fn enabled_key() -> LightUserData {
+pub(super) fn enabled_key() -> LightUserData {
     hidden_key(&ENABLED_TOKEN)
 }
 
@@ -3082,7 +3404,7 @@ fn text_key() -> LightUserData {
     hidden_key(&TEXT_TOKEN)
 }
 
-fn highlight_locked_key() -> LightUserData {
+pub(super) fn highlight_locked_key() -> LightUserData {
     hidden_key(&HIGHLIGHT_LOCKED_TOKEN)
 }
 
@@ -3094,7 +3416,7 @@ fn font_object_key() -> LightUserData {
     hidden_key(&FONT_OBJECT_TOKEN)
 }
 
-fn tex_coord_key() -> LightUserData {
+pub(super) fn tex_coord_key() -> LightUserData {
     hidden_key(&TEX_COORD_TOKEN)
 }
 
@@ -3106,7 +3428,7 @@ fn justify_v_key() -> LightUserData {
     hidden_key(&JUSTIFY_V_TOKEN)
 }
 
-fn checked_key() -> LightUserData {
+pub(super) fn checked_key() -> LightUserData {
     hidden_key(&CHECKED_TOKEN)
 }
 
@@ -3122,7 +3444,7 @@ fn model_file_key() -> LightUserData {
     hidden_key(&MODEL_FILE_TOKEN)
 }
 
-fn click_action_key() -> LightUserData {
+pub(super) fn click_action_key() -> LightUserData {
     hidden_key(&CLICK_ACTION_TOKEN)
 }
 
@@ -3134,7 +3456,7 @@ fn model_sequence_time_key() -> LightUserData {
     hidden_key(&MODEL_SEQUENCE_TIME_TOKEN)
 }
 
-fn frame_level_key() -> LightUserData {
+pub(super) fn frame_level_key() -> LightUserData {
     hidden_key(&FRAME_LEVEL_TOKEN)
 }
 
@@ -3146,8 +3468,44 @@ fn keyboard_enabled_key() -> LightUserData {
     hidden_key(&KEYBOARD_ENABLED_TOKEN)
 }
 
-fn texture_color_key() -> LightUserData {
+pub(super) fn texture_color_key() -> LightUserData {
     hidden_key(&TEXTURE_COLOR_TOKEN)
+}
+
+pub(super) fn texture_file_key() -> LightUserData {
+    hidden_key(&TEXTURE_FILE_TOKEN)
+}
+
+pub(super) fn texture_solid_color_key() -> LightUserData {
+    hidden_key(&TEXTURE_SOLID_COLOR_TOKEN)
+}
+
+pub(super) fn texture_blend_mode_key() -> LightUserData {
+    hidden_key(&TEXTURE_BLEND_MODE_TOKEN)
+}
+
+pub(super) fn horizontal_tiling_key() -> LightUserData {
+    hidden_key(&HORIZONTAL_TILING_TOKEN)
+}
+
+pub(super) fn vertical_tiling_key() -> LightUserData {
+    hidden_key(&VERTICAL_TILING_TOKEN)
+}
+
+pub(super) fn non_blocking_key() -> LightUserData {
+    hidden_key(&NON_BLOCKING_TOKEN)
+}
+
+pub(super) fn draw_layer_key() -> LightUserData {
+    hidden_key(&DRAW_LAYER_TOKEN)
+}
+
+pub(super) fn draw_sub_level_key() -> LightUserData {
+    hidden_key(&DRAW_SUB_LEVEL_TOKEN)
+}
+
+pub(super) fn frame_strata_key() -> LightUserData {
+    hidden_key(&FRAME_STRATA_TOKEN)
 }
 
 fn normal_texture_key() -> LightUserData {

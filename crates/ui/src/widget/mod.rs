@@ -23,3 +23,5 @@ pub use texture::{
     UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
     UiTextureStatePlan,
 };
+
+pub(crate) use texture::canonical_texture_asset;

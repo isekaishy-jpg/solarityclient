@@ -10,8 +10,9 @@ use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiBundle, UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan,
     UiFrameStatePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
-    UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
+    UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -27,6 +28,7 @@ pub struct GlueManager {
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
     geometry: UiRegionGeometryPlan,
+    presentation: UiPresentationPlan,
     textures: UiTexturePlan,
     texture_states: UiTextureStatePlan,
     objects: Vec<GlueObject>,
@@ -81,6 +83,7 @@ impl GlueManager {
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        let presentation = UiPresentationPlan::resolve(&live, &geometry);
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let report = GlueStartupReport::new(
             bundle.resources().len(),
@@ -104,6 +107,7 @@ impl GlueManager {
             frames,
             regions,
             geometry,
+            presentation,
             textures,
             texture_states,
             objects,
@@ -161,6 +165,12 @@ impl GlueManager {
     #[must_use]
     pub const fn geometry(&self) -> &UiRegionGeometryPlan {
         &self.geometry
+    }
+
+    /// Returns post-Lua texture packets in deterministic stock draw order.
+    #[must_use]
+    pub const fn presentation(&self) -> &UiPresentationPlan {
+        &self.presentation
     }
 
     /// Returns the archive-backed texture declaration plan.
