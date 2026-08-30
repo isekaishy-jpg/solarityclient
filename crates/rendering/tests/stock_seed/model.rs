@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::io::Cursor;
 
+use glam::{Mat4, Vec3, Vec4};
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
@@ -14,7 +15,8 @@ use solarity_rendering::{
     BlpColorSpace, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2LocalLightCount, M2MeshPlan, M2MeshPlanError, M2PixelShader,
+    CharacterWeaponState, M2DrawPushConstants, M2LocalLightCount, M2LocalLightState,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SceneUniform,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
     M2SpirvError, M2VertexShader, VulkanBootstrap,
 };
@@ -495,6 +497,33 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(draw.bone_influence(), 1);
     assert_eq!(lit_permutation.vertex_index(), 17);
     assert_eq!(lit_permutation.pixel_index(), 8);
+    let scene_uniform = M2SceneUniform::new(
+        Mat4::IDENTITY,
+        Vec3::new(1.0, 2.0, 3.0),
+        Vec3::splat(0.1),
+        Vec3::splat(0.8),
+        Vec3::Z,
+        Vec4::new(10.0, 100.0, 1.0, 1.0),
+        [M2LocalLightState::disabled(); 4],
+    );
+    assert_eq!(scene_uniform.to_bytes().len(), M2SceneUniform::BYTE_SIZE);
+    let material_uniform = M2MaterialUniform::new(
+        Mat4::IDENTITY,
+        [Mat4::IDENTITY; 2],
+        Mat4::IDENTITY,
+        Vec4::ONE,
+        Vec4::ZERO,
+        Vec4::new(state.alpha_reference(0.5), 0.0, 0.0, 0.0),
+    );
+    assert_eq!(
+        material_uniform.to_bytes().len(),
+        M2MaterialUniform::BYTE_SIZE
+    );
+    let push_constants = M2DrawPushConstants::new(64, draw, 0x20);
+    assert_eq!(
+        push_constants.to_bytes(),
+        [64, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0x20, 0, 0, 0]
+    );
     let spirv = M2SpirvCompiler::new()?.compile(specialized, lit_permutation)?;
     assert_eq!(spirv.key().plan(), specialized);
     assert_spirv_1_6(spirv.vertex_words());

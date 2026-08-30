@@ -42,7 +42,7 @@ layout(std140, set = 2, binding = 0) uniform M2MaterialState {
 } material;
 
 layout(push_constant) uniform M2DrawState {
-    uint bone_start;
+    uint bone_transform_offset;
     uint bone_count;
     uint texture_count;
     uint flags;
@@ -66,14 +66,14 @@ mat4 skin_matrix() {
         return mat4(1.0);
     }
     if (M2_BONE_CLASS == 1) {
-        return bones.transforms[bone_indices.x];
+        return bones.transforms[draw_state.bone_transform_offset + bone_indices.x];
     }
 
     mat4 skin = mat4(0.0);
-    skin += bones.transforms[bone_indices.x] * bone_weights.x;
-    skin += bones.transforms[bone_indices.y] * bone_weights.y;
-    skin += bones.transforms[bone_indices.z] * bone_weights.z;
-    skin += bones.transforms[bone_indices.w] * bone_weights.w;
+    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.x] * bone_weights.x;
+    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.y] * bone_weights.y;
+    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.z] * bone_weights.z;
+    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.w] * bone_weights.w;
     return skin;
 }
 

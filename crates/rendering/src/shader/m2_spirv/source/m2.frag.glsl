@@ -31,7 +31,7 @@ layout(set = 3, binding = 0) uniform sampler2D model_texture_0;
 layout(set = 3, binding = 1) uniform sampler2D model_texture_1;
 
 layout(push_constant) uniform M2DrawState {
-    uint bone_start;
+    uint bone_transform_offset;
     uint bone_count;
     uint texture_count;
     uint flags;
