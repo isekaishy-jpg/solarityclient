@@ -40,4 +40,5 @@ mod talent;
 mod vehicle;
 mod world;
 
+pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use object::{ObjectProjectionError, project_object_fields};

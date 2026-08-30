@@ -2210,9 +2210,11 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "shipyard",
+ "solarity-asset",
  "solarity-ecs",
  "thiserror",
  "tracing",
+ "wow-mpq",
 ]
 
 [[package]]
