@@ -2,20 +2,24 @@
 
 mod globals;
 
+use std::cell::Cell;
 use std::ffi::c_void;
+use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, RegistryKey, Table, Value, Variadic};
 
 use crate::{
-    UiAnchorTarget, UiBundle, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind,
-    UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiScriptError, UiScriptHandler,
-    UiScriptPlan, UiScriptTarget,
+    UiAnchorTarget, UiBundle, UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch,
+    UiObjectKind, UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent,
+    UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
 };
 
 use self::globals::register_base_globals;
 use super::script_events::glue_event;
+use super::templates::TEMPLATE_REGISTRY;
 
 const OBJECT_REGISTRY: &str = "solarity.ui.objects";
+const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -39,6 +43,7 @@ static SLIDER_MAX_TOKEN: u8 = 18;
 static SLIDER_VALUE_TOKEN: u8 = 19;
 static SLIDER_STEP_TOKEN: u8 = 20;
 static SHOWN_TOKEN: u8 = 21;
+static ID_TOKEN: u8 = 22;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -82,7 +87,8 @@ pub struct UiScriptRuntime {
     region_dimensions: Vec<(f64, f64)>,
     region_shown: Vec<bool>,
     region_anchors: Vec<Vec<InitialAnchor>>,
-    registered_objects: usize,
+    frame_ids: Vec<Option<i32>>,
+    registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
 }
@@ -136,10 +142,15 @@ impl UiScriptRuntime {
     /// the registry and metatable objects.
     pub fn new(
         bundle: &UiBundle,
+        frames: &UiFrameStatePlan,
         regions: &UiRegionStatePlan,
+        templates: &UiRuntimeTemplatePlan,
         environment: UiScriptEnvironment,
     ) -> Result<Self, UiScriptError> {
         let lua = bundle.lua();
+        templates
+            .install(lua)
+            .map_err(|error| execution_error("runtime templates", error))?;
         register_base_globals(lua, environment)
             .map_err(|error| execution_error("base globals", error))?;
         let objects = lua
@@ -147,15 +158,23 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
+        let metatables = lua
+            .create_table()
+            .map_err(|error| execution_error("object metatables", error))?;
         let object_metatables = OBJECT_KINDS
             .into_iter()
             .map(|kind| {
                 let metatable = create_object_metatable(lua, bundle.manifest().kind(), kind)
                     .map_err(|error| execution_error("object metatable", error))?;
+                metatables
+                    .raw_set(object_type_name(kind), metatable.clone())
+                    .map_err(|error| execution_error("object metatable", error))?;
                 lua.create_registry_value(metatable)
                     .map_err(|error| execution_error("object metatable", error))
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
+        lua.set_named_registry_value(METATABLE_REGISTRY, metatables)
+            .map_err(|error| execution_error("object metatables", error))?;
         let region_dimensions = (0..regions.state_count())
             .map(|index| {
                 let state = regions.state(index).ok_or_else(|| UiScriptError::Plan {
@@ -194,13 +213,20 @@ impl UiScriptRuntime {
                     .collect::<Vec<_>>())
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
+        let frame_ids = (0..regions.state_count())
+            .map(|index| frames.state(index).map(|state| state.id()))
+            .collect();
+        let registered_objects = Rc::new(Cell::new(0));
+        register_create_frame(lua, regions.state_count(), registered_objects.clone())
+            .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
             next_action: 0,
             object_metatables,
             region_dimensions,
             region_shown,
             region_anchors,
-            registered_objects: 0,
+            frame_ids,
+            registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
         })
@@ -294,8 +320,8 @@ impl UiScriptRuntime {
 
     /// Returns the number of object tables exposed so far.
     #[must_use]
-    pub const fn registered_object_count(&self) -> usize {
-        self.registered_objects
+    pub fn registered_object_count(&self) -> usize {
+        self.registered_objects.get()
     }
 
     /// Returns the number of external and inline Lua chunks executed so far.
@@ -388,6 +414,19 @@ impl UiScriptRuntime {
                 .ok_or_else(|| UiScriptError::Plan {
                     message: format!("object {node_index} has no resolved visibility state"),
                 })?;
+        let frame_id = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_ids
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!("frame object {node_index} has no resolved frame state"),
+                    })?,
+            )
+        } else {
+            None
+        };
         let initial_anchors =
             self.region_anchors
                 .get(node_index)
@@ -436,6 +475,7 @@ impl UiScriptRuntime {
                         .map_err(|error| execution_error("object registration", error))?,
                 )
                 .and_then(|()| table.raw_set(all_events_key(), false))
+                .and_then(|()| table.raw_set(id_key(), frame_id))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if is_enabled_control(object.kind()) {
@@ -492,7 +532,8 @@ impl UiScriptRuntime {
                     .map_err(|error| execution_error("object registration", error))?;
             }
         }
-        self.registered_objects += 1;
+        self.registered_objects
+            .set(self.registered_objects.get() + 1);
         Ok(())
     }
 
@@ -549,6 +590,210 @@ impl UiScriptRuntime {
     }
 }
 
+fn register_create_frame(
+    lua: &Lua,
+    static_object_count: usize,
+    registered_objects: Rc<Cell<usize>>,
+) -> mlua::Result<()> {
+    lua.globals().raw_set(
+        "CreateFrame",
+        lua.create_function(
+            move |lua,
+                  (kind, name, parent, template): (
+                String,
+                Option<String>,
+                Option<Table>,
+                Option<String>,
+            )| {
+                let templates: Table = lua.named_registry_value(TEMPLATE_REGISTRY)?;
+                let descriptor = if let Some(template) = template {
+                    if template.contains(',') {
+                        return Err(mlua::Error::runtime(
+                            "CreateFrame multiple-template inheritance is not implemented",
+                        ));
+                    }
+                    Some(templates.raw_get::<Table>(template.as_str()).map_err(|_| {
+                        mlua::Error::runtime(format!(
+                            "CreateFrame template {template} is unavailable"
+                        ))
+                    })?)
+                } else {
+                    None
+                };
+                create_dynamic_frame(
+                    lua,
+                    &kind,
+                    name.as_deref(),
+                    parent,
+                    descriptor,
+                    static_object_count,
+                    &registered_objects,
+                )
+            },
+        )?,
+    )
+}
+
+fn create_dynamic_frame(
+    lua: &Lua,
+    requested_kind: &str,
+    requested_name: Option<&str>,
+    requested_parent: Option<Table>,
+    descriptor: Option<Table>,
+    static_object_count: usize,
+    registered_objects: &Cell<usize>,
+) -> mlua::Result<Table> {
+    let records = if let Some(descriptor) = &descriptor {
+        descriptor.raw_get::<Table>("nodes")?
+    } else {
+        let records = lua.create_table()?;
+        let record = lua.create_table()?;
+        record.raw_set("kind", requested_kind)?;
+        record.raw_set("root_name", true)?;
+        record.raw_set("children", lua.create_table()?)?;
+        record.raw_set("width", 0.0)?;
+        record.raw_set("height", 0.0)?;
+        record.raw_set("shown", true)?;
+        records.raw_set(1, record)?;
+        records
+    };
+    let root_local = descriptor
+        .as_ref()
+        .map_or(Ok(1), |descriptor| descriptor.raw_get::<usize>("root"))?;
+    let root_record: Table = records.raw_get(root_local)?;
+    let template_kind = root_record.raw_get::<String>("kind")?;
+    if !template_kind.eq_ignore_ascii_case(requested_kind) {
+        return Err(mlua::Error::runtime(format!(
+            "CreateFrame type {requested_kind} does not match template type {template_kind}"
+        )));
+    }
+    let base_name = requested_name.map(str::to_owned).or_else(|| {
+        requested_parent
+            .as_ref()
+            .and_then(|parent| parent.raw_get(name_key()).ok())
+    });
+    let count = records.raw_len();
+    let mut objects = Vec::with_capacity(count);
+    for local_index in 1..=count {
+        let record: Table = records.raw_get(local_index)?;
+        let kind = record.raw_get::<String>("kind")?;
+        let name = dynamic_name(&record, requested_name, base_name.as_deref())?;
+        let parent = if local_index == root_local {
+            requested_parent.clone()
+        } else if let Some(parent_index) = record.raw_get::<Option<usize>>("parent")? {
+            objects.get(parent_index - 1).cloned()
+        } else if let Some(parent_name) = record.raw_get::<Option<String>>("external_parent")? {
+            lua.globals().raw_get::<Option<Table>>(parent_name)?
+        } else {
+            None
+        };
+        let index = static_object_count + registered_objects.get() + 1;
+        let object =
+            create_dynamic_object(lua, &kind, name.as_deref(), parent.as_ref(), index, &record)?;
+        registered_objects.set(registered_objects.get() + 1);
+        objects.push(object);
+    }
+    run_dynamic_load(lua, &records, &objects, root_local)?;
+    objects
+        .get(root_local - 1)
+        .cloned()
+        .ok_or_else(|| mlua::Error::runtime("CreateFrame root is outside its template"))
+}
+
+fn dynamic_name(
+    record: &Table,
+    requested_name: Option<&str>,
+    base_name: Option<&str>,
+) -> mlua::Result<Option<String>> {
+    if record.raw_get::<Option<bool>>("root_name")?.is_some() {
+        Ok(requested_name.map(str::to_owned))
+    } else if let Some(suffix) = record.raw_get::<Option<String>>("root_suffix")? {
+        Ok(Some(format!("{}{suffix}", base_name.unwrap_or(""))))
+    } else {
+        record.raw_get("absolute_name")
+    }
+}
+
+fn create_dynamic_object(
+    lua: &Lua,
+    kind: &str,
+    name: Option<&str>,
+    parent: Option<&Table>,
+    index: usize,
+    record: &Table,
+) -> mlua::Result<Table> {
+    let object = lua.create_table()?;
+    object.raw_set(name_key(), name)?;
+    object.raw_set(type_key(), kind)?;
+    object.raw_set(
+        parent_key(),
+        parent
+            .map(|parent| parent.raw_get::<usize>(index_key()))
+            .transpose()?,
+    )?;
+    object.raw_set(index_key(), index)?;
+    object.raw_set(width_key(), record.raw_get::<f64>("width")?)?;
+    object.raw_set(height_key(), record.raw_get::<f64>("height")?)?;
+    object.raw_set(shown_key(), record.raw_get::<bool>("shown")?)?;
+    object.raw_set(anchors_key(), lua.create_table()?)?;
+    if !matches!(kind, "Texture" | "FontString") {
+        object.raw_set(events_key(), lua.create_table()?)?;
+        object.raw_set(all_events_key(), false)?;
+        object.raw_set(id_key(), 0)?;
+    }
+    if matches!(kind, "Button" | "CheckButton" | "Slider") {
+        object.raw_set(enabled_key(), true)?;
+    }
+    if kind == "ScrollFrame" {
+        object.raw_set(horizontal_scroll_key(), 0.0)?;
+        object.raw_set(vertical_scroll_key(), 0.0)?;
+        object.raw_set(horizontal_scroll_range_key(), 0.0)?;
+        object.raw_set(vertical_scroll_range_key(), 0.0)?;
+    }
+    if kind == "Slider" {
+        object.raw_set(slider_min_key(), 0.0)?;
+        object.raw_set(slider_max_key(), 0.0)?;
+        object.raw_set(slider_value_key(), 0.0)?;
+        object.raw_set(slider_step_key(), 0.0)?;
+    }
+    let metatables: Table = lua.named_registry_value(METATABLE_REGISTRY)?;
+    object.set_metatable(Some(metatables.raw_get(kind)?))?;
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    objects.raw_set(index, object.clone())?;
+    if let Some(name) = name
+        && matches!(lua.globals().raw_get::<Value>(name)?, Value::Nil)
+    {
+        lua.globals().raw_set(name, object.clone())?;
+    }
+    Ok(object)
+}
+
+fn run_dynamic_load(
+    lua: &Lua,
+    records: &Table,
+    objects: &[Table],
+    local: usize,
+) -> mlua::Result<()> {
+    let record: Table = records.raw_get(local)?;
+    let children: Table = record.raw_get("children")?;
+    for child in children.sequence_values::<usize>() {
+        run_dynamic_load(lua, records, objects, child?)?;
+    }
+    let function = if let Some(function) = record.raw_get::<Option<mlua::Function>>("on_load")? {
+        Some(function)
+    } else if let Some(name) = record.raw_get::<Option<String>>("on_load_global")? {
+        Some(lua.globals().raw_get::<mlua::Function>(name)?)
+    } else {
+        None
+    };
+    if let Some(function) = function {
+        function.call::<()>(objects.get(local - 1).cloned().ok_or_else(|| {
+            mlua::Error::runtime("dynamic OnLoad object is outside its template")
+        })?)?;
+    }
+    Ok(())
+}
+
 fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
@@ -601,6 +846,14 @@ fn create_object_metatable(
 }
 
 fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "GetID",
+        lua.create_function(|_, object: Table| object.raw_get::<i32>(id_key()))?,
+    )?;
+    methods.raw_set(
+        "SetID",
+        lua.create_function(|_, (object, id): (Table, i32)| object.raw_set(id_key(), id))?,
+    )?;
     methods.raw_set(
         "Show",
         lua.create_function(|_, object: Table| object.raw_set(shown_key(), true))?,
@@ -1164,6 +1417,10 @@ fn slider_step_key() -> LightUserData {
 
 fn shown_key() -> LightUserData {
     hidden_key(&SHOWN_TOKEN)
+}
+
+fn id_key() -> LightUserData {
+    hidden_key(&ID_TOKEN)
 }
 
 fn hidden_key(token: &'static u8) -> LightUserData {

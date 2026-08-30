@@ -8,7 +8,9 @@ mod handlers;
 mod script_events;
 mod simple_script;
 mod status;
+mod templates;
 
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use simple_script::{UiScriptEnvironment, UiScriptRuntime};
 pub use status::UiScriptError;
+pub use templates::{UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan};

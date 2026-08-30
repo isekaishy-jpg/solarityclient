@@ -9,7 +9,8 @@ use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Loca
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiTextureFile, UiTexturePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiTextureFile,
+    UiTexturePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -84,8 +85,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let layout_plan = UiLayoutPlan::from_tree(&object_tree)?;
     let region_states = UiRegionStatePlan::resolve(&object_tree, &layout_plan)?;
     let script_plan = UiScriptPlan::from_tree(&object_tree, bundle.lua())?;
+    let runtime_templates =
+        UiRuntimeTemplatePlan::from_catalog(&object_catalog, &font_catalog, bundle.lua())?;
     if let Some(environment) = execution_environment {
-        let mut script_runtime = UiScriptRuntime::new(&bundle, &region_states, environment)?;
+        let mut script_runtime = UiScriptRuntime::new(
+            &bundle,
+            &frame_states,
+            &region_states,
+            &runtime_templates,
+            environment,
+        )?;
         script_runtime.execute_all(&bundle, &object_tree, &script_plan)?;
         println!(
             "executed {} actions, registered {} objects, ran {} Lua chunks and {} OnLoad handlers",
@@ -132,12 +141,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots in {} construction batches, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} authored anchors resolving to {} region states and {} final anchors, {} script declarations resolving to {} active bindings and {} unique inline functions, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates expanding to {} runtime prototype nodes, {} live roots in {} construction batches, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} authored anchors resolving to {} region states and {} final anchors, {} script declarations resolving to {} active bindings and {} unique inline functions, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
         font_catalog.definitions().len(),
         object_catalog.templates().len(),
+        runtime_templates.node_count(),
         object_catalog.roots().len(),
         object_tree.batches().len(),
         object_tree.nodes().len(),

@@ -42,4 +42,12 @@ pub enum UiScriptError {
         /// Lua runtime context.
         message: String,
     },
+    /// A virtual XML template could not become an owned runtime prototype.
+    #[error("failed to prepare runtime UI template {template}: {message}")]
+    Template {
+        /// Stock global template name.
+        template: String,
+        /// Construction, layout, script, or registry context.
+        message: String,
+    },
 }

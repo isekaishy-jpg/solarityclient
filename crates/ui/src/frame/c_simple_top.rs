@@ -237,6 +237,36 @@ impl<'bundle> UiObjectTree<'bundle> {
         Ok(tree)
     }
 
+    pub(crate) fn from_definition(
+        catalog: &UiObjectCatalog<'bundle>,
+        fonts: &FontCatalog,
+        definition: &UiObjectDefinition<'bundle>,
+    ) -> Result<Self, UiObjectError> {
+        let mut tree = Self {
+            nodes: Vec::new(),
+            by_name: HashMap::new(),
+            top_level: Vec::new(),
+            batches: Vec::new(),
+            pending_parents: Vec::new(),
+        };
+        let first_node = tree.nodes.len();
+        let root = tree.instantiate_root(catalog, fonts, definition)?;
+        tree.batches.push(UiObjectBatch {
+            action_index: definition.action_index(),
+            root,
+            first_node,
+            node_count: tree.nodes.len() - first_node,
+        });
+        Ok(tree)
+    }
+
+    pub(crate) fn pending_parent_name(&self, node_index: usize) -> Option<&str> {
+        self.pending_parents
+            .iter()
+            .find(|(index, _, _)| *index == node_index)
+            .map(|(_, name, _)| name.as_str())
+    }
+
     /// Returns all objects in construction order.
     #[must_use]
     pub fn nodes(&self) -> &[UiObjectNode<'bundle>] {

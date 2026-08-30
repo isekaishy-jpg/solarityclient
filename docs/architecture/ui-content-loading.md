@@ -73,6 +73,14 @@ their Lua global only when construction reaches that object. Like
 `FrameScript_Object::RegisterScriptObject`, object registration does not
 overwrite a non-nil global with the same name.
 
+Virtual declarations are also expanded ahead of execution into owned runtime
+prototypes. The local Glue corpus contains 71 templates expanding to 422
+prototype objects. `CreateFrame` resolves one of those prototypes, allocates its
+typed root and structural children, expands `$parent` names against the supplied
+runtime name, preserves first-global ownership, and invokes nested `OnLoad`
+handlers in construction postorder. This keeps dynamic dropdown and dialog
+objects on the same metatable and callback path as archive-authored objects.
+
 ## Typed XML callbacks
 
 Object construction converts each `<Scripts>` child into a callback slot from

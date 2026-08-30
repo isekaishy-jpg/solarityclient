@@ -4,9 +4,9 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
-    UiRegionStatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptRuntime, UiScriptTarget,
+    FontCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
+    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptTarget,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -57,12 +57,15 @@ fn script_plan_applies_stock_handler_replacement() -> Result<(), Box<dyn Error>>
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
 
     let live_index = tree.node_index("LiveButton").ok_or("missing LiveButton")?;
     let node = scripts.node(live_index).ok_or("missing script node")?;
     let bindings = scripts.bindings_for(node);
     assert_eq!(scripts.declaration_count(), 5);
     assert_eq!(scripts.function_count(), 3);
+    assert_eq!(templates.templates().len(), 1);
+    assert_eq!(templates.node_count(), 1);
     assert_eq!(bindings.len(), 2);
     assert!(bindings.iter().any(|binding| {
         binding.handler() == UiScriptHandler::Load
@@ -144,7 +147,14 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
         },
         FixtureFile {
             path: "Interface\\GlueXML\\Objects.xml",
-            bytes: br#"<Ui><Frame name="First"><Frames>
+            bytes: br#"<Ui>
+<Button name="DynamicTemplate" virtual="true"><Frames><Button name="$parentLabel"><Scripts><OnLoad>
+  LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+  assert(self:GetParent():GetName() == "Dynamic")
+</OnLoad></Scripts></Button></Frames><Scripts><OnLoad>
+  LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+</OnLoad></Scripts></Button>
+<Frame name="First"><Frames>
   <Button name="$parentChild"><Size x="40" y="20"/><Scripts><OnLoad>
     LOAD_ORDER = (LOAD_ORDER or "") .. self:GetName() .. ";"
     assert(self:GetObjectType() == "Button")
@@ -184,6 +194,9 @@ assert(FirstChild ~= nil)
 assert(Later == nil)
 BETWEEN = First:GetName()
 Later = "reserved"
+local dynamic = CreateFrame("Button", "Dynamic", First, "DynamicTemplate")
+assert(dynamic:GetParent() == First)
+assert(DynamicLabel:GetParent() == dynamic)
 function NamedLoad(self)
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
   assert(self:GetObjectType() == "CheckButton")
@@ -209,9 +222,11 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
     let layout = UiLayoutPlan::from_tree(&tree)?;
     let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let environment = UiScriptEnvironment::new(1920, 1080)?;
-    let mut runtime = UiScriptRuntime::new(&bundle, &regions, environment)?;
+    let mut runtime = UiScriptRuntime::new(&bundle, &frames, &regions, &templates, environment)?;
 
     assert!(
         bundle
@@ -222,6 +237,9 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     );
     assert!(runtime.execute_next(&bundle, &tree, &scripts)?);
     assert_eq!(runtime.next_action(), 1);
+    assert_eq!(runtime.registered_object_count(), 0);
+    assert!(runtime.execute_next(&bundle, &tree, &scripts)?);
+    assert_eq!(runtime.next_action(), 2);
     assert_eq!(runtime.registered_object_count(), 2);
     assert_eq!(runtime.executed_load_handler_count(), 2);
     assert!(
@@ -242,12 +260,12 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
     assert_eq!(runtime.next_action(), bundle.actions().len());
-    assert_eq!(runtime.registered_object_count(), 3);
+    assert_eq!(runtime.registered_object_count(), 5);
     assert_eq!(runtime.executed_chunk_count(), 2);
     assert_eq!(runtime.executed_load_handler_count(), 3);
     assert_eq!(
         bundle.lua().globals().get::<String>("RESULT")?,
-        "First:FirstChild;First;Later;"
+        "First:FirstChild;First;DynamicLabel;Dynamic;Later;"
     );
     Ok(())
 }
@@ -272,9 +290,11 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
     let layout = UiLayoutPlan::from_tree(&tree)?;
     let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let environment = UiScriptEnvironment::new(1920, 1080)?;
-    let mut runtime = UiScriptRuntime::new(&bundle, &regions, environment)?;
+    let mut runtime = UiScriptRuntime::new(&bundle, &frames, &regions, &templates, environment)?;
 
     let result = runtime.execute_next(&bundle, &tree, &scripts);
 

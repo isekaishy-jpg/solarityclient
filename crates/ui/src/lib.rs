@@ -31,8 +31,9 @@ pub use region::{
     UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionState, UiRegionStatePlan,
 };
 pub use script::{
-    UiScriptBinding, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode,
-    UiScriptPlan, UiScriptRuntime, UiScriptTarget,
+    UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,
+    UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan,
+    UiScriptRuntime, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
