@@ -17,7 +17,7 @@ use crate::{
     FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBundle,
     UiFrameStatePlan, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
     UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
-    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan,
+    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTextureStatePlan,
     VerticalJustification, XmlContent,
 };
 
@@ -159,7 +159,7 @@ pub struct UiScriptRuntime {
     font_strings: Vec<InitialFont>,
     buttons: Vec<InitialButton>,
     texture_coords: Vec<[f64; 8]>,
-    texture_colors: Vec<[f64; 4]>,
+    texture_colors: Vec<[[f64; 4]; 4]>,
     frame_ids: Vec<Option<i32>>,
     frame_levels: Vec<Option<i32>>,
     frame_keyboard_enabled: Vec<Option<bool>>,
@@ -175,7 +175,7 @@ pub struct UiScriptRuntimePlan<'plan, 'bundle> {
     regions: &'plan UiRegionStatePlan,
     templates: &'plan UiRuntimeTemplatePlan,
     fonts: &'plan FontCatalog,
-    textures: &'plan UiTexturePlan,
+    texture_states: &'plan UiTextureStatePlan,
 }
 
 impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
@@ -187,7 +187,7 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
         regions: &'plan UiRegionStatePlan,
         templates: &'plan UiRuntimeTemplatePlan,
         fonts: &'plan FontCatalog,
-        textures: &'plan UiTexturePlan,
+        texture_states: &'plan UiTextureStatePlan,
     ) -> Self {
         Self {
             tree,
@@ -195,7 +195,7 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
             regions,
             templates,
             fonts,
-            textures,
+            texture_states,
         }
     }
 }
@@ -452,8 +452,8 @@ impl UiScriptRuntime {
             .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
-        let texture_coords = tree_texture_coords(plan.tree, plan.textures)?;
-        let texture_colors = tree_texture_colors(plan.tree, plan.textures)?;
+        let texture_coords = tree_texture_coords(plan.tree, plan.texture_states)?;
+        let texture_colors = tree_texture_colors(plan.tree, plan.texture_states)?;
         let registered_objects = Rc::new(Cell::new(0));
         let dynamic_objects = Rc::new(Cell::new(0));
         register_create_frame(
@@ -1007,7 +1007,7 @@ impl UiScriptRuntime {
             table
                 .raw_set(
                     texture_color_key(),
-                    lua.create_sequence_from(*color)
+                    lua.create_sequence_from(color.iter().flatten().copied())
                         .map_err(|error| execution_error("object registration", error))?,
                 )
                 .map_err(|error| execution_error("object registration", error))?;
@@ -1192,10 +1192,7 @@ fn create_dynamic_frame(
             "texture_coords",
             lua.create_sequence_from([0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0])?,
         )?;
-        record.raw_set(
-            "texture_color",
-            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
-        )?;
+        record.raw_set("texture_color", lua.create_sequence_from([1.0; 16])?)?;
         records.raw_set(1, record)?;
         records
     };
@@ -1938,7 +1935,10 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 .transpose()?
                 .flatten()
                 .map_or(current.raw_get::<f64>(4)?, |value| value.clamp(0.0, 1.0));
-            texture.raw_set(texture_color_key(), lua.create_sequence_from(color)?)
+            texture.raw_set(
+                texture_color_key(),
+                lua.create_sequence_from(color.into_iter().cycle().take(16))?,
+            )
         })?,
     )?;
     methods.raw_set(
@@ -2804,60 +2804,44 @@ fn apply_font_justification(initial: &mut InitialFont, definition: &FontDefiniti
 
 fn tree_texture_coords(
     tree: &UiObjectTree<'_>,
-    textures: &UiTexturePlan,
+    textures: &UiTextureStatePlan,
 ) -> Result<Vec<[f64; 8]>, UiScriptError> {
     tree.nodes()
         .iter()
         .enumerate()
         .map(|(index, node)| {
-            let mut coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+            let coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
             if node.kind() != UiObjectKind::Texture {
                 return Ok(coords);
             }
-            let texture = textures.node(index).ok_or_else(|| UiScriptError::Plan {
-                message: format!("texture {index} is outside the texture plan"),
-            })?;
-            for layer in textures.layers_for(texture) {
-                let Some(value) = layer.tex_coords() else {
-                    continue;
-                };
-                let left = f64::from(value.left().unwrap_or(coords[0] as f32));
-                let right = f64::from(value.right().unwrap_or(coords[4] as f32));
-                let top = f64::from(value.top().unwrap_or(coords[1] as f32));
-                let bottom = f64::from(value.bottom().unwrap_or(coords[3] as f32));
-                coords = [left, top, left, bottom, right, top, right, bottom];
-            }
-            Ok(coords)
+            textures
+                .state(index)
+                .map(|state| state.tex_coords().map(f64::from))
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("texture {index} is outside the texture state plan"),
+                })
         })
         .collect()
 }
 
 fn tree_texture_colors(
     tree: &UiObjectTree<'_>,
-    textures: &UiTexturePlan,
-) -> Result<Vec<[f64; 4]>, UiScriptError> {
+    textures: &UiTextureStatePlan,
+) -> Result<Vec<[[f64; 4]; 4]>, UiScriptError> {
     tree.nodes()
         .iter()
         .enumerate()
         .map(|(index, node)| {
-            let mut color = [1.0, 1.0, 1.0, 1.0];
+            let color = [[1.0, 1.0, 1.0, 1.0]; 4];
             if node.kind() != UiObjectKind::Texture {
                 return Ok(color);
             }
-            let texture = textures.node(index).ok_or_else(|| UiScriptError::Plan {
-                message: format!("texture {index} is outside the texture plan"),
-            })?;
-            for layer in textures.layers_for(texture) {
-                if let Some(value) = layer.color() {
-                    color = [
-                        f64::from(value.red()),
-                        f64::from(value.green()),
-                        f64::from(value.blue()),
-                        f64::from(value.alpha().unwrap_or(1.0)),
-                    ];
-                }
-            }
-            Ok(color)
+            textures
+                .state(index)
+                .map(|state| state.vertex_colors().map(|color| color.map(f64::from)))
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("texture {index} is outside the texture state plan"),
+                })
         })
         .collect()
 }

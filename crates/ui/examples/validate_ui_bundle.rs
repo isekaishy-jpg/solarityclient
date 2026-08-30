@@ -10,7 +10,7 @@ use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
     UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTextureFile, UiTexturePlan,
+    UiTextureFile, UiTexturePlan, UiTextureStatePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -94,13 +94,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runtime_templates =
         UiRuntimeTemplatePlan::from_catalog(&object_catalog, &font_catalog, bundle.lua())?;
     let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&object_tree, &texture_plan)?;
     let script_runtime_plan = UiScriptRuntimePlan::new(
         &object_tree,
         &frame_states,
         &region_states,
         &runtime_templates,
         &font_catalog,
-        &texture_plan,
+        &texture_states,
     );
     if let Some(environment) = execution_environment {
         let mut script_runtime = UiScriptRuntime::new(&bundle, &script_runtime_plan, environment)?;

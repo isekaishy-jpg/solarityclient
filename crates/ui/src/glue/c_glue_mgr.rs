@@ -68,8 +68,14 @@ impl GlueManager {
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());
         let ui_extent = environment.ui_extent();
-        let runtime_plan =
-            UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+        let runtime_plan = UiScriptRuntimePlan::new(
+            &tree,
+            &frames,
+            &regions,
+            &templates,
+            &fonts,
+            &texture_states,
+        );
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
 

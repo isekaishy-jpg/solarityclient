@@ -7,7 +7,7 @@ use solarity_ui::{
     FontCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
     UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
     UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
-    UiTexturePlan,
+    UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -252,9 +252,16 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
-    let runtime_plan =
-        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     assert!(
@@ -318,6 +325,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
             bytes: br#"<Ui>
 <FontString name="FontLabel" inherits="GlueFontTest"/>
 <Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
+<Texture name="GradientTexture"><Gradient orientation="VERTICAL"><MinColor r="0.1" g="0.2" b="0.3" a="0.4"/><MaxColor r="0.6" g="0.7" b="0.8" a="0.9"/></Gradient></Texture>
 <Button name="FontButton"><Scripts><OnLoad>
   FontLabel:SetText("Label")
   assert(FontLabel:GetText() == "Label")
@@ -335,6 +343,12 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   ulX, ulY, llX, llY, urX, urY, lrX, lrY = CoordinateTexture:GetTexCoord()
   assert(ulX == 0.125 and ulY == 0 and llX == 0.125 and llY == 1)
   assert(urX == 0.625 and urY == 0 and lrX == 0.625 and lrY == 1)
+  local r, g, b, a = GradientTexture:GetVertexColor()
+  assert(math.abs(r - 0.6) &lt; 0.00001 and math.abs(g - 0.7) &lt; 0.00001)
+  assert(math.abs(b - 0.8) &lt; 0.00001 and math.abs(a - 0.9) &lt; 0.00001)
+  GradientTexture:SetVertexColor(0.25, 0.5, 0.75, 1)
+  r, g, b, a = GradientTexture:GetVertexColor()
+  assert(r == 0.25 and g == 0.5 and b == 0.75 and a == 1)
   assert(GlueFontTest:GetName() == "GlueFontTest")
   assert(GlueFontTest:GetObjectType() == "Font")
   assert(GlueFontTest:IsObjectType("Font"))
@@ -383,9 +397,16 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
-    let runtime_plan =
-        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     assert!(
@@ -433,9 +454,16 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
-    let runtime_plan =
-        UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     let result = runtime.execute_next(&bundle, &tree, &scripts);

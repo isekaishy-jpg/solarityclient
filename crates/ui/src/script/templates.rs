@@ -5,7 +5,7 @@ use mlua::{Lua, RegistryKey};
 use crate::{
     FontCatalog, HorizontalJustification, UiLayoutPlan, UiObjectCatalog, UiObjectKind,
     UiObjectTree, UiPoint, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
-    UiTexturePlan, VerticalJustification,
+    UiTexturePlan, UiTextureStatePlan, VerticalJustification,
 };
 
 const POINT_COUNT: usize = 9;
@@ -69,7 +69,7 @@ pub struct UiRuntimeTemplateNode {
     justify_h: String,
     justify_v: String,
     texture_coords: [f64; 8],
-    texture_color: [f64; 4],
+    texture_colors: [[f64; 4]; 4],
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
@@ -166,6 +166,8 @@ impl UiRuntimeTemplatePlan {
                 .map_err(|error| template_error(template_name, error))?;
             let textures = UiTexturePlan::from_tree(&tree)
                 .map_err(|error| template_error(template_name, error))?;
+            let texture_states = UiTextureStatePlan::resolve(&tree, &textures)
+                .map_err(|error| template_error(template_name, error))?;
             let first_node = plan.nodes.len();
             for (local_index, object) in tree.nodes().iter().enumerate() {
                 let region =
@@ -193,9 +195,9 @@ impl UiRuntimeTemplatePlan {
                     .collect::<Result<Vec<_>, _>>()?;
                 let (font_assigned, font_object_name, justify_h, justify_v) =
                     initial_font(object, fonts);
-                let texture_coords = initial_texture_coords(&tree, &textures, local_index)
+                let texture_coords = initial_texture_coords(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
-                let texture_color = initial_texture_color(&tree, &textures, local_index)
+                let texture_colors = initial_texture_colors(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
                 plan.nodes.push(UiRuntimeTemplateNode {
                     name: runtime_name(template_name, object.name()),
@@ -218,7 +220,7 @@ impl UiRuntimeTemplatePlan {
                     justify_h,
                     justify_v,
                     texture_coords,
-                    texture_color,
+                    texture_colors,
                     script_targets,
                 });
             }
@@ -353,7 +355,7 @@ impl UiRuntimeTemplatePlan {
                 )?;
                 record.raw_set(
                     "texture_color",
-                    lua.create_sequence_from(node.texture_color)?,
+                    lua.create_sequence_from(node.texture_colors.iter().flatten().copied())?,
                 )?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {
@@ -441,52 +443,32 @@ fn apply_justification(
 
 fn initial_texture_coords(
     tree: &UiObjectTree<'_>,
-    textures: &UiTexturePlan,
+    textures: &UiTextureStatePlan,
     index: usize,
 ) -> Result<[f64; 8], &'static str> {
-    let mut coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+    let coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
     if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
         return Ok(coords);
     }
-    let texture = textures
-        .node(index)
-        .ok_or("texture is outside the template texture plan")?;
-    for layer in textures.layers_for(texture) {
-        let Some(value) = layer.tex_coords() else {
-            continue;
-        };
-        let left = value.left().map(f64::from).unwrap_or(coords[0]);
-        let right = value.right().map(f64::from).unwrap_or(coords[4]);
-        let top = value.top().map(f64::from).unwrap_or(coords[1]);
-        let bottom = value.bottom().map(f64::from).unwrap_or(coords[3]);
-        coords = [left, top, left, bottom, right, top, right, bottom];
-    }
-    Ok(coords)
+    textures
+        .state(index)
+        .map(|state| state.tex_coords().map(f64::from))
+        .ok_or("texture is outside the template texture state plan")
 }
 
-fn initial_texture_color(
+fn initial_texture_colors(
     tree: &UiObjectTree<'_>,
-    textures: &UiTexturePlan,
+    textures: &UiTextureStatePlan,
     index: usize,
-) -> Result<[f64; 4], &'static str> {
-    let mut color = [1.0, 1.0, 1.0, 1.0];
+) -> Result<[[f64; 4]; 4], &'static str> {
+    let colors = [[1.0, 1.0, 1.0, 1.0]; 4];
     if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
-        return Ok(color);
+        return Ok(colors);
     }
-    let texture = textures
-        .node(index)
-        .ok_or("texture is outside the template texture plan")?;
-    for layer in textures.layers_for(texture) {
-        if let Some(value) = layer.color() {
-            color = [
-                f64::from(value.red()),
-                f64::from(value.green()),
-                f64::from(value.blue()),
-                f64::from(value.alpha().unwrap_or(1.0)),
-            ];
-        }
-    }
-    Ok(color)
+    textures
+        .state(index)
+        .map(|state| state.vertex_colors().map(|color| color.map(f64::from)))
+        .ok_or("texture is outside the template texture state plan")
 }
 
 fn attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> {
