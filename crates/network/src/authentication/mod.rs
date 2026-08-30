@@ -6,5 +6,10 @@
 //! client state machine.
 
 mod battlenet_login;
+mod error;
 mod grunt;
 mod grunt_login;
+
+pub use error::{LoginError, LoginFailure, LoginStage};
+pub use grunt::{GruntCredentials, GruntIntegrity, GruntLoginOptions, LoginLocale};
+pub use grunt_login::{AuthenticatedGrunt, GruntLogin, WorldSessionKey};
