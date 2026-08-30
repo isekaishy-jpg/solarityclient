@@ -148,19 +148,23 @@ impl ClientApplication {
 
     /// Keeps the process alive on the main thread until stock termination.
     ///
-    /// SDL waiting is blocking rather than a polling spin. The loop admits
-    /// translated input and lifecycle events in source order; subsystem event
-    /// routing can extend the non-termination arm without changing ownership.
-    #[must_use]
-    pub fn run(&mut self) -> ApplicationRunReport {
+    /// FIFO swapchain presentation paces the loop without a guessed timer. SDL
+    /// events are drained in source order before each service/frame boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError`] when a paced presentation frame fails.
+    pub fn run(&mut self) -> Result<ApplicationRunReport, ApplicationError> {
         let primary_window = self.report.window_id;
         let mut admitted_event_count = 0_u64;
         loop {
-            let event = self.services.wait_platform_event();
-            admitted_event_count = admitted_event_count.saturating_add(1);
-            if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
-                return ApplicationRunReport::new(exit_reason, admitted_event_count);
+            while let Some(event) = self.services.poll_platform_event() {
+                admitted_event_count = admitted_event_count.saturating_add(1);
+                if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
+                    return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
+                }
             }
+            self.services.present_login_frame()?;
         }
     }
 

@@ -75,15 +75,6 @@ impl SdlPlatform {
         None
     }
 
-    /// Blocks until SDL produces an event admitted by the client boundary.
-    pub(crate) fn wait_event(&mut self) -> PlatformEvent {
-        loop {
-            if let Some(event) = event_translation::translate(self.event_pump.wait_event()) {
-                return event;
-            }
-        }
-    }
-
     /// Returns the SDL identifier used to reject or route window-scoped work.
     pub(crate) fn window_id(&self) -> WindowId {
         WindowId::from_sdl(self.window.id())

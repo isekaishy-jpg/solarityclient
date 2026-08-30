@@ -10,13 +10,14 @@ use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 use solarity_ui::{GlueManager, GlueStartupReport};
 
 use crate::application::ApplicationError;
-use crate::application::login_ui;
+use crate::application::login_ui::LoginUiFrame;
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
+    login_ui: LoginUiFrame,
     platform: SdlPlatform,
     _glue: GlueManager,
     cpu: CpuExecutor,
@@ -47,7 +48,8 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let glue = GlueManager::start(assets, platform.logical_extent(), false)?;
-        login_ui::present(&mut renderer, &glue)?;
+        let login_ui = LoginUiFrame::prepare(&mut renderer, &glue)?;
+        login_ui.present(&mut renderer)?;
         platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
@@ -63,6 +65,7 @@ impl ClientServices {
         Ok((
             Self {
                 renderer,
+                login_ui,
                 platform,
                 _glue: glue,
                 cpu,
@@ -88,9 +91,10 @@ impl ClientServices {
         self.platform.poll_event()
     }
 
-    /// Blocks without spinning until one translated client event is admitted.
-    pub(crate) fn wait_platform_event(&mut self) -> PlatformEvent {
-        self.platform.wait_event()
+    /// Presents one FIFO-paced login frame after main-thread service polling.
+    pub(crate) fn present_login_frame(&mut self) -> Result<(), ApplicationError> {
+        self.login_ui.present(&mut self.renderer)?;
+        Ok(())
     }
 
     /// Returns startup facts that prove the configured window exists.

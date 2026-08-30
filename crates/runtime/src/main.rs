@@ -51,7 +51,13 @@ fn main() -> ExitCode {
         "client foundation started"
     );
     let mut application = application;
-    let run_report = application.run();
+    let run_report = match application.run() {
+        Ok(report) => report,
+        Err(failure) => {
+            error!(error = %failure, "client event loop failed");
+            return ExitCode::FAILURE;
+        }
+    };
     info!(
         exit_reason = ?run_report.exit_reason(),
         admitted_events = run_report.admitted_event_count(),

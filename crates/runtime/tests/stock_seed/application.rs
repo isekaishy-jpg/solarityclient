@@ -76,7 +76,7 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
         window_id: report.window_id(),
         win_event: SdlWindowEvent::CloseRequested,
     })?;
-    let run_report = application.run();
+    let run_report = application.run()?;
     assert_eq!(
         run_report.exit_reason(),
         ApplicationExitReason::PrimaryWindowCloseRequested
@@ -86,7 +86,7 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     // The process-wide route ends a subsequent loop without window identity.
     sdl.event()?.push_event(SdlEvent::Quit { timestamp: 4 })?;
     assert_eq!(
-        application.run().exit_reason(),
+        application.run()?.exit_reason(),
         ApplicationExitReason::QuitRequested
     );
     drop(sdl);
