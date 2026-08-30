@@ -1,10 +1,14 @@
 //! External stock-compatibility tests for encrypted world-session I/O.
 
 use std::error::Error;
+use std::io::Write;
 
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use solarity_network::{
     CharacterClass, CharacterGender, CharacterLoginProgress, CharacterLoginRejectionReason,
     CharacterRace, WorldAddon, WorldAddonManifest, WorldAuthProgress, WorldConnection,
+    WorldObjectKind, WorldObjectUpdate,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -76,7 +80,7 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(banned.flags(), 0x7788_99AA);
 
         let large_packet = session.receive_packet().await?;
-        assert_eq!(large_packet.opcode(), 0x01F6);
+        assert_eq!(large_packet.opcode(), 0x01F5);
         assert_eq!(large_packet.name(), None);
         assert_eq!(large_packet.payload().len(), 32_768);
         assert!(large_packet.payload().iter().all(|byte| *byte == 0xA7));
@@ -136,7 +140,7 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             }
             _ => return Err("interleaved world-entry packet was not retained".into()),
         };
-        let world = match login.advance().await? {
+        let mut world = match login.advance().await? {
             CharacterLoginProgress::Entered(world) => world,
             _ => return Err("login verification did not enter the world".into()),
         };
@@ -147,6 +151,34 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(world.location().y(), 647.5);
         assert_eq!(world.location().z(), 647.9);
         assert_eq!(world.location().orientation(), 1.75);
+
+        let object_packet = world.receive_packet().await?;
+        assert_eq!(object_packet.name(), Some("SMSG_UPDATE_OBJECT"));
+        let object_updates = object_packet
+            .object_updates()?
+            .ok_or("object packet did not decode as an update batch")?;
+        assert_create_player_update(&object_updates)?;
+
+        let compressed_packet = world.receive_packet().await?;
+        assert_eq!(
+            compressed_packet.name(),
+            Some("SMSG_COMPRESSED_UPDATE_OBJECT")
+        );
+        let compressed_updates = compressed_packet
+            .object_updates()?
+            .ok_or("compressed packet did not decode as an update batch")?;
+        assert_eq!(compressed_updates, object_updates);
+
+        let oversized_packet = world.receive_packet().await?;
+        let error = match oversized_packet.object_updates() {
+            Err(error) => error,
+            Ok(_) => return Err("oversized compressed update was accepted".into()),
+        };
+        assert_eq!(error.offset(), 0);
+        assert_eq!(
+            error.message(),
+            "decompressed update exceeds the world-packet bound"
+        );
 
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
@@ -267,7 +299,7 @@ async fn emulate_character_screen(
     assert!(matches!(request, ClientOpcodeMessage::CMSG_CHAR_ENUM));
 
     write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &addon_policy_payload()).await?;
-    write_encrypted_raw(&mut stream, &mut crypto, 0x01F6, &[0xA7; 32_768]).await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x01F5, &[0xA7; 32_768]).await?;
     let character = fixture_character();
     ServerOpcodeMessage::from(SMSG_CHAR_ENUM {
         characters: vec![character],
@@ -283,6 +315,21 @@ async fn emulate_character_screen(
     }
     write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0x5A, 0xA5]).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x0236, &world_location_payload()).await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x00A9, &UPDATE_OBJECT_BODY).await?;
+    write_encrypted_raw(
+        &mut stream,
+        &mut crypto,
+        0x01F6,
+        &compressed_object_update()?,
+    )
+    .await?;
+    write_encrypted_raw(
+        &mut stream,
+        &mut crypto,
+        0x01F6,
+        &0x0080_0000_u32.to_le_bytes(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -343,6 +390,65 @@ fn world_location_payload() -> Vec<u8> {
     payload.extend_from_slice(&1.75_f32.to_le_bytes());
     payload
 }
+
+fn assert_create_player_update(
+    batch: &solarity_network::WorldObjectUpdateBatch,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let update = batch
+        .updates()
+        .first()
+        .ok_or("fixture object update was empty")?;
+    let WorldObjectUpdate::Create {
+        guid,
+        kind,
+        second_form,
+        movement,
+        fields,
+    } = update
+    else {
+        return Err("fixture object update was not CREATE_OBJECT2".into());
+    };
+    assert_eq!(*guid, 8);
+    assert_eq!(*kind, WorldObjectKind::Player);
+    assert!(*second_form);
+    assert!(movement.is_self());
+    assert_eq!(
+        movement.position().ok_or("living position was absent")?,
+        [-8_949.95, -132.493, 83.5312]
+    );
+    assert_eq!(movement.orientation(), Some(0.0));
+    assert_eq!(movement.movement_flags(), Some(0));
+    assert_eq!(fields.len(), 6);
+    assert!(fields.iter().any(|field| field.index() == 2));
+    assert!(
+        fields
+            .iter()
+            .any(|field| field.index() == 68 && field.value() == 0x4D0C)
+    );
+    Ok(())
+}
+
+fn compressed_object_update() -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&UPDATE_OBJECT_BODY)?;
+    let compressed = encoder.finish()?;
+    let mut payload = Vec::with_capacity(4 + compressed.len());
+    payload.extend_from_slice(&(UPDATE_OBJECT_BODY.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&compressed);
+    Ok(payload)
+}
+
+// Canonical build-12340 CREATE_OBJECT2 player body from the pinned protocol corpus.
+const UPDATE_OBJECT_BODY: [u8; 113] = [
+    0x01, 0x00, 0x00, 0x00, 0x03, 0x01, 0x08, 0x04, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xCD, 0xD7, 0x0B, 0xC6, 0x35, 0x7E, 0x04, 0xC3, 0xF9, 0x0F, 0xA7, 0x42,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x8C, 0x42,
+    0x00, 0x00, 0x90, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xD0, 0x0F, 0x49, 0x40, 0x00, 0x00, 0x00, 0x00, 0x03, 0x07, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x80, 0x00, 0x18, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x19, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x4D, 0x00, 0x00, 0x0C, 0x4D, 0x00,
+    0x00,
+];
 
 async fn write_encrypted_raw(
     stream: &mut DuplexStream,

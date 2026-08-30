@@ -19,6 +19,6 @@ mod view;
 mod world;
 
 pub use movement::WorldTransform;
-pub use object::ObjectGuid;
+pub use object::{ObjectFields, ObjectGuid, ObjectKind};
 pub use player::{LocalPlayer, PlayerIdentity};
-pub use world::{ActiveWorld, WorldBootstrap, WorldMapId};
+pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};

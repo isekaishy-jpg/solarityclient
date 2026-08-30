@@ -16,7 +16,9 @@ mod security;
 mod telemetry;
 mod time;
 
-pub use application::{ApplicationError, ClientApplication, GameplaySession, StartupReport};
+pub use application::{
+    ApplicationError, ClientApplication, GameplaySession, GameplayUpdateError, StartupReport,
+};
 pub use configuration::{
     ConfigurationError, RuntimeConfiguration, WindowConfiguration, WindowMode,
 };

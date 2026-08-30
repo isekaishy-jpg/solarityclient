@@ -9,4 +9,4 @@ mod client_services;
 mod gameplay_session;
 
 pub use client::{ApplicationError, ClientApplication, StartupReport};
-pub use gameplay_session::GameplaySession;
+pub use gameplay_session::{GameplaySession, GameplayUpdateError};

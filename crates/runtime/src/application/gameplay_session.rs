@@ -1,8 +1,22 @@
 //! Composition boundary between an accepted network login and ECS ownership.
 
 use glam::Vec3;
-use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
-use solarity_network::InWorldSession;
+use solarity_ecs::{
+    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldStateError, WorldTransform,
+};
+use solarity_network::{
+    InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
+    WorldObjectUpdateBatch,
+};
+use thiserror::Error;
+
+/// Failure while applying an authoritative object-update batch to ECS state.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum GameplayUpdateError {
+    /// The update violates active-world GUID lifecycle invariants.
+    #[error(transparent)]
+    World(#[from] WorldStateError),
+}
 
 /// Live world transport paired with the ECS state it authoritatively seeded.
 pub struct GameplaySession<S> {
@@ -50,5 +64,74 @@ impl<S> GameplaySession<S> {
     #[must_use]
     pub const fn world_mut(&mut self) -> &mut ActiveWorld {
         &mut self.world
+    }
+
+    /// Applies one decoded object-update batch in exact server order.
+    ///
+    /// Sparse update fields stream directly into dense component storage
+    /// without allocating a second intermediate field collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GameplayUpdateError`] when a GUID lifecycle invariant is violated.
+    pub fn apply_object_updates(
+        &mut self,
+        batch: &WorldObjectUpdateBatch,
+    ) -> Result<(), GameplayUpdateError> {
+        for update in batch.updates() {
+            match update {
+                WorldObjectUpdate::Values { guid, fields } => self.world.update_fields(
+                    *guid,
+                    fields.iter().map(|field| (field.index(), field.value())),
+                )?,
+                WorldObjectUpdate::Movement { guid, movement } => {
+                    if let Some(transform) = movement_transform(*movement) {
+                        self.world.update_transform(*guid, transform)?;
+                    }
+                }
+                WorldObjectUpdate::Create {
+                    guid,
+                    kind,
+                    movement,
+                    fields,
+                    ..
+                } => {
+                    self.world.create_object(
+                        *guid,
+                        object_kind(*kind),
+                        movement_transform(*movement),
+                        fields.iter().map(|field| (field.index(), field.value())),
+                    )?;
+                }
+                WorldObjectUpdate::OutOfRange(guids) => {
+                    for guid in guids {
+                        self.world.remove_object(*guid)?;
+                    }
+                }
+                WorldObjectUpdate::Near(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> {
+    let [x, y, z] = movement.position()?;
+    Some(WorldTransform::new(
+        Vec3::new(x, y, z),
+        movement.orientation()?,
+    ))
+}
+
+const fn object_kind(kind: WorldObjectKind) -> ObjectKind {
+    match kind {
+        WorldObjectKind::Object => ObjectKind::Object,
+        WorldObjectKind::Item => ObjectKind::Item,
+        WorldObjectKind::Container => ObjectKind::Container,
+        WorldObjectKind::Unit => ObjectKind::Unit,
+        WorldObjectKind::Player => ObjectKind::Player,
+        WorldObjectKind::GameObject => ObjectKind::GameObject,
+        WorldObjectKind::DynamicObject => ObjectKind::DynamicObject,
+        WorldObjectKind::Corpse => ObjectKind::Corpse,
     }
 }

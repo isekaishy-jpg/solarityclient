@@ -7,6 +7,7 @@
 mod addon_manifest;
 mod addon_policy;
 mod character_directory;
+mod object_update;
 mod server_packet;
 mod world_entry;
 mod wow_svcs_client_services;
@@ -17,6 +18,10 @@ pub use character_directory::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,
     CharacterRace,
+};
+pub use object_update::{
+    ObjectFieldUpdate, ObjectMovementUpdate, ObjectUpdateError, WorldObjectKind, WorldObjectUpdate,
+    WorldObjectUpdateBatch,
 };
 pub use server_packet::WorldServerPacket;
 pub use world_entry::{

@@ -2,7 +2,8 @@
 
 use super::{
     AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
-    WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError, WorldLocation,
+    ObjectUpdateError, WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError, WorldLocation,
+    WorldObjectUpdateBatch,
 };
 
 const SMSG_CHAR_ENUM: u16 = 0x003B;
@@ -33,7 +34,9 @@ impl WorldServerPacket {
         match self.opcode {
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
+            0x00A9 => Some("SMSG_UPDATE_OBJECT"),
             0x01DD => Some("SMSG_PONG"),
+            0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
             SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
@@ -104,6 +107,21 @@ impl WorldServerPacket {
             return Ok(None);
         }
         CharacterLoginRejection::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes normal or zlib-compressed object updates.
+    ///
+    /// Returns `None` for another retained opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObjectUpdateError`] when framing, compression, movement, or
+    /// update-mask data is malformed or exceeds the explicit packet bound.
+    pub fn object_updates(&self) -> Result<Option<WorldObjectUpdateBatch>, ObjectUpdateError> {
+        if !matches!(self.opcode, 0x00A9 | 0x01F6) {
+            return Ok(None);
+        }
+        WorldObjectUpdateBatch::decode(self.opcode, &self.payload).map(Some)
     }
 }
 

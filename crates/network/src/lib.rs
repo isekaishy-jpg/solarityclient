@@ -29,7 +29,8 @@ pub use protocol::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation,
     CharacterLoginRejection, CharacterLoginRejectionReason, CharacterPet, CharacterRace,
-    WorldEntryPacketError, WorldLocation, WorldServerPacket,
+    ObjectFieldUpdate, ObjectMovementUpdate, ObjectUpdateError, WorldEntryPacketError,
+    WorldLocation, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket,
 };
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};

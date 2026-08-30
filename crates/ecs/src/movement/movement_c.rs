@@ -11,7 +11,9 @@ pub struct WorldTransform {
 }
 
 impl WorldTransform {
-    pub(crate) const fn new(position: Vec3, orientation: f32) -> Self {
+    /// Creates an authoritative renderer-independent transform.
+    #[must_use]
+    pub const fn new(position: Vec3, orientation: f32) -> Self {
         Self {
             position,
             orientation,

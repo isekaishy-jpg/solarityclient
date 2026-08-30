@@ -8,4 +8,4 @@ mod object_alloc;
 mod object_c;
 mod object_mgr_client;
 
-pub use object_c::ObjectGuid;
+pub use object_c::{ObjectFields, ObjectGuid, ObjectKind};
