@@ -3,8 +3,7 @@
 use std::fmt;
 use std::net::Ipv4Addr;
 
-use wow_login_messages::all::CMD_AUTH_LOGON_CHALLENGE_Client;
-use wow_login_messages::all::{Locale, Os, Platform, ProtocolVersion, Version};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use wow_srp::normalized_string::NormalizedString;
 
 use super::LoginError;
@@ -36,6 +35,8 @@ pub enum LoginLocale {
     KoKr,
     /// Traditional Chinese.
     ZhTw,
+    /// Simplified Chinese.
+    ZhCn,
     /// Legacy English Taiwan token.
     EnTw,
     /// Legacy English China token.
@@ -43,22 +44,24 @@ pub enum LoginLocale {
 }
 
 impl LoginLocale {
-    pub(super) const fn protocol(self) -> Locale {
+    /// Returns the four-byte client locale tag before little-endian wire order.
+    const fn protocol_tag(self) -> u32 {
         match self {
-            Self::EnGb => Locale::EnGb,
-            Self::EnUs => Locale::EnUs,
-            Self::EsMx => Locale::EsMx,
-            Self::PtBr => Locale::PtBr,
-            Self::FrFr => Locale::FrFr,
-            Self::DeDe => Locale::DeDe,
-            Self::EsEs => Locale::EsEs,
-            Self::PtPt => Locale::PtPt,
-            Self::ItIt => Locale::ItIt,
-            Self::RuRu => Locale::RuRu,
-            Self::KoKr => Locale::KoKr,
-            Self::ZhTw => Locale::ZhTw,
-            Self::EnTw => Locale::EnTw,
-            Self::EnCn => Locale::EnCn,
+            Self::EnGb => u32::from_be_bytes(*b"enGB"),
+            Self::EnUs => u32::from_be_bytes(*b"enUS"),
+            Self::EsMx => u32::from_be_bytes(*b"esMX"),
+            Self::PtBr => u32::from_be_bytes(*b"ptBR"),
+            Self::FrFr => u32::from_be_bytes(*b"frFR"),
+            Self::DeDe => u32::from_be_bytes(*b"deDE"),
+            Self::EsEs => u32::from_be_bytes(*b"esES"),
+            Self::PtPt => u32::from_be_bytes(*b"ptPT"),
+            Self::ItIt => u32::from_be_bytes(*b"itIT"),
+            Self::RuRu => u32::from_be_bytes(*b"ruRU"),
+            Self::KoKr => u32::from_be_bytes(*b"koKR"),
+            Self::ZhTw => u32::from_be_bytes(*b"zhTW"),
+            Self::ZhCn => u32::from_be_bytes(*b"zhCN"),
+            Self::EnTw => u32::from_be_bytes(*b"enTW"),
+            Self::EnCn => u32::from_be_bytes(*b"enCN"),
         }
     }
 }
@@ -92,24 +95,44 @@ impl GruntLoginOptions {
         self.locale
     }
 
-    pub(super) fn challenge(self, account_name: String) -> CMD_AUTH_LOGON_CHALLENGE_Client {
+    pub(super) async fn write_challenge(
+        self,
+        mut stream: impl AsyncWrite + Unpin + Send,
+        account_name: &str,
+    ) -> Result<(), std::io::Error> {
         // Although Solarity is a 64-bit process, build 12340's wire protocol
         // has only the original x86 Windows identity understood by realmd.
-        CMD_AUTH_LOGON_CHALLENGE_Client {
-            protocol_version: ProtocolVersion::Eight,
-            version: Version {
-                major: 3,
-                minor: 3,
-                patch: 5,
-                build: 12_340,
-            },
-            platform: Platform::X86,
-            os: Os::Windows,
-            locale: self.locale.protocol(),
-            utc_timezone_offset: self.utc_timezone_offset_minutes,
-            client_ip_address: self.client_ip_address,
-            account_name,
-        }
+        // This packet is owned here because `wow_login_messages` 0.5 omits
+        // build 12340's `zhCN` locale from its otherwise closed locale enum.
+        const FIXED_SIZE_WITHOUT_OPCODE: usize = 33;
+        let packet_size = FIXED_SIZE_WITHOUT_OPCODE + account_name.len();
+        let payload_size = u16::try_from(packet_size - 3).map_err(|_source| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "login challenge exceeds its 16-bit size field",
+            )
+        })?;
+        let account_size = u8::try_from(account_name.len()).map_err(|_source| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "login account exceeds its one-byte size field",
+            )
+        })?;
+        let mut packet = Vec::with_capacity(packet_size + 1);
+        packet.push(0x00); // CMD_AUTH_LOGON_CHALLENGE
+        packet.push(8); // ProtocolVersion::Eight
+        packet.extend_from_slice(&payload_size.to_le_bytes());
+        packet.extend_from_slice(&0x0057_6F57_u32.to_le_bytes()); // "WoW\0"
+        packet.extend_from_slice(&[3, 3, 5]);
+        packet.extend_from_slice(&12_340_u16.to_le_bytes());
+        packet.extend_from_slice(&0x0078_3836_u32.to_le_bytes()); // "\0x86"
+        packet.extend_from_slice(&0x0057_696E_u32.to_le_bytes()); // "\0Win"
+        packet.extend_from_slice(&self.locale.protocol_tag().to_le_bytes());
+        packet.extend_from_slice(&self.utc_timezone_offset_minutes.to_le_bytes());
+        packet.extend_from_slice(&self.client_ip_address.octets());
+        packet.push(account_size);
+        packet.extend_from_slice(account_name.as_bytes());
+        stream.write_all(&packet).await
     }
 }
 

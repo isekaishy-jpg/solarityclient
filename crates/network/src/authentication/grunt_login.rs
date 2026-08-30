@@ -149,8 +149,7 @@ impl GruntLogin {
         I: GruntIntegrity + ?Sized,
     {
         options
-            .challenge(credentials.username().to_owned())
-            .tokio_write(&mut stream)
+            .write_challenge(&mut stream, credentials.username())
             .await
             .map_err(|error| LoginError::Io {
                 stage: LoginStage::Challenge,

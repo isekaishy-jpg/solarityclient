@@ -8,7 +8,7 @@ use solarity_network::{
     LoginError, LoginFailure, LoginLocale, LoginStage, RealmCategory, RealmEntry,
     RealmRecommendation, RealmType, WorldIdentity,
 };
-use tokio::io::DuplexStream;
+use tokio::io::{AsyncReadExt, DuplexStream};
 use wow_login_messages::Message;
 use wow_login_messages::all::{Locale, Os, Platform, Population, ProtocolVersion, Version};
 use wow_login_messages::version_8::opcodes::ClientOpcodeMessage;
@@ -78,6 +78,28 @@ fn credentials_normalize_once_and_redact_passwords() -> Result<(), Box<dyn Error
         Err(LoginError::InvalidPassword { .. })
     ));
     Ok(())
+}
+
+/// Simplified Chinese keeps its exact stock four-byte login tag.
+#[test]
+fn grunt_login_writes_the_zhcn_challenge_locale() -> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (client, mut server) = tokio::io::duplex(1_024);
+        let server_task = tokio::spawn(async move {
+            let mut challenge = [0_u8; 45];
+            server.read_exact(&mut challenge).await?;
+            Ok::<_, std::io::Error>(challenge)
+        });
+        let credentials = GruntCredentials::new("testaccount", "hunter2")?;
+        let options = GruntLoginOptions::new(LoginLocale::ZhCn, 0, Ipv4Addr::new(127, 0, 0, 1));
+
+        let result = GruntLogin::authenticate(client, credentials, options, &TestIntegrity).await;
+        let challenge = server_task.await??;
+
+        assert!(result.is_err());
+        assert_eq!(&challenge[21..25], b"NChz");
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
 }
 
 /// A complete in-memory realmd exchange proves challenge bytes, mutual SRP, and realm ownership.
