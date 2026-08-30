@@ -17,6 +17,11 @@ mod texture;
 mod weather;
 mod world_text;
 
+pub use camera::{
+    WORLD_DEPTH_MAXIMUM, WORLD_DEPTH_MINIMUM, WORLD_NEAR_CLIP,
+    WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS, WorldCamera, WorldCameraError, WorldCameraFrame,
+    WorldFrustum, WorldScreenWindow,
+};
 pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError, M2FrameReport,
     M2MeshHandle, M2MeshResourceInfo, M2PipelineHandle, M2PipelineInfo, M2PreparedDraw,
