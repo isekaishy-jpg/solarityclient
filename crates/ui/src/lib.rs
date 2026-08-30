@@ -27,6 +27,10 @@ pub use frame::{
 pub use region::{
     UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
 };
+pub use widget::{
+    UiBlendMode, UiTexCoords, UiTextureError, UiTextureFile, UiTextureLayer, UiTextureNode,
+    UiTexturePlan,
+};
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,
     UiManifestEntryKind, UiManifestKind, UiResource, UiResourceContent, XmlAttribute, XmlContent,

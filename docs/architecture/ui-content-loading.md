@@ -161,3 +161,24 @@ the parser does not manufacture size, anchor, alpha, scale, visibility, or
 
 Real-client validation retains 1,815 Glue layout layers with 1,441 anchors and
 18,168 Frame layout layers with 14,692 anchors.
+
+## Typed texture plan
+
+Texture declarations are decoded into a flat plan parallel to the object tree.
+Each node owns a range of inheritance layers containing only explicitly stated
+file, blend-mode, and texture-coordinate values. Missing properties stay
+missing, while `file=""` is retained as a dynamic runtime assignment rather
+than being mistaken for a missing archive asset.
+
+Stock XML uses extensionless names and a handful of legacy `.tga` spellings,
+but the installed 3.3.5a archives contain the corresponding `.blp` path in
+every observed case. The plan therefore performs the single stock naming
+conversion to `.BLP` before lookup. It does not probe multiple extensions or
+loose files. The same canonical path also means an HD patch archive replaces
+the payload solely through normal archive priority; the UI layer has no
+separate HD path or quality branch.
+
+The instantiated local Glue tree retains 1,635 texture layers referencing 97
+unique concrete paths; Frame retains 10,798 layers referencing 494. The
+validator reads every unique canonical path through the mounted archive stack
+so a naming-rule or precedence regression fails before rendering begins.

@@ -17,3 +17,8 @@ mod scroll_frame;
 mod slider;
 mod status_bar;
 mod texture;
+
+pub use texture::{
+    UiBlendMode, UiTexCoords, UiTextureError, UiTextureFile, UiTextureLayer, UiTextureNode,
+    UiTexturePlan,
+};
