@@ -19,6 +19,12 @@ pub enum CharacterGeosetPlanError {
 /// A failure while translating stock item display names into attachment paths.
 #[derive(Debug, Error)]
 pub enum CharacterAttachmentPlanError {
+    /// A helmet model cannot select a suffix outside stock's two genders.
+    #[error("character gender {gender_id} cannot select a helmet model suffix")]
+    UnsupportedHelmetGender {
+        /// Gender identifier resolved from the character appearance tables.
+        gender_id: u32,
+    },
     /// A nonempty DBC model or texture name violated archive-path invariants.
     #[error(transparent)]
     Asset(#[from] AssetError),

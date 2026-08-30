@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, Locale,
+    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, HelmetGeosetVisibilityCatalog,
+    ItemDefinitionCatalog, ItemDisplayCatalog, Locale,
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
@@ -567,6 +567,133 @@ fn character_geosets_preserve_equipment_branching() -> Result<(), Box<dyn Error>
     for hidden in [501, 902, 1101, 1202, 1301] {
         assert!(!robe_plan.visible_geosets().contains(&hidden));
     }
+    Ok(())
+}
+
+/// Head and shoulder children use stock race suffixes, channels, and links.
+#[test]
+fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dyn Error>> {
+    let definitions = create_wdbc(
+        2,
+        8,
+        &[
+            90_001,
+            4,
+            0,
+            u32::MAX,
+            1,
+            91_001,
+            1,
+            0,
+            90_002,
+            4,
+            0,
+            u32::MAX,
+            1,
+            91_002,
+            3,
+            0,
+        ],
+        b"\0",
+    );
+    let mut strings = vec![0];
+    let helmet_model = append_string(&mut strings, "Helm_Test.mdx");
+    let helmet_texture = append_string(&mut strings, "HelmTexture");
+    let shoulder_zero_model = append_string(&mut strings, "ShoulderZero.mdx");
+    let shoulder_one_model = append_string(&mut strings, "ShoulderOne.mdx");
+    let shoulder_zero_texture = append_string(&mut strings, "ShoulderZeroBlue");
+    let shoulder_one_texture = append_string(&mut strings, "ShoulderOneBlue");
+    let mut helmet = item_display_model_fields(91_001, helmet_model, helmet_texture, 701, 801);
+    helmet[2] = 0;
+    let mut shoulder =
+        item_display_model_fields(91_002, shoulder_zero_model, shoulder_zero_texture, 702, 802);
+    shoulder[2] = shoulder_one_model;
+    shoulder[4] = shoulder_one_texture;
+    let displays = create_wdbc(
+        2,
+        25,
+        &helmet.into_iter().chain(shoulder).collect::<Vec<_>>(),
+        &strings,
+    );
+    let mut race_strings = vec![0];
+    let client_prefix = append_string(&mut race_strings, "Hu");
+    let client_file_string = append_string(&mut race_strings, "Human");
+    let mut race_fields = [0_u32; 69];
+    race_fields[0] = 1;
+    race_fields[6] = client_prefix;
+    race_fields[11] = client_file_string;
+    let races = create_wdbc(1, 69, &race_fields, &race_strings);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &displays,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ChrRaces.dbc",
+            bytes: &races,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let races = CharacterRaceCatalog::load(&mut store)?;
+    let race = races.race(1).ok_or("character race is absent")?;
+    let head = CharacterEquipmentItem::new(
+        PlayerEquipmentSlot::Head,
+        definitions.item(90_001).ok_or("head item is absent")?,
+        displays.display(91_001).ok_or("head display is absent")?,
+    );
+    let shoulders = CharacterEquipmentItem::new(
+        PlayerEquipmentSlot::Shoulders,
+        definitions.item(90_002).ok_or("shoulder item is absent")?,
+        displays
+            .display(91_002)
+            .ok_or("shoulder display is absent")?,
+    );
+
+    let plan = CharacterAttachmentPlan::equipped_items(
+        [head, shoulders],
+        race,
+        1,
+        CharacterWeaponState::new(CharacterWeaponPose::Ready, CharacterRangedHand::Left),
+    )?;
+    let values = plan
+        .attachments()
+        .iter()
+        .map(|attachment| {
+            (
+                attachment.point(),
+                attachment.model().as_str(),
+                attachment.texture().as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        values,
+        [
+            (
+                CharacterAttachmentPoint::Helmet,
+                "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELM_TEST_HUF.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELMTEXTURE.BLP",
+            ),
+            (
+                CharacterAttachmentPoint::ShoulderRight,
+                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZERO.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZEROBLUE.BLP",
+            ),
+            (
+                CharacterAttachmentPoint::ShoulderLeft,
+                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONE.MDX",
+                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONEBLUE.BLP",
+            ),
+        ]
+    );
     Ok(())
 }
 

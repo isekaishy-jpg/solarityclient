@@ -12,6 +12,7 @@ mod db_cache;
 mod db_cache_instances;
 mod db_client;
 mod item;
+mod race;
 mod w_data_store;
 mod wow_client_db;
 
@@ -29,4 +30,5 @@ pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
 };
+pub use race::{CharacterRace, CharacterRaceCatalog};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

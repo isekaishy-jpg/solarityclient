@@ -5,8 +5,9 @@ use std::path::Path;
 
 use solarity_asset::{
     AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
-    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
+    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
+    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
+    Locale, M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -723,6 +724,39 @@ fn helmet_visibility_catalog_decodes_exact_masks() -> Result<(), Box<dyn Error>>
     assert_eq!(visibility.ear_flags(), 0x10);
     assert_eq!(visibility.additional_flags(), [0x20, 0x40]);
     assert_eq!(catalog.visibility(103), None);
+    Ok(())
+}
+
+/// Character race rows retain stock helmet and body-model filename components.
+#[test]
+fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let prefix = append_string(&mut strings, "Hu");
+    let file_string = append_string(&mut strings, "Human");
+    let mut fields = [0_u32; 69];
+    fields[0] = 1;
+    fields[1] = 0x0080_0001;
+    fields[4] = 49;
+    fields[5] = 50;
+    fields[6] = prefix;
+    fields[11] = file_string;
+    let table = create_wdbc(1, 69, &fields, &strings);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\ChrRaces.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = CharacterRaceCatalog::load(&mut store)?;
+    let race = catalog.race(1).ok_or("character race is absent")?;
+    assert_eq!(race.flags(), 0x0080_0001);
+    assert_eq!(race.male_display_id(), 49);
+    assert_eq!(race.female_display_id(), 50);
+    assert_eq!(race.client_prefix(), "Hu");
+    assert_eq!(race.client_file_string(), "Human");
+    assert_eq!(catalog.race(2), None);
     Ok(())
 }
 

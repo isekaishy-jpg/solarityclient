@@ -1,6 +1,6 @@
-//! Stock held-item model attachment planning for player characters.
+//! Stock equipment child-model attachment planning for player characters.
 
-use solarity_asset::{AssetPath, InventoryType};
+use solarity_asset::{AssetPath, CharacterRace, InventoryType};
 use solarity_ecs::PlayerEquipmentSlot;
 
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
@@ -15,6 +15,12 @@ pub enum CharacterAttachmentPoint {
     HandRight = 1,
     /// Item held in the left hand.
     HandLeft = 2,
+    /// Left shoulder armor.
+    ShoulderLeft = 5,
+    /// Right shoulder armor.
+    ShoulderRight = 6,
+    /// Race- and gender-suffixed helmet model.
+    Helmet = 11,
     /// Ordinary main-hand back sheath.
     SheathMainHand = 26,
     /// Ordinary off-hand back sheath.
@@ -140,6 +146,58 @@ pub struct CharacterAttachmentPlan {
 }
 
 impl CharacterAttachmentPlan {
+    /// Plans every stock equipment child model for one player character.
+    ///
+    /// Head and shoulder armor are the only armor slots with child M2s in the
+    /// unmodified client. Helmet filenames are derived from `ChrRaces.dbc`;
+    /// shoulder and held-item names remain exactly as authored by their display.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterAttachmentPlanError`] when a nonempty DBC name cannot
+    /// form a valid archive-relative path or helmet gender is not male/female.
+    pub fn equipped_items<'catalog, I>(
+        equipment: I,
+        race: &CharacterRace,
+        gender_id: u32,
+        weapon_state: CharacterWeaponState,
+    ) -> Result<Self, CharacterAttachmentPlanError>
+    where
+        I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+    {
+        let mut attachments = Vec::with_capacity(6);
+        for item in equipment {
+            match item.slot() {
+                PlayerEquipmentSlot::Head => {
+                    push_helmet(&mut attachments, item, race, gender_id)?;
+                }
+                PlayerEquipmentSlot::Shoulders => {
+                    push_shoulders(&mut attachments, item)?;
+                }
+                PlayerEquipmentSlot::MainHand
+                | PlayerEquipmentSlot::OffHand
+                | PlayerEquipmentSlot::Ranged => {
+                    push_held_item(&mut attachments, item, weapon_state)?;
+                }
+                PlayerEquipmentSlot::Neck
+                | PlayerEquipmentSlot::Shirt
+                | PlayerEquipmentSlot::Chest
+                | PlayerEquipmentSlot::Waist
+                | PlayerEquipmentSlot::Legs
+                | PlayerEquipmentSlot::Feet
+                | PlayerEquipmentSlot::Wrists
+                | PlayerEquipmentSlot::Hands
+                | PlayerEquipmentSlot::FingerOne
+                | PlayerEquipmentSlot::FingerTwo
+                | PlayerEquipmentSlot::TrinketOne
+                | PlayerEquipmentSlot::TrinketTwo
+                | PlayerEquipmentSlot::Back
+                | PlayerEquipmentSlot::Tabard => {}
+            }
+        }
+        Ok(Self { attachments })
+    }
+
     /// Plans stock main-hand, off-hand, and ranged child models.
     ///
     /// Stock reads only model/texture channel zero for this path. A display with
@@ -160,29 +218,7 @@ impl CharacterAttachmentPlan {
     {
         let mut attachments = Vec::with_capacity(3);
         for item in equipment {
-            let Some(point) = attachment_point(item, state) else {
-                continue;
-            };
-            let display = item.display();
-            let [model_name, _] = display.model_names();
-            if model_name.is_empty() {
-                continue;
-            }
-
-            let [texture_name, _] = display.model_textures();
-            let folder = if item.definition().inventory_type() == InventoryType::Shield {
-                "Item\\ObjectComponents\\Shield"
-            } else {
-                "Item\\ObjectComponents\\Weapon"
-            };
-            attachments.push(CharacterItemAttachment {
-                slot: item.slot(),
-                point,
-                model: AssetPath::new(format!("{folder}\\{model_name}"))?,
-                texture: AssetPath::new(format!("{folder}\\{texture_name}.blp"))?,
-                item_visual_id: display.item_visual_id(),
-                particle_color_id: display.particle_color_id(),
-            });
+            push_held_item(&mut attachments, item, state)?;
         }
         Ok(Self { attachments })
     }
@@ -192,6 +228,109 @@ impl CharacterAttachmentPlan {
     pub fn attachments(&self) -> &[CharacterItemAttachment] {
         &self.attachments
     }
+}
+
+/// Adds the race/gender-suffixed stock helmet attachment when authored.
+fn push_helmet(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    item: CharacterEquipmentItem<'_>,
+    race: &CharacterRace,
+    gender_id: u32,
+) -> Result<(), CharacterAttachmentPlanError> {
+    let display = item.display();
+    let [model_name, _] = display.model_names();
+    if model_name.is_empty() {
+        return Ok(());
+    }
+    let gender_suffix = match gender_id {
+        0 => 'M',
+        1 => 'F',
+        _ => {
+            return Err(CharacterAttachmentPlanError::UnsupportedHelmetGender { gender_id });
+        }
+    };
+    let model_stem = model_name
+        .rfind('.')
+        .map_or(model_name, |extension| &model_name[..extension]);
+    let [texture_name, _] = display.model_textures();
+    attachments.push(CharacterItemAttachment {
+        slot: item.slot(),
+        point: CharacterAttachmentPoint::Helmet,
+        model: AssetPath::new(format!(
+            "Item\\ObjectComponents\\Head\\{model_stem}_{}{gender_suffix}.mdx",
+            race.client_prefix()
+        ))?,
+        texture: AssetPath::new(format!("Item\\ObjectComponents\\Head\\{texture_name}.blp"))?,
+        item_visual_id: display.item_visual_id(),
+        particle_color_id: display.particle_color_id(),
+    });
+    Ok(())
+}
+
+/// Adds both independently authored shoulder channels at their stock links.
+fn push_shoulders(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    item: CharacterEquipmentItem<'_>,
+) -> Result<(), CharacterAttachmentPlanError> {
+    let display = item.display();
+    let models = display.model_names();
+    let textures = display.model_textures();
+    let points = [
+        CharacterAttachmentPoint::ShoulderRight,
+        CharacterAttachmentPoint::ShoulderLeft,
+    ];
+    for channel in 0..2 {
+        if models[channel].is_empty() {
+            continue;
+        }
+        attachments.push(CharacterItemAttachment {
+            slot: item.slot(),
+            point: points[channel],
+            model: AssetPath::new(format!(
+                "Item\\ObjectComponents\\Shoulder\\{}",
+                models[channel]
+            ))?,
+            texture: AssetPath::new(format!(
+                "Item\\ObjectComponents\\Shoulder\\{}.blp",
+                textures[channel]
+            ))?,
+            item_visual_id: display.item_visual_id(),
+            particle_color_id: display.particle_color_id(),
+        });
+    }
+    Ok(())
+}
+
+/// Adds one stock weapon/shield model from display channel zero.
+fn push_held_item(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    item: CharacterEquipmentItem<'_>,
+    state: CharacterWeaponState,
+) -> Result<(), CharacterAttachmentPlanError> {
+    let Some(point) = attachment_point(item, state) else {
+        return Ok(());
+    };
+    let display = item.display();
+    let [model_name, _] = display.model_names();
+    if model_name.is_empty() {
+        return Ok(());
+    }
+
+    let [texture_name, _] = display.model_textures();
+    let folder = if item.definition().inventory_type() == InventoryType::Shield {
+        "Item\\ObjectComponents\\Shield"
+    } else {
+        "Item\\ObjectComponents\\Weapon"
+    };
+    attachments.push(CharacterItemAttachment {
+        slot: item.slot(),
+        point,
+        model: AssetPath::new(format!("{folder}\\{model_name}"))?,
+        texture: AssetPath::new(format!("{folder}\\{texture_name}.blp"))?,
+        item_visual_id: display.item_visual_id(),
+        particle_color_id: display.particle_color_id(),
+    });
+    Ok(())
 }
 
 /// Selects stock's hand or sheath link and rejects non-held public slots.

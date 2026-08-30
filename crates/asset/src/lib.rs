@@ -21,11 +21,11 @@ pub use archive::{
 pub use cache::{BlpTextureCache, M2ModelCache};
 pub use database::{
     AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
-    CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterSection,
-    CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
-    CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
-    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemDisplayInfo, WdbcHeader, WdbcTable,
+    CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterRace,
+    CharacterRaceCatalog, CharacterSection, CharacterSectionKind, CreatureCatalog,
+    CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelAppearance, CreatureModelData,
+    HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, WdbcHeader, WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{
