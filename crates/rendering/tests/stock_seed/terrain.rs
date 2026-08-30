@@ -58,8 +58,16 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(mesh.layers().len(), 1);
     assert!(mesh.indices().iter().all(|index| *index < 145));
     assert_eq!(mesh.vertices()[0].texture_coordinates(), [0.0, 0.0]);
-    assert_eq!(mesh.vertices()[9].texture_coordinates(), [0.0625, 0.0625]);
-    assert_eq!(mesh.vertices()[144].texture_coordinates(), [1.0, 1.0]);
+    assert_eq!(mesh.vertices()[9].texture_coordinates(), [0.25, 0.25]);
+    assert_eq!(mesh.vertices()[144].texture_coordinates(), [4.0, 4.0]);
+    assert_eq!(
+        mesh.vertices()[0].alpha_coordinates(),
+        [0.5 / 64.0, 0.5 / 64.0]
+    );
+    assert_eq!(
+        mesh.vertices()[144].alpha_coordinates(),
+        [63.5 / 64.0, 63.5 / 64.0]
+    );
     assert_eq!(
         mesh.vertex_bytes().len(),
         145 * solarity_rendering::TerrainRenderVertex::BYTE_SIZE

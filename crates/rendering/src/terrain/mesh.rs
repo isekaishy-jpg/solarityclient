@@ -11,6 +11,9 @@ use crate::{WorldCameraError, WorldFrustum};
 const TERRAIN_SQUARES_PER_CHUNK: usize = 8;
 const TERRAIN_UNITS_PER_CHUNK: f32 = 33.333_332;
 const TERRAIN_UNIT_SIZE: f32 = TERRAIN_UNITS_PER_CHUNK / TERRAIN_SQUARES_PER_CHUNK as f32;
+const TERRAIN_TEXTURE_REPEATS_PER_CHUNK: f32 = 4.0;
+const TERRAIN_ALPHA_TEXEL_CENTER: f32 = 0.5 / 64.0;
+const TERRAIN_ALPHA_TEXEL_SPAN: f32 = 63.0 / 64.0;
 const VERTICES_PER_CHUNK: usize = 145;
 const MAXIMUM_INDICES_PER_CHUNK: usize = 8 * 8 * 4 * 3;
 const NEUTRAL_VERTEX_COLOR_BGRA: [u8; 4] = [0x7F, 0x7F, 0x7F, 0xFF];
@@ -21,12 +24,13 @@ pub struct TerrainRenderVertex {
     position: [f32; 3],
     normal: [f32; 3],
     texture_coordinates: [f32; 2],
+    alpha_coordinates: [f32; 2],
     color_bgra: [u8; 4],
 }
 
 impl TerrainRenderVertex {
     /// Size of one explicitly serialized Vulkan terrain vertex.
-    pub const BYTE_SIZE: usize = 36;
+    pub const BYTE_SIZE: usize = 44;
 
     /// Returns world position in the network/ECS coordinate convention.
     #[must_use]
@@ -46,6 +50,12 @@ impl TerrainRenderVertex {
         self.texture_coordinates
     }
 
+    /// Returns half-texel-inset coordinates for the 64-by-64 blend map.
+    #[must_use]
+    pub const fn alpha_coordinates(self) -> [f32; 2] {
+        self.alpha_coordinates
+    }
+
     /// Returns authored MCCV data in BGRA order or stock's neutral value.
     #[must_use]
     pub const fn color_bgra(self) -> [u8; 4] {
@@ -61,6 +71,9 @@ impl TerrainRenderVertex {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         for value in self.texture_coordinates {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.alpha_coordinates {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         bytes.extend_from_slice(&self.color_bgra);
@@ -227,9 +240,22 @@ fn prepare_vertices(chunk: &TerrainChunk) -> Vec<TerrainRenderVertex> {
                     base[2] + chunk.heights()[index],
                 ],
                 normal: chunk.normals()[index],
+                // Stock ground color repeats four times over each MCNK. World
+                // coordinates keep shared edges bit-identical across chunks.
                 texture_coordinates: [
-                    column_units / TERRAIN_SQUARES_PER_CHUNK as f32,
-                    row_units / TERRAIN_SQUARES_PER_CHUNK as f32,
+                    -(base[1] - column_units * TERRAIN_UNIT_SIZE)
+                        * TERRAIN_TEXTURE_REPEATS_PER_CHUNK
+                        / TERRAIN_UNITS_PER_CHUNK,
+                    -(base[0] - row_units * TERRAIN_UNIT_SIZE) * TERRAIN_TEXTURE_REPEATS_PER_CHUNK
+                        / TERRAIN_UNITS_PER_CHUNK,
+                ],
+                // Alpha data has 64 authored samples, not wraparound texels.
+                // Insets sample their centers and prevent adjacent atlas bleed.
+                alpha_coordinates: [
+                    column_units / TERRAIN_SQUARES_PER_CHUNK as f32 * TERRAIN_ALPHA_TEXEL_SPAN
+                        + TERRAIN_ALPHA_TEXEL_CENTER,
+                    row_units / TERRAIN_SQUARES_PER_CHUNK as f32 * TERRAIN_ALPHA_TEXEL_SPAN
+                        + TERRAIN_ALPHA_TEXEL_CENTER,
                 ],
                 color_bgra,
             });
