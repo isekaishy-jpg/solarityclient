@@ -114,3 +114,13 @@ cargo run -p solarity-asset --example validate_client_data -- `
 
 DBC arguments additionally validate their WDBC headers and declared record and
 string-block bounds.
+
+For local source archaeology, one UTF-8 archive member can be streamed to
+standard output without extracting or copying the archive stack:
+
+```powershell
+cargo run -p solarity-asset --example print_client_text -- `
+    'C:\path\to\World of Warcraft\Data' `
+    enUS `
+    'Interface\GlueXML\GlueTemplates.lua'
+```

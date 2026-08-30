@@ -4,11 +4,29 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiManifestKind, UiObjectCatalog, UiObjectTree, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptTarget,
+    FontCatalog, UiBundle, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
+    UiRegionStatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptRuntime, UiScriptTarget,
 };
 
 use crate::support::{Fixture, FixtureFile};
+
+/// Script coordinates retain the stock fixed-height aspect compensation.
+#[test]
+fn script_environment_derives_stock_ui_extent() -> Result<(), Box<dyn Error>> {
+    let standard = UiScriptEnvironment::new(1024, 768)?;
+    let wide = UiScriptEnvironment::new(1920, 1080)?;
+
+    assert_eq!(standard.logical_extent(), (1024, 768));
+    assert_eq!(standard.ui_extent(), (1024.0, 768.0));
+    assert!((wide.ui_extent().0 - 1_365.333_333_333_333_3).abs() < f64::EPSILON);
+    assert_eq!(wide.ui_extent().1, 768.0);
+    assert!(matches!(
+        UiScriptEnvironment::new(0, 1080),
+        Err(UiScriptError::Plan { .. })
+    ));
+    Ok(())
+}
 
 /// Later XML layers replace or clear one callback slot without recompiling templates.
 #[test]
@@ -127,16 +145,36 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
         FixtureFile {
             path: "Interface\\GlueXML\\Objects.xml",
             bytes: br#"<Ui><Frame name="First"><Frames>
-  <Button name="$parentChild"><Scripts><OnLoad>
+  <Button name="$parentChild"><Size x="40" y="20"/><Scripts><OnLoad>
     LOAD_ORDER = (LOAD_ORDER or "") .. self:GetName() .. ";"
     assert(self:GetObjectType() == "Button")
     assert(self:IsObjectType("Button"))
     assert(self:IsObjectType("Frame"))
+    assert(self:IsObjectType("Slider") == nil)
     assert(self:GetParent() == First)
+    assert(self:GetWidth() == 40 and self:GetHeight() == 20)
+    self:SetSize(50, 25)
+    assert(self:GetWidth() == 50 and self:GetHeight() == 25)
+    self:SetPoint("TOPLEFT", First, "BOTTOMLEFT", 2, -3)
+    self:Disable()
+    assert(self:IsEnabled() == 0)
+    self:Enable()
     assert(Later == nil)
   </OnLoad></Scripts></Button>
 </Frames><Scripts><OnLoad>
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+  assert(GetScreenHeight() == 768)
+  assert(abs(GetScreenWidth() - 1365.3333333333) &lt; 0.001)
+  assert(format("%s:%d", "screen", 7) == "screen:7")
+  local values = { retained = true }
+  assert(wipe(values) == values and next(values) == nil)
+  local handler = function() end
+  seterrorhandler(handler)
+  assert(geterrorhandler() == handler)
+  self:RegisterEvent("set_glue_screen")
+  assert(self:IsEventRegistered("SET_GLUE_SCREEN"))
+  self:RegisterEvent("NOT_A_STOCK_EVENT")
+  assert(self:IsEventRegistered("NOT_A_STOCK_EVENT") == nil)
 </OnLoad></Scripts></Frame></Ui>"#,
         },
         FixtureFile {
@@ -169,8 +207,11 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let fonts = FontCatalog::from_bundle(&bundle)?;
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
-    let mut runtime = UiScriptRuntime::new(bundle.lua())?;
+    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let mut runtime = UiScriptRuntime::new(&bundle, &regions, environment)?;
 
     assert!(
         bundle
@@ -229,8 +270,11 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let fonts = FontCatalog::from_bundle(&bundle)?;
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
     let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
-    let mut runtime = UiScriptRuntime::new(bundle.lua())?;
+    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let mut runtime = UiScriptRuntime::new(&bundle, &regions, environment)?;
 
     let result = runtime.execute_next(&bundle, &tree, &scripts);
 

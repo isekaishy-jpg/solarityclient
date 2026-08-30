@@ -10,5 +10,5 @@ mod simple_script;
 mod status;
 
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
-pub use simple_script::UiScriptRuntime;
+pub use simple_script::{UiScriptEnvironment, UiScriptRuntime};
 pub use status::UiScriptError;

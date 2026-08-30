@@ -57,13 +57,21 @@ diagnostic. Missing globals and methods remain errors rather than permissive
 no-op functions.
 
 The bundle retains both the source files and its Lua state, so execution never
-reads the archives a second time. The first registered stock surface is the
-object identity layer: `GetName`, `GetObjectType`, `IsObjectType`, and
-`GetParent`. Each root batch registers its structural children in construction
-order and invokes their `OnLoad` callbacks postorder before the root callback.
-Named callbacks resolve their Lua global only when construction reaches that
-object. Like `FrameScript_Object::RegisterScriptObject`, object registration
-does not overwrite a non-nil global with the same name.
+reads the archives a second time. Bootstrap first installs the stock
+compatibility aliases for Lua's table, degree-based math, and string libraries,
+the error-handler pair, and aspect-compensated screen dimensions. The logical
+SDL extent is required input; the stock UI coordinate space remains 768 units
+high and derives its width from that real aspect ratio.
+
+Object metatables are concrete per widget type rather than one permissive table.
+The implemented surface includes identity, resolved dimensions, mutable sizes
+and points, frame visibility and backdrop colors, all 41 Glue events,
+button/slider enabled state, slider ranges, and scroll-frame offsets. Each root
+batch registers its structural children in construction order and invokes their
+`OnLoad` callbacks postorder before the root callback. Named callbacks resolve
+their Lua global only when construction reaches that object. Like
+`FrameScript_Object::RegisterScriptObject`, object registration does not
+overwrite a non-nil global with the same name.
 
 ## Typed XML callbacks
 
@@ -172,6 +180,12 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
     enUS `
     frame
 ```
+
+Appending `execute <logical-width> <logical-height>` runs the ordered bootstrap
+until completion or the first unimplemented stock API boundary. Requiring an
+extent keeps `GetScreenWidth` and `GetScreenHeight` tied to real window facts
+instead of a guessed resolution. This mode is intentionally strict and is the
+incremental compatibility audit for global and widget bindings.
 
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global

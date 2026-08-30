@@ -9,7 +9,7 @@ use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Loca
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
-    UiScriptPlan, UiTextureFile, UiTexturePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiTextureFile, UiTexturePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -32,6 +32,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("glue") => UiManifestKind::Glue,
         Some("frame") => UiManifestKind::Frame,
         _ => return Err(argument_error("bundle must be glue or frame").into()),
+    };
+    let execution_environment = match arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .as_deref()
+    {
+        None => None,
+        Some("execute") => {
+            let width = parse_dimension(arguments.next(), "logical width")?;
+            let height = parse_dimension(arguments.next(), "logical height")?;
+            Some(UiScriptEnvironment::new(width, height)?)
+        }
+        Some(_) => return Err(argument_error("optional mode must be execute").into()),
     };
     if arguments.next().is_some() {
         return Err(argument_error("unexpected extra arguments").into());
@@ -71,6 +84,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let layout_plan = UiLayoutPlan::from_tree(&object_tree)?;
     let region_states = UiRegionStatePlan::resolve(&object_tree, &layout_plan)?;
     let script_plan = UiScriptPlan::from_tree(&object_tree, bundle.lua())?;
+    if let Some(environment) = execution_environment {
+        let mut script_runtime = UiScriptRuntime::new(&bundle, &region_states, environment)?;
+        script_runtime.execute_all(&bundle, &object_tree, &script_plan)?;
+        println!(
+            "executed {} actions, registered {} objects, ran {} Lua chunks and {} OnLoad handlers",
+            script_runtime.next_action(),
+            script_runtime.registered_object_count(),
+            script_runtime.executed_chunk_count(),
+            script_runtime.executed_load_handler_count()
+        );
+    }
     let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
     let texture_paths = object_tree
         .nodes()
@@ -138,6 +162,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn argument_error(message: &str) -> IoError {
     IoError::new(
         ErrorKind::InvalidInput,
-        format!("{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame>"),
+        format!(
+            "{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame> [execute <logical-width> <logical-height>]"
+        ),
     )
+}
+
+fn parse_dimension(value: Option<std::ffi::OsString>, label: &str) -> Result<u32, IoError> {
+    let value = value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| argument_error(&format!("missing {label}")))?;
+    let dimension = value
+        .parse::<u32>()
+        .map_err(|_| argument_error(&format!("invalid {label}")))?;
+    if dimension == 0 {
+        return Err(argument_error(&format!("{label} must be nonzero")));
+    }
+    Ok(dimension)
 }
