@@ -3,6 +3,8 @@
 use tokio::io::{AsyncRead, AsyncWrite};
 use wow_srp::wrath_header::ClientCrypto;
 
+use crate::protocol::WorldAddonManifest;
+
 use super::{WorldAuthError, wow_connection::WorldHandshake};
 
 /// The account expansion entitlement returned by the world server.
@@ -58,6 +60,52 @@ pub struct WorldSession<S> {
     pub(crate) account_name: String,
     pub(crate) realm_id: u8,
     pub(crate) info: WorldSessionInfo,
+    pub(crate) addon_manifest: WorldAddonManifest,
+}
+
+/// A selected character awaiting the server's login result and world bootstrap.
+pub struct CharacterLogin<S> {
+    pub(crate) session: WorldSession<S>,
+    pub(crate) character_guid: u64,
+    pub(crate) character_name: String,
+}
+
+impl<S> CharacterLogin<S> {
+    /// Returns the selected character's world object GUID.
+    #[must_use]
+    pub const fn character_guid(&self) -> u64 {
+        self.character_guid
+    }
+
+    /// Returns the selected character's display name.
+    #[must_use]
+    pub fn character_name(&self) -> &str {
+        &self.character_name
+    }
+
+    /// Returns the authenticated account name.
+    #[must_use]
+    pub fn account_name(&self) -> &str {
+        self.session.account_name()
+    }
+
+    /// Returns the selected realmd realm identifier.
+    #[must_use]
+    pub const fn realm_id(&self) -> u8 {
+        self.session.realm_id()
+    }
+
+    /// Returns billing and expansion state for the world session.
+    #[must_use]
+    pub const fn info(&self) -> WorldSessionInfo {
+        self.session.info()
+    }
+
+    /// Returns the exact add-on manifest sent during world authentication.
+    #[must_use]
+    pub const fn addon_manifest(&self) -> &WorldAddonManifest {
+        self.session.addon_manifest()
+    }
 }
 
 impl<S> WorldSession<S> {
@@ -77,6 +125,15 @@ impl<S> WorldSession<S> {
     #[must_use]
     pub const fn info(&self) -> WorldSessionInfo {
         self.info
+    }
+
+    /// Returns the exact ordered manifest sent during world authentication.
+    ///
+    /// The server's add-on policy response is positional and must be decoded
+    /// against this manifest.
+    #[must_use]
+    pub const fn addon_manifest(&self) -> &WorldAddonManifest {
+        &self.addon_manifest
     }
 
     /// Consumes the session and returns its transport after discarding crypto state.

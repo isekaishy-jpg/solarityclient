@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use solarity_network::{
-    CharacterClass, CharacterGender, CharacterRace, WorldAddonManifest, WorldAuthProgress,
-    WorldConnection,
+    CharacterClass, CharacterGender, CharacterRace, WorldAddon, WorldAddonManifest,
+    WorldAuthProgress, WorldConnection,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -12,8 +12,8 @@ use wow_srp::wrath_header::ProofSeed;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::{ClientOpcodeMessage, ServerOpcodeMessage};
 use wow_world_messages::wrath::{
-    BillingPlanFlags, Character, Class, Expansion, Gender, Race, SMSG_ADDON_INFO,
-    SMSG_AUTH_CHALLENGE, SMSG_AUTH_RESPONSE, SMSG_CHAR_ENUM, Vector3d,
+    BillingPlanFlags, Character, Class, Expansion, Gender, Race, SMSG_AUTH_CHALLENGE,
+    SMSG_AUTH_RESPONSE, SMSG_CHAR_ENUM, Vector3d,
 };
 
 use super::authentication::authenticated_identity_and_realm;
@@ -27,9 +27,11 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         let (client, server) = tokio::io::duplex(8_192);
         let server_task = tokio::spawn(emulate_character_screen(server, session_key));
 
-        let progress =
-            WorldConnection::authenticate(client, identity, &realm, WorldAddonManifest::empty())
-                .await?;
+        let manifest = WorldAddonManifest::new(vec![
+            WorldAddon::new("Blizzard_TimeManager", true, 0x1122_3344, 0)?,
+            WorldAddon::new("Solarity_Inspector", true, 0x5566_7788, 0)?,
+        ])?;
+        let progress = WorldConnection::authenticate(client, identity, &realm, manifest).await?;
         let mut session = match progress {
             WorldAuthProgress::Authenticated(session) => session,
             WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
@@ -41,6 +43,37 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(addon_info.name(), Some("SMSG_ADDON_INFO"));
         assert!(!addon_info.payload().is_empty());
         assert!(addon_info.character_directory()?.is_none());
+        let policy = addon_info
+            .addon_policy(session.addon_manifest())?
+            .ok_or("add-on packet did not decode as policy")?;
+        assert_eq!(policy.entries().len(), 2);
+        let time_manager = policy
+            .by_name("Blizzard_TimeManager")
+            .ok_or("manifest name was not paired with policy")?;
+        assert_eq!(time_manager.state(), 2);
+        assert!(time_manager.uses_public_key());
+        assert!(time_manager.crc_mismatch());
+        assert_eq!(time_manager.public_key(), Some(&[0xA5; 256]));
+        assert_eq!(time_manager.unknown(), Some(42));
+        assert_eq!(time_manager.url(), Some("https://addons.example/keys"));
+        let inspector = policy
+            .by_name("Solarity_Inspector")
+            .ok_or("second manifest name was not paired with policy")?;
+        assert_eq!(inspector.state(), 1);
+        assert!(!inspector.uses_public_key());
+        assert!(!inspector.crc_mismatch());
+        assert_eq!(inspector.public_key(), None);
+        assert_eq!(inspector.unknown(), None);
+        assert_eq!(inspector.url(), None);
+        let banned = policy
+            .banned_addons()
+            .first()
+            .ok_or("banned add-on signature was not decoded")?;
+        assert_eq!(banned.id(), 7);
+        assert_eq!(banned.name_md5(), [0x11; 16]);
+        assert_eq!(banned.version_md5(), [0x22; 16]);
+        assert_eq!(banned.timestamp(), 0x3344_5566);
+        assert_eq!(banned.flags(), 0x7788_99AA);
 
         let large_packet = session.receive_packet().await?;
         assert_eq!(large_packet.opcode(), 0x01F6);
@@ -89,6 +122,13 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(character.equipment()[0].inventory_type_id(), 0);
         assert_eq!(character.equipment()[0].enchantment(), 3_821);
 
+        let login = session.login_character(character).await?;
+        assert_eq!(login.character_guid(), 0xF130_0000_0000_0042);
+        assert_eq!(login.character_name(), "Solarion");
+        assert_eq!(login.account_name(), "TESTACCOUNT");
+        assert_eq!(login.realm_id(), realm.id());
+        assert_eq!(login.addon_manifest().addons().len(), 2);
+
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
     })
@@ -124,6 +164,34 @@ fn character_directory_rejects_truncated_body() -> Result<(), Box<dyn Error + Se
     })
 }
 
+/// Positional add-on policy fails at the conditional key boundary when truncated.
+#[test]
+fn addon_policy_rejects_truncated_public_key() -> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, server) = tokio::io::duplex(4_096);
+        let server_task = tokio::spawn(emulate_truncated_addon_policy(server, session_key));
+        let manifest =
+            WorldAddonManifest::new(vec![WorldAddon::new("Blizzard_TimeManager", true, 0, 0)?])?;
+        let mut session =
+            match WorldConnection::authenticate(client, identity, &realm, manifest).await? {
+                WorldAuthProgress::Authenticated(session) => session,
+                WorldAuthProgress::Queued(_) => {
+                    return Err("fixture world unexpectedly queued".into());
+                }
+            };
+        let packet = session.receive_packet().await?;
+        let error = match packet.addon_policy(session.addon_manifest()) {
+            Err(error) => error,
+            Ok(_) => return Err("truncated add-on public key was accepted".into()),
+        };
+        assert_eq!(error.offset(), 3);
+        assert_eq!(error.message(), "add-on public key is truncated");
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
+
 async fn emulate_character_screen(
     mut stream: DuplexStream,
     session_key: [u8; 40],
@@ -133,9 +201,7 @@ async fn emulate_character_screen(
         ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
     assert!(matches!(request, ClientOpcodeMessage::CMSG_CHAR_ENUM));
 
-    ServerOpcodeMessage::from(SMSG_ADDON_INFO { addons: Vec::new() })
-        .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
-        .await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &addon_policy_payload()).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x01F6, &[0xA7; 32_768]).await?;
     let mut character = Character {
         guid: Guid::new(0xF130_0000_0000_0042),
@@ -169,7 +235,31 @@ async fn emulate_character_screen(
     })
     .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
     .await?;
+    let login = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    match login {
+        ClientOpcodeMessage::CMSG_PLAYER_LOGIN(login) => {
+            assert_eq!(login.guid.guid(), 0xF130_0000_0000_0042);
+        }
+        message => return Err(format!("unexpected character selection packet: {message}").into()),
+    }
     Ok(())
+}
+
+fn addon_policy_payload() -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&[2, 1, 1]);
+    payload.extend_from_slice(&[0xA5; 256]);
+    payload.extend_from_slice(&42_u32.to_le_bytes());
+    payload.push(1);
+    payload.extend_from_slice(b"https://addons.example/keys\0");
+    payload.extend_from_slice(&[1, 0, 0]);
+    payload.extend_from_slice(&1_u32.to_le_bytes());
+    payload.extend_from_slice(&7_u32.to_le_bytes());
+    payload.extend_from_slice(&[0x11; 16]);
+    payload.extend_from_slice(&[0x22; 16]);
+    payload.extend_from_slice(&0x3344_5566_u32.to_le_bytes());
+    payload.extend_from_slice(&0x7788_99AA_u32.to_le_bytes());
+    payload
 }
 
 async fn write_encrypted_raw(
@@ -199,6 +289,15 @@ async fn emulate_truncated_character_screen(
     let header = crypto.encrypter().encrypt_server_header(3, 0x003B);
     tokio::io::AsyncWriteExt::write_all(&mut stream, header).await?;
     tokio::io::AsyncWriteExt::write_all(&mut stream, &[1]).await?;
+    Ok(())
+}
+
+async fn emulate_truncated_addon_policy(
+    mut stream: DuplexStream,
+    session_key: [u8; 40],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &[2, 1, 1, 0xA5]).await?;
     Ok(())
 }
 

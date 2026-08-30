@@ -5,11 +5,13 @@
 //! malformed-packet behavior must remain build-12340 specific.
 
 mod addon_manifest;
+mod addon_policy;
 mod character_directory;
 mod server_packet;
 mod wow_svcs_client_services;
 
 pub use addon_manifest::{AddonManifestError, WorldAddon, WorldAddonManifest};
+pub use addon_policy::{AddonPolicyError, BannedAddon, WorldAddonPolicy, WorldAddonPolicyEntry};
 pub use character_directory::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,

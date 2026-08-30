@@ -90,6 +90,7 @@ impl WorldConnection {
             crypto,
             account_name,
             realm_id,
+            addon_manifest: addons,
         }
         .advance()
         .await
@@ -101,6 +102,7 @@ pub(crate) struct WorldHandshake<S> {
     crypto: ClientCrypto,
     account_name: String,
     realm_id: u8,
+    addon_manifest: WorldAddonManifest,
 }
 
 impl<S> WorldHandshake<S>
@@ -137,6 +139,7 @@ where
                 crypto: self.crypto,
                 account_name: self.account_name,
                 realm_id: self.realm_id,
+                addon_manifest: self.addon_manifest,
                 info: WorldSessionInfo {
                     billing_time,
                     billing_flags: billing_flags.as_int(),

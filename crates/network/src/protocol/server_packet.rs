@@ -1,8 +1,12 @@
 //! Owned wrapper around one decrypted server packet.
 
-use super::{CharacterDirectory, CharacterDirectoryError};
+use super::{
+    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, WorldAddonManifest,
+    WorldAddonPolicy,
+};
 
 const SMSG_CHAR_ENUM: u16 = 0x003B;
+const SMSG_ADDON_INFO: u16 = 0x02EF;
 
 /// A decoded world packet that retains unsupported payloads for later dispatch.
 pub struct WorldServerPacket {
@@ -28,7 +32,7 @@ impl WorldServerPacket {
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             0x01DD => Some("SMSG_PONG"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
-            0x02EF => Some("SMSG_ADDON_INFO"),
+            SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
             _ => None,
         }
     }
@@ -51,6 +55,24 @@ impl WorldServerPacket {
             return Ok(None);
         }
         CharacterDirectory::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes positional `SMSG_ADDON_INFO` policy against the sent manifest.
+    ///
+    /// Returns `None` for another retained opcode. The manifest must be the
+    /// exact ordered manifest used to authenticate this world session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AddonPolicyError`] when an add-on policy packet is malformed.
+    pub fn addon_policy(
+        &self,
+        manifest: &WorldAddonManifest,
+    ) -> Result<Option<WorldAddonPolicy>, AddonPolicyError> {
+        if self.opcode != SMSG_ADDON_INFO {
+            return Ok(None);
+        }
+        WorldAddonPolicy::decode(&self.payload, manifest).map(Some)
     }
 }
 

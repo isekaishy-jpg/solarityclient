@@ -17,10 +17,13 @@ pub use authentication::{
     LoginError, LoginFailure, LoginLocale, LoginStage, WorldIdentity, WorldSessionKey,
 };
 pub use connection::{
-    AccountExpansion, WorldAuthError, WorldAuthFailure, WorldAuthProgress, WorldAuthStage,
-    WorldConnection, WorldQueue, WorldSession, WorldSessionInfo,
+    AccountExpansion, CharacterLogin, WorldAuthError, WorldAuthFailure, WorldAuthProgress,
+    WorldAuthStage, WorldConnection, WorldQueue, WorldSession, WorldSessionInfo,
 };
-pub use protocol::{AddonManifestError, WorldAddon, WorldAddonManifest};
+pub use protocol::{
+    AddonManifestError, AddonPolicyError, BannedAddon, WorldAddon, WorldAddonManifest,
+    WorldAddonPolicy, WorldAddonPolicyEntry,
+};
 pub use protocol::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,
