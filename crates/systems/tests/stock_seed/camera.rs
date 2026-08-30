@@ -7,8 +7,9 @@ use glam::Vec3;
 use solarity_ecs::{PlayerViewState, WorldTransform};
 use solarity_systems::{
     CameraSubjectGeometry, CameraSubjectHeightError, CameraSubjectHeightSource,
-    PlayerCameraObstructionError, PlayerCameraPoseError, resolve_camera_subject_height,
-    resolve_player_camera_obstruction, resolve_player_camera_pose,
+    PlayerCameraObstructionError, PlayerCameraPoseError, PlayerCameraWaterError,
+    resolve_camera_subject_height, resolve_player_camera_obstruction, resolve_player_camera_pose,
+    resolve_player_camera_water_collision,
 };
 
 /// The default saved view produces stock's distinct eye, target, pivot, and subject.
@@ -143,6 +144,94 @@ fn camera_obstruction_rejects_invalid_provider_fraction() -> Result<(), Box<dyn 
     assert!(matches!(
         result,
         Err(PlayerCameraObstructionError::InvalidTraceFraction)
+    ));
+    Ok(())
+}
+
+/// Water collision keeps the final eye on the followed pivot's side of water.
+#[test]
+fn camera_water_collision_applies_stock_clearance() -> Result<(), Box<dyn Error>> {
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
+    let pose = resolve_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::STOCK_VIEW_2,
+        height,
+    )?;
+    let requested_direction = pose.target() - pose.eye();
+    let mut query = 0;
+    let dry = resolve_player_camera_water_collision(
+        pose,
+        true,
+        true,
+        |_x, _y, reference| -> Result<Option<f32>, Infallible> {
+            query += 1;
+            Ok(Some(if query == 1 {
+                reference - 1.0
+            } else {
+                reference + 2.0
+            }))
+        },
+    )?;
+    assert_eq!(query, 2);
+    assert!((dry.eye().z - (pose.eye().z + 2.05)).abs() < 0.000_001);
+    assert!((dry.target() - dry.eye()).abs_diff_eq(requested_direction, 0.000_001));
+
+    query = 0;
+    let submerged = resolve_player_camera_water_collision(
+        pose,
+        true,
+        false,
+        |_x, _y, reference| -> Result<Option<f32>, Infallible> {
+            query += 1;
+            Ok(Some(if query == 1 {
+                reference + 1.0
+            } else {
+                reference - 2.0
+            }))
+        },
+    )?;
+    assert!((submerged.eye().z - (pose.eye().z - 2.05)).abs() < 0.000_001);
+    assert!(
+        (submerged.target() - submerged.eye())
+            .normalize()
+            .abs_diff_eq(
+                (pose.orbit_pivot() - submerged.eye()).normalize(),
+                0.000_001
+            )
+    );
+    Ok(())
+}
+
+/// Disabled water collision is inert and invalid provider heights are rejected.
+#[test]
+fn camera_water_collision_has_no_surface_fallback() -> Result<(), Box<dyn Error>> {
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
+    let pose = resolve_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::STOCK_VIEW_2,
+        height,
+    )?;
+    let mut query_count = 0;
+    let disabled = resolve_player_camera_water_collision(
+        pose,
+        false,
+        true,
+        |_x, _y, _z| -> Result<Option<f32>, Infallible> {
+            query_count += 1;
+            Ok(Some(f32::NAN))
+        },
+    )?;
+    assert_eq!(disabled, pose);
+    assert_eq!(query_count, 0);
+
+    assert!(matches!(
+        resolve_player_camera_water_collision(
+            pose,
+            true,
+            true,
+            |_x, _y, _z| -> Result<Option<f32>, Infallible> { Ok(Some(f32::NAN)) },
+        ),
+        Err(PlayerCameraWaterError::InvalidSurfaceHeight)
     ));
     Ok(())
 }

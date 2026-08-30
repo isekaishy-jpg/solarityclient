@@ -7,6 +7,7 @@ mod controller;
 mod obstruction;
 mod transition;
 mod types;
+mod water;
 
 pub use controller::{
     resolve_camera_subject_height, resolve_model_camera_subject_height, resolve_player_camera_pose,
@@ -16,3 +17,4 @@ pub use types::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
 };
+pub use water::{PlayerCameraWaterError, resolve_player_camera_water_collision};
