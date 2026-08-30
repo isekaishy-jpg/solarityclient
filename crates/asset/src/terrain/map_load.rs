@@ -11,7 +11,7 @@ use crate::database::MapDefinition;
 use crate::file_stack::AssetStore;
 
 use super::alpha_map::decode_alpha_map;
-use super::map::{DecodedTerrainTile, TerrainMap};
+use super::map::{DecodedTerrainTile, TerrainMap, TerrainTextureTable};
 use super::map_area::{TerrainTile, TerrainTileIndex};
 use super::map_chunk::{
     TERRAIN_CHUNK_VERTEX_COUNT, TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement,
@@ -95,6 +95,7 @@ impl TerrainMap {
             *root,
             self.flags() & WDT_HAS_BIG_ALPHA != 0,
             &path,
+            decode_texture_flags(read.bytes(), &path)?,
         )
     }
 }
@@ -105,6 +106,7 @@ fn decode_adt(
     root: RootAdt,
     big_alpha: bool,
     path: &AssetPath,
+    texture_flags: Option<Vec<u32>>,
 ) -> Result<DecodedTerrainTile, AssetError> {
     if root.version != AdtVersion::WotLK {
         return Err(terrain_message(
@@ -121,6 +123,18 @@ fn decode_adt(
         .collect::<Result<Vec<_>, _>>()?;
     let doodads = decode_doodads(path, &root)?;
     let world_models = decode_world_models(path, &root)?;
+    if let Some(flags) = &texture_flags
+        && flags.len() != textures.len()
+    {
+        return Err(terrain_message(
+            path,
+            format!(
+                "MTXF has {} words for {} MTEX entries",
+                flags.len(),
+                textures.len()
+            ),
+        ));
+    }
     let chunks = decode_chunks(
         path,
         root.mcnk_chunks,
@@ -132,12 +146,66 @@ fn decode_adt(
     Ok(DecodedTerrainTile::new(
         index,
         source,
-        textures,
+        TerrainTextureTable {
+            paths: textures,
+            flags: texture_flags,
+        },
         chunks,
         doodads,
         world_models,
         root.water_data.is_some(),
     ))
+}
+
+/// Reads MTXF within its declared top-level chunk extent.
+///
+/// `wow-adt` 0.7 parses the variable-length MTXF body until the input cursor's
+/// end rather than the enclosing chunk end. Keep the dependency for the rest
+/// of the ADT but recover these parallel words from the original byte stream.
+fn decode_texture_flags(bytes: &[u8], path: &AssetPath) -> Result<Option<Vec<u32>>, AssetError> {
+    let mut offset = 0_usize;
+    let mut flags = None;
+    while offset < bytes.len() {
+        let header_end = offset
+            .checked_add(8)
+            .ok_or_else(|| terrain_message(path, "ADT chunk header offset overflow"))?;
+        let header = bytes
+            .get(offset..header_end)
+            .ok_or_else(|| terrain_message(path, "ADT ends inside a top-level chunk header"))?;
+        let magic = &header[..4];
+        let size = u32::from_le_bytes(
+            header[4..8]
+                .try_into()
+                .map_err(|_| terrain_message(path, "ADT chunk size is truncated"))?,
+        ) as usize;
+        let chunk_end = header_end
+            .checked_add(size)
+            .ok_or_else(|| terrain_message(path, "ADT chunk extent overflow"))?;
+        let payload = bytes
+            .get(header_end..chunk_end)
+            .ok_or_else(|| terrain_message(path, "ADT top-level chunk exceeds file size"))?;
+        if magic == b"FXTM" {
+            if flags.is_some() {
+                return Err(terrain_message(path, "ADT repeats top-level MTXF"));
+            }
+            if payload.len() % size_of::<u32>() != 0 {
+                return Err(terrain_message(
+                    path,
+                    "MTXF size is not a whole number of words",
+                ));
+            }
+            flags = Some(
+                payload
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                    .collect(),
+            );
+        }
+        offset = chunk_end;
+    }
+    Ok(flags)
 }
 
 fn decode_chunks(

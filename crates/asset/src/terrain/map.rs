@@ -24,18 +24,24 @@ pub struct TerrainMap {
 pub struct DecodedTerrainTile {
     index: TerrainTileIndex,
     source: ArchiveDescriptor,
-    textures: Vec<AssetPath>,
+    textures: TerrainTextureTable,
     chunks: Vec<TerrainChunk>,
     doodads: Vec<TerrainDoodadPlacement>,
     world_models: Vec<TerrainWorldModelPlacement>,
     has_liquid_table: bool,
 }
 
+/// Parallel root-level MTEX and optional MTXF payloads.
+pub(super) struct TerrainTextureTable {
+    pub(super) paths: Vec<AssetPath>,
+    pub(super) flags: Option<Vec<u32>>,
+}
+
 impl DecodedTerrainTile {
     pub(super) fn new(
         index: TerrainTileIndex,
         source: ArchiveDescriptor,
-        textures: Vec<AssetPath>,
+        textures: TerrainTextureTable,
         chunks: Vec<TerrainChunk>,
         doodads: Vec<TerrainDoodadPlacement>,
         world_models: Vec<TerrainWorldModelPlacement>,
@@ -67,7 +73,13 @@ impl DecodedTerrainTile {
     /// Returns normalized terrain texture paths indexed by MCLY layers.
     #[must_use]
     pub fn textures(&self) -> &[AssetPath] {
-        &self.textures
+        &self.textures.paths
+    }
+
+    /// Returns raw MTXF words parallel to MTEX when the chunk is authored.
+    #[must_use]
+    pub fn texture_flags(&self) -> Option<&[u32]> {
+        self.textures.flags.as_deref()
     }
 
     /// Returns the complete row-major 16-by-16 MCNK grid.

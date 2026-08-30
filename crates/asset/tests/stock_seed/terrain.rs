@@ -9,6 +9,7 @@ use solarity_asset::{
     TerrainTileIndex,
 };
 use wow_adt::builder::{AdtBuilder, BuiltAdt};
+use wow_adt::chunks::MtxfChunk;
 use wow_adt::{
     AdtVersion, DoodadPlacement, McalChunk, MclyChunk, MclyFlags, MclyLayer, ParsedAdt,
     WmoPlacement, parse_adt,
@@ -115,6 +116,7 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     let adt = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
         .add_texture("tileset/fixture/grass.blp")
+        .add_texture_flags(MtxfChunk { flags: vec![1] })
         .add_model("world/fixture/tree.m2")
         .add_wmo("world/fixture/house.wmo")
         .add_doodad_placement(DoodadPlacement {
@@ -169,6 +171,7 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks().len(), 256);
     assert_eq!(tile.textures().len(), 1);
     assert_eq!(tile.textures()[0].as_str(), "TILESET\\FIXTURE\\GRASS.BLP");
+    assert_eq!(tile.texture_flags(), Some([1_u32].as_slice()));
     assert_eq!(tile.chunks()[0].index().x(), 0);
     assert_eq!(tile.chunks()[0].index().y(), 0);
     assert_eq!(tile.chunks()[0].heights().len(), 145);
@@ -210,6 +213,9 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     let ParsedAdt::Root(mut root) = parse_adt(&mut Cursor::new(bytes))? else {
         return Err("fixture did not decode as a root ADT".into());
     };
+    // wow-adt 0.7 reads MTXF beyond its declared chunk extent. Restore the
+    // fixture's authored word before its builder serializes the edited ADT.
+    root.texture_flags = Some(MtxfChunk { flags: vec![1] });
     let first = root
         .mcnk_chunks
         .first_mut()
