@@ -1,5 +1,8 @@
 //! External stock-compatibility test modules for this crate.
 
+#[path = "stock_seed/support/mod.rs"]
+mod support;
+
 #[path = "stock_seed/addon.rs"]
 mod addon;
 #[path = "stock_seed/animation.rs"]

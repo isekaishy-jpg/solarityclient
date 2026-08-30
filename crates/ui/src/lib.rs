@@ -15,3 +15,9 @@ mod script;
 mod widget;
 mod world;
 mod xml;
+
+pub use xml::{
+    LuaSource, UiBundle, UiLoadError, UiManifest, UiManifestEntry, UiManifestEntryKind,
+    UiManifestKind, UiResource, UiResourceContent, XmlAttribute, XmlContent, XmlDocument,
+    XmlElement,
+};
