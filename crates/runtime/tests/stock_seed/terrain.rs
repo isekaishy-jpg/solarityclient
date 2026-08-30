@@ -64,6 +64,12 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     assert_eq!(textures.len(), 1);
     assert_eq!(textures[0].path().as_str(), "TILESET\\FIXTURE\\GRASS.BLP");
     assert_eq!(textures[0].mip_dimensions(0), Some((2, 1)));
+    let mesh = terrain
+        .resident_mesh_plan()
+        .ok_or("resident tile omitted its aggregate mesh plan")?;
+    assert_eq!(mesh.tile(), tile);
+    assert_eq!(mesh.textures(), [textures[0].path().clone()]);
+    assert_eq!(mesh.chunks().len(), 256);
     assert_eq!(
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::Current { map_id: 571, tile }
@@ -83,6 +89,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
     assert!(terrain.active_map().is_none());
     assert!(terrain.resident_texture_sources().is_none());
+    assert!(terrain.resident_mesh_plan().is_none());
     Ok(())
 }
 

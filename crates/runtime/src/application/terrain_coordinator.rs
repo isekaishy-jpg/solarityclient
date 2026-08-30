@@ -188,6 +188,15 @@ impl RuntimeTerrainCoordinator {
             .map(|tile| tile.textures.as_slice())
     }
 
+    /// Returns the immutable aggregate upload plan for the resident player ADT.
+    #[must_use]
+    pub fn resident_mesh_plan(&self) -> Option<&TerrainTileMeshPlan> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.mesh)
+    }
+
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
     ///
     /// # Errors

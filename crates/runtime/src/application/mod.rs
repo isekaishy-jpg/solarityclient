@@ -14,6 +14,7 @@ mod login_ui;
 mod realm_directory;
 mod run;
 mod terrain_coordinator;
+mod terrain_frame;
 mod world_coordinator;
 
 pub use character_directory::CharacterProjectionError;
@@ -26,6 +27,7 @@ pub use login_coordinator::{
 };
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use terrain_coordinator::{RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainPoll};
+pub use terrain_frame::RuntimeTerrainFrameError;
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,

@@ -25,6 +25,8 @@ use crate::application::login_coordinator::{
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
+use crate::application::terrain_coordinator::RuntimeTerrainPoll;
+use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
 use crate::application::world_coordinator::{
     RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
 };
@@ -43,6 +45,7 @@ pub(crate) struct ClientServices {
     world: RuntimeWorldCoordinator,
     gameplay: RuntimeGameplayCoordinator,
     terrain: RuntimeTerrainCoordinator,
+    terrain_frame: Option<TerrainFrame>,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -131,6 +134,7 @@ impl ClientServices {
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
+                terrain_frame: None,
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -201,6 +205,7 @@ impl ClientServices {
                     self.world.disconnect();
                     self.gameplay.disconnect();
                     self.terrain.disconnect();
+                    self.terrain_frame = None;
                     self.realm_directory_published = false;
                     self.world_session_published = false;
                     self.pending_realm_id = None;
@@ -368,7 +373,42 @@ impl ClientServices {
             Err(error) => self.publish_world_failure(error),
         }
         self.gameplay.service()?;
-        self.terrain.synchronize(self.gameplay.world())?;
+        match self.terrain.synchronize(self.gameplay.world())? {
+            RuntimeTerrainPoll::TileLoaded { tile, .. } => {
+                let plan = self.terrain.resident_mesh_plan().ok_or(
+                    RuntimeTerrainFrameError::MissingMeshPlan {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    },
+                )?;
+                let sources = self.terrain.resident_texture_sources().ok_or(
+                    RuntimeTerrainFrameError::MissingTextureSources {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    },
+                )?;
+                let frame = TerrainFrame::prepare(&mut self.renderer, plan, sources)?;
+                tracing::debug!(
+                    tile_x = tile.x(),
+                    tile_y = tile.y(),
+                    draw_count = frame.draw_count(),
+                    "resident terrain entered renderer resources"
+                );
+                self.terrain_frame = Some(frame);
+            }
+            RuntimeTerrainPoll::Idle | RuntimeTerrainPoll::GlobalWorldModel { .. } => {
+                self.terrain_frame = None;
+            }
+            RuntimeTerrainPoll::Current { tile, .. } => {
+                if self.terrain_frame.as_ref().map(TerrainFrame::tile) != Some(tile) {
+                    return Err(RuntimeTerrainFrameError::MissingGpuGeneration {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    }
+                    .into());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -416,6 +456,7 @@ impl ClientServices {
         self.world.disconnect();
         self.gameplay.disconnect();
         self.terrain.disconnect();
+        self.terrain_frame = None;
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {

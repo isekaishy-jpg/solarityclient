@@ -14,6 +14,7 @@ use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::run::{self, ApplicationRunReport};
 use crate::application::terrain_coordinator::RuntimeTerrainError;
+use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformError, PlatformEvent};
@@ -39,6 +40,9 @@ pub enum ApplicationError {
     /// Active-map or player-tile terrain residency failed.
     #[error(transparent)]
     Terrain(#[from] RuntimeTerrainError),
+    /// A resident ADT could not enter renderer-owned GPU state.
+    #[error(transparent)]
+    TerrainFrame(#[from] RuntimeTerrainFrameError),
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),
