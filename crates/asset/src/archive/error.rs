@@ -123,4 +123,12 @@ pub enum AssetError {
         /// Parser or structural validation context.
         message: String,
     },
+    /// A resolved stock shader library is malformed or uses another profile.
+    #[error("failed to decode client shader {path}: {message}")]
+    ShaderDecode {
+        /// Normalized BLS asset path.
+        path: AssetPath,
+        /// Structural or shader-profile validation context.
+        message: String,
+    },
 }

@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedBlpTexture, Locale, WdbcTable,
+    ArchiveCatalog, AssetPath, AssetStore, BlsShaderStage, ClientDataRoot, DecodedBlpTexture,
+    DecodedBlsShader, Locale, WdbcTable,
 };
 
 /// Mounts a real client archive set and reads every requested internal path.
@@ -57,6 +58,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 texture.width(),
                 texture.height(),
                 texture.source().relative_path().display(),
+                path
+            );
+            continue;
+        }
+        if path.as_str().ends_with(".BLS") {
+            let stage = if path.as_str().contains("\\VERTEX\\") {
+                BlsShaderStage::Vertex
+            } else if path.as_str().contains("\\PIXEL\\") {
+                BlsShaderStage::Pixel
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "BLS path does not identify its vertex or pixel stage",
+                )
+                .into());
+            };
+            let shader = DecodedBlsShader::load(&mut store, &path, stage)?;
+            println!(
+                "{} {:?} permutations\t{}\t{}",
+                shader.permutations().len(),
+                shader.stage(),
+                shader.source().relative_path().display(),
                 path
             );
             continue;

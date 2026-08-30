@@ -10,6 +10,8 @@ mod database;
 mod file_stack;
 #[path = "stock_seed/model.rs"]
 mod model;
+#[path = "stock_seed/shader.rs"]
+mod shader;
 #[path = "stock_seed/storage.rs"]
 mod storage;
 #[path = "stock_seed/support/mod.rs"]

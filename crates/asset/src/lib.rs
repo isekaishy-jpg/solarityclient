@@ -8,6 +8,7 @@ mod cache;
 mod database;
 mod file_stack;
 mod model;
+mod shader;
 mod storage;
 mod terrain;
 mod texture;
@@ -32,4 +33,5 @@ pub use model::{
     DecodedM2Model, M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture,
     M2TextureKind, M2Vertex,
 };
+pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
 pub use texture::{BlpTextureSource, DecodedBlpTexture};
