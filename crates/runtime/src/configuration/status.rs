@@ -48,6 +48,20 @@ pub enum ConfigurationError {
         /// The rejected value.
         value: String,
     },
+    /// An SDL window dimension is zero, malformed, or exceeds `i32::MAX`.
+    #[error("value {value} for startup option {option} must be an SDL window dimension")]
+    InvalidWindowDimension {
+        /// The option owning the value.
+        option: &'static str,
+        /// The rejected value.
+        value: String,
+    },
+    /// The requested initial window mode is not part of the supported contract.
+    #[error("unsupported --window-mode value {value}")]
+    InvalidWindowMode {
+        /// The rejected mode token.
+        value: String,
+    },
     /// The data-root value failed filesystem validation.
     #[error("invalid --data-root value: {source}")]
     InvalidDataRoot {

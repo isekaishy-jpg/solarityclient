@@ -1,0 +1,6 @@
+# SDL's vendored MSVC debug build embeds an MSVCRTD default-library directive,
+# while Rust selects the process CRT explicitly. The SDL static objects have no
+# unresolved debug-CRT symbols; excluding the redundant directive prevents
+# LNK4098 without changing the process runtime or suppressing other warnings.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-Clink-arg=/NODEFAULTLIB:MSVCRTD"]

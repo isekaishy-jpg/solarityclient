@@ -17,4 +17,11 @@ mod telemetry;
 mod time;
 
 pub use application::{ApplicationError, ClientApplication, StartupReport};
-pub use configuration::{ConfigurationError, RuntimeConfiguration};
+pub use configuration::{
+    ConfigurationError, RuntimeConfiguration, WindowConfiguration, WindowMode,
+};
+pub use platform::{
+    ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
+    MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformError, PlatformEvent, ScanCode,
+    TextEditingEvent, TextInputEvent, WindowEvent, WindowId,
+};

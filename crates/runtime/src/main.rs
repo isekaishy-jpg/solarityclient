@@ -32,6 +32,11 @@ fn main() -> ExitCode {
         archive_count = report.archive_count(),
         cpu_workers = report.cpu_worker_count(),
         network_workers = report.network_worker_count(),
+        window_id = report.window_id(),
+        logical_width = report.logical_window_extent().0,
+        logical_height = report.logical_window_extent().1,
+        pixel_width = report.pixel_window_extent().0,
+        pixel_height = report.pixel_window_extent().1,
         "client foundation started"
     );
     if let Err(failure) = application.shutdown() {

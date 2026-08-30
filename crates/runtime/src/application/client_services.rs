@@ -7,9 +7,11 @@ use solarity_cpu::CpuExecutor;
 
 use crate::application::ApplicationError;
 use crate::configuration::RuntimeConfiguration;
+use crate::platform::{PlatformEvent, SdlPlatform};
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
+    platform: SdlPlatform,
     _assets: AssetStore,
     cpu: CpuExecutor,
     network: Option<Runtime>,
@@ -25,6 +27,9 @@ impl ClientServices {
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
         let assets = AssetStore::mount(catalog)?;
+        // SDL must be initialized by the process main thread before worker
+        // construction can make lifecycle mistakes harder to diagnose.
+        let platform = SdlPlatform::start(configuration.window())?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
             .worker_threads(configuration.network_workers().get())
@@ -38,6 +43,7 @@ impl ClientServices {
 
         Ok((
             Self {
+                platform,
                 _assets: assets,
                 cpu,
                 network: Some(network),
@@ -45,6 +51,20 @@ impl ClientServices {
             },
             archive_count,
         ))
+    }
+
+    /// Polls one translated main-thread platform event without allocating a batch.
+    pub(crate) fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
+        self.platform.poll_event()
+    }
+
+    /// Returns startup facts that prove the configured window exists.
+    pub(crate) fn window_facts(&self) -> (u32, (u32, u32), (u32, u32)) {
+        (
+            self.platform.window_id().value(),
+            self.platform.logical_extent(),
+            self.platform.pixel_extent(),
+        )
     }
 
     /// Shuts down task admission before consuming the async runtime.

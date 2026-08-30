@@ -6,6 +6,8 @@
 
 mod profile;
 mod status;
+mod window;
 
 pub use profile::RuntimeConfiguration;
 pub use status::ConfigurationError;
+pub use window::{WindowConfiguration, WindowMode};

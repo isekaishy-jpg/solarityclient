@@ -9,7 +9,7 @@ use std::time::Duration;
 use solarity_asset::{ClientDataRoot, Locale};
 use solarity_cpu::CpuPoolConfig;
 
-use crate::configuration::ConfigurationError;
+use crate::configuration::{ConfigurationError, WindowConfiguration, WindowMode};
 
 const DATA_ROOT_OPTION: &str = "--data-root";
 const LOCALE_OPTION: &str = "--locale";
@@ -17,6 +17,9 @@ const CPU_WORKERS_OPTION: &str = "--cpu-workers";
 const CPU_CAPACITY_OPTION: &str = "--cpu-capacity";
 const NETWORK_WORKERS_OPTION: &str = "--network-workers";
 const NETWORK_SHUTDOWN_OPTION: &str = "--network-shutdown-ms";
+const WINDOW_WIDTH_OPTION: &str = "--window-width";
+const WINDOW_HEIGHT_OPTION: &str = "--window-height";
+const WINDOW_MODE_OPTION: &str = "--window-mode";
 
 /// Complete configuration required to construct the initial client services.
 #[derive(Clone, Debug)]
@@ -26,6 +29,7 @@ pub struct RuntimeConfiguration {
     cpu_pool: CpuPoolConfig,
     network_workers: NonZeroUsize,
     network_shutdown_timeout: Duration,
+    window: WindowConfiguration,
 }
 
 impl RuntimeConfiguration {
@@ -75,6 +79,18 @@ impl RuntimeConfiguration {
                         NETWORK_SHUTDOWN_OPTION,
                     )?;
                 }
+                WINDOW_WIDTH_OPTION => {
+                    let value = next_value(&mut arguments, WINDOW_WIDTH_OPTION)?;
+                    set_once(&mut values.window_width, value, WINDOW_WIDTH_OPTION)?;
+                }
+                WINDOW_HEIGHT_OPTION => {
+                    let value = next_value(&mut arguments, WINDOW_HEIGHT_OPTION)?;
+                    set_once(&mut values.window_height, value, WINDOW_HEIGHT_OPTION)?;
+                }
+                WINDOW_MODE_OPTION => {
+                    let value = next_value(&mut arguments, WINDOW_MODE_OPTION)?;
+                    set_once(&mut values.window_mode, value, WINDOW_MODE_OPTION)?;
+                }
                 _ => {
                     return Err(ConfigurationError::UnknownOption {
                         option: option.to_owned(),
@@ -90,7 +106,8 @@ impl RuntimeConfiguration {
     #[must_use]
     pub const fn usage() -> &'static str {
         "solarity-runtime --data-root <Data> --locale <locale> --cpu-workers <count> \
-         --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds>"
+         --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds> \
+         --window-width <pixels> --window-height <pixels> --window-mode <windowed|fullscreen>"
     }
 
     /// Returns the validated client `Data` directory.
@@ -123,6 +140,12 @@ impl RuntimeConfiguration {
         self.network_shutdown_timeout
     }
 
+    /// Returns the validated initial SDL window policy.
+    #[must_use]
+    pub const fn window(&self) -> WindowConfiguration {
+        self.window
+    }
+
     /// Validates parsed operating-system strings into domain types.
     fn from_parsed(values: ParsedValues) -> Result<Self, ConfigurationError> {
         let data_root = required(values.data_root, DATA_ROOT_OPTION)?;
@@ -144,6 +167,19 @@ impl RuntimeConfiguration {
             required(values.network_shutdown_ms, NETWORK_SHUTDOWN_OPTION)?,
             NETWORK_SHUTDOWN_OPTION,
         )?;
+        let window_width = positive_u32(
+            required(values.window_width, WINDOW_WIDTH_OPTION)?,
+            WINDOW_WIDTH_OPTION,
+        )?;
+        let window_height = positive_u32(
+            required(values.window_height, WINDOW_HEIGHT_OPTION)?,
+            WINDOW_HEIGHT_OPTION,
+        )?;
+        let window_mode = required(values.window_mode, WINDOW_MODE_OPTION)?;
+        let window_mode = WindowMode::parse(unicode(&window_mode, WINDOW_MODE_OPTION)?)
+            .ok_or_else(|| ConfigurationError::InvalidWindowMode {
+                value: window_mode.to_string_lossy().into_owned(),
+            })?;
 
         let data_root = ClientDataRoot::new(PathBuf::from(data_root))
             .map_err(|source| ConfigurationError::InvalidDataRoot { source })?;
@@ -163,6 +199,7 @@ impl RuntimeConfiguration {
             cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity),
             network_workers,
             network_shutdown_timeout: Duration::from_millis(shutdown_milliseconds),
+            window: WindowConfiguration::new(window_width, window_height, window_mode),
         })
     }
 }
@@ -176,6 +213,9 @@ struct ParsedValues {
     cpu_capacity: Option<OsString>,
     network_workers: Option<OsString>,
     network_shutdown_ms: Option<OsString>,
+    window_width: Option<OsString>,
+    window_height: Option<OsString>,
+    window_mode: Option<OsString>,
 }
 
 /// Reads the argument following an option.
@@ -224,4 +264,22 @@ fn positive_integer(
             option,
             value: text.to_owned(),
         })
+}
+
+/// Parses a nonzero SDL dimension that also fits SDL's signed C interface.
+fn positive_u32(value: OsString, option: &'static str) -> Result<u32, ConfigurationError> {
+    let text = unicode(&value, option)?;
+    let dimension =
+        text.parse::<u32>()
+            .map_err(|_source| ConfigurationError::InvalidWindowDimension {
+                option,
+                value: text.to_owned(),
+            })?;
+    if dimension == 0 || dimension > i32::MAX as u32 {
+        return Err(ConfigurationError::InvalidWindowDimension {
+            option,
+            value: text.to_owned(),
+        });
+    }
+    Ok(dimension)
 }

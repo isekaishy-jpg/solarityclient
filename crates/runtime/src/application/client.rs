@@ -7,6 +7,7 @@ use solarity_cpu::CpuError;
 
 use crate::application::client_services::ClientServices;
 use crate::configuration::RuntimeConfiguration;
+use crate::platform::{PlatformError, PlatformEvent};
 
 /// A failure while constructing or stopping concrete client services.
 #[derive(Debug, Error)]
@@ -17,6 +18,9 @@ pub enum ApplicationError {
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),
+    /// SDL could not construct the primary window or event source.
+    #[error(transparent)]
+    Platform(#[from] PlatformError),
     /// Tokio could not construct the private network runtime.
     #[error("failed to create network runtime: {message}")]
     NetworkRuntime {
@@ -31,6 +35,9 @@ pub struct StartupReport {
     archive_count: usize,
     cpu_worker_count: usize,
     network_worker_count: usize,
+    window_id: u32,
+    logical_window_extent: (u32, u32),
+    pixel_window_extent: (u32, u32),
 }
 
 impl StartupReport {
@@ -51,6 +58,24 @@ impl StartupReport {
     pub const fn network_worker_count(self) -> usize {
         self.network_worker_count
     }
+
+    /// Returns the SDL identifier of the primary client window.
+    #[must_use]
+    pub const fn window_id(self) -> u32 {
+        self.window_id
+    }
+
+    /// Returns the initial logical width and height used by UI coordinates.
+    #[must_use]
+    pub const fn logical_window_extent(self) -> (u32, u32) {
+        self.logical_window_extent
+    }
+
+    /// Returns the initial physical drawable extent intended for the swapchain.
+    #[must_use]
+    pub const fn pixel_window_extent(self) -> (u32, u32) {
+        self.pixel_window_extent
+    }
 }
 
 /// The sole owner of cross-crate concrete service wiring.
@@ -70,6 +95,7 @@ impl ClientApplication {
         let cpu_worker_count = configuration.cpu_pool().worker_count().get();
         let network_worker_count = configuration.network_workers().get();
         let (services, archive_count) = ClientServices::start(&configuration)?;
+        let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
 
         Ok(Self {
             services,
@@ -77,6 +103,9 @@ impl ClientApplication {
                 archive_count,
                 cpu_worker_count,
                 network_worker_count,
+                window_id,
+                logical_window_extent,
+                pixel_window_extent,
             },
         })
     }
@@ -85,6 +114,12 @@ impl ClientApplication {
     #[must_use]
     pub const fn report(&self) -> StartupReport {
         self.report
+    }
+
+    /// Returns the next stock-relevant platform event currently queued by SDL.
+    #[must_use]
+    pub fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
+        self.services.poll_platform_event()
     }
 
     /// Drains owned executors in explicit shutdown order.

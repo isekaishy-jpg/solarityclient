@@ -8,9 +8,21 @@ mod lcd;
 
 mod blizzard_cursor;
 mod cursor;
+mod event;
+mod event_translation;
 mod os_call;
 mod os_clipboard;
 mod os_ime;
 mod os_secure_random;
 mod os_url_download;
 mod os_version_hash;
+mod sdl_platform;
+mod status;
+
+pub use event::{
+    ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
+    MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformEvent, ScanCode,
+    TextEditingEvent, TextInputEvent, WindowEvent, WindowId,
+};
+pub(crate) use sdl_platform::SdlPlatform;
+pub use status::PlatformError;
