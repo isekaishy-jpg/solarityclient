@@ -20,6 +20,9 @@ mod world;
 
 pub use movement::WorldTransform;
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
-pub use player::{LocalPlayer, PlayerAppearance, PlayerIdentity};
+pub use player::{
+    LocalPlayer, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerAppearance, PlayerEquipment,
+    PlayerEquipmentSlot, PlayerIdentity, VisibleEquipmentItem,
+};
 pub use unit::{UnitFlags, UnitIdentity, UnitPresentation, UnitVitals};
 pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};

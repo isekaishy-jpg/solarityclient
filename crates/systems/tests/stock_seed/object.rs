@@ -4,8 +4,9 @@ use std::error::Error;
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, UnitFlags,
-    UnitIdentity, UnitPresentation, UnitVitals, WorldBootstrap, WorldMapId,
+    ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
+    PlayerEquipmentSlot, UnitFlags, UnitIdentity, UnitPresentation, UnitVitals, WorldBootstrap,
+    WorldMapId,
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
@@ -39,6 +40,10 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         (79, 0x0000_0001),
         (153, u32::from_le_bytes([3, 4, 5, 6])),
         (154, u32::from_le_bytes([7, 0, 0, 2])),
+        (283, 50_001),
+        (284, u32::from_le_bytes([17, 0, 23, 0])),
+        (319, 50_019),
+        (320, u32::from_le_bytes([31, 0, 0, 0])),
     ];
     world.create_object(guid, ObjectKind::Player, None, create_fields)?;
     project_object_fields(&mut world, guid, create_fields)?;
@@ -80,9 +85,24 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     assert_eq!(appearance.hair_color_id(), 6);
     assert_eq!(appearance.facial_hair_style_id(), 7);
 
+    let equipment = *world.storage().get::<&PlayerEquipment>(player)?;
+    assert_eq!(equipment.item(PlayerEquipmentSlot::Head).entry_id(), 50_001);
+    assert_eq!(
+        equipment.item(PlayerEquipmentSlot::Head).enchantment_word(),
+        u32::from_le_bytes([17, 0, 23, 0])
+    );
+    assert_eq!(
+        equipment.item(PlayerEquipmentSlot::Tabard).entry_id(),
+        50_019
+    );
+
     // A VALUES update carries only changed words; all other typed values must
     // remain intact just as they do in the authoritative dense table.
-    let values_fields = [(24, 750), (154, u32::from_le_bytes([9, 0, 0, 2]))];
+    let values_fields = [
+        (24, 750),
+        (154, u32::from_le_bytes([9, 0, 0, 2])),
+        (283, 50_101),
+    ];
     world.update_fields(guid, values_fields)?;
     project_object_fields(&mut world, guid, values_fields)?;
     let vitals = *world.storage().get::<&UnitVitals>(player)?;
@@ -91,6 +111,12 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     let appearance = *world.storage().get::<&PlayerAppearance>(player)?;
     assert_eq!(appearance.skin_id(), 3);
     assert_eq!(appearance.facial_hair_style_id(), 9);
+    let equipment = *world.storage().get::<&PlayerEquipment>(player)?;
+    assert_eq!(equipment.item(PlayerEquipmentSlot::Head).entry_id(), 50_101);
+    assert_eq!(
+        equipment.item(PlayerEquipmentSlot::Head).enchantment_word(),
+        u32::from_le_bytes([17, 0, 23, 0])
+    );
     assert_eq!(world.storage().get::<&ObjectFields>(player)?.get(24), 750);
     Ok(())
 }

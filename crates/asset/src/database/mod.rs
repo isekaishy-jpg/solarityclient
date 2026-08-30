@@ -25,5 +25,7 @@ pub use character::{
 pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData,
 };
-pub use item::{ItemDisplayCatalog, ItemDisplayInfo};
+pub use item::{
+    InventoryType, ItemDefinition, ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
+};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

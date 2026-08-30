@@ -5,8 +5,8 @@ use std::path::Path;
 
 use solarity_asset::{
     AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, CreatureCatalog, ItemDisplayCatalog, Locale,
-    M2TextureKind, WdbcTable,
+    CharacterCustomization, ClientDataRoot, CreatureCatalog, InventoryType, ItemDefinitionCatalog,
+    ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -645,6 +645,53 @@ fn item_display_catalog_decodes_stock_equipment_layout() -> Result<(), Box<dyn E
         ]
     );
     assert_eq!(catalog.display(55_001), None);
+    Ok(())
+}
+
+/// Client item entries resolve display and equipment categories without server data.
+#[test]
+fn item_definition_catalog_decodes_visible_item_lookup() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(
+        2,
+        8,
+        &[
+            50_001,
+            4,
+            4,
+            u32::MAX,
+            1,
+            55_000,
+            5,
+            0,
+            50_002,
+            2,
+            7,
+            7,
+            u32::MAX,
+            55_001,
+            17,
+            1,
+        ],
+        b"\0",
+    );
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\Item.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = ItemDefinitionCatalog::load(&mut store)?;
+    let chest = catalog.item(50_001).ok_or("item definition is absent")?;
+    assert_eq!(chest.display_info_id(), 55_000);
+    assert_eq!(chest.inventory_type(), InventoryType::Chest);
+    assert_eq!(chest.sound_override_subclass_id(), -1);
+    assert_eq!(chest.material_id(), 1);
+    let weapon = catalog.item(50_002).ok_or("weapon definition is absent")?;
+    assert_eq!(weapon.inventory_type(), InventoryType::TwoHandWeapon);
+    assert_eq!(weapon.sheathe_type(), 1);
+    assert_eq!(catalog.item(50_003), None);
     Ok(())
 }
 

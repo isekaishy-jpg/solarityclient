@@ -1,8 +1,8 @@
 //! Projects the stock build-12340 update table into typed ECS components.
 
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, UnitFlags, UnitIdentity,
-    UnitPresentation, UnitVitals,
+    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, UnitFlags,
+    UnitIdentity, UnitPresentation, UnitVitals, VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -29,6 +29,8 @@ const UNIT_FIELD_BYTES_1: u16 = 74;
 const UNIT_DYNAMIC_FLAGS: u16 = 79;
 const PLAYER_FIELD_BYTES: u16 = 153;
 const PLAYER_BYTES_2: u16 = 154;
+const PLAYER_VISIBLE_ITEM_START: u16 = 283;
+const PLAYER_VISIBLE_ITEM_LAST: u16 = 320;
 
 /// Failure while projecting authoritative update words into component views.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -153,6 +155,14 @@ where
     let mut hair_color_id = player_appearance_state.hair_color_id();
     let mut facial_hair_style_id = player_appearance_state.facial_hair_style_id();
 
+    let player_equipment = world
+        .storage()
+        .get::<&PlayerEquipment>(entity)
+        .map(|component| **component)
+        .ok();
+    let mut equipment_changed = false;
+    let mut equipment_items = player_equipment.unwrap_or_default().items();
+
     for (index, value) in fields {
         match index {
             OBJECT_FIELD_ENTRY => {
@@ -227,6 +237,17 @@ where
                 facial_hair_style_id = value.to_le_bytes()[0];
                 appearance_changed = true;
             }
+            PLAYER_VISIBLE_ITEM_START..=PLAYER_VISIBLE_ITEM_LAST if kind == ObjectKind::Player => {
+                let offset = usize::from(index - PLAYER_VISIBLE_ITEM_START);
+                let slot = offset / 2;
+                let previous = equipment_items[slot];
+                equipment_items[slot] = if offset % 2 == 0 {
+                    VisibleEquipmentItem::new(value, previous.enchantment_word())
+                } else {
+                    VisibleEquipmentItem::new(previous.entry_id(), value)
+                };
+                equipment_changed = true;
+            }
             _ => {}
         }
     }
@@ -289,6 +310,11 @@ where
                 facial_hair_style_id,
             ),),
         );
+    }
+    if kind == ObjectKind::Player && (player_equipment.is_none() || equipment_changed) {
+        world
+            .storage_mut()
+            .add_component(entity, (PlayerEquipment::new(equipment_items),));
     }
     Ok(())
 }
