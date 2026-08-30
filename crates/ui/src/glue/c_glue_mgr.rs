@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use solarity_asset::{AssetStore, BlpTextureCache};
+use solarity_asset::{AssetStore, AssetStoreHandle, BlpTextureCache};
 
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiGlueNetworkBridge;
@@ -39,7 +39,7 @@ pub struct GlueManager {
     report: GlueStartupReport,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
-    assets: Rc<RefCell<AssetStore>>,
+    assets: AssetStoreHandle,
     bundle: UiBundle,
 }
 
@@ -54,11 +54,29 @@ impl GlueManager {
     /// Returns [`GlueError`] at the first archive, XML, layout, object, font,
     /// texture, or Lua compatibility boundary.
     pub fn start(
-        mut assets: AssetStore,
+        assets: AssetStore,
         logical_extent: (u32, u32),
         streaming_trial: bool,
     ) -> Result<Self, GlueError> {
-        let bundle = UiBundle::load(&mut assets, UiManifestKind::Glue)?;
+        Self::start_shared(
+            AssetStoreHandle::new(assets),
+            logical_extent,
+            streaming_trial,
+        )
+    }
+
+    /// Starts Glue against the process-wide main-thread asset stack.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlueError`] under the same strict stock-loading rules as
+    /// [`Self::start`].
+    pub fn start_shared(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+    ) -> Result<Self, GlueError> {
+        let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
         let tree = UiObjectTree::from_catalog(&catalog, &fonts)?;
@@ -70,7 +88,6 @@ impl GlueManager {
         let templates = UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?;
         let textures = UiTexturePlan::from_tree(&tree)?;
         let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
-        let assets = Rc::new(RefCell::new(assets));
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());

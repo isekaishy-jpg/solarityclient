@@ -31,7 +31,7 @@ pub use database::{
     ItemDisplayCatalog, ItemDisplayInfo, MapCatalog, MapDefinition, MapKind, RealmCategoryCatalog,
     RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
 };
-pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
+pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle};
 pub use model::{
     DecodedM2Model, M2AnimationSet, M2Batch, M2BlendMode, M2Bone, M2Interpolation, M2Material,
     M2Sequence, M2SequenceStorage, M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2Track,

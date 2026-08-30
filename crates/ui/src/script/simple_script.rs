@@ -10,7 +10,7 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
-use solarity_asset::{AssetPath, AssetStore};
+use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_glue_event};
 use crate::script::UiGlueNetworkBridge;
@@ -267,7 +267,7 @@ pub struct UiScriptEnvironment {
     ui_extent: (f64, f64),
     streaming_trial: bool,
     cvars: UiCVarRegistry,
-    assets: Option<Rc<RefCell<AssetStore>>>,
+    assets: Option<AssetStoreHandle>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
@@ -324,13 +324,13 @@ impl UiScriptEnvironment {
     /// Attaches the mounted stock archive stack used by synchronous UI loads.
     #[must_use]
     pub fn with_asset_store(mut self, store: AssetStore) -> Self {
-        self.assets = Some(Rc::new(RefCell::new(store)));
+        self.assets = Some(AssetStoreHandle::new(store));
         self
     }
 
     /// Attaches a main-thread archive stack already owned by a UI manager.
     #[must_use]
-    pub(crate) fn with_shared_asset_store(mut self, store: Rc<RefCell<AssetStore>>) -> Self {
+    pub(crate) fn with_shared_asset_store(mut self, store: AssetStoreHandle) -> Self {
         self.assets = Some(store);
         self
     }
@@ -339,7 +339,7 @@ impl UiScriptEnvironment {
         self.cvars.clone()
     }
 
-    fn assets(&self) -> Option<Rc<RefCell<AssetStore>>> {
+    fn assets(&self) -> Option<AssetStoreHandle> {
         self.assets.clone()
     }
 
@@ -1780,7 +1780,7 @@ fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
-    assets: Option<Rc<RefCell<AssetStore>>>,
+    assets: Option<AssetStoreHandle>,
     button_measurement: Option<buttons::ButtonTextMeasurement>,
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
@@ -2234,7 +2234,7 @@ fn set_texture_gradient(
 fn register_model_methods(
     lua: &Lua,
     methods: &Table,
-    assets: Option<Rc<RefCell<AssetStore>>>,
+    assets: Option<AssetStoreHandle>,
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetModel",

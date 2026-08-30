@@ -28,6 +28,13 @@ pub(crate) struct ClientFixture {
 impl ClientFixture {
     /// Generates all archives required by runtime startup.
     pub(crate) fn new() -> Result<Self, Box<dyn Error>> {
+        Self::with_common_files(&[])
+    }
+
+    /// Generates the profile with additional exact-path base asset payloads.
+    pub(crate) fn with_common_files(
+        common_files: &[(&str, &[u8])],
+    ) -> Result<Self, Box<dyn Error>> {
         static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
@@ -37,7 +44,12 @@ impl ClientFixture {
         ));
         fs::create_dir_all(root.join("Data/enUS"))?;
         for archive in REQUIRED_ARCHIVES {
-            build_archive(&root.join("Data").join(archive), archive)?;
+            let additions = if archive == "common.MPQ" {
+                common_files
+            } else {
+                &[]
+            };
+            build_archive(&root.join("Data").join(archive), archive, additions)?;
         }
         let addon_root = root.join("Interface/AddOns/Blizzard_RuntimeFixture");
         fs::create_dir_all(&addon_root)?;
@@ -61,13 +73,20 @@ impl Drop for ClientFixture {
 }
 
 /// Creates one valid MPQ with a diagnostic marker.
-fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
+fn build_archive(
+    path: &Path,
+    archive: &str,
+    additions: &[(&str, &[u8])],
+) -> Result<(), Box<dyn Error>> {
     let mut builder = ArchiveBuilder::new()
         .listfile_option(ListfileOption::Generate)
         .add_file_data(
             format!("fixture:{archive}").into_bytes(),
             "Solarity\\RuntimeFixture.txt",
         );
+    for (asset_path, bytes) in additions {
+        builder = builder.add_file_data(bytes.to_vec(), asset_path);
+    }
     if archive == "enUS/locale-enUS.MPQ" {
         builder = builder.add_file_data(realm_category_dbc(), "DBFilesClient\\Cfg_Categories.dbc");
         builder =
@@ -75,6 +94,7 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
         builder = builder.add_file_data(empty_wdbc(69), "DBFilesClient\\ChrRaces.dbc");
         builder = builder.add_file_data(empty_wdbc(60), "DBFilesClient\\ChrClasses.dbc");
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
+        builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",

@@ -28,5 +28,7 @@ mod security;
 mod support;
 #[path = "stock_seed/telemetry.rs"]
 mod telemetry;
+#[path = "stock_seed/terrain.rs"]
+mod terrain;
 #[path = "stock_seed/time.rs"]
 mod time;

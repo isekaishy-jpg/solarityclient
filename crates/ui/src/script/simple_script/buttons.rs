@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, Table, Value, Variadic};
-use solarity_asset::AssetStore;
+use solarity_asset::AssetStoreHandle;
 
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
@@ -19,7 +19,7 @@ use super::{
 /// Archive-backed state required by the stock text-extent methods.
 #[derive(Clone)]
 pub(super) struct ButtonTextMeasurement {
-    assets: Rc<RefCell<AssetStore>>,
+    assets: AssetStoreHandle,
     fonts: Rc<HashMap<String, FontDefinition>>,
     system: Rc<RefCell<FontSystem>>,
     pixels_per_ui_unit: f64,
@@ -27,7 +27,7 @@ pub(super) struct ButtonTextMeasurement {
 
 impl ButtonTextMeasurement {
     pub(super) fn new(
-        assets: Rc<RefCell<AssetStore>>,
+        assets: AssetStoreHandle,
         fonts: Rc<HashMap<String, FontDefinition>>,
         logical_height: u32,
     ) -> Result<Self, crate::FontError> {

@@ -21,6 +21,7 @@ fn world_entry_owns_the_initial_local_player() -> Result<(), Box<dyn Error>> {
     ));
 
     assert_eq!(world.map_id().value(), 571);
+    assert_eq!(world.local_player_transform()?.position(), position);
     let local_player = world.local_player();
     assert_eq!(
         world.entity_by_guid(0xF130_0000_0000_0042),

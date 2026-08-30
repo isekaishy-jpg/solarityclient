@@ -2208,7 +2208,9 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wow-adt",
  "wow-mpq",
+ "wow-wdt",
 ]
 
 [[package]]

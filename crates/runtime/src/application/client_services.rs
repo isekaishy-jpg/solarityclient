@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use tokio::runtime::{Builder, Runtime};
 
-use solarity_asset::{ArchiveCatalog, AssetStore};
+use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, MapCatalog};
 use solarity_cpu::CpuExecutor;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
@@ -24,6 +24,7 @@ use crate::application::login_coordinator::{
 };
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::realm_directory::RuntimeRealmMetadata;
+use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::world_coordinator::{
     RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
 };
@@ -41,6 +42,7 @@ pub(crate) struct ClientServices {
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
     gameplay: RuntimeGameplayCoordinator,
+    terrain: RuntimeTerrainCoordinator,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -65,6 +67,7 @@ impl ClientServices {
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
+        let maps = MapCatalog::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -97,7 +100,8 @@ impl ClientServices {
         let mut renderer = unsafe {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
-        let glue = GlueManager::start(assets, platform.logical_extent(), false)?;
+        let assets = AssetStoreHandle::new(assets);
+        let glue = GlueManager::start_shared(assets.clone(), platform.logical_extent(), false)?;
         glue.set_realm_directory(realm_metadata.empty_directory());
         let login_ui = LoginUiFrame::prepare(&mut renderer, &glue)?;
         login_ui.present(&mut renderer)?;
@@ -126,6 +130,7 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
+                terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -195,6 +200,7 @@ impl ClientServices {
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
+                    self.terrain.disconnect();
                     self.realm_directory_published = false;
                     self.world_session_published = false;
                     self.pending_realm_id = None;
@@ -362,6 +368,7 @@ impl ClientServices {
             Err(error) => self.publish_world_failure(error),
         }
         self.gameplay.service()?;
+        self.terrain.synchronize(self.gameplay.world())?;
         Ok(())
     }
 
@@ -408,6 +415,7 @@ impl ClientServices {
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
+        self.terrain.disconnect();
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {

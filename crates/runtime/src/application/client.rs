@@ -13,6 +13,7 @@ use crate::application::client_services::ClientServices;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::run::{self, ApplicationRunReport};
+use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformError, PlatformEvent};
@@ -35,6 +36,9 @@ pub enum ApplicationError {
     /// Active-world packet I/O, decoding, or ECS projection failed.
     #[error(transparent)]
     Gameplay(#[from] RuntimeGameplayError),
+    /// Active-map or player-tile terrain residency failed.
+    #[error(transparent)]
+    Terrain(#[from] RuntimeTerrainError),
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),

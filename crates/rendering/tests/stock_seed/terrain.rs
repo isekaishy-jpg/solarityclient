@@ -2,10 +2,11 @@
 
 use std::error::Error;
 
+use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
-use solarity_rendering::TerrainChunkMeshPlan;
+use solarity_rendering::{TerrainChunkMeshPlan, WorldCamera, WorldFrustum, WorldScreenWindow};
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
 use wow_wdt::chunks::MwmoChunk;
@@ -65,6 +66,22 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     );
     assert_eq!(mesh.index_bytes().len(), 768 * size_of::<u16>());
     assert_eq!(mesh.bounds(), [[-33.333_332, -33.333_332, 0.0], [0.0; 3]]);
+    let visible = WorldCamera::stock(
+        Vec3::new(10.0, -16.0, 2.0),
+        Vec3::new(9.0, -16.0, 2.0),
+        Vec3::Z,
+        100.0,
+    )
+    .frame(1.0)?;
+    assert!(mesh.is_visible(WorldFrustum::new(visible, WorldScreenWindow::FULL)?)?);
+    let hidden = WorldCamera::stock(
+        Vec3::new(10.0, -16.0, 2.0),
+        Vec3::new(11.0, -16.0, 2.0),
+        Vec3::Z,
+        100.0,
+    )
+    .frame(1.0)?;
+    assert!(!mesh.is_visible(WorldFrustum::new(hidden, WorldScreenWindow::FULL)?)?);
     Ok(())
 }
 

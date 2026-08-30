@@ -1,8 +1,11 @@
 //! Upload-ready high-detail terrain mesh preparation for one MCNK.
 
+use glam::Vec3;
 use solarity_asset::{
     DecodedTerrainTile, TerrainChunk, TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex,
 };
+
+use crate::{WorldCameraError, WorldFrustum};
 
 const TERRAIN_SQUARES_PER_CHUNK: usize = 8;
 const TERRAIN_UNITS_PER_CHUNK: f32 = 33.333_332;
@@ -168,6 +171,24 @@ impl TerrainChunkMeshPlan {
             bytes.extend_from_slice(&index.to_le_bytes());
         }
         bytes
+    }
+
+    /// Tests this chunk's world AABB against an explicit camera frustum.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldCameraError::NonFiniteBounds`] when decoded geometry
+    /// contains non-finite coordinates.
+    pub fn is_visible(&self, frustum: WorldFrustum) -> Result<bool, WorldCameraError> {
+        let [minimum, maximum] = self.bounds.map(Vec3::from_array);
+        let center = (minimum + maximum) * 0.5;
+        let half = (maximum - minimum) * 0.5;
+        frustum.intersects_box(
+            center,
+            Vec3::new(half.x, 0.0, 0.0),
+            Vec3::new(0.0, half.y, 0.0),
+            Vec3::new(0.0, 0.0, half.z),
+        )
     }
 }
 

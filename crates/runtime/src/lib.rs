@@ -21,8 +21,8 @@ pub use application::{
     ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
     RuntimeCharacterSelection, RuntimeGameplayCoordinator, RuntimeGameplayError,
     RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState,
-    RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError, RuntimeWorldPoll,
-    RuntimeWorldState, StartupReport,
+    RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainPoll, RuntimeWorldCoordinator,
+    RuntimeWorldEntry, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,
