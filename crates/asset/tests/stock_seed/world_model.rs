@@ -120,6 +120,49 @@ fn world_model_cache_shares_and_collects_generations() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// WotLK's 30-byte MLIQ header and overloaded vertex records remain exact.
+#[test]
+fn world_model_decodes_group_liquid_grid() -> Result<(), Box<dyn Error>> {
+    let mut root_wmo = root_fixture(1);
+    set_u16(&mut root_wmo, 80, 0x0c);
+    let liquid = liquid_fixture();
+    let group_wmo = group_fixture_with_liquid(0x08, 2, Some(&liquid));
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Wmo\\Fixture.wmo",
+            bytes: &root_wmo,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Wmo\\Fixture_000.wmo",
+            bytes: &group_wmo,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Fixture.wmo")?)?;
+    let group = &model.groups()[0];
+    let liquid = group.liquid().ok_or("fixture MLIQ was omitted")?;
+
+    assert_eq!(liquid.vertex_width(), 2);
+    assert_eq!(liquid.vertex_height(), 2);
+    assert_eq!(liquid.tile_width(), 1);
+    assert_eq!(liquid.tile_height(), 1);
+    assert_eq!(liquid.corner(), [10.0, 20.0, 30.0]);
+    assert_eq!(liquid.material_id(), 0);
+    assert_eq!(liquid.tiles(), &[0x41]);
+    assert_eq!(liquid.vertices().len(), 4);
+    assert_eq!(liquid.vertices()[0].flow_one(), 1);
+    assert_eq!(liquid.vertices()[0].flow_two(), 2);
+    assert_eq!(liquid.vertices()[0].flow_one_percent(), 3);
+    assert_eq!(liquid.vertices()[0].texture_s(), 0x0201);
+    assert_eq!(liquid.vertices()[0].texture_t(), 0x0403);
+    assert_eq!(liquid.vertices()[0].height(), 5.0);
+    assert_eq!(group.resolve_liquid_type(model.flags(), Some(0x41)), 14);
+    Ok(())
+}
+
 /// Post-build chunks fail before the dependency can silently skip them.
 #[test]
 fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {
@@ -165,6 +208,14 @@ fn root_fixture(group_count: u32) -> Vec<u8> {
 }
 
 fn group_fixture(polygon_flags: u8) -> Vec<u8> {
+    group_fixture_with_liquid(polygon_flags, 0, None)
+}
+
+fn group_fixture_with_liquid(
+    polygon_flags: u8,
+    liquid_type: u32,
+    liquid: Option<&[u8]>,
+) -> Vec<u8> {
     let mut nested = Vec::new();
     push_chunk(&mut nested, *b"YPOM", &[polygon_flags, 0xff]);
     let mut indices = Vec::new();
@@ -195,14 +246,35 @@ fn group_fixture(polygon_flags: u8) -> Vec<u8> {
     node.extend_from_slice(&0.0_f32.to_le_bytes());
     push_chunk(&mut nested, *b"NBOM", &node);
     push_chunk(&mut nested, *b"RBOM", &0_u16.to_le_bytes());
+    if let Some(liquid) = liquid {
+        push_chunk(&mut nested, *b"QILM", liquid);
+    }
 
     let mut group = vec![0_u8; 68];
     set_vec3(&mut group, 12, [-1.0, -1.0, -1.0]);
     set_vec3(&mut group, 24, [1.0, 1.0, 1.0]);
+    set_u32(&mut group, 52, liquid_type);
     group.extend_from_slice(&nested);
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     push_chunk(&mut bytes, *b"PGOM", &group);
+    bytes
+}
+
+fn liquid_fixture() -> Vec<u8> {
+    let mut bytes = vec![0_u8; 30];
+    set_u32(&mut bytes, 0, 2);
+    set_u32(&mut bytes, 4, 2);
+    set_u32(&mut bytes, 8, 1);
+    set_u32(&mut bytes, 12, 1);
+    set_vec3(&mut bytes, 16, [10.0, 20.0, 30.0]);
+    set_u16(&mut bytes, 28, 0);
+    for (index, height) in [5.0_f32, 6.0, 7.0, 8.0].into_iter().enumerate() {
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+        bytes.extend_from_slice(&height.to_le_bytes());
+        assert_eq!(bytes.len(), 30 + (index + 1) * 8);
+    }
+    bytes.push(0x41);
     bytes
 }
 

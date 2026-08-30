@@ -7,7 +7,10 @@ use wow_wmo::{ParsedWmo, parse_wmo};
 use crate::{AssetError, AssetPath, AssetStore};
 
 use super::map_obj::DecodedWorldModel;
-use super::map_obj_group::{DecodedWorldModelGroup, WorldModelBspNode, WorldModelPolygon};
+use super::map_obj_group::{
+    DecodedWorldModelGroup, WorldModelBspNode, WorldModelLiquid, WorldModelLiquidVertex,
+    WorldModelPolygon,
+};
 
 const BUILD_12340_WMO_VERSION: u32 = 17;
 
@@ -58,6 +61,7 @@ fn load_group(
     let group_path = group_path(root_path, index)?;
     let read = store.read(&group_path)?;
     validate_group_chunk_layout(&group_path, read.bytes())?;
+    let liquid = decode_group_liquid(&group_path, read.bytes())?;
     let parsed = parse_wmo(&mut Cursor::new(read.bytes()))
         .map_err(|error| world_model_error(&group_path, error))?;
     let ParsedWmo::Group(group) = parsed else {
@@ -112,12 +116,150 @@ fn load_group(
         group.flags,
         bounds,
         group.group_liquid,
+        liquid,
         vertices,
         group.vertex_indices,
         polygons,
         bsp_nodes,
         group.bsp_face_indices,
     ))
+}
+
+fn decode_group_liquid(
+    path: &AssetPath,
+    bytes: &[u8],
+) -> Result<Option<WorldModelLiquid>, AssetError> {
+    let outer = scan_chunks(path, bytes, "WMO group")?;
+    let container = require_chunk(path, &outer, *b"PGOM", "MOGP")?;
+    let payload = bytes
+        .get(container.payload_start..container.payload_end)
+        .ok_or_else(|| world_model_message(path, "MOGP payload exceeds its group file"))?;
+    let nested_bytes = payload
+        .get(68..)
+        .ok_or_else(|| world_model_message(path, "MOGP is smaller than its 68-byte header"))?;
+    let nested = scan_chunks(path, nested_bytes, "MOGP")?;
+    let Some(chunk) = nested.iter().find(|chunk| chunk.magic == *b"QILM") else {
+        return Ok(None);
+    };
+    let liquid = nested_bytes
+        .get(chunk.payload_start..chunk.payload_end)
+        .ok_or_else(|| world_model_message(path, "MLIQ payload exceeds MOGP"))?;
+    if liquid.len() < 30 {
+        return Err(world_model_message(path, "MLIQ is smaller than 30 bytes"));
+    }
+
+    let vertex_width = read_u32(path, liquid, 0, "MLIQ vertex width")?;
+    let vertex_height = read_u32(path, liquid, 4, "MLIQ vertex height")?;
+    let tile_width = read_u32(path, liquid, 8, "MLIQ tile width")?;
+    let tile_height = read_u32(path, liquid, 12, "MLIQ tile height")?;
+    let expected_vertex_width = tile_width
+        .checked_add(1)
+        .ok_or_else(|| world_model_message(path, "MLIQ tile width overflows"))?;
+    let expected_vertex_height = tile_height
+        .checked_add(1)
+        .ok_or_else(|| world_model_message(path, "MLIQ tile height overflows"))?;
+    if vertex_width != expected_vertex_width || vertex_height != expected_vertex_height {
+        return Err(world_model_message(
+            path,
+            "MLIQ vertex dimensions must be one larger than tile dimensions",
+        ));
+    }
+    let corner = [
+        read_f32(path, liquid, 16, "MLIQ corner X")?,
+        read_f32(path, liquid, 20, "MLIQ corner Y")?,
+        read_f32(path, liquid, 24, "MLIQ corner Z")?,
+    ];
+    if corner.into_iter().any(|value| !value.is_finite()) {
+        return Err(world_model_message(path, "MLIQ corner is not finite"));
+    }
+    let material_id = read_u16(path, liquid, 28, "MLIQ material")?;
+    let vertex_count = usize::try_from(vertex_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(vertex_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| world_model_message(path, "MLIQ vertex count overflows"))?;
+    let tile_count = usize::try_from(tile_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(tile_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| world_model_message(path, "MLIQ tile count overflows"))?;
+    let vertex_bytes = vertex_count
+        .checked_mul(8)
+        .ok_or_else(|| world_model_message(path, "MLIQ vertex extent overflows"))?;
+    let tile_start = 30_usize
+        .checked_add(vertex_bytes)
+        .ok_or_else(|| world_model_message(path, "MLIQ vertex extent overflows"))?;
+    let expected = tile_start
+        .checked_add(tile_count)
+        .ok_or_else(|| world_model_message(path, "MLIQ tile extent overflows"))?;
+    if liquid.len() != expected {
+        return Err(world_model_message(
+            path,
+            format!(
+                "MLIQ dimensions require {expected} bytes; found {}",
+                liquid.len()
+            ),
+        ));
+    }
+
+    let mut vertices = Vec::with_capacity(vertex_count);
+    for index in 0..vertex_count {
+        let offset = 30 + index * 8;
+        let overloaded: [u8; 4] = liquid[offset..offset + 4]
+            .try_into()
+            .map_err(|error| world_model_error(path, error))?;
+        let height = read_f32(path, liquid, offset + 4, "MLIQ vertex height")?;
+        if !height.is_finite() {
+            return Err(world_model_message(
+                path,
+                format!("MLIQ vertex {index} height is not finite"),
+            ));
+        }
+        vertices.push(WorldModelLiquidVertex::new(overloaded, height));
+    }
+    let tiles = liquid[tile_start..].to_vec();
+    Ok(Some(WorldModelLiquid::new(
+        vertex_width,
+        vertex_height,
+        tile_width,
+        tile_height,
+        corner,
+        material_id,
+        vertices,
+        tiles,
+    )))
+}
+
+fn read_u16(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<u16, AssetError> {
+    let value = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| world_model_message(path, format!("{field} is truncated")))?;
+    Ok(u16::from_le_bytes(
+        value
+            .try_into()
+            .map_err(|error| world_model_error(path, error))?,
+    ))
+}
+
+fn read_u32(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<u32, AssetError> {
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| world_model_message(path, format!("{field} is truncated")))?;
+    Ok(u32::from_le_bytes(
+        value
+            .try_into()
+            .map_err(|error| world_model_error(path, error))?,
+    ))
+}
+
+fn read_f32(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<f32, AssetError> {
+    Ok(f32::from_bits(read_u32(path, bytes, offset, field)?))
 }
 
 fn validate_root(path: &AssetPath, root: &wow_wmo::root_parser::WmoRoot) -> Result<(), AssetError> {
