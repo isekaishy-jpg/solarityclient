@@ -51,3 +51,9 @@ pub use equipment::{
     resolve_player_equipment,
 };
 pub use object::{ObjectProjectionError, project_object_fields};
+pub use world::{
+    DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
+    LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, WORLD_VIEW_DISTANCE_MINIMUM, WorldViewDistance,
+    WorldViewDistanceError, WorldViewDistanceLimit, WorldViewDistanceRequest,
+    resolve_world_view_distance,
+};
