@@ -43,4 +43,12 @@ pub enum UiLoadError {
         /// Compiler context.
         message: String,
     },
+    /// An XML include or external-script directive was invalid.
+    #[error("invalid UI load directive in {path}: {message}")]
+    Directive {
+        /// The XML source containing the directive.
+        path: AssetPath,
+        /// Path, extension, or include-cycle context.
+        message: String,
+    },
 }

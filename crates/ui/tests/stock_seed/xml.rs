@@ -3,7 +3,9 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{UiBundle, UiLoadError, UiManifestEntryKind, UiManifestKind, UiResourceContent};
+use solarity_ui::{
+    UiBundle, UiLoadAction, UiLoadError, UiManifestEntryKind, UiManifestKind, UiResourceContent,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -115,6 +117,98 @@ fn malformed_lua_fails_during_bundle_load() -> Result<(), Box<dyn Error>> {
 
     assert!(matches!(result, Err(UiLoadError::Lua { .. })));
     Ok(())
+}
+
+/// Includes and external scripts expand at their exact position in the XML root.
+#[test]
+fn xml_directives_expand_into_stock_load_order() -> Result<(), Box<dyn Error>> {
+    let fixture = ui_fixture(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Root.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Root.xml",
+            bytes: br#"<Ui>
+  <Frame name="Before"><Scripts><OnLoad>local loaded = true</OnLoad></Scripts></Frame>
+  <Include file="Nested.xml"/>
+  <Frame name="After"/>
+  <Script file="..\SharedXML\External.lua"/>
+  <Script>local inline = true</Script>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Nested.xml",
+            bytes: br#"<Ui><Button name="Nested"/></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\SharedXML\\External.lua",
+            bytes: b"local external = true",
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+
+    assert_eq!(bundle.resources().len(), 3);
+    assert_eq!(bundle.actions().len(), 5);
+    assert_eq!(action_element_name(&bundle, 0), Some("Frame"));
+    assert_eq!(action_element_name(&bundle, 1), Some("Button"));
+    assert_eq!(action_element_name(&bundle, 2), Some("Frame"));
+    assert!(matches!(
+        bundle.actions()[3],
+        UiLoadAction::LuaResource { resource_index: 2 }
+    ));
+    assert_eq!(
+        bundle.resources()[2].path().as_str(),
+        "INTERFACE\\SHAREDXML\\EXTERNAL.LUA"
+    );
+    assert!(matches!(
+        &bundle.actions()[4],
+        UiLoadAction::InlineLua { source, .. } if source.contains("local inline = true")
+    ));
+    Ok(())
+}
+
+/// Recursive includes fail explicitly instead of being silently skipped.
+#[test]
+fn recursive_xml_include_is_rejected() -> Result<(), Box<dyn Error>> {
+    let fixture = ui_fixture(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Root.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Root.xml",
+            bytes: br#"<Ui><Include file="Nested.xml"/></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Nested.xml",
+            bytes: br#"<Ui><Include file="Root.xml"/></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+
+    let result = UiBundle::load(&mut store, UiManifestKind::Glue);
+
+    assert!(matches!(result, Err(UiLoadError::Directive { .. })));
+    Ok(())
+}
+
+fn action_element_name(bundle: &UiBundle, action_index: usize) -> Option<&str> {
+    let UiLoadAction::XmlElement {
+        resource_index,
+        element_index,
+    } = bundle.actions().get(action_index)?
+    else {
+        return None;
+    };
+    let UiResourceContent::Xml(document) = bundle.resource(*resource_index)?.content() else {
+        return None;
+    };
+    document
+        .element(*element_index)
+        .map(|element| element.name())
 }
 
 fn ui_fixture(files: &[FixtureFile<'_>]) -> Result<Fixture, Box<dyn Error>> {

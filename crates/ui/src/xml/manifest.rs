@@ -3,7 +3,7 @@
 use mlua::Lua;
 use solarity_asset::{AssetPath, AssetStore};
 
-use crate::xml::{UiLoadError, XmlDocument};
+use crate::xml::{UiLoadError, XmlContent, XmlDocument, XmlElement};
 
 /// The built-in UI manifest selected for a client state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -177,10 +177,35 @@ impl UiResource {
     }
 }
 
+/// One operation in the fully expanded stock UI load order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UiLoadAction {
+    /// Construct or register one root XML object.
+    XmlElement {
+        /// Index into [`UiBundle::resources`].
+        resource_index: usize,
+        /// Index into the resource's [`XmlDocument`] arena.
+        element_index: usize,
+    },
+    /// Execute one manifest- or XML-referenced Lua file after API registration.
+    LuaResource {
+        /// Index into [`UiBundle::resources`].
+        resource_index: usize,
+    },
+    /// Execute a root-level inline `<Script>` after API registration.
+    InlineLua {
+        /// XML source owning the script.
+        path: AssetPath,
+        /// Lua 5.1 source text.
+        source: String,
+    },
+}
+
 /// A completely resolved built-in UI manifest and its ordered resources.
 pub struct UiBundle {
     manifest: UiManifest,
     resources: Vec<UiResource>,
+    actions: Vec<UiLoadAction>,
     lua: Lua,
 }
 
@@ -197,36 +222,15 @@ impl UiBundle {
     /// stock load order.
     pub fn load(store: &mut AssetStore, kind: UiManifestKind) -> Result<Self, UiLoadError> {
         let manifest = UiManifest::load(store, kind)?;
-        let lua = Lua::new();
-        let mut resources = Vec::with_capacity(manifest.entries.len());
-
+        let mut loader = UiBundleLoader::new(store, manifest.entries.len());
         for entry in &manifest.entries {
-            let bytes = store.read(&entry.path)?.into_bytes();
-            let source = decode_text(&entry.path, bytes)?;
-            let content = match entry.kind {
-                UiManifestEntryKind::Xml => {
-                    UiResourceContent::Xml(XmlDocument::parse(&entry.path, &source)?)
-                }
-                UiManifestEntryKind::Lua => {
-                    lua.load(&source)
-                        .set_name(entry.path.as_str())
-                        .into_function()
-                        .map_err(|error| UiLoadError::Lua {
-                            path: entry.path.clone(),
-                            message: error.to_string(),
-                        })?;
-                    UiResourceContent::Lua(LuaSource { source })
-                }
-            };
-            resources.push(UiResource {
-                path: entry.path.clone(),
-                content,
-            });
+            loader.load_entry(&entry.path, entry.kind)?;
         }
-
+        let (resources, actions, lua) = loader.finish();
         Ok(Self {
             manifest,
             resources,
+            actions,
             lua,
         })
     }
@@ -243,10 +247,286 @@ impl UiBundle {
         &self.resources
     }
 
+    /// Returns the expanded XML and Lua operations in exact load order.
+    #[must_use]
+    pub fn actions(&self) -> &[UiLoadAction] {
+        &self.actions
+    }
+
+    /// Returns one loaded resource by action index.
+    #[must_use]
+    pub fn resource(&self, index: usize) -> Option<&UiResource> {
+        self.resources.get(index)
+    }
+
     /// Returns the owned Lua state reserved for stock API registration.
     #[must_use]
     pub const fn lua(&self) -> &Lua {
         &self.lua
+    }
+}
+
+struct UiBundleLoader<'a> {
+    store: &'a mut AssetStore,
+    resources: Vec<UiResource>,
+    actions: Vec<UiLoadAction>,
+    include_stack: Vec<AssetPath>,
+    lua: Lua,
+}
+
+impl<'a> UiBundleLoader<'a> {
+    fn new(store: &'a mut AssetStore, manifest_entries: usize) -> Self {
+        Self {
+            store,
+            resources: Vec::with_capacity(manifest_entries),
+            actions: Vec::with_capacity(manifest_entries),
+            include_stack: Vec::new(),
+            lua: Lua::new(),
+        }
+    }
+
+    fn load_entry(
+        &mut self,
+        path: &AssetPath,
+        kind: UiManifestEntryKind,
+    ) -> Result<(), UiLoadError> {
+        match kind {
+            UiManifestEntryKind::Xml => self.load_xml(path),
+            UiManifestEntryKind::Lua => self.load_lua(path),
+        }
+    }
+
+    fn load_lua(&mut self, path: &AssetPath) -> Result<(), UiLoadError> {
+        let bytes = self.store.read(path)?.into_bytes();
+        let source = decode_text(path, bytes)?;
+        compile_lua(&self.lua, path, path.as_str(), &source)?;
+        let resource_index = self.resources.len();
+        self.resources.push(UiResource {
+            path: path.clone(),
+            content: UiResourceContent::Lua(LuaSource { source }),
+        });
+        self.actions
+            .push(UiLoadAction::LuaResource { resource_index });
+        Ok(())
+    }
+
+    fn load_xml(&mut self, path: &AssetPath) -> Result<(), UiLoadError> {
+        if self.include_stack.contains(path) {
+            return Err(UiLoadError::Directive {
+                path: path.clone(),
+                message: "recursive XML include".to_owned(),
+            });
+        }
+
+        let bytes = self.store.read(path)?.into_bytes();
+        let source = decode_text(path, bytes)?;
+        let document = XmlDocument::parse(path, &source)?;
+        let directives = analyze_root(path, &document)?;
+        let resource_index = self.resources.len();
+        self.resources.push(UiResource {
+            path: path.clone(),
+            content: UiResourceContent::Xml(document),
+        });
+
+        self.include_stack.push(path.clone());
+        let result = self.apply_directives(path, resource_index, directives);
+        let removed = self.include_stack.pop();
+        debug_assert_eq!(removed.as_ref(), Some(path));
+        result
+    }
+
+    fn apply_directives(
+        &mut self,
+        owner: &AssetPath,
+        resource_index: usize,
+        directives: Vec<RootDirective>,
+    ) -> Result<(), UiLoadError> {
+        for directive in directives {
+            match directive {
+                RootDirective::Element {
+                    element_index,
+                    handlers,
+                } => {
+                    for (label, source) in handlers {
+                        compile_lua(&self.lua, owner, &label, &source)?;
+                    }
+                    self.actions.push(UiLoadAction::XmlElement {
+                        resource_index,
+                        element_index,
+                    });
+                }
+                RootDirective::Include(file) => {
+                    let path = resolve_directive_path(owner, &file, ".xml")?;
+                    self.load_xml(&path)?;
+                }
+                RootDirective::Script { file, source } => {
+                    if let Some(file) = file {
+                        let path = resolve_directive_path(owner, &file, ".lua")?;
+                        self.load_lua(&path)?;
+                    }
+                    if let Some(source) = source {
+                        compile_lua(&self.lua, owner, owner.as_str(), &source)?;
+                        self.actions.push(UiLoadAction::InlineLua {
+                            path: owner.clone(),
+                            source,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> (Vec<UiResource>, Vec<UiLoadAction>, Lua) {
+        (self.resources, self.actions, self.lua)
+    }
+}
+
+enum RootDirective {
+    Element {
+        element_index: usize,
+        handlers: Vec<(String, String)>,
+    },
+    Include(String),
+    Script {
+        file: Option<String>,
+        source: Option<String>,
+    },
+}
+
+fn analyze_root(
+    path: &AssetPath,
+    document: &XmlDocument,
+) -> Result<Vec<RootDirective>, UiLoadError> {
+    let mut directives = Vec::new();
+    for content in document.root().content() {
+        let XmlContent::Element(element_index) = content else {
+            continue;
+        };
+        let element = document
+            .element(*element_index)
+            .ok_or_else(|| directive_error(path, "XML root child index is outside the arena"))?;
+        match element.name() {
+            "Include" => {
+                let file = attribute(element, "file")
+                    .ok_or_else(|| directive_error(path, "Include has no file attribute"))?;
+                directives.push(RootDirective::Include(file.to_owned()));
+            }
+            "Script" => {
+                let file = attribute(element, "file").map(str::to_owned);
+                let source = direct_text(element).filter(|source| !source.trim().is_empty());
+                if file.is_none() && source.is_none() {
+                    return Err(directive_error(path, "Script has neither file nor source"));
+                }
+                directives.push(RootDirective::Script { file, source });
+            }
+            _ => {
+                let mut handlers = Vec::new();
+                collect_handlers(path, document, *element_index, &mut handlers)?;
+                directives.push(RootDirective::Element {
+                    element_index: *element_index,
+                    handlers,
+                });
+            }
+        }
+    }
+    Ok(directives)
+}
+
+fn collect_handlers(
+    path: &AssetPath,
+    document: &XmlDocument,
+    element_index: usize,
+    handlers: &mut Vec<(String, String)>,
+) -> Result<(), UiLoadError> {
+    let element = document
+        .element(element_index)
+        .ok_or_else(|| directive_error(path, "XML child index is outside the arena"))?;
+    if element.name().starts_with("On") {
+        let source = direct_text(element).unwrap_or_default();
+        if !source.trim().is_empty() {
+            handlers.push((format!("{}:<{}>", path.as_str(), element.name()), source));
+        }
+    }
+    for content in element.content() {
+        if let XmlContent::Element(child) = content {
+            collect_handlers(path, document, *child, handlers)?;
+        }
+    }
+    Ok(())
+}
+
+fn direct_text(element: &XmlElement) -> Option<String> {
+    let mut source = String::new();
+    for content in element.content() {
+        if let XmlContent::Text(text) = content {
+            source.push_str(text);
+        }
+    }
+    (!source.is_empty()).then_some(source)
+}
+
+fn attribute<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes()
+        .iter()
+        .find(|attribute| attribute.name() == name)
+        .map(|attribute| attribute.value())
+}
+
+fn resolve_directive_path(
+    owner: &AssetPath,
+    file: &str,
+    extension: &str,
+) -> Result<AssetPath, UiLoadError> {
+    if !file.ends_with_ignore_ascii_case(extension) {
+        return Err(directive_error(
+            owner,
+            format!("directive path {file} must end in {extension}"),
+        ));
+    }
+    let directory = owner
+        .as_str()
+        .rsplit_once('\\')
+        .map_or("", |(directory, _)| directory);
+    let mut components = directory.split('\\').collect::<Vec<_>>();
+    for component in file.split(['\\', '/']) {
+        match component {
+            "" | "." => {
+                return Err(directive_error(
+                    owner,
+                    format!("directive path {file} contains an empty or current component"),
+                ));
+            }
+            ".." => {
+                if components.pop().is_none() {
+                    return Err(directive_error(
+                        owner,
+                        format!("directive path {file} escapes the archive root"),
+                    ));
+                }
+            }
+            value => components.push(value),
+        }
+    }
+    AssetPath::new(components.join("\\")).map_err(|error| directive_error(owner, error.to_string()))
+}
+
+fn compile_lua(lua: &Lua, path: &AssetPath, label: &str, source: &str) -> Result<(), UiLoadError> {
+    lua.load(source)
+        .set_name(label)
+        .into_function()
+        .map_err(|error| UiLoadError::Lua {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+    Ok(())
+}
+
+fn directive_error(path: &AssetPath, message: impl Into<String>) -> UiLoadError {
+    UiLoadError::Directive {
+        path: path.clone(),
+        message: message.into(),
     }
 }
 

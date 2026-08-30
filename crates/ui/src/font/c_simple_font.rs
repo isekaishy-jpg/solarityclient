@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use solarity_asset::AssetPath;
 
 use crate::font::FontError;
-use crate::{UiBundle, UiResourceContent, XmlContent, XmlDocument, XmlElement};
+use crate::{UiBundle, UiLoadAction, UiResourceContent, XmlContent, XmlDocument, XmlElement};
 
 /// Stock outline strength named by a font object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -234,11 +234,33 @@ impl FontCatalog {
             definitions: Vec::new(),
             by_name: HashMap::new(),
         };
-        for resource in bundle.resources() {
-            let UiResourceContent::Xml(document) = resource.content() else {
+        for action in bundle.actions() {
+            let UiLoadAction::XmlElement {
+                resource_index,
+                element_index,
+            } = action
+            else {
                 continue;
             };
-            catalog.read_document(resource.path(), document)?;
+            let Some(resource) = bundle.resource(*resource_index) else {
+                return Err(definition_error(
+                    bundle.manifest().path(),
+                    "UI action resource index is outside the bundle",
+                ));
+            };
+            let UiResourceContent::Xml(document) = resource.content() else {
+                return Err(definition_error(
+                    resource.path(),
+                    "XML action refers to a non-XML resource",
+                ));
+            };
+            let Some(element) = document.element(*element_index) else {
+                return Err(definition_error(
+                    resource.path(),
+                    "XML action element index is outside the arena",
+                ));
+            };
+            catalog.read_element(resource.path(), document, element)?;
         }
         Ok(catalog)
     }
@@ -257,31 +279,25 @@ impl FontCatalog {
             .and_then(|index| self.definitions.get(*index))
     }
 
-    fn read_document(&mut self, path: &AssetPath, document: &XmlDocument) -> Result<(), FontError> {
-        for content in document.root().content() {
-            let XmlContent::Element(index) = content else {
-                continue;
-            };
-            let Some(element) = document.element(*index) else {
-                return Err(definition_error(
-                    path,
-                    "XML child index is outside the arena",
-                ));
-            };
-            if element.name() != "Font" {
-                continue;
-            }
-            let definition = self.parse_definition(path, document, element)?;
-            if self.by_name.contains_key(definition.name()) {
-                return Err(definition_error(
-                    path,
-                    format!("duplicate font name {}", definition.name()),
-                ));
-            }
-            let index = self.definitions.len();
-            self.by_name.insert(definition.name.clone(), index);
-            self.definitions.push(definition);
+    fn read_element(
+        &mut self,
+        path: &AssetPath,
+        document: &XmlDocument,
+        element: &XmlElement,
+    ) -> Result<(), FontError> {
+        if element.name() != "Font" {
+            return Ok(());
         }
+        let definition = self.parse_definition(path, document, element)?;
+        if self.by_name.contains_key(definition.name()) {
+            return Err(definition_error(
+                path,
+                format!("duplicate font name {}", definition.name()),
+            ));
+        }
+        let index = self.definitions.len();
+        self.by_name.insert(definition.name.clone(), index);
+        self.definitions.push(definition);
         Ok(())
     }
 

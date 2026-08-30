@@ -17,6 +17,16 @@ Both inspected manifests use the same small grammar. Blank lines and lines
 beginning with `#` are metadata or comments. Every other line names an XML or
 Lua source relative to the manifest directory. Entry order is load order.
 
+The TOC is only the first level of that order. While visiting each XML root,
+the loader expands `<Include file="...">`, external `<Script file="...">`, and
+inline `<Script>` at the exact point encountered. Relative directives may
+lexically traverse to a sibling stock interface directory, as
+`VideoOptionsPanels.xml` does for `..\FrameXML\GraphicsQualityLevels.lua`, but
+the normalized result cannot escape the archive root. Recursive includes,
+invalid extensions, and missing files are explicit errors. Nested `On*` event
+handlers are compiled for Lua 5.1 syntax and retained in their XML object; they
+are not mistaken for global scripts.
+
 The loader therefore rejects unsupported extensions, absolute paths, and path
 traversal. It does not search loose directories or try a second base path when
 an entry is missing. All files pass through `AssetStore`, so ordinary patch and
@@ -89,7 +99,9 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
     frame
 ```
 
-Against the current local client, the complete 16-archive stack resolves and
-validates 31 Glue sources (30 XML and 1 Lua) containing 76 global fonts, and 139
-Frame sources (126 XML and 13 Lua) containing 149 global fonts. The same command
-opens the archive-backed `FRIZQT__.TTF` face and rasterizes a validation glyph.
+Against the current local client, the complete 16-archive stack expands and
+validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
+fonts, and 265 Frame resources (133 XML and 132 external Lua) containing 149
+global fonts. Inline scripts remain ordered actions rather than synthetic files.
+The same command opens the archive-backed `FRIZQT__.TTF` face and rasterizes a
+validation glyph.
