@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::{UiLayoutError, UiScriptError};
+use crate::{UiLayoutError, UiRenderError, UiScriptError};
 
 /// Result of delivering one canonical UI event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,4 +45,7 @@ pub enum UiEventError {
     /// A handler left live anchors in an invalid geometry state.
     #[error(transparent)]
     Layout(#[from] UiLayoutError),
+    /// A handler left live presentation state outside the renderer mesh ABI.
+    #[error(transparent)]
+    Render(#[from] UiRenderError),
 }

@@ -30,6 +30,8 @@ mod support;
 mod terrain;
 #[path = "stock_seed/texture.rs"]
 mod texture;
+#[path = "stock_seed/ui.rs"]
+mod ui;
 #[path = "stock_seed/weather.rs"]
 mod weather;
 #[path = "stock_seed/world_text.rs"]

@@ -256,6 +256,12 @@ impl UiPresentationPlan {
     pub fn member_count(&self) -> usize {
         self.members.len()
     }
+
+    /// Returns all packet members in their final contiguous draw order.
+    #[must_use]
+    pub fn members_in_draw_order(&self) -> &[UiTexturePresentation] {
+        &self.members
+    }
 }
 
 fn nearest_owning_frame(live: &UiRuntimeObjectPlan, object: &UiRuntimeObject) -> Option<usize> {

@@ -3,8 +3,8 @@
 use thiserror::Error;
 
 use crate::{
-    FontError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError, UiScriptError,
-    UiTextureError,
+    FontError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError, UiRenderError,
+    UiScriptError, UiTextureError,
 };
 
 /// A stock built-in login UI could not be constructed or executed.
@@ -28,6 +28,9 @@ pub enum GlueError {
     /// Texture declaration decoding failed.
     #[error(transparent)]
     Texture(#[from] UiTextureError),
+    /// Live presentation state cannot enter the renderer mesh ABI.
+    #[error(transparent)]
+    Render(#[from] UiRenderError),
     /// Lua plan creation or ordered execution failed.
     #[error(transparent)]
     Script(#[from] UiScriptError),

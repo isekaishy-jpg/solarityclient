@@ -122,9 +122,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         let manager = GlueManager::start(AssetStore::mount(catalog)?, extent, false)?;
         println!(
-            "activated stock login lifecycle with {} presentation packets and {} texture members",
+            "activated stock login lifecycle with {} presentation packets, {} texture members, and {} renderer batches",
             manager.presentation().packets().len(),
-            manager.presentation().member_count()
+            manager.presentation().member_count(),
+            manager.render_plan().mesh().batches().len()
         );
     }
     let texture_paths = object_tree

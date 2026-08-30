@@ -34,8 +34,8 @@ pub use region::{
     UiRegionStatePlan, UiScreenRect,
 };
 pub use render::{
-    UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan, UiTexturePresentation,
-    UiTextureSource,
+    UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan, UiRenderError, UiRenderPlan,
+    UiTexturePresentation, UiTextureSource,
 };
 pub use script::{
     UiGlueMediaIntent, UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan,

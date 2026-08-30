@@ -11,8 +11,8 @@ use crate::{
     FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
     UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiLayoutPlan, UiManifestKind,
     UiObjectCatalog, UiObjectTree, UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTexturePlan, UiTextureStatePlan,
+    UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
+    UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -29,6 +29,7 @@ pub struct GlueManager {
     regions: UiRegionStatePlan,
     geometry: UiRegionGeometryPlan,
     presentation: UiPresentationPlan,
+    render_plan: UiRenderPlan,
     textures: UiTexturePlan,
     texture_states: UiTextureStatePlan,
     objects: Vec<GlueObject>,
@@ -92,6 +93,7 @@ impl GlueManager {
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
+        let render_plan = UiRenderPlan::prepare(&presentation, ui_extent)?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let report = GlueStartupReport::new(
             bundle.resources().len(),
@@ -116,6 +118,7 @@ impl GlueManager {
             regions,
             geometry,
             presentation,
+            render_plan,
             textures,
             texture_states,
             objects,
@@ -182,6 +185,12 @@ impl GlueManager {
         &self.presentation
     }
 
+    /// Returns the upload-ready mesh rebuilt after each delivered Glue event.
+    #[must_use]
+    pub const fn render_plan(&self) -> &UiRenderPlan {
+        &self.render_plan
+    }
+
     /// Returns the stock music and ambience requests retained for `media`.
     #[must_use]
     pub fn media_intent(&self) -> UiGlueMediaIntent {
@@ -238,9 +247,11 @@ impl GlueManager {
         let live = self.runtime.snapshot_objects(&self.bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
+        let render_plan = UiRenderPlan::prepare(&presentation, geometry.ui_extent())?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         self.geometry = geometry;
         self.presentation = presentation;
+        self.render_plan = render_plan;
         self.objects = objects;
         self.child_indices = child_indices;
         Ok(())

@@ -3,6 +3,7 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
+use solarity_rendering::{UiRenderBlend, UiRenderSource, UiTextureAddressMode, UiTextureResidency};
 use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiTextureSource};
 
 use crate::support::{Fixture, FixtureFile};
@@ -115,5 +116,31 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         UiFrameStrata::High
     );
     assert_eq!(presentation.packets()[3].key().draw_rank(), 40);
+
+    let mesh = manager.render_plan().mesh();
+    assert_eq!(mesh.logical_extent(), [1_365.333_4, 768.0]);
+    assert_eq!(mesh.vertices().len(), 20);
+    assert_eq!(mesh.indices().len(), 30);
+    assert_eq!(mesh.object_indices().len(), presentation.member_count());
+    let mutated_path = solarity_asset::AssetPath::new("Interface\\Glues\\After.blp")?;
+    let mutated_batch = mesh
+        .batches()
+        .iter()
+        .find(|batch| batch.source() == &UiRenderSource::Texture(mutated_path.clone()))
+        .ok_or("missing mutated texture render batch")?;
+    assert_eq!(mutated_batch.blend(), UiRenderBlend::Additive);
+    assert_eq!(
+        mutated_batch.horizontal_address(),
+        UiTextureAddressMode::Clamp
+    );
+    assert_eq!(
+        mutated_batch.vertical_address(),
+        UiTextureAddressMode::Clamp
+    );
+    assert_eq!(mutated_batch.residency(), UiTextureResidency::Blocking);
+    assert!(matches!(mutated_batch.source(), UiRenderSource::Texture(_)));
+    let solid_quad = mesh.object_indices().len() - 1;
+    let solid_vertex = mesh.vertices()[solid_quad * 4];
+    assert_eq!(solid_vertex.color(), [0.2, 0.4, 0.6, 0.8]);
     Ok(())
 }
