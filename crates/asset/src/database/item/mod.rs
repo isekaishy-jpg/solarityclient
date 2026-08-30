@@ -2,6 +2,8 @@
 
 mod definition;
 mod display;
+mod helmet_visibility;
 
 pub use definition::{InventoryType, ItemDefinition, ItemDefinitionCatalog};
 pub use display::{ItemDisplayCatalog, ItemDisplayInfo};
+pub use helmet_visibility::{HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog};

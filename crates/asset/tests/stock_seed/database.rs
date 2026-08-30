@@ -5,8 +5,8 @@ use std::path::Path;
 
 use solarity_asset::{
     AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, CreatureCatalog, InventoryType, ItemDefinitionCatalog,
-    ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
+    CharacterCustomization, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
+    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -692,6 +692,37 @@ fn item_definition_catalog_decodes_visible_item_lookup() -> Result<(), Box<dyn E
     assert_eq!(weapon.inventory_type(), InventoryType::TwoHandWeapon);
     assert_eq!(weapon.sheathe_type(), 1);
     assert_eq!(catalog.item(50_003), None);
+    Ok(())
+}
+
+/// Helmet visibility rows preserve all seven build-12340 mask words.
+#[test]
+fn helmet_visibility_catalog_decodes_exact_masks() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(
+        2,
+        8,
+        &[
+            101, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 102, 0x80, 0x100, 0x200, 0x400, 0x800,
+            0x1000, 0x2000,
+        ],
+        b"\0",
+    );
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\HelmetGeosetVisData.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let visibility = catalog.visibility(101).ok_or("helmet row is absent")?;
+
+    assert_eq!(visibility.hair_flags(), 0x01);
+    assert_eq!(visibility.facial_hair_flags(), [0x02, 0x04, 0x08]);
+    assert_eq!(visibility.ear_flags(), 0x10);
+    assert_eq!(visibility.additional_flags(), [0x20, 0x40]);
+    assert_eq!(catalog.visibility(103), None);
     Ok(())
 }
 

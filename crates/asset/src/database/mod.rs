@@ -26,6 +26,7 @@ pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData,
 };
 pub use item::{
-    InventoryType, ItemDefinition, ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
+    HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
 };
 pub use wow_client_db::{WdbcHeader, WdbcTable};
