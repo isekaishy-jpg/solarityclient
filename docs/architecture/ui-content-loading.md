@@ -142,3 +142,22 @@ named) and 22,015 Frame objects (15,769 globally named), with 12 and 66
 top-level owners respectively. These counts are emitted by the validator so
 future template or merge changes cannot hide an unexpected fan-out during
 local-client review.
+
+## Typed layout plan
+
+Region geometry is decoded after object construction into three flat arrays:
+one node range per object, a shared inheritance-layer arena, and a shared anchor
+arena. XML layers that contain no geometry consume no layout entry. This avoids
+allocating separate vectors for every one of the tens of thousands of object
+instances while retaining exact application order.
+
+The plan accepts both stock dimension spellings observed in the local client:
+`<Size><AbsDimension x="..." y="..."/></Size>` and direct
+`<Size x="..." y="..."/>`. Anchors retain their explicit point,
+`relativeTo`, `relativePoint`, and absolute offset. `$parent` references are
+expanded from the constructed ownership tree. Missing values remain absent;
+the parser does not manufacture size, anchor, alpha, scale, visibility, or
+`setAllPoints` defaults.
+
+Real-client validation retains 1,815 Glue layout layers with 1,441 anchors and
+18,168 Frame layout layers with 14,692 anchors.

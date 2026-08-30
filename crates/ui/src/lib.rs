@@ -24,6 +24,9 @@ pub use frame::{
     UiElementLayer, UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError,
     UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
 };
+pub use region::{
+    UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
+};
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,
     UiManifestEntryKind, UiManifestKind, UiResource, UiResourceContent, XmlAttribute, XmlContent,

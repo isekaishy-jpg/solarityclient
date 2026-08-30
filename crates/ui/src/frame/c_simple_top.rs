@@ -82,6 +82,12 @@ impl<'bundle> UiObjectNode<'bundle> {
         self.name.as_deref()
     }
 
+    /// Returns the nearest expanded name used for descendant `$parent` values.
+    #[must_use]
+    pub fn name_context(&self) -> Option<&str> {
+        self.name_context.as_deref()
+    }
+
     /// Returns the concrete stock object type.
     #[must_use]
     pub const fn kind(&self) -> UiObjectKind {
