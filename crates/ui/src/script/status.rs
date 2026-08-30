@@ -34,4 +34,12 @@ pub enum UiScriptError {
         /// Index or arena mismatch context.
         message: String,
     },
+    /// Ordered Lua execution failed at a named source or callback boundary.
+    #[error("failed to execute UI Lua action {label}: {message}")]
+    Execution {
+        /// Archive source, inline chunk, or object callback label.
+        label: String,
+        /// Lua runtime context.
+        message: String,
+    },
 }

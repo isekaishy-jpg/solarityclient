@@ -5,7 +5,7 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiBundle, UiManifestKind, UiObjectCatalog, UiObjectTree, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptTarget,
+    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptTarget,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -113,6 +113,130 @@ fn script_plan_rejects_varargs_in_non_vararg_handler() -> Result<(), Box<dyn Err
     let result = UiScriptPlan::from_tree(&tree, bundle.lua());
 
     assert!(matches!(result, Err(UiScriptError::Lua { .. })));
+    Ok(())
+}
+
+/// XML construction and Lua files share one manifest-ordered execution cursor.
+#[test]
+fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Objects.xml\nBetween.lua\nLater.xml\nAfter.lua\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Objects.xml",
+            bytes: br#"<Ui><Frame name="First"><Frames>
+  <Button name="$parentChild"><Scripts><OnLoad>
+    LOAD_ORDER = (LOAD_ORDER or "") .. self:GetName() .. ";"
+    assert(self:GetObjectType() == "Button")
+    assert(self:IsObjectType("Button"))
+    assert(self:IsObjectType("Frame"))
+    assert(self:GetParent() == First)
+    assert(Later == nil)
+  </OnLoad></Scripts></Button>
+</Frames><Scripts><OnLoad>
+  LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+</OnLoad></Scripts></Frame></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Between.lua",
+            bytes: br#"assert(First ~= nil)
+assert(FirstChild ~= nil)
+assert(Later == nil)
+BETWEEN = First:GetName()
+Later = "reserved"
+function NamedLoad(self)
+  LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+  assert(self:GetObjectType() == "CheckButton")
+  assert(self:IsObjectType("Button"))
+end"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Later.xml",
+            bytes: br#"<Ui><CheckButton name="Later"><Scripts>
+  <OnLoad function="NamedLoad"/>
+</Scripts></CheckButton></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\After.lua",
+            bytes: br#"assert(Later == "reserved")
+RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let mut runtime = UiScriptRuntime::new(bundle.lua())?;
+
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<Option<mlua::Table>>("First")?
+            .is_none()
+    );
+    assert!(runtime.execute_next(&bundle, &tree, &scripts)?);
+    assert_eq!(runtime.next_action(), 1);
+    assert_eq!(runtime.registered_object_count(), 2);
+    assert_eq!(runtime.executed_load_handler_count(), 2);
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<Option<mlua::Table>>("First")?
+            .is_some()
+    );
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<Option<mlua::Table>>("Later")?
+            .is_none()
+    );
+
+    runtime.execute_all(&bundle, &tree, &scripts)?;
+
+    assert_eq!(runtime.next_action(), bundle.actions().len());
+    assert_eq!(runtime.registered_object_count(), 3);
+    assert_eq!(runtime.executed_chunk_count(), 2);
+    assert_eq!(runtime.executed_load_handler_count(), 3);
+    assert_eq!(
+        bundle.lua().globals().get::<String>("RESULT")?,
+        "First:FirstChild;First;Later;"
+    );
+    Ok(())
+}
+
+/// A missing API remains an execution error at its manifest action.
+#[test]
+fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Missing.lua\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Missing.lua",
+            bytes: b"MissingStockApi()\n",
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let mut runtime = UiScriptRuntime::new(bundle.lua())?;
+
+    let result = runtime.execute_next(&bundle, &tree, &scripts);
+
+    assert!(matches!(result, Err(UiScriptError::Execution { .. })));
+    assert_eq!(runtime.next_action(), 0);
+    assert_eq!(runtime.executed_chunk_count(), 0);
     Ok(())
 }
 

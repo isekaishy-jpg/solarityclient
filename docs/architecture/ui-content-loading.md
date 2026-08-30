@@ -49,14 +49,21 @@ the tokenizer is not allowed to invent missing elements or attributes.
 
 The workspace pins vendored Lua 5.1 through `mlua`. Every manifest Lua source
 is compiled immediately in load order so syntax and bytecode compatibility
-fail at the asset boundary. Chunks are not executed yet. Execution requires the
-stock globals and widget APIs to be registered first; installing permissive
-no-op functions would conceal compatibility gaps and violate the repository's
-no-fallback policy.
+fail at the asset boundary. `UiScriptRuntime` then advances across the expanded
+manifest one action at a time. XML actions expose only the object batch created
+at that point; external and inline Lua actions execute in their original slots.
+A Lua failure leaves the cursor on the failing action for a reproducible
+diagnostic. Missing globals and methods remain errors rather than permissive
+no-op functions.
 
-The bundle retains both the source files and its Lua state. This gives the next
-stage a single owner for API registration and ordered execution without reading
-the archives a second time.
+The bundle retains both the source files and its Lua state, so execution never
+reads the archives a second time. The first registered stock surface is the
+object identity layer: `GetName`, `GetObjectType`, `IsObjectType`, and
+`GetParent`. Each root batch registers its structural children in construction
+order and invokes their `OnLoad` callbacks postorder before the root callback.
+Named callbacks resolve their Lua global only when construction reaches that
+object. Like `FrameScript_Object::RegisterScriptObject`, object registration
+does not overwrite a non-nil global with the same name.
 
 ## Typed XML callbacks
 
@@ -137,10 +144,10 @@ callbacks can still walk the original nested construction topology.
 
 Nested global names are not required to be unique. Stock declares
 `QuestInfoRequiredMoneyText` under two distinct live parents; both instances
-remain owned while the later registration replaces the global lookup entry.
-Objects with the same name, parent, type, and role are instead merged as
-inherited/concrete layers. The constructor keeps XML layers as references into
-the bundle, avoiding a second copy of the expanded property trees.
+remain owned while Lua retains the first non-nil global binding. Objects with
+the same name, parent, type, and role are instead merged as inherited/concrete
+layers. The constructor keeps XML layers as references into the bundle,
+avoiding a second copy of the expanded property trees.
 
 ## Validation
 

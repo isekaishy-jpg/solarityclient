@@ -366,6 +366,15 @@ impl UiScriptPlan {
         &self.bindings[node.first_binding..node.first_binding + node.binding_count]
     }
 
+    /// Finds one active callback on an object-arena index.
+    #[must_use]
+    pub fn binding(&self, node_index: usize, handler: UiScriptHandler) -> Option<&UiScriptBinding> {
+        let node = self.node(node_index)?;
+        self.bindings_for(node)
+            .iter()
+            .find(|binding| binding.handler == handler)
+    }
+
     /// Returns the number of XML callback declarations processed.
     #[must_use]
     pub const fn declaration_count(&self) -> usize {
@@ -382,6 +391,13 @@ impl UiScriptPlan {
     #[must_use]
     pub fn function_count(&self) -> usize {
         self.functions.len()
+    }
+
+    pub(super) fn compiled_function(&self, lua: &Lua, index: u32) -> mlua::Result<Function> {
+        let key = self.functions.get(index as usize).ok_or_else(|| {
+            mlua::Error::runtime("compiled UI handler index is outside the arena")
+        })?;
+        lua.registry_value(key)
     }
 }
 
