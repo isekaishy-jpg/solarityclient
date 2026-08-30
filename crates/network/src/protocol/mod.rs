@@ -11,6 +11,7 @@ mod liveness;
 mod object_update;
 mod server_packet;
 mod world_entry;
+mod world_time;
 mod wow_svcs_client_services;
 
 pub use addon_manifest::{AddonManifestError, WorldAddon, WorldAddonManifest};
@@ -29,3 +30,4 @@ pub use server_packet::WorldServerPacket;
 pub use world_entry::{
     CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,
 };
+pub use world_time::{WorldTimePacketError, WorldTimeSpeed};

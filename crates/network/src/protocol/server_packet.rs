@@ -3,11 +3,13 @@
 use super::{
     AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
     ObjectUpdateError, WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError,
-    WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch,
+    WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch, WorldTimePacketError,
+    WorldTimeSpeed,
 };
 
 const SMSG_CHAR_ENUM: u16 = 0x003B;
 const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
+const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
 const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
 const SMSG_ADDON_INFO: u16 = 0x02EF;
 const SMSG_TIME_SYNC_REQ: u16 = 0x0390;
@@ -36,6 +38,7 @@ impl WorldServerPacket {
         match self.opcode {
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
+            SMSG_LOGIN_SETTIMESPEED => Some("SMSG_LOGIN_SETTIMESPEED"),
             0x00A9 => Some("SMSG_UPDATE_OBJECT"),
             SMSG_PONG => Some("SMSG_PONG"),
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
@@ -110,6 +113,19 @@ impl WorldServerPacket {
             return Ok(None);
         }
         CharacterLoginRejection::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_LOGIN_SETTIMESPEED`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldTimePacketError`] unless the body is the exact valid
+    /// build-12340 clock, advancement rate, and holiday-offset representation.
+    pub fn world_time_speed(&self) -> Result<Option<WorldTimeSpeed>, WorldTimePacketError> {
+        if self.opcode != SMSG_LOGIN_SETTIMESPEED {
+            return Ok(None);
+        }
+        WorldTimeSpeed::decode(&self.payload).map(Some)
     }
 
     /// Decodes normal or zlib-compressed object updates.

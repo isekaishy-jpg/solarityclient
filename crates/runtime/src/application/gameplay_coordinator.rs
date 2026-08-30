@@ -6,7 +6,7 @@ use std::time::Duration;
 use solarity_ecs::ActiveWorld;
 use solarity_network::{
     InWorldSession, WorldLivenessPacketError, WorldPacketReader, WorldPacketWriter,
-    WorldServerPacket, WorldSessionError,
+    WorldServerPacket, WorldSessionError, WorldTimePacketError,
 };
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -20,6 +20,7 @@ use crate::application::gameplay_session::{
     GameplaySession, GameplayUpdateError, apply_object_updates,
 };
 use crate::application::world_coordinator::RuntimeWorldEntry;
+use crate::time::RealmClock;
 
 const PACKET_CHANNEL_CAPACITY: usize = 256;
 const LIVENESS_CHANNEL_CAPACITY: usize = 32;
@@ -44,6 +45,9 @@ pub enum RuntimeGameplayError {
     /// An object-update packet was malformed.
     #[error(transparent)]
     ObjectUpdate(#[from] solarity_network::ObjectUpdateError),
+    /// A realm clock packet was malformed.
+    #[error(transparent)]
+    WorldTime(#[from] WorldTimePacketError),
     /// The network task ended without publishing its terminal result.
     #[error("active-world network task ended unexpectedly")]
     TaskEnded,
@@ -59,6 +63,7 @@ pub enum RuntimeGameplayError {
 pub struct RuntimeGameplayCoordinator {
     active: Option<ActiveGameplayNetwork>,
     world: Option<ActiveWorld>,
+    realm_clock: Option<RealmClock>,
     unhandled_packets: VecDeque<WorldServerPacket>,
 }
 
@@ -69,6 +74,7 @@ impl RuntimeGameplayCoordinator {
         Self {
             active: None,
             world: None,
+            realm_clock: None,
             unhandled_packets: VecDeque::new(),
         }
     }
@@ -90,14 +96,16 @@ impl RuntimeGameplayCoordinator {
         let (network, setup_packets) = entry.into_parts();
         let mut gameplay = GameplaySession::enter(network);
         let mut retained = VecDeque::new();
+        let mut realm_clock = None;
         for packet in setup_packets {
-            dispatch_setup_packet(&mut gameplay, packet, &mut retained)?;
+            dispatch_setup_packet(&mut gameplay, packet, &mut realm_clock, &mut retained)?;
         }
         let (network, world) = gameplay.into_parts();
         let (sender, receiver) = mpsc::channel(PACKET_CHANNEL_CAPACITY);
         let task = runtime.spawn(pump_world_packets(network, sender));
         self.active = Some(ActiveGameplayNetwork { receiver, task });
         self.world = Some(world);
+        self.realm_clock = realm_clock;
         self.unhandled_packets = retained;
         Ok(())
     }
@@ -119,12 +127,18 @@ impl RuntimeGameplayCoordinator {
         loop {
             match active.receiver.try_recv() {
                 Ok(Ok(packet)) => {
-                    match dispatch_world_packet(world, packet, &mut self.unhandled_packets) {
+                    match dispatch_world_packet(
+                        world,
+                        packet,
+                        &mut self.realm_clock,
+                        &mut self.unhandled_packets,
+                    ) {
                         Ok(true) => applied += 1,
                         Ok(false) => {}
                         Err(error) => {
                             active.task.abort();
                             self.world = None;
+                            self.realm_clock = None;
                             self.unhandled_packets.clear();
                             return Err(error);
                         }
@@ -133,6 +147,7 @@ impl RuntimeGameplayCoordinator {
                 Ok(Err(error)) => {
                     active.task.abort();
                     self.world = None;
+                    self.realm_clock = None;
                     self.unhandled_packets.clear();
                     return Err(error);
                 }
@@ -142,6 +157,7 @@ impl RuntimeGameplayCoordinator {
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.world = None;
+                    self.realm_clock = None;
                     self.unhandled_packets.clear();
                     return Err(RuntimeGameplayError::TaskEnded);
                 }
@@ -156,6 +172,18 @@ impl RuntimeGameplayCoordinator {
         self.world.as_ref()
     }
 
+    /// Returns the running authoritative realm clock, when received.
+    #[must_use]
+    pub const fn realm_clock(&self) -> Option<&RealmClock> {
+        self.realm_clock.as_ref()
+    }
+
+    /// Returns the current stock DBC half-minute, when server time is known.
+    #[must_use]
+    pub fn realm_half_minutes(&self) -> Option<u32> {
+        self.realm_clock.as_ref().map(RealmClock::half_minutes)
+    }
+
     /// Returns unsupported packets retained for their future owning subsystem.
     #[must_use]
     pub fn unhandled_packets(&self) -> &VecDeque<WorldServerPacket> {
@@ -168,6 +196,7 @@ impl RuntimeGameplayCoordinator {
             active.task.abort();
         }
         self.world = None;
+        self.realm_clock = None;
         self.unhandled_packets.clear();
     }
 }
@@ -301,8 +330,13 @@ enum WorldLivenessEvent {
 fn dispatch_setup_packet<S>(
     gameplay: &mut GameplaySession<S>,
     packet: WorldServerPacket,
+    realm_clock: &mut Option<RealmClock>,
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<(), RuntimeGameplayError> {
+    if let Some(source) = packet.world_time_speed()? {
+        *realm_clock = Some(RealmClock::new(source));
+        return Ok(());
+    }
     if let Some(updates) = packet.object_updates()? {
         gameplay.apply_object_updates(&updates)?;
         return Ok(());
@@ -313,8 +347,13 @@ fn dispatch_setup_packet<S>(
 fn dispatch_world_packet(
     world: &mut ActiveWorld,
     packet: WorldServerPacket,
+    realm_clock: &mut Option<RealmClock>,
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<bool, RuntimeGameplayError> {
+    if let Some(source) = packet.world_time_speed()? {
+        *realm_clock = Some(RealmClock::new(source));
+        return Ok(false);
+    }
     if let Some(updates) = packet.object_updates()? {
         apply_object_updates(world, &updates)?;
         return Ok(true);

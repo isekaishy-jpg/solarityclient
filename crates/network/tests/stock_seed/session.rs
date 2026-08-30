@@ -153,6 +153,17 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         assert_eq!(world.location().orientation(), 1.75);
         let (mut reader, mut writer) = world.split();
 
+        let time_packet = reader.receive_packet().await?;
+        assert_eq!(time_packet.name(), Some("SMSG_LOGIN_SETTIMESPEED"));
+        let time = time_packet
+            .world_time_speed()?
+            .ok_or("world-time packet did not decode")?;
+        assert_eq!(time.packed_time(), (21 << 6) | 37);
+        assert_eq!(time.hour(), 21);
+        assert_eq!(time.minute(), 37);
+        assert_eq!(time.game_time_speed(), 1.0 / 60.0);
+        assert_eq!(time.holiday_offset(), 0x1122_3344);
+
         let object_packet = reader.receive_packet().await?;
         assert_eq!(object_packet.name(), Some("SMSG_UPDATE_OBJECT"));
         let object_updates = object_packet
@@ -329,6 +340,13 @@ async fn emulate_character_screen(
     }
     write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0x5A, 0xA5]).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x0236, &world_location_payload()).await?;
+    write_encrypted_raw(
+        &mut stream,
+        &mut crypto,
+        0x0042,
+        &world_time_speed_payload(),
+    )
+    .await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x00A9, &UPDATE_OBJECT_BODY).await?;
     write_encrypted_raw(
         &mut stream,
@@ -427,6 +445,14 @@ fn world_location_payload() -> Vec<u8> {
     payload.extend_from_slice(&647.5_f32.to_le_bytes());
     payload.extend_from_slice(&647.9_f32.to_le_bytes());
     payload.extend_from_slice(&1.75_f32.to_le_bytes());
+    payload
+}
+
+fn world_time_speed_payload() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(12);
+    payload.extend_from_slice(&((21_u32 << 6) | 37).to_le_bytes());
+    payload.extend_from_slice(&(1.0_f32 / 60.0).to_le_bytes());
+    payload.extend_from_slice(&0x1122_3344_u32.to_le_bytes());
     payload
 }
 

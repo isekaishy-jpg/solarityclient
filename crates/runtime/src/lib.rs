@@ -16,6 +16,8 @@ mod security;
 mod telemetry;
 mod time;
 
+pub use time::RealmClock;
+
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, CharacterProjectionError,
     ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
