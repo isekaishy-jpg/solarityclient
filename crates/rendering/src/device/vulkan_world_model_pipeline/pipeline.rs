@@ -69,6 +69,10 @@ impl WorldModelPipelineLayout {
         self.handle
     }
 
+    pub(super) fn descriptor_set(&self, index: usize) -> Option<vk::DescriptorSetLayout> {
+        self.descriptor_sets.get(index).copied()
+    }
+
     pub(super) fn destroy(&mut self, device: &Device) {
         // SAFETY: Non-null handles belong to this device and are uniquely owned.
         unsafe {

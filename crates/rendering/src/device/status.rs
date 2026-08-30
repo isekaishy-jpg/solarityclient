@@ -113,6 +113,61 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit WMO pipeline handle.
     #[error("WMO pipeline registry exhausted its 32-bit handle space")]
     WorldModelPipelineCapacity,
+    /// The renderer cannot assign another stable WMO sampler handle.
+    #[error("WMO sampler registry exhausted its 32-bit handle space")]
+    WorldModelSamplerCapacity,
+    /// A WMO descriptor references an image owned by another renderer.
+    #[error("WMO texture set references an unknown BLP texture handle")]
+    UnknownWorldModelTextureHandle,
+    /// A WMO descriptor references a sampler owned by another renderer.
+    #[error("WMO texture set references an unknown WMO sampler handle")]
+    UnknownWorldModelSamplerHandle,
+    /// The renderer cannot assign another WMO texture-set handle.
+    #[error("WMO texture-set registry exhausted its 32-bit handle space")]
+    WorldModelTextureSetCapacity,
+    /// A WMO draw references geometry owned by another renderer.
+    #[error("WMO draw references an unknown mesh handle")]
+    UnknownWorldModelMeshHandle,
+    /// A WMO draw references a pipeline owned by another renderer.
+    #[error("WMO draw references an unknown pipeline handle")]
+    UnknownWorldModelPipelineHandle,
+    /// A WMO draw references descriptors owned by another renderer.
+    #[error("WMO draw references an unknown texture-set handle")]
+    UnknownWorldModelTextureSetHandle,
+    /// Uploaded geometry and the CPU plan identify different WMO generations.
+    #[error("WMO draw mesh does not match its CPU mesh plan")]
+    WorldModelDrawMeshMismatch,
+    /// The requested logical MOBA draw does not exist.
+    #[error("WMO draw index {requested} is unavailable; plan has {available} draws")]
+    WorldModelDrawIndex {
+        /// Requested zero-based combined MOBA draw.
+        requested: usize,
+        /// Number of draws in the CPU plan.
+        available: usize,
+    },
+    /// The MOBA index span exceeds its uploaded aggregate geometry.
+    #[error("WMO draw index range exceeds the uploaded mesh")]
+    WorldModelDrawIndexRange,
+    /// A decoded MOBA references no retained root material.
+    #[error("WMO draw references an unavailable root material")]
+    WorldModelDrawMaterial,
+    /// A decoded MOBA references no retained group range.
+    #[error("WMO draw references an unavailable group range")]
+    WorldModelDrawGroup,
+    /// The requested physical transition/ordinary pass does not exist.
+    #[error("WMO pass index {requested} is unavailable; draw has {available} passes")]
+    WorldModelDrawPass {
+        /// Requested zero-based physical pass.
+        requested: usize,
+        /// Exact one- or two-pass stock count.
+        available: usize,
+    },
+    /// The pipeline does not represent the selected physical surface pass.
+    #[error("WMO draw pipeline does not match its material pass")]
+    WorldModelDrawPipelineMismatch,
+    /// Sampled images or stage count disagree with the MOMT effect.
+    #[error("WMO draw texture set does not match its material effect")]
+    WorldModelDrawTextureSetMismatch,
     /// A terrain plan has no geometry that Vulkan can bind and draw.
     #[error("terrain mesh has no {buffer_kind} data to upload")]
     EmptyTerrainMesh {

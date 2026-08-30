@@ -47,11 +47,22 @@ use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSampler
 use crate::device::vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
 };
+use crate::device::vulkan_world_model_draw::{
+    WorldModelPreparedDraw, prepare_draw as prepare_world_model_draw,
+};
 use crate::device::vulkan_world_model_mesh::{
     WorldModelMeshHandle, WorldModelMeshRegistry, WorldModelMeshResourceInfo,
 };
 use crate::device::vulkan_world_model_pipeline::{
     WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPipelineRegistry,
+};
+use crate::device::vulkan_world_model_sampler::{
+    WorldModelBaseMip, WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelSamplerRegistry,
+    WorldModelTextureFiltering,
+};
+use crate::device::vulkan_world_model_texture_set::{
+    WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo,
+    WorldModelTextureSetRegistry,
 };
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
@@ -61,7 +72,7 @@ use crate::{
     TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource,
     WorldModelSurfacePass,
 };
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +149,8 @@ pub struct VulkanRenderer {
     m2_meshes: M2MeshRegistry,
     world_model_meshes: WorldModelMeshRegistry,
     world_model_pipelines: WorldModelPipelineRegistry,
+    world_model_samplers: WorldModelSamplerRegistry,
+    world_model_texture_sets: WorldModelTextureSetRegistry,
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
@@ -163,6 +176,8 @@ pub struct VulkanRenderer {
     is_idle: bool,
     uniform_buffer_alignment: vk::DeviceSize,
     storage_buffer_alignment: vk::DeviceSize,
+    sampler_anisotropy: bool,
+    maximum_sampler_anisotropy: f32,
 }
 
 impl VulkanRenderer {
@@ -191,6 +206,8 @@ impl VulkanRenderer {
             m2_meshes: M2MeshRegistry::default(),
             world_model_meshes: WorldModelMeshRegistry::default(),
             world_model_pipelines: WorldModelPipelineRegistry::default(),
+            world_model_samplers: WorldModelSamplerRegistry::default(),
+            world_model_texture_sets: WorldModelTextureSetRegistry::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -227,6 +244,8 @@ impl VulkanRenderer {
             is_idle: false,
             uniform_buffer_alignment: selected.uniform_buffer_alignment,
             storage_buffer_alignment: selected.storage_buffer_alignment,
+            sampler_anisotropy: selected.sampler_anisotropy,
+            maximum_sampler_anisotropy: selected.maximum_sampler_anisotropy,
         };
         renderer.create_allocator(selected.physical_device)?;
         renderer.create_swapchain(&selected, extent)?;
@@ -793,6 +812,110 @@ impl VulkanRenderer {
         self.world_model_pipelines.info(handle)
     }
 
+    /// Creates one WMO sampler from global filtering and MOMT axis clamps.
+    ///
+    /// The requested anisotropy is capped to the selected adapter exactly as
+    /// stock caps its global filter class to device capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for handle exhaustion or sampler creation.
+    pub fn prepare_world_model_sampler(
+        &mut self,
+        material: crate::WorldModelMaterialState,
+        filtering: WorldModelTextureFiltering,
+        base_mip: WorldModelBaseMip,
+    ) -> Result<WorldModelSamplerHandle, VulkanError> {
+        self.world_model_samplers.prepare(
+            &self.device,
+            material,
+            filtering,
+            base_mip,
+            self.sampler_anisotropy,
+            self.maximum_sampler_anisotropy,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live WMO sampler.
+    #[must_use]
+    pub fn world_model_sampler_info(
+        &self,
+        handle: WorldModelSamplerHandle,
+    ) -> Option<WorldModelSamplerInfo> {
+        self.world_model_samplers.info(handle)
+    }
+
+    /// Creates persistent WMO image/sampler descriptor sets in one exact batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign resource handles, exhausted handle
+    /// space, or Vulkan layout/pool/allocation failures.
+    pub fn prepare_world_model_texture_sets(
+        &mut self,
+        requested: &[WorldModelTextureSet],
+    ) -> Result<Vec<WorldModelTextureSetHandle>, VulkanError> {
+        let layout = self
+            .world_model_pipelines
+            .texture_set_layout(&self.device)?;
+        self.world_model_texture_sets.prepare(
+            &self.device,
+            layout,
+            &self.blp_textures,
+            &self.world_model_samplers,
+            requested,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live WMO texture descriptor.
+    #[must_use]
+    pub fn world_model_texture_set_info(
+        &self,
+        handle: WorldModelTextureSetHandle,
+    ) -> Option<WorldModelTextureSetInfo> {
+        self.world_model_texture_sets.info(handle)
+    }
+
+    /// Joins one logical MOBA pass to matching renderer-local WMO resources.
+    ///
+    /// The material uniform is formed here from the validated pass, placement,
+    /// root ambient, and current DayNight emissive scalar so callers cannot
+    /// combine correct handles with unrelated shader constants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, CPU/GPU generation skew,
+    /// invalid draw/pass ranges, or material/pipeline/texture disagreement.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_world_model_draw(
+        &self,
+        mesh: WorldModelMeshHandle,
+        pipeline: WorldModelPipelineHandle,
+        texture_set: WorldModelTextureSetHandle,
+        plan: &WorldModelMeshPlan,
+        draw_index: usize,
+        pass_index: usize,
+        model: Mat4,
+        environment_emissive: f32,
+        fog_color: Vec3,
+    ) -> Result<WorldModelPreparedDraw, VulkanError> {
+        prepare_world_model_draw(
+            &self.world_model_meshes,
+            &self.world_model_pipelines,
+            &self.world_model_texture_sets,
+            &self.blp_textures,
+            mesh,
+            pipeline,
+            texture_set,
+            plan,
+            draw_index,
+            pass_index,
+            model,
+            environment_emissive,
+            fog_color,
+        )
+    }
+
     /// Creates or retrieves stock's linear, base-mip M2 sampler state.
     ///
     /// Horizontal and vertical addressing come directly from the texture
@@ -1030,6 +1153,7 @@ impl Drop for VulkanRenderer {
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);
             self.ui_texture_sets.destroy(&self.device);
+            self.world_model_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
@@ -1038,6 +1162,7 @@ impl Drop for VulkanRenderer {
             self.m2_meshes.destroy(allocator);
         }
         self.terrain_texture_sets.destroy(&self.device);
+        self.world_model_samplers.destroy(&self.device);
         self.m2_samplers.destroy(&self.device);
         self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);
@@ -1085,9 +1210,12 @@ fn create_device(
     let mut vulkan13 = vk::PhysicalDeviceVulkan13Features::default()
         .dynamic_rendering(true)
         .synchronization2(true);
+    let enabled_features =
+        vk::PhysicalDeviceFeatures::default().sampler_anisotropy(selected.sampler_anisotropy);
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_infos)
         .enabled_extension_names(&extension_names)
+        .enabled_features(&enabled_features)
         .push_next(&mut vulkan13);
     // SAFETY: Queue families and features were queried from this physical
     // device, and all create-info slices remain alive for the call.

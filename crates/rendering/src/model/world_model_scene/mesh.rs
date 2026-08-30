@@ -9,6 +9,8 @@ use super::{
 /// Upload-ready shared geometry and materials for one WMO generation.
 pub struct WorldModelMeshPlan {
     path: AssetPath,
+    root_flags: u16,
+    ambient_color: [u8; 4],
     vertices: Vec<WorldModelRenderVertex>,
     indices: Vec<u32>,
     materials: Vec<WorldModelMaterial>,
@@ -134,6 +136,8 @@ impl WorldModelMeshPlan {
         }
         Ok(Self {
             path: model.path().clone(),
+            root_flags: model.flags(),
+            ambient_color: model.ambient_color(),
             vertices,
             indices,
             materials: model.materials().to_vec(),
@@ -146,6 +150,18 @@ impl WorldModelMeshPlan {
     #[must_use]
     pub const fn path(&self) -> &AssetPath {
         &self.path
+    }
+
+    /// Returns raw MOHD flags controlling the ordinary/unified effect family.
+    #[must_use]
+    pub const fn root_flags(&self) -> u16 {
+        self.root_flags
+    }
+
+    /// Returns exact MOHD ambient BGRA bytes for unified interior passes.
+    #[must_use]
+    pub const fn ambient_color(&self) -> [u8; 4] {
+        self.ambient_color
     }
 
     /// Returns combined fixed-layout vertices.

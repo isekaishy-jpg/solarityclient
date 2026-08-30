@@ -17,6 +17,8 @@ pub(super) struct SelectedAdapter {
     pub(super) depth_format: vk::Format,
     pub(super) uniform_buffer_alignment: vk::DeviceSize,
     pub(super) storage_buffer_alignment: vk::DeviceSize,
+    pub(super) sampler_anisotropy: bool,
+    pub(super) maximum_sampler_anisotropy: f32,
     pub(super) surface_capabilities: vk::SurfaceCapabilitiesKHR,
 }
 
@@ -43,6 +45,12 @@ impl SelectedAdapter {
             bootstrap
                 .instance
                 .get_physical_device_properties(physical_device)
+        };
+        // SAFETY: The selected physical device belongs to this live instance.
+        let features = unsafe {
+            bootstrap
+                .instance
+                .get_physical_device_features(physical_device)
         };
         if properties.api_version < vk::API_VERSION_1_3 {
             return Err(VulkanError::AdapterApi {
@@ -98,6 +106,8 @@ impl SelectedAdapter {
             depth_format,
             uniform_buffer_alignment: properties.limits.min_uniform_buffer_offset_alignment,
             storage_buffer_alignment: properties.limits.min_storage_buffer_offset_alignment,
+            sampler_anisotropy: features.sampler_anisotropy == vk::TRUE,
+            maximum_sampler_anisotropy: properties.limits.max_sampler_anisotropy,
             surface_capabilities,
         })
     }

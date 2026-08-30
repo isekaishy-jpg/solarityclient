@@ -97,6 +97,23 @@ impl WorldModelPipelineRegistry {
             .map(|resource| resource.info)
     }
 
+    pub(in crate::device) fn texture_set_layout(
+        &mut self,
+        device: &Device,
+    ) -> Result<vk::DescriptorSetLayout, VulkanError> {
+        const TEXTURE_SET_INDEX: usize = 2;
+
+        self.layout.ensure_created(device)?;
+        self.layout
+            .descriptor_set(TEXTURE_SET_INDEX)
+            .ok_or_else(|| {
+                VulkanError::operation(
+                    "access WMO texture descriptor layout",
+                    "layout is unavailable",
+                )
+            })
+    }
+
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         // SAFETY: The renderer idles before uniquely owned pipelines are freed.
