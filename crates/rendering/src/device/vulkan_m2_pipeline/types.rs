@@ -14,6 +14,7 @@ pub struct M2PipelineHandle {
 pub struct M2PipelineInfo {
     vertex_shader: M2VertexShader,
     pixel_shader: M2PixelShader,
+    texture_count: u16,
     permutation: M2ShaderPermutation,
 }
 
@@ -22,11 +23,13 @@ impl M2PipelineInfo {
     pub(super) const fn new(
         vertex_shader: M2VertexShader,
         pixel_shader: M2PixelShader,
+        texture_count: u16,
         permutation: M2ShaderPermutation,
     ) -> Self {
         Self {
             vertex_shader,
             pixel_shader,
+            texture_count,
             permutation,
         }
     }
@@ -41,6 +44,12 @@ impl M2PipelineInfo {
     #[must_use]
     pub const fn pixel_shader(self) -> M2PixelShader {
         self.pixel_shader
+    }
+
+    /// Returns the exact number of texture descriptors statically consumed.
+    #[must_use]
+    pub const fn texture_count(self) -> u16 {
+        self.texture_count
     }
 
     /// Returns the exact BLS vertex and pixel indices.

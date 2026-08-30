@@ -96,10 +96,12 @@ impl M2SpirvCompiler {
         let pixel_effect = pixel_effect_index(plan.pixel_shader()).to_string();
         let vertex_permutation = permutation.vertex_index().to_string();
         let pixel_permutation = permutation.pixel_index().to_string();
+        let texture_count = plan.texture_count().to_string();
         options.add_macro_definition("M2_VERTEX_EFFECT", Some(&vertex_effect));
         options.add_macro_definition("M2_PIXEL_EFFECT", Some(&pixel_effect));
         options.add_macro_definition("M2_VERTEX_PERMUTATION", Some(&vertex_permutation));
         options.add_macro_definition("M2_PIXEL_PERMUTATION", Some(&pixel_permutation));
+        options.add_macro_definition("M2_TEXTURE_COUNT", Some(&texture_count));
 
         self.compiler
             .compile_into_spirv(source, kind, name, "main", Some(&options))

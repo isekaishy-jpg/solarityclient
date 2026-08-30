@@ -18,6 +18,7 @@ const STOCK_SIMPLE_FALLBACK: u16 = 0x11;
 pub struct M2ShaderPlan {
     requested_shader_id: u16,
     resolved_shader_id: u16,
+    texture_count: u16,
     vertex_shader: M2VertexShader,
     pixel_shader: M2PixelShader,
     material: M2MaterialState,
@@ -51,6 +52,7 @@ impl M2ShaderPlan {
             return Ok(Self {
                 requested_shader_id,
                 resolved_shader_id: requested_shader_id,
+                texture_count,
                 vertex_shader,
                 pixel_shader,
                 material,
@@ -75,6 +77,7 @@ impl M2ShaderPlan {
         Ok(Self {
             requested_shader_id,
             resolved_shader_id,
+            texture_count,
             vertex_shader,
             pixel_shader,
             material,
@@ -92,6 +95,12 @@ impl M2ShaderPlan {
     #[must_use]
     pub const fn resolved_shader_id(self) -> u16 {
         self.resolved_shader_id
+    }
+
+    /// Returns the exact number of texture stages required by this effect.
+    #[must_use]
+    pub const fn texture_count(self) -> u16 {
+        self.texture_count
     }
 
     /// Returns the selected stock vertex effect basename.

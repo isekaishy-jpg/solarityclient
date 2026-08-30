@@ -456,6 +456,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     let specialized = M2ShaderPlan::resolve(&model, draw)?;
     assert_eq!(specialized.requested_shader_id(), 0x8001);
     assert_eq!(specialized.resolved_shader_id(), 0x8001);
+    assert_eq!(specialized.texture_count(), 2);
     assert_eq!(specialized.vertex_shader(), M2VertexShader::DiffuseT1Env);
     assert_eq!(
         specialized.pixel_shader(),
@@ -588,6 +589,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         pipeline_info.pixel_shader(),
         M2PixelShader::OpaqueMod2xNoAlphaAlpha
     );
+    assert_eq!(pipeline_info.texture_count(), 2);
     assert_eq!(pipeline_info.permutation(), lit_permutation);
     let texture_handle = renderer.upload_blp_texture(&texture_source, BlpColorSpace::Srgb)?;
     assert_eq!(

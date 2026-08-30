@@ -6,6 +6,9 @@
 #ifndef M2_PIXEL_PERMUTATION
 #error M2_PIXEL_PERMUTATION must select a stock BLS permutation
 #endif
+#ifndef M2_TEXTURE_COUNT
+#error M2_TEXTURE_COUNT must select the validated stock texture-stage count
+#endif
 
 const bool M2_SHADER_ALPHA_TEST = (M2_PIXEL_PERMUTATION / 8) != 0;
 
@@ -145,7 +148,7 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
 
 void main() {
     vec4 texture_0 = texture(model_texture_0, fragment_texture_coordinates_0);
-    vec4 texture_1 = draw_state.texture_count > 1u
+    vec4 texture_1 = M2_TEXTURE_COUNT > 1
         ? texture(model_texture_1, fragment_texture_coordinates_1)
         : vec4(1.0);
     vec4 combined = combine_textures(texture_0, texture_1);

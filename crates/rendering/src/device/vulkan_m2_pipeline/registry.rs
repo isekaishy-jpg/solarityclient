@@ -84,7 +84,12 @@ impl M2PipelineRegistry {
         };
         self.resources.push(GpuM2Pipeline {
             handle: pipeline,
-            info: M2PipelineInfo::new(plan.vertex_shader(), plan.pixel_shader(), permutation),
+            info: M2PipelineInfo::new(
+                plan.vertex_shader(),
+                plan.pixel_shader(),
+                plan.texture_count(),
+                permutation,
+            ),
         });
         self.handles.insert(key, handle);
         Ok(handle)
