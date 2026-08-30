@@ -6,11 +6,12 @@ use std::sync::Arc;
 use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
-    WorldModelBatchClass,
+    WorldModelBatchClass, WorldModelBlendMode,
 };
 use solarity_rendering::{
-    PlacedWorldModelDrawPlan, WorldCamera, WorldFrustum, WorldModelMeshPlan,
-    WorldModelRenderVertex, WorldScreenWindow,
+    PlacedWorldModelDrawPlan, WorldCamera, WorldFrustum, WorldModelBlendFactor,
+    WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode, WorldModelMaterialState,
+    WorldModelMeshPlan, WorldModelRenderVertex, WorldModelSurfacePassPlan, WorldScreenWindow,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -33,6 +34,65 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     let data_root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
     let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Render.wmo")?)?;
+
+    let material = WorldModelMaterialState::from_material(&model.materials()[0]);
+    assert_eq!(material.blend().mode(), WorldModelBlendMode::Mod2x);
+    assert_eq!(
+        material.blend().color_factors(),
+        [
+            WorldModelBlendFactor::DestinationColor,
+            WorldModelBlendFactor::SourceColor,
+        ]
+    );
+    assert_eq!(
+        material.blend().alpha_factors(),
+        [
+            WorldModelBlendFactor::DestinationAlpha,
+            WorldModelBlendFactor::SourceAlpha,
+        ]
+    );
+    assert!(!material.cull_enabled());
+    assert!(material.depth_test_enabled());
+    assert!(material.depth_write_enabled());
+    assert!(!material.is_unlit());
+    assert!(!material.is_unfogged());
+    assert_eq!(material.texture_clamps(), [true, true]);
+    assert_eq!(material.alpha_reference(), 1.0 / 255.0);
+    assert_eq!(material.fog_mode(), WorldModelFogMode::HalfWhite);
+
+    let transition = WorldModelSurfacePassPlan::prepare(
+        0x02,
+        0,
+        WorldModelBatchClass::Transition,
+        &model.materials()[0],
+    );
+    assert!(transition.is_unified());
+    assert_eq!(transition.passes().len(), 2);
+    assert_eq!(
+        transition.passes()[0].material().blend().mode(),
+        WorldModelBlendMode::SourceAlphaOpaque
+    );
+    assert_eq!(
+        transition.passes()[0].lighting(),
+        WorldModelLightingMode::Exterior
+    );
+    assert_eq!(
+        transition.passes()[1].material().blend().mode(),
+        WorldModelBlendMode::InverseSourceAlphaAdd
+    );
+    assert_eq!(
+        transition.passes()[1].lighting(),
+        WorldModelLightingMode::RootAmbient
+    );
+
+    let direct_add = WorldModelBlendState::for_mode(WorldModelBlendMode::Add);
+    assert_eq!(
+        direct_add.color_factors(),
+        [
+            WorldModelBlendFactor::SourceAlpha,
+            WorldModelBlendFactor::One,
+        ]
+    );
 
     let plan = WorldModelMeshPlan::prepare(&model)?;
     assert_eq!(plan.path(), model.path());
@@ -117,6 +177,10 @@ fn root_fixture() -> Vec<u8> {
     push_chunk(&mut bytes, *b"DHOM", &header);
     push_chunk(&mut bytes, *b"XTOM", b"wall.blp\0");
     let mut material = vec![0_u8; 64];
+    // MOMT 0x08 and 0x10 are deliberately present: unlike M2, neither changes
+    // WMO depth state. 0x04 selects two-sided rendering and 0x40/0x80 clamp.
+    set_u32(&mut material, 0, 0xdc);
+    set_u32(&mut material, 8, 5);
     set_u32(&mut material, 12, 0);
     push_chunk(&mut bytes, *b"TMOM", &material);
     let mut group = vec![0_u8; 32];

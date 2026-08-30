@@ -90,7 +90,7 @@ impl DecodedWorldModel {
 }
 
 /// Build-12340 MapObj shader selector after stock `FinishLoad` normalization.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum WorldModelShader {
     /// MapObj diffuse.
     Diffuse,
@@ -106,6 +106,73 @@ pub enum WorldModelShader {
     EnvironmentMetal,
     /// Unified composite, also known as two-layer diffuse.
     Composite,
+}
+
+/// Direct build-12340 `EGxBlend` index stored by a WMO MOMT record.
+///
+/// Unlike M2's `M2BLEND` field, this value has already passed stock's format
+/// translation and must be applied directly by the graphics backend.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum WorldModelBlendMode {
+    /// Replace the framebuffer without alpha blending.
+    Opaque,
+    /// Replace the framebuffer after the stock 224/255 alpha test.
+    AlphaKey,
+    /// Conventional source-alpha interpolation.
+    Alpha,
+    /// Source-alpha-scaled additive blending.
+    Add,
+    /// Destination-color modulation.
+    Mod,
+    /// Doubled source/destination color modulation.
+    Mod2x,
+    /// Destination-color modulation followed by addition.
+    ModAdd,
+    /// Add the source scaled by inverse source alpha.
+    InverseSourceAlphaAdd,
+    /// Replace with the source scaled by inverse source alpha.
+    InverseSourceAlphaOpaque,
+    /// Replace with the source scaled by source alpha.
+    SourceAlphaOpaque,
+    /// Add the source without using source alpha.
+    NoAlphaAdd,
+}
+
+impl WorldModelBlendMode {
+    pub(super) const fn decode(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Opaque),
+            1 => Some(Self::AlphaKey),
+            2 => Some(Self::Alpha),
+            3 => Some(Self::Add),
+            4 => Some(Self::Mod),
+            5 => Some(Self::Mod2x),
+            6 => Some(Self::ModAdd),
+            7 => Some(Self::InverseSourceAlphaAdd),
+            8 => Some(Self::InverseSourceAlphaOpaque),
+            9 => Some(Self::SourceAlphaOpaque),
+            10 => Some(Self::NoAlphaAdd),
+            _ => None,
+        }
+    }
+
+    /// Returns the direct numeric GX state-table index.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::Opaque => 0,
+            Self::AlphaKey => 1,
+            Self::Alpha => 2,
+            Self::Add => 3,
+            Self::Mod => 4,
+            Self::Mod2x => 5,
+            Self::ModAdd => 6,
+            Self::InverseSourceAlphaAdd => 7,
+            Self::InverseSourceAlphaOpaque => 8,
+            Self::SourceAlphaOpaque => 9,
+            Self::NoAlphaAdd => 10,
+        }
+    }
 }
 
 impl WorldModelShader {
@@ -136,7 +203,7 @@ pub struct WorldModelMaterial {
     flags: u32,
     authored_shader: WorldModelShader,
     shader: WorldModelShader,
-    blend_mode: u32,
+    blend_mode: WorldModelBlendMode,
     texture_offsets: [u32; 3],
     textures: [Option<AssetPath>; 3],
     emissive_color: u32,
@@ -153,7 +220,7 @@ impl WorldModelMaterial {
         flags: u32,
         authored_shader: WorldModelShader,
         shader: WorldModelShader,
-        blend_mode: u32,
+        blend_mode: WorldModelBlendMode,
         texture_offsets: [u32; 3],
         textures: [Option<AssetPath>; 3],
         emissive_color: u32,
@@ -199,7 +266,7 @@ impl WorldModelMaterial {
 
     /// Returns the direct EGxBlend index stored by MOMT.
     #[must_use]
-    pub const fn blend_mode(&self) -> u32 {
+    pub const fn blend_mode(&self) -> WorldModelBlendMode {
         self.blend_mode
     }
 

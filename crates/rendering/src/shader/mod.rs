@@ -9,6 +9,7 @@ mod m2_spirv;
 mod shader_effect_manager;
 mod terrain_spirv;
 mod ui_spirv;
+mod world_model_effect;
 
 pub use m2_effect::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
@@ -20,3 +21,7 @@ pub use terrain_spirv::{
     TerrainSpirvProgram,
 };
 pub use ui_spirv::{UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram};
+pub use world_model_effect::{
+    WorldModelBlendFactor, WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode,
+    WorldModelMaterialState, WorldModelSurfacePass, WorldModelSurfacePassPlan,
+};

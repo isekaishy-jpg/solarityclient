@@ -6,7 +6,9 @@ use wow_wmo::{ParsedWmo, parse_wmo};
 
 use crate::{AssetError, AssetPath, AssetStore};
 
-use super::map_obj::{DecodedWorldModel, WorldModelMaterial, WorldModelShader};
+use super::map_obj::{
+    DecodedWorldModel, WorldModelBlendMode, WorldModelMaterial, WorldModelShader,
+};
 use super::map_obj_group::{
     DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
     WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,
@@ -198,6 +200,15 @@ fn decode_materials(
                 ),
             )
         })?;
+        let blend_mode = WorldModelBlendMode::decode(material.blend_mode).ok_or_else(|| {
+            world_model_message(
+                path,
+                format!(
+                    "MOMT material {index} blend mode {} is outside build-12340 EGxBlend range 0..10",
+                    material.blend_mode
+                ),
+            )
+        })?;
         let offsets = [material.texture_1, material.texture_2, material.texture_3];
         let mut textures = [None, None, None];
         for slot in 0..3 {
@@ -223,7 +234,7 @@ fn decode_materials(
             material.flags,
             authored_shader,
             shader,
-            material.blend_mode,
+            blend_mode,
             offsets,
             textures,
             u32::from_le_bytes(material.emissive_color),

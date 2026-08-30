@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
-    WmoModelCache, WorldModelBatchClass, WorldModelShader,
+    WmoModelCache, WorldModelBatchClass, WorldModelBlendMode, WorldModelShader,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -191,7 +191,7 @@ fn world_model_decodes_stock_presentation_tables() -> Result<(), Box<dyn Error>>
     assert_eq!(composite.flags(), 0xc1);
     assert_eq!(composite.authored_shader(), WorldModelShader::Composite);
     assert_eq!(composite.shader(), WorldModelShader::Composite);
-    assert_eq!(composite.blend_mode(), 2);
+    assert_eq!(composite.blend_mode(), WorldModelBlendMode::Alpha);
     assert_eq!(composite.texture_offsets(), [0, 9, 20]);
     assert_eq!(
         composite.textures()[0].as_ref().map(AssetPath::as_str),

@@ -53,7 +53,9 @@ pub use shader::{
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
     M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader, TerrainLayerCount,
     TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError, TerrainSpirvProgram,
-    UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram,
+    UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram, WorldModelBlendFactor,
+    WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode, WorldModelMaterialState,
+    WorldModelSurfacePass, WorldModelSurfacePassPlan,
 };
 pub use terrain::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,

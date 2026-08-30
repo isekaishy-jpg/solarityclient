@@ -51,6 +51,6 @@ pub use terrain::{
 pub use texture::{BlpTextureSource, DecodedBlpTexture};
 pub use world_model::{
     DecodedWorldModel, DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass,
-    WorldModelBspNode, WorldModelLiquid, WorldModelLiquidVertex, WorldModelMaterial,
-    WorldModelPolygon, WorldModelShader,
+    WorldModelBlendMode, WorldModelBspNode, WorldModelLiquid, WorldModelLiquidVertex,
+    WorldModelMaterial, WorldModelPolygon, WorldModelShader,
 };
