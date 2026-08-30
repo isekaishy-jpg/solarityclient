@@ -121,6 +121,66 @@ pub struct M2Vertex {
     texture_coordinates: [Vec2; 2],
 }
 
+/// Authored model-space render bounds from the build-12340 M2 header.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct M2ModelBounds {
+    minimum: Vec3,
+    maximum: Vec3,
+    sphere_radius: f32,
+}
+
+impl M2ModelBounds {
+    /// Returns the authored lower model-space corner.
+    #[must_use]
+    pub const fn minimum(self) -> Vec3 {
+        self.minimum
+    }
+
+    /// Returns the authored upper model-space corner.
+    #[must_use]
+    pub const fn maximum(self) -> Vec3 {
+        self.maximum
+    }
+
+    /// Returns the authored model-space bounding-sphere radius.
+    #[must_use]
+    pub const fn sphere_radius(self) -> f32 {
+        self.sphere_radius
+    }
+}
+
+/// One authored M2 attachment before animation or model transforms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct M2Attachment {
+    id: u32,
+    bone_index: i32,
+    position: Vec3,
+}
+
+impl M2Attachment {
+    /// Returns the stock attachment identifier.
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        self.id
+    }
+
+    /// Returns the model bone that owns this attachment.
+    #[must_use]
+    pub const fn bone_index(self) -> i32 {
+        self.bone_index
+    }
+
+    /// Returns the stable authored model-space position.
+    ///
+    /// This deliberately excludes the current bone pose. Build 12340 reads
+    /// the authored Breath attachment position for player-camera height so
+    /// the orbit pivot does not bob with the walk animation.
+    #[must_use]
+    pub const fn position(self) -> Vec3 {
+        self.position
+    }
+}
+
 impl M2Vertex {
     /// Returns the untransformed stock-coordinate position.
     #[must_use]
@@ -319,6 +379,9 @@ impl M2SkinProfile {
 pub(super) struct ModelBlob {
     pub(super) name: Option<String>,
     pub(super) flags: u32,
+    pub(super) bounds: M2ModelBounds,
+    pub(super) attachments: Vec<M2Attachment>,
+    pub(super) attachment_lookup: Vec<u16>,
     pub(super) vertices: Vec<M2Vertex>,
     pub(super) textures: Vec<M2Texture>,
     pub(super) materials: Vec<M2Material>,
@@ -338,7 +401,26 @@ impl ModelBlob {
         model: M2Model,
     ) -> Result<Self, AssetError> {
         let flags = model.header.flags.bits();
+        let bounds = M2ModelBounds {
+            minimum: Vec3::from_array(model.header.bounding_box_min),
+            maximum: Vec3::from_array(model.header.bounding_box_max),
+            sphere_radius: model.header.bounding_sphere_radius,
+        };
         let texture_combiner_combos = decode_texture_combiner_combos(path, bytes, &model)?;
+        validate_attachment_lookup(path, &model)?;
+        let attachments = model
+            .attachments
+            .iter()
+            .map(|attachment| M2Attachment {
+                id: attachment.id,
+                bone_index: attachment.bone_index,
+                position: Vec3::new(
+                    attachment.position.x,
+                    attachment.position.y,
+                    attachment.position.z,
+                ),
+            })
+            .collect();
         let mut vertices = Vec::with_capacity(model.vertices.len());
         for vertex in model.vertices {
             let texture_coordinates2 = vertex.tex_coords2.ok_or_else(|| {
@@ -371,10 +453,12 @@ impl ModelBlob {
             .enumerate()
             .map(|(index, material)| convert_material(path, index, material))
             .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             name: model.name,
             flags,
+            bounds,
+            attachments,
+            attachment_lookup: model.raw_data.attachment_lookup_table,
             vertices,
             textures,
             materials,
@@ -386,6 +470,24 @@ impl ModelBlob {
             texture_combiner_combos,
         })
     }
+}
+
+/// Rejects a lookup entry that cannot name an authored attachment record.
+fn validate_attachment_lookup(path: &AssetPath, model: &M2Model) -> Result<(), AssetError> {
+    if let Some((slot, index)) = model
+        .raw_data
+        .attachment_lookup_table
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_slot, index)| *index != u16::MAX && usize::from(*index) >= model.attachments.len())
+    {
+        return Err(model_decode(
+            path,
+            format!("attachment lookup slot {slot} references missing attachment {index}"),
+        ));
+    }
+    Ok(())
 }
 
 /// Reads WotLK's optional trailing `u16` combiner table exactly as `M2Data` stores it.

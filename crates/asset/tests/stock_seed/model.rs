@@ -7,6 +7,7 @@ use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
     M2BlendMode, M2Interpolation, M2ModelCache, M2SequenceStorage, M2TextureKind,
 };
+use wow_m2::chunks::attachment::M2Attachment as RawAttachment;
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
 };
@@ -104,6 +105,19 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
     assert_eq!(model.texture_lookup(), &[0, 1]);
     assert_eq!(model.texture_units(), &[0, 1]);
+    assert_eq!(model.bounds().minimum(), glam::Vec3::new(-1.0, -2.0, -3.0));
+    assert_eq!(model.bounds().maximum(), glam::Vec3::new(4.0, 5.0, 6.0));
+    assert_eq!(model.bounds().sphere_radius(), 7.25);
+    let breath = model
+        .attachment(17)
+        .ok_or("fixture Breath attachment is absent")?;
+    assert_eq!(breath.id(), 17);
+    assert_eq!(breath.bone_index(), -1);
+    assert_eq!(breath.position(), glam::Vec3::new(0.25, 0.5, 1.75));
+    assert_eq!(model.attachments(), &[breath]);
+    assert_eq!(model.attachment_lookup().len(), 18);
+    assert!(model.attachment(16).is_none());
+    assert!(model.attachment(18).is_none());
     Ok(())
 }
 
@@ -396,7 +410,7 @@ fn extended_triangle_start_loads_large_hd_profile() -> Result<(), Box<dyn Error>
 
 /// Serializes a deterministic legacy MD20 fixture with raw influence sentinels.
 pub(crate) fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
-    m2_bytes_inner(name, skin_profiles, &[])
+    m2_bytes_inner(name, skin_profiles, &[], true)
 }
 
 /// Serializes a model carrying WotLK's optional trailing combiner table.
@@ -405,7 +419,7 @@ fn m2_bytes_with_texture_combiners(
     skin_profiles: u32,
     combiners: &[u16],
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    m2_bytes_inner(name, skin_profiles, combiners)
+    m2_bytes_inner(name, skin_profiles, combiners, false)
 }
 
 /// Serializes a deterministic legacy MD20 fixture with optional combiners.
@@ -413,6 +427,7 @@ fn m2_bytes_inner(
     name: &str,
     skin_profiles: u32,
     combiners: &[u16],
+    include_camera_metadata: bool,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
@@ -420,6 +435,20 @@ fn m2_bytes_inner(
         ..M2Model::default()
     };
     model.header.num_skin_profiles = Some(skin_profiles);
+    if include_camera_metadata {
+        model.header.bounding_box_min = [-1.0, -2.0, -3.0];
+        model.header.bounding_box_max = [4.0, 5.0, 6.0];
+        model.header.bounding_sphere_radius = 7.25;
+        let mut breath = RawAttachment::new(17, -1);
+        breath.position = C3Vector {
+            x: 0.25,
+            y: 0.5,
+            z: 1.75,
+        };
+        model.attachments = vec![breath];
+        model.raw_data.attachment_lookup_table = vec![u16::MAX; 18];
+        model.raw_data.attachment_lookup_table[17] = 0;
+    }
     if !combiners.is_empty() {
         model.header.flags |= M2ModelFlags::USE_TEXTURE_COMBINERS;
         model.header.texture_combiner_combos = Some(M2Array::new(0, 0));

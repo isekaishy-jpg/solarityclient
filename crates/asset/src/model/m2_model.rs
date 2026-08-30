@@ -6,8 +6,8 @@ use crate::model::m2_shared::{
 };
 use crate::model::model_blob::ModelBlob;
 use crate::{
-    ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Material, M2SkinProfile, M2Texture,
-    M2Vertex,
+    ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Attachment, M2Material, M2ModelBounds,
+    M2SkinProfile, M2Texture, M2Vertex,
 };
 
 /// A decoded M2 and every external SKIN profile named by its build-12340 header.
@@ -98,6 +98,37 @@ impl DecodedM2Model {
     #[must_use]
     pub const fn flags(&self) -> u32 {
         self.blob.flags
+    }
+
+    /// Returns the authored model-space render bounds.
+    #[must_use]
+    pub const fn bounds(&self) -> M2ModelBounds {
+        self.blob.bounds
+    }
+
+    /// Resolves an authored attachment through the M2 attachment lookup table.
+    ///
+    /// The lookup is authoritative. Missing slots and `0xFFFF` entries return
+    /// `None`; this boundary does not search the attachment array as a fallback.
+    #[must_use]
+    pub fn attachment(&self, id: u32) -> Option<M2Attachment> {
+        let slot = usize::try_from(id).ok()?;
+        let index = *self.blob.attachment_lookup.get(slot)?;
+        (index != u16::MAX)
+            .then(|| self.blob.attachments.get(usize::from(index)).copied())
+            .flatten()
+    }
+
+    /// Returns every authored attachment record in file order.
+    #[must_use]
+    pub fn attachments(&self) -> &[M2Attachment] {
+        &self.blob.attachments
+    }
+
+    /// Returns the raw attachment-to-record lookup table.
+    #[must_use]
+    pub fn attachment_lookup(&self) -> &[u16] {
+        &self.blob.attachment_lookup
     }
 
     /// Reports whether stock substitutes shader combiners from the trailing table.

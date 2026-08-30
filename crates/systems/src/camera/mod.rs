@@ -6,3 +6,8 @@
 mod controller;
 mod transition;
 mod types;
+
+pub use controller::{resolve_camera_subject_height, resolve_model_camera_subject_height};
+pub use types::{
+    CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError, CameraSubjectHeightSource,
+};

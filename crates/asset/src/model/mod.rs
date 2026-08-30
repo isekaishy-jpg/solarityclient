@@ -15,5 +15,6 @@ pub use animation::{
 pub use m2_model::DecodedM2Model;
 pub(crate) use m2_shared::canonical_model_path;
 pub use model_blob::{
-    M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2Vertex,
+    M2Attachment, M2Batch, M2BlendMode, M2Material, M2ModelBounds, M2SkinProfile, M2Submesh,
+    M2Texture, M2TextureKind, M2Vertex,
 };

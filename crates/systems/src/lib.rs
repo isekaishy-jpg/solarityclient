@@ -40,6 +40,10 @@ mod talent;
 mod vehicle;
 mod world;
 
+pub use camera::{
+    CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
+    CameraSubjectHeightSource, resolve_camera_subject_height, resolve_model_camera_subject_height,
+};
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
