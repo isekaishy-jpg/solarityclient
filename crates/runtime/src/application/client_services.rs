@@ -7,6 +7,7 @@ use tokio::runtime::{Builder, Runtime};
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, DecodedBlpTexture};
 use solarity_cpu::CpuExecutor;
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
+use solarity_ui::{GlueManager, GlueStartupReport};
 
 use crate::application::ApplicationError;
 use crate::configuration::RuntimeConfiguration;
@@ -18,7 +19,7 @@ const BOOTSTRAP_TEXTURE: &str = "Interface\\Icons\\INV_Misc_QuestionMark.blp";
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     platform: SdlPlatform,
-    _assets: AssetStore,
+    _glue: GlueManager,
     cpu: CpuExecutor,
     network: Option<Runtime>,
     network_shutdown_timeout: std::time::Duration,
@@ -51,6 +52,7 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         renderer.present_blp(&texture)?;
+        let glue = GlueManager::start(assets, platform.logical_extent(), false)?;
         platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
@@ -67,7 +69,7 @@ impl ClientServices {
             Self {
                 renderer,
                 platform,
-                _assets: assets,
+                _glue: glue,
                 cpu,
                 network: Some(network),
                 network_shutdown_timeout: configuration.network_shutdown_timeout(),
@@ -79,6 +81,11 @@ impl ClientServices {
     /// Returns the concrete adapter and swapchain facts selected at startup.
     pub(crate) fn vulkan_report(&self) -> &VulkanReport {
         self.renderer.report()
+    }
+
+    /// Returns proof that the built-in pre-world UI finished ordered startup.
+    pub(crate) fn glue_report(&self) -> GlueStartupReport {
+        self._glue.report()
     }
 
     /// Polls one translated main-thread platform event without allocating a batch.

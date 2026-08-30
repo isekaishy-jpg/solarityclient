@@ -34,6 +34,11 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert!(vulkan.swapchain_image_count() >= 2);
     assert_eq!(vulkan.extent(), report.pixel_window_extent());
     assert_eq!(vulkan.presented_texture_extent(), Some((2, 1)));
+    assert_eq!(report.glue().resource_count(), 2);
+    assert_eq!(report.glue().action_count(), 2);
+    assert_eq!(report.glue().object_count(), 2);
+    assert_eq!(report.glue().executed_chunk_count(), 1);
+    assert_eq!(report.glue().executed_load_handler_count(), 1);
 
     // Exercise SDL's real process queue so the test covers both translation
     // and the composition root's ownership of the sole event pump.

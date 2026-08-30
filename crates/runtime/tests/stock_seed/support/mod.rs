@@ -67,6 +67,27 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",
         );
+        builder = builder.add_file_data(
+            b"Bootstrap.xml\nAfter.lua\n".to_vec(),
+            "Interface\\GlueXML\\GlueXML.toc",
+        );
+        builder = builder.add_file_data(
+            br#"<Ui><Frame name="GlueBootstrap"><Frames>
+  <Model name="$parentModel"/>
+</Frames><Scripts><OnLoad>
+  GlueBootstrapModel:SetModel("Solarity\\RuntimeFixture.txt")
+  self.loaded = true
+</OnLoad></Scripts></Frame></Ui>"#
+                .to_vec(),
+            "Interface\\GlueXML\\Bootstrap.xml",
+        );
+        builder = builder.add_file_data(
+            br#"assert(GlueBootstrap.loaded)
+assert(GlueBootstrapModel:GetModel() == "SOLARITY\\RUNTIMEFIXTURE.TXT")
+GLUE_READY = true"#
+                .to_vec(),
+            "Interface\\GlueXML\\After.lua",
+        );
     }
     builder.build(path)?;
     Ok(())

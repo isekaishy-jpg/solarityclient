@@ -26,6 +26,7 @@ pub use frame::{
     UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole,
     UiObjectTree,
 };
+pub use glue::{GlueError, GlueManager, GlueObject, GlueStartupReport};
 pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
     UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionState, UiRegionStatePlan,

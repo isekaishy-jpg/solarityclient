@@ -265,6 +265,13 @@ impl UiScriptEnvironment {
         self
     }
 
+    /// Attaches a main-thread archive stack already owned by a UI manager.
+    #[must_use]
+    pub(crate) fn with_shared_asset_store(mut self, store: Rc<RefCell<AssetStore>>) -> Self {
+        self.assets = Some(store);
+        self
+    }
+
     fn cvars(&self) -> UiCVarRegistry {
         self.cvars.clone()
     }

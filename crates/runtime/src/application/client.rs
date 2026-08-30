@@ -5,6 +5,7 @@ use thiserror::Error;
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
 use solarity_rendering::{VulkanError, VulkanReport};
+use solarity_ui::{GlueError, GlueStartupReport};
 
 use crate::application::client_services::ClientServices;
 use crate::application::run::{self, ApplicationRunReport};
@@ -26,6 +27,9 @@ pub enum ApplicationError {
     /// Vulkan 1.3 instance, device, or presentation initialization failed.
     #[error(transparent)]
     Vulkan(#[from] VulkanError),
+    /// Built-in GlueXML, FrameXML, fonts, layout, or Lua startup failed.
+    #[error(transparent)]
+    Ui(#[from] GlueError),
     /// Tokio could not construct the private network runtime.
     #[error("failed to create network runtime: {message}")]
     NetworkRuntime {
@@ -43,6 +47,7 @@ pub struct StartupReport {
     window_id: u32,
     logical_window_extent: (u32, u32),
     pixel_window_extent: (u32, u32),
+    glue: GlueStartupReport,
 }
 
 impl StartupReport {
@@ -81,6 +86,12 @@ impl StartupReport {
     pub const fn pixel_window_extent(self) -> (u32, u32) {
         self.pixel_window_extent
     }
+
+    /// Returns facts proving the stock built-in login UI executed.
+    #[must_use]
+    pub const fn glue(self) -> GlueStartupReport {
+        self.glue
+    }
 }
 
 /// The sole owner of cross-crate concrete service wiring.
@@ -101,6 +112,7 @@ impl ClientApplication {
         let network_worker_count = configuration.network_workers().get();
         let (services, archive_count) = ClientServices::start(&configuration)?;
         let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
+        let glue = services.glue_report();
 
         Ok(Self {
             services,
@@ -111,6 +123,7 @@ impl ClientApplication {
                 window_id,
                 logical_window_extent,
                 pixel_window_extent,
+                glue,
             },
         })
     }

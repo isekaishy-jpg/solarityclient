@@ -29,6 +29,7 @@ fn main() -> ExitCode {
 
     let report = application.report();
     let vulkan = application.vulkan_report();
+    let glue = report.glue();
     info!(
         archive_count = report.archive_count(),
         cpu_workers = report.cpu_worker_count(),
@@ -44,6 +45,10 @@ fn main() -> ExitCode {
         swapchain_height = vulkan.extent().1,
         texture_width = vulkan.presented_texture_extent().map(|extent| extent.0),
         texture_height = vulkan.presented_texture_extent().map(|extent| extent.1),
+        glue_resources = glue.resource_count(),
+        glue_objects = glue.object_count(),
+        glue_lua_chunks = glue.executed_chunk_count(),
+        glue_load_handlers = glue.executed_load_handler_count(),
         "client foundation started"
     );
     let mut application = application;

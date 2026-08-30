@@ -209,6 +209,17 @@ top-level owners respectively. These counts are emitted by the validator so
 future template or merge changes cannot hide an unexpected fan-out during
 local-client review.
 
+## Persistent Glue ownership
+
+`GlueManager` turns the validation pipeline into the pre-world runtime owner.
+It loads and executes `GlueXML.toc` once, releases the temporary XML-backed
+catalog and construction tree, and retains the lifetime-independent object
+hierarchy, resolved frame and region states, texture plan, font catalog,
+compiled handlers, dynamic templates, and Lua state. Direct-child indices use
+one flat arena rather than one allocation per object. The same mounted
+`AssetStore` is retained behind the main-thread Lua boundary for synchronous
+stock model and font methods; runtime startup does not mount every MPQ twice.
+
 ## Typed layout plan
 
 Region geometry is decoded after object construction into three flat arrays:

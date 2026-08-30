@@ -2,9 +2,10 @@
 
 The runtime crate is the only workspace boundary allowed to construct concrete
 cross-crate services. The executable mounts client archives, creates the SDL
-window, Vulkan renderer, bounded CPU executor, and Tokio network runtime, then
-remains in the main-thread SDL event loop until process or primary-window
-termination. It finally drains owned services in explicit ownership order.
+window and Vulkan renderer, executes and retains the archive-backed GlueXML UI,
+creates the bounded CPU executor and Tokio network runtime, then remains in the
+main-thread SDL event loop until process or primary-window termination. It
+finally drains owned services in explicit ownership order.
 
 ## Stock evidence
 
@@ -56,8 +57,10 @@ blocking asset work on its workers.
 ## Current executable behavior
 
 `solarity-runtime` presents the stock missing-icon BLP as its initialized
-bootstrap frame, reveals the window, and blocks on SDL rather than spinning or
-exiting immediately. Global quit, host termination, and a close request for the
-primary window end the loop; a close event for another window does not. The
-generated integration fixture proves startup, a real queued SDL termination,
-and shutdown with all ten required consolidated archives.
+bootstrap frame, constructs and executes the stock GlueXML manifest using that
+same mounted archive stack, reveals the window, and blocks on SDL rather than
+spinning or exiting immediately. Global quit, host termination, and a close
+request for the primary window end the loop; a close event for another window
+does not. The generated integration fixture proves archive-backed BLP and UI
+startup, a real queued SDL termination, and shutdown with all ten required
+consolidated archives.
