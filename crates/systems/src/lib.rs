@@ -41,4 +41,8 @@ mod vehicle;
 mod world;
 
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
+pub use equipment::{
+    PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
+    resolve_player_equipment,
+};
 pub use object::{ObjectProjectionError, project_object_fields};
