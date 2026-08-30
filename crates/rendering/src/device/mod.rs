@@ -23,6 +23,7 @@ mod vulkan_mesh;
 mod vulkan_renderer;
 mod vulkan_sampler;
 mod vulkan_selection;
+mod vulkan_terrain_draw;
 mod vulkan_terrain_material;
 mod vulkan_terrain_mesh;
 mod vulkan_terrain_pipeline;
@@ -46,6 +47,7 @@ pub use vulkan_m2_texture_set::{
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanRenderer, VulkanReport};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
+pub use vulkan_terrain_draw::TerrainPreparedDraw;
 pub use vulkan_terrain_material::{TerrainMaterialHandle, TerrainMaterialResourceInfo};
 pub use vulkan_terrain_mesh::{TerrainMeshHandle, TerrainMeshResourceInfo};
 pub use vulkan_terrain_pipeline::{TerrainPipelineHandle, TerrainPipelineInfo};

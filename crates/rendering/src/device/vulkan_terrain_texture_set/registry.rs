@@ -85,6 +85,18 @@ impl TerrainTextureSetRegistry {
             .map(|resource| resource.info)
     }
 
+    pub(in crate::device) fn matches(
+        &self,
+        handle: TerrainTextureSetHandle,
+        requested: &TerrainTextureSet,
+    ) -> bool {
+        handle.registry_id == self.registry_id
+            && self
+                .handles
+                .get(requested)
+                .is_some_and(|found| *found == handle)
+    }
+
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         self.resources.clear();

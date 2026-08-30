@@ -57,6 +57,7 @@ impl TerrainTileMeshPlan {
             vertices,
             indices,
             chunks,
+            tile.textures().to_vec(),
             tile.texture_flags().map(<[u32]>::to_vec),
             atlas,
         ))

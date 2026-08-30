@@ -10,6 +10,7 @@ use crate::device::vulkan_mesh::{GpuMeshBuffers, MeshUploadContext, upload_mesh_
 use super::{TerrainMeshHandle, TerrainMeshResourceInfo};
 
 struct GpuTerrainMesh {
+    plan_identity: u64,
     buffers: GpuMeshBuffers,
     info: TerrainMeshResourceInfo,
 }
@@ -68,7 +69,11 @@ impl TerrainMeshRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuTerrainMesh { buffers, info });
+        self.resources.push(GpuTerrainMesh {
+            plan_identity: plan.identity(),
+            buffers,
+            info,
+        });
         self.handles.insert(plan.identity(), handle);
         Ok(handle)
     }
@@ -83,6 +88,18 @@ impl TerrainMeshRegistry {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| resource.info)
+    }
+
+    pub(in crate::device) fn matches_plan(
+        &self,
+        handle: TerrainMeshHandle,
+        plan: &TerrainTileMeshPlan,
+    ) -> bool {
+        handle.registry_id == self.registry_id
+            && self
+                .resources
+                .get(handle.slot as usize)
+                .is_some_and(|resource| resource.plan_identity == plan.identity())
     }
 
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {

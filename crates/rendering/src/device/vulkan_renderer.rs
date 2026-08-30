@@ -17,6 +17,9 @@ use crate::device::vulkan_mesh::{
 };
 use crate::device::vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2SamplerRegistry};
 use crate::device::vulkan_selection::SelectedAdapter;
+use crate::device::vulkan_terrain_draw::{
+    TerrainPreparedDraw, prepare_draw as prepare_terrain_draw,
+};
 use crate::device::vulkan_terrain_material::{
     TerrainMaterialHandle, TerrainMaterialRegistry, TerrainMaterialResourceInfo,
 };
@@ -412,6 +415,37 @@ impl VulkanRenderer {
         handle: TerrainTextureSetHandle,
     ) -> Option<TerrainTextureSetInfo> {
         self.terrain_texture_sets.info(handle)
+    }
+
+    /// Joins one authored MCNK to matching renderer-local terrain resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, plan skew, invalid index
+    /// ranges, non-sRGB diffuse images, or layer/pipeline/descriptor mismatch.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_terrain_draw(
+        &self,
+        mesh: TerrainMeshHandle,
+        pipeline: TerrainPipelineHandle,
+        texture_set: TerrainTextureSetHandle,
+        texture_request: &TerrainTextureSet,
+        plan: &TerrainTileMeshPlan,
+        chunk_index: usize,
+    ) -> Result<TerrainPreparedDraw, VulkanError> {
+        prepare_terrain_draw(
+            &self.terrain_meshes,
+            &self.terrain_materials,
+            &self.terrain_pipelines,
+            &self.terrain_texture_sets,
+            &self.blp_textures,
+            mesh,
+            pipeline,
+            texture_set,
+            texture_request,
+            plan,
+            chunk_index,
+        )
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.

@@ -1,7 +1,7 @@
 //! Public immutable terrain tile upload and draw contracts.
 
 use glam::Vec3;
-use solarity_asset::{TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex};
+use solarity_asset::{AssetPath, TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
@@ -114,6 +114,7 @@ pub struct TerrainTileMeshPlan {
     vertices: Vec<TerrainRenderVertex>,
     indices: Vec<u16>,
     chunks: Vec<TerrainChunkDrawPlan>,
+    textures: Vec<AssetPath>,
     texture_flags: Option<Vec<u32>>,
     material_atlas_rgba: Box<[u8; TERRAIN_MATERIAL_ATLAS_BYTE_COUNT]>,
 }
@@ -124,6 +125,7 @@ impl TerrainTileMeshPlan {
         vertices: Vec<TerrainRenderVertex>,
         indices: Vec<u16>,
         chunks: Vec<TerrainChunkDrawPlan>,
+        textures: Vec<AssetPath>,
         texture_flags: Option<Vec<u32>>,
         material_atlas_rgba: Box<[u8; TERRAIN_MATERIAL_ATLAS_BYTE_COUNT]>,
     ) -> Self {
@@ -133,6 +135,7 @@ impl TerrainTileMeshPlan {
             vertices,
             indices,
             chunks,
+            textures,
             texture_flags,
             material_atlas_rgba,
         }
@@ -164,6 +167,12 @@ impl TerrainTileMeshPlan {
     #[must_use]
     pub fn chunks(&self) -> &[TerrainChunkDrawPlan] {
         &self.chunks
+    }
+
+    /// Returns the normalized MTEX table referenced by every chunk layer.
+    #[must_use]
+    pub fn textures(&self) -> &[AssetPath] {
+        &self.textures
     }
 
     /// Returns optional raw MTXF words parallel to the resident texture table.

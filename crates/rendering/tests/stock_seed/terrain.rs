@@ -115,6 +115,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(tile_mesh.chunks()[1].first_index(), 768);
     assert_eq!(tile_mesh.chunks()[0].atlas_chunk(), [0, 0]);
     assert_eq!(tile_mesh.chunks()[255].atlas_chunk(), [15, 15]);
+    assert_eq!(tile_mesh.textures(), std::slice::from_ref(&grass_path));
     assert_eq!(tile_mesh.texture_flags(), Some([0_u32].as_slice()));
     assert_eq!(
         tile_mesh.vertex_bytes().len(),
@@ -182,6 +183,18 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             .layer_count(),
         TerrainLayerCount::One
     );
+    let terrain_pipeline = renderer.prepare_terrain_pipeline(TerrainLayerCount::One)?;
+    let draw = renderer.prepare_terrain_draw(
+        handle,
+        terrain_pipeline,
+        texture_sets[0],
+        &texture_set,
+        &tile_mesh,
+        0,
+    )?;
+    assert_eq!(draw.first_index(), 0);
+    assert_eq!(draw.index_count(), 768);
+    assert_eq!(draw.push_bytes(), [0; 8]);
     for layer_count in [
         TerrainLayerCount::One,
         TerrainLayerCount::Two,

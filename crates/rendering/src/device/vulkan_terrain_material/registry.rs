@@ -10,6 +10,7 @@ use crate::device::vulkan_texture::{GpuSampledImage, TextureUploadContext, uploa
 use super::{TerrainMaterialHandle, TerrainMaterialResourceInfo};
 
 struct GpuTerrainMaterial {
+    plan_identity: u64,
     image: GpuSampledImage,
     info: TerrainMaterialResourceInfo,
 }
@@ -53,7 +54,11 @@ impl TerrainMaterialRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuTerrainMaterial { image, info });
+        self.resources.push(GpuTerrainMaterial {
+            plan_identity: plan.identity(),
+            image,
+            info,
+        });
         self.handles.insert(plan.identity(), handle);
         Ok(handle)
     }
@@ -80,6 +85,18 @@ impl TerrainMaterialRegistry {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| resource.image.view())
+    }
+
+    pub(in crate::device) fn matches_plan(
+        &self,
+        handle: TerrainMaterialHandle,
+        plan: &TerrainTileMeshPlan,
+    ) -> bool {
+        handle.registry_id == self.registry_id
+            && self
+                .resources
+                .get(handle.slot as usize)
+                .is_some_and(|resource| resource.plan_identity == plan.identity())
     }
 
     pub(in crate::device) fn destroy(

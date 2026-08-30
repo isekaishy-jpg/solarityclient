@@ -120,6 +120,35 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable terrain texture-set handle.
     #[error("terrain texture-set registry exhausted its 32-bit handle space")]
     TerrainTextureSetCapacity,
+    /// A terrain draw references an unknown renderer-local mesh handle.
+    #[error("terrain draw references an unknown mesh handle")]
+    UnknownTerrainMeshHandle,
+    /// A terrain draw references an unknown renderer-local pipeline handle.
+    #[error("terrain draw references an unknown pipeline handle")]
+    UnknownTerrainPipelineHandle,
+    /// A terrain draw references an unknown renderer-local texture-set handle.
+    #[error("terrain draw references an unknown texture-set handle")]
+    UnknownTerrainTextureSetHandle,
+    /// The uploaded terrain buffers do not belong to the submitted CPU plan.
+    #[error("terrain draw mesh does not match its CPU tile plan")]
+    TerrainDrawMeshMismatch,
+    /// The requested MCNK draw does not exist in the CPU plan.
+    #[error("terrain draw index {requested} is unavailable; plan has {available} chunks")]
+    TerrainDrawIndex {
+        /// Requested zero-based MCNK draw.
+        requested: usize,
+        /// Number of chunks present in the tile plan.
+        available: usize,
+    },
+    /// The MCNK index span exceeds its uploaded aggregate geometry.
+    #[error("terrain draw index range exceeds the uploaded mesh")]
+    TerrainDrawIndexRange,
+    /// The compiled layer-count variant disagrees with the authored MCLY list.
+    #[error("terrain draw pipeline does not match its authored layers")]
+    TerrainDrawPipelineMismatch,
+    /// Atlas or ordered diffuse resources disagree with this MCNK.
+    #[error("terrain draw texture set does not match its authored layers")]
+    TerrainDrawTextureSetMismatch,
     /// The stock M2 shader pair could not be translated to the pinned target.
     #[error("M2 shader preparation failed: {message}")]
     M2Shader {
