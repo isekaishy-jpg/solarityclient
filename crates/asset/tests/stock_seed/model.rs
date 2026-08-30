@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
-    M2BlendMode, M2ModelCache, M2TextureKind,
+    M2BlendMode, M2Interpolation, M2ModelCache, M2SequenceStorage, M2TextureKind,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -104,6 +104,87 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
     assert_eq!(model.texture_lookup(), &[0, 1]);
     assert_eq!(model.texture_units(), &[0, 1]);
+    Ok(())
+}
+
+/// Version-264 nested arrays decode per-sequence bone keys rather than outer refs.
+#[test]
+fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
+    let model = animated_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Animated.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Animated00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Animated.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    let animations = model.animations();
+    assert_eq!(animations.sequences().len(), 1);
+    let sequence = animations.sequences()[0];
+    assert_eq!(sequence.animation_id(), 5);
+    assert_eq!(sequence.duration_ms(), 1_000);
+    assert_eq!(sequence.storage(), M2SequenceStorage::Internal);
+    assert_eq!(animations.is_sequence_available(0), Some(true));
+    let bone = &animations.bones()[0];
+    assert_eq!(bone.parent(), None);
+    assert_eq!(bone.pivot(), glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(bone.translation().interpolation(), M2Interpolation::Linear);
+    let channel = &bone.translation().channels()[0];
+    assert_eq!(channel.timestamps_ms(), &[0, 1_000]);
+    assert_eq!(
+        channel.values(),
+        &[glam::Vec3::ZERO, glam::Vec3::new(4.0, 5.0, 6.0)]
+    );
+    Ok(())
+}
+
+/// Stock keeps the model usable while disabling a missing external sequence.
+#[test]
+fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_m2_bytes()?;
+    let sequence_offset = m2_array_offset(&model, 0x1c)?;
+    model[sequence_offset + 12..sequence_offset + 16].copy_from_slice(&0_u32.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\External.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\External00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\External.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(
+        model.animations().sequences()[0].storage(),
+        M2SequenceStorage::External
+    );
+    assert_eq!(model.animations().is_sequence_available(0), Some(false));
+    assert!(
+        model.animations().bones()[0].translation().channels()[0]
+            .timestamps_ms()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -410,6 +491,65 @@ fn m2_bytes_inner(
             bytes.extend_from_slice(&combiner.to_le_bytes());
         }
     }
+    Ok(bytes)
+}
+
+/// Adds one internal sequence and one linear bone track to the base fixture.
+fn animated_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = m2_bytes("Animated", 1)?;
+
+    let sequence_offset = u32::try_from(bytes.len())?;
+    let mut sequence = [0_u8; 64];
+    sequence[0..2].copy_from_slice(&5_u16.to_le_bytes());
+    sequence[4..8].copy_from_slice(&1_000_u32.to_le_bytes());
+    sequence[8..12].copy_from_slice(&2.0_f32.to_le_bytes());
+    sequence[12..16].copy_from_slice(&0x20_u32.to_le_bytes());
+    sequence[16..18].copy_from_slice(&1_i16.to_le_bytes());
+    sequence[28..32].copy_from_slice(&100_u32.to_le_bytes());
+    sequence[60..62].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes.extend_from_slice(&sequence);
+
+    let bone_offset = u32::try_from(bytes.len())?;
+    let mut bone = [0_u8; 88];
+    bone[0..4].copy_from_slice(&(-1_i32).to_le_bytes());
+    bone[8..10].copy_from_slice(&(-1_i16).to_le_bytes());
+    bone[16..18].copy_from_slice(&1_u16.to_le_bytes());
+    bone[18..20].copy_from_slice(&u16::MAX.to_le_bytes());
+    bone[38..40].copy_from_slice(&u16::MAX.to_le_bytes());
+    bone[58..60].copy_from_slice(&u16::MAX.to_le_bytes());
+    bone[76..80].copy_from_slice(&1.0_f32.to_le_bytes());
+    bone[80..84].copy_from_slice(&2.0_f32.to_le_bytes());
+    bone[84..88].copy_from_slice(&3.0_f32.to_le_bytes());
+    bytes.extend_from_slice(&bone);
+
+    let timestamp_refs = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    let timestamp_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let value_refs = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    let value_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = u32::try_from(bytes.len())?;
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_000_u32.to_le_bytes());
+    let value_data = u32::try_from(bytes.len())?;
+    for value in [0.0_f32, 0.0, 0.0, 4.0, 5.0, 6.0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    bytes[timestamp_data_word..timestamp_data_word + 4]
+        .copy_from_slice(&timestamp_data.to_le_bytes());
+    bytes[value_data_word..value_data_word + 4].copy_from_slice(&value_data.to_le_bytes());
+    let bone = usize::try_from(bone_offset)?;
+    bytes[bone + 20..bone + 24].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[bone + 24..bone + 28].copy_from_slice(&timestamp_refs.to_le_bytes());
+    bytes[bone + 28..bone + 32].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[bone + 32..bone + 36].copy_from_slice(&value_refs.to_le_bytes());
+    bytes[0x1c..0x20].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[0x20..0x24].copy_from_slice(&sequence_offset.to_le_bytes());
+    bytes[0x2c..0x30].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
     Ok(bytes)
 }
 

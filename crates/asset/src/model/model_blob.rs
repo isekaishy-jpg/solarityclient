@@ -328,8 +328,6 @@ pub(super) struct ModelBlob {
     pub(super) transparency_lookup: Vec<u16>,
     pub(super) texture_animation_lookup: Vec<u16>,
     pub(super) texture_combiner_combos: Vec<u16>,
-    pub(super) bone_count: usize,
-    pub(super) animation_count: usize,
 }
 
 impl ModelBlob {
@@ -386,8 +384,6 @@ impl ModelBlob {
             transparency_lookup: model.raw_data.transparency_lookup_table,
             texture_animation_lookup: model.raw_data.texture_animation_lookup,
             texture_combiner_combos,
-            bone_count: model.bones.len(),
-            animation_count: model.animations.len(),
         })
     }
 }

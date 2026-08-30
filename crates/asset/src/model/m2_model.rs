@@ -1,5 +1,6 @@
 //! Archive-backed build-12340 M2 model ownership.
 
+use crate::model::M2AnimationSet;
 use crate::model::m2_shared::{
     canonical_model_path, model_decode, parse_model, parse_skin, skin_path,
 };
@@ -15,6 +16,7 @@ pub struct DecodedM2Model {
     path: AssetPath,
     source: ArchiveDescriptor,
     blob: ModelBlob,
+    animations: M2AnimationSet,
     skins: Vec<M2SkinProfile>,
 }
 
@@ -33,7 +35,8 @@ impl DecodedM2Model {
         let path = canonical_model_path(path)?;
         let read = store.read(&path)?;
         let source = read.source().clone();
-        let model = parse_model(&path, read.bytes())?;
+        let model_bytes = read.into_bytes();
+        let model = parse_model(&path, &model_bytes)?;
         let profile_count = model.header.num_skin_profiles.ok_or_else(|| {
             model_decode(
                 &path,
@@ -48,7 +51,8 @@ impl DecodedM2Model {
         }
 
         let model_vertex_count = model.vertices.len();
-        let blob = ModelBlob::from_model(&path, read.bytes(), model)?;
+        let animations = M2AnimationSet::load(store, &path, &model_bytes)?;
+        let blob = ModelBlob::from_model(&path, &model_bytes, model)?;
         let mut skins = Vec::with_capacity(profile_count as usize);
         for profile in 0..profile_count {
             let profile_path = skin_path(&path, profile)?;
@@ -67,6 +71,7 @@ impl DecodedM2Model {
             path,
             source,
             blob,
+            animations,
             skins,
         })
     }
@@ -164,13 +169,19 @@ impl DecodedM2Model {
     /// Returns the number of decoded model bones.
     #[must_use]
     pub const fn bone_count(&self) -> usize {
-        self.blob.bone_count
+        self.animations.bone_count()
     }
 
     /// Returns the number of decoded animation sequences.
     #[must_use]
-    pub const fn animation_count(&self) -> usize {
-        self.blob.animation_count
+    pub fn animation_count(&self) -> usize {
+        self.animations.sequences().len()
+    }
+
+    /// Returns decoded sequence metadata and nested bone animation channels.
+    #[must_use]
+    pub const fn animations(&self) -> &M2AnimationSet {
+        &self.animations
     }
 
     /// Returns the number of model texture definitions.

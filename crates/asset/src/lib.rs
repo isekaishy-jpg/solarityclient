@@ -30,8 +30,9 @@ pub use database::{
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{
-    DecodedM2Model, M2Batch, M2BlendMode, M2Material, M2SkinProfile, M2Submesh, M2Texture,
-    M2TextureKind, M2Vertex,
+    DecodedM2Model, M2AnimationSet, M2Batch, M2BlendMode, M2Bone, M2Interpolation, M2Material,
+    M2Sequence, M2SequenceStorage, M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2Track,
+    M2TrackChannel, M2Vertex,
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
 pub use texture::{BlpTextureSource, DecodedBlpTexture};
