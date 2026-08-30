@@ -11,8 +11,8 @@ use solarity_asset::{
 };
 use solarity_rendering::{
     BlpColorSpace, TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
-    TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrustum,
-    WorldScreenWindow,
+    TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera,
+    WorldFrustum, WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -95,6 +95,17 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         100.0,
     )
     .frame(1.0)?;
+    let scene = TerrainSceneUniform::new(
+        visible.view_projection(),
+        Vec3::new(0.25, 0.3, 0.35),
+        Vec3::new(0.75, 0.7, 0.65),
+        Vec3::new(0.0, 0.0, 1.0),
+    );
+    let scene_bytes = scene.to_bytes();
+    assert_eq!(scene_bytes.len(), TerrainSceneUniform::BYTE_SIZE);
+    assert_eq!(f32::from_le_bytes(scene_bytes[64..68].try_into()?), 0.25);
+    assert_eq!(f32::from_le_bytes(scene_bytes[68..72].try_into()?), 0.3);
+    assert_eq!(f32::from_le_bytes(scene_bytes[72..76].try_into()?), 0.35);
     assert!(mesh.is_visible(WorldFrustum::new(visible, WorldScreenWindow::FULL)?)?);
     let hidden = WorldCamera::stock(
         Vec3::new(10.0, -16.0, 2.0),

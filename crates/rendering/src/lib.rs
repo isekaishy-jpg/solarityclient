@@ -54,7 +54,8 @@ pub use shader::{
 };
 pub use terrain::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
-    TerrainChunkMeshPlan, TerrainRenderVertex, TerrainTileMeshPlan, TerrainTileMeshPlanError,
+    TerrainChunkMeshPlan, TerrainRenderVertex, TerrainSceneUniform, TerrainTileMeshPlan,
+    TerrainTileMeshPlanError,
 };
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource,
