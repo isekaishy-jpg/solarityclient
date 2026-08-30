@@ -28,8 +28,8 @@ pub use region::{
     UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
 };
 pub use widget::{
-    UiBlendMode, UiTexCoords, UiTextureError, UiTextureFile, UiTextureLayer, UiTextureNode,
-    UiTexturePlan,
+    UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
+    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

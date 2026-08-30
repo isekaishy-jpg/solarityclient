@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBlendMode, UiBundle, UiManifestKind, UiObjectCatalog, UiObjectRole,
-    UiObjectTree, UiTextureError, UiTextureFile, UiTexturePlan,
+    FontCatalog, UiBlendMode, UiBundle, UiGradientOrientation, UiManifestKind, UiObjectCatalog,
+    UiObjectRole, UiObjectTree, UiTextureError, UiTextureFile, UiTexturePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -23,14 +23,20 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
             bytes: br#"<Ui>
   <Frame name="Root">
     <Layers><Layer>
-      <Texture name="$parentLogo" file="Interface\Glues\Logo" alphaMode="ADD">
+      <Texture name="$parentLogo" file="Interface\Glues\Logo" alphaMode="ADD"
+               horizTile="true" vertTile="false" nonBlocking="true">
         <TexCoords left="0.1" right="0.9"/>
+        <Color r="1" g="0.8" b="0.6" a="0.5"/>
+        <Gradient orientation="VERTICAL">
+          <MinColor r="0" g="0" b="0" a="0"/>
+          <MaxColor r="1" g="1" b="1"/>
+        </Gradient>
       </Texture>
       <Texture name="$parentDynamic" file=""/>
     </Layer></Layers>
     <Frames>
       <Button name="$parentButton">
-        <PushedTexture file="Interface\Buttons\Push.tga"/>
+        <PushedTexture file="Interface\Buttons\Push.tga" alphaMode="BLEND"/>
       </Button>
     </Frames>
   </Frame>
@@ -66,6 +72,16 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
     assert_eq!(coords.right(), Some(0.9));
     assert_eq!(coords.top(), None);
     assert_eq!(coords.bottom(), None);
+    let color = logo.color().ok_or("missing texture color")?;
+    assert_eq!((color.red(), color.green(), color.blue()), (1.0, 0.8, 0.6));
+    assert_eq!(color.alpha(), Some(0.5));
+    let gradient = logo.gradient().ok_or("missing texture gradient")?;
+    assert_eq!(gradient.orientation(), UiGradientOrientation::Vertical);
+    assert_eq!(gradient.minimum().alpha(), Some(0.0));
+    assert_eq!(gradient.maximum().alpha(), None);
+    assert_eq!(logo.horizontal_tiling(), Some(true));
+    assert_eq!(logo.vertical_tiling(), Some(false));
+    assert_eq!(logo.non_blocking(), Some(true));
 
     let dynamic_index = tree
         .nodes()
@@ -91,6 +107,10 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
         Some(&UiTextureFile::Asset(AssetPath::new(
             "Interface\\Buttons\\Push.blp"
         )?))
+    );
+    assert_eq!(
+        plan.layers_for(pushed_node)[0].blend_mode(),
+        Some(UiBlendMode::Blend)
     );
     Ok(())
 }

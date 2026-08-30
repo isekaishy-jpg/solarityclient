@@ -3,6 +3,6 @@
 mod types;
 
 pub use types::{
-    UiBlendMode, UiTexCoords, UiTextureError, UiTextureFile, UiTextureLayer, UiTextureNode,
-    UiTexturePlan,
+    UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
+    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan,
 };

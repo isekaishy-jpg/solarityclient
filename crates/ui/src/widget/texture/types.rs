@@ -30,8 +30,80 @@ pub enum UiTextureFile {
 /// Explicit stock texture blend behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiBlendMode {
+    /// Ordinary source-alpha blending selected by `alphaMode="BLEND"`.
+    Blend,
     /// Additive blending selected by `alphaMode="ADD"`.
     Add,
+}
+
+/// Explicit texture color components.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiTextureColor {
+    red: f32,
+    green: f32,
+    blue: f32,
+    alpha: Option<f32>,
+}
+
+impl UiTextureColor {
+    /// Returns the red component.
+    #[must_use]
+    pub const fn red(self) -> f32 {
+        self.red
+    }
+
+    /// Returns the green component.
+    #[must_use]
+    pub const fn green(self) -> f32 {
+        self.green
+    }
+
+    /// Returns the blue component.
+    #[must_use]
+    pub const fn blue(self) -> f32 {
+        self.blue
+    }
+
+    /// Returns the explicitly supplied alpha component.
+    #[must_use]
+    pub const fn alpha(self) -> Option<f32> {
+        self.alpha
+    }
+}
+
+/// Direction used to interpolate a stock XML texture gradient.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiGradientOrientation {
+    /// Interpolate from the lower edge to the upper edge.
+    Vertical,
+}
+
+/// Explicit color endpoints for one texture gradient.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiTextureGradient {
+    orientation: UiGradientOrientation,
+    minimum: UiTextureColor,
+    maximum: UiTextureColor,
+}
+
+impl UiTextureGradient {
+    /// Returns the interpolation direction.
+    #[must_use]
+    pub const fn orientation(self) -> UiGradientOrientation {
+        self.orientation
+    }
+
+    /// Returns the minimum endpoint color.
+    #[must_use]
+    pub const fn minimum(self) -> UiTextureColor {
+        self.minimum
+    }
+
+    /// Returns the maximum endpoint color.
+    #[must_use]
+    pub const fn maximum(self) -> UiTextureColor {
+        self.maximum
+    }
 }
 
 /// Texture coordinates explicitly supplied by one XML layer.
@@ -75,6 +147,11 @@ pub struct UiTextureLayer {
     file: Option<UiTextureFile>,
     blend_mode: Option<UiBlendMode>,
     tex_coords: Option<UiTexCoords>,
+    color: Option<UiTextureColor>,
+    gradient: Option<UiTextureGradient>,
+    horizontal_tiling: Option<bool>,
+    vertical_tiling: Option<bool>,
+    non_blocking: Option<bool>,
 }
 
 impl UiTextureLayer {
@@ -94,6 +171,36 @@ impl UiTextureLayer {
     #[must_use]
     pub const fn tex_coords(&self) -> Option<UiTexCoords> {
         self.tex_coords
+    }
+
+    /// Returns the explicit uniform vertex color.
+    #[must_use]
+    pub const fn color(&self) -> Option<UiTextureColor> {
+        self.color
+    }
+
+    /// Returns the explicit vertex-color gradient.
+    #[must_use]
+    pub const fn gradient(&self) -> Option<UiTextureGradient> {
+        self.gradient
+    }
+
+    /// Returns the explicit horizontal-tiling flag.
+    #[must_use]
+    pub const fn horizontal_tiling(&self) -> Option<bool> {
+        self.horizontal_tiling
+    }
+
+    /// Returns the explicit vertical-tiling flag.
+    #[must_use]
+    pub const fn vertical_tiling(&self) -> Option<bool> {
+        self.vertical_tiling
+    }
+
+    /// Returns the explicit non-blocking load flag.
+    #[must_use]
+    pub const fn non_blocking(&self) -> Option<bool> {
+        self.non_blocking
     }
 }
 
@@ -178,6 +285,7 @@ fn parse_layer(
         .transpose()?;
     let blend_mode = attribute(element, "alphaMode")
         .map(|value| match value {
+            "BLEND" => Ok(UiBlendMode::Blend),
             "ADD" => Ok(UiBlendMode::Add),
             _ => Err(texture_error(
                 path,
@@ -188,12 +296,30 @@ fn parse_layer(
     let tex_coords = child_named(document, element, "TexCoords")
         .map(|coords| parse_tex_coords(path, coords))
         .transpose()?;
+    let color = child_named(document, element, "Color")
+        .map(|color| parse_color(path, color))
+        .transpose()?;
+    let gradient = child_named(document, element, "Gradient")
+        .map(|gradient| parse_gradient(path, document, gradient))
+        .transpose()?;
     let layer = UiTextureLayer {
         file,
         blend_mode,
         tex_coords,
+        color,
+        gradient,
+        horizontal_tiling: parse_optional_bool(path, element, "horizTile")?,
+        vertical_tiling: parse_optional_bool(path, element, "vertTile")?,
+        non_blocking: parse_optional_bool(path, element, "nonBlocking")?,
     };
-    let present = layer.file.is_some() || layer.blend_mode.is_some() || layer.tex_coords.is_some();
+    let present = layer.file.is_some()
+        || layer.blend_mode.is_some()
+        || layer.tex_coords.is_some()
+        || layer.color.is_some()
+        || layer.gradient.is_some()
+        || layer.horizontal_tiling.is_some()
+        || layer.vertical_tiling.is_some()
+        || layer.non_blocking.is_some();
     Ok(present.then_some(layer))
 }
 
@@ -232,6 +358,64 @@ fn parse_tex_coords(path: &AssetPath, element: &XmlElement) -> Result<UiTexCoord
     })
 }
 
+fn parse_color(path: &AssetPath, element: &XmlElement) -> Result<UiTextureColor, UiTextureError> {
+    Ok(UiTextureColor {
+        red: parse_required_number(path, element, "r")?,
+        green: parse_required_number(path, element, "g")?,
+        blue: parse_required_number(path, element, "b")?,
+        alpha: parse_optional_number(path, element, "a")?,
+    })
+}
+
+fn parse_gradient(
+    path: &AssetPath,
+    document: &crate::XmlDocument,
+    element: &XmlElement,
+) -> Result<UiTextureGradient, UiTextureError> {
+    let orientation = match attribute(element, "orientation") {
+        Some("VERTICAL") => UiGradientOrientation::Vertical,
+        Some(value) => {
+            return Err(texture_error(
+                path,
+                format!("unsupported gradient orientation {value}"),
+            ));
+        }
+        None => return Err(texture_error(path, "Gradient has no orientation")),
+    };
+    let minimum = child_named(document, element, "MinColor")
+        .ok_or_else(|| texture_error(path, "Gradient has no MinColor"))
+        .and_then(|color| parse_color(path, color))?;
+    let maximum = child_named(document, element, "MaxColor")
+        .ok_or_else(|| texture_error(path, "Gradient has no MaxColor"))
+        .and_then(|color| parse_color(path, color))?;
+    Ok(UiTextureGradient {
+        orientation,
+        minimum,
+        maximum,
+    })
+}
+
+fn parse_optional_bool(
+    path: &AssetPath,
+    element: &XmlElement,
+    name: &str,
+) -> Result<Option<bool>, UiTextureError> {
+    attribute(element, name)
+        .map(|value| {
+            if value.eq_ignore_ascii_case("true") {
+                Ok(true)
+            } else if value.eq_ignore_ascii_case("false") {
+                Ok(false)
+            } else {
+                Err(texture_error(
+                    path,
+                    format!("invalid {name} boolean {value}"),
+                ))
+            }
+        })
+        .transpose()
+}
+
 fn parse_optional_number(
     path: &AssetPath,
     element: &XmlElement,
@@ -251,6 +435,15 @@ fn parse_optional_number(
             Ok(number)
         })
         .transpose()
+}
+
+fn parse_required_number(
+    path: &AssetPath,
+    element: &XmlElement,
+    name: &str,
+) -> Result<f32, UiTextureError> {
+    parse_optional_number(path, element, name)?
+        .ok_or_else(|| texture_error(path, format!("missing numeric attribute {name}")))
 }
 
 fn child_named<'a>(
