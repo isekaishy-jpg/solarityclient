@@ -5,12 +5,13 @@ use mlua::{Function, Lua, Table, Value};
 use crate::UiManifestKind;
 
 use super::UiScriptEnvironment;
+use super::cvars::UiCVarSetError;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 
 pub(super) fn register_base_globals(
     lua: &Lua,
-    environment: UiScriptEnvironment,
+    environment: &UiScriptEnvironment,
     manifest_kind: UiManifestKind,
 ) -> mlua::Result<()> {
     let globals = lua.globals();
@@ -24,11 +25,7 @@ pub(super) fn register_base_globals(
         lua.create_function(move |_, ()| Ok(screen_height))?,
     )?;
     if manifest_kind == UiManifestKind::Glue {
-        let character_count = environment.initial_character_count();
-        globals.raw_set(
-            "GetNumCharacters",
-            lua.create_function(move |_, ()| Ok(character_count))?,
-        )?;
+        register_glue_globals(lua, &globals, environment)?;
     }
     globals.raw_set(
         "seterrorhandler",
@@ -52,6 +49,120 @@ pub(super) fn register_base_globals(
     Ok(())
 }
 
+fn register_glue_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let character_count = environment.initial_character_count();
+    globals.raw_set(
+        "GetNumCharacters",
+        lua.create_function(move |_, ()| Ok(character_count))?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetSavedAccountName",
+        lua.create_function(move |_, ()| {
+            cvars
+                .get("accountName")
+                .ok_or_else(|| mlua::Error::runtime("stock accountName CVar is not registered"))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetSavedAccountName",
+        lua.create_function(move |lua, value: Value| {
+            let Some(value) = lua.coerce_string(value)? else {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetSavedAccountName(\"accountName\")",
+                ));
+            };
+            set_cvar(&cvars, "accountName", value.to_string_lossy())
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetSavedAccountList",
+        lua.create_function(move |_, ()| {
+            cvars
+                .get("accountList")
+                .ok_or_else(|| mlua::Error::runtime("stock accountList CVar is not registered"))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetCVar",
+        lua.create_function(move |lua, value: Value| {
+            let name = cvar_name(lua, value, "GetCVar")?;
+            cvars
+                .get(&name)
+                .ok_or_else(|| mlua::Error::runtime(format!("Couldn't find CVar named '{name}'")))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetCVar",
+        lua.create_function(move |lua, (name, value): (Value, Value)| {
+            let name = cvar_name(lua, name, "SetCVar")?;
+            let value = lua
+                .coerce_string(value)?
+                .map_or_else(|| "0".to_owned(), |value| value.to_string_lossy());
+            set_cvar(&cvars, &name, value)
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetCVarDefault",
+        lua.create_function(move |lua, value: Value| {
+            let name = cvar_name(lua, value, "GetCVarDefault")?;
+            cvars
+                .default_value(&name)
+                .ok_or_else(|| mlua::Error::runtime(format!("Couldn't find CVar named '{name}'")))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetBuildInfo",
+        lua.create_function(|lua, ()| {
+            let globals = lua.globals();
+            Ok((
+                globals.raw_get::<String>("VERSION")?,
+                globals.raw_get::<String>("RELEASE_BUILD")?,
+                "3.3.5",
+                "12340",
+                "Jun 24 2010",
+            ))
+        })?,
+    )?;
+    let streaming_trial = environment.streaming_trial();
+    globals.raw_set(
+        "IsStreamingTrial",
+        lua.create_function(move |_, ()| Ok(streaming_trial.then_some(Value::Number(1.0))))?,
+    )?;
+    globals.raw_set(
+        "GetClientExpansionLevel",
+        lua.create_function(|_, ()| Ok(3_u32))?,
+    )
+}
+
+fn cvar_name(lua: &Lua, value: Value, function: &str) -> mlua::Result<String> {
+    let Some(name) = lua.coerce_string(value)? else {
+        return Err(mlua::Error::runtime(format!("Usage: {function}(\"cvar\")")));
+    };
+    Ok(name.to_string_lossy())
+}
+
+fn set_cvar(cvars: &super::cvars::UiCVarRegistry, name: &str, value: String) -> mlua::Result<()> {
+    match cvars.set(name, value) {
+        Ok(()) => Ok(()),
+        Err(UiCVarSetError::Missing) => Err(mlua::Error::runtime(format!(
+            "Couldn't find CVar named '{name}'"
+        ))),
+        Err(UiCVarSetError::ReadOnly) => {
+            Err(mlua::Error::runtime(format!("\"{name}\" is read-only")))
+        }
+    }
+}
+
 fn register_table_wipe(lua: &Lua) -> mlua::Result<()> {
     let table: Table = lua.globals().raw_get("table")?;
     table.raw_set(
@@ -66,7 +177,8 @@ fn register_table_wipe(lua: &Lua) -> mlua::Result<()> {
             }
             Ok(table)
         })?,
-    )
+    )?;
+    Ok(())
 }
 
 const COMPATIBILITY_SOURCE: &str = r#"

@@ -1,12 +1,14 @@
 //! Ordered Lua source execution and stock object identity methods.
 
+mod cvars;
 mod globals;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, RegistryKey, Table, Value, Variadic};
+use solarity_asset::{AssetPath, AssetStore};
 
 use crate::{
     FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBundle,
@@ -15,6 +17,7 @@ use crate::{
     UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTexturePlan, VerticalJustification,
 };
 
+use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
 use super::script_events::glue_event;
 use super::templates::TEMPLATE_REGISTRY;
@@ -55,6 +58,11 @@ static FONT_OBJECT_TOKEN: u8 = 29;
 static TEX_COORD_TOKEN: u8 = 30;
 static JUSTIFY_H_TOKEN: u8 = 31;
 static JUSTIFY_V_TOKEN: u8 = 32;
+static CHECKED_TOKEN: u8 = 33;
+static MODEL_CAMERA_TOKEN: u8 = 34;
+static MODEL_SEQUENCE_TOKEN: u8 = 35;
+static MODEL_FILE_TOKEN: u8 = 36;
+static CLICK_ACTION_TOKEN: u8 = 37;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -160,11 +168,14 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
 }
 
 /// Immutable process facts required by built-in Lua globals.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct UiScriptEnvironment {
     logical_extent: (u32, u32),
     ui_extent: (f64, f64),
     initial_character_count: usize,
+    streaming_trial: bool,
+    cvars: UiCVarRegistry,
+    assets: Option<Rc<RefCell<AssetStore>>>,
 }
 
 impl UiScriptEnvironment {
@@ -173,7 +184,11 @@ impl UiScriptEnvironment {
     /// # Errors
     ///
     /// Returns [`UiScriptError::Plan`] when either logical dimension is zero.
-    pub fn new(logical_width: u32, logical_height: u32) -> Result<Self, UiScriptError> {
+    pub fn new(
+        logical_width: u32,
+        logical_height: u32,
+        streaming_trial: bool,
+    ) -> Result<Self, UiScriptError> {
         if logical_width == 0 || logical_height == 0 {
             return Err(UiScriptError::Plan {
                 message: "UI script logical window extent must be nonzero".to_owned(),
@@ -185,25 +200,49 @@ impl UiScriptEnvironment {
             logical_extent: (logical_width, logical_height),
             ui_extent: (ui_width, ui_height),
             initial_character_count: 0,
+            streaming_trial,
+            cvars: UiCVarRegistry::stock_initial(),
+            assets: None,
         })
     }
 
     /// Returns the SDL logical window extent used to derive UI coordinates.
     #[must_use]
-    pub const fn logical_extent(self) -> (u32, u32) {
+    pub const fn logical_extent(&self) -> (u32, u32) {
         self.logical_extent
     }
 
     /// Returns the stock aspect-compensated UI width and fixed 768-unit height.
     #[must_use]
-    pub const fn ui_extent(self) -> (f64, f64) {
+    pub const fn ui_extent(&self) -> (f64, f64) {
         self.ui_extent
     }
 
     /// Returns the character-list count present when GlueXML starts.
     #[must_use]
-    pub const fn initial_character_count(self) -> usize {
+    pub const fn initial_character_count(&self) -> usize {
         self.initial_character_count
+    }
+
+    /// Returns whether assets come from the stock streaming-trial mode.
+    #[must_use]
+    pub const fn streaming_trial(&self) -> bool {
+        self.streaming_trial
+    }
+
+    /// Attaches the mounted stock archive stack used by synchronous UI loads.
+    #[must_use]
+    pub fn with_asset_store(mut self, store: AssetStore) -> Self {
+        self.assets = Some(Rc::new(RefCell::new(store)));
+        self
+    }
+
+    fn cvars(&self) -> UiCVarRegistry {
+        self.cvars.clone()
+    }
+
+    fn assets(&self) -> Option<Rc<RefCell<AssetStore>>> {
+        self.assets.clone()
     }
 }
 
@@ -223,7 +262,7 @@ impl UiScriptRuntime {
         plan.templates
             .install(lua)
             .map_err(|error| execution_error("runtime templates", error))?;
-        register_base_globals(lua, environment, bundle.manifest().kind())
+        register_base_globals(lua, &environment, bundle.manifest().kind())
             .map_err(|error| execution_error("base globals", error))?;
         let objects = lua
             .create_table()
@@ -236,8 +275,13 @@ impl UiScriptRuntime {
         let object_metatables = OBJECT_KINDS
             .into_iter()
             .map(|kind| {
-                let metatable = create_object_metatable(lua, bundle.manifest().kind(), kind)
-                    .map_err(|error| execution_error("object metatable", error))?;
+                let metatable = create_object_metatable(
+                    lua,
+                    bundle.manifest().kind(),
+                    kind,
+                    environment.assets(),
+                )
+                .map_err(|error| execution_error("object metatable", error))?;
                 metatables
                     .raw_set(object_type_name(kind), metatable.clone())
                     .map_err(|error| execution_error("object metatable", error))?;
@@ -597,6 +641,12 @@ impl UiScriptRuntime {
         ) {
             table
                 .raw_set(highlight_locked_key(), false)
+                .and_then(|()| table.raw_set(click_action_key(), 0_u64))
+                .map_err(|error| execution_error("object registration", error))?;
+        }
+        if object.kind() == UiObjectKind::CheckButton {
+            table
+                .raw_set(checked_key(), false)
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::ScrollFrame {
@@ -613,6 +663,12 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(slider_max_key(), 0.0))
                 .and_then(|()| table.raw_set(slider_value_key(), 0.0))
                 .and_then(|()| table.raw_set(slider_step_key(), 0.0))
+                .map_err(|error| execution_error("object registration", error))?;
+        }
+        if matches!(object.kind(), UiObjectKind::Model | UiObjectKind::ModelFfx) {
+            table
+                .raw_set(model_camera_key(), 0)
+                .and_then(|()| table.raw_set(model_sequence_key(), 0_u32))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::FontString {
@@ -911,6 +967,10 @@ fn create_dynamic_object(
     }
     if matches!(kind, "Button" | "CheckButton") {
         object.raw_set(highlight_locked_key(), false)?;
+        object.raw_set(click_action_key(), 0_u64)?;
+    }
+    if kind == "CheckButton" {
+        object.raw_set(checked_key(), false)?;
     }
     if kind == "ScrollFrame" {
         object.raw_set(horizontal_scroll_key(), 0.0)?;
@@ -923,6 +983,10 @@ fn create_dynamic_object(
         object.raw_set(slider_max_key(), 0.0)?;
         object.raw_set(slider_value_key(), 0.0)?;
         object.raw_set(slider_step_key(), 0.0)?;
+    }
+    if matches!(kind, "Model" | "ModelFFX") {
+        object.raw_set(model_camera_key(), 0)?;
+        object.raw_set(model_sequence_key(), 0_u32)?;
     }
     if kind == "FontString" {
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
@@ -1032,6 +1096,7 @@ fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
+    assets: Option<Rc<RefCell<AssetStore>>>,
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
     methods.raw_set(
@@ -1071,11 +1136,17 @@ fn create_object_metatable(
     if matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton) {
         register_button_font_methods(lua, &methods)?;
     }
+    if kind == UiObjectKind::CheckButton {
+        register_check_button_methods(lua, &methods)?;
+    }
     if kind == UiObjectKind::FontString {
         register_font_string_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
+    }
+    if matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx) {
+        register_model_methods(lua, &methods, assets)?;
     }
     if kind == UiObjectKind::ScrollFrame {
         register_scroll_frame_methods(lua, &methods)?;
@@ -1236,6 +1307,61 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     )
 }
 
+fn register_model_methods(
+    lua: &Lua,
+    methods: &Table,
+    assets: Option<Rc<RefCell<AssetStore>>>,
+) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetModel",
+        lua.create_function(move |lua, (model, value): (Table, Value)| {
+            let Some(value) = lua.coerce_string(value)? else {
+                return Err(mlua::Error::runtime("Usage: Model:SetModel(\"file\")"));
+            };
+            let display = value.to_string_lossy();
+            let path = AssetPath::new(&display)
+                .map_err(|error| mlua::Error::runtime(format!("Invalid model file: {error}")))?;
+            let Some(assets) = &assets else {
+                return Err(mlua::Error::runtime(
+                    "Model:SetModel requires a mounted asset store",
+                ));
+            };
+            assets
+                .borrow_mut()
+                .read(&path)
+                .map_err(|_| mlua::Error::runtime(format!("Invalid model file: {display}")))?;
+            model.raw_set(model_file_key(), path.as_str())
+        })?,
+    )?;
+    methods.raw_set(
+        "GetModel",
+        lua.create_function(|_, model: Table| model.raw_get::<Option<String>>(model_file_key()))?,
+    )?;
+    methods.raw_set(
+        "SetCamera",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            let value = lua
+                .coerce_number(value)?
+                .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetCamera(index)"))?;
+            model.raw_set(model_camera_key(), value as i32)
+        })?,
+    )?;
+    methods.raw_set(
+        "SetSequence",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            let value = lua
+                .coerce_number(value)?
+                .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetSequence(sequence)"))?;
+            if !(0.0..506.0).contains(&value) {
+                return Err(mlua::Error::runtime(
+                    "SetSequence(sequence) exceeds valid range of 0 - 506",
+                ));
+            }
+            model.raw_set(model_sequence_key(), value as u32)
+        })?,
+    )
+}
+
 fn register_button_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     register_button_font_pair(
         lua,
@@ -1287,7 +1413,82 @@ fn register_button_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
     methods.raw_set(
         "UnlockHighlight",
         lua.create_function(|_, button: Table| button.raw_set(highlight_locked_key(), false))?,
+    )?;
+    methods.raw_set(
+        "RegisterForClicks",
+        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
+            let mut action = 0_u64;
+            for value in arguments {
+                let Some(value) = lua.coerce_string(value)? else {
+                    break;
+                };
+                action |= click_action(value.to_string_lossy().as_str());
+            }
+            button.raw_set(click_action_key(), action)
+        })?,
     )
+}
+
+/// Reproduces build 12340's recognized `StringToClickAction` names.
+fn click_action(value: &str) -> u64 {
+    if value.eq_ignore_ascii_case("LeftButtonDown") {
+        1
+    } else if value.eq_ignore_ascii_case("LeftButtonUp") {
+        0x8000_0000
+    } else if value.eq_ignore_ascii_case("MiddleButtonDown") {
+        2
+    } else if value.eq_ignore_ascii_case("RightButtonDown") {
+        4
+    } else {
+        0
+    }
+}
+
+fn register_check_button_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetChecked",
+        lua.create_function(|_, (button, arguments): (Table, Variadic<Value>)| {
+            let checked = arguments.first().is_none_or(|value| lua_bool(value, true));
+            button.raw_set(checked_key(), checked)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetChecked",
+        lua.create_function(|_, button: Table| {
+            Ok(button
+                .raw_get::<bool>(checked_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
+    )
+}
+
+fn lua_bool(value: &Value, default: bool) -> bool {
+    match value {
+        Value::Nil => false,
+        Value::Boolean(value) => *value,
+        Value::Integer(value) => *value != 0,
+        Value::Number(value) => *value != 0.0,
+        Value::String(value) => {
+            let value = value.to_string_lossy();
+            let Some(first) = value.as_bytes().first().copied() else {
+                return default;
+            };
+            match first {
+                b'0' | b'F' | b'N' | b'f' | b'n' => false,
+                b'1'..=b'9' | b'T' | b'Y' | b't' | b'y' => true,
+                _ if value.eq_ignore_ascii_case("off")
+                    || value.eq_ignore_ascii_case("disabled") =>
+                {
+                    false
+                }
+                _ if value.eq_ignore_ascii_case("on") || value.eq_ignore_ascii_case("enabled") => {
+                    true
+                }
+                _ => default,
+            }
+        }
+        _ => default,
+    }
 }
 
 fn register_button_font_pair(
@@ -2175,6 +2376,26 @@ fn justify_h_key() -> LightUserData {
 
 fn justify_v_key() -> LightUserData {
     hidden_key(&JUSTIFY_V_TOKEN)
+}
+
+fn checked_key() -> LightUserData {
+    hidden_key(&CHECKED_TOKEN)
+}
+
+fn model_camera_key() -> LightUserData {
+    hidden_key(&MODEL_CAMERA_TOKEN)
+}
+
+fn model_sequence_key() -> LightUserData {
+    hidden_key(&MODEL_SEQUENCE_TOKEN)
+}
+
+fn model_file_key() -> LightUserData {
+    hidden_key(&MODEL_FILE_TOKEN)
+}
+
+fn click_action_key() -> LightUserData {
+    hidden_key(&CLICK_ACTION_TOKEN)
 }
 
 fn hidden_key(token: &'static u8) -> LightUserData {

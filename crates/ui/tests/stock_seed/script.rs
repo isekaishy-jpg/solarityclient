@@ -15,15 +15,15 @@ use crate::support::{Fixture, FixtureFile};
 /// Script coordinates retain the stock fixed-height aspect compensation.
 #[test]
 fn script_environment_derives_stock_ui_extent() -> Result<(), Box<dyn Error>> {
-    let standard = UiScriptEnvironment::new(1024, 768)?;
-    let wide = UiScriptEnvironment::new(1920, 1080)?;
+    let standard = UiScriptEnvironment::new(1024, 768, false)?;
+    let wide = UiScriptEnvironment::new(1920, 1080, false)?;
 
     assert_eq!(standard.logical_extent(), (1024, 768));
     assert_eq!(standard.ui_extent(), (1024.0, 768.0));
     assert!((wide.ui_extent().0 - 1_365.333_333_333_333_3).abs() < f64::EPSILON);
     assert_eq!(wide.ui_extent().1, 768.0);
     assert!(matches!(
-        UiScriptEnvironment::new(0, 1080),
+        UiScriptEnvironment::new(0, 1080, false),
         Err(UiScriptError::Plan { .. })
     ));
     Ok(())
@@ -177,6 +177,16 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(GetScreenHeight() == 768)
   assert(abs(GetScreenWidth() - 1365.3333333333) &lt; 0.001)
   assert(GetNumCharacters() == 0)
+  assert(GetSavedAccountName() == "")
+  SetSavedAccountName("tester")
+  assert(GetSavedAccountName() == "tester")
+  SetSavedAccountName("")
+  assert(GetSavedAccountList() == "")
+  assert(GetCVar("showToolsUI") == "-1")
+  assert(GetCVarDefault("showToolsUI") == "-1")
+  SetCVar("showToolsUI", 1)
+  assert(GetCVar("SHOWTOOLSUI") == "1")
+  assert(not pcall(function() GetCVar("notRegistered") end))
   assert(format("%s:%d", "screen", 7) == "screen:7")
   local values = { retained = true }
   assert(wipe(values) == values and next(values) == nil)
@@ -228,7 +238,7 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
-    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let runtime_plan =
         UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
@@ -328,9 +338,20 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(self:GetText() == nil)
   self:LockHighlight()
   self:UnlockHighlight()
+  self:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
   local bare = CreateFrame("FontString", "BareLabel", self)
   assert(bare:GetJustifyH() == "CENTER" and bare:GetJustifyV() == "MIDDLE")
   assert(not pcall(function() bare:SetText("invalid") end))
+  local check = CreateFrame("CheckButton", "DynamicCheck", self)
+  assert(check:GetChecked() == nil)
+  check:SetChecked(1)
+  assert(check:GetChecked() == 1)
+  check:SetChecked(0)
+  assert(check:GetChecked() == nil)
+  local model = CreateFrame("ModelFFX", "DynamicModel", self)
+  model:SetCamera(0)
+  model:SetSequence(505)
+  assert(not pcall(function() model:SetSequence(506) end))
 </OnLoad></Scripts></Button>
 </Ui>"#,
         },
@@ -346,7 +367,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
-    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let runtime_plan =
         UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
@@ -396,7 +417,7 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
-    let environment = UiScriptEnvironment::new(1920, 1080)?;
+    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let runtime_plan =
         UiScriptRuntimePlan::new(&tree, &frames, &regions, &templates, &fonts, &textures);
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;

@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("execute") => {
             let width = parse_dimension(arguments.next(), "logical width")?;
             let height = parse_dimension(arguments.next(), "logical height")?;
-            Some(UiScriptEnvironment::new(width, height)?)
+            Some(UiScriptEnvironment::new(width, height, false)?)
         }
         Some(_) => return Err(argument_error("optional mode must be execute").into()),
     };
@@ -54,6 +54,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let root = ClientDataRoot::new(data_root)?;
     let catalog = ArchiveCatalog::discover(root, locale)?;
     let archive_count = catalog.descriptors().len();
+    let execution_environment = match execution_environment {
+        Some(environment) => {
+            Some(environment.with_asset_store(AssetStore::mount(catalog.clone())?))
+        }
+        None => None,
+    };
     let mut store = AssetStore::mount(catalog)?;
     let bundle = UiBundle::load(&mut store, kind)?;
     let xml_count = bundle
