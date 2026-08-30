@@ -72,7 +72,7 @@ impl M2Texture {
 }
 
 /// Exact build-12340 M2 material blend operation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum M2BlendMode {
     /// Opaque replacement.
     Opaque,

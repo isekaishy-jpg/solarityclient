@@ -13,7 +13,8 @@ use solarity_rendering::{
     CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2MeshPlan, M2MeshPlanError, VulkanBootstrap,
+    CharacterWeaponState, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2ShaderPlan, M2VertexShader,
+    VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -21,7 +22,7 @@ use wow_m2::chunks::material::{
 use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2TextureType};
 use wow_m2::chunks::vertex::M2Vertex as RawM2Vertex;
 use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
-use wow_m2::header::M2Header;
+use wow_m2::header::{M2Header, M2ModelFlags};
 use wow_m2::skin::{OldSkinHeader, SkinBatch, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
 
@@ -436,8 +437,39 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
                 )
             })
             .collect::<Vec<_>>(),
-        [(0, 0, 0), (1, 1, 1)]
+        [(0, 0, 0), (1, 1, 3)]
     );
+    let specialized = M2ShaderPlan::resolve(&model, draw)?;
+    assert_eq!(specialized.requested_shader_id(), 0x8001);
+    assert_eq!(specialized.resolved_shader_id(), 0x8001);
+    assert_eq!(specialized.vertex_shader(), M2VertexShader::DiffuseT1Env);
+    assert_eq!(
+        specialized.pixel_shader(),
+        M2PixelShader::OpaqueMod2xNoAlphaAlpha
+    );
+    assert!(!specialized.used_stock_fallback());
+    let state = specialized.material();
+    assert!(state.blend_enabled());
+    assert!(!state.cull_enabled());
+    assert!(!state.depth_test_enabled());
+    assert!(!state.depth_write_enabled());
+    assert!(state.is_unlit());
+    assert!(state.is_unfogged());
+    assert!((state.alpha_reference(0.5) - (1.0 / 255.0)).abs() < f32::EPSILON);
+
+    let simple = M2ShaderPlan::resolve(&model, &plan.draws()[1])?;
+    assert_eq!(simple.requested_shader_id(), 0);
+    assert_eq!(simple.resolved_shader_id(), 0x000E);
+    assert_eq!(simple.vertex_shader(), M2VertexShader::DiffuseT1Env);
+    assert_eq!(simple.pixel_shader(), M2PixelShader::OpaqueMod2xNoAlpha);
+    assert!(!simple.used_stock_fallback());
+
+    let fallback = M2ShaderPlan::resolve(&model, &plan.draws()[2])?;
+    assert_eq!(fallback.requested_shader_id(), 2);
+    assert_eq!(fallback.resolved_shader_id(), 0x11);
+    assert_eq!(fallback.vertex_shader(), M2VertexShader::DiffuseT1T2);
+    assert_eq!(fallback.pixel_shader(), M2PixelShader::ModMod);
+    assert!(fallback.used_stock_fallback());
     assert!(matches!(
         M2MeshPlan::prepare(&model, 1),
         Err(M2MeshPlanError::MissingProfile {
@@ -1226,6 +1258,8 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
         ..M2Model::default()
     };
     model.header.num_skin_profiles = Some(skin_profiles);
+    model.header.flags |= M2ModelFlags::USE_TEXTURE_COMBINERS;
+    model.header.texture_combiner_combos = Some(M2Array::new(0, 0));
     let texture_name = b"Creature\\Solarity\\Renderable.blp";
     model.textures = vec![
         RawTexture {
@@ -1245,11 +1279,15 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
         },
     ];
     model.materials = vec![RawMaterial {
-        flags: M2RenderFlags::DEPTH_TEST | M2RenderFlags::DEPTH_WRITE,
+        flags: M2RenderFlags::UNLIT
+            | M2RenderFlags::UNFOGGED
+            | M2RenderFlags::NO_BACKFACE_CULLING
+            | M2RenderFlags::NO_ZBUFFER
+            | M2RenderFlags::AFFECTED_BY_PROJECTION,
         blend_mode: RawBlendMode::ALPHA,
     }];
     model.raw_data.texture_lookup_table = vec![0, 1];
-    model.raw_data.texture_units = vec![0, 1];
+    model.raw_data.texture_units = vec![0, 3];
     for index in 0..3 {
         model.vertices.push(RawM2Vertex {
             position: C3Vector {
@@ -1279,6 +1317,13 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
     bytes[texture_offset + 12..texture_offset + 16].copy_from_slice(&filename_offset.to_le_bytes());
     bytes.extend_from_slice(texture_name);
     bytes.push(0);
+    let combiners = [0_u16, 6, 3, 3];
+    let combiner_offset = u32::try_from(bytes.len())?;
+    bytes[0x130..0x134].copy_from_slice(&u32::try_from(combiners.len())?.to_le_bytes());
+    bytes[0x134..0x138].copy_from_slice(&combiner_offset.to_le_bytes());
+    for combiner in combiners {
+        bytes.extend_from_slice(&combiner.to_le_bytes());
+    }
     Ok(bytes)
 }
 
@@ -1306,21 +1351,53 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
             sort_center: [0.0; 3],
             bounding_radius: 1.0,
         }],
-        batches: vec![SkinBatch {
-            flags: 1,
-            priority_plane: -2,
-            shader_id: 0x8001,
-            skin_section_index: 0,
-            geoset_index: 0,
-            color_index: 3,
-            material_index: 0,
-            material_layer: 1,
-            texture_count: 2,
-            texture_combo_index: 0,
-            texture_coord_combo_index: 0,
-            texture_weight_combo_index: 0,
-            texture_transform_combo_index: 0,
-        }],
+        batches: vec![
+            SkinBatch {
+                flags: 1,
+                priority_plane: -2,
+                shader_id: 0x8001,
+                skin_section_index: 0,
+                geoset_index: 0,
+                color_index: 3,
+                material_index: 0,
+                material_layer: 1,
+                texture_count: 2,
+                texture_combo_index: 0,
+                texture_coord_combo_index: 0,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
+            },
+            SkinBatch {
+                flags: 0,
+                priority_plane: 0,
+                shader_id: 0,
+                skin_section_index: 0,
+                geoset_index: 0,
+                color_index: 0,
+                material_index: 0,
+                material_layer: 0,
+                texture_count: 2,
+                texture_combo_index: 0,
+                texture_coord_combo_index: 0,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
+            },
+            SkinBatch {
+                flags: 0,
+                priority_plane: 1,
+                shader_id: 2,
+                skin_section_index: 0,
+                geoset_index: 0,
+                color_index: 0,
+                material_index: 0,
+                material_layer: 0,
+                texture_count: 2,
+                texture_combo_index: 0,
+                texture_coord_combo_index: 0,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
+            },
+        ],
     };
     let mut cursor = Cursor::new(Vec::new());
     skin.write(&mut cursor)?;
