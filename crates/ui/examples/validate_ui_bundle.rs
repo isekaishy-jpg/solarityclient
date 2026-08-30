@@ -4,8 +4,10 @@ use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{UiBundle, UiManifestKind, UiResourceContent};
+use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
+use solarity_ui::{
+    FontCatalog, FontRasterization, FontSystem, UiBundle, UiManifestKind, UiResourceContent,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os();
@@ -43,11 +45,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter(|resource| matches!(resource.content(), UiResourceContent::Xml(_)))
         .count();
     let lua_count = bundle.resources().len() - xml_count;
+    let font_catalog = FontCatalog::from_bundle(&bundle)?;
+    let font_path = AssetPath::new("Fonts\\FRIZQT__.TTF")?;
+    let mut fonts = FontSystem::new()?;
+    let glyph = fonts.rasterize(
+        &mut store,
+        &font_path,
+        16,
+        'A',
+        FontRasterization::Antialiased,
+    )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua)",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} fonts, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
-        bundle.resources().len()
+        bundle.resources().len(),
+        font_catalog.definitions().len(),
+        glyph.width(),
+        glyph.height()
     );
     Ok(())
 }

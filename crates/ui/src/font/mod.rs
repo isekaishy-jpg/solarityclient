@@ -9,3 +9,12 @@ mod gxu_font_misc_classes;
 mod gxu_font_string;
 mod gxu_font_util;
 mod i_gxu_font_glyph;
+mod status;
+
+pub use c_simple_font::{
+    FontCatalog, FontColor, FontDefinition, FontOutline, FontShadow, HorizontalJustification,
+    VerticalJustification,
+};
+pub use gxu_font_util::{FontRasterization, FontSystem};
+pub use i_gxu_font_glyph::RasterizedGlyph;
+pub use status::FontError;

@@ -48,6 +48,23 @@ The bundle retains both the source files and its Lua state. This gives the next
 stage a single owner for API registration and ordered execution without reading
 the archives a second time.
 
+## Font boundary
+
+Root-level `<Font>` objects are constructed in XML load order. Their face,
+height, outline, monochrome mode, spacing, color, shadow, and justification
+properties inherit only from global fonts already constructed. A missing or
+forward parent is an error; the catalog does not search later documents to make
+an invalid order appear to work. Values absent after inheritance remain absent
+until the stock schema-default stage rather than receiving guessed defaults.
+
+Font faces such as `Fonts\FRIZQT__.TTF` are resolved through `AssetStore` and
+retained by the UI-thread FreeType owner. Each face is read once while pixel
+height remains a glyph-level input, matching the stock XML's reuse of one face
+at many sizes. Rasterization returns tightly packed 8-bit coverage plus exact
+bearing and 26.6 advance metrics. Grayscale and one-bit monochrome bitmaps are
+handled explicitly; other formats, corrupt fonts, and missing glyph assets are
+errors instead of requests for an operating-system substitute.
+
 ## Validation
 
 Generated MPQs exercise manifest order, relative resolution, XML ownership,
@@ -73,5 +90,6 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
 ```
 
 Against the current local client, the complete 16-archive stack resolves and
-validates 31 Glue sources (30 XML and 1 Lua) and 139 Frame sources (126 XML and
-13 Lua).
+validates 31 Glue sources (30 XML and 1 Lua) containing 76 global fonts, and 139
+Frame sources (126 XML and 13 Lua) containing 149 global fonts. The same command
+opens the archive-backed `FRIZQT__.TTF` face and rasterizes a validation glyph.
