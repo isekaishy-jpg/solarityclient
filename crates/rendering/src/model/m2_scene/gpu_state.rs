@@ -47,12 +47,12 @@ impl M2LocalLightState {
         }
     }
 
-    /// Appends the exact 64-byte std140 light struct.
-    fn append_bytes(self, bytes: &mut Vec<u8>) {
-        append_vec4(bytes, self.position);
-        append_vec4(bytes, self.ambient);
-        append_vec4(bytes, self.diffuse);
-        append_vec4(bytes, self.attenuation);
+    /// Writes the exact 64-byte std140 light struct into its scene block.
+    fn write_bytes<const N: usize>(self, bytes: &mut [u8; N], offset: &mut usize) {
+        write_vec4(bytes, offset, self.position);
+        write_vec4(bytes, offset, self.ambient);
+        write_vec4(bytes, offset, self.diffuse);
+        write_vec4(bytes, offset, self.attenuation);
     }
 }
 
@@ -97,16 +97,17 @@ impl M2SceneUniform {
 
     /// Serializes without depending on Rust or glam's in-memory representation.
     #[must_use]
-    pub fn to_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::BYTE_SIZE);
-        append_mat4(&mut bytes, self.view_projection);
-        append_vec4(&mut bytes, self.camera_position.extend(1.0));
-        append_vec4(&mut bytes, self.ambient_light.extend(0.0));
-        append_vec4(&mut bytes, self.diffuse_light.extend(0.0));
-        append_vec4(&mut bytes, self.light_direction.extend(0.0));
-        append_vec4(&mut bytes, self.fog_parameters);
+    pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+        let mut bytes = [0_u8; Self::BYTE_SIZE];
+        let mut offset = 0;
+        write_mat4(&mut bytes, &mut offset, self.view_projection);
+        write_vec4(&mut bytes, &mut offset, self.camera_position.extend(1.0));
+        write_vec4(&mut bytes, &mut offset, self.ambient_light.extend(0.0));
+        write_vec4(&mut bytes, &mut offset, self.diffuse_light.extend(0.0));
+        write_vec4(&mut bytes, &mut offset, self.light_direction.extend(0.0));
+        write_vec4(&mut bytes, &mut offset, self.fog_parameters);
         for light in self.local_lights {
-            light.append_bytes(&mut bytes);
+            light.write_bytes(&mut bytes, &mut offset);
         }
         bytes
     }
@@ -149,16 +150,17 @@ impl M2MaterialUniform {
 
     /// Serializes without relying on host struct layout or alignment.
     #[must_use]
-    pub fn to_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::BYTE_SIZE);
-        append_mat4(&mut bytes, self.model);
+    pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+        let mut bytes = [0_u8; Self::BYTE_SIZE];
+        let mut offset = 0;
+        write_mat4(&mut bytes, &mut offset, self.model);
         for transform in self.texture_transforms {
-            append_mat4(&mut bytes, transform);
+            write_mat4(&mut bytes, &mut offset, transform);
         }
-        append_mat4(&mut bytes, self.environment_view);
-        append_vec4(&mut bytes, self.mesh_color);
-        append_vec4(&mut bytes, self.fog_color);
-        append_vec4(&mut bytes, self.fragment_parameters);
+        write_mat4(&mut bytes, &mut offset, self.environment_view);
+        write_vec4(&mut bytes, &mut offset, self.mesh_color);
+        write_vec4(&mut bytes, &mut offset, self.fog_color);
+        write_vec4(&mut bytes, &mut offset, self.fragment_parameters);
         bytes
     }
 }
@@ -205,16 +207,23 @@ impl M2DrawPushConstants {
     }
 }
 
-/// Appends one column-major matrix in GLSL's default layout.
-fn append_mat4(bytes: &mut Vec<u8>, matrix: Mat4) {
+/// Writes one column-major matrix in GLSL's default layout.
+fn write_mat4<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, matrix: Mat4) {
     for value in matrix.to_cols_array() {
-        bytes.extend_from_slice(&value.to_le_bytes());
+        write_f32(bytes, offset, value);
     }
 }
 
-/// Appends one tightly packed 16-byte std140 vector.
-fn append_vec4(bytes: &mut Vec<u8>, vector: Vec4) {
+/// Writes one tightly packed 16-byte std140 vector.
+fn write_vec4<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, vector: Vec4) {
     for value in vector.to_array() {
-        bytes.extend_from_slice(&value.to_le_bytes());
+        write_f32(bytes, offset, value);
     }
+}
+
+/// Writes one little-endian scalar and advances the private fixed-layout cursor.
+fn write_f32<const N: usize>(bytes: &mut [u8; N], offset: &mut usize, value: f32) {
+    let end = *offset + size_of::<f32>();
+    bytes[*offset..end].copy_from_slice(&value.to_le_bytes());
+    *offset = end;
 }
