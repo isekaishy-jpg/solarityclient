@@ -17,6 +17,9 @@ use crate::device::vulkan_mesh::{
 };
 use crate::device::vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2SamplerRegistry};
 use crate::device::vulkan_selection::SelectedAdapter;
+use crate::device::vulkan_terrain_mesh::{
+    TerrainMeshHandle, TerrainMeshRegistry, TerrainMeshResourceInfo,
+};
 use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
     BlpTextureUploadError, TextureUploadContext,
@@ -33,7 +36,7 @@ use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
-use crate::{UiMeshPlan, UiRenderBlend, UiShaderSource};
+use crate::{TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource};
 use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -109,6 +112,7 @@ pub struct VulkanRenderer {
     m2_pipelines: M2PipelineRegistry,
     m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
+    terrain_meshes: TerrainMeshRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
@@ -155,6 +159,7 @@ impl VulkanRenderer {
             m2_pipelines: M2PipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
+            terrain_meshes: TerrainMeshRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
@@ -263,6 +268,39 @@ impl VulkanRenderer {
     #[must_use]
     pub fn m2_mesh_info(&self, handle: M2MeshHandle) -> Option<&M2MeshResourceInfo> {
         self.m2_meshes.info(handle)
+    }
+
+    /// Uploads one aggregate resident ADT to shared device-local buffers.
+    ///
+    /// Repeated submission of the same immutable plan returns its stable
+    /// renderer-local handle without another staging allocation or queue wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for empty geometry, exhausted handle space, or
+    /// Vulkan allocation, transfer, submission, and synchronization failures.
+    pub fn upload_terrain_mesh(
+        &mut self,
+        plan: &TerrainTileMeshPlan,
+    ) -> Result<TerrainMeshHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.terrain_meshes.upload(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            plan,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live terrain allocation.
+    #[must_use]
+    pub fn terrain_mesh_info(&self, handle: TerrainMeshHandle) -> Option<TerrainMeshResourceInfo> {
+        self.terrain_meshes.info(handle)
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.
@@ -724,6 +762,7 @@ impl Drop for VulkanRenderer {
             self.ui_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
+            self.terrain_meshes.destroy(allocator);
             self.m2_meshes.destroy(allocator);
         }
         self.m2_samplers.destroy(&self.device);

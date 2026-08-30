@@ -2,6 +2,7 @@
 
 use glam::Vec3;
 use solarity_asset::{TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 use crate::{TerrainRenderVertex, WorldCameraError, WorldFrustum};
@@ -108,6 +109,7 @@ impl TerrainChunkDrawPlan {
 
 /// One transfer-ready ADT geometry allocation and shared material atlas.
 pub struct TerrainTileMeshPlan {
+    identity: u64,
     tile: TerrainTileIndex,
     vertices: Vec<TerrainRenderVertex>,
     indices: Vec<u16>,
@@ -117,7 +119,7 @@ pub struct TerrainTileMeshPlan {
 }
 
 impl TerrainTileMeshPlan {
-    pub(super) const fn new(
+    pub(super) fn new(
         tile: TerrainTileIndex,
         vertices: Vec<TerrainRenderVertex>,
         indices: Vec<u16>,
@@ -126,6 +128,7 @@ impl TerrainTileMeshPlan {
         material_atlas_rgba: Box<[u8; TERRAIN_MATERIAL_ATLAS_BYTE_COUNT]>,
     ) -> Self {
         Self {
+            identity: next_identity(),
             tile,
             vertices,
             indices,
@@ -133,6 +136,10 @@ impl TerrainTileMeshPlan {
             texture_flags,
             material_atlas_rgba,
         }
+    }
+
+    pub(crate) const fn identity(&self) -> u64 {
+        self.identity
     }
 
     /// Returns the owning ADT coordinate.
@@ -190,4 +197,9 @@ impl TerrainTileMeshPlan {
         }
         bytes
     }
+}
+
+fn next_identity() -> u64 {
+    static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
+    NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed)
 }

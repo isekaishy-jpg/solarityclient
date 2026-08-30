@@ -1,5 +1,7 @@
 //! External stock-compatibility tests for terrain mesh preparation.
 
+#![allow(unsafe_code)]
+
 use std::error::Error;
 
 use glam::Vec3;
@@ -7,8 +9,8 @@ use solarity_asset::{
     ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainTileMeshPlan, WorldCamera,
-    WorldFrustum, WorldScreenWindow,
+    TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainTileMeshPlan, VulkanBootstrap,
+    WorldCamera, WorldFrustum, WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -120,6 +122,33 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             .iter()
             .all(|index| usize::from(*index) < tile_mesh.vertices().len())
     );
+
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let mut window_builder = video.window("Solarity terrain upload test", 64, 64);
+    window_builder.vulkan().hidden();
+    let window = window_builder.build()?;
+    let extensions = window.vulkan_instance_extensions()?;
+    let bootstrap = VulkanBootstrap::start(&extensions)?;
+    // SAFETY: The bootstrap enabled this live window's exact extensions.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: SDL created the surface from this exact instance and transfers
+    // ownership immediately to the renderer.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    let handle = renderer.upload_terrain_mesh(&tile_mesh)?;
+    assert_eq!(renderer.upload_terrain_mesh(&tile_mesh)?, handle);
+    let info = renderer
+        .terrain_mesh_info(handle)
+        .ok_or("uploaded terrain resource is absent")?;
+    assert_eq!(info.tile(), tile_index);
+    assert_eq!(info.vertex_count(), 256 * 145);
+    assert_eq!(info.index_count(), 256 * 768);
+    assert_eq!(info.chunk_count(), 256);
+    assert_eq!(
+        info.vertex_byte_count(),
+        256 * 145 * solarity_rendering::TerrainRenderVertex::BYTE_SIZE
+    );
+    assert_eq!(info.index_byte_count(), 256 * 768 * 2);
     Ok(())
 }
 

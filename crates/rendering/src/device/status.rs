@@ -93,6 +93,15 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit mesh handle.
     #[error("M2 mesh registry exhausted its 32-bit handle space")]
     M2MeshCapacity,
+    /// A terrain plan has no geometry that Vulkan can bind and draw.
+    #[error("terrain mesh has no {buffer_kind} data to upload")]
+    EmptyTerrainMesh {
+        /// Stable name of the absent vertex or index payload.
+        buffer_kind: &'static str,
+    },
+    /// The renderer cannot assign another stable 32-bit terrain mesh handle.
+    #[error("terrain mesh registry exhausted its 32-bit handle space")]
+    TerrainMeshCapacity,
     /// The stock M2 shader pair could not be translated to the pinned target.
     #[error("M2 shader preparation failed: {message}")]
     M2Shader {
