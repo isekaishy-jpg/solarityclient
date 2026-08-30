@@ -20,6 +20,9 @@ pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,
 };
+pub use frame::{
+    UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind,
+};
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,
     UiManifestEntryKind, UiManifestKind, UiResource, UiResourceContent, XmlAttribute, XmlContent,

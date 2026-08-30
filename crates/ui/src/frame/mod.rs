@@ -7,3 +7,7 @@
 mod c_simple_frame;
 mod c_simple_frame_script;
 mod c_simple_top;
+mod status;
+
+pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
+pub use status::UiObjectError;

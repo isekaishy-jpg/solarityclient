@@ -75,6 +75,22 @@ bearing and 26.6 advance metrics. Grayscale and one-bit monochrome bitmaps are
 handled explicitly; other formats, corrupt fonts, and missing glyph assets are
 errors instead of requests for an operating-system substitute.
 
+## Object declarations
+
+Every expanded root XML action is registered as either a virtual template or a
+live root object. The type vocabulary is limited to concrete names observed in
+the stock GlueXML and FrameXML data, including frame, button, texture, model,
+tooltip, message, status, scrolling, movie, and world-root families. Unknown
+root tags fail registration rather than being treated as generic frames.
+
+Names are global and case-sensitive. `inherits` targets must already exist in
+load order and object targets must be virtual; the catalog never searches
+forward. Root `FontString` declarations may also inherit a previously
+registered global font. Definitions retain references to their original XML
+subtrees instead of duplicating hundreds of layout nodes before construction.
+This keeps startup allocations bounded while preserving every unconsumed stock
+attribute and child for the subsequent frame, region, and widget stages.
+
 ## Validation
 
 Generated MPQs exercise manifest order, relative resolution, XML ownership,
@@ -101,7 +117,8 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
 
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
-fonts, and 265 Frame resources (133 XML and 132 external Lua) containing 149
-global fonts. Inline scripts remain ordered actions rather than synthetic files.
-The same command opens the archive-backed `FRIZQT__.TTF` face and rasterizes a
-validation glyph.
+fonts, 71 object templates, and 34 live roots. Frame expansion validates 265
+resources (133 XML and 132 external Lua) containing 149 global fonts, 311 object
+templates, and 276 live roots. Inline scripts remain ordered actions rather
+than synthetic files. The same command opens the archive-backed
+`FRIZQT__.TTF` face and rasterizes a validation glyph.
