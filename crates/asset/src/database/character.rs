@@ -166,7 +166,7 @@ impl CharacterAppearanceCatalog {
         })
     }
 
-    /// Finds every section with an exact customization key.
+    /// Finds every section with an exact customization key in source order.
     ///
     /// Multiple rows are retained because player, NPC, and death-knight flags
     /// can intentionally distinguish records with the same visible choice.
@@ -250,7 +250,10 @@ fn decode_sections(table: &WdbcTable) -> Result<Vec<CharacterSection>, AssetErro
             color_index: values[9],
         });
     }
-    records.sort_unstable_by_key(|section| (section.key(), section.flags, section.id));
+    // Stock builds the component array in physical table order. Stable sorting
+    // preserves that order within a key so a patched duplicate retains the
+    // executable's last-record-wins behavior.
+    records.sort_by_key(CharacterSection::key);
     reject_duplicate_ids(table, &records, CharacterSection::id)?;
     Ok(records)
 }

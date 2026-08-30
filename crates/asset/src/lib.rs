@@ -19,9 +19,10 @@ pub use archive::{
     ClientDataRoot, Locale,
 };
 pub use database::{
-    CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
-    CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData, WdbcHeader,
-    WdbcTable,
+    AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
+    CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterSection,
+    CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
+    CreatureModelAppearance, CreatureModelData, WdbcHeader, WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{

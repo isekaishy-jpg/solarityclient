@@ -4,6 +4,7 @@
 //! `WDataStore.cpp` family. Table schemas and validation belong here; game
 //! behavior that consumes a table belongs to its owning domain crate.
 
+mod appearance;
 mod c_data_store;
 mod character;
 mod creature;
@@ -13,6 +14,10 @@ mod db_client;
 mod w_data_store;
 mod wow_client_db;
 
+pub use appearance::{
+    AppearanceError, CharacterCustomization, CharacterGeosetSelection, CharacterModelAppearance,
+    CharacterSectionKind, CreatureModelAppearance,
+};
 pub use character::{
     CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
 };

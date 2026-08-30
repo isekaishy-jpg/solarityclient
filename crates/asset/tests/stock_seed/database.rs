@@ -4,8 +4,8 @@ use std::error::Error;
 use std::path::Path;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog, ClientDataRoot,
-    CreatureCatalog, Locale, WdbcTable,
+    AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
+    CharacterCustomization, ClientDataRoot, CreatureCatalog, Locale, M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -70,8 +70,8 @@ fn truncated_wdbc_is_rejected() -> Result<(), Box<dyn Error>> {
 #[test]
 fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<dyn Error>> {
     let mut display_strings = vec![0];
-    let skin_1 = append_string(&mut display_strings, "BearSkinBrown");
-    let skin_2 = append_string(&mut display_strings, "BearSkinBlack");
+    let skin_1 = append_string(&mut display_strings, "BearSkinBrown.blp");
+    let skin_2 = append_string(&mut display_strings, "BearSkinBlack.blp");
     let portrait = append_string(&mut display_strings, "BearPortrait");
     let display_fields = [
         20_000,
@@ -184,7 +184,7 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     assert_eq!(display.model_alpha(), 255);
     assert_eq!(
         display.texture_variations(),
-        ["BearSkinBrown", "BearSkinBlack", ""]
+        ["BearSkinBrown.blp", "BearSkinBlack.blp", ""]
     );
     assert_eq!(display.portrait_texture_name(), "BearPortrait");
     assert_eq!(display.size_class(), 2);
@@ -238,6 +238,29 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     assert_eq!(model.missile_collision(), [1.3, 1.4, 1.5]);
     assert_eq!(catalog.display(99), None);
     assert_eq!(catalog.model(99), None);
+
+    let appearance = catalog.resolve_model(display.id())?;
+    assert_eq!(appearance.display(), display);
+    assert_eq!(appearance.model(), model);
+    assert_eq!(appearance.extra(), Some(extra));
+    assert_eq!(
+        appearance.model_path(),
+        model.model_path().ok_or("model path was absent")?
+    );
+    assert_eq!(
+        appearance
+            .texture_for(M2TextureKind::Monster1)
+            .map(AssetPath::as_str),
+        Some("CREATURE\\BEAR\\BEARSKINBROWN.BLP")
+    );
+    assert_eq!(
+        appearance
+            .texture_for(M2TextureKind::Monster2)
+            .map(AssetPath::as_str),
+        Some("CREATURE\\BEAR\\BEARSKINBLACK.BLP")
+    );
+    assert_eq!(appearance.texture_for(M2TextureKind::Monster3), None);
+    assert_eq!(appearance.texture_for(M2TextureKind::Hardcoded), None);
     Ok(())
 }
 
@@ -311,10 +334,10 @@ fn character_appearance_catalog_indexes_stock_customization_keys() -> Result<(),
     let catalog = CharacterAppearanceCatalog::load(&mut store)?;
     let matching = catalog.sections_for(4, 1, 3, 7, 5);
     assert_eq!(matching.len(), 2);
-    assert_eq!(matching[0].id(), 1);
-    assert_eq!(matching[0].flags(), 1);
-    assert_eq!(matching[1].id(), 2);
-    assert_eq!(matching[1].flags(), 4);
+    assert_eq!(matching[0].id(), 2);
+    assert_eq!(matching[0].flags(), 4);
+    assert_eq!(matching[1].id(), 1);
+    assert_eq!(matching[1].flags(), 1);
     assert_eq!(matching[0].race_id(), 4);
     assert_eq!(matching[0].gender_id(), 1);
     assert_eq!(matching[0].base_section(), 3);
@@ -343,6 +366,165 @@ fn character_appearance_catalog_indexes_stock_customization_keys() -> Result<(),
         .ok_or("facial-hair row was not indexed")?;
     assert_eq!(facial.geosets(), [1, 2, 3, 4, 5]);
     assert_eq!(catalog.facial_hair_style(4, 1, 7), None);
+    Ok(())
+}
+
+/// Stock component keys produce the complete player texture and geoset plan.
+#[test]
+fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let skin = append_string(&mut strings, "Character\\NightElf\\Female\\Skin.blp");
+    let skin_extra = append_string(&mut strings, "Character\\NightElf\\Female\\SkinExtra.blp");
+    let face_lower = append_string(&mut strings, "Character\\NightElf\\Female\\FaceLower.blp");
+    let face_upper = append_string(&mut strings, "Character\\NightElf\\Female\\FaceUpper.blp");
+    let facial_lower = append_string(&mut strings, "Character\\NightElf\\Female\\FacialLower.blp");
+    let facial_upper = append_string(&mut strings, "Character\\NightElf\\Female\\FacialUpper.blp");
+    let hair = append_string(&mut strings, "Character\\NightElf\\Female\\Hair.blp");
+    let hair_lower = append_string(&mut strings, "Character\\NightElf\\Female\\HairLower.blp");
+    let hair_upper = append_string(&mut strings, "Character\\NightElf\\Female\\HairUpper.blp");
+    let underwear_lower = append_string(
+        &mut strings,
+        "Character\\NightElf\\Female\\UnderwearLower.blp",
+    );
+    let underwear_upper = append_string(
+        &mut strings,
+        "Character\\NightElf\\Female\\UnderwearUpper.blp",
+    );
+    let sections = [
+        10,
+        4,
+        1,
+        0,
+        skin,
+        skin_extra,
+        0,
+        17,
+        0,
+        2,
+        11,
+        4,
+        1,
+        1,
+        face_lower,
+        face_upper,
+        0,
+        1,
+        3,
+        2,
+        12,
+        4,
+        1,
+        2,
+        facial_lower,
+        facial_upper,
+        0,
+        1,
+        6,
+        5,
+        13,
+        4,
+        1,
+        3,
+        hair,
+        hair_lower,
+        hair_upper,
+        18,
+        4,
+        5,
+        14,
+        4,
+        1,
+        4,
+        underwear_lower,
+        underwear_upper,
+        0,
+        1,
+        0,
+        2,
+    ];
+    let section_table = create_wdbc(5, 10, &sections, &strings);
+    // Zero is deliberately authored: stock converts it to geoset one.
+    let hair_table = create_wdbc(1, 6, &[90, 4, 1, 4, 0, 1], b"\0");
+    let facial_table = create_wdbc(1, 8, &[4, 1, 6, 1, 2, 3, 4, 5], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &section_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+
+    let appearance = catalog.resolve_player(4, 1, CharacterCustomization::new(2, 3, 4, 5, 6))?;
+
+    assert_eq!(appearance.skin().id(), 10);
+    assert_eq!(appearance.face().map(|section| section.id()), Some(11));
+    assert_eq!(appearance.facial_hair().id(), 12);
+    assert_eq!(appearance.hair().id(), 13);
+    assert_eq!(appearance.underwear().map(|section| section.id()), Some(14));
+    assert_eq!(appearance.hair_geoset().map(|row| row.id()), Some(90));
+    assert!(appearance.facial_hair_style().is_some());
+    assert_eq!(appearance.geosets().hair(), 1);
+    assert_eq!(
+        appearance.geosets().facial_hair(),
+        Some([101, 203, 302, 1604, 1705])
+    );
+    Ok(())
+}
+
+/// Missing customization rows remain a typed failure instead of selecting a neighbor.
+#[test]
+fn character_appearance_does_not_fallback_to_another_color() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let skin = append_string(&mut strings, "Character\\Human\\Male\\Skin.blp");
+    let section_table = create_wdbc(1, 10, &[1, 1, 0, 0, skin, 0, 0, 17, 0, 0], &strings);
+    let hair_table = create_wdbc(0, 6, &[], b"\0");
+    let facial_table = create_wdbc(0, 8, &[], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &section_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+
+    assert_eq!(
+        catalog
+            .resolve_player(1, 0, CharacterCustomization::new(1, 0, 0, 0, 0))
+            .err(),
+        Some(AppearanceError::MissingCharacterSection {
+            race_id: 1,
+            gender_id: 0,
+            kind: solarity_asset::CharacterSectionKind::Skin,
+            variation_index: 0,
+            color_index: 1,
+        })
+    );
     Ok(())
 }
 
