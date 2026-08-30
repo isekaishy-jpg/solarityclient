@@ -14,6 +14,7 @@ mod db_cache_instances;
 mod db_client;
 mod item;
 mod localized;
+mod map;
 mod player_class;
 mod race;
 mod realm;
@@ -35,6 +36,7 @@ pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
 };
+pub use map::{MapCatalog, MapDefinition, MapKind};
 pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};
 pub use race::{CharacterRace, CharacterRaceCatalog};
 pub use realm::{

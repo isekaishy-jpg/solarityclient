@@ -28,8 +28,8 @@ pub use database::{
     CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
     CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemDisplayInfo, RealmCategoryCatalog, RealmCategoryDefinition,
-    RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
+    ItemDisplayCatalog, ItemDisplayInfo, MapCatalog, MapDefinition, MapKind, RealmCategoryCatalog,
+    RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{
@@ -38,4 +38,5 @@ pub use model::{
     M2TrackChannel, M2Vertex,
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
+pub use terrain::{TerrainMap, TerrainTile, TerrainTileIndex};
 pub use texture::{BlpTextureSource, DecodedBlpTexture};

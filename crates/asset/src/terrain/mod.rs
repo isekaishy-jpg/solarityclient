@@ -12,3 +12,6 @@ mod map_load;
 mod map_low_detail;
 mod map_mem;
 mod map_shadow;
+
+pub use map::TerrainMap;
+pub use map_area::{TerrainTile, TerrainTileIndex};

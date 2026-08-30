@@ -7,7 +7,8 @@ use solarity_asset::{
     AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError, AssetPath, AssetStore,
     CharacterAppearanceCatalog, CharacterClassCatalog, CharacterCustomization,
     CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
-    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
+    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, MapCatalog,
+    MapKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -803,6 +804,47 @@ fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn 
     assert_eq!(area.name(), "Dalaran");
     assert_eq!(area.parent_area_id(), 0);
     assert_eq!(areas.area(4396), None);
+    Ok(())
+}
+
+/// World asset resolution uses the exact internal directory from `Map.dbc`.
+#[test]
+fn map_catalog_decodes_build_12340_world_identity() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let directory = append_string(&mut strings, "Northrend");
+    let name = append_string(&mut strings, "Northrend");
+    let mut fields = [0_u32; 66];
+    fields[0] = 571;
+    fields[1] = directory;
+    fields[2] = 0;
+    fields[3] = 0x20;
+    fields[5] = name;
+    fields[22] = 571;
+    fields[59] = u32::MAX;
+    fields[60] = 0.0_f32.to_bits();
+    fields[61] = 0.0_f32.to_bits();
+    fields[63] = 2;
+    fields[65] = 0;
+    let table = create_wdbc(1, 66, &fields, &strings);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\Map.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = MapCatalog::load(&mut store)?;
+    let map = catalog.map(571).ok_or("Northrend map is absent")?;
+    assert_eq!(map.directory(), "Northrend");
+    assert_eq!(map.kind(), MapKind::World);
+    assert_eq!(map.flags(), 0x20);
+    assert_eq!(map.name(), "Northrend");
+    assert_eq!(map.linked_zone_id(), 571);
+    assert_eq!(map.entrance(), None);
+    assert_eq!(map.expansion_id(), 2);
+    assert_eq!(map.maximum_players(), 0);
+    assert_eq!(catalog.map(572), None);
     Ok(())
 }
 

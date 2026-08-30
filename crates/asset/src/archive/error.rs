@@ -147,4 +147,12 @@ pub enum AssetError {
         /// Structural or shader-profile validation context.
         message: String,
     },
+    /// A resolved stock WDT or ADT world asset is malformed.
+    #[error("failed to decode client terrain {path}: {message}")]
+    TerrainDecode {
+        /// Normalized WDT or ADT asset path.
+        path: AssetPath,
+        /// Parser or build-12340 structural validation context.
+        message: String,
+    },
 }
