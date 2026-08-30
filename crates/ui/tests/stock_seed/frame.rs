@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiInheritanceTarget, UiManifestKind, UiObjectCatalog, UiObjectError,
-    UiObjectKind, UiObjectTree,
+    FontCatalog, UiBundle, UiFrameError, UiFramePlan, UiFrameStrata, UiInheritanceTarget,
+    UiManifestKind, UiObjectCatalog, UiObjectError, UiObjectKind, UiObjectTree,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -53,6 +53,83 @@ fn object_catalog_resolves_earlier_virtual_templates() -> Result<(), Box<dyn Err
     assert_eq!(login_node.parent(), Some(0));
     assert_eq!(child_node.parent(), Some(1));
     assert_eq!(login_node.layers().len(), 2);
+    Ok(())
+}
+
+/// Frame ordering and interaction flags retain exact inheritance-layer order.
+#[test]
+fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Frames.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Frames.xml",
+            bytes: br#"<Ui>
+  <Frame name="Base" virtual="true" frameStrata="LOW" frameLevel="3" id="7"
+         toplevel="true" movable="true" resizable="true" clampedToScreen="true"
+         enableKeyboard="true" enableMouse="false" protected="true"
+         dontSavePosition="true"/>
+  <Button name="Login" inherits="Base" frameStrata="DIALOG" frameLevel="11"
+          enableMouse="true"/>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let plan = UiFramePlan::from_tree(&tree)?;
+    let index = tree
+        .nodes()
+        .iter()
+        .position(|node| node.name() == Some("Login"))
+        .ok_or("missing Login")?;
+    let node = plan.node(index).ok_or("missing Login frame node")?;
+    let layers = plan.layers_for(node);
+
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].strata(), Some(UiFrameStrata::Low));
+    assert_eq!(layers[0].level(), Some(3));
+    assert_eq!(layers[0].id(), Some(7));
+    assert_eq!(layers[0].top_level(), Some(true));
+    assert_eq!(layers[0].movable(), Some(true));
+    assert_eq!(layers[0].resizable(), Some(true));
+    assert_eq!(layers[0].clamped_to_screen(), Some(true));
+    assert_eq!(layers[0].keyboard_enabled(), Some(true));
+    assert_eq!(layers[0].mouse_enabled(), Some(false));
+    assert_eq!(layers[0].protected(), Some(true));
+    assert_eq!(layers[0].position_persistence_disabled(), Some(true));
+    assert_eq!(layers[1].strata(), Some(UiFrameStrata::Dialog));
+    assert_eq!(layers[1].level(), Some(11));
+    assert_eq!(layers[1].mouse_enabled(), Some(true));
+    Ok(())
+}
+
+/// Unknown frame strata fail without being assigned a nearby render band.
+#[test]
+fn frame_plan_rejects_unknown_strata() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Frames.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Frames.xml",
+            bytes: br#"<Ui><Frame name="Root" frameStrata="FRONT"/></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+
+    let result = UiFramePlan::from_tree(&tree);
+
+    assert!(matches!(result, Err(UiFrameError::Property { .. })));
     Ok(())
 }
 

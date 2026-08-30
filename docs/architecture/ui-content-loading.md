@@ -171,6 +171,17 @@ exact legacy spelling is normalized, while other unknown bands are errors.
 The instantiated local trees retain 668 Glue and 9,472 Frame declarations with
 an explicit or schema-defaulted draw band.
 
+Frame-derived objects keep a second flat plan for explicit strata, frame level,
+numeric ID, top-level behavior, movement and resize policy, screen clamping,
+keyboard and mouse input, protection, and saved-position opt-out. Strata are a
+closed back-to-front vocabulary from `BACKGROUND` through `TOOLTIP`; unknown
+values are not silently mapped into an adjacent render band. Defaults remain a
+later stock schema/application concern, so an absent XML property consumes no
+per-object state here.
+
+Real-client validation retains 218 Glue and 1,604 Frame property-bearing
+layers in this plan.
+
 ## Typed texture plan
 
 Texture declarations are decoded into a flat plan parallel to the object tree.

@@ -21,8 +21,9 @@ pub use font::{
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,
 };
 pub use frame::{
-    UiDrawLayer, UiElementLayer, UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition,
-    UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
+    UiDrawLayer, UiElementLayer, UiFrameError, UiFrameLayer, UiFrameNode, UiFramePlan,
+    UiFrameStrata, UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError,
+    UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
 };
 pub use region::{
     UiAnchor, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,

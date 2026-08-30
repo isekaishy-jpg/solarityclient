@@ -7,8 +7,10 @@
 mod c_simple_frame;
 mod c_simple_frame_script;
 mod c_simple_top;
+mod properties;
 mod status;
 
 pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
 pub use c_simple_top::{UiDrawLayer, UiElementLayer, UiObjectNode, UiObjectRole, UiObjectTree};
-pub use status::UiObjectError;
+pub use properties::{UiFrameLayer, UiFrameNode, UiFramePlan, UiFrameStrata};
+pub use status::{UiFrameError, UiObjectError};

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, FontRasterization, FontSystem, UiBundle, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiResourceContent, UiTextureFile, UiTexturePlan,
+    FontCatalog, FontRasterization, FontSystem, UiBundle, UiFramePlan, UiLayoutPlan,
+    UiManifestKind, UiObjectCatalog, UiObjectTree, UiResourceContent, UiTextureFile, UiTexturePlan,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let font_catalog = FontCatalog::from_bundle(&bundle)?;
     let object_catalog = UiObjectCatalog::from_bundle(&bundle, &font_catalog)?;
     let object_tree = UiObjectTree::from_catalog(&object_catalog, &font_catalog)?;
+    let frame_plan = UiFramePlan::from_tree(&object_tree)?;
     let layout_plan = UiLayoutPlan::from_tree(&object_tree)?;
     let texture_plan = UiTexturePlan::from_tree(&object_tree)?;
     let texture_paths = object_tree
@@ -88,7 +89,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {draw_layer_count} layered declarations, {} layout layers and {} anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {} frame-property layers, {draw_layer_count} layered declarations, {} layout layers and {} anchors, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
@@ -97,6 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         object_catalog.roots().len(),
         object_tree.nodes().len(),
         object_tree.top_level().len(),
+        frame_plan.layer_count(),
         layout_plan.layer_count(),
         layout_plan.anchor_count(),
         texture_plan.layer_count(),
