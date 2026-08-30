@@ -5,7 +5,9 @@ use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 
-use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
+use solarity_asset::{
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, Locale,
+};
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiBundle, UiFramePlan, UiLayoutPlan,
     UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
@@ -121,11 +123,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         && let Some(extent) = manager_extent
     {
         let manager = GlueManager::start(AssetStore::mount(catalog)?, extent, false)?;
+        let mut texture_cache = BlpTextureCache::new();
+        let texture_bindings = manager.load_blocking_render_textures(&mut texture_cache)?;
         println!(
-            "activated stock login lifecycle with {} presentation packets, {} texture members, and {} renderer batches",
+            "activated stock login lifecycle with {} presentation packets, {} texture members, {} renderer batches, {} resident textures, and {} pending textures",
             manager.presentation().packets().len(),
             manager.presentation().member_count(),
-            manager.render_plan().mesh().batches().len()
+            manager.render_plan().mesh().batches().len(),
+            texture_bindings.resident_count(),
+            texture_bindings.pending_count()
         );
     }
     let texture_paths = object_tree

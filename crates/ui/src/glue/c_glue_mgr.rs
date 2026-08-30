@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use solarity_asset::AssetStore;
+use solarity_asset::{AssetStore, BlpTextureCache};
 
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiRuntimeObjectPlan;
@@ -12,7 +12,7 @@ use crate::{
     UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiLayoutPlan, UiManifestKind,
     UiObjectCatalog, UiObjectTree, UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan,
     UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
+    UiScriptRuntimePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -36,7 +36,7 @@ pub struct GlueManager {
     child_indices: Vec<usize>,
     report: GlueStartupReport,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
-    _assets: Rc<RefCell<AssetStore>>,
+    assets: Rc<RefCell<AssetStore>>,
     bundle: UiBundle,
 }
 
@@ -125,7 +125,7 @@ impl GlueManager {
             child_indices,
             report,
             media_intent,
-            _assets: assets,
+            assets,
             bundle,
         })
     }
@@ -189,6 +189,21 @@ impl GlueManager {
     #[must_use]
     pub const fn render_plan(&self) -> &UiRenderPlan {
         &self.render_plan
+    }
+
+    /// Resolves every presentation-blocking BLP through the retained MPQ stack.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::UiRenderError::Asset`] when a required source cannot be
+    /// read or parsed. Non-blocking sources remain pending for the streamer.
+    pub fn load_blocking_render_textures(
+        &self,
+        cache: &mut BlpTextureCache,
+    ) -> Result<UiTextureAssetBindings, crate::UiRenderError> {
+        self.render_plan
+            .texture_assets()
+            .load_blocking(&mut self.assets.borrow_mut(), cache)
     }
 
     /// Returns the stock music and ambience requests retained for `media`.

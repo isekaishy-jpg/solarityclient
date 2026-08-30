@@ -6,13 +6,15 @@ use solarity_rendering::{
 };
 
 use crate::{
-    UiBlendMode, UiPresentationPlan, UiRenderError, UiTexturePresentation, UiTextureSource,
+    UiBlendMode, UiPresentationPlan, UiRenderError, UiTextureAssetPlan, UiTexturePresentation,
+    UiTextureSource,
 };
 
 /// Renderer-owned mesh data derived from one complete live presentation pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderPlan {
     mesh: UiMeshPlan,
+    texture_assets: UiTextureAssetPlan,
 }
 
 impl UiRenderPlan {
@@ -33,13 +35,23 @@ impl UiRenderPlan {
     ) -> Result<Self, UiRenderError> {
         let quads = presentation.members_in_draw_order().iter().map(render_quad);
         let mesh = UiMeshPlan::prepare([logical_extent.0 as f32, logical_extent.1 as f32], quads)?;
-        Ok(Self { mesh })
+        let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
+        Ok(Self {
+            mesh,
+            texture_assets,
+        })
     }
 
     /// Returns upload-ready vertices, indices, and adjacent material batches.
     #[must_use]
     pub const fn mesh(&self) -> &UiMeshPlan {
         &self.mesh
+    }
+
+    /// Returns unique MPQ image requests and their batch associations.
+    #[must_use]
+    pub const fn texture_assets(&self) -> &UiTextureAssetPlan {
+        &self.texture_assets
     }
 }
 

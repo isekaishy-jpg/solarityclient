@@ -142,5 +142,12 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let solid_quad = mesh.object_indices().len() - 1;
     let solid_vertex = mesh.vertices()[solid_quad * 4];
     assert_eq!(solid_vertex.color(), [0.2, 0.4, 0.6, 0.8]);
+    let texture_assets = manager.render_plan().texture_assets();
+    assert_eq!(texture_assets.requests().len(), 4);
+    assert_eq!(
+        texture_assets.request_for_batch(mesh.batches().len() - 1),
+        None,
+        "the final solid-color batch has no invented image request"
+    );
     Ok(())
 }
