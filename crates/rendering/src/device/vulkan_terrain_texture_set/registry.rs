@@ -14,6 +14,7 @@ use crate::device::vulkan_texture::BlpTextureRegistry;
 use super::{TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo};
 
 struct GpuTerrainTextureSet {
+    handle: vk::DescriptorSet,
     info: TerrainTextureSetInfo,
 }
 
@@ -95,6 +96,18 @@ impl TerrainTextureSetRegistry {
                 .handles
                 .get(requested)
                 .is_some_and(|found| *found == handle)
+    }
+
+    pub(in crate::device) fn raw(
+        &self,
+        handle: TerrainTextureSetHandle,
+    ) -> Option<vk::DescriptorSet> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.handle)
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
@@ -203,6 +216,7 @@ impl TerrainTextureSetRegistry {
                 slot,
             };
             self.resources.push(GpuTerrainTextureSet {
+                handle: descriptor_set,
                 info: TerrainTextureSetInfo::new(key.layer_count()),
             });
             self.handles.insert(key, handle);

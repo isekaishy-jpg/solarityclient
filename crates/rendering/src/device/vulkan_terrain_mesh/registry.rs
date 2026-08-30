@@ -102,6 +102,18 @@ impl TerrainMeshRegistry {
                 .is_some_and(|resource| resource.plan_identity == plan.identity())
     }
 
+    pub(in crate::device) fn buffers(
+        &self,
+        handle: TerrainMeshHandle,
+    ) -> Option<(ash::vk::Buffer, ash::vk::Buffer)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.buffers.buffers())
+    }
+
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.handles.clear();
         for resource in self.resources.iter_mut().rev() {

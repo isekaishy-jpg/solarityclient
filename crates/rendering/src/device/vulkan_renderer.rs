@@ -20,6 +20,9 @@ use crate::device::vulkan_selection::SelectedAdapter;
 use crate::device::vulkan_terrain_draw::{
     TerrainPreparedDraw, prepare_draw as prepare_terrain_draw,
 };
+use crate::device::vulkan_terrain_frame::{
+    TerrainFrameContext, TerrainFrameRenderer, TerrainFrameReport,
+};
 use crate::device::vulkan_terrain_material::{
     TerrainMaterialHandle, TerrainMaterialRegistry, TerrainMaterialResourceInfo,
 };
@@ -48,7 +51,7 @@ use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
-use crate::{TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource};
+use crate::{TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource};
 use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -127,6 +130,7 @@ pub struct VulkanRenderer {
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
+    terrain_frames: TerrainFrameRenderer,
     terrain_texture_sets: TerrainTextureSetRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
@@ -177,6 +181,7 @@ impl VulkanRenderer {
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
+            terrain_frames: TerrainFrameRenderer::default(),
             terrain_texture_sets: TerrainTextureSetRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
@@ -446,6 +451,50 @@ impl VulkanRenderer {
             plan,
             chunk_index,
         )
+    }
+
+    /// Records and presents one camera-selected terrain draw list.
+    ///
+    /// Scene buffers, depth images, descriptors, commands, and synchronization
+    /// are allocated once per swapchain image and reused without steady-state
+    /// allocation. Draw order is preserved exactly as submitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for empty input, frame-resource creation, scene
+    /// upload, command recording, queue submission, or presentation failure.
+    pub fn present_terrain(
+        &mut self,
+        scene: TerrainSceneUniform,
+        draws: &[TerrainPreparedDraw],
+    ) -> Result<TerrainFrameReport, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let scene_layout = self.terrain_pipelines.scene_set_layout(&self.device)?;
+        let report = self.terrain_frames.present(
+            TerrainFrameContext {
+                device: &self.device,
+                allocator,
+                swapchain_loader: &self.swapchain_loader,
+                swapchain: self.swapchain,
+                swapchain_images: &self.swapchain_images,
+                image_views: &self.image_views,
+                graphics_queue: self.graphics_queue,
+                present_queue: self.present_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+                extent: self.report.extent,
+                depth_format: self.depth_format,
+                pipelines: &self.terrain_pipelines,
+                meshes: &self.terrain_meshes,
+                texture_sets: &self.terrain_texture_sets,
+            },
+            scene_layout,
+            scene,
+            draws,
+        )?;
+        self.is_idle = false;
+        Ok(report)
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.
@@ -901,8 +950,8 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         self.ui_frames.destroy(&self.device);
-        self.terrain_texture_sets.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
+            self.terrain_frames.destroy(&self.device, allocator);
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);
             self.ui_texture_sets.destroy(&self.device);
@@ -912,6 +961,7 @@ impl Drop for VulkanRenderer {
             self.terrain_meshes.destroy(allocator);
             self.m2_meshes.destroy(allocator);
         }
+        self.terrain_texture_sets.destroy(&self.device);
         self.m2_samplers.destroy(&self.device);
         self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);

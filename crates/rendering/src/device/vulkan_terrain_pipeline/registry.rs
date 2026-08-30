@@ -40,6 +40,19 @@ impl Default for TerrainPipelineRegistry {
 }
 
 impl TerrainPipelineRegistry {
+    pub(in crate::device) fn scene_set_layout(
+        &mut self,
+        device: &Device,
+    ) -> Result<vk::DescriptorSetLayout, VulkanError> {
+        self.layout.ensure_created(device)?;
+        self.layout.descriptor_set(0).ok_or_else(|| {
+            VulkanError::operation(
+                "access terrain scene descriptor layout",
+                "layout is unavailable",
+            )
+        })
+    }
+
     pub(in crate::device) fn material_set_layout(
         &mut self,
         device: &Device,
@@ -102,6 +115,18 @@ impl TerrainPipelineRegistry {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| resource.info)
+    }
+
+    pub(in crate::device) fn raw(
+        &self,
+        handle: TerrainPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.handle, self.layout.handle()))
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device) {

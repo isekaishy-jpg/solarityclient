@@ -206,6 +206,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(draw.first_index(), 0);
     assert_eq!(draw.index_count(), 768);
     assert_eq!(draw.push_bytes(), [0; 8]);
+    let frame = renderer.present_terrain(scene, &[draw])?;
+    assert_eq!(frame.draw_count(), 1);
     for layer_count in [
         TerrainLayerCount::One,
         TerrainLayerCount::Two,
