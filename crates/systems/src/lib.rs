@@ -39,3 +39,5 @@ mod support;
 mod talent;
 mod vehicle;
 mod world;
+
+pub use object::{ObjectProjectionError, project_object_fields};

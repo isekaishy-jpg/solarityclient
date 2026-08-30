@@ -8,6 +8,7 @@ use solarity_network::{
     InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
     WorldObjectUpdateBatch,
 };
+use solarity_systems::{ObjectProjectionError, project_object_fields};
 use thiserror::Error;
 
 /// Failure while applying an authoritative object-update batch to ECS state.
@@ -16,6 +17,9 @@ pub enum GameplayUpdateError {
     /// The update violates active-world GUID lifecycle invariants.
     #[error(transparent)]
     World(#[from] WorldStateError),
+    /// The decoded field table could not be projected into typed views.
+    #[error(transparent)]
+    Projection(#[from] ObjectProjectionError),
 }
 
 /// Live world transport paired with the ECS state it authoritatively seeded.
@@ -80,10 +84,17 @@ impl<S> GameplaySession<S> {
     ) -> Result<(), GameplayUpdateError> {
         for update in batch.updates() {
             match update {
-                WorldObjectUpdate::Values { guid, fields } => self.world.update_fields(
-                    *guid,
-                    fields.iter().map(|field| (field.index(), field.value())),
-                )?,
+                WorldObjectUpdate::Values { guid, fields } => {
+                    self.world.update_fields(
+                        *guid,
+                        fields.iter().map(|field| (field.index(), field.value())),
+                    )?;
+                    project_object_fields(
+                        &mut self.world,
+                        *guid,
+                        fields.iter().map(|field| (field.index(), field.value())),
+                    )?;
+                }
                 WorldObjectUpdate::Movement { guid, movement } => {
                     if let Some(transform) = movement_transform(*movement) {
                         self.world.update_transform(*guid, transform)?;
@@ -100,6 +111,11 @@ impl<S> GameplaySession<S> {
                         *guid,
                         object_kind(*kind),
                         movement_transform(*movement),
+                        fields.iter().map(|field| (field.index(), field.value())),
+                    )?;
+                    project_object_fields(
+                        &mut self.world,
+                        *guid,
                         fields.iter().map(|field| (field.index(), field.value())),
                     )?;
                 }

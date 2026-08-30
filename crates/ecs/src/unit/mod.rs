@@ -5,3 +5,11 @@
 //! execute combat rules.
 
 mod unit_c;
+mod unit_flags;
+mod unit_presentation;
+mod unit_vitals;
+
+pub use unit_c::UnitIdentity;
+pub use unit_flags::UnitFlags;
+pub use unit_presentation::UnitPresentation;
+pub use unit_vitals::UnitVitals;

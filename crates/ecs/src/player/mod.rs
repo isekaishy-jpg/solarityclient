@@ -7,4 +7,4 @@
 mod player_c;
 mod player_name;
 
-pub use player_c::{LocalPlayer, PlayerIdentity};
+pub use player_c::{LocalPlayer, PlayerAppearance, PlayerIdentity};

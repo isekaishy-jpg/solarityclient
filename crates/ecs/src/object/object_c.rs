@@ -39,6 +39,37 @@ pub enum ObjectKind {
     Corpse,
 }
 
+/// Common render-facing values shared by every stock object category.
+///
+/// The values mirror `OBJECT_FIELD_ENTRY` and `OBJECT_FIELD_SCALE_X`. Zeroes
+/// are retained until the server materializes the corresponding update word,
+/// matching the zero-initialized stock object field table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Component)]
+pub struct ObjectPresentation {
+    entry_id: u32,
+    scale: f32,
+}
+
+impl ObjectPresentation {
+    /// Creates the typed view of the common presentation fields.
+    #[must_use]
+    pub const fn new(entry_id: u32, scale: f32) -> Self {
+        Self { entry_id, scale }
+    }
+
+    /// Returns the template identifier, or zero when the object has none.
+    #[must_use]
+    pub const fn entry_id(self) -> u32 {
+        self.entry_id
+    }
+
+    /// Returns the exact server-provided object scale.
+    #[must_use]
+    pub const fn scale(self) -> f32 {
+        self.scale
+    }
+}
+
 /// Dense build-12340 update-field storage indexed exactly like the client table.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Component)]
 pub struct ObjectFields {

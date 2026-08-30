@@ -1,1 +1,119 @@
-//! External stock-compatibility tests for `systems/object` belong here.
+//! External stock-compatibility tests for object update projection.
+
+use std::error::Error;
+
+use glam::Vec3;
+use solarity_ecs::{
+    ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, UnitFlags,
+    UnitIdentity, UnitPresentation, UnitVitals, WorldBootstrap, WorldMapId,
+};
+use solarity_systems::{ObjectProjectionError, project_object_fields};
+
+/// Build-12340 player words project into typed views and preserve sparse state.
+#[test]
+fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box<dyn Error>> {
+    let guid = 0x0000_0000_0000_0042;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        guid,
+        "Solarion",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let create_fields = [
+        (3, 0),
+        (4, 1.0_f32.to_bits()),
+        (23, u32::from_le_bytes([1, 8, 0, 0])),
+        (24, 1_000),
+        (25, 4_000),
+        (32, 1_500),
+        (33, 5_000),
+        (54, 80),
+        (55, 1),
+        (59, 0x0000_0008),
+        (60, 0x0000_0800),
+        (67, 20_000),
+        (68, 20_001),
+        (69, 14_307),
+        (74, u32::from_le_bytes([1, 0, 0, 0])),
+        (79, 0x0000_0001),
+        (153, u32::from_le_bytes([3, 4, 5, 6])),
+        (154, u32::from_le_bytes([7, 0, 0, 2])),
+    ];
+    world.create_object(guid, ObjectKind::Player, None, create_fields)?;
+    project_object_fields(&mut world, guid, create_fields)?;
+
+    let player = world.local_player();
+    let object = *world.storage().get::<&ObjectPresentation>(player)?;
+    assert_eq!(object.entry_id(), 0);
+    assert_eq!(object.scale(), 1.0);
+
+    let identity = *world.storage().get::<&UnitIdentity>(player)?;
+    assert_eq!(identity.race_id(), 1);
+    assert_eq!(identity.class_id(), 8);
+    assert_eq!(identity.gender_id(), 0);
+    assert_eq!(identity.power_type_id(), 0);
+    assert_eq!(identity.level(), 80);
+    assert_eq!(identity.faction_template_id(), 1);
+
+    let vitals = *world.storage().get::<&UnitVitals>(player)?;
+    assert_eq!(vitals.health(), 1_000);
+    assert_eq!(vitals.max_health(), 1_500);
+    assert_eq!(vitals.powers()[0], 4_000);
+    assert_eq!(vitals.max_powers()[0], 5_000);
+
+    let presentation = *world.storage().get::<&UnitPresentation>(player)?;
+    assert_eq!(presentation.display_id(), 20_000);
+    assert_eq!(presentation.native_display_id(), 20_001);
+    assert_eq!(presentation.mount_display_id(), 14_307);
+    assert_eq!(presentation.stand_state(), 1);
+
+    let flags = *world.storage().get::<&UnitFlags>(player)?;
+    assert_eq!(flags.primary(), 0x0000_0008);
+    assert_eq!(flags.secondary(), 0x0000_0800);
+    assert_eq!(flags.dynamic(), 0x0000_0001);
+
+    let appearance = *world.storage().get::<&PlayerAppearance>(player)?;
+    assert_eq!(appearance.skin_id(), 3);
+    assert_eq!(appearance.face_id(), 4);
+    assert_eq!(appearance.hair_style_id(), 5);
+    assert_eq!(appearance.hair_color_id(), 6);
+    assert_eq!(appearance.facial_hair_style_id(), 7);
+
+    // A VALUES update carries only changed words; all other typed values must
+    // remain intact just as they do in the authoritative dense table.
+    let values_fields = [(24, 750), (154, u32::from_le_bytes([9, 0, 0, 2]))];
+    world.update_fields(guid, values_fields)?;
+    project_object_fields(&mut world, guid, values_fields)?;
+    let vitals = *world.storage().get::<&UnitVitals>(player)?;
+    assert_eq!(vitals.health(), 750);
+    assert_eq!(vitals.max_health(), 1_500);
+    let appearance = *world.storage().get::<&PlayerAppearance>(player)?;
+    assert_eq!(appearance.skin_id(), 3);
+    assert_eq!(appearance.facial_hair_style_id(), 9);
+    assert_eq!(world.storage().get::<&ObjectFields>(player)?.get(24), 750);
+    Ok(())
+}
+
+/// Projection rejects a pre-seeded player until its create type arrives.
+#[test]
+fn projection_requires_the_stock_create_type() -> Result<(), Box<dyn Error>> {
+    let guid = 0x42;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        guid,
+        "Solarion",
+        Vec3::ZERO,
+        0.0,
+    ));
+
+    assert_eq!(
+        project_object_fields(&mut world, guid, [(24, 1)]),
+        Err(ObjectProjectionError::MissingObjectKind { guid })
+    );
+    assert_eq!(
+        project_object_fields(&mut world, 0x99, [(24, 1)]),
+        Err(ObjectProjectionError::UnknownObject { guid: 0x99 })
+    );
+    Ok(())
+}

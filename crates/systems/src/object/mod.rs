@@ -6,3 +6,5 @@
 mod lifecycle;
 mod types;
 mod update;
+
+pub use update::{ObjectProjectionError, project_object_fields};
