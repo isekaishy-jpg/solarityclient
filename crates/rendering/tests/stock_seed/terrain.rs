@@ -4,15 +4,16 @@
 
 use std::error::Error;
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, Locale, MapCatalog,
     TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    BlpColorSpace, TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
-    TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera,
-    WorldFrustum, WorldScreenWindow,
+    BlpColorSpace, M2LocalLightState, M2SceneUniform, TERRAIN_MATERIAL_ATLAS_BYTE_COUNT,
+    TerrainChunkMeshPlan, TerrainLayerCount, TerrainSceneUniform, TerrainTextureSet,
+    TerrainTileMeshPlan, VulkanBootstrap, WorldCamera, WorldFrameScene, WorldFrustum,
+    WorldModelSceneUniform, WorldScreenWindow,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -206,8 +207,31 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(draw.first_index(), 0);
     assert_eq!(draw.index_count(), 768);
     assert_eq!(draw.push_bytes(), [0; 8]);
-    let frame = renderer.present_terrain(scene, &[draw])?;
-    assert_eq!(frame.draw_count(), 1);
+    let fog = Vec4::new(10.0, 100.0, 0.0, 1.0);
+    let world_scene = WorldFrameScene::new(
+        scene,
+        WorldModelSceneUniform::new(
+            visible.view_projection(),
+            visible.camera().position(),
+            Vec3::new(0.25, 0.3, 0.35),
+            Vec3::new(0.75, 0.7, 0.65),
+            Vec3::Z,
+            fog,
+        ),
+        M2SceneUniform::new(
+            visible.view_projection(),
+            visible.camera().position(),
+            Vec3::new(0.25, 0.3, 0.35),
+            Vec3::new(0.75, 0.7, 0.65),
+            Vec3::Z,
+            fog,
+            [M2LocalLightState::disabled(); 4],
+        ),
+    );
+    let frame = renderer.present_world_frame(world_scene, &[], &[draw], &[], &[])?;
+    assert_eq!(frame.terrain_draw_count(), 1);
+    assert_eq!(frame.world_model_draw_count(), 0);
+    assert_eq!(frame.m2_draw_count(), 0);
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.
     let empty_frame = renderer.present_terrain(scene, &[])?;

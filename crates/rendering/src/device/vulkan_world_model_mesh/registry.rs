@@ -89,6 +89,18 @@ impl WorldModelMeshRegistry {
             .map(|resource| &resource.info)
     }
 
+    pub(in crate::device) fn buffers(
+        &self,
+        handle: WorldModelMeshHandle,
+    ) -> Option<(ash::vk::Buffer, ash::vk::Buffer)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.buffers.buffers())
+    }
+
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.handles.clear();
         for mut resource in self.resources.drain(..).rev() {

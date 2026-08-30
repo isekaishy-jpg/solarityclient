@@ -47,6 +47,9 @@ use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSampler
 use crate::device::vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
 };
+use crate::device::vulkan_world_frame::{
+    WorldFrameContext, WorldFrameRenderer, WorldFrameReport, WorldFrameScene,
+};
 use crate::device::vulkan_world_model_draw::{
     WorldModelPreparedDraw, prepare_draw as prepare_world_model_draw,
 };
@@ -151,6 +154,7 @@ pub struct VulkanRenderer {
     world_model_pipelines: WorldModelPipelineRegistry,
     world_model_samplers: WorldModelSamplerRegistry,
     world_model_texture_sets: WorldModelTextureSetRegistry,
+    world_frames: WorldFrameRenderer,
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
@@ -208,6 +212,7 @@ impl VulkanRenderer {
             world_model_pipelines: WorldModelPipelineRegistry::default(),
             world_model_samplers: WorldModelSamplerRegistry::default(),
             world_model_texture_sets: WorldModelTextureSetRegistry::default(),
+            world_frames: WorldFrameRenderer::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -916,6 +921,73 @@ impl VulkanRenderer {
         )
     }
 
+    /// Presents terrain, physical WMO passes, and M2s in one world framebuffer.
+    ///
+    /// Exactly one swapchain image is acquired, color/depth are cleared once,
+    /// and the completed shared rendering scope is presented once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for empty input, insufficient M2 bones, missing
+    /// shadow resources, frame growth, recording, submission, or presentation.
+    pub fn present_world_frame(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+    ) -> Result<WorldFrameReport, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let terrain_layout = self.terrain_pipelines.scene_set_layout(&self.device)?;
+        let world_model_layouts = self.world_model_pipelines.frame_set_layouts(&self.device)?;
+        let m2_layouts = self.m2_pipelines.frame_set_layouts(&self.device)?;
+        let descriptor_layouts = [
+            terrain_layout,
+            world_model_layouts[0],
+            world_model_layouts[1],
+            m2_layouts[0],
+            m2_layouts[1],
+            m2_layouts[2],
+        ];
+        let report = self.world_frames.present(
+            WorldFrameContext {
+                device: &self.device,
+                allocator,
+                swapchain_loader: &self.swapchain_loader,
+                swapchain: self.swapchain,
+                swapchain_images: &self.swapchain_images,
+                image_views: &self.image_views,
+                graphics_queue: self.graphics_queue,
+                present_queue: self.present_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+                extent: self.report.extent,
+                depth_format: self.depth_format,
+                uniform_alignment: self.uniform_buffer_alignment,
+                storage_alignment: self.storage_buffer_alignment,
+                terrain_pipelines: &self.terrain_pipelines,
+                terrain_meshes: &self.terrain_meshes,
+                terrain_texture_sets: &self.terrain_texture_sets,
+                world_model_pipelines: &self.world_model_pipelines,
+                world_model_meshes: &self.world_model_meshes,
+                world_model_texture_sets: &self.world_model_texture_sets,
+                m2_pipelines: &self.m2_pipelines,
+                m2_meshes: &self.m2_meshes,
+                m2_texture_sets: &self.m2_texture_sets,
+            },
+            descriptor_layouts,
+            scene,
+            bone_transforms,
+            terrain_draws,
+            world_model_draws,
+            m2_draws,
+        )?;
+        self.is_idle = false;
+        Ok(report)
+    }
+
     /// Creates or retrieves stock's linear, base-mip M2 sampler state.
     ///
     /// Horizontal and vertical addressing come directly from the texture
@@ -1149,6 +1221,7 @@ impl Drop for VulkanRenderer {
         let _idle_result = self.wait_idle();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
+            self.world_frames.destroy(&self.device, allocator);
             self.terrain_frames.destroy(&self.device, allocator);
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);

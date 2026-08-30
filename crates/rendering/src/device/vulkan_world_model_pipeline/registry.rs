@@ -114,6 +114,35 @@ impl WorldModelPipelineRegistry {
             })
     }
 
+    pub(in crate::device) fn frame_set_layouts(
+        &mut self,
+        device: &Device,
+    ) -> Result<[vk::DescriptorSetLayout; 2], VulkanError> {
+        self.layout.ensure_created(device)?;
+        let mut layouts = [vk::DescriptorSetLayout::null(); 2];
+        for (index, output) in layouts.iter_mut().enumerate() {
+            *output = self.layout.descriptor_set(index).ok_or_else(|| {
+                VulkanError::operation(
+                    "access WMO frame descriptor layout",
+                    "layout is unavailable",
+                )
+            })?;
+        }
+        Ok(layouts)
+    }
+
+    pub(in crate::device) fn raw(
+        &self,
+        handle: WorldModelPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.handle, self.layout.handle()))
+    }
+
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         // SAFETY: The renderer idles before uniquely owned pipelines are freed.

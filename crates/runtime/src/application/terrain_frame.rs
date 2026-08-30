@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
+use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadError, TerrainFrameReport, TerrainLayerCount,
+    BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2SceneUniform, TerrainLayerCount,
     TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
     TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
-    WorldFrustum, WorldScreenWindow,
+    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -203,7 +204,7 @@ impl TerrainFrame {
         plan: &TerrainTileMeshPlan,
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
-    ) -> Result<TerrainFrameReport, RuntimeTerrainFrameError> {
+    ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
                 frame_x: self.tile.x(),
@@ -220,13 +221,33 @@ impl TerrainFrame {
             }
         }
         let light = environment.light();
-        let scene = TerrainSceneUniform::new(
+        let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
             light.ambient_color(),
             light.diffuse_color(),
             environment.light_direction(),
         );
-        Ok(renderer.present_terrain(scene, &self.visible_draws)?)
+        let (fog_start, fog_end) = light.fog_range();
+        let fog_parameters = Vec4::new(fog_start, fog_end, 0.0, 1.0);
+        let world_model_scene = WorldModelSceneUniform::new(
+            camera.view_projection(),
+            camera.camera().position(),
+            light.ambient_color(),
+            light.diffuse_color(),
+            environment.light_direction(),
+            fog_parameters,
+        );
+        let m2_scene = M2SceneUniform::new(
+            camera.view_projection(),
+            camera.camera().position(),
+            light.ambient_color(),
+            light.diffuse_color(),
+            environment.light_direction(),
+            fog_parameters,
+            [M2LocalLightState::disabled(); 4],
+        );
+        let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene);
+        Ok(renderer.present_world_frame(scene, &[], &self.visible_draws, &[], &[])?)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

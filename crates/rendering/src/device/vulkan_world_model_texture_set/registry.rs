@@ -14,6 +14,7 @@ use crate::device::vulkan_world_model_sampler::WorldModelSamplerRegistry;
 use super::{WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo};
 
 struct GpuWorldModelTextureSet {
+    handle: vk::DescriptorSet,
     info: WorldModelTextureSetInfo,
     request: WorldModelTextureSet,
 }
@@ -80,6 +81,18 @@ impl WorldModelTextureSetRegistry {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| resource.info)
+    }
+
+    pub(in crate::device) fn raw(
+        &self,
+        handle: WorldModelTextureSetHandle,
+    ) -> Option<vk::DescriptorSet> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| resource.handle)
     }
 
     pub(in crate::device) fn request(
@@ -159,6 +172,7 @@ impl WorldModelTextureSetRegistry {
                 slot,
             };
             self.resources.push(GpuWorldModelTextureSet {
+                handle: descriptor_set,
                 info: WorldModelTextureSetInfo::new(key.stage_count()),
                 request: key,
             });

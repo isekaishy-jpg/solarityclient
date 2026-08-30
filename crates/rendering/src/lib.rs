@@ -33,11 +33,11 @@ pub use device::{
     TerrainTextureSetInfo, UiFrameReport, UiMeshHandle, UiMeshResourceInfo, UiPipelineHandle,
     UiPipelineInfo, UiPreparedDraw, UiSampledTexture, UiSamplerHandle, UiSamplerInfo,
     UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap, VulkanError, VulkanRenderer,
-    VulkanReport, WorldModelBaseMip, WorldModelMeshHandle, WorldModelMeshResourceInfo,
-    WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPreparedDraw,
-    WorldModelSampledTexture, WorldModelSamplerHandle, WorldModelSamplerInfo,
-    WorldModelTextureAddressMode, WorldModelTextureFiltering, WorldModelTextureSet,
-    WorldModelTextureSetHandle, WorldModelTextureSetInfo,
+    VulkanReport, WorldFrameReport, WorldFrameScene, WorldModelBaseMip, WorldModelMeshHandle,
+    WorldModelMeshResourceInfo, WorldModelPipelineHandle, WorldModelPipelineInfo,
+    WorldModelPreparedDraw, WorldModelSampledTexture, WorldModelSamplerHandle,
+    WorldModelSamplerInfo, WorldModelTextureAddressMode, WorldModelTextureFiltering,
+    WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

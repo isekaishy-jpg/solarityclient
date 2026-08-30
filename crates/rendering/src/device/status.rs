@@ -168,6 +168,12 @@ pub enum VulkanError {
     /// Sampled images or stage count disagree with the MOMT effect.
     #[error("WMO draw texture set does not match its material effect")]
     WorldModelDrawTextureSetMismatch,
+    /// A unified world frame contains no terrain, WMO, or M2 draws.
+    #[error("world frame contains no prepared draws")]
+    EmptyWorldFrame,
+    /// Unified frame buffers or dynamic offsets exceed Vulkan capacity.
+    #[error("world frame resources exceed addressable capacity")]
+    WorldFrameCapacity,
     /// A terrain plan has no geometry that Vulkan can bind and draw.
     #[error("terrain mesh has no {buffer_kind} data to upload")]
     EmptyTerrainMesh {

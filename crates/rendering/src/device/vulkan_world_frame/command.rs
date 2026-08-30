@@ -1,0 +1,423 @@
+//! One dynamic-rendering scope for terrain, WMO, and M2 world draws.
+
+#![allow(unsafe_code)]
+
+use ash::{Device, vk};
+
+use crate::device::VulkanError;
+use crate::device::vulkan_m2_draw::M2PreparedDraw;
+use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
+use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
+use crate::device::vulkan_mesh::M2MeshRegistry;
+use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
+use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
+use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
+use crate::device::vulkan_terrain_texture_set::TerrainTextureSetRegistry;
+use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
+use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
+use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
+use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
+
+use super::WorldFrameContext;
+use super::resource::WorldFrameSlot;
+
+pub(super) struct RecordContext<'a> {
+    pub(super) device: &'a Device,
+    pub(super) command_buffer: vk::CommandBuffer,
+    pub(super) image: vk::Image,
+    pub(super) image_view: vk::ImageView,
+    pub(super) depth_image: vk::Image,
+    pub(super) depth_view: vk::ImageView,
+    pub(super) extent: (u32, u32),
+    pub(super) frame_sets: [vk::DescriptorSet; 6],
+    pub(super) world_model_material_stride: vk::DeviceSize,
+    pub(super) m2_material_stride: vk::DeviceSize,
+    pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
+    pub(super) terrain_meshes: &'a TerrainMeshRegistry,
+    pub(super) terrain_texture_sets: &'a TerrainTextureSetRegistry,
+    pub(super) world_model_pipelines: &'a WorldModelPipelineRegistry,
+    pub(super) world_model_meshes: &'a WorldModelMeshRegistry,
+    pub(super) world_model_texture_sets: &'a WorldModelTextureSetRegistry,
+    pub(super) m2_pipelines: &'a M2PipelineRegistry,
+    pub(super) m2_meshes: &'a M2MeshRegistry,
+    pub(super) m2_texture_sets: &'a M2TextureSetRegistry,
+    pub(super) terrain_draws: &'a [TerrainPreparedDraw],
+    pub(super) world_model_draws: &'a [WorldModelPreparedDraw],
+    pub(super) m2_draws: &'a [M2PreparedDraw],
+}
+
+pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
+    let begin =
+        vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    // SAFETY: Slot pool was reset and this primary buffer is not pending.
+    unsafe {
+        context
+            .device
+            .begin_command_buffer(context.command_buffer, &begin)
+    }
+    .map_err(|source| VulkanError::operation("begin world command buffer", source))?;
+    transition_attachments(&context);
+    let color = vk::RenderingAttachmentInfo::default()
+        .image_view(context.image_view)
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .clear_value(vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        });
+    let depth = vk::RenderingAttachmentInfo::default()
+        .image_view(context.depth_view)
+        .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .clear_value(vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        });
+    let colors = [color];
+    let render_area = vk::Rect2D {
+        offset: vk::Offset2D::default(),
+        extent: vk::Extent2D {
+            width: context.extent.0,
+            height: context.extent.1,
+        },
+    };
+    let rendering = vk::RenderingInfo::default()
+        .render_area(render_area)
+        .layer_count(1)
+        .color_attachments(&colors)
+        .depth_attachment(&depth)
+        .stencil_attachment(&depth);
+    // SAFETY: Formats/layouts agree with every world pipeline.
+    unsafe {
+        context
+            .device
+            .cmd_begin_rendering(context.command_buffer, &rendering)
+    };
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: context.extent.1 as f32,
+        width: context.extent.0 as f32,
+        height: -(context.extent.1 as f32),
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    // SAFETY: Every terrain, WMO, and M2 pipeline declares these dynamic.
+    unsafe {
+        context
+            .device
+            .cmd_set_viewport(context.command_buffer, 0, &[viewport]);
+        context
+            .device
+            .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
+    }
+    for draw in context.terrain_draws.iter().copied() {
+        record_terrain(&context, draw)?;
+    }
+    for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
+        record_world_model(&context, index, draw)?;
+    }
+    for (index, draw) in context.m2_draws.iter().copied().enumerate() {
+        record_m2(&context, index, draw)?;
+    }
+    // SAFETY: The single matching world rendering scope is active.
+    unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    transition_to_present(&context);
+    // SAFETY: Every bound resource outlives slot fence retirement.
+    unsafe { context.device.end_command_buffer(context.command_buffer) }
+        .map_err(|source| VulkanError::operation("end world command buffer", source))
+}
+
+fn record_terrain(
+    context: &RecordContext<'_>,
+    draw: TerrainPreparedDraw,
+) -> Result<(), VulkanError> {
+    let (pipeline, layout) = context
+        .terrain_pipelines
+        .raw(draw.pipeline())
+        .ok_or(VulkanError::UnknownTerrainPipelineHandle)?;
+    let (vertex, index) = context
+        .terrain_meshes
+        .buffers(draw.mesh())
+        .ok_or(VulkanError::UnknownTerrainMeshHandle)?;
+    let texture = context
+        .terrain_texture_sets
+        .raw(draw.texture_set())
+        .ok_or(VulkanError::UnknownTerrainTextureSetHandle)?;
+    let sets = [context.frame_sets[0], texture];
+    // SAFETY: Prepared draw proves compatible renderer-local resources.
+    unsafe {
+        context.device.cmd_bind_pipeline(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline,
+        );
+        context
+            .device
+            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
+        context.device.cmd_bind_index_buffer(
+            context.command_buffer,
+            index,
+            0,
+            vk::IndexType::UINT16,
+        );
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &sets,
+            &[],
+        );
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            &draw.push_bytes(),
+        );
+        context.device.cmd_draw_indexed(
+            context.command_buffer,
+            draw.index_count(),
+            1,
+            draw.first_index(),
+            0,
+            0,
+        );
+    }
+    Ok(())
+}
+
+fn record_world_model(
+    context: &RecordContext<'_>,
+    draw_index: usize,
+    draw: WorldModelPreparedDraw,
+) -> Result<(), VulkanError> {
+    let (pipeline, layout) = context
+        .world_model_pipelines
+        .raw(draw.pipeline())
+        .ok_or(VulkanError::UnknownWorldModelPipelineHandle)?;
+    let (vertex, index) = context
+        .world_model_meshes
+        .buffers(draw.mesh())
+        .ok_or(VulkanError::UnknownWorldModelMeshHandle)?;
+    let texture = context
+        .world_model_texture_sets
+        .raw(draw.texture_set())
+        .ok_or(VulkanError::UnknownWorldModelTextureSetHandle)?;
+    let dynamic_offset = dynamic_offset(draw_index, context.world_model_material_stride)?;
+    let sets = [context.frame_sets[1], context.frame_sets[2], texture];
+    let range = draw.index_range();
+    // SAFETY: Prepared draw proves compatible pipeline, UINT32 mesh, and set.
+    unsafe {
+        context.device.cmd_bind_pipeline(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline,
+        );
+        context
+            .device
+            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
+        context.device.cmd_bind_index_buffer(
+            context.command_buffer,
+            index,
+            0,
+            vk::IndexType::UINT32,
+        );
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &sets,
+            &[dynamic_offset],
+        );
+        context
+            .device
+            .cmd_draw_indexed(context.command_buffer, range[1], 1, range[0], 0, 0);
+    }
+    Ok(())
+}
+
+fn record_m2(
+    context: &RecordContext<'_>,
+    draw_index: usize,
+    draw: M2PreparedDraw,
+) -> Result<(), VulkanError> {
+    let (pipeline, layout) = context
+        .m2_pipelines
+        .raw(draw.pipeline())
+        .ok_or(VulkanError::UnknownM2PipelineHandle)?;
+    let (vertex, index) = context
+        .m2_meshes
+        .buffers(draw.mesh())
+        .ok_or(VulkanError::UnknownM2MeshHandle)?;
+    let texture = context
+        .m2_texture_sets
+        .raw(draw.texture_set())
+        .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
+    let dynamic_offset = dynamic_offset(draw_index, context.m2_material_stride)?;
+    let sets = [
+        context.frame_sets[3],
+        context.frame_sets[4],
+        context.frame_sets[5],
+        texture,
+    ];
+    // SAFETY: Prepared draw proves compatible resources and material range.
+    unsafe {
+        context.device.cmd_bind_pipeline(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline,
+        );
+        context
+            .device
+            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
+        context.device.cmd_bind_index_buffer(
+            context.command_buffer,
+            index,
+            0,
+            vk::IndexType::UINT16,
+        );
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &sets,
+            &[dynamic_offset],
+        );
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &draw.push_constants().to_bytes(),
+        );
+        context.device.cmd_draw_indexed(
+            context.command_buffer,
+            draw.index_count(),
+            1,
+            draw.first_index(),
+            0,
+            0,
+        );
+    }
+    Ok(())
+}
+
+fn dynamic_offset(index: usize, stride: u64) -> Result<u32, VulkanError> {
+    (index as u64)
+        .checked_mul(stride)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(VulkanError::WorldFrameCapacity)
+}
+
+fn transition_attachments(context: &RecordContext<'_>) {
+    let color_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .layer_count(1);
+    let depth_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+        .level_count(1)
+        .layer_count(1);
+    let barriers = [
+        vk::ImageMemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .image(context.image)
+            .subresource_range(color_range),
+        vk::ImageMemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+            .dst_stage_mask(
+                vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            )
+            .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .image(context.depth_image)
+            .subresource_range(depth_range),
+    ];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: Synchronization2 is enabled and old contents are discarded.
+    unsafe {
+        context
+            .device
+            .cmd_pipeline_barrier2(context.command_buffer, &dependency)
+    };
+}
+
+fn transition_to_present(context: &RecordContext<'_>) {
+    let range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .layer_count(1);
+    let barriers = [vk::ImageMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .image(context.image)
+        .subresource_range(range)];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: Barrier follows the completed rendering scope.
+    unsafe {
+        context
+            .device
+            .cmd_pipeline_barrier2(context.command_buffer, &dependency)
+    };
+}
+
+pub(super) fn submit_and_present(
+    context: &WorldFrameContext<'_>,
+    slot: &mut WorldFrameSlot,
+    present_semaphore: vk::Semaphore,
+    image_index: u32,
+) -> Result<(), VulkanError> {
+    let waits = [vk::SemaphoreSubmitInfo::default()
+        .semaphore(slot.image_available())
+        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
+    let commands = [vk::CommandBufferSubmitInfo::default().command_buffer(slot.command_buffer())];
+    let signals = [vk::SemaphoreSubmitInfo::default()
+        .semaphore(present_semaphore)
+        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+    let submit = vk::SubmitInfo2::default()
+        .wait_semaphore_infos(&waits)
+        .command_buffer_infos(&commands)
+        .signal_semaphore_infos(&signals);
+    slot.reset_fence(context.device)?;
+    // SAFETY: Command and synchronization resources live through fence retirement.
+    if let Err(source) = unsafe {
+        context
+            .device
+            .queue_submit2(context.graphics_queue, &[submit], slot.fence())
+    } {
+        slot.restore_signaled_fence(context.device)?;
+        return Err(VulkanError::operation("submit world frame", source));
+    }
+    let wait = [present_semaphore];
+    let swapchains = [context.swapchain];
+    let indices = [image_index];
+    let present = vk::PresentInfoKHR::default()
+        .wait_semaphores(&wait)
+        .swapchains(&swapchains)
+        .image_indices(&indices);
+    // SAFETY: Presentation waits for this submission's signal.
+    unsafe {
+        context
+            .swapchain_loader
+            .queue_present(context.present_queue, &present)
+    }
+    .map_err(|source| VulkanError::operation("present world frame", source))?;
+    Ok(())
+}
