@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 use solarity_asset::AssetError;
+use solarity_network::TransportError;
 
 /// A failure to construct complete typed runtime configuration.
 #[derive(Debug, Error)]
@@ -83,5 +84,24 @@ pub enum ConfigurationError {
         /// The asset boundary's contextual failure.
         #[source]
         source: AssetError,
+    },
+    /// The login-server authority is not valid `host:port` syntax.
+    #[error("invalid --login-endpoint value: {source}")]
+    InvalidLoginEndpoint {
+        /// The transport boundary's contextual validation failure.
+        #[source]
+        source: TransportError,
+    },
+    /// The login timezone cannot be represented by the signed wire field.
+    #[error("value {value} for --login-timezone-minutes must be a signed 32-bit integer")]
+    InvalidLoginTimezone {
+        /// The rejected value.
+        value: String,
+    },
+    /// The login challenge requires an explicit IPv4 address.
+    #[error("value {value} for --login-client-ip must be an IPv4 address")]
+    InvalidLoginClientIp {
+        /// The rejected value.
+        value: String,
     },
 }

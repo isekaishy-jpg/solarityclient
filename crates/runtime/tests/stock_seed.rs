@@ -16,6 +16,8 @@ mod input;
 mod legal;
 #[path = "stock_seed/loading.rs"]
 mod loading;
+#[path = "stock_seed/login.rs"]
+mod login;
 #[path = "stock_seed/platform.rs"]
 mod platform;
 #[path = "stock_seed/platform/lcd.rs"]

@@ -21,6 +21,14 @@ fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>
     assert_eq!(configuration.cpu_pool().max_in_flight().get(), 24);
     assert_eq!(configuration.network_workers().get(), 2);
     assert_eq!(configuration.network_shutdown_timeout().as_millis(), 250);
+    assert_eq!(
+        configuration.login().endpoint().to_string(),
+        "127.0.0.1:3724"
+    );
+    assert_eq!(
+        configuration.login().options().locale(),
+        solarity_network::LoginLocale::EnUs
+    );
     assert_eq!(configuration.window().width(), 1280);
     assert_eq!(configuration.window().height(), 720);
     assert_eq!(configuration.window().mode(), WindowMode::Windowed);
@@ -112,6 +120,26 @@ fn invalid_window_policy_is_rejected() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Login transport identity is validated without DNS or interface inference.
+#[test]
+fn invalid_login_identity_is_rejected() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let mut invalid_endpoint = arguments(&fixture, &["--cpu-workers", "2", "--cpu-capacity", "8"]);
+    replace_option_value(&mut invalid_endpoint, "--login-endpoint", "localhost")?;
+    assert!(matches!(
+        RuntimeConfiguration::from_arguments(invalid_endpoint),
+        Err(ConfigurationError::InvalidLoginEndpoint { .. })
+    ));
+
+    let mut invalid_ip = arguments(&fixture, &["--cpu-workers", "2", "--cpu-capacity", "8"]);
+    replace_option_value(&mut invalid_ip, "--login-client-ip", "localhost")?;
+    assert!(matches!(
+        RuntimeConfiguration::from_arguments(invalid_ip),
+        Err(ConfigurationError::InvalidLoginClientIp { value }) if value == "localhost"
+    ));
+    Ok(())
+}
+
 /// Builds a complete argument vector with selected CPU options inserted.
 fn arguments(fixture: &ClientFixture, cpu_options: &[&str]) -> Vec<OsString> {
     let mut arguments = vec![
@@ -126,6 +154,12 @@ fn arguments(fixture: &ClientFixture, cpu_options: &[&str]) -> Vec<OsString> {
         OsString::from("2"),
         OsString::from("--network-shutdown-ms"),
         OsString::from("250"),
+        OsString::from("--login-endpoint"),
+        OsString::from("127.0.0.1:3724"),
+        OsString::from("--login-timezone-minutes"),
+        OsString::from("-240"),
+        OsString::from("--login-client-ip"),
+        OsString::from("127.0.0.1"),
         OsString::from("--window-width"),
         OsString::from("1280"),
         OsString::from("--window-height"),
@@ -158,6 +192,12 @@ fn arguments_with_window(
         OsString::from("2"),
         OsString::from("--network-shutdown-ms"),
         OsString::from("250"),
+        OsString::from("--login-endpoint"),
+        OsString::from("127.0.0.1:3724"),
+        OsString::from("--login-timezone-minutes"),
+        OsString::from("-240"),
+        OsString::from("--login-client-ip"),
+        OsString::from("127.0.0.1"),
         OsString::from("--window-width"),
         OsString::from(width),
         OsString::from("--window-height"),
@@ -167,4 +207,17 @@ fn arguments_with_window(
         OsString::from("--gpu-index"),
         OsString::from("0"),
     ]
+}
+
+fn replace_option_value(
+    arguments: &mut [OsString],
+    option: &str,
+    value: &str,
+) -> Result<(), Box<dyn Error>> {
+    let option_index = arguments
+        .iter()
+        .position(|argument| argument == option)
+        .ok_or("test argument vector omitted required option")?;
+    arguments[option_index + 1] = OsString::from(value);
+    Ok(())
 }

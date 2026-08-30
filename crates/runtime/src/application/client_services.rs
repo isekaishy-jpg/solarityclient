@@ -2,14 +2,20 @@
 
 #![allow(unsafe_code)]
 
+use std::collections::VecDeque;
+
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
-use solarity_ui::{GlueManager, GlueStartupReport};
+use solarity_ui::{GlueManager, GlueStartupReport, UiGlueNetworkAction, UiGlueNetworkStatus};
 
 use crate::application::ApplicationError;
+use crate::application::login_coordinator::{
+    RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
+    RuntimeLoginState,
+};
 use crate::application::login_ui::LoginUiFrame;
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
@@ -19,9 +25,11 @@ pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: LoginUiFrame,
     platform: SdlPlatform,
-    _glue: GlueManager,
+    glue: GlueManager,
     cpu: CpuExecutor,
     network: Option<Runtime>,
+    login: RuntimeLoginCoordinator,
+    login_failures: VecDeque<RuntimeLoginError>,
     network_shutdown_timeout: std::time::Duration,
 }
 
@@ -61,15 +69,18 @@ impl ClientServices {
             .map_err(|source| ApplicationError::NetworkRuntime {
                 message: source.to_string(),
             })?;
+        let login = RuntimeLoginCoordinator::new(configuration.login().clone());
 
         Ok((
             Self {
                 renderer,
                 login_ui,
                 platform,
-                _glue: glue,
+                glue,
                 cpu,
                 network: Some(network),
+                login,
+                login_failures: VecDeque::new(),
                 network_shutdown_timeout: configuration.network_shutdown_timeout(),
             },
             archive_count,
@@ -83,7 +94,7 @@ impl ClientServices {
 
     /// Returns proof that the built-in pre-world UI finished ordered startup.
     pub(crate) fn glue_report(&self) -> GlueStartupReport {
-        self._glue.report()
+        self.glue.report()
     }
 
     /// Polls one translated main-thread platform event without allocating a batch.
@@ -97,6 +108,62 @@ impl ClientServices {
         Ok(())
     }
 
+    /// Applies ordered Glue actions and polls one asynchronous login result.
+    pub(crate) fn service_login(&mut self) {
+        let Some(network) = self.network.as_ref() else {
+            return;
+        };
+        let handle = network.handle().clone();
+        while let Some(action) = self.glue.take_network_action() {
+            match action {
+                UiGlueNetworkAction::Login(request) => {
+                    let result = std::str::from_utf8(request.password_bytes())
+                        .map_err(|_source| RuntimeLoginError::PasswordEncoding)
+                        .and_then(|password| {
+                            self.login.begin(&handle, request.account_name(), password)
+                        });
+                    match result {
+                        Ok(())
+                        | Err(RuntimeLoginError::AlreadyActive)
+                        | Err(RuntimeLoginError::AlreadyAuthenticated) => {}
+                        Err(error) => self.publish_login_failure(error),
+                    }
+                }
+                UiGlueNetworkAction::CancelLogin => {
+                    self.login.cancel();
+                    self.glue.set_network_status(UiGlueNetworkStatus::default());
+                }
+                UiGlueNetworkAction::Disconnect => {
+                    self.login.disconnect();
+                    self.glue.set_network_status(UiGlueNetworkStatus::default());
+                }
+            }
+        }
+
+        match self.login.poll() {
+            Ok(RuntimeLoginPoll::Idle | RuntimeLoginPoll::Pending) => {}
+            Ok(RuntimeLoginPoll::Authenticated) => self
+                .glue
+                .set_network_status(UiGlueNetworkStatus::new(None, true)),
+            Err(error) => self.publish_login_failure(error),
+        }
+    }
+
+    /// Returns synchronous login ownership for diagnostics and Glue routing.
+    pub(crate) const fn login_state(&self) -> RuntimeLoginState {
+        self.login.state()
+    }
+
+    /// Returns the retained authenticated result before explicit realm selection.
+    pub(crate) const fn authenticated_login(&self) -> Option<&RuntimeAuthenticatedLogin> {
+        self.login.authenticated()
+    }
+
+    /// Takes the oldest login failure without collapsing distinct attempts.
+    pub(crate) fn take_login_failure(&mut self) -> Option<RuntimeLoginError> {
+        self.login_failures.pop_front()
+    }
+
     /// Returns startup facts that prove the configured window exists.
     pub(crate) fn window_facts(&self) -> (u32, (u32, u32), (u32, u32)) {
         (
@@ -108,6 +175,7 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
+        self.login.disconnect();
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
@@ -115,6 +183,14 @@ impl ClientServices {
         }
         renderer_result?;
         cpu_result
+    }
+}
+
+impl ClientServices {
+    fn publish_login_failure(&mut self, error: RuntimeLoginError) {
+        self.glue.set_network_status(UiGlueNetworkStatus::default());
+        tracing::warn!(error = %error, "login exchange failed");
+        self.login_failures.push_back(error);
     }
 }
 

@@ -18,10 +18,11 @@ mod time;
 
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, ClientApplication,
-    GameplaySession, GameplayUpdateError, StartupReport,
+    GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin, RuntimeLoginCoordinator,
+    RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState, StartupReport,
 };
 pub use configuration::{
-    ConfigurationError, RuntimeConfiguration, WindowConfiguration, WindowMode,
+    ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,
 };
 pub use platform::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,

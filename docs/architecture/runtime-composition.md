@@ -27,6 +27,13 @@ by the implemented services:
 --cpu-capacity <count>
 --network-workers <count>
 --network-shutdown-ms <milliseconds>
+--login-endpoint <host:port>
+--login-timezone-minutes <signed-minutes>
+--login-client-ip <IPv4>
+--window-width <pixels>
+--window-height <pixels>
+--window-mode <windowed|fullscreen>
+--gpu-index <zero-based-index>
 ```
 
 Missing, duplicate, unknown, zero, and malformed values fail explicitly. The
@@ -40,8 +47,10 @@ complete.
 Construction follows dependency order:
 
 1. discover and mount the validated stock/patch archive catalog;
-2. construct the bounded private Rayon CPU executor; and
-3. construct a separate multithreaded Tokio runtime for network and timer I/O.
+2. create the main-thread SDL window and Vulkan 1.3 presentation owner;
+3. execute GlueXML and prepare its initial device-local frame resources;
+4. construct the bounded private Rayon CPU executor; and
+5. construct a separate multithreaded Tokio runtime and idle login coordinator.
 
 Shutdown first closes and drains CPU admission, then consumes Tokio with the
 configured timeout. Mounted archives remain owned by the service aggregate
@@ -56,11 +65,17 @@ blocking asset work on its workers.
 
 ## Current executable behavior
 
-`solarity-runtime` presents the stock missing-icon BLP as its initialized
-bootstrap frame, constructs and executes the stock GlueXML manifest using that
-same mounted archive stack, reveals the window, and blocks on SDL rather than
-spinning or exiting immediately. Global quit, host termination, and a close
-request for the primary window end the loop; a close event for another window
-does not. The generated integration fixture proves archive-backed BLP and UI
-startup, a real queued SDL termination, and shutdown with all ten required
-consolidated archives.
+`solarity-runtime` constructs and executes the stock GlueXML manifest using the
+mounted archive stack, prepares its texture batches, and reveals the window
+only after the first Vulkan frame presents. FIFO swapchain presentation paces
+subsequent main-thread boundaries. Each boundary drains SDL events, applies the
+ordered Glue login-action mailbox, polls the asynchronous Grunt task, and then
+presents the retained login generation.
+
+Login configuration does not open a socket at startup. `DefaultServerLogin`
+admits one task that connects, proves build 12340 with SRP, and requests the
+realm directory. `CancelLogin` aborts only an in-progress task;
+`DisconnectFromServer` also releases authenticated ownership. Transport and
+login failures remain ordered for the Glue status layer, while a successful
+result retains both the authenticated realmd stream and the exact server-order
+realm rows for explicit realm selection.

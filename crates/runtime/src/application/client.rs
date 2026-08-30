@@ -4,10 +4,12 @@ use thiserror::Error;
 
 use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
+use solarity_network::RealmDirectory;
 use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport};
 use solarity_ui::{GlueError, GlueStartupReport, UiRenderError};
 
 use crate::application::client_services::ClientServices;
+use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::run::{self, ApplicationRunReport};
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformError, PlatformEvent};
@@ -164,6 +166,7 @@ impl ClientApplication {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
             }
+            self.services.service_login();
             self.services.present_login_frame()?;
         }
     }
@@ -172,6 +175,23 @@ impl ClientApplication {
     #[must_use]
     pub fn vulkan_report(&self) -> &VulkanReport {
         self.services.vulkan_report()
+    }
+
+    /// Returns synchronous ownership of the login-server phase.
+    #[must_use]
+    pub const fn login_state(&self) -> RuntimeLoginState {
+        self.services.login_state()
+    }
+
+    /// Returns the authenticated realm directory before realm selection.
+    #[must_use]
+    pub fn realm_directory(&self) -> Option<&RealmDirectory> {
+        Some(self.services.authenticated_login()?.realms())
+    }
+
+    /// Takes the oldest terminal login failure observed by the main thread.
+    pub fn take_login_failure(&mut self) -> Option<RuntimeLoginError> {
+        self.services.take_login_failure()
     }
 
     /// Drains owned executors in explicit shutdown order.

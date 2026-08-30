@@ -8,8 +8,12 @@ use std::time::Duration;
 
 use solarity_asset::{ClientDataRoot, Locale};
 use solarity_cpu::CpuPoolConfig;
+use solarity_network::{GruntLoginOptions, TcpEndpoint};
 
-use crate::configuration::{ConfigurationError, WindowConfiguration, WindowMode};
+use crate::configuration::login::{client_ip, login_locale};
+use crate::configuration::{
+    ConfigurationError, LoginConfiguration, WindowConfiguration, WindowMode,
+};
 
 const DATA_ROOT_OPTION: &str = "--data-root";
 const LOCALE_OPTION: &str = "--locale";
@@ -17,6 +21,9 @@ const CPU_WORKERS_OPTION: &str = "--cpu-workers";
 const CPU_CAPACITY_OPTION: &str = "--cpu-capacity";
 const NETWORK_WORKERS_OPTION: &str = "--network-workers";
 const NETWORK_SHUTDOWN_OPTION: &str = "--network-shutdown-ms";
+const LOGIN_ENDPOINT_OPTION: &str = "--login-endpoint";
+const LOGIN_TIMEZONE_OPTION: &str = "--login-timezone-minutes";
+const LOGIN_CLIENT_IP_OPTION: &str = "--login-client-ip";
 const WINDOW_WIDTH_OPTION: &str = "--window-width";
 const WINDOW_HEIGHT_OPTION: &str = "--window-height";
 const WINDOW_MODE_OPTION: &str = "--window-mode";
@@ -30,6 +37,7 @@ pub struct RuntimeConfiguration {
     cpu_pool: CpuPoolConfig,
     network_workers: NonZeroUsize,
     network_shutdown_timeout: Duration,
+    login: LoginConfiguration,
     window: WindowConfiguration,
     gpu_index: usize,
 }
@@ -81,6 +89,18 @@ impl RuntimeConfiguration {
                         NETWORK_SHUTDOWN_OPTION,
                     )?;
                 }
+                LOGIN_ENDPOINT_OPTION => {
+                    let value = next_value(&mut arguments, LOGIN_ENDPOINT_OPTION)?;
+                    set_once(&mut values.login_endpoint, value, LOGIN_ENDPOINT_OPTION)?;
+                }
+                LOGIN_TIMEZONE_OPTION => {
+                    let value = next_value(&mut arguments, LOGIN_TIMEZONE_OPTION)?;
+                    set_once(&mut values.login_timezone, value, LOGIN_TIMEZONE_OPTION)?;
+                }
+                LOGIN_CLIENT_IP_OPTION => {
+                    let value = next_value(&mut arguments, LOGIN_CLIENT_IP_OPTION)?;
+                    set_once(&mut values.login_client_ip, value, LOGIN_CLIENT_IP_OPTION)?;
+                }
                 WINDOW_WIDTH_OPTION => {
                     let value = next_value(&mut arguments, WINDOW_WIDTH_OPTION)?;
                     set_once(&mut values.window_width, value, WINDOW_WIDTH_OPTION)?;
@@ -113,6 +133,8 @@ impl RuntimeConfiguration {
     pub const fn usage() -> &'static str {
         "solarity-runtime --data-root <Data> --locale <locale> --cpu-workers <count> \
          --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds> \
+         --login-endpoint <host:port> --login-timezone-minutes <signed-minutes> \
+         --login-client-ip <IPv4> \
          --window-width <pixels> --window-height <pixels> --window-mode <windowed|fullscreen> \
          --gpu-index <zero-based-index>"
     }
@@ -145,6 +167,12 @@ impl RuntimeConfiguration {
     #[must_use]
     pub const fn network_shutdown_timeout(&self) -> Duration {
         self.network_shutdown_timeout
+    }
+
+    /// Returns the exact login-server and challenge identity.
+    #[must_use]
+    pub const fn login(&self) -> &LoginConfiguration {
+        &self.login
     }
 
     /// Returns the validated initial SDL window policy.
@@ -180,6 +208,24 @@ impl RuntimeConfiguration {
             required(values.network_shutdown_ms, NETWORK_SHUTDOWN_OPTION)?,
             NETWORK_SHUTDOWN_OPTION,
         )?;
+        let login_endpoint = required(values.login_endpoint, LOGIN_ENDPOINT_OPTION)?;
+        let login_endpoint_text = unicode(&login_endpoint, LOGIN_ENDPOINT_OPTION)?;
+        let login_endpoint = TcpEndpoint::parse(login_endpoint_text)
+            .map_err(|source| ConfigurationError::InvalidLoginEndpoint { source })?;
+        let login_timezone = required(values.login_timezone, LOGIN_TIMEZONE_OPTION)?;
+        let login_timezone_text = unicode(&login_timezone, LOGIN_TIMEZONE_OPTION)?;
+        let login_timezone = login_timezone_text.parse::<i32>().map_err(|_source| {
+            ConfigurationError::InvalidLoginTimezone {
+                value: login_timezone_text.to_owned(),
+            }
+        })?;
+        let login_client_ip = required(values.login_client_ip, LOGIN_CLIENT_IP_OPTION)?;
+        let login_client_ip_text = unicode(&login_client_ip, LOGIN_CLIENT_IP_OPTION)?;
+        let login_client_ip = client_ip(login_client_ip_text).map_err(|_source| {
+            ConfigurationError::InvalidLoginClientIp {
+                value: login_client_ip_text.to_owned(),
+            }
+        })?;
         let window_width = positive_u32(
             required(values.window_width, WINDOW_WIDTH_OPTION)?,
             WINDOW_WIDTH_OPTION,
@@ -202,6 +248,10 @@ impl RuntimeConfiguration {
             .map_err(|source| ConfigurationError::InvalidDataRoot { source })?;
         let locale = Locale::from_str(locale)
             .map_err(|source| ConfigurationError::InvalidLocale { source })?;
+        let login = LoginConfiguration::new(
+            login_endpoint,
+            GruntLoginOptions::new(login_locale(locale), login_timezone, login_client_ip),
+        );
         let shutdown_milliseconds =
             u64::try_from(network_shutdown_ms.get()).map_err(|_source| {
                 ConfigurationError::InvalidPositiveInteger {
@@ -216,6 +266,7 @@ impl RuntimeConfiguration {
             cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity),
             network_workers,
             network_shutdown_timeout: Duration::from_millis(shutdown_milliseconds),
+            login,
             window: WindowConfiguration::new(window_width, window_height, window_mode),
             gpu_index,
         })
@@ -231,6 +282,9 @@ struct ParsedValues {
     cpu_capacity: Option<OsString>,
     network_workers: Option<OsString>,
     network_shutdown_ms: Option<OsString>,
+    login_endpoint: Option<OsString>,
+    login_timezone: Option<OsString>,
+    login_client_ip: Option<OsString>,
     window_width: Option<OsString>,
     window_height: Option<OsString>,
     window_mode: Option<OsString>,
