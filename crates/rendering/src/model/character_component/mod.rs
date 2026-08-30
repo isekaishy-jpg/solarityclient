@@ -4,11 +4,13 @@
 //! then independently replaces the M2 hair and extra-skin texture slots.
 
 mod atlas;
+mod composer;
 mod status;
 mod types;
 
 pub use atlas::CharacterTexturePlan;
-pub use status::CharacterTexturePlanError;
+pub use status::{CharacterTextureComposeError, CharacterTexturePlanError};
 pub use types::{
-    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRect, CharacterAtlasRegion,
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
+    CharacterAtlasRegion, CharacterAtlasTexture,
 };

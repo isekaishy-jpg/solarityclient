@@ -9,6 +9,7 @@ mod component_utils;
 mod m2_scene;
 
 pub use character_component::{
-    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRect, CharacterAtlasRegion,
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
+    CharacterAtlasRegion, CharacterAtlasTexture, CharacterTextureComposeError,
     CharacterTexturePlan, CharacterTexturePlanError,
 };

@@ -61,8 +61,13 @@ pub struct CharacterAtlasRect {
 }
 
 impl CharacterAtlasRect {
+    /// Returns a rectangle covering the full stock-default atlas.
+    pub(super) const fn atlas() -> Self {
+        Self::new(0, 0, STOCK_CHARACTER_ATLAS_SIZE, STOCK_CHARACTER_ATLAS_SIZE)
+    }
+
     /// Creates a compile-time rectangle from the recovered stock layout.
-    const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+    pub(super) const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self {
             x,
             y,
@@ -93,6 +98,73 @@ impl CharacterAtlasRect {
     #[must_use]
     pub const fn height(self) -> u32 {
         self.height
+    }
+}
+
+/// One fully composed RGBA8 mip of the dynamic stock body texture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CharacterAtlasMip {
+    level: usize,
+    width: u32,
+    rgba8: Vec<u8>,
+}
+
+impl CharacterAtlasMip {
+    /// Creates one internally validated square destination mip.
+    pub(super) fn new(level: usize, width: u32, rgba8: Vec<u8>) -> Self {
+        Self {
+            level,
+            width,
+            rgba8,
+        }
+    }
+
+    /// Returns the zero-based destination mip level.
+    #[must_use]
+    pub const fn level(&self) -> usize {
+        self.level
+    }
+
+    /// Returns this square mip's width and height.
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns tightly packed row-major RGBA8 pixels.
+    #[must_use]
+    pub fn rgba8(&self) -> &[u8] {
+        &self.rgba8
+    }
+
+    /// Returns mutable pixels within the private composition boundary.
+    pub(super) fn rgba8_mut(&mut self) -> &mut [u8] {
+        &mut self.rgba8
+    }
+}
+
+/// Complete CPU-side mip chain for the dynamic stock character body texture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CharacterAtlasTexture {
+    mips: Vec<CharacterAtlasMip>,
+}
+
+impl CharacterAtlasTexture {
+    /// Wraps the fixed complete mip chain after composition.
+    pub(super) fn new(mips: Vec<CharacterAtlasMip>) -> Self {
+        Self { mips }
+    }
+
+    /// Returns all destination mips from 256-by-256 through 1-by-1.
+    #[must_use]
+    pub fn mips(&self) -> &[CharacterAtlasMip] {
+        &self.mips
+    }
+
+    /// Returns one zero-based destination mip when present.
+    #[must_use]
+    pub fn mip(&self, level: usize) -> Option<&CharacterAtlasMip> {
+        self.mips.get(level)
     }
 }
 

@@ -19,6 +19,7 @@ mod world_text;
 
 pub use device::{VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport};
 pub use model::{
-    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRect, CharacterAtlasRegion,
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
+    CharacterAtlasRegion, CharacterAtlasTexture, CharacterTextureComposeError,
     CharacterTexturePlan, CharacterTexturePlanError,
 };

@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, CharacterAppearanceCatalog, CharacterCustomization, ClientDataRoot,
-    Locale,
+    ArchiveCatalog, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
+    CharacterCustomization, ClientDataRoot, Locale,
 };
 use solarity_rendering::{CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterTexturePlan};
 
@@ -14,6 +14,37 @@ use crate::support::{Fixture, FixtureFile};
 #[test]
 fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<(), Box<dyn Error>> {
     let tables = character_tables(0);
+    let skin = solid_raw3_blp(
+        512,
+        512,
+        &[
+            0xFFFF_0000,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+            0xFF00_00FF,
+        ],
+    );
+    let overlay = solid_raw3_blp(
+        256,
+        128,
+        &[
+            0x80FF_0000,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+            0x8000_FF00,
+        ],
+    );
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "DBFilesClient\\CharSections.dbc",
@@ -26,6 +57,42 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
         FixtureFile {
             path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
             bytes: &tables.facial_hair,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\Skin.blp",
+            bytes: &skin,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\FaceLower.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\FaceUpper.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\FacialLower.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\FacialUpper.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\HairLower.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\HairUpper.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\UnderwearLower.blp",
+            bytes: &overlay,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\UnderwearUpper.blp",
+            bytes: &overlay,
         },
     ])?;
     let catalog =
@@ -124,6 +191,28 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
         plan.extra_skin().map(|path| path.as_str()),
         Some("CHARACTER\\HUMAN\\MALE\\SKINEXTRA.BLP")
     );
+
+    let mut texture_cache = BlpTextureCache::new();
+    let atlas = plan.compose(&mut store, &mut texture_cache)?;
+    assert_eq!(atlas.mips().len(), 9);
+    assert_eq!(atlas.mip(0).map(|mip| mip.width()), Some(256));
+    assert_eq!(atlas.mip(8).map(|mip| mip.width()), Some(1));
+    let top = atlas.mip(0).ok_or("top character atlas mip is absent")?;
+    // The 512-pixel HD skin selects authored mip one instead of resampling mip
+    // zero. Underwear and head overlays likewise select their authored mip one.
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 10, 10),
+        [0, 0, 255, 255]
+    );
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 130, 10),
+        [0, 128, 127, 255]
+    );
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 10, 170),
+        [0, 223, 0, 255]
+    );
+    assert_eq!(texture_cache.len(), 9);
     Ok(())
 }
 
@@ -233,4 +322,55 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
     block.extend_from_slice(value.as_bytes());
     block.push(0);
     offset
+}
+
+/// Builds a BLP2/RAW3 authored mip chain with one solid color per level.
+fn solid_raw3_blp(width: u32, height: u32, colors: &[u32]) -> Vec<u8> {
+    const HEADER_SIZE: u32 = 148;
+    const PALETTE_SIZE: u32 = 256 * 4;
+    const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
+
+    let mut offsets = [0_u32; 16];
+    let mut sizes = [0_u32; 16];
+    let mut next_offset = PIXEL_OFFSET;
+    for (level, _color) in colors.iter().take(16).enumerate() {
+        let mip_width = (width >> level).max(1);
+        let mip_height = (height >> level).max(1);
+        let byte_size = mip_width.saturating_mul(mip_height).saturating_mul(4);
+        offsets[level] = next_offset;
+        sizes[level] = byte_size;
+        next_offset = next_offset.saturating_add(byte_size);
+    }
+
+    let mut bytes = Vec::with_capacity(next_offset as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[3, 8, 8, u8::from(colors.len() > 1)]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    for offset in offsets {
+        bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+    for size in sizes {
+        bytes.extend_from_slice(&size.to_le_bytes());
+    }
+    bytes.resize(PIXEL_OFFSET as usize, 0);
+    for (level, color) in colors.iter().take(16).enumerate() {
+        let pixel_count = (width >> level).max(1) * (height >> level).max(1);
+        for _pixel in 0..pixel_count {
+            bytes.extend_from_slice(&color.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// Reads one tightly packed RGBA8 fixture pixel.
+fn rgba8_pixel(rgba8: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let index = ((y * width + x) * 4) as usize;
+    [
+        rgba8[index],
+        rgba8[index + 1],
+        rgba8[index + 2],
+        rgba8[index + 3],
+    ]
 }
