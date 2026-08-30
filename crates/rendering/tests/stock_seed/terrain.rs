@@ -149,6 +149,17 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         256 * 145 * solarity_rendering::TerrainRenderVertex::BYTE_SIZE
     );
     assert_eq!(info.index_byte_count(), 256 * 768 * 2);
+    let material = renderer.upload_terrain_material(&tile_mesh)?;
+    assert_eq!(renderer.upload_terrain_material(&tile_mesh)?, material);
+    let material_info = renderer
+        .terrain_material_info(material)
+        .ok_or("uploaded terrain material atlas is absent")?;
+    assert_eq!(material_info.tile(), tile_index);
+    assert_eq!(material_info.extent(), (1_024, 1_024));
+    assert_eq!(
+        material_info.byte_count(),
+        TERRAIN_MATERIAL_ATLAS_BYTE_COUNT
+    );
     Ok(())
 }
 

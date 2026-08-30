@@ -17,6 +17,9 @@ use crate::device::vulkan_mesh::{
 };
 use crate::device::vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2SamplerRegistry};
 use crate::device::vulkan_selection::SelectedAdapter;
+use crate::device::vulkan_terrain_material::{
+    TerrainMaterialHandle, TerrainMaterialRegistry, TerrainMaterialResourceInfo,
+};
 use crate::device::vulkan_terrain_mesh::{
     TerrainMeshHandle, TerrainMeshRegistry, TerrainMeshResourceInfo,
 };
@@ -113,6 +116,7 @@ pub struct VulkanRenderer {
     m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
     terrain_meshes: TerrainMeshRegistry,
+    terrain_materials: TerrainMaterialRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
@@ -160,6 +164,7 @@ impl VulkanRenderer {
             m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
+            terrain_materials: TerrainMaterialRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
@@ -301,6 +306,43 @@ impl VulkanRenderer {
     #[must_use]
     pub fn terrain_mesh_info(&self, handle: TerrainMeshHandle) -> Option<TerrainMeshResourceInfo> {
         self.terrain_meshes.info(handle)
+    }
+
+    /// Uploads the resident ADT's combined RGB blend and alpha shadow atlas.
+    ///
+    /// The image is linear RGBA8: blend weights and authored shadow opacity
+    /// must not receive sRGB conversion. Repeated submission deduplicates by
+    /// immutable tile-plan identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for exhausted handle space or Vulkan image,
+    /// staging, transfer, synchronization, and view-creation failures.
+    pub fn upload_terrain_material(
+        &mut self,
+        plan: &TerrainTileMeshPlan,
+    ) -> Result<TerrainMaterialHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.terrain_materials.upload(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            plan,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live terrain material atlas.
+    #[must_use]
+    pub fn terrain_material_info(
+        &self,
+        handle: TerrainMaterialHandle,
+    ) -> Option<TerrainMaterialResourceInfo> {
+        self.terrain_materials.info(handle)
     }
 
     /// Uploads every authored mip from one selected BLP source exactly once.
@@ -762,6 +804,7 @@ impl Drop for VulkanRenderer {
             self.ui_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
+            self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);
             self.m2_meshes.destroy(allocator);
         }

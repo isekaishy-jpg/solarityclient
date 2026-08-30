@@ -29,10 +29,15 @@ struct DecodedMip {
 
 /// Device-local image/view pair owned by the renderer texture registry.
 pub(super) struct GpuBlpTexture {
+    image: GpuSampledImage,
+    info: BlpTextureResourceInfo,
+}
+
+/// Device-local sampled image storage shared by typed texture registries.
+pub(in crate::device) struct GpuSampledImage {
     image: vk::Image,
     allocation: Option<vk_mem::Allocation>,
     view: vk::ImageView,
-    info: BlpTextureResourceInfo,
 }
 
 impl GpuBlpTexture {
@@ -43,12 +48,25 @@ impl GpuBlpTexture {
 
     /// Returns the live sampled image view for descriptor construction.
     pub(super) const fn view(&self) -> vk::ImageView {
-        self.view
+        self.image.view()
     }
 
     /// Destroys the child view before its allocated parent image.
     pub(super) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
-        // SAFETY: The view belongs to this device and is uniquely owned.
+        self.image.destroy(device, allocator);
+    }
+}
+
+impl GpuSampledImage {
+    /// Returns the live sampled view for descriptor construction.
+    pub(in crate::device) const fn view(&self) -> vk::ImageView {
+        self.view
+    }
+
+    /// Destroys the child view before its allocated parent image.
+    pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        // SAFETY: Both handles are uniquely owned and no command references
+        // them after their registry's parent renderer has gone idle.
         unsafe {
             if self.view != vk::ImageView::null() {
                 device.destroy_image_view(self.view, None);
@@ -66,14 +84,14 @@ impl GpuBlpTexture {
 struct TextureGuard<'a> {
     device: &'a Device,
     allocator: &'a vk_mem::Allocator,
-    texture: Option<GpuBlpTexture>,
+    texture: Option<GpuSampledImage>,
 }
 
 impl TextureGuard<'_> {
     /// Transfers ownership after every upload and view operation succeeds.
-    fn finish(mut self) -> Result<GpuBlpTexture, VulkanError> {
+    fn finish(mut self) -> Result<GpuSampledImage, VulkanError> {
         self.texture.take().ok_or_else(|| {
-            VulkanError::operation("finish BLP texture upload", "texture is unavailable")
+            VulkanError::operation("finish sampled image upload", "image is unavailable")
         })
     }
 }
@@ -239,18 +257,78 @@ pub(super) fn upload_texture(
     color_space: BlpColorSpace,
 ) -> Result<GpuBlpTexture, BlpTextureUploadError> {
     let (bytes, mips) = decode_mips(source)?;
-    let mip_levels = u32::try_from(mips.len())
-        .map_err(|source| VulkanError::operation("convert BLP mip count", source))?;
     let format = match color_space {
         BlpColorSpace::Linear => vk::Format::R8G8B8A8_UNORM,
         BlpColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
     };
+    let image = upload_sampled_image(
+        context,
+        format,
+        (source.width(), source.height()),
+        &bytes,
+        &mips,
+    )?;
+    let info = BlpTextureResourceInfo::new(
+        source.path().clone(),
+        color_space,
+        (source.width(), source.height()),
+        mips.len(),
+        bytes.len(),
+    );
+    Ok(GpuBlpTexture { image, info })
+}
+
+/// Uploads one tightly packed linear RGBA8 image for a non-BLP typed owner.
+pub(in crate::device) fn upload_rgba8_image(
+    context: TextureUploadContext<'_>,
+    extent: (u32, u32),
+    bytes: &[u8],
+) -> Result<GpuSampledImage, VulkanError> {
+    let expected = u64::from(extent.0)
+        .checked_mul(u64::from(extent.1))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|byte_count| usize::try_from(byte_count).ok())
+        .ok_or_else(|| VulkanError::operation("size RGBA8 image", "extent overflow"))?;
+    if extent.0 == 0 || extent.1 == 0 || bytes.len() != expected {
+        return Err(VulkanError::operation(
+            "validate RGBA8 image",
+            format!(
+                "{}x{} requires {expected} bytes; received {}",
+                extent.0,
+                extent.1,
+                bytes.len()
+            ),
+        ));
+    }
+    let mips = [DecodedMip {
+        offset: 0,
+        width: extent.0,
+        height: extent.1,
+    }];
+    upload_sampled_image(context, vk::Format::R8G8B8A8_UNORM, extent, bytes, &mips)
+}
+
+fn upload_sampled_image(
+    context: TextureUploadContext<'_>,
+    format: vk::Format,
+    extent: (u32, u32),
+    bytes: &[u8],
+    mips: &[DecodedMip],
+) -> Result<GpuSampledImage, VulkanError> {
+    let mip_levels = u32::try_from(mips.len())
+        .map_err(|source| VulkanError::operation("convert sampled image mip count", source))?;
+    if mip_levels == 0 || bytes.is_empty() {
+        return Err(VulkanError::operation(
+            "validate sampled image",
+            "image has no mip pixels",
+        ));
+    }
     let image_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .format(format)
         .extent(vk::Extent3D {
-            width: source.width(),
-            height: source.height(),
+            width: extent.0,
+            height: extent.1,
             depth: 1,
         })
         .mip_levels(mip_levels)
@@ -271,25 +349,17 @@ pub(super) fn upload_texture(
             .allocator
             .create_image(&image_info, &allocation_info)
     }
-    .map_err(|source| VulkanError::operation("create BLP sampled image", source))?;
-    let info = BlpTextureResourceInfo::new(
-        source.path().clone(),
-        color_space,
-        (source.width(), source.height()),
-        mips.len(),
-        bytes.len(),
-    );
+    .map_err(|source| VulkanError::operation("create sampled image", source))?;
     let mut guard = TextureGuard {
         device: context.device,
         allocator: context.allocator,
-        texture: Some(GpuBlpTexture {
+        texture: Some(GpuSampledImage {
             image,
             allocation: Some(allocation),
             view: vk::ImageView::null(),
-            info,
         }),
     };
-    let transfer = TextureTransfer::create(context, &bytes)?;
+    let transfer = TextureTransfer::create(context, bytes)?;
     let command_buffer = transfer.command_buffer()?;
     record_upload(
         context.device,
@@ -297,7 +367,7 @@ pub(super) fn upload_texture(
         transfer.staging_buffer,
         image,
         mip_levels,
-        &mips,
+        mips,
     )?;
     transfer.submit_and_wait(command_buffer)?;
     let view_info = vk::ImageViewCreateInfo::default()
@@ -315,12 +385,11 @@ pub(super) fn upload_texture(
     // SAFETY: The image is live and the view covers its exact format/mip range.
     let view = unsafe { context.device.create_image_view(&view_info, None) }
         .map_err(|source| VulkanError::operation("create BLP image view", source))?;
-    let texture = guard
-        .texture
-        .as_mut()
-        .ok_or_else(|| VulkanError::operation("retain BLP image view", "texture is unavailable"))?;
-    texture.view = view;
-    Ok(guard.finish()?)
+    let sampled_image = guard.texture.as_mut().ok_or_else(|| {
+        VulkanError::operation("retain sampled image view", "image is unavailable")
+    })?;
+    sampled_image.view = view;
+    guard.finish()
 }
 
 /// Expands authored compressed mips only for the duration of GPU staging.
