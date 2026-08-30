@@ -13,8 +13,8 @@ mod templates;
 
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use network_intent::{
-    UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRealmCategory, UiRealmDirectory,
-    UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiCharacterDirectory, UiCharacterInfo, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 pub use simple_script::{
     UiGlueMediaIntent, UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan,

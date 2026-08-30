@@ -3,6 +3,7 @@
 use crate::archive::{AssetError, AssetPath};
 use crate::file_stack::AssetStore;
 
+use super::localized::localized_string;
 use super::wow_client_db::WdbcTable;
 
 const CHARACTER_RACES_PATH: &str = "DBFilesClient\\ChrRaces.dbc";
@@ -17,6 +18,7 @@ pub struct CharacterRace {
     female_display_id: u32,
     client_prefix: String,
     client_file_string: String,
+    name: String,
 }
 
 impl CharacterRace {
@@ -55,6 +57,12 @@ impl CharacterRace {
     pub fn client_file_string(&self) -> &str {
         &self.client_file_string
     }
+
+    /// Returns the exact selected-locale race name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// Identifier-indexed `ChrRaces.dbc` records used by character rendering.
@@ -70,6 +78,7 @@ impl CharacterRaceCatalog {
     /// Returns [`AssetError`] when the table is absent, malformed, belongs to
     /// another build, contains invalid file strings, or repeats an identifier.
     pub fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
+        let locale = store.locale();
         let path = AssetPath::new(CHARACTER_RACES_PATH)?;
         let table = WdbcTable::load(store, &path)?;
         require_layout(&table)?;
@@ -83,6 +92,7 @@ impl CharacterRaceCatalog {
                 female_display_id: field(&table, row, 5)?,
                 client_prefix: string(&table, row, 6)?,
                 client_file_string: string(&table, row, 11)?,
+                name: localized_string(&table, row, 14, locale)?,
             });
         }
         races.sort_unstable_by_key(CharacterRace::id);

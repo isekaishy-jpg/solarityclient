@@ -17,10 +17,11 @@ mod telemetry;
 mod time;
 
 pub use application::{
-    ApplicationError, ApplicationExitReason, ApplicationRunReport, ClientApplication,
-    GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin, RuntimeLoginCoordinator,
-    RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState, RuntimeWorldCoordinator,
-    RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
+    ApplicationError, ApplicationExitReason, ApplicationRunReport, CharacterProjectionError,
+    ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
+    RuntimeCharacterSelection, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
+    RuntimeLoginState, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
+    RuntimeWorldPoll, RuntimeWorldState, StartupReport,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,

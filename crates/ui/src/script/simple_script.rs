@@ -265,7 +265,6 @@ impl UiGlueMediaIntent {
 pub struct UiScriptEnvironment {
     logical_extent: (u32, u32),
     ui_extent: (f64, f64),
-    initial_character_count: usize,
     streaming_trial: bool,
     cvars: UiCVarRegistry,
     assets: Option<Rc<RefCell<AssetStore>>>,
@@ -295,7 +294,6 @@ impl UiScriptEnvironment {
         Ok(Self {
             logical_extent: (logical_width, logical_height),
             ui_extent: (ui_width, ui_height),
-            initial_character_count: 0,
             streaming_trial,
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
@@ -315,12 +313,6 @@ impl UiScriptEnvironment {
     #[must_use]
     pub const fn ui_extent(&self) -> (f64, f64) {
         self.ui_extent
-    }
-
-    /// Returns the character-list count present when GlueXML starts.
-    #[must_use]
-    pub const fn initial_character_count(&self) -> usize {
-        self.initial_character_count
     }
 
     /// Returns whether assets come from the stock streaming-trial mode.

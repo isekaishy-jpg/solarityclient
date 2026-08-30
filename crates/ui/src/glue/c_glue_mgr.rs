@@ -233,6 +233,11 @@ impl GlueManager {
         self.network.borrow_mut().set_realms(realms);
     }
 
+    /// Publishes the complete runtime-owned character directory for Glue queries.
+    pub fn set_character_directory(&self, characters: crate::UiCharacterDirectory) {
+        self.network.borrow_mut().set_characters(characters);
+    }
+
     /// Returns the archive-backed texture declaration plan.
     #[must_use]
     pub const fn textures(&self) -> &UiTexturePlan {

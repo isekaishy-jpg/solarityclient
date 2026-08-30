@@ -7,8 +7,10 @@ use tokio::sync::oneshot::{self, Receiver, error::TryRecvError};
 use tokio::task::JoinHandle;
 
 use solarity_network::{
-    RealmEntry, TcpEndpoint, TcpTransport, TransportError, WorldAddonManifest, WorldAuthError,
-    WorldAuthProgress, WorldConnection, WorldSession,
+    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginProgress,
+    CharacterLoginRejection, InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError,
+    WorldAddonManifest, WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection,
+    WorldServerPacket, WorldSession, WorldSessionError,
 };
 
 use crate::application::RuntimeAuthenticatedLogin;
@@ -20,8 +22,12 @@ pub enum RuntimeWorldState {
     Idle,
     /// One selected realm is connecting or authenticating.
     Connecting,
-    /// The world accepted the encrypted account session.
-    Authenticated,
+    /// One selected character is awaiting authoritative world entry.
+    EnteringWorld,
+    /// The world accepted the session and supplied character-selection state.
+    CharacterSelection,
+    /// The selected character entered a world map.
+    InWorld,
 }
 
 /// Result of polling one asynchronous world transition.
@@ -31,8 +37,12 @@ pub enum RuntimeWorldPoll {
     Idle,
     /// The selected realm has not completed authentication.
     Pending,
-    /// The world session became authenticated at this poll boundary.
-    Authenticated,
+    /// Character-selection state became available at this poll boundary.
+    CharacterDirectoryReady,
+    /// The selected character entered its authoritative initial map.
+    EnteredWorld,
+    /// The selected character was rejected and selection state was restored.
+    CharacterRejected(CharacterLoginRejection),
 }
 
 /// A failure to start or complete selected-realm authentication.
@@ -44,12 +54,36 @@ pub enum RuntimeWorldError {
     /// A realm was selected while a world session was already retained.
     #[error("an authenticated world connection is already active")]
     AlreadyAuthenticated,
+    /// Character login was requested without character-selection ownership.
+    #[error("no authenticated character directory is available")]
+    NoCharacterDirectory,
+    /// The selected GUID is absent from the authoritative character directory.
+    #[error("character directory does not contain GUID {guid}")]
+    UnknownCharacter {
+        /// Rejected world object GUID.
+        guid: u64,
+    },
     /// The selected realm address is malformed or cannot be connected.
     #[error(transparent)]
     Transport(#[from] TransportError),
     /// The build-12340 world authentication exchange failed.
     #[error(transparent)]
     Authentication(#[from] WorldAuthError),
+    /// Encrypted character-screen packet I/O failed.
+    #[error(transparent)]
+    Session(#[from] WorldSessionError),
+    /// The character enumeration packet was malformed.
+    #[error(transparent)]
+    CharacterDirectory(#[from] CharacterDirectoryError),
+    /// The positional world-server AddOn policy was malformed.
+    #[error(transparent)]
+    AddonPolicy(#[from] AddonPolicyError),
+    /// The server sent too many unrelated setup packets before enumeration.
+    #[error("world sent more than {maximum} setup packets before character enumeration")]
+    SetupPacketLimit {
+        /// Explicit upper bound for retained pre-enumeration packets.
+        maximum: usize,
+    },
     /// The task ended without publishing its owned result.
     #[error("world authentication task ended without publishing a result")]
     TaskEnded,
@@ -58,7 +92,68 @@ pub enum RuntimeWorldError {
 /// Main-thread owner of at most one selected world transition.
 pub struct RuntimeWorldCoordinator {
     active: Option<ActiveWorld>,
-    authenticated: Option<WorldSession<TcpStream>>,
+    character_selection: Option<RuntimeCharacterSelection>,
+    world_entry: Option<RuntimeWorldEntry>,
+}
+
+/// Authenticated character-screen state retained on the main thread.
+pub struct RuntimeCharacterSelection {
+    session: WorldSession<TcpStream>,
+    directory: CharacterDirectory,
+    addon_policy: Option<WorldAddonPolicy>,
+    setup_packets: Vec<WorldServerPacket>,
+}
+
+impl RuntimeCharacterSelection {
+    /// Returns the encrypted world session backing character selection.
+    #[must_use]
+    pub const fn session(&self) -> &WorldSession<TcpStream> {
+        &self.session
+    }
+
+    /// Returns the most recent authoritative character enumeration.
+    #[must_use]
+    pub const fn directory(&self) -> &CharacterDirectory {
+        &self.directory
+    }
+
+    /// Returns positional server AddOn policy when it preceded enumeration.
+    #[must_use]
+    pub const fn addon_policy(&self) -> Option<&WorldAddonPolicy> {
+        self.addon_policy.as_ref()
+    }
+
+    /// Returns setup packets retained for later subsystem dispatch.
+    #[must_use]
+    pub fn setup_packets(&self) -> &[WorldServerPacket] {
+        &self.setup_packets
+    }
+}
+
+/// Entered-world network ownership and retained pre-entry setup packets.
+pub struct RuntimeWorldEntry {
+    session: InWorldSession<TcpStream>,
+    setup_packets: Vec<WorldServerPacket>,
+}
+
+impl RuntimeWorldEntry {
+    /// Returns the authenticated active-world network state.
+    #[must_use]
+    pub const fn session(&self) -> &InWorldSession<TcpStream> {
+        &self.session
+    }
+
+    /// Returns packets retained before `SMSG_LOGIN_VERIFY_WORLD`.
+    #[must_use]
+    pub fn setup_packets(&self) -> &[WorldServerPacket] {
+        &self.setup_packets
+    }
+
+    /// Transfers network and setup-packet ownership to gameplay composition.
+    #[must_use]
+    pub fn into_parts(self) -> (InWorldSession<TcpStream>, Vec<WorldServerPacket>) {
+        (self.session, self.setup_packets)
+    }
 }
 
 impl RuntimeWorldCoordinator {
@@ -67,17 +162,20 @@ impl RuntimeWorldCoordinator {
     pub const fn new() -> Self {
         Self {
             active: None,
-            authenticated: None,
+            character_selection: None,
+            world_entry: None,
         }
     }
 
     /// Returns current synchronous world ownership state.
     #[must_use]
     pub const fn state(&self) -> RuntimeWorldState {
-        if self.authenticated.is_some() {
-            RuntimeWorldState::Authenticated
-        } else if self.active.is_some() {
-            RuntimeWorldState::Connecting
+        if self.world_entry.is_some() {
+            RuntimeWorldState::InWorld
+        } else if self.character_selection.is_some() {
+            RuntimeWorldState::CharacterSelection
+        } else if let Some(active) = &self.active {
+            active.phase.state()
         } else {
             RuntimeWorldState::Idle
         }
@@ -100,7 +198,7 @@ impl RuntimeWorldCoordinator {
         if self.active.is_some() {
             return Err(RuntimeWorldError::AlreadyActive);
         }
-        if self.authenticated.is_some() {
+        if self.character_selection.is_some() || self.world_entry.is_some() {
             return Err(RuntimeWorldError::AlreadyAuthenticated);
         }
         let (sender, receiver) = oneshot::channel();
@@ -108,7 +206,43 @@ impl RuntimeWorldCoordinator {
             let result = authenticate_world(authenticated, realm, addons).await;
             let _send_result = sender.send(result);
         });
-        self.active = Some(ActiveWorld { receiver, task });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::Connecting,
+        });
+        Ok(())
+    }
+
+    /// Starts one selected-character login and transfers session ownership to
+    /// the cancellable async task until acceptance or rejection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeWorldError`] when another transition is active, no
+    /// character directory is retained, or `guid` was not enumerated.
+    pub fn enter_world(&mut self, runtime: &Handle, guid: u64) -> Result<(), RuntimeWorldError> {
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        let selection = self
+            .character_selection
+            .take()
+            .ok_or(RuntimeWorldError::NoCharacterDirectory)?;
+        if selection.directory.by_guid(guid).is_none() {
+            self.character_selection = Some(selection);
+            return Err(RuntimeWorldError::UnknownCharacter { guid });
+        }
+        let (sender, receiver) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = login_character(selection, guid).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::EnteringWorld,
+        });
         Ok(())
     }
 
@@ -120,8 +254,10 @@ impl RuntimeWorldCoordinator {
     /// error when the worker disappears without its owned result.
     pub fn poll(&mut self) -> Result<RuntimeWorldPoll, RuntimeWorldError> {
         let Some(active) = self.active.as_mut() else {
-            return Ok(if self.authenticated.is_some() {
-                RuntimeWorldPoll::Authenticated
+            return Ok(if self.world_entry.is_some() {
+                RuntimeWorldPoll::EnteredWorld
+            } else if self.character_selection.is_some() {
+                RuntimeWorldPoll::CharacterDirectoryReady
             } else {
                 RuntimeWorldPoll::Idle
             });
@@ -133,9 +269,20 @@ impl RuntimeWorldCoordinator {
         };
         self.active = None;
         match result {
-            Ok(session) => {
-                self.authenticated = Some(session);
-                Ok(RuntimeWorldPoll::Authenticated)
+            Ok(ActiveWorldResult::CharacterSelection(selection)) => {
+                self.character_selection = Some(selection);
+                Ok(RuntimeWorldPoll::CharacterDirectoryReady)
+            }
+            Ok(ActiveWorldResult::Entered(entry)) => {
+                self.world_entry = Some(entry);
+                Ok(RuntimeWorldPoll::EnteredWorld)
+            }
+            Ok(ActiveWorldResult::Rejected {
+                selection,
+                rejection,
+            }) => {
+                self.character_selection = Some(selection);
+                Ok(RuntimeWorldPoll::CharacterRejected(rejection))
             }
             Err(error) => Err(error),
         }
@@ -146,13 +293,29 @@ impl RuntimeWorldCoordinator {
         if let Some(active) = self.active.take() {
             active.task.abort();
         }
-        self.authenticated = None;
+        self.character_selection = None;
+        self.world_entry = None;
     }
 
     /// Returns the retained encrypted world session.
     #[must_use]
     pub const fn authenticated(&self) -> Option<&WorldSession<TcpStream>> {
-        self.authenticated.as_ref()
+        match &self.character_selection {
+            Some(selection) => Some(selection.session()),
+            None => None,
+        }
+    }
+
+    /// Returns retained character-selection state after enumeration.
+    #[must_use]
+    pub const fn character_selection(&self) -> Option<&RuntimeCharacterSelection> {
+        self.character_selection.as_ref()
+    }
+
+    /// Transfers an accepted world entry to the gameplay owner.
+    #[must_use]
+    pub fn take_world_entry(&mut self) -> Option<RuntimeWorldEntry> {
+        self.world_entry.take()
     }
 }
 
@@ -169,24 +332,128 @@ impl Drop for RuntimeWorldCoordinator {
 }
 
 struct ActiveWorld {
-    receiver: Receiver<Result<WorldSession<TcpStream>, RuntimeWorldError>>,
+    receiver: Receiver<Result<ActiveWorldResult, RuntimeWorldError>>,
     task: JoinHandle<()>,
+    phase: ActiveWorldPhase,
+}
+
+#[derive(Clone, Copy)]
+enum ActiveWorldPhase {
+    Connecting,
+    EnteringWorld,
+}
+
+impl ActiveWorldPhase {
+    const fn state(self) -> RuntimeWorldState {
+        match self {
+            Self::Connecting => RuntimeWorldState::Connecting,
+            Self::EnteringWorld => RuntimeWorldState::EnteringWorld,
+        }
+    }
+}
+
+enum ActiveWorldResult {
+    CharacterSelection(RuntimeCharacterSelection),
+    Entered(RuntimeWorldEntry),
+    Rejected {
+        selection: RuntimeCharacterSelection,
+        rejection: CharacterLoginRejection,
+    },
 }
 
 async fn authenticate_world(
     authenticated: RuntimeAuthenticatedLogin,
     realm: RealmEntry,
     addons: WorldAddonManifest,
-) -> Result<WorldSession<TcpStream>, RuntimeWorldError> {
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
     let endpoint = TcpEndpoint::parse(realm.address())?;
     let stream = TcpTransport::connect(&endpoint).await?;
     let (login, _realms) = authenticated.into_parts();
     let identity = login.into_world_identity();
     let mut progress = WorldConnection::authenticate(stream, identity, &realm, addons).await?;
-    loop {
+    let mut session = loop {
         progress = match progress {
-            WorldAuthProgress::Authenticated(session) => return Ok(session),
+            WorldAuthProgress::Authenticated(session) => break session,
             WorldAuthProgress::Queued(queue) => queue.advance().await?,
         };
+    };
+    session.request_character_directory().await?;
+
+    const MAX_SETUP_PACKETS: usize = 256;
+    let mut addon_policy = None;
+    let mut setup_packets = Vec::new();
+    loop {
+        let packet = session.receive_packet().await?;
+        if let Some(directory) = packet.character_directory()? {
+            return Ok(ActiveWorldResult::CharacterSelection(
+                RuntimeCharacterSelection {
+                    session,
+                    directory,
+                    addon_policy,
+                    setup_packets,
+                },
+            ));
+        }
+        if let Some(policy) = packet.addon_policy(session.addon_manifest())? {
+            addon_policy = Some(policy);
+            continue;
+        }
+        if setup_packets.len() == MAX_SETUP_PACKETS {
+            return Err(RuntimeWorldError::SetupPacketLimit {
+                maximum: MAX_SETUP_PACKETS,
+            });
+        }
+        setup_packets.push(packet);
+    }
+}
+
+async fn login_character(
+    selection: RuntimeCharacterSelection,
+    guid: u64,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    let RuntimeCharacterSelection {
+        session,
+        directory,
+        addon_policy,
+        mut setup_packets,
+    } = selection;
+    let character = directory
+        .by_guid(guid)
+        .cloned()
+        .ok_or(RuntimeWorldError::UnknownCharacter { guid })?;
+    let mut login = session.login_character(&character).await?;
+    const MAX_SETUP_PACKETS: usize = 256;
+    loop {
+        match login.advance().await? {
+            CharacterLoginProgress::Awaiting {
+                login: pending,
+                packet,
+            } => {
+                if setup_packets.len() == MAX_SETUP_PACKETS {
+                    return Err(RuntimeWorldError::SetupPacketLimit {
+                        maximum: MAX_SETUP_PACKETS,
+                    });
+                }
+                setup_packets.push(packet);
+                login = pending;
+            }
+            CharacterLoginProgress::Entered(session) => {
+                return Ok(ActiveWorldResult::Entered(RuntimeWorldEntry {
+                    session,
+                    setup_packets,
+                }));
+            }
+            CharacterLoginProgress::Rejected { session, rejection } => {
+                return Ok(ActiveWorldResult::Rejected {
+                    selection: RuntimeCharacterSelection {
+                        session,
+                        directory,
+                        addon_policy,
+                        setup_packets,
+                    },
+                    rejection,
+                });
+            }
+        }
     }
 }

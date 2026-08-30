@@ -5,6 +5,7 @@
 //! behavior that consumes a table belongs to its owning domain crate.
 
 mod appearance;
+mod area;
 mod c_data_store;
 mod character;
 mod creature;
@@ -12,6 +13,8 @@ mod db_cache;
 mod db_cache_instances;
 mod db_client;
 mod item;
+mod localized;
+mod player_class;
 mod race;
 mod realm;
 mod w_data_store;
@@ -21,6 +24,7 @@ pub use appearance::{
     AppearanceError, CharacterCustomization, CharacterGeosetSelection, CharacterModelAppearance,
     CharacterSectionKind, CreatureModelAppearance,
 };
+pub use area::{AreaDefinition, AreaTableCatalog};
 pub use character::{
     CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
 };
@@ -31,6 +35,7 @@ pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
 };
+pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};
 pub use race::{CharacterRace, CharacterRaceCatalog};
 pub use realm::{
     RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,

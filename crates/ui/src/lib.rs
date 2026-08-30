@@ -43,11 +43,11 @@ pub use render::{
     UiTextureSource,
 };
 pub use script::{
-    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRealmCategory,
-    UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion, UiRuntimeTemplate,
-    UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding, UiScriptEnvironment,
-    UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiScriptTarget,
+    UiCharacterDirectory, UiCharacterInfo, UiGlueMediaIntent, UiGlueNetworkAction,
+    UiGlueNetworkStatus, UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags,
+    UiRealmInfo, UiRealmVersion, UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan,
+    UiScriptBinding, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

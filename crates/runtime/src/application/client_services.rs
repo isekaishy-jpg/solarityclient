@@ -4,11 +4,12 @@
 
 use std::collections::VecDeque;
 
+use tokio::net::TcpStream;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::CpuExecutor;
-use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
+use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest, WorldServerPacket};
 use solarity_rendering::{VulkanBootstrap, VulkanRenderer, VulkanReport};
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
@@ -16,6 +17,8 @@ use solarity_ui::{
 };
 
 use crate::application::ApplicationError;
+use crate::application::character_directory::RuntimeCharacterMetadata;
+use crate::application::gameplay_session::GameplaySession;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
@@ -38,7 +41,10 @@ pub(crate) struct ClientServices {
     network: Option<Runtime>,
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
+    gameplay: Option<GameplaySession<TcpStream>>,
+    pending_world_packets: Vec<WorldServerPacket>,
     realm_metadata: RuntimeRealmMetadata,
+    character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
     realm_directory_published: bool,
     world_session_published: bool,
@@ -59,6 +65,7 @@ impl ClientServices {
         let archive_count = catalog.descriptors().len();
         let mut assets = AssetStore::mount(catalog)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
+        let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
@@ -120,7 +127,10 @@ impl ClientServices {
                 network: Some(network),
                 login,
                 world,
+                gameplay: None,
+                pending_world_packets: Vec::new(),
                 realm_metadata,
+                character_metadata,
                 addon_manifest,
                 realm_directory_published: false,
                 world_session_published: false,
@@ -187,6 +197,8 @@ impl ClientServices {
                 UiGlueNetworkAction::Disconnect => {
                     self.login.disconnect();
                     self.world.disconnect();
+                    self.gameplay = None;
+                    self.pending_world_packets.clear();
                     self.realm_directory_published = false;
                     self.world_session_published = false;
                     self.pending_realm_id = None;
@@ -242,6 +254,17 @@ impl ClientServices {
                         self.glue.set_network_status(UiGlueNetworkStatus::default());
                     }
                 }
+                UiGlueNetworkAction::SelectCharacter { guid } => {
+                    let payload = UiEventPayload::new([UiEventArgument::Number(guid as f64)])?;
+                    self.glue
+                        .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)?;
+                }
+                UiGlueNetworkAction::EnterWorld { guid } => {
+                    match self.world.enter_world(&handle, guid) {
+                        Ok(()) | Err(RuntimeWorldError::AlreadyActive) => {}
+                        Err(error) => self.publish_world_failure(error),
+                    }
+                }
             }
         }
 
@@ -289,13 +312,65 @@ impl ClientServices {
         }
         match self.world.poll() {
             Ok(RuntimeWorldPoll::Idle | RuntimeWorldPoll::Pending) => {}
-            Ok(RuntimeWorldPoll::Authenticated) if !self.world_session_published => {
+            Ok(RuntimeWorldPoll::CharacterDirectoryReady) if !self.world_session_published => {
                 self.world_session_published = true;
                 if let Some(selected) = &self.selected_realm {
                     self.glue.set_network_status(selected.status(true, false));
                 }
+                if let Some(selection) = self.world.character_selection() {
+                    let characters = self.character_metadata.project(selection.directory())?;
+                    let count = i64::try_from(characters.characters().len()).map_err(|source| {
+                        ApplicationError::NetworkRuntime {
+                            message: source.to_string(),
+                        }
+                    })?;
+                    self.glue.set_character_directory(characters);
+                    self.glue.dispatch_event(
+                        "SET_GLUE_SCREEN",
+                        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+                    )?;
+                    self.glue.dispatch_event(
+                        "CHARACTER_LIST_UPDATE",
+                        &UiEventPayload::new([UiEventArgument::Integer(count)])?,
+                    )?;
+                    self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+                }
             }
-            Ok(RuntimeWorldPoll::Authenticated) => {}
+            Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
+            Ok(RuntimeWorldPoll::EnteredWorld) => {
+                if let Some(entry) = self.world.take_world_entry() {
+                    let (network, setup_packets) = entry.into_parts();
+                    let mut gameplay = GameplaySession::enter(network);
+                    for packet in &setup_packets {
+                        if let Some(updates) = packet.object_updates()? {
+                            gameplay.apply_object_updates(&updates)?;
+                        }
+                    }
+                    self.pending_world_packets = setup_packets;
+                    self.gameplay = Some(gameplay);
+                }
+            }
+            Ok(RuntimeWorldPoll::CharacterRejected(rejection)) => {
+                tracing::warn!(
+                    result_code = rejection.result_code(),
+                    reason = ?rejection.reason(),
+                    "character login rejected"
+                );
+                if let Some(selection) = self.world.character_selection() {
+                    let characters = self.character_metadata.project(selection.directory())?;
+                    let count = i64::try_from(characters.characters().len()).map_err(|source| {
+                        ApplicationError::NetworkRuntime {
+                            message: source.to_string(),
+                        }
+                    })?;
+                    self.glue.set_character_directory(characters);
+                    self.glue.dispatch_event(
+                        "CHARACTER_LIST_UPDATE",
+                        &UiEventPayload::new([UiEventArgument::Integer(count)])?,
+                    )?;
+                    self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+                }
+            }
             Err(error) => self.publish_world_failure(error),
         }
         Ok(())
@@ -313,7 +388,11 @@ impl ClientServices {
 
     /// Returns synchronous ownership of the selected world-server phase.
     pub(crate) const fn world_state(&self) -> RuntimeWorldState {
-        self.world.state()
+        if self.gameplay.is_some() {
+            RuntimeWorldState::InWorld
+        } else {
+            self.world.state()
+        }
     }
 
     /// Takes the oldest login failure without collapsing distinct attempts.
@@ -339,6 +418,8 @@ impl ClientServices {
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
         self.login.disconnect();
         self.world.disconnect();
+        self.gameplay = None;
+        self.pending_world_packets.clear();
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {

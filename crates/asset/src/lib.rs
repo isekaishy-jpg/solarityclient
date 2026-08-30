@@ -21,13 +21,15 @@ pub use archive::{
 };
 pub use cache::{BlpTextureCache, M2ModelCache};
 pub use database::{
-    AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
-    CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterRace,
-    CharacterRaceCatalog, CharacterSection, CharacterSectionKind, CreatureCatalog,
-    CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelAppearance, CreatureModelData,
-    HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, RealmCategoryCatalog,
-    RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
+    AppearanceError, AreaDefinition, AreaTableCatalog, CharacterAppearanceCatalog,
+    CharacterClassCatalog, CharacterClassDefinition, CharacterCustomization,
+    CharacterFacialHairStyle, CharacterGeosetSelection, CharacterHairGeoset,
+    CharacterModelAppearance, CharacterRace, CharacterRaceCatalog, CharacterSection,
+    CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
+    CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
+    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemDisplayInfo, RealmCategoryCatalog, RealmCategoryDefinition,
+    RealmConfiguration, RealmConfigurationCatalog, WdbcHeader, WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{

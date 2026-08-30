@@ -4,10 +4,10 @@ use std::error::Error;
 use std::path::Path;
 
 use solarity_asset::{
-    AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
-    Locale, M2TextureKind, WdbcTable,
+    AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError, AssetPath, AssetStore,
+    CharacterAppearanceCatalog, CharacterClassCatalog, CharacterCustomization,
+    CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
+    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -733,6 +733,7 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     let mut strings = vec![0];
     let prefix = append_string(&mut strings, "Hu");
     let file_string = append_string(&mut strings, "Human");
+    let display_name = append_string(&mut strings, "Human");
     let mut fields = [0_u32; 69];
     fields[0] = 1;
     fields[1] = 0x0080_0001;
@@ -740,6 +741,7 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     fields[5] = 50;
     fields[6] = prefix;
     fields[11] = file_string;
+    fields[14] = display_name;
     let table = create_wdbc(1, 69, &fields, &strings);
     let fixture = Fixture::new(&[FixtureFile {
         archive: "common.MPQ",
@@ -756,7 +758,51 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     assert_eq!(race.female_display_id(), 50);
     assert_eq!(race.client_prefix(), "Hu");
     assert_eq!(race.client_file_string(), "Human");
+    assert_eq!(race.name(), "Human");
     assert_eq!(catalog.race(2), None);
+    Ok(())
+}
+
+/// Character-selection labels come from each table's exact locale slot.
+#[test]
+fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn Error>> {
+    let mut class_strings = vec![0];
+    let class_name = append_string(&mut class_strings, "Mage");
+    let mut class_fields = [0_u32; 60];
+    class_fields[0] = 8;
+    class_fields[4] = class_name;
+    let classes = create_wdbc(1, 60, &class_fields, &class_strings);
+
+    let mut area_strings = vec![0];
+    let area_name = append_string(&mut area_strings, "Dalaran");
+    let mut area_fields = [0_u32; 36];
+    area_fields[0] = 4395;
+    area_fields[1] = 571;
+    area_fields[11] = area_name;
+    let areas = create_wdbc(1, 36, &area_fields, &area_strings);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\ChrClasses.dbc",
+            bytes: &classes,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\AreaTable.dbc",
+            bytes: &areas,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let classes = CharacterClassCatalog::load(&mut store)?;
+    assert_eq!(classes.class(8).map(|class| class.name()), Some("Mage"));
+    assert_eq!(classes.class(9), None);
+    let areas = AreaTableCatalog::load(&mut store)?;
+    let area = areas.area(4395).ok_or("Dalaran area is absent")?;
+    assert_eq!(area.name(), "Dalaran");
+    assert_eq!(area.parent_area_id(), 0);
+    assert_eq!(areas.area(4396), None);
     Ok(())
 }
 

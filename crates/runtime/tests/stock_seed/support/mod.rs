@@ -72,6 +72,9 @@ fn build_archive(path: &Path, archive: &str) -> Result<(), Box<dyn Error>> {
         builder = builder.add_file_data(realm_category_dbc(), "DBFilesClient\\Cfg_Categories.dbc");
         builder =
             builder.add_file_data(realm_configuration_dbc(), "DBFilesClient\\Cfg_Configs.dbc");
+        builder = builder.add_file_data(empty_wdbc(69), "DBFilesClient\\ChrRaces.dbc");
+        builder = builder.add_file_data(empty_wdbc(60), "DBFilesClient\\ChrClasses.dbc");
+        builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
         builder = builder.add_file_data(
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",
@@ -121,6 +124,18 @@ fn realm_category_dbc() -> Vec<u8> {
 /// Builds one exact-layout PvE realm configuration for composition startup.
 fn realm_configuration_dbc() -> Vec<u8> {
     wdbc(&[1, 0, 0, 0], b"\0")
+}
+
+/// Builds an empty exact-layout table for metadata not exercised at startup.
+fn empty_wdbc(field_count: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(21);
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&field_count.to_le_bytes());
+    bytes.extend_from_slice(&(field_count * 4).to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(0);
+    bytes
 }
 
 /// Serializes one-row build-12340 WDBC fixture without runtime crate helpers.

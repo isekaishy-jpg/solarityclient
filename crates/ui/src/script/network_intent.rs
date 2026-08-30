@@ -5,8 +5,10 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
+mod character;
 mod realm;
 
+pub use character::{UiCharacterDirectory, UiCharacterInfo};
 pub use realm::{UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion};
 
 /// One credential submission emitted by stock `DefaultServerLogin`.
@@ -91,6 +93,16 @@ pub enum UiGlueNetworkAction {
         /// Whether the active Glue screen was the account-login screen.
         from_login_screen: bool,
     },
+    /// Select one character identity for character-screen presentation.
+    SelectCharacter {
+        /// World object GUID returned by enumeration.
+        guid: u64,
+    },
+    /// Enter the world with the currently selected character.
+    EnterWorld {
+        /// World object GUID returned by enumeration.
+        guid: u64,
+    },
 }
 
 /// Main-thread network facts queried synchronously by Glue Lua.
@@ -167,6 +179,7 @@ pub(crate) struct UiGlueNetworkBridge {
     actions: VecDeque<UiGlueNetworkAction>,
     status: UiGlueNetworkStatus,
     realms: UiRealmDirectory,
+    characters: UiCharacterDirectory,
 }
 
 impl UiGlueNetworkBridge {
@@ -196,5 +209,17 @@ impl UiGlueNetworkBridge {
 
     pub(crate) fn set_realms(&mut self, realms: UiRealmDirectory) {
         self.realms = realms;
+    }
+
+    pub(crate) const fn characters(&self) -> &UiCharacterDirectory {
+        &self.characters
+    }
+
+    pub(crate) fn set_characters(&mut self, characters: UiCharacterDirectory) {
+        self.characters = characters;
+    }
+
+    pub(crate) fn select_character(&mut self, guid: u64) -> bool {
+        self.characters.select(guid)
     }
 }

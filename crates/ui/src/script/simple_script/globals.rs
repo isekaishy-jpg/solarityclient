@@ -2,7 +2,7 @@
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
-use crate::{UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
+use crate::{UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
@@ -114,11 +114,6 @@ fn register_glue_globals(
     globals.raw_set(
         "GetCurrentScreen",
         lua.create_function(move |_, ()| Ok(current_screen.borrow().clone()))?,
-    )?;
-    let character_count = environment.initial_character_count();
-    globals.raw_set(
-        "GetNumCharacters",
-        lua.create_function(move |_, ()| Ok(character_count))?,
     )?;
     let cvars = environment.cvars();
     globals.raw_set(
@@ -385,7 +380,110 @@ fn register_glue_network_globals(
         lua.create_function(move |_, ()| Ok(network.borrow().status().is_connected()))?,
     )?;
     register_realm_list_globals(lua, globals, environment)?;
+    register_character_list_globals(lua, globals, environment)?;
     Ok(())
+}
+
+/// Registers the synchronous character-selection surface consumed by
+/// `CharacterSelect.lua` after `SMSG_CHAR_ENUM` is published.
+fn register_character_list_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let network = environment.network();
+    globals.raw_set(
+        "GetNumCharacters",
+        lua.create_function(move |_, ()| Ok(network.borrow().characters().characters().len()))?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetCharIDFromIndex",
+        lua.create_function(move |_, index: u32| {
+            Ok(network
+                .borrow()
+                .characters()
+                .by_index(index)
+                .map(UiCharacterInfo::guid))
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetIndexFromCharID",
+        lua.create_function(move |_, guid: u64| Ok(network.borrow().characters().index_of(guid)))?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetCharacterInfo",
+        lua.create_function(move |lua, guid: u64| {
+            let network = network.borrow();
+            character_info_values(lua, network.characters().by_guid(guid))
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetSelectBackgroundModel",
+        lua.create_function(move |_, guid: u64| {
+            let network = network.borrow();
+            Ok(network.characters().by_guid(guid).map(|character| {
+                if character.class_id() == 6 {
+                    "DEATHKNIGHT".to_owned()
+                } else {
+                    character.race_file_string().to_ascii_uppercase()
+                }
+            }))
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "SelectCharacter",
+        lua.create_function(move |_, guid: u64| {
+            let mut network = network.borrow_mut();
+            if network.select_character(guid) {
+                network.push(UiGlueNetworkAction::SelectCharacter { guid });
+            }
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "EnterWorld",
+        lua.create_function(move |_, ()| {
+            let mut network = network.borrow_mut();
+            if let Some(guid) = network.characters().selected_guid() {
+                network.push(UiGlueNetworkAction::EnterWorld { guid });
+            }
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
+
+fn character_info_values(
+    lua: &Lua,
+    character: Option<&UiCharacterInfo>,
+) -> mlua::Result<MultiValue> {
+    let Some(character) = character else {
+        return Ok(MultiValue::from_vec(vec![Value::Nil]));
+    };
+    Ok(MultiValue::from_vec(vec![
+        Value::String(lua.create_string(character.name())?),
+        Value::String(lua.create_string(character.race_name())?),
+        Value::String(lua.create_string(character.class_name())?),
+        Value::Integer(i64::from(character.level())),
+        match character.zone_name() {
+            Some(zone) => Value::String(lua.create_string(zone)?),
+            None => Value::Nil,
+        },
+        Value::Integer(i64::from(character.sex())),
+        Value::Boolean(character.is_ghost()),
+        Value::Boolean(character.has_paid_customization()),
+        Value::Boolean(character.has_paid_race_change()),
+        Value::Boolean(character.has_paid_faction_change()),
+        // Build 12340 computes this from realm/account service eligibility;
+        // no disable bit exists in SMSG_CHAR_ENUM itself.
+        Value::Boolean(false),
+    ]))
 }
 
 /// Registers the synchronous realm-list surface consumed by `RealmList.lua`.
