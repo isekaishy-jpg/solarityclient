@@ -53,6 +53,7 @@ fn blp_source_decodes_authored_mips_without_top_level_expansion() -> Result<(), 
     let mut store = AssetStore::mount(catalog)?;
     let path = AssetPath::new("Character/Solarity/Layer.blp")?;
     let source = BlpTextureSource::load(&mut store, &path)?;
+    assert_eq!(source.path(), &path);
 
     assert_eq!((source.width(), source.height()), (2, 2));
     assert_eq!(source.mip_count(), 2);

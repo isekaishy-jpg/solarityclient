@@ -3,7 +3,7 @@
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
-use solarity_asset::DecodedBlpTexture;
+use solarity_asset::{BlpTextureSource, DecodedBlpTexture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
@@ -11,6 +11,10 @@ use crate::device::vulkan_mesh::{
     M2MeshHandle, M2MeshRegistry, M2MeshResourceInfo, MeshUploadContext,
 };
 use crate::device::vulkan_selection::SelectedAdapter;
+use crate::device::vulkan_texture::{
+    BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
+    BlpTextureUploadError, TextureUploadContext,
+};
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2MeshPlan;
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
@@ -80,6 +84,7 @@ pub struct VulkanRenderer {
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
     m2_meshes: M2MeshRegistry,
+    blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
@@ -115,6 +120,7 @@ impl VulkanRenderer {
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
             m2_meshes: M2MeshRegistry::default(),
+            blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
             swapchain_images: Vec::new(),
@@ -212,6 +218,41 @@ impl VulkanRenderer {
     #[must_use]
     pub fn m2_mesh_info(&self, handle: M2MeshHandle) -> Option<&M2MeshResourceInfo> {
         self.m2_meshes.info(handle)
+    }
+
+    /// Uploads every authored mip from one selected BLP source exactly once.
+    ///
+    /// Color interpretation is explicit because the BLP container does not
+    /// identify which Vulkan transfer function the owning material expects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlpTextureUploadError`] when a mip cannot decode or Vulkan
+    /// allocation, recording, submission, synchronization, or view creation fails.
+    pub fn upload_blp_texture(
+        &mut self,
+        source: &BlpTextureSource,
+        color_space: BlpColorSpace,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.blp_textures.upload(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            source,
+            color_space,
+        )
+    }
+
+    /// Returns immutable diagnostics for a live renderer-owned BLP image.
+    #[must_use]
+    pub fn blp_texture_info(&self, handle: BlpTextureHandle) -> Option<&BlpTextureResourceInfo> {
+        self.blp_textures.info(handle)
     }
 
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
@@ -334,6 +375,7 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         if let Some(allocator) = self.allocator.as_ref() {
+            self.blp_textures.destroy(&self.device, allocator);
             self.m2_meshes.destroy(allocator);
         }
         self.m2_pipelines.destroy(&self.device);

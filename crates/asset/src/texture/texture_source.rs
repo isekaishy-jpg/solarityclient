@@ -73,6 +73,12 @@ impl BlpTextureSource {
         DecodedBlpTexture::from_image(&self.path, &self.archive, &self.image, mip_level)
     }
 
+    /// Returns the normalized archive path used as the texture cache identity.
+    #[must_use]
+    pub const fn path(&self) -> &AssetPath {
+        &self.path
+    }
+
     /// Returns the exact archive selected by stock patch priority.
     #[must_use]
     pub const fn source(&self) -> &ArchiveDescriptor {

@@ -4,13 +4,14 @@ use std::error::Error;
 use std::io::Cursor;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, CharacterAppearanceCatalog,
-    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, DecodedM2Model,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, Locale, M2BlendMode,
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, BlpTextureSource,
+    CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
+    DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
+    Locale, M2BlendMode,
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
-    CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
+    BlpColorSpace, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
     CharacterWeaponState, M2LocalLightCount, M2MeshPlan, M2MeshPlanError, M2PixelShader,
@@ -397,6 +398,7 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
 fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     let model = render_m2_bytes("Renderable", 1)?;
     let skin = render_skin_bytes()?;
+    let texture = solid_raw3_blp(2, 2, &[0xFFFF_0000, 0xFF00_FF00]);
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "Creature\\Solarity\\Renderable.m2",
@@ -406,12 +408,18 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             path: "Creature\\Solarity\\Renderable00.skin",
             bytes: &skin,
         },
+        FixtureFile {
+            path: "Creature\\Solarity\\Renderable.blp",
+            bytes: &texture,
+        },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog)?;
     let path = AssetPath::new("Creature\\Solarity\\Renderable.m2")?;
     let model = DecodedM2Model::load(&mut store, &path)?;
+    let texture_path = AssetPath::new("Creature\\Solarity\\Renderable.blp")?;
+    let texture_source = BlpTextureSource::load(&mut store, &texture_path)?;
 
     let plan = M2MeshPlan::prepare(&model, 0)?;
     assert_eq!(plan.path(), &path);
@@ -549,6 +557,19 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         M2PixelShader::OpaqueMod2xNoAlphaAlpha
     );
     assert_eq!(pipeline_info.permutation(), lit_permutation);
+    let texture_handle = renderer.upload_blp_texture(&texture_source, BlpColorSpace::Srgb)?;
+    assert_eq!(
+        renderer.upload_blp_texture(&texture_source, BlpColorSpace::Srgb)?,
+        texture_handle
+    );
+    let texture_info = renderer
+        .blp_texture_info(texture_handle)
+        .ok_or("uploaded BLP texture handle did not resolve")?;
+    assert_eq!(texture_info.path(), &texture_path);
+    assert_eq!(texture_info.color_space(), BlpColorSpace::Srgb);
+    assert_eq!(texture_info.extent(), (2, 2));
+    assert_eq!(texture_info.mip_count(), 2);
+    assert_eq!(texture_info.decoded_byte_count(), 20);
     renderer.shutdown()?;
     Ok(())
 }
