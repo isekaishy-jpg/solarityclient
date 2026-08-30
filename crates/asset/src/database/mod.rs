@@ -11,6 +11,7 @@ mod creature;
 mod db_cache;
 mod db_cache_instances;
 mod db_client;
+mod item;
 mod w_data_store;
 mod wow_client_db;
 
@@ -24,4 +25,5 @@ pub use character::{
 pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData,
 };
+pub use item::{ItemDisplayCatalog, ItemDisplayInfo};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

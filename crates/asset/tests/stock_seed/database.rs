@@ -5,7 +5,8 @@ use std::path::Path;
 
 use solarity_asset::{
     AppearanceError, ArchiveCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterCustomization, ClientDataRoot, CreatureCatalog, Locale, M2TextureKind, WdbcTable,
+    CharacterCustomization, ClientDataRoot, CreatureCatalog, ItemDisplayCatalog, Locale,
+    M2TextureKind, WdbcTable,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -560,6 +561,90 @@ fn character_appearance_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn
             if path == AssetPath::new("DBFilesClient/CharSections.dbc")?
                 && message.contains("requires 10 fields")
     ));
+    Ok(())
+}
+
+/// Build-12340 item displays retain model, geoset, and component texture fields.
+#[test]
+fn item_display_catalog_decodes_stock_equipment_layout() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let model_left = append_string(&mut strings, "Helm_Plate_Raid_LichKing_C_01.m2");
+    let model_right = append_string(&mut strings, "Helm_Plate_Raid_LichKing_C_01_Visor.m2");
+    let texture_left = append_string(&mut strings, "Helm_Plate_RaidLichKing_C_01Blue");
+    let texture_right = append_string(&mut strings, "Helm_Plate_RaidLichKing_C_01Blue_Visor");
+    let icon_left = append_string(&mut strings, "INV_Helmet_170");
+    let icon_right = append_string(&mut strings, "INV_Helmet_170_2");
+    let arm_upper = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_ArmUpper");
+    let arm_lower = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_ArmLower");
+    let hand = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_Hand");
+    let torso_upper = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_TorsoUpper");
+    let torso_lower = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_TorsoLower");
+    let leg_upper = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_LegUpper");
+    let leg_lower = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_LegLower");
+    let foot = append_string(&mut strings, "Plate_RaidLichKing_C_01Blue_Foot");
+    let fields = [
+        55_000,
+        model_left,
+        model_right,
+        texture_left,
+        texture_right,
+        icon_left,
+        icon_right,
+        2,
+        3,
+        4,
+        0x40,
+        71,
+        9,
+        101,
+        102,
+        arm_upper,
+        arm_lower,
+        hand,
+        torso_upper,
+        torso_lower,
+        leg_upper,
+        leg_lower,
+        foot,
+        88,
+        99,
+    ];
+    let table = create_wdbc(1, 25, &fields, &strings);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\ItemDisplayInfo.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = ItemDisplayCatalog::load(&mut store)?;
+    let display = catalog.display(55_000).ok_or("item display is absent")?;
+
+    assert_eq!(
+        display.model_names(),
+        [
+            "Helm_Plate_Raid_LichKing_C_01.m2",
+            "Helm_Plate_Raid_LichKing_C_01_Visor.m2"
+        ]
+    );
+    assert_eq!(display.geoset_groups(), [2, 3, 4]);
+    assert_eq!(display.flags(), 0x40);
+    assert_eq!(display.helmet_geoset_visibility_ids(), [101, 102]);
+    assert_eq!(
+        display.component_textures(),
+        [
+            "Plate_RaidLichKing_C_01Blue_ArmUpper",
+            "Plate_RaidLichKing_C_01Blue_ArmLower",
+            "Plate_RaidLichKing_C_01Blue_Hand",
+            "Plate_RaidLichKing_C_01Blue_TorsoUpper",
+            "Plate_RaidLichKing_C_01Blue_TorsoLower",
+            "Plate_RaidLichKing_C_01Blue_LegUpper",
+            "Plate_RaidLichKing_C_01Blue_LegLower",
+            "Plate_RaidLichKing_C_01Blue_Foot",
+        ]
+    );
+    assert_eq!(catalog.display(55_001), None);
     Ok(())
 }
 

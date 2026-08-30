@@ -23,7 +23,8 @@ pub use database::{
     AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
     CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterSection,
     CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
-    CreatureModelAppearance, CreatureModelData, WdbcHeader, WdbcTable,
+    CreatureModelAppearance, CreatureModelData, ItemDisplayCatalog, ItemDisplayInfo, WdbcHeader,
+    WdbcTable,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore};
 pub use model::{
