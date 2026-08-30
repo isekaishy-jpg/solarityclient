@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use solarity_asset::AssetPath;
+
 /// A failure to establish or stop the required Vulkan 1.3 presentation stack.
 #[derive(Debug, Error)]
 pub enum VulkanError {
@@ -80,6 +82,17 @@ pub enum VulkanError {
     /// CPU frame composition overflowed addressable memory.
     #[error("bootstrap frame dimensions exceed addressable memory")]
     FrameSize,
+    /// A decoded M2 has no geometry that Vulkan can bind and draw.
+    #[error("M2 mesh {path} has no {buffer_kind} data to upload")]
+    EmptyM2Mesh {
+        /// Model whose selected profile produced the empty buffer.
+        path: AssetPath,
+        /// Stable name of the absent vertex or index payload.
+        buffer_kind: &'static str,
+    },
+    /// The renderer cannot assign another stable 32-bit mesh handle.
+    #[error("M2 mesh registry exhausted its 32-bit handle space")]
+    M2MeshCapacity,
 }
 
 impl VulkanError {

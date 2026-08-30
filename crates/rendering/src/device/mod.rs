@@ -15,9 +15,11 @@ mod gfx_singleton_manager;
 mod status;
 mod vulkan_frame;
 mod vulkan_instance;
+mod vulkan_mesh;
 mod vulkan_renderer;
 mod vulkan_selection;
 
 pub use status::VulkanError;
 pub use vulkan_instance::VulkanBootstrap;
+pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanRenderer, VulkanReport};

@@ -2174,6 +2174,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "glam",
+ "sdl3",
  "shaderc",
  "solarity-asset",
  "solarity-cpu",

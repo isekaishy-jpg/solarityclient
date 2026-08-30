@@ -13,7 +13,7 @@ use solarity_rendering::{
     CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2MeshPlan, M2MeshPlanError,
+    CharacterWeaponState, M2MeshPlan, M2MeshPlanError, VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -387,8 +387,11 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-/// M2 mesh preparation resolves SKIN indirection and material texture stages.
+/// M2 geometry resolves SKIN indirection and reaches renderer-owned GPU buffers.
 #[test]
+// SDL and the renderer require an explicit ownership transfer for the native
+// surface; both unsafe calls are constrained to the live window/instance below.
+#[allow(unsafe_code)]
 fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     let model = render_m2_bytes("Renderable", 1)?;
     let skin = render_skin_bytes()?;
@@ -442,6 +445,32 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             ..
         })
     ));
+
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let mut window_builder = video.window("Solarity M2 upload test", 64, 64);
+    window_builder.vulkan().hidden();
+    let window = window_builder.build()?;
+    let extensions = window.vulkan_instance_extensions()?;
+    let bootstrap = VulkanBootstrap::start(&extensions)?;
+    // SAFETY: The bootstrap enabled the exact extensions reported by this
+    // window, and the window remains live through renderer destruction.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: SDL created the surface from this exact live instance and
+    // transfers its sole ownership into the renderer immediately.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    let handle = renderer.upload_m2_mesh(&plan)?;
+    assert_eq!(renderer.upload_m2_mesh(&plan)?, handle);
+    let info = renderer
+        .m2_mesh_info(handle)
+        .ok_or("uploaded M2 resource is absent")?;
+    assert_eq!(info.path(), &path);
+    assert_eq!(info.profile_index(), 0);
+    assert_eq!(info.vertex_count(), 3);
+    assert_eq!(info.index_count(), 3);
+    assert_eq!(info.vertex_byte_count(), 144);
+    assert_eq!(info.index_byte_count(), 6);
+    renderer.shutdown()?;
     Ok(())
 }
 

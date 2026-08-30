@@ -6,8 +6,12 @@ use ash::{Device, vk};
 use solarity_asset::DecodedBlpTexture;
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
+use crate::device::vulkan_mesh::{
+    M2MeshHandle, M2MeshRegistry, M2MeshResourceInfo, MeshUploadContext,
+};
 use crate::device::vulkan_selection::SelectedAdapter;
 use crate::device::{VulkanBootstrap, VulkanError};
+use crate::model::M2MeshPlan;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,11 +71,12 @@ impl VulkanReport {
 
 /// Sole owner of the initialized Vulkan presentation object graph.
 pub struct VulkanRenderer {
-    // Manual drop order is image views, swapchain, device, then the embedded
-    // bootstrap's surface, instance, and loader.
+    // Manual drop order is M2 buffers, image views, swapchain, allocator,
+    // device, then the embedded bootstrap's surface, instance, and loader.
     bootstrap: VulkanBootstrap,
     device: Device,
     allocator: Option<vk_mem::Allocator>,
+    m2_meshes: M2MeshRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
@@ -103,6 +108,7 @@ impl VulkanRenderer {
             bootstrap,
             device,
             allocator: None,
+            m2_meshes: M2MeshRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
             swapchain_images: Vec::new(),
@@ -167,6 +173,37 @@ impl VulkanRenderer {
         })?;
         self.report.presented_texture_extent = Some((texture.width(), texture.height()));
         Ok(())
+    }
+
+    /// Uploads one selected M2 profile to shared device-local geometry buffers.
+    ///
+    /// Model path and profile form the resource identity, matching the decoded
+    /// asset cache. Repeated uploads return the existing stable handle without
+    /// another allocation or transfer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when the plan is empty, handle capacity is
+    /// exhausted, or Vulkan allocation, recording, submission, or waiting fails.
+    pub fn upload_m2_mesh(&mut self, plan: &M2MeshPlan) -> Result<M2MeshHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.m2_meshes.upload(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            plan,
+        )
+    }
+
+    /// Returns immutable diagnostics for a live renderer-owned M2 resource.
+    #[must_use]
+    pub fn m2_mesh_info(&self, handle: M2MeshHandle) -> Option<&M2MeshResourceInfo> {
+        self.m2_meshes.info(handle)
     }
 
     /// Creates the swapchain and one owned color view for each borrowed image.
@@ -262,6 +299,9 @@ impl Drop for VulkanRenderer {
     /// Releases Vulkan children in reverse dependency order.
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
+        if let Some(allocator) = self.allocator.as_ref() {
+            self.m2_meshes.destroy(allocator);
+        }
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.
         unsafe {

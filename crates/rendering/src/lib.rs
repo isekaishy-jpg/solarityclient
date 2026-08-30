@@ -17,7 +17,9 @@ mod texture;
 mod weather;
 mod world_text;
 
-pub use device::{VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport};
+pub use device::{
+    M2MeshHandle, M2MeshResourceInfo, VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport,
+};
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
