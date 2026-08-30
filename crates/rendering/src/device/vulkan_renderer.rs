@@ -22,6 +22,7 @@ use crate::device::vulkan_texture::{
     BlpTextureUploadError, TextureUploadContext,
 };
 use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
+use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSamplerRegistry};
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
@@ -98,6 +99,7 @@ pub struct VulkanRenderer {
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
+    ui_samplers: UiSamplerRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -140,6 +142,7 @@ impl VulkanRenderer {
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
+            ui_samplers: UiSamplerRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -296,6 +299,25 @@ impl VulkanRenderer {
     #[must_use]
     pub fn ui_pipeline_info(&self, handle: UiPipelineHandle) -> Option<UiPipelineInfo> {
         self.ui_pipelines.info(handle)
+    }
+
+    /// Creates or retrieves one exact UI texture-axis sampler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when handle capacity is exhausted or the driver
+    /// rejects sampler creation.
+    pub fn prepare_ui_sampler(
+        &mut self,
+        info: UiSamplerInfo,
+    ) -> Result<UiSamplerHandle, VulkanError> {
+        self.ui_samplers.prepare(&self.device, info)
+    }
+
+    /// Returns immutable diagnostics for one live UI sampler.
+    #[must_use]
+    pub fn ui_sampler_info(&self, handle: UiSamplerHandle) -> Option<UiSamplerInfo> {
+        self.ui_samplers.info(handle)
     }
 
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
@@ -562,6 +584,7 @@ impl Drop for VulkanRenderer {
             self.m2_meshes.destroy(allocator);
         }
         self.m2_samplers.destroy(&self.device);
+        self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner

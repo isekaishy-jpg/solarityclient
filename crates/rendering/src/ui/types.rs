@@ -12,7 +12,7 @@ pub enum UiRenderBlend {
 }
 
 /// Texture addressing selected independently for each UI texture axis.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UiTextureAddressMode {
     /// Coordinates outside the authored edge use the edge texel.
     Clamp,
