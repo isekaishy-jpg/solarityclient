@@ -11,7 +11,9 @@ mod properties;
 mod status;
 
 pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
-pub use c_simple_top::{UiDrawLayer, UiElementLayer, UiObjectNode, UiObjectRole, UiObjectTree};
+pub use c_simple_top::{
+    UiDrawLayer, UiElementLayer, UiObjectBatch, UiObjectNode, UiObjectRole, UiObjectTree,
+};
 pub use properties::{
     UiFrameLayer, UiFrameNode, UiFramePlan, UiFrameState, UiFrameStatePlan, UiFrameStrata,
 };

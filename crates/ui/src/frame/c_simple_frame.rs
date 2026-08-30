@@ -91,6 +91,7 @@ pub enum UiInheritanceTarget {
 
 /// One named root declaration retaining its original XML subtree.
 pub struct UiObjectDefinition<'bundle> {
+    action_index: usize,
     kind: UiObjectKind,
     name: String,
     virtual_object: bool,
@@ -103,6 +104,12 @@ pub struct UiObjectDefinition<'bundle> {
 }
 
 impl<'bundle> UiObjectDefinition<'bundle> {
+    /// Returns the expanded bundle action that registers this declaration.
+    #[must_use]
+    pub const fn action_index(&self) -> usize {
+        self.action_index
+    }
+
     /// Returns the concrete stock object type.
     #[must_use]
     pub const fn kind(&self) -> UiObjectKind {
@@ -186,7 +193,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             root_indices: Vec::new(),
         };
 
-        for action in bundle.actions() {
+        for (action_index, action) in bundle.actions().iter().enumerate() {
             let UiLoadAction::XmlElement {
                 resource_index,
                 element_index,
@@ -215,7 +222,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             if element.name() == "Font" {
                 continue;
             }
-            catalog.register(resource.path(), document, element, fonts)?;
+            catalog.register(action_index, resource.path(), document, element, fonts)?;
         }
         Ok(catalog)
     }
@@ -256,6 +263,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
 
     fn register(
         &mut self,
+        action_index: usize,
         path: &'bundle AssetPath,
         document: &'bundle XmlDocument,
         element: &'bundle XmlElement,
@@ -307,6 +315,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
         let index = self.definitions.len();
         resolved_layers.push(index);
         let definition = UiObjectDefinition {
+            action_index,
             kind,
             name: name.clone(),
             virtual_object,

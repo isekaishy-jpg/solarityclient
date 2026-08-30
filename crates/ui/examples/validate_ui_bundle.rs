@@ -51,6 +51,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let font_catalog = FontCatalog::from_bundle(&bundle)?;
     let object_catalog = UiObjectCatalog::from_bundle(&bundle, &font_catalog)?;
     let object_tree = UiObjectTree::from_catalog(&object_catalog, &font_catalog)?;
+    let scheduled_object_count = object_tree
+        .batches()
+        .iter()
+        .map(|batch| batch.node_count())
+        .sum::<usize>();
+    if scheduled_object_count != object_tree.nodes().len() {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            format!(
+                "construction batches cover {scheduled_object_count} of {} objects",
+                object_tree.nodes().len()
+            ),
+        )
+        .into());
+    }
     let frame_plan = UiFramePlan::from_tree(&object_tree)?;
     let frame_states = frame_plan.resolve(&object_tree)?;
     let layout_plan = UiLayoutPlan::from_tree(&object_tree)?;
@@ -93,13 +108,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} authored anchors resolving to {} region states and {} final anchors, {} script declarations resolving to {} active bindings and {} unique inline functions, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots in {} construction batches, {} instantiated objects ({named_object_count} named, {} top-level), {} resolved frames from {} property layers, {draw_layer_count} layered declarations, {} layout layers and {} authored anchors resolving to {} region states and {} final anchors, {} script declarations resolving to {} active bindings and {} unique inline functions, {} texture layers referencing {} unique archive assets, FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
         font_catalog.definitions().len(),
         object_catalog.templates().len(),
         object_catalog.roots().len(),
+        object_tree.batches().len(),
         object_tree.nodes().len(),
         object_tree.top_level().len(),
         frame_states.state_count(),

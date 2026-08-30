@@ -125,6 +125,16 @@ child declaration: stock `GameTimeFrame` names the nested `Minimap` before the
 owning minimap XML has been constructed. Parent fixups occur once after the
 load pass rather than adding a runtime name search.
 
+The arena also retains one construction batch for every live root. A batch
+links the root and its contiguous node range to the exact expanded
+`UiLoadAction` that created it. Template declarations and intervening Lua
+actions therefore consume action positions without creating fake batches.
+Each node separately retains its structural XML owner and its final layout
+parent: deferred `parent` fixups may change the latter but never rewrite the
+former. The Lua executor can consequently expose one root batch at the correct
+manifest boundary without making later globals visible early, while post-load
+callbacks can still walk the original nested construction topology.
+
 Nested global names are not required to be unique. Stock declares
 `QuestInfoRequiredMoneyText` under two distinct live parents; both instances
 remain owned while the later registration replaces the global lookup entry.

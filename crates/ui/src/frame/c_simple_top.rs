@@ -1,6 +1,7 @@
 //! Nested live object construction and global name ownership.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use solarity_asset::AssetPath;
 
@@ -43,6 +44,41 @@ pub enum UiObjectRole {
     DisabledCheckedTexture,
     /// Slider thumb texture.
     ThumbTexture,
+}
+
+/// One live-root construction batch aligned to an expanded bundle action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiObjectBatch {
+    action_index: usize,
+    root: usize,
+    first_node: usize,
+    node_count: usize,
+}
+
+impl UiObjectBatch {
+    /// Returns the bundle action that constructs this live root.
+    #[must_use]
+    pub const fn action_index(self) -> usize {
+        self.action_index
+    }
+
+    /// Returns the root object arena index for this batch.
+    #[must_use]
+    pub const fn root(self) -> usize {
+        self.root
+    }
+
+    /// Returns newly allocated objects in exact construction order.
+    #[must_use]
+    pub fn node_range(self) -> Range<usize> {
+        self.first_node..self.first_node + self.node_count
+    }
+
+    /// Returns the number of newly allocated objects in this batch.
+    #[must_use]
+    pub const fn node_count(self) -> usize {
+        self.node_count
+    }
 }
 
 /// One XML layer contributing properties and nested objects to an instance.
@@ -94,6 +130,8 @@ pub struct UiObjectNode<'bundle> {
     role: UiObjectRole,
     parent: Option<usize>,
     children: Vec<usize>,
+    construction_parent: Option<usize>,
+    construction_children: Vec<usize>,
     layers: Vec<UiElementLayer<'bundle>>,
 }
 
@@ -134,6 +172,21 @@ impl<'bundle> UiObjectNode<'bundle> {
         &self.children
     }
 
+    /// Returns the owner that constructed this object from nested XML.
+    ///
+    /// This remains stable when a stock `parent` attribute later reparents the
+    /// object for layout and frame ownership.
+    #[must_use]
+    pub const fn construction_parent(&self) -> Option<usize> {
+        self.construction_parent
+    }
+
+    /// Returns nested objects in their original construction order.
+    #[must_use]
+    pub fn construction_children(&self) -> &[usize] {
+        &self.construction_children
+    }
+
     /// Returns unique inherited and concrete XML layers in application order.
     #[must_use]
     pub fn layers(&self) -> &[UiElementLayer<'bundle>] {
@@ -146,6 +199,7 @@ pub struct UiObjectTree<'bundle> {
     nodes: Vec<UiObjectNode<'bundle>>,
     by_name: HashMap<String, usize>,
     top_level: Vec<usize>,
+    batches: Vec<UiObjectBatch>,
     pending_parents: Vec<(usize, String, AssetPath)>,
 }
 
@@ -166,10 +220,18 @@ impl<'bundle> UiObjectTree<'bundle> {
             nodes: Vec::new(),
             by_name: HashMap::new(),
             top_level: Vec::new(),
+            batches: Vec::new(),
             pending_parents: Vec::new(),
         };
         for definition in catalog.roots() {
-            tree.instantiate_root(catalog, fonts, definition)?;
+            let first_node = tree.nodes.len();
+            let root = tree.instantiate_root(catalog, fonts, definition)?;
+            tree.batches.push(UiObjectBatch {
+                action_index: definition.action_index(),
+                root,
+                first_node,
+                node_count: tree.nodes.len() - first_node,
+            });
         }
         tree.resolve_pending_parents()?;
         Ok(tree)
@@ -185,6 +247,21 @@ impl<'bundle> UiObjectTree<'bundle> {
     #[must_use]
     pub fn top_level(&self) -> &[usize] {
         &self.top_level
+    }
+
+    /// Returns live-root batches in exact expanded bundle-action order.
+    #[must_use]
+    pub fn batches(&self) -> &[UiObjectBatch] {
+        &self.batches
+    }
+
+    /// Finds the live-root construction batch owned by one bundle action.
+    #[must_use]
+    pub fn batch_for_action(&self, action_index: usize) -> Option<UiObjectBatch> {
+        self.batches
+            .binary_search_by_key(&action_index, |batch| batch.action_index())
+            .ok()
+            .and_then(|index| self.batches.get(index).copied())
     }
 
     /// Finds an expanded global object name.
@@ -206,7 +283,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         catalog: &UiObjectCatalog<'bundle>,
         fonts: &FontCatalog,
         definition: &UiObjectDefinition<'bundle>,
-    ) -> Result<(), UiObjectError> {
+    ) -> Result<usize, UiObjectError> {
         let requested_parent = definition.parent_name();
         let parent = requested_parent.and_then(|name| self.by_name.get(name).copied());
         let layers = definition_layers(catalog, definition)?;
@@ -215,6 +292,7 @@ impl<'bundle> UiObjectTree<'bundle> {
             definition.kind(),
             UiObjectRole::Object,
             parent,
+            None,
             layers,
         )?;
         if let Some(parent_name) = requested_parent.filter(|_| parent.is_none()) {
@@ -224,7 +302,8 @@ impl<'bundle> UiObjectTree<'bundle> {
                 definition.source_path().clone(),
             ));
         }
-        self.instantiate_new_layers(catalog, fonts, node_index, first_new_layer)
+        self.instantiate_new_layers(catalog, fonts, node_index, first_new_layer)?;
+        Ok(node_index)
     }
 
     fn instantiate_element(
@@ -277,8 +356,14 @@ impl<'bundle> UiObjectTree<'bundle> {
             }
         }
         layers.push(layer);
-        let (node_index, first_new_layer) =
-            self.create_or_merge(name, kind, role, Some(parent), layers)?;
+        let (node_index, first_new_layer) = self.create_or_merge(
+            name,
+            kind,
+            role,
+            Some(parent),
+            Some(structural_parent),
+            layers,
+        )?;
         if let Some(parent_name) = unresolved_parent {
             self.pending_parents
                 .push((node_index, parent_name, layer.source_path.clone()));
@@ -292,6 +377,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         kind: UiObjectKind,
         role: UiObjectRole,
         parent: Option<usize>,
+        construction_parent: Option<usize>,
         layers: Vec<UiElementLayer<'bundle>>,
     ) -> Result<(usize, usize), UiObjectError> {
         let existing_sibling = name.as_deref().and_then(|candidate| {
@@ -329,6 +415,8 @@ impl<'bundle> UiObjectTree<'bundle> {
             role,
             parent,
             children: Vec::new(),
+            construction_parent,
+            construction_children: Vec::new(),
             layers,
         });
         if let Some(name) = name {
@@ -338,6 +426,9 @@ impl<'bundle> UiObjectTree<'bundle> {
             self.nodes[parent].children.push(node_index);
         } else {
             self.top_level.push(node_index);
+        }
+        if let Some(parent) = construction_parent {
+            self.nodes[parent].construction_children.push(node_index);
         }
         Ok((node_index, 0))
     }

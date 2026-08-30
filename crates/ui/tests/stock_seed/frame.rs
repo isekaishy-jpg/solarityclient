@@ -56,6 +56,73 @@ fn object_catalog_resolves_earlier_virtual_templates() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// Live roots retain action batches and structural ownership for ordered Lua exposure.
+#[test]
+fn object_tree_retains_stock_construction_schedule() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Objects.xml\nMiddle.lua\nLater.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Objects.xml",
+            bytes: br#"<Ui>
+  <Frame name="Template" virtual="true"/>
+  <Frame name="First" inherits="Template"><Frames>
+    <Frame name="$parentChild" parent="Second"/>
+  </Frames></Frame>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Middle.lua",
+            bytes: b"MIDDLE_LOADED = true\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Later.xml",
+            bytes: br#"<Ui><Frame name="Second"/></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+
+    let first_definition = objects
+        .definition("First")
+        .ok_or("missing First definition")?;
+    let second_definition = objects
+        .definition("Second")
+        .ok_or("missing Second definition")?;
+    assert_eq!(first_definition.action_index(), 1);
+    assert_eq!(second_definition.action_index(), 3);
+    assert_eq!(tree.batches().len(), 2);
+
+    let first_batch = tree
+        .batch_for_action(first_definition.action_index())
+        .ok_or("missing First batch")?;
+    let second_batch = tree
+        .batch_for_action(second_definition.action_index())
+        .ok_or("missing Second batch")?;
+    assert_eq!(first_batch.root(), 0);
+    assert_eq!(first_batch.node_range(), 0..2);
+    assert_eq!(second_batch.root(), 2);
+    assert_eq!(second_batch.node_range(), 2..3);
+    assert!(tree.batch_for_action(2).is_none());
+
+    let child_index = tree.node_index("FirstChild").ok_or("missing FirstChild")?;
+    let child = &tree.nodes()[child_index];
+    assert_eq!(child.construction_parent(), Some(first_batch.root()));
+    assert_eq!(child.parent(), Some(second_batch.root()));
+    assert_eq!(
+        tree.nodes()[first_batch.root()].construction_children(),
+        &[child_index]
+    );
+    assert!(tree.nodes()[first_batch.root()].children().is_empty());
+    assert_eq!(tree.nodes()[second_batch.root()].children(), &[child_index]);
+    Ok(())
+}
+
 /// Frame ordering and interaction flags retain exact inheritance-layer order.
 #[test]
 fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
