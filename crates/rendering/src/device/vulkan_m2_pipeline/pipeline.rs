@@ -88,6 +88,11 @@ impl M2PipelineLayout {
         self.handle
     }
 
+    /// Returns one initialized descriptor-set layout by fixed ABI index.
+    pub(super) fn descriptor_set(&self, index: usize) -> Option<vk::DescriptorSetLayout> {
+        self.descriptor_sets.get(index).copied()
+    }
+
     /// Releases the parent layout before its child descriptor layouts.
     pub(super) fn destroy(&mut self, device: &Device) {
         // SAFETY: Non-null handles belong to this device and are uniquely owned.

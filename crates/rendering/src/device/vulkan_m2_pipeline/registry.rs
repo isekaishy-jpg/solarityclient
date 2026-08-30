@@ -44,6 +44,24 @@ impl Default for M2PipelineRegistry {
 }
 
 impl M2PipelineRegistry {
+    /// Returns the initialized set-three sampled-texture layout.
+    pub(in crate::device) fn texture_set_layout(
+        &mut self,
+        device: &Device,
+    ) -> Result<vk::DescriptorSetLayout, VulkanError> {
+        const TEXTURE_SET_INDEX: usize = 3;
+
+        self.layout.ensure_created(device)?;
+        self.layout
+            .descriptor_set(TEXTURE_SET_INDEX)
+            .ok_or_else(|| {
+                VulkanError::operation(
+                    "access M2 texture descriptor layout",
+                    "layout is unavailable",
+                )
+            })
+    }
+
     /// Returns an existing pipeline or compiles and creates one exact variant.
     pub(in crate::device) fn prepare(
         &mut self,

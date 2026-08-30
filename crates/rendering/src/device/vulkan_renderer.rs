@@ -7,6 +7,9 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Texture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
+use crate::device::vulkan_m2_texture_set::{
+    M2TextureSet, M2TextureSetHandle, M2TextureSetInfo, M2TextureSetRegistry,
+};
 use crate::device::vulkan_mesh::{
     M2MeshHandle, M2MeshRegistry, M2MeshResourceInfo, MeshUploadContext,
 };
@@ -86,6 +89,7 @@ pub struct VulkanRenderer {
     m2_pipelines: M2PipelineRegistry,
     m2_meshes: M2MeshRegistry,
     m2_samplers: M2SamplerRegistry,
+    m2_texture_sets: M2TextureSetRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -123,6 +127,7 @@ impl VulkanRenderer {
             m2_pipelines: M2PipelineRegistry::default(),
             m2_meshes: M2MeshRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
+            m2_texture_sets: M2TextureSetRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -307,6 +312,36 @@ impl VulkanRenderer {
         self.m2_samplers.info(handle)
     }
 
+    /// Creates persistent sampled-image descriptor sets in one exact-size batch.
+    ///
+    /// Existing sets are shared by their image/sampler stage identity. A single
+    /// descriptor pool is created for only the unique new sets in this call,
+    /// matching a decoded model's known material count without a guessed limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign resource handles, handle exhaustion,
+    /// descriptor-layout creation, pool creation, or set allocation failure.
+    pub fn prepare_m2_texture_sets(
+        &mut self,
+        requested: &[M2TextureSet],
+    ) -> Result<Vec<M2TextureSetHandle>, VulkanError> {
+        let layout = self.m2_pipelines.texture_set_layout(&self.device)?;
+        self.m2_texture_sets.prepare(
+            &self.device,
+            layout,
+            &self.blp_textures,
+            &self.m2_samplers,
+            requested,
+        )
+    }
+
+    /// Returns immutable diagnostics for a live texture descriptor set.
+    #[must_use]
+    pub fn m2_texture_set_info(&self, handle: M2TextureSetHandle) -> Option<M2TextureSetInfo> {
+        self.m2_texture_sets.info(handle)
+    }
+
     /// Creates the swapchain and one owned color view for each borrowed image.
     fn create_swapchain(
         &mut self,
@@ -401,6 +436,7 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         if let Some(allocator) = self.allocator.as_ref() {
+            self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);
             self.m2_meshes.destroy(allocator);
         }

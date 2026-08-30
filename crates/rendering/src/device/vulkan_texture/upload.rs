@@ -41,6 +41,11 @@ impl GpuBlpTexture {
         &self.info
     }
 
+    /// Returns the live sampled image view for descriptor construction.
+    pub(super) const fn view(&self) -> vk::ImageView {
+        self.view
+    }
+
     /// Destroys the child view before its allocated parent image.
     pub(super) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         // SAFETY: The view belongs to this device and is uniquely owned.

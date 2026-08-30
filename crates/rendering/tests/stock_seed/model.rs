@@ -16,9 +16,10 @@ use solarity_rendering::{
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
     CharacterWeaponState, M2DrawPushConstants, M2LocalLightCount, M2LocalLightState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2SpirvError, M2TextureAddressMode, M2VertexShader, VulkanBootstrap,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SampledTexture,
+    M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
+    M2SpirvCompiler, M2SpirvError, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -621,6 +622,33 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         .ok_or("clamped M2 sampler handle did not resolve")?;
     assert_eq!(clamped_info.address_u(), M2TextureAddressMode::Clamp);
     assert_eq!(clamped_info.address_v(), M2TextureAddressMode::Clamp);
+    let one_stage = M2TextureSet::One(M2SampledTexture::new(texture_handle, wrap_u_sampler));
+    let two_stage = M2TextureSet::Two([
+        M2SampledTexture::new(texture_handle, wrap_u_sampler),
+        M2SampledTexture::new(texture_handle, clamped_sampler),
+    ]);
+    let texture_sets = renderer.prepare_m2_texture_sets(&[two_stage, one_stage, two_stage])?;
+    assert_eq!(texture_sets.len(), 3);
+    assert_eq!(texture_sets[0], texture_sets[2]);
+    assert_ne!(texture_sets[0], texture_sets[1]);
+    assert_eq!(
+        renderer
+            .m2_texture_set_info(texture_sets[0])
+            .ok_or("two-stage M2 texture set did not resolve")?
+            .stage_count(),
+        2
+    );
+    assert_eq!(
+        renderer
+            .m2_texture_set_info(texture_sets[1])
+            .ok_or("one-stage M2 texture set did not resolve")?
+            .stage_count(),
+        1
+    );
+    assert_eq!(
+        renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
+        texture_sets[..2]
+    );
     renderer.shutdown()?;
     Ok(())
 }

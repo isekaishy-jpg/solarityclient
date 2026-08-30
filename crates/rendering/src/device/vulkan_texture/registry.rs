@@ -76,6 +76,16 @@ impl BlpTextureRegistry {
             .map(GpuBlpTexture::info)
     }
 
+    /// Resolves a renderer-local identity to its live sampled image view.
+    pub(in crate::device) fn view(&self, handle: BlpTextureHandle) -> Option<ash::vk::ImageView> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(GpuBlpTexture::view)
+    }
+
     /// Releases views and images in reverse upload order before VMA teardown.
     pub(in crate::device) fn destroy(
         &mut self,

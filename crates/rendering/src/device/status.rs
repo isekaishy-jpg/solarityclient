@@ -105,6 +105,15 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit sampler handle.
     #[error("M2 sampler registry exhausted its 32-bit handle space")]
     M2SamplerCapacity,
+    /// A sampled image handle belongs to another renderer or no live image.
+    #[error("M2 texture set references an unknown BLP texture handle")]
+    UnknownBlpTextureHandle,
+    /// A sampler handle belongs to another renderer or no live sampler.
+    #[error("M2 texture set references an unknown M2 sampler handle")]
+    UnknownM2SamplerHandle,
+    /// The renderer cannot assign another stable 32-bit texture-set handle.
+    #[error("M2 texture-set registry exhausted its 32-bit handle space")]
+    M2TextureSetCapacity,
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,
