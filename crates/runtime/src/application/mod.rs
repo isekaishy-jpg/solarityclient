@@ -32,7 +32,10 @@ pub use login_coordinator::{
 };
 pub use player_coordinator::{RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation};
 pub use run::{ApplicationExitReason, ApplicationRunReport};
-pub use terrain_coordinator::{RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainPoll};
+pub use terrain_coordinator::{
+    RuntimeCameraError, RuntimeCameraSceneError, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimeTerrainPoll,
+};
 pub use terrain_frame::RuntimeTerrainFrameError;
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,

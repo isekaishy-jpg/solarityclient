@@ -21,13 +21,13 @@ pub use time::RealmClock;
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, CharacterProjectionError,
     ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
-    RuntimeCharacterSelection, RuntimeGameplayCoordinator, RuntimeGameplayError,
-    RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll, RuntimeLoginState,
-    RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator,
-    RuntimeTerrainError, RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator,
-    RuntimeWorldEntry, RuntimeWorldEnvironment, RuntimeWorldEnvironmentError,
-    RuntimeWorldEnvironmentFrame, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
-    StartupReport,
+    RuntimeCameraError, RuntimeCameraSceneError, RuntimeCharacterSelection,
+    RuntimeGameplayCoordinator, RuntimeGameplayError, RuntimeLoginCoordinator, RuntimeLoginError,
+    RuntimeLoginPoll, RuntimeLoginState, RuntimePlayerError, RuntimePlayerPoll,
+    RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator, RuntimeWorldEntry,
+    RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
+    RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,

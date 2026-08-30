@@ -7,10 +7,13 @@ use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, ClientDataRoot,
     CreatureCatalog, Locale, MapCatalog, TerrainTileIndex,
 };
-use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
+use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
 use solarity_runtime::{
     RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
+};
+use solarity_systems::{
+    CameraSubjectGeometry, resolve_camera_subject_height, resolve_player_camera_pose,
 };
 use wow_adt::AdtVersion;
 use wow_adt::WmoPlacement;
@@ -218,6 +221,14 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     assert!((liquid.height() - 2.0).abs() < 0.001);
     assert_eq!(liquid.liquid_type(), 14);
     assert!(liquid.is_fishable());
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(Some(1.75), 2.0, 1.0))?;
+    let pose = resolve_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::new(2.0, 0.174_532_92, 0.0, 2),
+        height,
+    )?;
+    let resolved = terrain.resolve_player_camera(pose, 1.0, true, true)?;
+    assert!((resolved.eye().z - 1.95).abs() < 0.001);
 
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);

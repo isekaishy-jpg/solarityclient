@@ -11,10 +11,12 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit,
+    PlacedWorldModelCollision, PlacedWorldModelLiquid, PlayerCameraObstructionError,
+    PlayerCameraPose, PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit,
     TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
     WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
-    WorldModelLiquidSample, WorldModelLiquidScene,
+    WorldModelLiquidSample, WorldModelLiquidScene, resolve_player_camera_obstruction,
+    resolve_player_camera_water_collision,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,6 +68,34 @@ pub enum RuntimeTerrainError {
         /// Required ADT Y coordinate.
         tile_y: u8,
     },
+}
+
+/// Failure from one concrete resident-world camera query provider.
+#[derive(Debug, Error)]
+pub enum RuntimeCameraSceneError {
+    /// Resident ADT collision rejected the trace.
+    #[error(transparent)]
+    TerrainCollision(#[from] TerrainCollisionError),
+    /// Resident placed-WMO collision rejected the trace.
+    #[error(transparent)]
+    WorldModelCollision(#[from] WorldModelCollisionError),
+    /// Resident MH2O sampling rejected the point.
+    #[error(transparent)]
+    TerrainLiquid(#[from] TerrainLiquidError),
+    /// Resident placed-WMO liquid sampling rejected the point.
+    #[error(transparent)]
+    WorldModelLiquid(#[from] WorldModelLiquidError),
+}
+
+/// Failure while composing the stock camera against the resident world scene.
+#[derive(Debug, Error)]
+pub enum RuntimeCameraError {
+    /// Terrain or placed-WMO obstruction resolution failed.
+    #[error(transparent)]
+    Obstruction(#[from] PlayerCameraObstructionError<RuntimeCameraSceneError>),
+    /// Terrain or placed-WMO waterline resolution failed.
+    #[error(transparent)]
+    Water(#[from] PlayerCameraWaterError<RuntimeCameraSceneError>),
 }
 
 /// Observable result of one main-thread terrain synchronization pass.
@@ -352,6 +382,55 @@ impl RuntimeTerrainCoordinator {
         liquid.sample(world_x, world_y, reference_height)
     }
 
+    /// Resolves one final player camera against all resident static providers.
+    ///
+    /// The caller supplies the current stock CVar state explicitly. This owner
+    /// contributes only admitted ADT and WMO geometry; M2 scene collision can
+    /// join the same nearest-fraction closure when its residency is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeCameraError`] for invalid camera policy/input or a
+    /// rejected terrain/WMO query.
+    pub fn resolve_player_camera(
+        &mut self,
+        pose: PlayerCameraPose,
+        aspect_ratio: f32,
+        smart_pivot: bool,
+        water_collision: bool,
+    ) -> Result<PlayerCameraPose, RuntimeCameraError> {
+        let pose = resolve_player_camera_obstruction(
+            pose,
+            aspect_ratio,
+            smart_pivot,
+            |start, end, maximum_fraction| {
+                let terrain = self
+                    .trace_collision(start, end, 0.0, maximum_fraction)?
+                    .map(|hit| hit.fraction());
+                let world_model = self.trace_world_model_camera(start, end, maximum_fraction)?;
+                Ok::<_, RuntimeCameraSceneError>(nearest_fraction(terrain, world_model))
+            },
+        )?;
+        Ok(resolve_player_camera_water_collision(
+            pose,
+            water_collision,
+            smart_pivot,
+            |world_x, world_y, reference_height| {
+                let terrain = self
+                    .sample_liquid(world_x, world_y, Some(reference_height))?
+                    .map(TerrainLiquidSample::height);
+                let world_model = self
+                    .sample_world_model_liquid(world_x, world_y, Some(reference_height))?
+                    .map(WorldModelLiquidSample::height);
+                Ok::<_, RuntimeCameraSceneError>(preferred_surface(
+                    terrain,
+                    world_model,
+                    reference_height,
+                ))
+            },
+        )?)
+    }
+
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
@@ -475,4 +554,30 @@ fn same_world_model_placement(
         && left.flags() == right.flags()
         && left.doodad_set() == right.doodad_set()
         && left.name_set() == right.name_set()
+}
+
+fn nearest_fraction(left: Option<f32>, right: Option<f32>) -> Option<f32> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn preferred_surface(left: Option<f32>, right: Option<f32>, reference: f32) -> Option<f32> {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            let left_above = left >= reference - 0.0001;
+            let right_above = right >= reference - 0.0001;
+            if left_above != right_above {
+                Some(if left_above { left } else { right })
+            } else if left_above {
+                Some(left.min(right))
+            } else {
+                Some(left.max(right))
+            }
+        }
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
