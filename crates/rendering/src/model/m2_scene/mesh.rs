@@ -158,7 +158,7 @@ fn resolve_draws(
         let texture_bindings = resolve_texture_bindings(model, profile, batch_index, batch)?;
         let first_index = u32::from(submesh.triangle_start) + (u32::from(submesh.level) << 16);
         draws.push(M2DrawCall::new(
-            submesh.id,
+            *submesh,
             first_index,
             u32::from(submesh.triangle_count),
             batch,

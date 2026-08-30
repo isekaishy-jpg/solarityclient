@@ -13,7 +13,8 @@ use solarity_rendering::{
     CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2ShaderPlan, M2VertexShader,
+    CharacterWeaponState, M2LocalLightCount, M2MeshPlan, M2MeshPlanError, M2PixelShader,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
     VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
@@ -453,7 +454,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert!(!state.cull_enabled());
     assert!(!state.depth_test_enabled());
     assert!(!state.depth_write_enabled());
-    assert!(state.is_unlit());
+    assert!(!state.is_unlit());
     assert!(state.is_unfogged());
     assert!((state.alpha_reference(0.5) - (1.0 / 255.0)).abs() < f32::EPSILON);
 
@@ -470,6 +471,27 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(fallback.vertex_shader(), M2VertexShader::DiffuseT1T2);
     assert_eq!(fallback.pixel_shader(), M2PixelShader::ModMod);
     assert!(fallback.used_stock_fallback());
+    assert!(fallback.material().is_unlit());
+
+    let lit_permutation = M2ShaderPermutation::resolve(
+        draw,
+        M2LocalLightCount::Three,
+        M2ShadowPermutation::Disabled,
+        M2ShadowFiltering::Direct,
+    );
+    assert_eq!(draw.bone_count(), 1);
+    assert_eq!(draw.bone_start(), 0);
+    assert_eq!(draw.bone_influence(), 1);
+    assert_eq!(lit_permutation.vertex_index(), 17);
+    assert_eq!(lit_permutation.pixel_index(), 8);
+    let unlit_permutation = M2ShaderPermutation::resolve(
+        &plan.draws()[2],
+        M2LocalLightCount::Four,
+        M2ShadowPermutation::Mode3,
+        M2ShadowFiltering::Pcf,
+    );
+    assert_eq!(unlit_permutation.vertex_index(), 70);
+    assert_eq!(unlit_permutation.pixel_index(), 15);
     assert!(matches!(
         M2MeshPlan::prepare(&model, 1),
         Err(M2MeshPlanError::MissingProfile {
@@ -1278,14 +1300,19 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
             filename: M2ArrayString::default(),
         },
     ];
-    model.materials = vec![RawMaterial {
-        flags: M2RenderFlags::UNLIT
-            | M2RenderFlags::UNFOGGED
-            | M2RenderFlags::NO_BACKFACE_CULLING
-            | M2RenderFlags::NO_ZBUFFER
-            | M2RenderFlags::AFFECTED_BY_PROJECTION,
-        blend_mode: RawBlendMode::ALPHA,
-    }];
+    model.materials = vec![
+        RawMaterial {
+            flags: M2RenderFlags::UNFOGGED
+                | M2RenderFlags::NO_BACKFACE_CULLING
+                | M2RenderFlags::NO_ZBUFFER
+                | M2RenderFlags::AFFECTED_BY_PROJECTION,
+            blend_mode: RawBlendMode::ALPHA,
+        },
+        RawMaterial {
+            flags: M2RenderFlags::empty(),
+            blend_mode: RawBlendMode::MOD,
+        },
+    ];
     model.raw_data.texture_lookup_table = vec![0, 1];
     model.raw_data.texture_units = vec![0, 3];
     for index in 0..3 {
@@ -1389,7 +1416,7 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 skin_section_index: 0,
                 geoset_index: 0,
                 color_index: 0,
-                material_index: 0,
+                material_index: 1,
                 material_layer: 0,
                 texture_count: 2,
                 texture_combo_index: 0,

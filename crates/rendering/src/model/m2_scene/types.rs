@@ -1,6 +1,6 @@
 //! Packed M2 vertex, texture-stage, and indexed-draw values.
 
-use solarity_asset::{M2Batch, M2Material, M2Vertex};
+use solarity_asset::{M2Batch, M2Material, M2Submesh, M2Vertex};
 
 /// Fixed 48-byte vertex payload consumed by the M2 graphics pipeline.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,7 +115,7 @@ impl M2TextureBinding {
 /// One SKIN material batch translated to a direct indexed Vulkan draw range.
 #[derive(Clone, Debug, PartialEq)]
 pub struct M2DrawCall {
-    geoset_id: u16,
+    submesh: M2Submesh,
     first_index: u32,
     index_count: u32,
     batch: M2Batch,
@@ -126,7 +126,7 @@ pub struct M2DrawCall {
 impl M2DrawCall {
     /// Creates one draw after every cross-array reference has been validated.
     pub(super) fn new(
-        geoset_id: u16,
+        submesh: M2Submesh,
         first_index: u32,
         index_count: u32,
         batch: M2Batch,
@@ -134,7 +134,7 @@ impl M2DrawCall {
         texture_bindings: Vec<M2TextureBinding>,
     ) -> Self {
         Self {
-            geoset_id,
+            submesh,
             first_index,
             index_count,
             batch,
@@ -146,7 +146,25 @@ impl M2DrawCall {
     /// Returns the character geoset/submesh identifier controlling visibility.
     #[must_use]
     pub const fn geoset_id(&self) -> u16 {
-        self.geoset_id
+        self.submesh.id
+    }
+
+    /// Returns the number of bones available to this draw's local palette.
+    #[must_use]
+    pub const fn bone_count(&self) -> u16 {
+        self.submesh.bone_count
+    }
+
+    /// Returns the first model bone-lookup entry in the local palette.
+    #[must_use]
+    pub const fn bone_start(&self) -> u16 {
+        self.submesh.bone_start
+    }
+
+    /// Returns stock's vertex-shader bone-influence permutation selector.
+    #[must_use]
+    pub const fn bone_influence(&self) -> u16 {
+        self.submesh.bone_influence
     }
 
     /// Returns the first entry in the resolved GPU index buffer.

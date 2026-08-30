@@ -30,5 +30,6 @@ pub use model::{
     M2MeshPlanError, M2RenderVertex, M2TextureBinding,
 };
 pub use shader::{
-    M2BlendFactor, M2MaterialState, M2PixelShader, M2ShaderPlan, M2ShaderPlanError, M2VertexShader,
+    M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
+    M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
 };
