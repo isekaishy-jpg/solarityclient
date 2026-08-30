@@ -1,6 +1,8 @@
 //! Archive-backed build-12340 M2 model ownership.
 
-use crate::model::m2_shared::{model_decode, parse_model, parse_skin, skin_path};
+use crate::model::m2_shared::{
+    canonical_model_path, model_decode, parse_model, parse_skin, skin_path,
+};
 use crate::model::model_blob::ModelBlob;
 use crate::{
     ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Material, M2SkinProfile, M2Texture,
@@ -28,27 +30,28 @@ impl DecodedM2Model {
     /// the model is not exact build-12340 MD20 data, a required external profile
     /// is missing or malformed, or cross-file geometry references are invalid.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
-        let read = store.read(path)?;
+        let path = canonical_model_path(path)?;
+        let read = store.read(&path)?;
         let source = read.source().clone();
-        let model = parse_model(path, read.bytes())?;
+        let model = parse_model(&path, read.bytes())?;
         let profile_count = model.header.num_skin_profiles.ok_or_else(|| {
             model_decode(
-                path,
+                &path,
                 "M2 header has no external skin-profile count".to_owned(),
             )
         })?;
         if profile_count == 0 {
             return Err(model_decode(
-                path,
+                &path,
                 "M2 header names no external skin profiles".to_owned(),
             ));
         }
 
         let model_vertex_count = model.vertices.len();
-        let blob = ModelBlob::from_model(path, read.bytes(), model)?;
+        let blob = ModelBlob::from_model(&path, read.bytes(), model)?;
         let mut skins = Vec::with_capacity(profile_count as usize);
         for profile in 0..profile_count {
-            let profile_path = skin_path(path, profile)?;
+            let profile_path = skin_path(&path, profile)?;
             let profile_read = store.read(&profile_path)?;
             let profile_source = profile_read.source().clone();
             let skin = parse_skin(&profile_path, profile_read.bytes())?;
@@ -61,7 +64,7 @@ impl DecodedM2Model {
         }
 
         Ok(Self {
-            path: path.clone(),
+            path,
             source,
             blob,
             skins,

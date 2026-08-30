@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
-    M2BlendMode, M2TextureKind,
+    M2BlendMode, M2ModelCache, M2TextureKind,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -104,6 +104,39 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
     assert_eq!(model.texture_lookup(), &[0, 1]);
     assert_eq!(model.texture_units(), &[0, 1]);
+    Ok(())
+}
+
+/// Stock cache conversion makes legacy DBC `.mdx` names share the `.m2` entry.
+#[test]
+fn legacy_model_extensions_use_one_canonical_m2_cache_key() -> Result<(), Box<dyn Error>> {
+    let model = m2_bytes("LegacyName", 1)?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Item\\ObjectComponents\\Weapon\\Legacy.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Item\\ObjectComponents\\Weapon\\Legacy00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let mut cache = M2ModelCache::new();
+    let legacy_path = AssetPath::new("Item/ObjectComponents/Weapon/Legacy.mdx")?;
+    let modern_path = AssetPath::new("Item/ObjectComponents/Weapon/Legacy.m2")?;
+
+    let legacy_model = cache.load(&mut store, &legacy_path)?;
+    let modern_model = cache.load(&mut store, &modern_path)?;
+
+    assert_eq!(cache.len(), 1);
+    assert_eq!(legacy_model.path().as_str(), modern_path.as_str());
+    assert!(std::sync::Arc::ptr_eq(&legacy_model, &modern_model));
     Ok(())
 }
 

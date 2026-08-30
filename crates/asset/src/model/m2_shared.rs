@@ -23,6 +23,31 @@ pub(super) struct ParsedSkin {
     pub(super) center_bone_indices: Vec<u16>,
 }
 
+/// Applies build 12340's model-cache filename conversion before archive lookup.
+///
+/// Stock DBC records still carry legacy `.mdl` and `.mdx` names even though
+/// the corresponding archive entry contains an M2. The cache accepts exactly
+/// those two legacy extensions and `.m2`; it does not infer an absent or
+/// unrelated extension.
+pub(crate) fn canonical_model_path(path: &AssetPath) -> Result<AssetPath, AssetError> {
+    let value = path.as_str();
+    let Some((stem, extension)) = value.rsplit_once('.') else {
+        return Err(model_decode(
+            path,
+            "model path has no supported extension".to_owned(),
+        ));
+    };
+
+    match extension {
+        "M2" => Ok(path.clone()),
+        "MDL" | "MDX" => AssetPath::new(format!("{stem}.M2")),
+        _ => Err(model_decode(
+            path,
+            format!("unsupported model path extension .{extension}"),
+        )),
+    }
+}
+
 /// Parses an exact build-12340 legacy M2 without retaining dependency types.
 pub(super) fn parse_model(path: &AssetPath, bytes: &[u8]) -> Result<M2Model, AssetError> {
     validate_model_prefix(path, bytes)?;

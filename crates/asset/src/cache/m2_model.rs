@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::model::canonical_model_path;
 use crate::{AssetError, AssetPath, AssetStore, DecodedM2Model};
 
 /// Process-local shared cache of immutable decoded M2 and SKIN data.
@@ -50,12 +51,13 @@ impl M2ModelCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Arc<DecodedM2Model>, AssetError> {
-        if let Some(model) = self.models.get(path) {
+        let canonical_path = canonical_model_path(path)?;
+        if let Some(model) = self.models.get(&canonical_path) {
             return Ok(Arc::clone(model));
         }
 
-        let model = Arc::new(DecodedM2Model::load(store, path)?);
-        self.models.insert(path.clone(), Arc::clone(&model));
+        let model = Arc::new(DecodedM2Model::load(store, &canonical_path)?);
+        self.models.insert(canonical_path, Arc::clone(&model));
         Ok(model)
     }
 
