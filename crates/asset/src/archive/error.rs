@@ -115,4 +115,12 @@ pub enum AssetError {
         /// Parser or pixel-conversion context.
         message: String,
     },
+    /// A resolved model or one of its external skin profiles is malformed.
+    #[error("failed to decode client model {path}: {message}")]
+    ModelDecode {
+        /// The normalized model or skin-profile asset path.
+        path: AssetPath,
+        /// Parser or structural validation context.
+        message: String,
+    },
 }

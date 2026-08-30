@@ -7,3 +7,6 @@ mod m2_cache;
 mod m2_model;
 mod m2_shared;
 mod model_blob;
+
+pub use m2_model::DecodedM2Model;
+pub use model_blob::{M2Batch, M2SkinProfile, M2Submesh, M2Vertex};
