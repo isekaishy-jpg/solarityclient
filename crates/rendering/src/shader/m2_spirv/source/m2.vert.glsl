@@ -66,14 +66,14 @@ mat4 skin_matrix() {
         return mat4(1.0);
     }
     if (M2_BONE_CLASS == 1) {
-        return bones.transforms[draw_state.bone_start + bone_indices.x];
+        return bones.transforms[bone_indices.x];
     }
 
     mat4 skin = mat4(0.0);
-    skin += bones.transforms[draw_state.bone_start + bone_indices.x] * bone_weights.x;
-    skin += bones.transforms[draw_state.bone_start + bone_indices.y] * bone_weights.y;
-    skin += bones.transforms[draw_state.bone_start + bone_indices.z] * bone_weights.z;
-    skin += bones.transforms[draw_state.bone_start + bone_indices.w] * bone_weights.w;
+    skin += bones.transforms[bone_indices.x] * bone_weights.x;
+    skin += bones.transforms[bone_indices.y] * bone_weights.y;
+    skin += bones.transforms[bone_indices.z] * bone_weights.z;
+    skin += bones.transforms[bone_indices.w] * bone_weights.w;
     return skin;
 }
 

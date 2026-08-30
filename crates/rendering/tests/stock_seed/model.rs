@@ -425,9 +425,12 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(plan.path(), &path);
     assert_eq!(plan.profile_index(), 0);
     assert_eq!(plan.vertices().len(), 3);
-    assert_eq!(plan.vertex_bytes().len(), 3 * 48);
-    assert_eq!(plan.indices(), &[2, 0, 1]);
-    assert_eq!(plan.index_bytes(), [2, 0, 0, 0, 1, 0]);
+    assert_eq!(plan.vertex_bytes().len(), 3 * 52);
+    assert_eq!(plan.indices(), &[0, 1, 2]);
+    assert_eq!(plan.index_bytes(), [0, 0, 1, 0, 2, 0]);
+    assert_eq!(plan.vertices()[0].position(), [2.0, 2.25, 2.5]);
+    assert_eq!(plan.vertices()[0].bone_weights(), [255, 0, 0, 0]);
+    assert_eq!(plan.vertices()[0].bone_indices(), [2, 0, 0, 0]);
     let draw = plan.draws().first().ok_or("M2 draw is absent")?;
     assert_eq!(draw.geoset_id(), 402);
     assert_eq!(draw.first_index(), 0);
@@ -541,7 +544,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.profile_index(), 0);
     assert_eq!(info.vertex_count(), 3);
     assert_eq!(info.index_count(), 3);
-    assert_eq!(info.vertex_byte_count(), 144);
+    assert_eq!(info.vertex_byte_count(), 156);
     assert_eq!(info.index_byte_count(), 6);
     let pipeline = renderer.prepare_m2_pipeline(specialized, lit_permutation)?;
     assert_eq!(
@@ -1368,6 +1371,7 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
     ];
     model.raw_data.texture_lookup_table = vec![0, 1];
     model.raw_data.texture_units = vec![0, 3];
+    model.raw_data.bone_lookup_table = vec![2];
     for index in 0..3 {
         model.vertices.push(RawM2Vertex {
             position: C3Vector {

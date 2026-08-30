@@ -217,10 +217,10 @@ fn vertex_attributes() -> [vk::VertexInputAttributeDescription; 6] {
     [
         vertex_attribute(0, vk::Format::R32G32B32_SFLOAT, 0),
         vertex_attribute(1, vk::Format::R8G8B8A8_UNORM, 12),
-        vertex_attribute(2, vk::Format::R8G8B8A8_UINT, 16),
-        vertex_attribute(3, vk::Format::R32G32B32_SFLOAT, 20),
-        vertex_attribute(4, vk::Format::R32G32_SFLOAT, 32),
-        vertex_attribute(5, vk::Format::R32G32_SFLOAT, 40),
+        vertex_attribute(2, vk::Format::R16G16B16A16_UINT, 16),
+        vertex_attribute(3, vk::Format::R32G32B32_SFLOAT, 24),
+        vertex_attribute(4, vk::Format::R32G32_SFLOAT, 36),
+        vertex_attribute(5, vk::Format::R32G32_SFLOAT, 44),
     ]
 }
 

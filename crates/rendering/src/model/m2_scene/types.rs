@@ -2,26 +2,30 @@
 
 use solarity_asset::{M2Batch, M2Material, M2Submesh, M2Vertex};
 
-/// Fixed 48-byte vertex payload consumed by the M2 graphics pipeline.
+/// Fixed 52-byte profile-local vertex payload consumed by the M2 pipeline.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2RenderVertex {
     position: [f32; 3],
     bone_weights: [u8; 4],
-    bone_indices: [u8; 4],
+    bone_indices: [u16; 4],
     normal: [f32; 3],
     texture_coordinates: [[f32; 2]; 2],
 }
 
 impl M2RenderVertex {
     /// Size of one serialized vertex in the Vulkan vertex buffer.
-    pub const BYTE_SIZE: usize = 48;
+    pub const BYTE_SIZE: usize = 52;
 
     /// Converts one decoder-independent model vertex without coordinate changes.
-    pub(super) fn from_model(vertex: M2Vertex) -> Self {
+    pub(super) fn from_profile(
+        vertex: M2Vertex,
+        bone_weights: [u8; 4],
+        bone_indices: [u16; 4],
+    ) -> Self {
         Self {
             position: vertex.position().to_array(),
-            bone_weights: vertex.bone_weights(),
-            bone_indices: vertex.bone_indices(),
+            bone_weights,
+            bone_indices,
             normal: vertex.normal().to_array(),
             texture_coordinates: vertex.texture_coordinates().map(|value| value.to_array()),
         }
@@ -41,7 +45,7 @@ impl M2RenderVertex {
 
     /// Returns model bone indices parallel to the influence weights.
     #[must_use]
-    pub const fn bone_indices(self) -> [u8; 4] {
+    pub const fn bone_indices(self) -> [u16; 4] {
         self.bone_indices
     }
 
@@ -63,7 +67,9 @@ impl M2RenderVertex {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         bytes.extend_from_slice(&self.bone_weights);
-        bytes.extend_from_slice(&self.bone_indices);
+        for index in self.bone_indices {
+            bytes.extend_from_slice(&index.to_le_bytes());
+        }
         for value in self.normal {
             bytes.extend_from_slice(&value.to_le_bytes());
         }

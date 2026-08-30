@@ -26,6 +26,20 @@ pub enum M2MeshPlanError {
         /// Referenced profile-local vertex index.
         profile_vertex: u16,
     },
+    /// A used SKIN palette entry exceeded the model bone lookup table.
+    #[error(
+        "M2 skin {path} profile vertex {profile_vertex} influence {influence} references missing bone lookup {lookup_index}"
+    )]
+    MissingBoneLookup {
+        /// External SKIN path containing the palette byte.
+        path: AssetPath,
+        /// Profile-local vertex carrying the palette reference.
+        profile_vertex: usize,
+        /// Zero-based influence within the vertex.
+        influence: usize,
+        /// Computed entry in the model bone lookup table.
+        lookup_index: usize,
+    },
     /// A material batch selected an absent submesh.
     #[error("M2 skin {path} batch {batch_index} references missing submesh {submesh_index}")]
     MissingSubmesh {

@@ -35,12 +35,7 @@ impl M2MeshPlan {
                     path: model.path().clone(),
                     profile_index,
                 })?;
-        let vertices = model
-            .vertices()
-            .iter()
-            .copied()
-            .map(M2RenderVertex::from_model)
-            .collect();
+        let vertices = resolve_vertices(model, profile)?;
         let indices = resolve_indices(profile)?;
         let draws = resolve_draws(model, profile)?;
         Ok(Self {
@@ -117,18 +112,70 @@ impl M2MeshPlan {
 fn resolve_indices(profile: &M2SkinProfile) -> Result<Vec<u16>, M2MeshPlanError> {
     let mut indices = Vec::with_capacity(profile.triangle_lookup().len());
     for (triangle_index, profile_vertex) in profile.triangle_lookup().iter().copied().enumerate() {
-        let model_vertex = profile
-            .vertex_lookup()
-            .get(usize::from(profile_vertex))
-            .copied()
-            .ok_or_else(|| M2MeshPlanError::MissingProfileVertex {
+        if usize::from(profile_vertex) >= profile.vertex_lookup().len() {
+            return Err(M2MeshPlanError::MissingProfileVertex {
                 path: profile.path().clone(),
                 triangle_index,
                 profile_vertex,
-            })?;
-        indices.push(model_vertex);
+            });
+        }
+        indices.push(profile_vertex);
     }
     Ok(indices)
+}
+
+/// Copies the selected SKIN vertex domain and resolves its replacement palettes.
+fn resolve_vertices(
+    model: &DecodedM2Model,
+    profile: &M2SkinProfile,
+) -> Result<Vec<M2RenderVertex>, M2MeshPlanError> {
+    let mut owners = vec![None; profile.vertex_lookup().len()];
+    for submesh in profile.submeshes() {
+        let start = usize::from(submesh.vertex_start);
+        let end = start + usize::from(submesh.vertex_count);
+        for owner in &mut owners[start..end] {
+            // Build 12340 applies sections in file order; a later overlapping
+            // section therefore owns the final palette replacement.
+            *owner = Some(submesh);
+        }
+    }
+
+    let mut vertices = Vec::with_capacity(profile.vertex_lookup().len());
+    for (profile_vertex, model_vertex) in profile.vertex_lookup().iter().copied().enumerate() {
+        let vertex = model.vertices()[usize::from(model_vertex)];
+        let mut weights = [0_u8; 4];
+        let mut indices = [0_u16; 4];
+        if let Some(submesh) = owners[profile_vertex] {
+            let influence_count = match submesh.bone_influence {
+                0 => 0,
+                1 => 1,
+                2..=u16::MAX => 4,
+            };
+            let source_weights = vertex.bone_weights();
+            for influence in 0..influence_count {
+                let weight = source_weights[influence];
+                if weight == 0 {
+                    continue;
+                }
+                let palette = usize::from(profile.bone_indices()[profile_vertex * 4 + influence]);
+                let lookup_index = usize::from(submesh.bone_start) + palette;
+                let bone = model
+                    .bone_lookup()
+                    .get(lookup_index)
+                    .copied()
+                    .ok_or_else(|| M2MeshPlanError::MissingBoneLookup {
+                        path: profile.path().clone(),
+                        profile_vertex,
+                        influence,
+                        lookup_index,
+                    })?;
+                weights[influence] = weight;
+                indices[influence] = bone;
+            }
+        }
+        vertices.push(M2RenderVertex::from_profile(vertex, weights, indices));
+    }
+    Ok(vertices)
 }
 
 /// Translates every batch while preserving its shader and animation selectors.
