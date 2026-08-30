@@ -115,6 +115,12 @@ pub enum LoginError {
         /// Rejected parameter detail.
         message: String,
     },
+    /// The server challenge cannot produce the pinned build proof.
+    #[error("login client-integrity proof failed: {message}")]
+    Integrity {
+        /// Exact incompatibility without exposing credential material.
+        message: String,
+    },
     /// The server requested an additional security mechanism not yet supplied.
     #[error("login server requested unsupported {mechanism} security")]
     UnsupportedSecurity {

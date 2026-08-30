@@ -238,9 +238,10 @@ impl GruntLogin {
             server_public_key,
             salt,
         );
-        let integrity_hash = integrity.proof(crc_salt)?;
+        let client_public_key = *challenge.client_public_key();
+        let integrity_hash = integrity.proof(crc_salt, client_public_key)?;
         let proof = CMD_AUTH_LOGON_PROOF_Client {
-            client_public_key: *challenge.client_public_key(),
+            client_public_key,
             client_proof: *challenge.client_proof(),
             crc_hash: integrity_hash,
             telemetry_keys: Vec::new(),

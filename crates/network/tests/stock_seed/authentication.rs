@@ -4,9 +4,9 @@ use std::error::Error;
 use std::net::Ipv4Addr;
 
 use solarity_network::{
-    GruntCredentials, GruntIntegrity, GruntLogin, GruntLoginOptions, LoginError, LoginFailure,
-    LoginLocale, LoginStage, RealmCategory, RealmEntry, RealmRecommendation, RealmType,
-    WorldIdentity,
+    Build12340WindowsIntegrity, GruntCredentials, GruntIntegrity, GruntLogin, GruntLoginOptions,
+    LoginError, LoginFailure, LoginLocale, LoginStage, RealmCategory, RealmEntry,
+    RealmRecommendation, RealmType, WorldIdentity,
 };
 use tokio::io::DuplexStream;
 use wow_login_messages::Message;
@@ -24,12 +24,39 @@ use wow_srp::{GENERATOR, LARGE_SAFE_PRIME_LITTLE_ENDIAN, PublicKey};
 pub(super) struct TestIntegrity;
 
 impl GruntIntegrity for TestIntegrity {
-    fn proof(&self, crc_salt: [u8; 16]) -> Result<[u8; 20], LoginError> {
+    fn proof(
+        &self,
+        crc_salt: [u8; 16],
+        _client_public_key: [u8; 32],
+    ) -> Result<[u8; 20], LoginError> {
         let mut proof = [0_u8; 20];
         proof[..16].copy_from_slice(&crc_salt);
         proof[16..].copy_from_slice(&[0x12, 0x34, 0x56, 0x78]);
         Ok(proof)
     }
+}
+
+/// Strict realmd version proof binds the transmitted SRP key to build 12340.
+#[test]
+fn build_12340_windows_integrity_uses_the_authoritative_seed() -> Result<(), LoginError> {
+    let challenge = [
+        0xBA, 0xA3, 0x1E, 0x99, 0xA0, 0x0B, 0x21, 0x57, 0xFC, 0x37, 0x3F, 0xB3, 0x69, 0xCD, 0xD2,
+        0xF1,
+    ];
+    let public_key = std::array::from_fn(|index| index as u8);
+
+    assert_eq!(
+        Build12340WindowsIntegrity.proof(challenge, public_key)?,
+        [
+            0xBA, 0x16, 0xFA, 0x4A, 0x3B, 0xC6, 0x34, 0x55, 0x59, 0xC3, 0xA3, 0xD1, 0x6F, 0xE6,
+            0x6A, 0xD2, 0x57, 0xA2, 0x23, 0x4A,
+        ]
+    );
+    assert!(matches!(
+        Build12340WindowsIntegrity.proof([0; 16], public_key),
+        Err(LoginError::Integrity { .. })
+    ));
+    Ok(())
 }
 
 /// Credentials normalize like the stock edit boxes and never expose passwords in diagnostics.
@@ -215,7 +242,10 @@ async fn emulate_realmd(
         ClientOpcodeMessage::CMD_AUTH_LOGON_PROOF(proof) => proof,
         message => return Err(format!("unexpected proof message: {message}").into()),
     };
-    assert_eq!(client_proof.crc_hash, TestIntegrity.proof(crc_salt)?);
+    assert_eq!(
+        client_proof.crc_hash,
+        TestIntegrity.proof(crc_salt, client_proof.client_public_key)?
+    );
     assert!(client_proof.telemetry_keys.is_empty());
     assert!(client_proof.security_flag.is_empty());
     let public_key = PublicKey::from_le_bytes(client_proof.client_public_key)?;

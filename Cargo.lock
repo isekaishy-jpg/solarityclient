@@ -2160,6 +2160,7 @@ name = "solarity-network"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "sha-1",
  "thiserror",
  "tokio",
  "tracing",

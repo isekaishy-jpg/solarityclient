@@ -13,8 +13,9 @@ mod session;
 mod transport;
 
 pub use authentication::{
-    AuthenticatedGrunt, GruntCredentials, GruntIntegrity, GruntLogin, GruntLoginOptions,
-    LoginError, LoginFailure, LoginLocale, LoginStage, WorldIdentity, WorldSessionKey,
+    AuthenticatedGrunt, Build12340WindowsIntegrity, GruntCredentials, GruntIntegrity, GruntLogin,
+    GruntLoginOptions, LoginError, LoginFailure, LoginLocale, LoginStage, WorldIdentity,
+    WorldSessionKey,
 };
 pub use connection::{
     AccountExpansion, CharacterLogin, CharacterLoginProgress, InWorldSession, WorldAuthError,

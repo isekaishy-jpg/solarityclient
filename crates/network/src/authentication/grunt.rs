@@ -122,9 +122,16 @@ pub trait GruntIntegrity {
     ///
     /// # Errors
     ///
-    /// Returns a stable login error when the exact client-build inputs cannot be
-    /// inspected or hashed.
-    fn proof(&self, crc_salt: [u8; 16]) -> Result<[u8; 20], LoginError>;
+    /// `client_public_key` is the exact 32-byte value sent beside the result;
+    /// strict build verification binds the version seed to that ephemeral key.
+    ///
+    /// Returns a stable login error when the challenge or pinned build inputs
+    /// cannot produce the exact proof.
+    fn proof(
+        &self,
+        crc_salt: [u8; 16],
+        client_public_key: [u8; 32],
+    ) -> Result<[u8; 20], LoginError>;
 }
 
 /// Uppercased, stock-valid Grunt account credentials.

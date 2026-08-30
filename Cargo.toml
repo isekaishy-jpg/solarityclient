@@ -39,6 +39,7 @@ sdl3 = { version = "=0.18.4", default-features = false, features = [
     "build-from-source-static",
     "mixer",
 ] }
+sha-1 = { version = "=0.10.1", default-features = false }
 shaderc = { version = "=0.10.1", features = ["build-from-source"] }
 shipyard = { version = "=0.11.5", default-features = false, features = [
     "parallel",
