@@ -18,6 +18,7 @@ pub use archive::{
     ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetError, AssetPath, AssetPathViolation,
     ClientDataRoot, Locale,
 };
+pub use cache::M2ModelCache;
 pub use database::{
     AppearanceError, CharacterAppearanceCatalog, CharacterCustomization, CharacterFacialHairStyle,
     CharacterGeosetSelection, CharacterHairGeoset, CharacterModelAppearance, CharacterSection,

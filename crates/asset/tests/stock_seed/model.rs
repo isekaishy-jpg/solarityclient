@@ -252,7 +252,7 @@ fn extended_triangle_start_loads_large_hd_profile() -> Result<(), Box<dyn Error>
 }
 
 /// Serializes a deterministic legacy MD20 fixture with raw influence sentinels.
-fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
+pub(crate) fn m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
         name: Some(name.to_owned()),
@@ -325,7 +325,10 @@ fn m2_array_offset(bytes: &[u8], pair_offset: usize) -> Result<usize, Box<dyn Er
 }
 
 /// Serializes WotLK's old external SKIN form without using format detection.
-fn skin_bytes(bone_count_max: u32, triangles: &[u16]) -> Result<Vec<u8>, Box<dyn Error>> {
+pub(crate) fn skin_bytes(
+    bone_count_max: u32,
+    triangles: &[u16],
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let skin = OldSkin {
         header: OldSkinHeader {
             bone_count_max,
