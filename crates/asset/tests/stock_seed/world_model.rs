@@ -292,6 +292,7 @@ fn presentation_root_fixture() -> Vec<u8> {
     set_u32(&mut header, 32, 42);
     set_vec3(&mut header, 36, [-2.0, -3.0, -4.0]);
     set_vec3(&mut header, 48, [2.0, 3.0, 4.0]);
+    set_u16(&mut header, 60, 0x02);
     push_chunk(&mut bytes, *b"DHOM", &header);
     let textures = b"wall.blp\0detail.blp\0\0";
     push_chunk(&mut bytes, *b"XTOM", textures);

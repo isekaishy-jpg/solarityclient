@@ -2,8 +2,10 @@
 
 use std::error::Error;
 
+use solarity_asset::WorldModelShader;
 use solarity_rendering::{
     TerrainLayerCount, TerrainSpirvCompiler, UiShaderSource, UiSpirvCompiler,
+    WorldModelSpirvCompiler, WorldModelSpirvKey,
 };
 
 const SPIRV_MAGIC: u32 = 0x0723_0203;
@@ -43,5 +45,37 @@ fn terrain_shader_variants_compile_for_pinned_target() -> Result<(), Box<dyn Err
     }
     assert!(TerrainLayerCount::try_from(0).is_err());
     assert!(TerrainLayerCount::try_from(5).is_err());
+    Ok(())
+}
+
+/// Every non-null ordinary/unified MapObj effect compiles for SPIR-V 1.6.
+#[test]
+fn world_model_effects_compile_for_pinned_target() -> Result<(), Box<dyn Error>> {
+    let compiler = WorldModelSpirvCompiler::new()?;
+    let shaders = [
+        WorldModelShader::Diffuse,
+        WorldModelShader::Specular,
+        WorldModelShader::Metal,
+        WorldModelShader::Environment,
+        WorldModelShader::Opaque,
+        WorldModelShader::EnvironmentMetal,
+        WorldModelShader::Composite,
+    ];
+    for unified in [false, true] {
+        for shader in shaders {
+            let key = WorldModelSpirvKey::new(shader, unified);
+            if !unified && shader == WorldModelShader::Composite {
+                assert!(key.is_err());
+                continue;
+            }
+            let key = key?;
+            let program = compiler.compile(key)?;
+            assert_eq!(program.key(), key);
+            assert_eq!(program.vertex_words()[0], SPIRV_MAGIC);
+            assert_eq!(program.vertex_words()[1], SPIRV_VERSION_1_6);
+            assert_eq!(program.fragment_words()[0], SPIRV_MAGIC);
+            assert_eq!(program.fragment_words()[1], SPIRV_VERSION_1_6);
+        }
+    }
     Ok(())
 }

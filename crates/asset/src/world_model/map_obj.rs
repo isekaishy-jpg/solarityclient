@@ -195,6 +195,20 @@ impl WorldModelShader {
             Self::Environment | Self::EnvironmentMetal | Self::Composite
         )
     }
+
+    /// Returns the direct index into stock's ordinary or unified effect table.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::Diffuse => 0,
+            Self::Specular => 1,
+            Self::Metal => 2,
+            Self::Environment => 3,
+            Self::Opaque => 4,
+            Self::EnvironmentMetal => 5,
+            Self::Composite => 6,
+        }
+    }
 }
 
 /// One exact WotLK MOMT record with resolved archive texture paths.

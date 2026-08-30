@@ -25,6 +25,7 @@ pub use m2_scene::{
     M2TextureBinding,
 };
 pub use world_model_scene::{
-    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMeshPlan,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
+    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    WorldModelSceneUniform,
 };

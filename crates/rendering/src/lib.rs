@@ -45,8 +45,8 @@ pub use model::{
     M2BonePose, M2BonePoseError, M2DrawCall, M2DrawPushConstants, M2LocalLightState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix,
     M2ShadowState, M2TextureBinding, PlacedWorldModelDrawPlan, WorldModelDrawCall,
-    WorldModelGroupRange, WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError,
-    WorldModelRenderVertex,
+    WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
@@ -55,6 +55,7 @@ pub use shader::{
     TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError, TerrainSpirvProgram,
     UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram, WorldModelBlendFactor,
     WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode, WorldModelMaterialState,
+    WorldModelSpirvCompiler, WorldModelSpirvError, WorldModelSpirvKey, WorldModelSpirvProgram,
     WorldModelSurfacePass, WorldModelSurfacePassPlan,
 };
 pub use terrain::{

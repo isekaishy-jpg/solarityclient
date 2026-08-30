@@ -38,6 +38,16 @@ impl DecodedWorldModel {
         validate_root(path, &root)?;
         let bounds = validate_bounds(path, root.bounding_box_min, root.bounding_box_max, "MOHD")?;
         let materials = decode_materials(path, read.bytes(), &root)?;
+        if root.flags & 0x02 == 0
+            && materials
+                .iter()
+                .any(|material| material.shader() == WorldModelShader::Composite)
+        {
+            return Err(world_model_message(
+                path,
+                "MOMT shader 6 selects stock's null ordinary MapObj effect",
+            ));
+        }
         let group_count =
             usize::try_from(root.n_groups).map_err(|error| world_model_error(path, error))?;
         let mut groups = Vec::with_capacity(group_count);

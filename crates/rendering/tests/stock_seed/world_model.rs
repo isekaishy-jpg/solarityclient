@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Mat4, Vec3, Vec4};
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
     WorldModelBatchClass, WorldModelBlendMode,
@@ -11,7 +11,8 @@ use solarity_asset::{
 use solarity_rendering::{
     PlacedWorldModelDrawPlan, WorldCamera, WorldFrustum, WorldModelBlendFactor,
     WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode, WorldModelMaterialState,
-    WorldModelMeshPlan, WorldModelRenderVertex, WorldModelSurfacePassPlan, WorldScreenWindow,
+    WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelRenderVertex, WorldModelSceneUniform,
+    WorldModelSurfacePassPlan, WorldScreenWindow,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -83,6 +84,34 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     assert_eq!(
         transition.passes()[1].lighting(),
         WorldModelLightingMode::RootAmbient
+    );
+
+    let scene = WorldModelSceneUniform::new(
+        Mat4::IDENTITY,
+        Vec3::new(1.0, 2.0, 3.0),
+        Vec3::new(64.0, 32.0, 128.0) / 255.0,
+        Vec3::new(128.0, 64.0, 0.0) / 255.0,
+        Vec3::Z,
+        Vec4::new(10.0, 500.0, 0.0, 1.0),
+    );
+    let flattened = scene.flattened_lighting();
+    assert_vec3_bytes(flattened[0], [112, 64, 80]);
+    assert_vec3_bytes(flattened[1], [96, 48, 64]);
+    assert_eq!(scene.to_bytes().len(), WorldModelSceneUniform::BYTE_SIZE);
+
+    let uniform = WorldModelMaterialUniform::new(
+        Mat4::IDENTITY,
+        model.ambient_color(),
+        &model.materials()[0],
+        transition.passes()[0],
+        1.0,
+        Vec3::new(0.1, 0.2, 0.3),
+    );
+    assert_vec3_bytes(uniform.additive_color(), [63, 31, 15]);
+    assert_eq!(uniform.behavior(), [1, 0, 1, 0]);
+    assert_eq!(
+        uniform.to_bytes().len(),
+        WorldModelMaterialUniform::BYTE_SIZE
     );
 
     let direct_add = WorldModelBlendState::for_mode(WorldModelBlendMode::Add);
@@ -166,12 +195,19 @@ fn assert_color(actual: [f32; 4], expected: [u8; 4]) {
     }
 }
 
+fn assert_vec3_bytes(actual: Vec3, expected: [u8; 3]) {
+    for (actual, expected) in actual.to_array().into_iter().zip(expected) {
+        assert!((actual - f32::from(expected) / 255.0).abs() < 0.0001);
+    }
+}
+
 fn root_fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     let mut header = vec![0_u8; 64];
     set_u32(&mut header, 0, 1);
     set_u32(&mut header, 4, 1);
+    set_u32(&mut header, 28, 0xff20_3040);
     set_vec3(&mut header, 36, [-2.0, -3.0, -4.0]);
     set_vec3(&mut header, 48, [2.0, 3.0, 4.0]);
     push_chunk(&mut bytes, *b"DHOM", &header);
@@ -182,6 +218,7 @@ fn root_fixture() -> Vec<u8> {
     set_u32(&mut material, 0, 0xdc);
     set_u32(&mut material, 8, 5);
     set_u32(&mut material, 12, 0);
+    set_u32(&mut material, 16, 0xff80_4020);
     push_chunk(&mut bytes, *b"TMOM", &material);
     let mut group = vec![0_u8; 32];
     set_vec3(&mut group, 4, [-1.0, -1.0, -1.0]);
