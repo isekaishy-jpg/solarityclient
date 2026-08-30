@@ -1,10 +1,12 @@
 //! Allocation-conscious conversion from ordered UI quads to indexed mesh runs.
 
 use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderVertex};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upload-ready UI geometry with adjacent compatible quads already batched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiMeshPlan {
+    identity: u64,
     logical_extent: [f32; 2],
     vertices: Vec<UiRenderVertex>,
     indices: Vec<u32>,
@@ -43,6 +45,7 @@ impl UiMeshPlan {
         u32::try_from(quad_count)
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "quad" })?;
         let mut plan = Self {
+            identity: next_identity(),
             logical_extent,
             vertices: Vec::with_capacity(vertex_capacity),
             indices: Vec::with_capacity(index_capacity),
@@ -83,6 +86,11 @@ impl UiMeshPlan {
     #[must_use]
     pub fn object_indices(&self) -> &[usize] {
         &self.object_indices
+    }
+
+    /// Returns the process-local identity preserved by clones of this generation.
+    pub(crate) const fn identity(&self) -> u64 {
+        self.identity
     }
 
     /// Serializes vertices without relying on Rust layout or unsafe casts.
@@ -144,6 +152,12 @@ impl UiMeshPlan {
         self.object_indices.push(quad.object_index());
         Ok(())
     }
+}
+
+/// Assigns nonzero process-local identities to immutable presentation generations.
+fn next_identity() -> u64 {
+    static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
+    NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Rejects canvases that cannot define the renderer's clip transform.

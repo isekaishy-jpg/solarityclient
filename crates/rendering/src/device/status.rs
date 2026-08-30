@@ -184,6 +184,44 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,
+    /// A UI plan has no geometry that Vulkan can bind and draw.
+    #[error("UI mesh has no {buffer_kind} data to upload")]
+    EmptyUiMesh {
+        /// Stable name of the absent vertex or index payload.
+        buffer_kind: &'static str,
+    },
+    /// The renderer cannot assign another stable 32-bit UI mesh handle.
+    #[error("UI mesh registry exhausted its 32-bit handle space")]
+    UiMeshCapacity,
+    /// A UI draw references a mesh handle from another renderer.
+    #[error("UI draw references an unknown mesh handle")]
+    UnknownUiMeshHandle,
+    /// The uploaded geometry belongs to another immutable UI plan generation.
+    #[error("UI draw mesh does not match its CPU mesh plan")]
+    UiDrawMeshMismatch,
+    /// The requested ordered material batch does not exist.
+    #[error("UI draw index {requested} is unavailable; plan has {available} batches")]
+    UiDrawIndex {
+        /// Requested zero-based material batch.
+        requested: usize,
+        /// Number of batches present in the immutable CPU plan.
+        available: usize,
+    },
+    /// The batch's index span exceeds its uploaded geometry allocation.
+    #[error("UI draw index range exceeds the uploaded mesh")]
+    UiDrawIndexRange,
+    /// A UI draw references a pipeline handle from another renderer.
+    #[error("UI draw references an unknown pipeline handle")]
+    UnknownUiPipelineHandle,
+    /// The compiled source or blend state disagrees with the CPU batch.
+    #[error("UI draw pipeline does not match its material batch")]
+    UiDrawPipelineMismatch,
+    /// A UI draw references a descriptor set from another renderer.
+    #[error("UI draw references an unknown texture-set handle")]
+    UnknownUiTextureSetHandle,
+    /// Image path, sampler state, or descriptor presence disagrees with the batch.
+    #[error("UI draw sampled texture does not match its material batch")]
+    UiDrawTextureMismatch,
     /// The selected adapter lacks the pinned stock-compatible depth format.
     #[error("selected Vulkan adapter lacks D24_UNORM_S8_UINT depth/stencil attachments")]
     DepthStencilFormat,

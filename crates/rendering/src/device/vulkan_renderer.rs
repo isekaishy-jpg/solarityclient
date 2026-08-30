@@ -21,6 +21,8 @@ use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
     BlpTextureUploadError, TextureUploadContext,
 };
+use crate::device::vulkan_ui_draw::{UiPreparedDraw, prepare_draw as prepare_ui_draw};
+use crate::device::vulkan_ui_mesh::{UiMeshHandle, UiMeshRegistry, UiMeshResourceInfo};
 use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
 use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSamplerRegistry};
 use crate::device::vulkan_ui_texture_set::{
@@ -30,7 +32,7 @@ use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
-use crate::{UiRenderBlend, UiShaderSource};
+use crate::{UiMeshPlan, UiRenderBlend, UiShaderSource};
 use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -102,6 +104,7 @@ pub struct VulkanRenderer {
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     ui_pipelines: UiPipelineRegistry,
+    ui_meshes: UiMeshRegistry,
     ui_samplers: UiSamplerRegistry,
     ui_texture_sets: UiTextureSetRegistry,
     blp_textures: BlpTextureRegistry,
@@ -146,6 +149,7 @@ impl VulkanRenderer {
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
+            ui_meshes: UiMeshRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
             ui_texture_sets: UiTextureSetRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
@@ -306,6 +310,33 @@ impl VulkanRenderer {
         self.ui_pipelines.info(handle)
     }
 
+    /// Uploads one immutable UI presentation generation to device-local buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for empty geometry, handle exhaustion, allocation,
+    /// transfer recording, submission, or synchronization failure.
+    pub fn upload_ui_mesh(&mut self, plan: &UiMeshPlan) -> Result<UiMeshHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.ui_meshes.upload(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            plan,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live UI mesh generation.
+    #[must_use]
+    pub fn ui_mesh_info(&self, handle: UiMeshHandle) -> Option<UiMeshResourceInfo> {
+        self.ui_meshes.info(handle)
+    }
+
     /// Creates or retrieves one exact UI texture-axis sampler.
     ///
     /// # Errors
@@ -349,6 +380,34 @@ impl VulkanRenderer {
     #[must_use]
     pub fn ui_texture_set_info(&self, handle: UiTextureSetHandle) -> Option<UiTextureSetInfo> {
         self.ui_texture_sets.info(handle)
+    }
+
+    /// Joins one ordered UI batch to compatible renderer-local resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, plan skew, invalid ranges,
+    /// or source/blend/image/sampler state mismatches.
+    pub fn prepare_ui_draw(
+        &self,
+        mesh: UiMeshHandle,
+        pipeline: UiPipelineHandle,
+        texture_set: Option<UiTextureSetHandle>,
+        plan: &UiMeshPlan,
+        batch_index: usize,
+    ) -> Result<UiPreparedDraw, VulkanError> {
+        prepare_ui_draw(
+            &self.ui_meshes,
+            &self.ui_pipelines,
+            &self.ui_texture_sets,
+            &self.blp_textures,
+            &self.ui_samplers,
+            mesh,
+            pipeline,
+            texture_set,
+            plan,
+            batch_index,
+        )
     }
 
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
@@ -610,6 +669,7 @@ impl Drop for VulkanRenderer {
         let _idle_result = self.wait_idle();
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_frames.destroy(&self.device, allocator);
+            self.ui_meshes.destroy(allocator);
             self.ui_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
             self.blp_textures.destroy(&self.device, allocator);

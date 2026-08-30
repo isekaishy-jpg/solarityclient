@@ -62,9 +62,14 @@ impl AllocatedBuffer {
 
 /// Permanent geometry buffers retained by the renderer registry.
 pub(super) struct GpuM2Mesh {
+    buffers: GpuMeshBuffers,
+    info: M2MeshResourceInfo,
+}
+
+/// Shared device-local vertex/index allocation used by typed mesh registries.
+pub(in crate::device) struct GpuMeshBuffers {
     vertex_buffer: AllocatedBuffer,
     index_buffer: AllocatedBuffer,
-    info: M2MeshResourceInfo,
 }
 
 impl GpuM2Mesh {
@@ -75,11 +80,23 @@ impl GpuM2Mesh {
 
     /// Returns both live device-local buffers for command recording.
     pub(super) const fn buffers(&self) -> (vk::Buffer, vk::Buffer) {
-        (self.vertex_buffer.handle, self.index_buffer.handle)
+        self.buffers.buffers()
     }
 
     /// Releases both children before the renderer drops VMA.
     pub(super) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
+        self.buffers.destroy(allocator);
+    }
+}
+
+impl GpuMeshBuffers {
+    /// Returns both live device-local buffers for command recording.
+    pub(in crate::device) const fn buffers(&self) -> (vk::Buffer, vk::Buffer) {
+        (self.vertex_buffer.handle, self.index_buffer.handle)
+    }
+
+    /// Releases both children before the renderer drops VMA.
+    pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.index_buffer.destroy(allocator);
         self.vertex_buffer.destroy(allocator);
     }
@@ -88,14 +105,14 @@ impl GpuM2Mesh {
 /// Partial permanent-resource construction guard for every failure path.
 struct MeshGuard<'a> {
     allocator: &'a vk_mem::Allocator,
-    mesh: Option<GpuM2Mesh>,
+    buffers: Option<GpuMeshBuffers>,
 }
 
 impl MeshGuard<'_> {
     /// Transfers ownership out after the queue fence has retired.
-    fn finish(mut self) -> Result<GpuM2Mesh, VulkanError> {
-        self.mesh.take().ok_or_else(|| {
-            VulkanError::operation("finish M2 mesh upload", "mesh resource is unavailable")
+    fn finish(mut self) -> Result<GpuMeshBuffers, VulkanError> {
+        self.buffers.take().ok_or_else(|| {
+            VulkanError::operation("finish mesh upload", "mesh buffers are unavailable")
         })
     }
 }
@@ -103,8 +120,8 @@ impl MeshGuard<'_> {
 impl Drop for MeshGuard<'_> {
     /// Cleans both device buffers if any later allocation or command fails.
     fn drop(&mut self) {
-        if let Some(mesh) = self.mesh.as_mut() {
-            mesh.destroy(self.allocator);
+        if let Some(buffers) = self.buffers.as_mut() {
+            buffers.destroy(self.allocator);
         }
     }
 }
@@ -266,7 +283,25 @@ pub(super) fn upload_mesh(
             buffer_kind: "index",
         });
     }
+    let info = M2MeshResourceInfo::new(
+        plan.path().clone(),
+        plan.profile_index(),
+        plan.vertices().len(),
+        plan.indices().len(),
+        vertex_bytes.len(),
+        index_bytes.len(),
+        plan.max_bone_index(),
+    );
+    let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
+    Ok(GpuM2Mesh { buffers, info })
+}
 
+/// Uploads one nonempty serialized vertex/index pair for any typed mesh owner.
+pub(in crate::device) fn upload_mesh_buffers(
+    context: MeshUploadContext<'_>,
+    vertex_bytes: &[u8],
+    index_bytes: &[u8],
+) -> Result<GpuMeshBuffers, VulkanError> {
     // Vulkan buffer copies operate in four-byte units. Preserve logical byte
     // lengths in diagnostics while padding only transfer/allocation storage.
     let vertex_copy_size = aligned_copy_size(vertex_bytes.len())?;
@@ -279,9 +314,9 @@ pub(super) fn upload_mesh(
     let index_device_size = u64::try_from(index_copy_size)
         .map_err(|source| VulkanError::operation("convert M2 index buffer size", source))?;
     let mut staging_bytes = Vec::with_capacity(staging_size);
-    staging_bytes.extend_from_slice(&vertex_bytes);
+    staging_bytes.extend_from_slice(vertex_bytes);
     staging_bytes.resize(vertex_copy_size, 0);
-    staging_bytes.extend_from_slice(&index_bytes);
+    staging_bytes.extend_from_slice(index_bytes);
     staging_bytes.resize(staging_size, 0);
 
     let device_allocation = vk_mem::AllocationCreateInfo {
@@ -310,34 +345,24 @@ pub(super) fn upload_mesh(
             return Err(error);
         }
     };
-    let info = M2MeshResourceInfo::new(
-        plan.path().clone(),
-        plan.profile_index(),
-        plan.vertices().len(),
-        plan.indices().len(),
-        vertex_bytes.len(),
-        index_bytes.len(),
-        plan.max_bone_index(),
-    );
     let guard = MeshGuard {
         allocator: context.allocator,
-        mesh: Some(GpuM2Mesh {
+        buffers: Some(GpuMeshBuffers {
             vertex_buffer,
             index_buffer,
-            info,
         }),
     };
     let transfer = TransferResources::create(context, &staging_bytes)?;
     let command_buffer = transfer.command_buffer()?;
-    let mesh = guard.mesh.as_ref().ok_or_else(|| {
-        VulkanError::operation("record M2 mesh upload", "mesh resource is unavailable")
+    let buffers = guard.buffers.as_ref().ok_or_else(|| {
+        VulkanError::operation("record mesh upload", "mesh buffers are unavailable")
     })?;
     record_copies(
         context.device,
         command_buffer,
         transfer.staging.handle,
-        mesh.vertex_buffer.handle,
-        mesh.index_buffer.handle,
+        buffers.vertex_buffer.handle,
+        buffers.index_buffer.handle,
         vertex_device_size,
         index_device_size,
     )?;
