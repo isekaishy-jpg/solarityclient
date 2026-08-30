@@ -18,6 +18,7 @@ mod vulkan_instance;
 mod vulkan_m2_pipeline;
 mod vulkan_mesh;
 mod vulkan_renderer;
+mod vulkan_sampler;
 mod vulkan_selection;
 mod vulkan_texture;
 
@@ -26,6 +27,7 @@ pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo};
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanRenderer, VulkanReport};
+pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError,
 };

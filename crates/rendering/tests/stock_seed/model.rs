@@ -18,7 +18,7 @@ use solarity_rendering::{
     CharacterWeaponState, M2DrawPushConstants, M2LocalLightCount, M2LocalLightState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SceneUniform,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2SpirvError, M2VertexShader, VulkanBootstrap,
+    M2SpirvError, M2TextureAddressMode, M2VertexShader, VulkanBootstrap,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -604,6 +604,23 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(texture_info.extent(), (2, 2));
     assert_eq!(texture_info.mip_count(), 2);
     assert_eq!(texture_info.decoded_byte_count(), 20);
+    let wrap_u_sampler = renderer.prepare_m2_sampler(&model.textures()[0])?;
+    assert_eq!(
+        renderer.prepare_m2_sampler(&model.textures()[0])?,
+        wrap_u_sampler
+    );
+    let wrap_u_info = renderer
+        .m2_sampler_info(wrap_u_sampler)
+        .ok_or("M2 sampler handle did not resolve")?;
+    assert_eq!(wrap_u_info.address_u(), M2TextureAddressMode::Repeat);
+    assert_eq!(wrap_u_info.address_v(), M2TextureAddressMode::Clamp);
+    let clamped_sampler = renderer.prepare_m2_sampler(&model.textures()[1])?;
+    assert_ne!(wrap_u_sampler, clamped_sampler);
+    let clamped_info = renderer
+        .m2_sampler_info(clamped_sampler)
+        .ok_or("clamped M2 sampler handle did not resolve")?;
+    assert_eq!(clamped_info.address_u(), M2TextureAddressMode::Clamp);
+    assert_eq!(clamped_info.address_v(), M2TextureAddressMode::Clamp);
     renderer.shutdown()?;
     Ok(())
 }

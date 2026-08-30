@@ -102,6 +102,9 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit pipeline handle.
     #[error("M2 pipeline registry exhausted its 32-bit handle space")]
     M2PipelineCapacity,
+    /// The renderer cannot assign another stable 32-bit sampler handle.
+    #[error("M2 sampler registry exhausted its 32-bit handle space")]
+    M2SamplerCapacity,
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,

@@ -19,8 +19,8 @@ mod world_text;
 
 pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadError, M2MeshHandle,
-    M2MeshResourceInfo, M2PipelineHandle, M2PipelineInfo, VulkanBootstrap, VulkanError,
-    VulkanRenderer, VulkanReport,
+    M2MeshResourceInfo, M2PipelineHandle, M2PipelineInfo, M2SamplerHandle, M2SamplerInfo,
+    M2TextureAddressMode, VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

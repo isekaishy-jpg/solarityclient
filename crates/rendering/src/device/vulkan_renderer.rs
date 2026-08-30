@@ -3,13 +3,14 @@
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
-use solarity_asset::{BlpTextureSource, DecodedBlpTexture};
+use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Texture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
 use crate::device::vulkan_mesh::{
     M2MeshHandle, M2MeshRegistry, M2MeshResourceInfo, MeshUploadContext,
 };
+use crate::device::vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2SamplerRegistry};
 use crate::device::vulkan_selection::SelectedAdapter;
 use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
@@ -84,6 +85,7 @@ pub struct VulkanRenderer {
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
     m2_meshes: M2MeshRegistry,
+    m2_samplers: M2SamplerRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -120,6 +122,7 @@ impl VulkanRenderer {
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
             m2_meshes: M2MeshRegistry::default(),
+            m2_samplers: M2SamplerRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -281,6 +284,29 @@ impl VulkanRenderer {
         self.m2_pipelines.info(handle)
     }
 
+    /// Creates or retrieves stock's linear, base-mip M2 sampler state.
+    ///
+    /// Horizontal and vertical addressing come directly from the texture
+    /// declaration. Uploaded image identity remains independent so the same
+    /// path can be sampled by multiple materials without another allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when handle capacity is exhausted or the driver
+    /// rejects sampler creation.
+    pub fn prepare_m2_sampler(
+        &mut self,
+        texture: &M2Texture,
+    ) -> Result<M2SamplerHandle, VulkanError> {
+        self.m2_samplers.prepare(&self.device, texture)
+    }
+
+    /// Returns immutable diagnostics for a live renderer-owned M2 sampler.
+    #[must_use]
+    pub fn m2_sampler_info(&self, handle: M2SamplerHandle) -> Option<M2SamplerInfo> {
+        self.m2_samplers.info(handle)
+    }
+
     /// Creates the swapchain and one owned color view for each borrowed image.
     fn create_swapchain(
         &mut self,
@@ -378,6 +404,7 @@ impl Drop for VulkanRenderer {
             self.blp_textures.destroy(&self.device, allocator);
             self.m2_meshes.destroy(allocator);
         }
+        self.m2_samplers.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.
