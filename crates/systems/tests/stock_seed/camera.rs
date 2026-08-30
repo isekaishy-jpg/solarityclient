@@ -2,10 +2,50 @@
 
 use std::error::Error;
 
+use glam::Vec3;
+use solarity_ecs::{PlayerViewState, WorldTransform};
 use solarity_systems::{
     CameraSubjectGeometry, CameraSubjectHeightError, CameraSubjectHeightSource,
-    resolve_camera_subject_height,
+    PlayerCameraPoseError, resolve_camera_subject_height, resolve_player_camera_pose,
 };
+
+/// The default saved view produces stock's distinct eye, target, pivot, and subject.
+#[test]
+fn default_view_resolves_the_stock_player_orbit() -> Result<(), Box<dyn Error>> {
+    let transform = WorldTransform::new(Vec3::new(10.0, 20.0, 30.0), 0.0);
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(Some(1.75), 99.0, 1.0))?;
+    let pose = resolve_player_camera_pose(transform, PlayerViewState::STOCK_VIEW_2, height)?;
+
+    assert!(
+        pose.subject()
+            .abs_diff_eq(Vec3::new(10.0, 20.0, 30.0), 0.000_001)
+    );
+    assert!(
+        pose.orbit_pivot()
+            .abs_diff_eq(Vec3::new(10.0, 20.0, 31.847_221), 0.000_01)
+    );
+    assert!(
+        pose.eye()
+            .abs_diff_eq(Vec3::new(4.534_317, 20.0, 32.810_97), 0.000_01)
+    );
+    assert!(((pose.target() - pose.eye()).length() - 1.0).abs() < 0.000_001);
+    assert!((pose.up().length() - 1.0).abs() < 0.000_001);
+    assert!((pose.target() - pose.eye()).dot(pose.up()).abs() < 0.000_001);
+    Ok(())
+}
+
+/// Non-finite saved state is rejected rather than reaching renderer matrices.
+#[test]
+fn invalid_player_view_has_no_camera_fallback() -> Result<(), Box<dyn Error>> {
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(Some(1.75), 2.0, 1.0))?;
+    let view = PlayerViewState::new(5.55, f32::NAN, 0.0, 2);
+
+    assert_eq!(
+        resolve_player_camera_pose(WorldTransform::new(Vec3::ZERO, 0.0), view, height),
+        Err(PlayerCameraPoseError::NonFiniteView)
+    );
+    Ok(())
+}
 
 /// The authored Breath attachment is stable and takes priority over bounds.
 #[test]

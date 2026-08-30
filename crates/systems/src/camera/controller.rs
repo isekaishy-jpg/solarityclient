@@ -1,10 +1,26 @@
 //! Player and world camera control policy.
 
+use glam::Vec3;
 use solarity_asset::DecodedM2Model;
+use solarity_ecs::{PlayerViewState, WorldTransform};
 
 use super::{
-    CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError, CameraSubjectHeightSource,
+    CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
+    CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
 };
+
+/// Live orbit pitch bounds recovered from build 12340's `CGCamera` paths.
+const CAMERA_PITCH_MINIMUM_RADIANS: f32 = -1.553_343;
+const CAMERA_PITCH_MAXIMUM_RADIANS: f32 = 1.553_343;
+
+/// Final stock cap after the distance CVar and its factor are combined.
+const CAMERA_DISTANCE_MAXIMUM: f32 = 50.0;
+
+/// Logical first person retains a direction inside the stock near plane.
+const CAMERA_ORBIT_DISTANCE_MINIMUM: f32 = 0.01;
+
+/// The orbit builder does not admit a pivot directly on or below the unit.
+const CAMERA_PIVOT_HEIGHT_MINIMUM: f32 = 0.1;
 
 /// Attachment identifier read by `CGUnit_C::GetCameraHeight` in build 12340.
 const BREATH_ATTACHMENT_ID: u32 = 17;
@@ -18,6 +34,60 @@ const CAMERA_HEIGHT_MAXIMUM: f32 = 15.0;
 
 /// Minimum scale retained by the model presentation transform.
 const MODEL_SCALE_MINIMUM: f32 = 0.001;
+
+/// Resolves the build-12340 ordinary player orbit before camera collision.
+///
+/// The camera target is one unit along the final view direction, not the
+/// character or orbit pivot. Pitch and distance use the executable's live
+/// clamps; invalid non-finite state is rejected before trigonometry can
+/// contaminate renderer and world-residency inputs.
+///
+/// # Errors
+///
+/// Returns [`PlayerCameraPoseError`] when the authoritative transform, saved
+/// view, or authored subject height contains a non-finite value.
+pub fn resolve_player_camera_pose(
+    transform: WorldTransform,
+    view: PlayerViewState,
+    subject_height: CameraSubjectHeight,
+) -> Result<PlayerCameraPose, PlayerCameraPoseError> {
+    let subject = transform.position();
+    if !subject.is_finite() || !transform.orientation().is_finite() {
+        return Err(PlayerCameraPoseError::NonFiniteTransform);
+    }
+    if !view.distance().is_finite()
+        || !view.pitch_radians().is_finite()
+        || !view.yaw_offset_radians().is_finite()
+    {
+        return Err(PlayerCameraPoseError::NonFiniteView);
+    }
+    if !subject_height.value().is_finite() {
+        return Err(PlayerCameraPoseError::NonFiniteSubjectHeight);
+    }
+
+    let yaw = transform.orientation() + view.yaw_offset_radians();
+    if !yaw.is_finite() {
+        return Err(PlayerCameraPoseError::NonFiniteView);
+    }
+    let pitch = view
+        .pitch_radians()
+        .clamp(CAMERA_PITCH_MINIMUM_RADIANS, CAMERA_PITCH_MAXIMUM_RADIANS);
+    let distance = view.distance().clamp(0.0, CAMERA_DISTANCE_MAXIMUM);
+    let orbit_distance = distance.max(CAMERA_ORBIT_DISTANCE_MINIMUM);
+    let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+    let horizontal_distance = orbit_distance * pitch.cos();
+    let orbit_pivot = subject
+        + Vec3::new(
+            0.0,
+            0.0,
+            subject_height.value().max(CAMERA_PIVOT_HEIGHT_MINIMUM),
+        );
+    let eye = orbit_pivot - facing * horizontal_distance + Vec3::Z * (orbit_distance * pitch.sin());
+    let target = eye + facing * pitch.cos() - Vec3::Z * pitch.sin();
+    let up = facing * pitch.sin() + Vec3::Z * pitch.cos();
+
+    Ok(PlayerCameraPose::new(eye, target, up, orbit_pivot, subject))
+}
 
 /// Resolves the stock camera pivot height from already-extracted M2 geometry.
 ///

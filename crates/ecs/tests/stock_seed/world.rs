@@ -4,8 +4,8 @@ use std::error::Error;
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, LocalPlayer, ObjectFields, ObjectGuid, ObjectKind, PlayerIdentity, WorldBootstrap,
-    WorldMapId, WorldStateError, WorldTransform,
+    ActiveWorld, LocalPlayer, ObjectFields, ObjectGuid, ObjectKind, PlayerIdentity,
+    PlayerViewState, WorldBootstrap, WorldMapId, WorldStateError, WorldTransform,
 };
 
 /// World entry creates one indexed local player from authoritative login facts.
@@ -24,6 +24,7 @@ fn world_entry_owns_the_initial_local_player() -> Result<(), Box<dyn Error>> {
     assert_eq!(world.local_player_transform()?.position(), position);
     let local_player = world.local_player();
     assert_eq!(world.local_player_guid()?, 0xF130_0000_0000_0042);
+    assert_eq!(world.local_player_view()?, PlayerViewState::STOCK_VIEW_2);
     assert_eq!(
         world.entity_by_guid(0xF130_0000_0000_0042),
         Some(local_player)

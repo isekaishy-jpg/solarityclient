@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::movement::WorldTransform;
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
 use crate::player::{LocalPlayer, PlayerIdentity};
+use crate::view::PlayerViewState;
 
 use super::{WorldMapId, registry::ObjectRegistry, types::WorldBootstrap};
 
@@ -28,6 +29,7 @@ impl ActiveWorld {
             PlayerIdentity::new(player_name),
             LocalPlayer,
             WorldTransform::new(position, orientation),
+            PlayerViewState::default(),
             ObjectFields::default(),
         ));
         let mut objects = ObjectRegistry::default();
@@ -76,6 +78,19 @@ impl ActiveWorld {
             .get::<&WorldTransform>(self.local_player)
             .map(|transform| **transform)
             .map_err(|_| WorldStateError::MissingLocalPlayerTransform)
+    }
+
+    /// Returns the durable renderer-independent local camera state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError::MissingLocalPlayerView`] if ECS storage no
+    /// longer satisfies the active-world bootstrap invariant.
+    pub fn local_player_view(&self) -> Result<PlayerViewState, WorldStateError> {
+        self.storage
+            .get::<&PlayerViewState>(self.local_player)
+            .map(|view| **view)
+            .map_err(|_| WorldStateError::MissingLocalPlayerView)
     }
 
     /// Finds a loaded entity by its exact server GUID.
@@ -225,4 +240,7 @@ pub enum WorldStateError {
     /// The controlled player lost the GUID seeded during world entry.
     #[error("active world's local player has no server GUID")]
     MissingLocalPlayerGuid,
+    /// The controlled player lost its persistent camera state.
+    #[error("active world's local player has no view state")]
+    MissingLocalPlayerView,
 }

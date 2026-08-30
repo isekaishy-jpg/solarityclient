@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+glam.workspace = true
 shipyard.workspace = true
 solarity-asset.workspace = true
 solarity-ecs.workspace = true

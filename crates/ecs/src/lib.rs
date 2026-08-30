@@ -25,4 +25,5 @@ pub use player::{
     PlayerEquipmentSlot, PlayerIdentity, VisibleEquipmentItem,
 };
 pub use unit::{UnitFlags, UnitIdentity, UnitPresentation, UnitVitals};
+pub use view::PlayerViewState;
 pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};
