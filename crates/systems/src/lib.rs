@@ -42,8 +42,9 @@ mod world;
 
 pub use camera::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
-    CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
-    resolve_camera_subject_height, resolve_model_camera_subject_height, resolve_player_camera_pose,
+    CameraSubjectHeightSource, PlayerCameraObstructionError, PlayerCameraPose,
+    PlayerCameraPoseError, resolve_camera_subject_height, resolve_model_camera_subject_height,
+    resolve_player_camera_obstruction, resolve_player_camera_pose,
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};

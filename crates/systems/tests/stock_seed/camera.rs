@@ -1,12 +1,14 @@
 //! External stock-compatibility tests for build-12340 player camera policy.
 
+use std::convert::Infallible;
 use std::error::Error;
 
 use glam::Vec3;
 use solarity_ecs::{PlayerViewState, WorldTransform};
 use solarity_systems::{
     CameraSubjectGeometry, CameraSubjectHeightError, CameraSubjectHeightSource,
-    PlayerCameraPoseError, resolve_camera_subject_height, resolve_player_camera_pose,
+    PlayerCameraObstructionError, PlayerCameraPoseError, resolve_camera_subject_height,
+    resolve_player_camera_obstruction, resolve_player_camera_pose,
 };
 
 /// The default saved view produces stock's distinct eye, target, pivot, and subject.
@@ -92,5 +94,55 @@ fn camera_height_obeys_stock_clamps() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(minimum.value(), 0.833_333_3);
     assert_eq!(maximum.value(), 15.0);
+    Ok(())
+}
+
+/// Center obstruction retreats the eye while smart pivot preserves view direction.
+#[test]
+fn camera_obstruction_resolves_the_stock_swept_volume() -> Result<(), Box<dyn Error>> {
+    let transform = WorldTransform::new(Vec3::new(10.0, 20.0, 30.0), 0.0);
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(Some(1.75), 2.0, 1.0))?;
+    let pose = resolve_player_camera_pose(transform, PlayerViewState::STOCK_VIEW_2, height)?;
+    let requested_direction = pose.target() - pose.eye();
+    let mut trace_count = 0;
+    let resolved = resolve_player_camera_obstruction(
+        pose,
+        16.0 / 9.0,
+        true,
+        |_start, _end, _maximum| -> Result<Option<f32>, Infallible> {
+            trace_count += 1;
+            Ok((trace_count == 1).then_some(0.5))
+        },
+    )?;
+
+    let ray_length = (pose.eye() - pose.orbit_pivot()).length();
+    let expected_fraction = 0.5 - 0.111_111_11 / ray_length;
+    let expected_eye = pose.orbit_pivot() + (pose.eye() - pose.orbit_pivot()) * expected_fraction;
+    assert_eq!(trace_count, 9);
+    assert!(resolved.eye().abs_diff_eq(expected_eye, 0.000_001));
+    assert!((resolved.target() - resolved.eye()).abs_diff_eq(requested_direction, 0.000_001));
+    Ok(())
+}
+
+/// Trace providers cannot return fractions outside the requested interval.
+#[test]
+fn camera_obstruction_rejects_invalid_provider_fraction() -> Result<(), Box<dyn Error>> {
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
+    let pose = resolve_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::STOCK_VIEW_2,
+        height,
+    )?;
+    let result = resolve_player_camera_obstruction(
+        pose,
+        1.0,
+        true,
+        |_start, _end, maximum| -> Result<Option<f32>, Infallible> { Ok(Some(maximum + 0.1)) },
+    );
+
+    assert!(matches!(
+        result,
+        Err(PlayerCameraObstructionError::InvalidTraceFraction)
+    ));
     Ok(())
 }

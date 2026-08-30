@@ -4,12 +4,14 @@
 //! projection without placing gameplay policy in either owning state crate.
 
 mod controller;
+mod obstruction;
 mod transition;
 mod types;
 
 pub use controller::{
     resolve_camera_subject_height, resolve_model_camera_subject_height, resolve_player_camera_pose,
 };
+pub use obstruction::{PlayerCameraObstructionError, resolve_player_camera_obstruction};
 pub use types::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
