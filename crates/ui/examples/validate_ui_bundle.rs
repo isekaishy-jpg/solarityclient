@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, UiBundle, UiManifestKind, UiObjectCatalog,
-    UiResourceContent,
+    UiObjectTree, UiResourceContent,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -48,6 +48,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let lua_count = bundle.resources().len() - xml_count;
     let font_catalog = FontCatalog::from_bundle(&bundle)?;
     let object_catalog = UiObjectCatalog::from_bundle(&bundle, &font_catalog)?;
+    let object_tree = UiObjectTree::from_catalog(&object_catalog, &font_catalog)?;
+    let named_object_count = object_tree
+        .nodes()
+        .iter()
+        .filter(|node| node.name().is_some())
+        .count();
     let font_path = AssetPath::new("Fonts\\FRIZQT__.TTF")?;
     let mut fonts = FontSystem::new()?;
     let glyph = fonts.rasterize(
@@ -59,13 +65,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, FRIZQT__ 'A' {}x{}",
+        "validated {:?}: {archive_count} archives, {} resources ({xml_count} XML, {lua_count} Lua), {} ordered actions, {} fonts, {} templates, {} live roots, {} instantiated objects ({named_object_count} named, {} top-level), FRIZQT__ 'A' {}x{}",
         bundle.manifest().kind(),
         bundle.resources().len(),
         bundle.actions().len(),
         font_catalog.definitions().len(),
         object_catalog.templates().len(),
         object_catalog.roots().len(),
+        object_tree.nodes().len(),
+        object_tree.top_level().len(),
         glyph.width(),
         glyph.height()
     );

@@ -91,6 +91,20 @@ subtrees instead of duplicating hundreds of layout nodes before construction.
 This keeps startup allocations bounded while preserving every unconsumed stock
 attribute and child for the subsequent frame, region, and widget stages.
 
+Live construction expands `$parent` against the nearest named ownership
+context, applies each pre-linearized template layer once, and stores all frames,
+regions, and widgets in one indexed arena. Explicit parents may bind after the
+child declaration: stock `GameTimeFrame` names the nested `Minimap` before the
+owning minimap XML has been constructed. Parent fixups occur once after the
+load pass rather than adding a runtime name search.
+
+Nested global names are not required to be unique. Stock declares
+`QuestInfoRequiredMoneyText` under two distinct live parents; both instances
+remain owned while the later registration replaces the global lookup entry.
+Objects with the same name, parent, type, and role are instead merged as
+inherited/concrete layers. The constructor keeps XML layers as references into
+the bundle, avoiding a second copy of the expanded property trees.
+
 ## Validation
 
 Generated MPQs exercise manifest order, relative resolution, XML ownership,
@@ -122,3 +136,9 @@ resources (133 XML and 132 external Lua) containing 149 global fonts, 311 object
 templates, and 276 live roots. Inline scripts remain ordered actions rather
 than synthetic files. The same command opens the archive-backed
 `FRIZQT__.TTF` face and rasterizes a validation glyph.
+
+Nested construction currently produces 2,552 Glue objects (1,410 globally
+named) and 22,015 Frame objects (15,769 globally named), with 12 and 66
+top-level owners respectively. These counts are emitted by the validator so
+future template or merge changes cannot hide an unexpected fan-out during
+local-client review.

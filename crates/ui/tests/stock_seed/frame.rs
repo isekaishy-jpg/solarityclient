@@ -5,7 +5,7 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiBundle, UiInheritanceTarget, UiManifestKind, UiObjectCatalog, UiObjectError,
-    UiObjectKind,
+    UiObjectKind, UiObjectTree,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -21,8 +21,9 @@ fn object_catalog_resolves_earlier_virtual_templates() -> Result<(), Box<dyn Err
         FixtureFile {
             path: "Interface\\GlueXML\\Objects.xml",
             bytes: br#"<Ui>
-  <Frame name="BaseFrame" virtual="true"/>
+  <Frame name="BaseFrame" virtual="true"><Frames><Frame name="$parentChild"/></Frames></Frame>
   <Texture name="LogoTexture" virtual="true"/>
+  <Frame name="GlueParent"/>
   <Button name="LoginButton" inherits="BaseFrame" parent="GlueParent"/>
 </Ui>"#,
         },
@@ -32,17 +33,26 @@ fn object_catalog_resolves_earlier_virtual_templates() -> Result<(), Box<dyn Err
     let fonts = FontCatalog::from_bundle(&bundle)?;
 
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
     let login = objects
         .definition("LoginButton")
         .ok_or("missing LoginButton")?;
 
-    assert_eq!(objects.definitions().len(), 3);
+    assert_eq!(objects.definitions().len(), 4);
     assert_eq!(objects.templates().len(), 2);
-    assert_eq!(objects.roots().len(), 1);
+    assert_eq!(objects.roots().len(), 2);
     assert_eq!(login.kind(), UiObjectKind::Button);
     assert_eq!(login.parent_name(), Some("GlueParent"));
     assert_eq!(login.inherited_from(), &[UiInheritanceTarget::Object(0)]);
     assert_eq!(login.element().name(), "Button");
+    let login_node = tree.node("LoginButton").ok_or("missing live LoginButton")?;
+    let child_node = tree
+        .node("LoginButtonChild")
+        .ok_or("missing inherited LoginButtonChild")?;
+    assert_eq!(tree.top_level().len(), 1);
+    assert_eq!(login_node.parent(), Some(0));
+    assert_eq!(child_node.parent(), Some(1));
+    assert_eq!(login_node.layers().len(), 2);
     Ok(())
 }
 
@@ -69,6 +79,36 @@ fn object_catalog_rejects_forward_template_lookup() -> Result<(), Box<dyn Error>
     let result = UiObjectCatalog::from_bundle(&bundle, &fonts);
 
     assert!(matches!(result, Err(UiObjectError::Declaration { .. })));
+    Ok(())
+}
+
+/// Distinct children may reuse a global name; the later registration shadows it.
+#[test]
+fn nested_global_name_shadowing_preserves_both_instances() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Objects.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Objects.xml",
+            bytes: br#"<Ui>
+  <Frame name="First"><Layers><Layer><FontString name="Shared"/></Layer></Layers></Frame>
+  <Frame name="Second"><Layers><Layer><FontString name="Shared"/></Layer></Layers></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+
+    assert_eq!(tree.nodes().len(), 4);
+    assert_eq!(tree.nodes()[0].children(), &[1]);
+    assert_eq!(tree.nodes()[2].children(), &[3]);
+    assert_eq!(tree.node("Shared").and_then(|node| node.parent()), Some(2));
     Ok(())
 }
 

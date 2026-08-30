@@ -28,6 +28,8 @@ pub enum UiObjectKind {
     GameTooltip,
     /// Message display frame.
     MessageFrame,
+    /// Minimap presentation frame.
+    Minimap,
     /// 3D model frame.
     Model,
     /// Glue model frame with the stock FFX presentation path.
@@ -38,6 +40,8 @@ pub enum UiObjectKind {
     ScrollFrame,
     /// Scrolling message display frame.
     ScrollingMessageFrame,
+    /// Restricted HTML frame.
+    SimpleHtml,
     /// Slider control.
     Slider,
     /// Status bar control.
@@ -49,7 +53,7 @@ pub enum UiObjectKind {
 }
 
 impl UiObjectKind {
-    fn from_element_name(name: &str) -> Option<Self> {
+    pub(crate) fn from_element_name(name: &str) -> Option<Self> {
         match name {
             "Frame" => Some(Self::Frame),
             "Button" => Some(Self::Button),
@@ -60,11 +64,13 @@ impl UiObjectKind {
             "FontString" => Some(Self::FontString),
             "GameTooltip" => Some(Self::GameTooltip),
             "MessageFrame" => Some(Self::MessageFrame),
+            "Minimap" => Some(Self::Minimap),
             "Model" => Some(Self::Model),
             "ModelFFX" => Some(Self::ModelFfx),
             "MovieFrame" => Some(Self::MovieFrame),
             "ScrollFrame" => Some(Self::ScrollFrame),
             "ScrollingMessageFrame" => Some(Self::ScrollingMessageFrame),
+            "SimpleHTML" => Some(Self::SimpleHtml),
             "Slider" => Some(Self::Slider),
             "StatusBar" => Some(Self::StatusBar),
             "Texture" => Some(Self::Texture),
@@ -90,6 +96,7 @@ pub struct UiObjectDefinition<'bundle> {
     virtual_object: bool,
     parent_name: Option<String>,
     inherited_from: Vec<UiInheritanceTarget>,
+    resolved_layers: Vec<usize>,
     source_path: &'bundle AssetPath,
     document: &'bundle XmlDocument,
     element: &'bundle XmlElement,
@@ -126,21 +133,27 @@ impl<'bundle> UiObjectDefinition<'bundle> {
         &self.inherited_from
     }
 
+    /// Returns ancestor template definition indices followed by this object.
+    #[must_use]
+    pub fn resolved_layers(&self) -> &[usize] {
+        &self.resolved_layers
+    }
+
     /// Returns the XML asset containing this declaration.
     #[must_use]
-    pub const fn source_path(&self) -> &AssetPath {
+    pub const fn source_path(&self) -> &'bundle AssetPath {
         self.source_path
     }
 
     /// Returns the owning document used to resolve child arena indices.
     #[must_use]
-    pub const fn document(&self) -> &XmlDocument {
+    pub const fn document(&self) -> &'bundle XmlDocument {
         self.document
     }
 
     /// Returns the original root XML element.
     #[must_use]
-    pub const fn element(&self) -> &XmlElement {
+    pub const fn element(&self) -> &'bundle XmlElement {
         self.element
     }
 }
@@ -221,6 +234,12 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             .and_then(|index| self.definitions.get(*index))
     }
 
+    /// Returns a declaration by its stable registration index.
+    #[must_use]
+    pub fn definition_at(&self, index: usize) -> Option<&UiObjectDefinition<'bundle>> {
+        self.definitions.get(index)
+    }
+
     /// Iterates virtual template declarations in registration order.
     pub fn templates(&self) -> impl ExactSizeIterator<Item = &UiObjectDefinition<'bundle>> {
         self.template_indices
@@ -260,6 +279,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             .transpose()?
             .unwrap_or(false);
         let mut inherited_from = Vec::new();
+        let mut resolved_layers = Vec::new();
         if let Some(parents) = attribute(element, "inherits") {
             for parent_name in parents.split(',').map(str::trim) {
                 if let Some(index) = self.by_name.get(parent_name).copied() {
@@ -269,6 +289,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
                             format!("object {name} inherits non-virtual object {parent_name}"),
                         ));
                     }
+                    resolved_layers.extend_from_slice(self.definitions[index].resolved_layers());
                     inherited_from.push(UiInheritanceTarget::Object(index));
                 } else if kind == UiObjectKind::FontString
                     && fonts.definition(parent_name).is_some()
@@ -283,17 +304,19 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             }
         }
 
+        let index = self.definitions.len();
+        resolved_layers.push(index);
         let definition = UiObjectDefinition {
             kind,
             name: name.clone(),
             virtual_object,
             parent_name: attribute(element, "parent").map(str::to_owned),
             inherited_from,
+            resolved_layers,
             source_path: path,
             document,
             element,
         };
-        let index = self.definitions.len();
         self.by_name.insert(name, index);
         self.definitions.push(definition);
         if virtual_object {

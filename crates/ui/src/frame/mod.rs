@@ -10,4 +10,5 @@ mod c_simple_top;
 mod status;
 
 pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
+pub use c_simple_top::{UiElementLayer, UiObjectNode, UiObjectRole, UiObjectTree};
 pub use status::UiObjectError;

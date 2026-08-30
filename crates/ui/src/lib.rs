@@ -21,7 +21,8 @@ pub use font::{
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,
 };
 pub use frame::{
-    UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind,
+    UiElementLayer, UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectError,
+    UiObjectKind, UiObjectNode, UiObjectRole, UiObjectTree,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,
