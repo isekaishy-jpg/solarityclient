@@ -36,6 +36,8 @@ mod vulkan_ui_mesh;
 mod vulkan_ui_pipeline;
 mod vulkan_ui_sampler;
 mod vulkan_ui_texture_set;
+mod vulkan_world_model_mesh;
+mod vulkan_world_model_pipeline;
 
 pub use status::VulkanError;
 pub use vulkan_instance::VulkanBootstrap;
@@ -65,3 +67,5 @@ pub use vulkan_ui_mesh::{UiMeshHandle, UiMeshResourceInfo};
 pub use vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo};
 pub use vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo};
 pub use vulkan_ui_texture_set::{UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo};
+pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};
+pub use vulkan_world_model_pipeline::{WorldModelPipelineHandle, WorldModelPipelineInfo};

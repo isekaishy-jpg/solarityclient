@@ -47,11 +47,20 @@ use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSampler
 use crate::device::vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
 };
+use crate::device::vulkan_world_model_mesh::{
+    WorldModelMeshHandle, WorldModelMeshRegistry, WorldModelMeshResourceInfo,
+};
+use crate::device::vulkan_world_model_pipeline::{
+    WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPipelineRegistry,
+};
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
-use crate::model::{M2MaterialUniform, M2MeshPlan};
+use crate::model::{M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
-use crate::{TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource};
+use crate::{
+    TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource,
+    WorldModelSurfacePass,
+};
 use glam::Mat4;
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
@@ -127,6 +136,8 @@ pub struct VulkanRenderer {
     m2_pipelines: M2PipelineRegistry,
     m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
+    world_model_meshes: WorldModelMeshRegistry,
+    world_model_pipelines: WorldModelPipelineRegistry,
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
@@ -178,6 +189,8 @@ impl VulkanRenderer {
             m2_pipelines: M2PipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
+            world_model_meshes: WorldModelMeshRegistry::default(),
+            world_model_pipelines: WorldModelPipelineRegistry::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -291,6 +304,39 @@ impl VulkanRenderer {
     #[must_use]
     pub fn m2_mesh_info(&self, handle: M2MeshHandle) -> Option<&M2MeshResourceInfo> {
         self.m2_meshes.info(handle)
+    }
+
+    /// Uploads one combined root/group WMO generation to device-local buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for empty geometry, handle exhaustion, or a
+    /// failed Vulkan allocation, transfer, submission, or queue wait.
+    pub fn upload_world_model_mesh(
+        &mut self,
+        plan: &WorldModelMeshPlan,
+    ) -> Result<WorldModelMeshHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.world_model_meshes.upload(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            plan,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live WMO geometry allocation.
+    #[must_use]
+    pub fn world_model_mesh_info(
+        &self,
+        handle: WorldModelMeshHandle,
+    ) -> Option<&WorldModelMeshResourceInfo> {
+        self.world_model_meshes.info(handle)
     }
 
     /// Uploads one aggregate resident ADT to shared device-local buffers.
@@ -718,6 +764,35 @@ impl VulkanRenderer {
         self.m2_pipelines.info(handle)
     }
 
+    /// Creates or retrieves one exact ordinary/unified WMO surface pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for a null stock effect slot, shader failure,
+    /// handle exhaustion, or Vulkan layout/module/pipeline creation failure.
+    pub fn prepare_world_model_pipeline(
+        &mut self,
+        unified: bool,
+        pass: WorldModelSurfacePass,
+    ) -> Result<WorldModelPipelineHandle, VulkanError> {
+        self.world_model_pipelines.prepare(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            unified,
+            pass,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live WMO graphics pipeline.
+    #[must_use]
+    pub fn world_model_pipeline_info(
+        &self,
+        handle: WorldModelPipelineHandle,
+    ) -> Option<WorldModelPipelineInfo> {
+        self.world_model_pipelines.info(handle)
+    }
+
     /// Creates or retrieves stock's linear, base-mip M2 sampler state.
     ///
     /// Horizontal and vertical addressing come directly from the texture
@@ -959,6 +1034,7 @@ impl Drop for VulkanRenderer {
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);
+            self.world_model_meshes.destroy(allocator);
             self.m2_meshes.destroy(allocator);
         }
         self.terrain_texture_sets.destroy(&self.device);
@@ -966,6 +1042,7 @@ impl Drop for VulkanRenderer {
         self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);
         self.terrain_pipelines.destroy(&self.device);
+        self.world_model_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.

@@ -93,6 +93,26 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit mesh handle.
     #[error("M2 mesh registry exhausted its 32-bit handle space")]
     M2MeshCapacity,
+    /// A decoded WMO generation has no geometry that Vulkan can bind.
+    #[error("WMO mesh {path} has no {buffer_kind} data to upload")]
+    EmptyWorldModelMesh {
+        /// Root model whose combined generation produced the empty buffer.
+        path: AssetPath,
+        /// Stable name of the absent vertex or index payload.
+        buffer_kind: &'static str,
+    },
+    /// The renderer cannot assign another stable 32-bit WMO mesh handle.
+    #[error("WMO mesh registry exhausted its 32-bit handle space")]
+    WorldModelMeshCapacity,
+    /// A stock MapObj shader pair could not compile to the pinned target.
+    #[error("WMO shader preparation failed: {message}")]
+    WorldModelShader {
+        /// Stable shader compiler or invalid-effect diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable 32-bit WMO pipeline handle.
+    #[error("WMO pipeline registry exhausted its 32-bit handle space")]
+    WorldModelPipelineCapacity,
     /// A terrain plan has no geometry that Vulkan can bind and draw.
     #[error("terrain mesh has no {buffer_kind} data to upload")]
     EmptyTerrainMesh {

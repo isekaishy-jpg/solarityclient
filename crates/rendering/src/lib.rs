@@ -33,7 +33,8 @@ pub use device::{
     TerrainTextureSetInfo, UiFrameReport, UiMeshHandle, UiMeshResourceInfo, UiPipelineHandle,
     UiPipelineInfo, UiPreparedDraw, UiSampledTexture, UiSamplerHandle, UiSamplerInfo,
     UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap, VulkanError, VulkanRenderer,
-    VulkanReport,
+    VulkanReport, WorldModelMeshHandle, WorldModelMeshResourceInfo, WorldModelPipelineHandle,
+    WorldModelPipelineInfo,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
