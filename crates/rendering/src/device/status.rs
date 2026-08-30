@@ -93,6 +93,18 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit mesh handle.
     #[error("M2 mesh registry exhausted its 32-bit handle space")]
     M2MeshCapacity,
+    /// The stock M2 shader pair could not be translated to the pinned target.
+    #[error("M2 shader preparation failed: {message}")]
+    M2Shader {
+        /// Stable shader compiler or unsupported-permutation diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable 32-bit pipeline handle.
+    #[error("M2 pipeline registry exhausted its 32-bit handle space")]
+    M2PipelineCapacity,
+    /// The selected adapter lacks the pinned stock-compatible depth format.
+    #[error("selected Vulkan adapter lacks D24_UNORM_S8_UINT depth/stencil attachments")]
+    DepthStencilFormat,
 }
 
 impl VulkanError {

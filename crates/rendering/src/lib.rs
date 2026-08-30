@@ -18,7 +18,8 @@ mod weather;
 mod world_text;
 
 pub use device::{
-    M2MeshHandle, M2MeshResourceInfo, VulkanBootstrap, VulkanError, VulkanRenderer, VulkanReport,
+    M2MeshHandle, M2MeshResourceInfo, M2PipelineHandle, M2PipelineInfo, VulkanBootstrap,
+    VulkanError, VulkanRenderer, VulkanReport,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,

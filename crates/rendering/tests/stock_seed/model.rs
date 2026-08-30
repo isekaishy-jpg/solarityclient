@@ -535,6 +535,20 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.index_count(), 3);
     assert_eq!(info.vertex_byte_count(), 144);
     assert_eq!(info.index_byte_count(), 6);
+    let pipeline = renderer.prepare_m2_pipeline(specialized, lit_permutation)?;
+    assert_eq!(
+        renderer.prepare_m2_pipeline(specialized, lit_permutation)?,
+        pipeline
+    );
+    let pipeline_info = renderer
+        .m2_pipeline_info(pipeline)
+        .ok_or("uploaded M2 pipeline handle did not resolve")?;
+    assert_eq!(pipeline_info.vertex_shader(), M2VertexShader::DiffuseT1Env);
+    assert_eq!(
+        pipeline_info.pixel_shader(),
+        M2PixelShader::OpaqueMod2xNoAlphaAlpha
+    );
+    assert_eq!(pipeline_info.permutation(), lit_permutation);
     renderer.shutdown()?;
     Ok(())
 }

@@ -6,12 +6,14 @@ use ash::{Device, vk};
 use solarity_asset::DecodedBlpTexture;
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
+use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
 use crate::device::vulkan_mesh::{
     M2MeshHandle, M2MeshRegistry, M2MeshResourceInfo, MeshUploadContext,
 };
 use crate::device::vulkan_selection::SelectedAdapter;
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2MeshPlan;
+use crate::shader::{M2ShaderPermutation, M2ShaderPlan};
 
 /// Immutable evidence for the concrete Vulkan stack selected at startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,16 +73,19 @@ impl VulkanReport {
 
 /// Sole owner of the initialized Vulkan presentation object graph.
 pub struct VulkanRenderer {
-    // Manual drop order is M2 buffers, image views, swapchain, allocator,
-    // device, then the embedded bootstrap's surface, instance, and loader.
+    // Manual drop order is M2 buffers/pipelines, image views, swapchain,
+    // allocator, device, then the bootstrap's surface, instance, and loader.
     bootstrap: VulkanBootstrap,
     device: Device,
     allocator: Option<vk_mem::Allocator>,
+    m2_pipelines: M2PipelineRegistry,
     m2_meshes: M2MeshRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
+    color_format: vk::Format,
+    depth_format: vk::Format,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
     report: VulkanReport,
@@ -108,11 +113,14 @@ impl VulkanRenderer {
             bootstrap,
             device,
             allocator: None,
+            m2_pipelines: M2PipelineRegistry::default(),
             m2_meshes: M2MeshRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
             swapchain_images: Vec::new(),
             image_views: Vec::new(),
+            color_format: selected.surface_format.format,
+            depth_format: selected.depth_format,
             graphics_queue,
             present_queue,
             report: VulkanReport {
@@ -204,6 +212,32 @@ impl VulkanRenderer {
     #[must_use]
     pub fn m2_mesh_info(&self, handle: M2MeshHandle) -> Option<&M2MeshResourceInfo> {
         self.m2_meshes.info(handle)
+    }
+
+    /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when shader translation, module/layout creation,
+    /// or driver pipeline compilation fails.
+    pub fn prepare_m2_pipeline(
+        &mut self,
+        plan: M2ShaderPlan,
+        permutation: M2ShaderPermutation,
+    ) -> Result<M2PipelineHandle, VulkanError> {
+        self.m2_pipelines.prepare(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            plan,
+            permutation,
+        )
+    }
+
+    /// Returns immutable diagnostics for a live renderer-owned M2 pipeline.
+    #[must_use]
+    pub fn m2_pipeline_info(&self, handle: M2PipelineHandle) -> Option<&M2PipelineInfo> {
+        self.m2_pipelines.info(handle)
     }
 
     /// Creates the swapchain and one owned color view for each borrowed image.
@@ -302,6 +336,7 @@ impl Drop for VulkanRenderer {
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_meshes.destroy(allocator);
         }
+        self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.
         unsafe {

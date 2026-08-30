@@ -14,6 +14,7 @@ pub(super) struct SelectedAdapter {
     pub(super) graphics_family: u32,
     pub(super) present_family: u32,
     pub(super) surface_format: vk::SurfaceFormatKHR,
+    pub(super) depth_format: vk::Format,
     pub(super) surface_capabilities: vk::SurfaceCapabilitiesKHR,
 }
 
@@ -53,6 +54,7 @@ impl SelectedAdapter {
         validate_vulkan13_features(bootstrap, physical_device)?;
         let (graphics_family, present_family) = select_queue_families(bootstrap, physical_device)?;
         let surface_format = select_surface_format(bootstrap, physical_device)?;
+        let depth_format = select_depth_format(bootstrap, physical_device)?;
         validate_present_mode(bootstrap, physical_device)?;
         // SAFETY: The physical device and surface belong to the live bootstrap.
         let surface_capabilities = unsafe {
@@ -91,9 +93,31 @@ impl SelectedAdapter {
             graphics_family,
             present_family,
             surface_format,
+            depth_format,
             surface_capabilities,
         })
     }
+}
+
+/// Requires the direct Vulkan counterpart to stock's 24-bit depth/stencil surface.
+fn select_depth_format(
+    bootstrap: &VulkanBootstrap,
+    physical_device: vk::PhysicalDevice,
+) -> Result<vk::Format, VulkanError> {
+    let format = vk::Format::D24_UNORM_S8_UINT;
+    // SAFETY: The selected physical device belongs to the live instance.
+    let properties = unsafe {
+        bootstrap
+            .instance
+            .get_physical_device_format_properties(physical_device, format)
+    };
+    if !properties
+        .optimal_tiling_features
+        .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+    {
+        return Err(VulkanError::DepthStencilFormat);
+    }
+    Ok(format)
 }
 
 /// Requires the one device extension used by the presentation owner.
