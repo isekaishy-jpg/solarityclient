@@ -6,10 +6,10 @@ use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2MeshPlanError, M2SceneUniform,
-    TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform,
-    TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError,
-    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
+    M2ShaderPlanError, TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw,
+    TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer,
+    WorldCameraError, WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum,
+    WorldModelBaseMip, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
     WorldModelTextureFiltering, WorldScreenWindow,
 };
 use thiserror::Error;
@@ -48,6 +48,9 @@ pub enum RuntimeTerrainFrameError {
     /// An M2 SKIN profile could not enter the direct-index mesh ABI.
     #[error(transparent)]
     M2Mesh(#[from] M2MeshPlanError),
+    /// One M2 material batch could not select a stock BLS effect.
+    #[error(transparent)]
+    M2Shader(#[from] M2ShaderPlanError),
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"
@@ -151,6 +154,24 @@ pub enum RuntimeTerrainFrameError {
         source_index: usize,
         /// Number of resident M2 generations.
         source_count: usize,
+    },
+    /// Resident M2 texture sources no longer parallel the model declarations.
+    #[error("M2 {model} retains {source_count} texture sources for {model_count} declarations")]
+    M2TextureTableCount {
+        /// Model whose immutable texture table became inconsistent.
+        model: AssetPath,
+        /// Number of resident texture sources.
+        source_count: usize,
+        /// Number of decoded model texture declarations.
+        model_count: usize,
+    },
+    /// A validated M2 draw references no corresponding resident texture source.
+    #[error("M2 {model} draw references absent resident texture {texture_index}")]
+    M2TextureIndex {
+        /// Model containing the selected material draw.
+        model: AssetPath,
+        /// Texture-declaration index selected through the SKIN combo table.
+        texture_index: u16,
     },
 }
 

@@ -188,7 +188,14 @@ pub(super) fn prepare_world_models(
             // The active-index resolver and root admission jointly prove that
             // this table lookup is in range.
             let doodad = &source.model().doodads()[doodad_index];
-            m2_builder.add_world_model_doodad(placement, doodad_index, doodad, m2_cache, store)?;
+            m2_builder.add_world_model_doodad(
+                placement,
+                doodad_index,
+                doodad,
+                m2_cache,
+                texture_cache,
+                store,
+            )?;
         }
     }
     Ok((result, collision, liquids))

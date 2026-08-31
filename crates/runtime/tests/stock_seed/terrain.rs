@@ -19,8 +19,9 @@ use solarity_systems::{
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
 use wow_adt::{DoodadPlacement, WmoPlacement};
+use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2TextureType};
 use wow_m2::chunks::vertex::M2Vertex;
-use wow_m2::common::{C2Vector, C3Vector};
+use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
 use wow_m2::header::M2Header;
 use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
@@ -212,6 +213,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         ("World\\Wmo\\Fixture_000.wmo", &group_wmo),
         ("World\\Fixture\\Collision.m2", &m2),
         ("World\\Fixture\\Collision00.skin", &skin),
+        ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -231,6 +233,8 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     assert_eq!(terrain.resident_world_model_source_count(), 1);
     assert_eq!(terrain.resident_m2_count(), 2);
     assert_eq!(terrain.resident_m2_source_count(), 1);
+    assert_eq!(terrain.resident_m2_authored_texture_count(), 1);
+    assert_eq!(terrain.resident_m2_replaceable_texture_count(), 1);
     assert_eq!(terrain.resident_m2_collision_count(), 2);
     let m2_hit = terrain
         .trace_m2_camera(
@@ -268,6 +272,8 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     assert_eq!(terrain.resident_world_model_source_count(), 0);
     assert_eq!(terrain.resident_m2_count(), 0);
     assert_eq!(terrain.resident_m2_source_count(), 0);
+    assert_eq!(terrain.resident_m2_authored_texture_count(), 0);
+    assert_eq!(terrain.resident_m2_replaceable_texture_count(), 0);
     assert_eq!(terrain.resident_m2_collision_count(), 0);
     Ok(())
 }
@@ -436,6 +442,7 @@ fn add_last_chunk_object_references(
 }
 
 fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+    let texture_name = b"World\\Fixture\\Collision.blp";
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
         name: Some("Collision".to_owned()),
@@ -448,6 +455,23 @@ fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     model.header.collision_box_min = [0.0, 0.0, -0.1];
     model.header.collision_box_max = [2.0, 2.0, 0.1];
     model.header.collision_sphere_radius = 2.0_f32.sqrt();
+    model.textures = vec![
+        RawTexture {
+            texture_type: M2TextureType::Hardcoded,
+            flags: M2TextureFlags::empty(),
+            filename: M2ArrayString {
+                string: FixedString {
+                    data: texture_name.to_vec(),
+                },
+                array: M2Array::new(u32::try_from(texture_name.len() + 1)?, 1),
+            },
+        },
+        RawTexture {
+            texture_type: M2TextureType::Monster1,
+            flags: M2TextureFlags::empty(),
+            filename: M2ArrayString::default(),
+        },
+    ];
     for index in [0_u16, 1, 2] {
         model
             .raw_data
@@ -480,7 +504,16 @@ fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     }
     let mut cursor = Cursor::new(Vec::new());
     model.write(&mut cursor)?;
-    Ok(cursor.into_inner())
+    let mut bytes = cursor.into_inner();
+    let texture_array_offset = u32::from_le_bytes(bytes[0x54..0x58].try_into()?) as usize;
+    let filename_offset = u32::try_from(bytes.len())?;
+    bytes[texture_array_offset + 8..texture_array_offset + 12]
+        .copy_from_slice(&u32::try_from(texture_name.len() + 1)?.to_le_bytes());
+    bytes[texture_array_offset + 12..texture_array_offset + 16]
+        .copy_from_slice(&filename_offset.to_le_bytes());
+    bytes.extend_from_slice(texture_name);
+    bytes.push(0);
+    Ok(bytes)
 }
 
 fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {

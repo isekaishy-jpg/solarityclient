@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use glam::{Mat4, Quat, Vec3};
 use solarity_asset::{
-    AssetPath, AssetStore, DecodedM2Model, M2ModelCache, TerrainDoodadPlacement,
-    TerrainWorldModelPlacement, WorldModelDoodad,
+    AssetPath, AssetStore, BlpTextureCache, BlpTextureSource, DecodedM2Model, M2ModelCache,
+    M2TextureKind, TerrainDoodadPlacement, TerrainWorldModelPlacement, WorldModelDoodad,
 };
 use solarity_systems::{M2CollisionScene, PlacedM2Collision};
 
@@ -24,15 +24,29 @@ pub(in crate::application) enum ResidentM2Owner {
     },
 }
 
+/// One model texture declaration after archive-backed hardcoded resolution.
+pub(in crate::application) enum ResidentM2Texture {
+    /// A concrete BLP selected through ordinary MPQ precedence.
+    Authored(Arc<BlpTextureSource>),
+    /// A display/customization input which this static world owner cannot fill.
+    Replaceable(M2TextureKind),
+}
+
 /// One archive-selected M2 generation shared by every resident owner.
 pub(in crate::application) struct ResidentM2Source {
     model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentM2Texture>,
 }
 
 impl ResidentM2Source {
     /// Returns the immutable M2/SKIN generation selected by MPQ precedence.
     pub(in crate::application) const fn model(&self) -> &Arc<DecodedM2Model> {
         &self.model
+    }
+
+    /// Returns one resident source for every model texture declaration.
+    pub(in crate::application) fn textures(&self) -> &[ResidentM2Texture] {
+        &self.textures
     }
 }
 
@@ -97,6 +111,22 @@ impl ResidentM2Scene {
     pub(super) const fn placement_count(&self) -> usize {
         self.placements.len()
     }
+
+    pub(super) fn authored_texture_count(&self) -> usize {
+        self.sources
+            .iter()
+            .flat_map(ResidentM2Source::textures)
+            .filter(|texture| matches!(texture, ResidentM2Texture::Authored(_)))
+            .count()
+    }
+
+    pub(super) fn replaceable_texture_count(&self) -> usize {
+        self.sources
+            .iter()
+            .flat_map(ResidentM2Source::textures)
+            .filter(|texture| matches!(texture, ResidentM2Texture::Replaceable(_)))
+            .count()
+    }
 }
 
 /// Transactional builder sharing source identities across MDDF and MODD.
@@ -119,6 +149,7 @@ impl ResidentM2SceneBuilder {
         &mut self,
         placement: &TerrainDoodadPlacement,
         cache: &mut M2ModelCache,
+        texture_cache: &mut BlpTextureCache,
         store: &mut AssetStore,
     ) -> Result<(), RuntimeTerrainError> {
         let transform = adt_placement_transform(
@@ -135,6 +166,7 @@ impl ResidentM2SceneBuilder {
             placement.flags(),
             [u8::MAX; 4],
             cache,
+            texture_cache,
             store,
         )
     }
@@ -145,6 +177,7 @@ impl ResidentM2SceneBuilder {
         doodad_index: usize,
         doodad: &WorldModelDoodad,
         cache: &mut M2ModelCache,
+        texture_cache: &mut BlpTextureCache,
         store: &mut AssetStore,
     ) -> Result<(), RuntimeTerrainError> {
         let outer = adt_placement_transform(
@@ -163,6 +196,7 @@ impl ResidentM2SceneBuilder {
             u16::from(doodad.flags()),
             doodad.color(),
             cache,
+            texture_cache,
             store,
         )
     }
@@ -176,6 +210,7 @@ impl ResidentM2SceneBuilder {
         flags: u16,
         color: [u8; 4],
         cache: &mut M2ModelCache,
+        texture_cache: &mut BlpTextureCache,
         store: &mut AssetStore,
     ) -> Result<(), RuntimeTerrainError> {
         // Cache loading performs stock's MDL/MDX-to-M2 conversion. Key the
@@ -186,8 +221,10 @@ impl ResidentM2SceneBuilder {
             *index
         } else {
             let index = self.scene.sources.len();
+            let textures = prepare_textures(&model, texture_cache, store)?;
             self.scene.sources.push(ResidentM2Source {
                 model: Arc::clone(&model),
+                textures,
             });
             self.source_indices.insert(model.path().clone(), index);
             index
@@ -225,6 +262,32 @@ impl ResidentM2SceneBuilder {
         }
         (self.scene, self.collision)
     }
+}
+
+/// Resolves hardcoded BLPs while preserving replacement categories as holes.
+fn prepare_textures(
+    model: &DecodedM2Model,
+    cache: &mut BlpTextureCache,
+    store: &mut AssetStore,
+) -> Result<Vec<ResidentM2Texture>, RuntimeTerrainError> {
+    model
+        .textures()
+        .iter()
+        .map(|texture| {
+            if texture.kind() != M2TextureKind::Hardcoded {
+                return Ok(ResidentM2Texture::Replaceable(texture.kind()));
+            }
+            let path = texture.filename().ok_or_else(|| {
+                RuntimeTerrainError::MissingM2HardcodedTexturePath {
+                    model: model.path().clone(),
+                }
+            })?;
+            cache
+                .load(store, path)
+                .map(ResidentM2Texture::Authored)
+                .map_err(RuntimeTerrainError::from)
+        })
+        .collect()
 }
 
 /// Reproduces the build-12340 MDDF/MODF Euler placement matrix.

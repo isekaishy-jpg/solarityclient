@@ -60,6 +60,12 @@ pub enum RuntimeTerrainError {
     /// An admitted MDDF/MODD transform cannot produce an invertible matrix.
     #[error("placed M2 transform is invalid")]
     InvalidM2Placement,
+    /// A hardcoded M2 texture declaration carries no archive path.
+    #[error("M2 {model} has a hardcoded texture declaration without a BLP path")]
+    MissingM2HardcodedTexturePath {
+        /// Model whose type-zero texture declaration omitted its filename.
+        model: solarity_asset::AssetPath,
+    },
     /// One authored placement identity disagrees with another MODF record.
     #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
     ConflictingWorldModelPlacement {
@@ -314,6 +320,20 @@ impl RuntimeTerrainCoordinator {
             .as_ref()
             .and_then(|active| active.tile.as_ref())
             .map(|tile| &tile.m2_scene)
+    }
+
+    /// Returns concrete BLP sources retained by resident M2 declarations.
+    #[must_use]
+    pub fn resident_m2_authored_texture_count(&self) -> usize {
+        self.resident_m2_scene()
+            .map_or(0, ResidentM2Scene::authored_texture_count)
+    }
+
+    /// Returns unresolved typed replacement slots retained by resident M2s.
+    #[must_use]
+    pub fn resident_m2_replaceable_texture_count(&self) -> usize {
+        self.resident_m2_scene()
+            .map_or(0, ResidentM2Scene::replaceable_texture_count)
     }
 
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
@@ -590,7 +610,7 @@ impl ResidentTerrainTile {
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
         let mut m2_builder = ResidentM2SceneBuilder::new();
-        prepare_doodads(&decoded, &mut m2_builder, model_cache, store)?;
+        prepare_doodads(&decoded, &mut m2_builder, model_cache, texture_cache, store)?;
         let (world_models, world_model_collision, world_model_liquid) = prepare_world_models(
             &decoded,
             world_model_cache,
@@ -623,6 +643,7 @@ fn prepare_doodads(
     tile: &DecodedTerrainTile,
     builder: &mut ResidentM2SceneBuilder,
     cache: &mut M2ModelCache,
+    texture_cache: &mut BlpTextureCache,
     store: &mut AssetStore,
 ) -> Result<(), RuntimeTerrainError> {
     let mut referenced = vec![false; tile.doodads().len()];
@@ -648,7 +669,7 @@ fn prepare_doodads(
             }
             continue;
         }
-        builder.add_terrain_doodad(placement, cache, store)?;
+        builder.add_terrain_doodad(placement, cache, texture_cache, store)?;
     }
     Ok(())
 }
