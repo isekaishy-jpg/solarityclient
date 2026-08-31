@@ -706,7 +706,7 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
     );
     assert_eq!(particle.z_source().channels()[0].values(), &[7.0, 8.0]);
 
-    assert_eq!(particle.color().timestamps(), &[0, u16::MAX]);
+    assert_eq!(particle.color().timestamps(), &[0, i16::MAX as u16]);
     assert_eq!(
         particle.color().values(),
         &[
@@ -761,7 +761,7 @@ fn m2_particle_lifetime_timestamps_must_be_ordered() -> Result<(), Box<dyn Error
     let mut model = animated_particle_m2_bytes()?;
     let particle_offset = m2_array_offset(&model, 0x128)?;
     let timestamps = m2_array_offset(&model, particle_offset + 0x104)?;
-    model[timestamps..timestamps + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    model[timestamps..timestamps + 2].copy_from_slice(&(i16::MAX as u16).to_le_bytes());
     model[timestamps + 2..timestamps + 4].copy_from_slice(&0_u16.to_le_bytes());
     let skin = skin_bytes(32, &[0, 1, 2])?;
     let fixture = Fixture::new(&[
@@ -785,6 +785,39 @@ fn m2_particle_lifetime_timestamps_must_be_ordered() -> Result<(), Box<dyn Error
         DecodedM2Model::load(&mut store, &path),
         Err(AssetError::ModelDecode { path: failed, message })
             if failed == path && message.contains("color timestamps are not ordered")
+    ));
+    Ok(())
+}
+
+/// Lifetime ramp keys are signed fixed16 values in build 12340.
+#[test]
+fn m2_particle_lifetime_timestamps_must_fit_signed_fixed16() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_particle_m2_bytes()?;
+    let particle_offset = m2_array_offset(&model, 0x128)?;
+    let timestamps = m2_array_offset(&model, particle_offset + 0x104)?;
+    model[timestamps + 2..timestamps + 4].copy_from_slice(&0x8000_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticleLifetime.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticleLifetime00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadParticleLifetime.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("color timestamp exceeds the stock signed fixed16 domain")
     ));
     Ok(())
 }
@@ -1788,21 +1821,21 @@ fn animated_particle_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     append_lifetime_track(
         &mut bytes,
         particle_offset + 0x104,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &f32_values(&[1.0, 0.5, 0.25, 0.0, 1.0, 0.5]),
         12,
     )?;
     append_lifetime_track(
         &mut bytes,
         particle_offset + 0x114,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &i16_values(&[32_767, 16_384]),
         2,
     )?;
     append_lifetime_track(
         &mut bytes,
         particle_offset + 0x124,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &f32_values(&[1.0, 2.0, 3.0, 4.0]),
         8,
     )?;
@@ -1811,14 +1844,14 @@ fn animated_particle_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     append_lifetime_track(
         &mut bytes,
         particle_offset + 0x13c,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &[1, 0, 2, 0],
         2,
     )?;
     append_lifetime_track(
         &mut bytes,
         particle_offset + 0x14c,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &[3, 0, 4, 0],
         2,
     )?;

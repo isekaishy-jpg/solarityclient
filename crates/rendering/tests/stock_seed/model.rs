@@ -2194,35 +2194,35 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x104,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &render_f32_values(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         12,
     )?;
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x114,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &render_i16_values(&[32_767, 16_384]),
         2,
     )?;
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x124,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &render_f32_values(&[1.0, 1.0, 3.0, 5.0]),
         8,
     )?;
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x13c,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &render_u16_values(&[2, 7]),
         2,
     )?;
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x14c,
-        &[0, u16::MAX],
+        &[0, i16::MAX as u16],
         &render_u16_values(&[4, 9]),
         2,
     )?;

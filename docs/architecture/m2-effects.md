@@ -129,10 +129,11 @@ patches follow the same MPQ precedence and virtual asset paths, so larger
 payloads do not create another record type or resource identity.
 
 Rendering now samples the eleven emitter-time tracks through the selected M2
-and global clocks, while each particle's five lifetime ramps use independent
-normalized `u16` time. Continuous color, alpha, and scale ramps interpolate;
-integer head/tail flipbook cells remain held. Admission rejects unordered
-lifetime timestamps instead of making the interval search order-dependent.
+and global clocks, while each particle's five lifetime ramps use the stock
+signed fixed-16 normalized domain `0x0000..=0x7FFF`. Continuous color, alpha,
+and scale ramps interpolate; integer head/tail flipbook cells remain held.
+Admission rejects out-of-domain or unordered lifetime timestamps instead of
+making the interval search order-dependent.
 
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. The

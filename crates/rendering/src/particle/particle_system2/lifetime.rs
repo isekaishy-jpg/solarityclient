@@ -5,7 +5,7 @@ use solarity_asset::{M2ParticleEmitter, M2ParticleLifetimeTrack};
 use thiserror::Error;
 
 /// WotLK's normalized particle-lifetime key corresponding to death.
-const LIFETIME_KEY_MAXIMUM: f32 = u16::MAX as f32;
+const LIFETIME_KEY_MAXIMUM: f32 = i16::MAX as f32;
 
 /// One render-state sample at a particle's normalized age.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,10 +19,10 @@ pub struct M2ParticleLifetimePose {
 impl M2ParticleLifetimePose {
     /// Samples continuous ramps linearly and holds discrete atlas selectors.
     ///
-    /// Build 12340 stores lifetime timestamps in a `u16` container but maps
-    /// `0x0000..=0xFFFF` to birth through death. Ages outside the live range are
-    /// clamped to its endpoints so a render prepared on the death update uses
-    /// the final authored keys.
+    /// Build 12340 stores lifetime timestamps in a `u16` container but reads
+    /// them as signed fixed-16 values. `0x0000..=0x7FFF` therefore maps birth
+    /// through death. Ages outside the live range are clamped to its endpoints
+    /// so a render prepared on the death update uses the final authored keys.
     ///
     /// # Errors
     ///

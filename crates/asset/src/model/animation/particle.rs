@@ -741,6 +741,15 @@ fn decode_lifetime_track<T>(
     let timestamps = (0..timestamps.count)
         .map(|index| read_u16(path, bytes, timestamps.offset + index * 2, field))
         .collect::<Result<Vec<_>, _>>()?;
+    if timestamps
+        .iter()
+        .any(|timestamp| *timestamp > i16::MAX as u16)
+    {
+        return Err(model_decode(
+            path,
+            format!("{field} timestamp exceeds the stock signed fixed16 domain"),
+        ));
+    }
     if !timestamps.windows(2).all(|pair| pair[0] <= pair[1]) {
         return Err(model_decode(
             path,
