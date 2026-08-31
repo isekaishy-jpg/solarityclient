@@ -5,11 +5,13 @@ use glam::{Quat, Vec3};
 use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
+mod camera;
 mod light;
 mod material;
 mod particle;
 mod ribbon;
 
+pub use camera::M2Camera;
 pub use light::{M2Light, M2LightKind};
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
 pub use particle::{M2ParticleEmitter, M2ParticleLifetimeTrack};
@@ -280,6 +282,8 @@ pub struct M2AnimationSet {
     colors: Vec<M2ColorAnimation>,
     texture_weights: Vec<M2TextureWeight>,
     texture_transforms: Vec<M2TextureTransform>,
+    cameras: Vec<M2Camera>,
+    camera_lookup: Vec<Option<u16>>,
     lights: Vec<M2Light>,
     ribbons: Vec<M2RibbonEmitter>,
     particles: Vec<M2ParticleEmitter>,
@@ -335,6 +339,8 @@ impl M2AnimationSet {
             decode_texture_weights(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let texture_transforms =
             decode_texture_transforms(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let (cameras, camera_lookup) =
+            camera::decode_cameras(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let lights = light::decode_lights(
             model_path,
             model_bytes,
@@ -368,6 +374,8 @@ impl M2AnimationSet {
             colors,
             texture_weights,
             texture_transforms,
+            cameras,
+            camera_lookup,
             lights,
             ribbons,
             particles,
@@ -584,6 +592,18 @@ impl M2AnimationSet {
     #[must_use]
     pub fn texture_transforms(&self) -> &[M2TextureTransform] {
         &self.texture_transforms
+    }
+
+    /// Returns authored model cameras in exact M2 table order.
+    #[must_use]
+    pub fn cameras(&self) -> &[M2Camera] {
+        &self.cameras
+    }
+
+    /// Returns semantic camera slots, retaining absent `-1` entries.
+    #[must_use]
+    pub fn camera_lookup(&self) -> &[Option<u16>] {
+        &self.camera_lookup
     }
 
     /// Returns authored model lights in exact M2 table order.

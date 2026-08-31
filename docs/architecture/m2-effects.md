@@ -28,6 +28,18 @@ Mutable light state belongs to a model placement. The decoded declaration and
 animation keys remain shared with the M2 asset, including when a higher-priority
 HD patch supplies a larger file at the same virtual path.
 
+## Model cameras
+
+One build-12340 model camera is exactly 100 bytes, not the dependency's later
+108-byte structure. It retains the signed camera-role selector, field of view,
+near/far clip planes, animated position and target offsets with their base
+vectors, and animated roll. It has no trailing later-version ID or flag word.
+
+The separate signed camera lookup preserves `-1` as an absent semantic slot and
+validates every nonnegative index. Missing roles remain missing; camera zero is
+not a compatibility substitute. Runtime presentation will sample shared camera
+tracks into placement-local state rather than mutate the decoded M2.
+
 ## Ribbons
 
 The asset boundary now owns every field of the 176-byte ribbon record:

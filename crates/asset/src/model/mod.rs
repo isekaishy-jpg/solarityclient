@@ -10,7 +10,7 @@ mod m2_shared;
 mod model_blob;
 
 pub use animation::{
-    M2AnimationSet, M2Bone, M2ColorAnimation, M2Interpolation, M2Light, M2LightKind,
+    M2AnimationSet, M2Bone, M2Camera, M2ColorAnimation, M2Interpolation, M2Light, M2LightKind,
     M2ParticleEmitter, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence, M2SequenceStorage,
     M2TextureTransform, M2TextureWeight, M2Track, M2TrackChannel,
 };

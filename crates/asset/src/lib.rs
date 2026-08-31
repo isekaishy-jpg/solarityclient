@@ -36,11 +36,11 @@ pub use database::{
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle};
 pub use model::{
-    DecodedM2Model, M2AnimationSet, M2Attachment, M2Batch, M2BlendMode, M2Bone, M2CollisionMesh,
-    M2ColorAnimation, M2Interpolation, M2Light, M2LightKind, M2Material, M2ModelBounds,
-    M2ParticleEmitter, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence, M2SequenceStorage,
-    M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2TextureTransform, M2TextureWeight,
-    M2Track, M2TrackChannel, M2Vertex,
+    DecodedM2Model, M2AnimationSet, M2Attachment, M2Batch, M2BlendMode, M2Bone, M2Camera,
+    M2CollisionMesh, M2ColorAnimation, M2Interpolation, M2Light, M2LightKind, M2Material,
+    M2ModelBounds, M2ParticleEmitter, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence,
+    M2SequenceStorage, M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2TextureTransform,
+    M2TextureWeight, M2Track, M2TrackChannel, M2Vertex,
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
 pub use terrain::{
