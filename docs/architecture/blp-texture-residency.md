@@ -48,5 +48,8 @@ shared sources for replacement types 7 and 8.
 Runtime player residency keys this composition by the complete resolved
 texture plan, not only by the body M2 path. A customization change can therefore
 recompose the atlas without duplicating the decoded M2 or any same-path HD BLP
-source. The dynamic atlas will receive its own GPU image identity; it must not
-be disguised as an archive-backed BLP path.
+source. The dynamic atlas receives its own placement-owned GPU image identity
+and complete sRGB mip upload; it is not disguised as an archive-backed BLP
+path. M2 descriptor stages use a closed typed image domain so the composed
+atlas and ordinary shared BLPs can enter the same material without conflating
+their residency rules.

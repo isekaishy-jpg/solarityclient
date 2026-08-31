@@ -326,6 +326,9 @@ pub enum VulkanError {
     /// A sampled image handle belongs to another renderer or no live image.
     #[error("M2 texture set references an unknown BLP texture handle")]
     UnknownBlpTextureHandle,
+    /// A composed body atlas handle belongs to another renderer or no live image.
+    #[error("M2 texture set references an unknown character atlas texture handle")]
+    UnknownCharacterAtlasTextureHandle,
     /// A sampler handle belongs to another renderer or no live sampler.
     #[error("M2 texture set references an unknown M2 sampler handle")]
     UnknownM2SamplerHandle,
@@ -384,6 +387,9 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit texture handle.
     #[error("BLP texture registry exhausted its 32-bit handle space")]
     BlpTextureCapacity,
+    /// The renderer cannot assign another stable 32-bit character-atlas handle.
+    #[error("character atlas texture registry exhausted its 32-bit handle space")]
+    CharacterAtlasTextureCapacity,
     /// A UI plan has no geometry that Vulkan can bind and draw.
     #[error("UI mesh has no {buffer_kind} data to upload")]
     EmptyUiMesh {

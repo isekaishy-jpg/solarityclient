@@ -1,11 +1,20 @@
 //! Validated one/two-stage texture sets and renderer-local identities.
 
-use crate::device::{BlpTextureHandle, M2SamplerHandle};
+use crate::device::{BlpTextureHandle, CharacterAtlasTextureHandle, M2SamplerHandle};
+
+/// Closed image-source domain accepted by build-12340 M2 material stages.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum M2TextureImageHandle {
+    /// An authored BLP selected and shared by its archive virtual path.
+    Blp(BlpTextureHandle),
+    /// A placement-owned character body atlas composed from customization.
+    CharacterAtlas(CharacterAtlasTextureHandle),
+}
 
 /// One uploaded image and stock sampler paired for an M2 texture stage.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct M2SampledTexture {
-    texture: BlpTextureHandle,
+    image: M2TextureImageHandle,
     sampler: M2SamplerHandle,
 }
 
@@ -13,13 +22,28 @@ impl M2SampledTexture {
     /// Pairs independently cached image and sampling state identities.
     #[must_use]
     pub const fn new(texture: BlpTextureHandle, sampler: M2SamplerHandle) -> Self {
-        Self { texture, sampler }
+        Self {
+            image: M2TextureImageHandle::Blp(texture),
+            sampler,
+        }
+    }
+
+    /// Pairs one dynamic character body atlas with authored M2 sampler state.
+    #[must_use]
+    pub const fn character_atlas(
+        texture: CharacterAtlasTextureHandle,
+        sampler: M2SamplerHandle,
+    ) -> Self {
+        Self {
+            image: M2TextureImageHandle::CharacterAtlas(texture),
+            sampler,
+        }
     }
 
     /// Returns the renderer-local uploaded image identity.
     #[must_use]
-    pub const fn texture(self) -> BlpTextureHandle {
-        self.texture
+    pub const fn image(self) -> M2TextureImageHandle {
+        self.image
     }
 
     /// Returns the renderer-local stock sampler identity.

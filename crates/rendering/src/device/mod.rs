@@ -13,6 +13,7 @@ mod c_gx_device_d3d9_ex;
 mod c_gx_device_open_gl;
 mod gfx_singleton_manager;
 mod status;
+mod vulkan_character_atlas;
 mod vulkan_frame;
 mod vulkan_instance;
 mod vulkan_m2_draw;
@@ -48,6 +49,7 @@ mod vulkan_world_model_sampler;
 mod vulkan_world_model_texture_set;
 
 pub use status::VulkanError;
+pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_draw::M2PreparedDraw;
 pub use vulkan_m2_frame::M2FrameReport;
@@ -57,7 +59,7 @@ pub use vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo};
 pub use vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 pub use vulkan_m2_ribbon_pipeline::{M2RibbonPipelineHandle, M2RibbonPipelineInfo};
 pub use vulkan_m2_texture_set::{
-    M2SampledTexture, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
+    M2SampledTexture, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanRenderer, VulkanReport};

@@ -40,6 +40,7 @@ use crate::support::{Fixture, FixtureFile};
 
 /// Base player customization produces stock atlas and M2 replacement bindings.
 #[test]
+#[allow(unsafe_code)]
 fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<(), Box<dyn Error>> {
     let tables = character_tables(0, 0);
     let skin = solid_raw3_blp(
@@ -241,6 +242,30 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
         [0, 223, 0, 255]
     );
     assert_eq!(texture_cache.len(), 9);
+
+    let _sdl_test = crate::support::sdl_test_lock();
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let mut window_builder = video.window("Solarity character atlas upload test", 64, 64);
+    window_builder.vulkan().hidden();
+    let window = window_builder.build()?;
+    let extensions = window.vulkan_instance_extensions()?;
+    let bootstrap = VulkanBootstrap::start(&extensions)?;
+    // SAFETY: The bootstrap enabled the extensions reported by this live SDL
+    // window, which remains alive until the attached renderer is destroyed.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: SDL created the surface for this exact instance and transfers
+    // its sole ownership into the renderer immediately.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    assert_eq!(renderer.character_atlas_upload_submission_count(), 0);
+    let atlas_handle = renderer.upload_character_atlas_texture(&atlas)?;
+    let atlas_info = renderer
+        .character_atlas_texture_info(atlas_handle)
+        .ok_or("uploaded character atlas handle did not resolve")?;
+    assert_eq!(atlas_info.extent(), (256, 256));
+    assert_eq!(atlas_info.mip_count(), 9);
+    assert_eq!(atlas_info.upload_byte_count(), 349_524);
+    assert_eq!(renderer.character_atlas_upload_submission_count(), 1);
     Ok(())
 }
 

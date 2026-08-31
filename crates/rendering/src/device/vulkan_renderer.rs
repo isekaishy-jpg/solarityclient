@@ -5,6 +5,9 @@
 use ash::{Device, vk};
 use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture};
 
+use crate::device::vulkan_character_atlas::{
+    CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
+};
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
@@ -81,7 +84,7 @@ use crate::device::vulkan_world_model_texture_set::{
 };
 use crate::device::{VulkanBootstrap, VulkanError};
 use crate::model::M2SceneUniform;
-use crate::model::{M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
+use crate::model::{CharacterAtlasTexture, M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
 use crate::{
     M2ParticleMeshPlan, M2RibbonMeshPlan, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan,
@@ -176,6 +179,7 @@ pub struct VulkanRenderer {
     terrain_texture_sets: TerrainTextureSetRegistry,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
+    character_atlas_textures: CharacterAtlasTextureRegistry,
     ui_pipelines: UiPipelineRegistry,
     ui_frames: UiFrameRenderer,
     ui_meshes: UiMeshRegistry,
@@ -236,6 +240,7 @@ impl VulkanRenderer {
             terrain_texture_sets: TerrainTextureSetRegistry::default(),
             m2_samplers: M2SamplerRegistry::default(),
             m2_texture_sets: M2TextureSetRegistry::default(),
+            character_atlas_textures: CharacterAtlasTextureRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
             ui_frames: UiFrameRenderer::default(),
             ui_meshes: UiMeshRegistry::default(),
@@ -674,6 +679,49 @@ impl VulkanRenderer {
     #[must_use]
     pub const fn blp_texture_upload_submission_count(&self) -> u64 {
         self.blp_textures.upload_submission_count()
+    }
+
+    /// Uploads one complete placement-owned character body atlas.
+    ///
+    /// The composed texture is sampled as sRGB and deliberately receives no
+    /// archive path identity. Callers retain the returned handle with the
+    /// placement whose customization produced these pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when the private atlas invariant is broken,
+    /// handle capacity is exhausted, or Vulkan upload cannot complete.
+    pub fn upload_character_atlas_texture(
+        &mut self,
+        atlas: &CharacterAtlasTexture,
+    ) -> Result<CharacterAtlasTextureHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.character_atlas_textures.upload(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            atlas,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live composed body atlas.
+    #[must_use]
+    pub fn character_atlas_texture_info(
+        &self,
+        handle: CharacterAtlasTextureHandle,
+    ) -> Option<CharacterAtlasTextureResourceInfo> {
+        self.character_atlas_textures.info(handle)
+    }
+
+    /// Returns retired queue submissions spent admitting dynamic body atlases.
+    #[must_use]
+    pub const fn character_atlas_upload_submission_count(&self) -> u64 {
+        self.character_atlas_textures.upload_submission_count()
     }
 
     /// Creates or retrieves one exact simple-render source/blend pipeline.
@@ -1235,6 +1283,7 @@ impl VulkanRenderer {
             &self.device,
             layout,
             &self.blp_textures,
+            &self.character_atlas_textures,
             &self.m2_samplers,
             requested,
         )
@@ -1435,6 +1484,8 @@ impl Drop for VulkanRenderer {
             self.ui_texture_sets.destroy(&self.device);
             self.world_model_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);
+            self.character_atlas_textures
+                .destroy(&self.device, allocator);
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);

@@ -29,6 +29,35 @@ struct UploadMip {
     height: u32,
 }
 
+/// One tightly packed RGBA8 mip borrowed from a non-BLP typed owner.
+#[derive(Clone, Copy)]
+pub(in crate::device) struct Rgba8MipUpload<'a> {
+    width: u32,
+    height: u32,
+    bytes: &'a [u8],
+}
+
+impl<'a> Rgba8MipUpload<'a> {
+    /// Couples one exact two-dimensional mip extent to its RGBA8 pixels.
+    pub(in crate::device) const fn new(width: u32, height: u32, bytes: &'a [u8]) -> Self {
+        Self {
+            width,
+            height,
+            bytes,
+        }
+    }
+
+    /// Returns this mip's width.
+    pub(in crate::device) const fn width(self) -> u32 {
+        self.width
+    }
+
+    /// Returns this mip's height.
+    pub(in crate::device) const fn height(self) -> u32 {
+        self.height
+    }
+}
+
 /// One staging payload retaining either authored BC blocks or decoded RGBA8.
 struct PreparedTexture {
     bytes: Vec<u8>,
@@ -468,6 +497,47 @@ pub(in crate::device) fn upload_rgba8_image(
     bytes: &[u8],
 ) -> Result<GpuSampledImage, VulkanError> {
     upload_rgba8_image_with_color_space(context, extent, bytes, BlpColorSpace::Linear)
+}
+
+/// Uploads one complete tightly packed RGBA8 mip chain for a non-BLP owner.
+pub(in crate::device) fn upload_rgba8_mip_chain(
+    context: TextureUploadContext<'_>,
+    source_mips: &[Rgba8MipUpload<'_>],
+    color_space: BlpColorSpace,
+) -> Result<GpuSampledImage, VulkanError> {
+    let top = source_mips.first().ok_or_else(|| {
+        VulkanError::operation("validate RGBA8 mip chain", "image has no mip pixels")
+    })?;
+    let mut bytes = Vec::new();
+    let mut mips = Vec::with_capacity(source_mips.len());
+    for (level, source) in source_mips.iter().copied().enumerate() {
+        let expected = u64::from(source.width)
+            .checked_mul(u64::from(source.height))
+            .and_then(|pixels| pixels.checked_mul(4))
+            .and_then(|byte_count| usize::try_from(byte_count).ok())
+            .ok_or_else(|| VulkanError::operation("size RGBA8 mip", "extent overflow"))?;
+        if source.width == 0 || source.height == 0 || source.bytes.len() != expected {
+            return Err(VulkanError::operation(
+                "validate RGBA8 mip chain",
+                format!(
+                    "mip {level} {}x{} requires {expected} bytes; received {}",
+                    source.width,
+                    source.height,
+                    source.bytes.len()
+                ),
+            ));
+        }
+        let offset = u64::try_from(bytes.len())
+            .map_err(|source| VulkanError::operation("convert RGBA8 mip offset", source))?;
+        mips.push(UploadMip {
+            offset,
+            width: source.width,
+            height: source.height,
+        });
+        bytes.extend_from_slice(source.bytes);
+    }
+    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
+    upload_sampled_image(context, format, (top.width, top.height), &bytes, &mips)
 }
 
 fn upload_rgba8_image_with_color_space(

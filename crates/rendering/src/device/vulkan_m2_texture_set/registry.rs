@@ -8,10 +8,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_character_atlas::CharacterAtlasTextureRegistry;
 use crate::device::vulkan_sampler::M2SamplerRegistry;
 use crate::device::vulkan_texture::BlpTextureRegistry;
 
-use super::types::{M2TextureSet, M2TextureSetHandle, M2TextureSetInfo};
+use super::types::{M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo};
 
 /// One live descriptor set owned transitively by a registry descriptor pool.
 struct GpuM2TextureSet {
@@ -48,10 +49,11 @@ impl M2TextureSetRegistry {
         device: &Device,
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
+        character_atlases: &CharacterAtlasTextureRegistry,
         samplers: &M2SamplerRegistry,
         requested: &[M2TextureSet],
     ) -> Result<Vec<M2TextureSetHandle>, VulkanError> {
-        validate_resources(textures, samplers, requested)?;
+        validate_resources(textures, character_atlases, samplers, requested)?;
         let mut seen = HashSet::new();
         let pending = requested
             .iter()
@@ -59,7 +61,14 @@ impl M2TextureSetRegistry {
             .filter(|set| !self.handles.contains_key(set) && seen.insert(*set))
             .collect::<Vec<_>>();
         if !pending.is_empty() {
-            self.allocate_batch(device, layout, textures, samplers, &pending)?;
+            self.allocate_batch(
+                device,
+                layout,
+                textures,
+                character_atlases,
+                samplers,
+                &pending,
+            )?;
         }
         requested
             .iter()
@@ -113,6 +122,7 @@ impl M2TextureSetRegistry {
         device: &Device,
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
+        character_atlases: &CharacterAtlasTextureRegistry,
         samplers: &M2SamplerRegistry,
         pending: &[M2TextureSet],
     ) -> Result<(), VulkanError> {
@@ -160,7 +170,14 @@ impl M2TextureSetRegistry {
         };
 
         for (key, descriptor_set) in pending.iter().copied().zip(sets) {
-            write_texture_set(device, descriptor_set, textures, samplers, key)?;
+            write_texture_set(
+                device,
+                descriptor_set,
+                textures,
+                character_atlases,
+                samplers,
+                key,
+            )?;
             let slot = u32::try_from(self.resources.len())
                 .map_err(|_source| VulkanError::M2TextureSetCapacity)?;
             let handle = M2TextureSetHandle {
@@ -181,13 +198,12 @@ impl M2TextureSetRegistry {
 /// Rejects handles belonging to another renderer before allocating a pool.
 fn validate_resources(
     textures: &BlpTextureRegistry,
+    character_atlases: &CharacterAtlasTextureRegistry,
     samplers: &M2SamplerRegistry,
     sets: &[M2TextureSet],
 ) -> Result<(), VulkanError> {
     for stage in sets.iter().flat_map(M2TextureSet::stages) {
-        if textures.view(stage.texture()).is_none() {
-            return Err(VulkanError::UnknownBlpTextureHandle);
-        }
+        resolve_image_view(textures, character_atlases, stage.image())?;
         if samplers.handle(stage.sampler()).is_none() {
             return Err(VulkanError::UnknownM2SamplerHandle);
         }
@@ -200,13 +216,12 @@ fn write_texture_set(
     device: &Device,
     descriptor_set: vk::DescriptorSet,
     textures: &BlpTextureRegistry,
+    character_atlases: &CharacterAtlasTextureRegistry,
     samplers: &M2SamplerRegistry,
     set: M2TextureSet,
 ) -> Result<(), VulkanError> {
     for (binding, stage) in set.stages().iter().copied().enumerate() {
-        let image_view = textures
-            .view(stage.texture())
-            .ok_or(VulkanError::UnknownBlpTextureHandle)?;
+        let image_view = resolve_image_view(textures, character_atlases, stage.image())?;
         let sampler = samplers
             .handle(stage.sampler())
             .ok_or(VulkanError::UnknownM2SamplerHandle)?;
@@ -228,4 +243,20 @@ fn write_texture_set(
         unsafe { device.update_descriptor_sets(&[write], &[]) };
     }
     Ok(())
+}
+
+/// Resolves the exact typed image registry selected by one M2 stage.
+fn resolve_image_view(
+    textures: &BlpTextureRegistry,
+    character_atlases: &CharacterAtlasTextureRegistry,
+    image: M2TextureImageHandle,
+) -> Result<vk::ImageView, VulkanError> {
+    match image {
+        M2TextureImageHandle::Blp(handle) => textures
+            .view(handle)
+            .ok_or(VulkanError::UnknownBlpTextureHandle),
+        M2TextureImageHandle::CharacterAtlas(handle) => character_atlases
+            .view(handle)
+            .ok_or(VulkanError::UnknownCharacterAtlasTextureHandle),
+    }
 }
