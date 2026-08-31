@@ -17,6 +17,7 @@ use solarity_rendering::{
 use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
+use crate::application::player_coordinator::ResidentPlayerFrameInput;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::random::CrtRand;
@@ -202,6 +203,46 @@ pub enum RuntimeTerrainFrameError {
         /// Texture-declaration index selected through the SKIN combo table.
         texture_index: u16,
     },
+    /// An internal M2 texture slot cannot fit the decoded 16-bit domain.
+    #[error("M2 {model} texture slot {texture_index} exceeds the 16-bit format domain")]
+    M2TextureIndexCapacity {
+        /// Model containing the oversized internal slot.
+        model: AssetPath,
+        /// Unaddressable zero-based texture slot.
+        texture_index: usize,
+    },
+    /// A selected player draw/effect requires a replacement not yet supplied.
+    #[error("M2 {model} texture {texture_index} requires unresolved replacement {kind:?}")]
+    M2UnresolvedTexture {
+        /// Model containing the selected texture declaration.
+        model: AssetPath,
+        /// Zero-based texture declaration slot.
+        texture_index: usize,
+        /// Stock replacement category lacking an owner-provided source.
+        kind: solarity_asset::M2TextureKind,
+    },
+    /// A selected material escaped stock's one-or-two-stage shader domain.
+    #[error("M2 {model} draw {draw_index} resolved {stage_count} texture stages")]
+    M2TextureStageCount {
+        /// Model containing the selected material batch.
+        model: AssetPath,
+        /// Zero-based draw slot in the selected SKIN profile.
+        draw_index: usize,
+        /// Resolved stage count outside the closed shader domain.
+        stage_count: usize,
+    },
+    /// Authoritative player placement data cannot form a finite model matrix.
+    #[error("local player M2 transform is invalid")]
+    InvalidPlayerM2Transform,
+    /// A current player update has no matching placement in the GPU generation.
+    #[error("local player {guid:#018X} has no M2 placement in the current frame")]
+    MissingPlayerM2Placement {
+        /// Controlled player GUID absent from the M2 frame.
+        guid: u64,
+    },
+    /// Camera presentation exists without the corresponding resident M2 input.
+    #[error("local player camera has no resident M2 frame input")]
+    MissingPlayerM2FrameInput,
     /// A selected M2 animation no longer resolves through its validated aliases.
     #[error("M2 {model} selected absent animation sequence {sequence}")]
     M2SequenceIndex {
@@ -320,6 +361,7 @@ impl TerrainFrame {
         world_model_base_mip: WorldModelBaseMip,
         random: &mut CrtRand,
         particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
+        player: Option<ResidentPlayerFrameInput<'_>>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -397,11 +439,13 @@ impl TerrainFrame {
             )?);
         }
 
+        let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
+        m2.replace_player(renderer, player, random)?;
         Ok(Self {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
-            m2: M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?,
+            m2,
             world_models: WorldModelFrame::prepare(
                 renderer,
                 world_models,
@@ -416,6 +460,7 @@ impl TerrainFrame {
     /// The visible packet buffer is retained across frames. An empty result is
     /// still presented as a cleared world attachment; looking away from the
     /// resident ADT is valid camera state, not a rendering failure.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
@@ -424,6 +469,7 @@ impl TerrainFrame {
         camera: WorldCameraFrame,
         global_animation_time_ms: f32,
         random: &mut CrtRand,
+        player: ResidentPlayerFrameInput<'_>,
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -473,6 +519,7 @@ impl TerrainFrame {
             environment.world_model_emissive(),
             light.fog_color(),
         )?;
+        self.m2.update_player_transform(player)?;
         let local_animation_time_ms = self.m2.animation_time_ms();
         let m2 = self.m2.prepare_visible_draws(
             renderer,
@@ -495,6 +542,16 @@ impl TerrainFrame {
             m2.ribbon_vertices,
             m2.ribbon_draws,
         )?)
+    }
+
+    /// Rebuilds only the player-owned source after appearance customization.
+    pub(super) fn replace_player(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        player: Option<ResidentPlayerFrameInput<'_>>,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2.replace_player(renderer, player, random)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
-    CharacterAppearanceCatalog, CreatureCatalog, DecodedM2Model, M2ModelCache,
-    ParticleColorCatalog,
+    CharacterAppearanceCatalog, CreatureCatalog, DecodedM2Model, HelmetGeosetVisibilityCatalog,
+    M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
-use solarity_ecs::{ActiveWorld, WorldStateError};
+use solarity_ecs::{ActiveWorld, WorldStateError, WorldTransform};
 use solarity_rendering::{
-    CharacterAtlasTexture, CharacterTextureComposeError, CharacterTexturePlan,
+    CharacterAtlasTexture, CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError,
+    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
     CharacterTexturePlanError, M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
@@ -43,6 +44,15 @@ pub enum RuntimePlayerError {
     /// Planned character texture layers could not form the complete body atlas.
     #[error(transparent)]
     CharacterTextureCompose(#[from] CharacterTextureComposeError),
+    /// Resolved customization could not form stock's body-geoset mask.
+    #[error(transparent)]
+    CharacterGeosetPlan(#[from] CharacterGeosetPlanError),
+    /// A hardcoded model texture declaration omitted its required BLP path.
+    #[error("player M2 {model} has a hardcoded texture without a filename")]
+    MissingHardcodedTexturePath {
+        /// Model containing the invalid declaration.
+        model: AssetPath,
+    },
     /// The local player resolved without the character-only appearance join.
     #[error("local player {guid:#018X} has no character appearance")]
     MissingCharacterAppearance {
@@ -69,6 +79,7 @@ pub struct RuntimePlayerPresentation {
     assets: AssetStoreHandle,
     creatures: CreatureCatalog,
     characters: CharacterAppearanceCatalog,
+    helmet_visibility: HelmetGeosetVisibilityCatalog,
     particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
     textures: BlpTextureCache,
@@ -82,12 +93,14 @@ impl RuntimePlayerPresentation {
         assets: AssetStoreHandle,
         creatures: CreatureCatalog,
         characters: CharacterAppearanceCatalog,
+        helmet_visibility: HelmetGeosetVisibilityCatalog,
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
             assets,
             creatures,
             characters,
+            helmet_visibility,
             particle_colors,
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
@@ -133,17 +146,28 @@ impl RuntimePlayerPresentation {
         let character = appearance
             .character()
             .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
+        let class_id = appearance
+            .player_class_id()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
         let texture_plan = CharacterTexturePlan::base(character)?;
+        let geosets = CharacterGeosetPlan::equipped(
+            character,
+            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            std::iter::empty(),
+        )?;
         if self.resident.as_ref().is_some_and(|resident| {
             resident.guid == guid
                 && resident.path() == path
                 && resident.object_scale == scale
                 && resident.particle_color_id == particle_color_id
                 && resident.texture_plan == texture_plan
+                && resident.geosets == geosets
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
             if let Some(resident) = self.resident.as_mut() {
+                resident.world_transform = transform;
                 resident.camera_pose =
                     resolve_player_camera_pose(transform, view, resident.camera_height)?;
             }
@@ -156,6 +180,13 @@ impl RuntimePlayerPresentation {
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        let textures = prepare_model_textures(
+            &model,
+            hair.as_ref(),
+            extra_skin.as_ref(),
+            &mut assets,
+            &mut self.textures,
+        )?;
         drop(assets);
         let camera_height = resolve_model_camera_subject_height(&model, scale)?;
         let camera_pose = resolve_player_camera_pose(
@@ -171,9 +202,12 @@ impl RuntimePlayerPresentation {
             particle_color_id,
             particle_colors,
             texture_plan,
+            geosets,
             atlas,
             hair,
             extra_skin,
+            textures,
+            world_transform: world.local_player_transform()?,
             camera_height,
             camera_pose,
             model,
@@ -233,6 +267,13 @@ impl RuntimePlayerPresentation {
             .and_then(|resident| resident.extra_skin.as_ref())
     }
 
+    /// Returns the complete player-frame input without exposing mutable residency.
+    pub(super) fn resident_frame_input(&self) -> Option<ResidentPlayerFrameInput<'_>> {
+        self.resident
+            .as_ref()
+            .map(ResidentPlayerFrameInput::from_resident)
+    }
+
     /// Returns the authored and stock-clamped camera pivot height.
     #[must_use]
     pub fn camera_subject_height(&self) -> Option<CameraSubjectHeight> {
@@ -279,12 +320,84 @@ struct ResidentPlayerModel {
     particle_color_id: u32,
     particle_colors: Option<M2ParticleColorReplacement>,
     texture_plan: CharacterTexturePlan,
+    geosets: CharacterGeosetPlan,
     atlas: CharacterAtlasTexture,
     hair: Option<Arc<BlpTextureSource>>,
     extra_skin: Option<Arc<BlpTextureSource>>,
+    textures: Vec<ResidentPlayerTexture>,
+    world_transform: WorldTransform,
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
+}
+
+/// One player M2 texture declaration after customization resolution.
+pub(super) enum ResidentPlayerTexture {
+    /// A concrete BLP selected through ordinary archive precedence.
+    Authored(Arc<BlpTextureSource>),
+    /// The placement-owned body atlas produced by stock composition.
+    BodyAtlas,
+    /// A replacement category not supplied by the naked body presentation.
+    Unresolved(M2TextureKind),
+}
+
+/// Borrowed immutable inputs required to publish the resident player M2.
+pub(super) struct ResidentPlayerFrameInput<'a> {
+    guid: u64,
+    model: &'a Arc<DecodedM2Model>,
+    textures: &'a [ResidentPlayerTexture],
+    atlas: &'a CharacterAtlasTexture,
+    geosets: &'a CharacterGeosetPlan,
+    world_transform: WorldTransform,
+    object_scale: f32,
+    particle_colors: Option<&'a M2ParticleColorReplacement>,
+}
+
+impl<'a> ResidentPlayerFrameInput<'a> {
+    fn from_resident(resident: &'a ResidentPlayerModel) -> Self {
+        Self {
+            guid: resident.guid,
+            model: &resident.model,
+            textures: &resident.textures,
+            atlas: &resident.atlas,
+            geosets: &resident.geosets,
+            world_transform: resident.world_transform,
+            object_scale: resident.object_scale,
+            particle_colors: resident.particle_colors.as_ref(),
+        }
+    }
+
+    pub(super) const fn guid(&self) -> u64 {
+        self.guid
+    }
+
+    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+        self.model
+    }
+
+    pub(super) const fn textures(&self) -> &[ResidentPlayerTexture] {
+        self.textures
+    }
+
+    pub(super) const fn atlas(&self) -> &CharacterAtlasTexture {
+        self.atlas
+    }
+
+    pub(super) const fn geosets(&self) -> &CharacterGeosetPlan {
+        self.geosets
+    }
+
+    pub(super) const fn world_transform(&self) -> WorldTransform {
+        self.world_transform
+    }
+
+    pub(super) const fn object_scale(&self) -> f32 {
+        self.object_scale
+    }
+
+    pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
+        self.particle_colors
+    }
 }
 
 /// Loads one optional character replacement without inventing a substitute.
@@ -294,6 +407,46 @@ fn load_optional_texture(
     textures: &mut BlpTextureCache,
 ) -> Result<Option<Arc<BlpTextureSource>>, AssetError> {
     path.map(|path| textures.load(assets, path)).transpose()
+}
+
+/// Resolves every body-model texture slot without inventing equipment inputs.
+fn prepare_model_textures(
+    model: &DecodedM2Model,
+    hair: Option<&Arc<BlpTextureSource>>,
+    extra_skin: Option<&Arc<BlpTextureSource>>,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<Vec<ResidentPlayerTexture>, RuntimePlayerError> {
+    model
+        .textures()
+        .iter()
+        .map(|texture| match texture.kind() {
+            M2TextureKind::Hardcoded => {
+                let path = texture.filename().ok_or_else(|| {
+                    RuntimePlayerError::MissingHardcodedTexturePath {
+                        model: model.path().clone(),
+                    }
+                })?;
+                Ok(ResidentPlayerTexture::Authored(
+                    textures.load(assets, path)?,
+                ))
+            }
+            M2TextureKind::Body => Ok(ResidentPlayerTexture::BodyAtlas),
+            // Build-12340 CCharacterComponent binds its resolved hair image to
+            // special texture slot 6. Every stock playable body M2 authors
+            // that slot as Environment; the generic type-7 Hair category is
+            // not a substitute.
+            M2TextureKind::Environment => Ok(hair.map_or(
+                ResidentPlayerTexture::Unresolved(M2TextureKind::Environment),
+                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
+            )),
+            M2TextureKind::SkinExtra => Ok(extra_skin.map_or(
+                ResidentPlayerTexture::Unresolved(M2TextureKind::SkinExtra),
+                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
+            )),
+            kind => Ok(ResidentPlayerTexture::Unresolved(kind)),
+        })
+        .collect()
 }
 
 impl ResidentPlayerModel {

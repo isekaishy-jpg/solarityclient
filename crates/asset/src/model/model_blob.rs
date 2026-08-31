@@ -374,6 +374,7 @@ fn decode_textures(
         };
         let filename_ref = array_ref(path, bytes, offset + 8, "texture filename")?;
         let filename = decode_c_string(path, bytes, filename_ref, "texture filename")?
+            .filter(|filename| !filename.is_empty())
             .map(AssetPath::new)
             .transpose()
             .map_err(|source| {

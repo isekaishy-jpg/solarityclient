@@ -1265,6 +1265,42 @@ fn invalid_m2_texture_type_has_no_compatibility_fallback() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Stock replacement slots may encode one NUL byte instead of a zero array.
+#[test]
+fn empty_m2_replacement_filename_decodes_as_absent() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("EmptyReplacement", 1)?;
+    let texture_offset = m2_array_offset(&model, 0x50)?;
+    let replacement_offset = texture_offset + 16;
+    let empty_name_offset = u32::try_from(model.len())?;
+    model[replacement_offset + 8..replacement_offset + 12].copy_from_slice(&1_u32.to_le_bytes());
+    model[replacement_offset + 12..replacement_offset + 16]
+        .copy_from_slice(&empty_name_offset.to_le_bytes());
+    model.push(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Character\\Solarity\\EmptyReplacement.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Character\\Solarity\\EmptyReplacement00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Character/Solarity/EmptyReplacement.m2")?;
+
+    let decoded = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(decoded.textures()[1].kind(), M2TextureKind::Monster1);
+    assert_eq!(decoded.textures()[1].filename(), None);
+    Ok(())
+}
+
 /// Every external profile named by the WotLK M2 header is mandatory.
 #[test]
 fn absent_external_skin_is_reported_at_its_derived_stock_path() -> Result<(), Box<dyn Error>> {

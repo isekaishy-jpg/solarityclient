@@ -73,6 +73,7 @@ fn player_model_resolution_joins_stock_ecs_and_dbc_keys() -> Result<(), Box<dyn 
     assert_eq!(resolved.guid(), guid);
     assert_eq!(resolved.object_scale(), 1.25);
     assert_eq!(resolved.native_display_id(), 20_001);
+    assert_eq!(resolved.player_class_id(), Some(6));
     assert_eq!(
         resolved.body().model_path().as_str(),
         "CHARACTER\\HUMAN\\MALE\\HUMANMALE.M2"

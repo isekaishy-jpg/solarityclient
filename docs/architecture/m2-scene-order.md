@@ -53,5 +53,14 @@ The runtime now shares transparent mesh order across every resident world M2
 placement and performs runtime-alpha pipeline promotion. Pass-zero meshes
 retain collection order until their compatible grouping comparator is carried
 alongside ribbons, particles, and callbacks into one unified world scene queue.
-That later step must not duplicate decoded or GPU-resident HD replacement
-assets; only small per-instance scene elements and animation state are mutable.
+
+The local player's body is another placement in this same M2 frame. It shares
+the decoded M2/SKIN mesh and archive-backed hardcoded BLP identities while
+owning its transform, animation clock, particle/ribbon histories, particle
+color replacement, geoset visibility, and composed body atlas. Authoritative
+movement updates only the placement matrix. A customization generation replaces
+only the player source; it does not rebuild terrain M2s or duplicate same-path
+HD replacement assets.
+
+Pass-zero compatible grouping, attachment/equipment models, and the remaining
+callback producers still need to enter the final unified scene queue.

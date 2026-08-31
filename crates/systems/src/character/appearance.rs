@@ -16,6 +16,7 @@ pub struct UnitModelAppearance<'catalog> {
     native_display_id: u32,
     body: CreatureModelAppearance<'catalog>,
     character: Option<CharacterModelAppearance<'catalog>>,
+    player_class_id: Option<u8>,
     mount: Option<CreatureModelAppearance<'catalog>>,
 }
 
@@ -48,6 +49,12 @@ impl UnitModelAppearance<'_> {
     #[must_use]
     pub const fn character(&self) -> Option<&CharacterModelAppearance<'_>> {
         self.character.as_ref()
+    }
+
+    /// Returns the authoritative player class used by character geoset rules.
+    #[must_use]
+    pub const fn player_class_id(&self) -> Option<u8> {
+        self.player_class_id
     }
 
     /// Returns the active mount model when `UNIT_FIELD_MOUNTDISPLAYID` is nonzero.
@@ -153,7 +160,7 @@ pub fn resolve_unit_model<'catalog>(
     } else {
         Some(creatures.resolve_model(presentation.mount_display_id())?)
     };
-    let character = if kind == ObjectKind::Player {
+    let (character, player_class_id) = if kind == ObjectKind::Player {
         let identity = world
             .storage()
             .get::<&UnitIdentity>(entity)
@@ -171,13 +178,16 @@ pub fn resolve_unit_model<'catalog>(
             appearance.hair_color_id(),
             appearance.facial_hair_style_id(),
         );
-        Some(characters.resolve_player(
-            u32::from(identity.race_id()),
-            u32::from(identity.gender_id()),
-            customization,
-        )?)
+        (
+            Some(characters.resolve_player(
+                u32::from(identity.race_id()),
+                u32::from(identity.gender_id()),
+                customization,
+            )?),
+            Some(identity.class_id()),
+        )
     } else {
-        None
+        (None, None)
     };
 
     Ok(UnitModelAppearance {
@@ -186,6 +196,7 @@ pub fn resolve_unit_model<'catalog>(
         native_display_id: presentation.native_display_id(),
         body,
         character,
+        player_class_id,
         mount,
     })
 }

@@ -43,7 +43,9 @@ A character body does not bind one authored body BLP. Build 12340 composes the
 resolved skin, face, facial-hair, hair-detail, underwear, and equipped-item
 layers into a placement-owned 256-by-256 RGBA8 mip chain. That dynamic atlas
 replaces M2 texture type 1. Authored hair and extra-skin BLPs remain separate
-shared sources for replacement types 7 and 8.
+shared sources for character special-texture slots 6 and 8. Stock playable body
+M2s label slot 6 with the generic `Environment` texture category; the character
+component still binds its resolved hair image there.
 
 Runtime player residency keys this composition by the complete resolved
 texture plan, not only by the body M2 path. A customization change can therefore

@@ -125,6 +125,11 @@ colors untouched. The executable deliberately substitutes packed green for a
 missing nonzero row; Solarity retains that diagnostic behavior without
 applying it to static ADT or WMO doodads.
 
+The resident local-player placement carries its display-selected replacement
+into the same particle mesh path as world placements. Static placements retain
+`None`; the shared decoded emitter and `ParticleColor.dbc` catalog are never
+mutated.
+
 Under flag `0x10000000`, the 16-bit texture field contains three five-bit model
 texture indices. Otherwise it is one ordinary index. Admission expands and
 validates the applicable representation instead of assuming every emitter has

@@ -4,18 +4,21 @@ use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_asset::{DecodedM2Model, M2ParticleEmitter};
+use solarity_ecs::WorldTransform;
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
-    M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2ParticleMeshPlan, M2ParticlePipelineHandle, M2ParticlePose,
-    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable,
-    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
+    BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterGeosetPlan,
+    M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount, M2MaterialPose, M2MaterialState,
+    M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
+    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
+    M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
+    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
+    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
     WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
 };
 
+use crate::application::player_coordinator::{ResidentPlayerFrameInput, ResidentPlayerTexture};
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
 };
@@ -42,7 +45,7 @@ struct M2GpuSource {
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
     mesh: M2MeshHandle,
-    draws: Vec<M2GpuDraw>,
+    draws: Vec<Option<M2GpuDraw>>,
     particles: Vec<M2GpuParticle>,
     ribbons: Vec<Vec<M2GpuRibbonPass>>,
 }
@@ -77,12 +80,32 @@ struct M2TransparentDraw {
 struct M2GpuPlacement {
     source_index: usize,
     transform: Mat4,
-    owner: ResidentM2Owner,
+    owner: M2GpuPlacementOwner,
     flags: u16,
     color: [u8; 4],
+    particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2Playback>,
     particles: Vec<M2ParticleSimulation>,
     ribbons: Vec<M2RibbonTrail>,
+}
+
+/// Placement category retained for diagnostics and player replacement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum M2GpuPlacementOwner {
+    /// An ADT or WMO owner from the resident terrain generation.
+    Static(ResidentM2Owner),
+    /// The one authoritative character controlled by this client.
+    Player { guid: u64 },
+}
+
+/// One texture slot resolved for this exact source/placement generation.
+enum M2ResolvedTexture<'source> {
+    /// A shared authored BLP selected through archive precedence.
+    Authored(&'source solarity_asset::BlpTextureSource),
+    /// A dynamic body image composed for one character placement.
+    CharacterAtlas(&'source CharacterAtlasTexture),
+    /// A replacement category not supplied by this presentation owner.
+    Unresolved(solarity_asset::M2TextureKind),
 }
 
 /// Per-instance sequence state retained by stock's `CM2Model` owner.
@@ -251,9 +274,10 @@ impl M2Frame {
             placements.push(M2GpuPlacement {
                 source_index: placement.source_index(),
                 transform: placement.transform(),
-                owner: placement.owner(),
+                owner: M2GpuPlacementOwner::Static(placement.owner()),
                 flags: placement.flags(),
                 color: placement.color(),
+                particle_colors: None,
                 playback,
                 particles,
                 ribbons,
@@ -276,6 +300,103 @@ impl M2Frame {
         })
     }
 
+    /// Replaces the one player-owned source and placement transactionally.
+    pub(super) fn replace_player(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        input: Option<ResidentPlayerFrameInput<'_>>,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(input) = input else {
+            self.remove_player();
+            return Ok(());
+        };
+        let resolved = input
+            .textures()
+            .iter()
+            .map(|texture| match texture {
+                ResidentPlayerTexture::Authored(source) => {
+                    M2ResolvedTexture::Authored(source.as_ref())
+                }
+                ResidentPlayerTexture::BodyAtlas => {
+                    M2ResolvedTexture::CharacterAtlas(input.atlas())
+                }
+                ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
+            })
+            .collect::<Vec<_>>();
+        let source = prepare_gpu_source(renderer, input.model(), &resolved, Some(input.geosets()))?;
+        let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
+        let playback = M2Playback::new(input.model(), random)?;
+        let particles = input
+            .model()
+            .animations()
+            .particles()
+            .iter()
+            .map(|_emitter| {
+                let first = u32::from(random.next_u15());
+                let second = u32::from(random.next_u15());
+                M2ParticleSimulation::new(first << 16 | second)
+            })
+            .collect();
+        let ribbons = input
+            .model()
+            .animations()
+            .ribbons()
+            .iter()
+            .map(M2RibbonTrail::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.remove_player();
+        let source_index = self.sources.len();
+        self.sources.push(Some(source));
+        self.placements.push(M2GpuPlacement {
+            source_index,
+            transform,
+            owner: M2GpuPlacementOwner::Player { guid: input.guid() },
+            flags: 0,
+            color: [255; 4],
+            particle_colors: input.particle_colors().cloned(),
+            playback,
+            particles,
+            ribbons,
+        });
+        Ok(())
+    }
+
+    /// Updates authoritative player movement without rebuilding shared resources.
+    pub(super) fn update_player_transform(
+        &mut self,
+        input: ResidentPlayerFrameInput<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
+        let placement = self
+            .placements
+            .iter_mut()
+            .find(|placement| {
+                placement.owner == (M2GpuPlacementOwner::Player { guid: input.guid() })
+            })
+            .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
+        placement.transform = transform;
+        Ok(())
+    }
+
+    /// Drops local references to the previous player generation.
+    fn remove_player(&mut self) {
+        let mut player_sources = Vec::new();
+        self.placements.retain(|placement| {
+            if matches!(placement.owner, M2GpuPlacementOwner::Player { .. }) {
+                player_sources.push(placement.source_index);
+                false
+            } else {
+                true
+            }
+        });
+        for source_index in player_sources {
+            if let Some(source) = self.sources.get_mut(source_index) {
+                *source = None;
+            }
+        }
+    }
+
     /// Returns the number of selected shared M2 GPU generations.
     pub(super) fn mesh_count(&self) -> usize {
         for source in self.sources.iter().flatten() {
@@ -288,7 +409,7 @@ impl M2Frame {
                 decoded_path = %source.model.path(),
                 "shared M2 entered renderer generation"
             );
-            for draw in &source.draws {
+            for draw in source.draws.iter().flatten() {
                 tracing::trace!(
                     pipeline = ?draw.pipeline,
                     texture_set = ?draw.texture_set,
@@ -434,7 +555,7 @@ impl M2Frame {
                 } else {
                     Mat4::IDENTITY
                 };
-                let mesh = M2ParticleMeshPlan::prepare_transformed_with_twinkle_table(
+                let mesh = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
                     emitter,
                     pose,
                     simulation.particles(),
@@ -442,6 +563,7 @@ impl M2Frame {
                     particle_to_world,
                     placement_color(placement.color).w,
                     &self.particle_twinkle,
+                    placement.particle_colors.as_ref(),
                 )?;
                 let first_vertex =
                     u32::try_from(self.particle_vertices.len()).map_err(|_source| {
@@ -481,6 +603,9 @@ impl M2Frame {
             let instance_color = placement_color(placement.color);
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             for (draw_index, resources) in source.draws.iter().enumerate() {
+                let Some(resources) = resources else {
+                    continue;
+                };
                 let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
                 let draw = &source.plan.draws()[draw_index];
                 let material_state = M2MaterialState::from_material(draw.material());
@@ -721,6 +846,27 @@ fn placement_color(color: [u8; 4]) -> glam::Vec4 {
     )
 }
 
+/// Converts authoritative unit movement into the character's model matrix.
+fn player_placement_transform(
+    transform: WorldTransform,
+    object_scale: f32,
+) -> Result<Mat4, RuntimeTerrainFrameError> {
+    if !transform.position().is_finite()
+        || !transform.orientation().is_finite()
+        || !object_scale.is_finite()
+        || object_scale <= 0.0
+    {
+        return Err(RuntimeTerrainFrameError::InvalidPlayerM2Transform);
+    }
+    let matrix = Mat4::from_translation(transform.position())
+        * Mat4::from_rotation_z(transform.orientation())
+        * Mat4::from_scale(glam::Vec3::splat(object_scale));
+    if !matrix.is_finite() || matrix.determinant().abs() <= f32::EPSILON {
+        return Err(RuntimeTerrainFrameError::InvalidPlayerM2Transform);
+    }
+    Ok(matrix)
+}
+
 /// Publishes a source only when every selected draw has concrete BLP stages.
 fn prepare_source(
     renderer: &mut VulkanRenderer,
@@ -734,17 +880,24 @@ fn prepare_source(
             model_count: model.textures().len(),
         });
     }
+    let resolved = source
+        .textures()
+        .iter()
+        .map(|texture| match texture {
+            ResidentM2Texture::Authored(source) => M2ResolvedTexture::Authored(source.as_ref()),
+            ResidentM2Texture::Replaceable(kind) => M2ResolvedTexture::Unresolved(*kind),
+        })
+        .collect::<Vec<_>>();
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     for draw in plan.draws() {
         for binding in draw.texture_bindings() {
-            let texture = source
-                .textures()
+            let texture = resolved
                 .get(usize::from(binding.texture_index()))
                 .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
                     model: model.path().clone(),
                     texture_index: binding.texture_index(),
                 })?;
-            if let ResidentM2Texture::Replaceable(kind) = texture {
+            if let M2ResolvedTexture::Unresolved(kind) = texture {
                 tracing::debug!(
                     path = %model.path(),
                     ?kind,
@@ -756,14 +909,13 @@ fn prepare_source(
     }
     for emitter in model.animations().ribbons() {
         for texture_index in emitter.texture_indices() {
-            let texture = source
-                .textures()
-                .get(usize::from(*texture_index))
-                .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+            let texture = resolved.get(usize::from(*texture_index)).ok_or_else(|| {
+                RuntimeTerrainFrameError::M2TextureIndex {
                     model: model.path().clone(),
                     texture_index: *texture_index,
-                })?;
-            if let ResidentM2Texture::Replaceable(kind) = texture {
+                }
+            })?;
+            if let M2ResolvedTexture::Unresolved(kind) = texture {
                 tracing::debug!(
                     path = %model.path(),
                     ?kind,
@@ -775,14 +927,13 @@ fn prepare_source(
     }
     for (particle_index, emitter) in model.animations().particles().iter().enumerate() {
         let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
-        let texture = source
-            .textures()
-            .get(usize::from(texture_index))
-            .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+        let texture = resolved.get(usize::from(texture_index)).ok_or_else(|| {
+            RuntimeTerrainFrameError::M2TextureIndex {
                 model: model.path().clone(),
                 texture_index,
-            })?;
-        if let ResidentM2Texture::Replaceable(kind) = texture {
+            }
+        })?;
+        if let M2ResolvedTexture::Unresolved(kind) = texture {
             tracing::debug!(
                 path = %model.path(),
                 particle_index,
@@ -792,11 +943,29 @@ fn prepare_source(
             return Ok(None);
         }
     }
+    Ok(Some(prepare_gpu_source(renderer, model, &resolved, None)?))
+}
 
+/// Publishes immutable model resources using one owner's resolved texture table.
+fn prepare_gpu_source(
+    renderer: &mut VulkanRenderer,
+    model: &Arc<DecodedM2Model>,
+    textures: &[M2ResolvedTexture<'_>],
+    geosets: Option<&CharacterGeosetPlan>,
+) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
+    if textures.len() != model.textures().len() {
+        return Err(RuntimeTerrainFrameError::M2TextureTableCount {
+            model: model.path().clone(),
+            source_count: textures.len(),
+            model_count: model.textures().len(),
+        });
+    }
+    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
+    validate_gpu_texture_coverage(model, &plan, textures, geosets)?;
     let mut upload_indices = Vec::new();
     let mut uploads = Vec::new();
-    for (texture_index, texture) in source.textures().iter().enumerate() {
-        if let ResidentM2Texture::Authored(source_texture) = texture {
+    for (texture_index, texture) in textures.iter().enumerate() {
+        if let M2ResolvedTexture::Authored(source_texture) = texture {
             upload_indices.push(texture_index);
             uploads.push(BlpTextureUploadRequest::new(
                 source_texture,
@@ -805,15 +974,32 @@ fn prepare_source(
         }
     }
     let uploaded = renderer.upload_blp_textures(&uploads)?;
-    let mut texture_handles = vec![None; source.textures().len()];
+    let mut texture_handles = vec![None; textures.len()];
     for (texture_index, handle) in upload_indices.into_iter().zip(uploaded) {
-        texture_handles[texture_index] = Some(handle);
+        texture_handles[texture_index] = Some(M2TextureImageHandle::Blp(handle));
+    }
+    let mut atlas_handle = None;
+    for (texture_index, texture) in textures.iter().enumerate() {
+        if let M2ResolvedTexture::CharacterAtlas(atlas) = texture {
+            let handle = match atlas_handle {
+                Some(handle) => handle,
+                None => {
+                    let handle = renderer.upload_character_atlas_texture(atlas)?;
+                    atlas_handle = Some(handle);
+                    handle
+                }
+            };
+            texture_handles[texture_index] = Some(M2TextureImageHandle::CharacterAtlas(handle));
+        }
     }
 
     let mesh = renderer.upload_m2_mesh(&plan)?;
     let mut texture_requests = Vec::with_capacity(plan.draws().len());
     let mut pipelines = Vec::with_capacity(plan.draws().len());
-    for draw in plan.draws() {
+    for (draw_index, draw) in plan.draws().iter().enumerate() {
+        if geosets.is_some_and(|geosets| !geosets.is_visible(draw.geoset_id())) {
+            continue;
+        }
         let shader = M2ShaderPlan::resolve(model, draw)?;
         let permutation = M2ShaderPermutation::resolve(
             draw,
@@ -828,57 +1014,39 @@ fn prepare_source(
         } else {
             Some(renderer.prepare_m2_pipeline(shader.with_runtime_alpha_fade(), permutation)?)
         };
-        pipelines.push((pipeline, runtime_fade_pipeline));
+        pipelines.push((draw_index, pipeline, runtime_fade_pipeline));
 
         let mut stages = Vec::with_capacity(draw.texture_bindings().len());
         for binding in draw.texture_bindings() {
             let texture_index = usize::from(binding.texture_index());
-            let ResidentM2Texture::Authored(_source_texture) = &source.textures()[texture_index]
-            else {
-                unreachable!("selected replacement textures returned before GPU preparation");
-            };
-            let texture = texture_handles[texture_index].ok_or_else(|| {
-                RuntimeTerrainFrameError::M2TextureIndex {
-                    model: model.path().clone(),
-                    texture_index: binding.texture_index(),
-                }
-            })?;
+            let texture = require_texture_handle(model, textures, &texture_handles, texture_index)?;
             let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_index])?;
-            stages.push(M2SampledTexture::new(texture, sampler));
+            stages.push(sampled_texture(texture, sampler));
         }
-        texture_requests.push(match stages.as_slice() {
-            [stage] => M2TextureSet::One(*stage),
-            [first, second] => M2TextureSet::Two([*first, *second]),
-            _ => unreachable!("stock shader resolution accepts only one or two stages"),
-        });
+        texture_requests.push(texture_set(model, draw_index, &stages)?);
     }
     let texture_sets = renderer.prepare_m2_texture_sets(&texture_requests)?;
-    let draws = pipelines
-        .into_iter()
-        .zip(texture_sets)
-        .map(
-            |((pipeline, runtime_fade_pipeline), texture_set)| M2GpuDraw {
-                pipeline,
-                runtime_fade_pipeline,
-                texture_set,
-            },
-        )
-        .collect();
+    let mut draws = Vec::with_capacity(plan.draws().len());
+    draws.resize_with(plan.draws().len(), || None);
+    for ((draw_index, pipeline, runtime_fade_pipeline), texture_set) in
+        pipelines.into_iter().zip(texture_sets)
+    {
+        draws[draw_index] = Some(M2GpuDraw {
+            pipeline,
+            runtime_fade_pipeline,
+            texture_set,
+        });
+    }
     let mut particle_pipelines = Vec::with_capacity(model.animations().particles().len());
     let mut particle_texture_requests = Vec::with_capacity(model.animations().particles().len());
     for (particle_index, emitter) in model.animations().particles().iter().enumerate() {
         let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
         let texture_slot = usize::from(texture_index);
-        let texture = texture_handles[texture_slot].ok_or_else(|| {
-            RuntimeTerrainFrameError::M2TextureIndex {
-                model: model.path().clone(),
-                texture_index,
-            }
-        })?;
+        let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
         let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
         particle_pipelines
             .push(renderer.prepare_m2_particle_pipeline(emitter.blending_type(), emitter.flags())?);
-        particle_texture_requests.push(M2TextureSet::One(M2SampledTexture::new(texture, sampler)));
+        particle_texture_requests.push(M2TextureSet::One(sampled_texture(texture, sampler)));
     }
     let particle_texture_sets = renderer.prepare_m2_texture_sets(&particle_texture_requests)?;
     let particles = particle_pipelines
@@ -902,15 +1070,10 @@ fn prepare_source(
             let material = model.materials()[usize::from(material_index)];
             let pipeline = renderer.prepare_m2_ribbon_pipeline(material)?;
             let texture_slot = usize::from(texture_index);
-            let texture = texture_handles[texture_slot].ok_or_else(|| {
-                RuntimeTerrainFrameError::M2TextureIndex {
-                    model: model.path().clone(),
-                    texture_index,
-                }
-            })?;
+            let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
             let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
             pass_pipelines.push((pipeline, material));
-            pass_textures.push(M2TextureSet::One(M2SampledTexture::new(texture, sampler)));
+            pass_textures.push(M2TextureSet::One(sampled_texture(texture, sampler)));
         }
         let texture_sets = renderer.prepare_m2_texture_sets(&pass_textures)?;
         ribbons.push(
@@ -925,14 +1088,138 @@ fn prepare_source(
                 .collect(),
         );
     }
-    Ok(Some(M2GpuSource {
+    Ok(M2GpuSource {
         model: Arc::clone(model),
         plan,
         mesh,
         draws,
         particles,
         ribbons,
-    }))
+    })
+}
+
+/// Rejects selected holes before any renderer registry mutates.
+fn validate_gpu_texture_coverage(
+    model: &DecodedM2Model,
+    plan: &M2MeshPlan,
+    textures: &[M2ResolvedTexture<'_>],
+    geosets: Option<&CharacterGeosetPlan>,
+) -> Result<(), RuntimeTerrainFrameError> {
+    for draw in plan.draws() {
+        if geosets.is_some_and(|geosets| !geosets.is_visible(draw.geoset_id())) {
+            continue;
+        }
+        for binding in draw.texture_bindings() {
+            require_resolved_texture(model, textures, usize::from(binding.texture_index()))?;
+        }
+    }
+    for emitter in model.animations().ribbons() {
+        for texture_index in emitter.texture_indices() {
+            require_resolved_texture(model, textures, usize::from(*texture_index))?;
+        }
+    }
+    for (particle_index, emitter) in model.animations().particles().iter().enumerate() {
+        let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
+        require_resolved_texture(model, textures, usize::from(texture_index))?;
+    }
+    Ok(())
+}
+
+/// Verifies that one selected slot has an owner-provided image source.
+fn require_resolved_texture(
+    model: &DecodedM2Model,
+    textures: &[M2ResolvedTexture<'_>],
+    texture_index: usize,
+) -> Result<(), RuntimeTerrainFrameError> {
+    match textures.get(texture_index) {
+        Some(M2ResolvedTexture::Authored(_) | M2ResolvedTexture::CharacterAtlas(_)) => Ok(()),
+        Some(M2ResolvedTexture::Unresolved(kind)) => {
+            Err(RuntimeTerrainFrameError::M2UnresolvedTexture {
+                model: model.path().clone(),
+                texture_index,
+                kind: *kind,
+            })
+        }
+        None => {
+            let texture_index = u16::try_from(texture_index).map_err(|_source| {
+                RuntimeTerrainFrameError::M2TextureIndexCapacity {
+                    model: model.path().clone(),
+                    texture_index,
+                }
+            })?;
+            Err(RuntimeTerrainFrameError::M2TextureIndex {
+                model: model.path().clone(),
+                texture_index,
+            })
+        }
+    }
+}
+
+/// Requires one resolved image handle for a selected visible/effect texture.
+fn require_texture_handle(
+    model: &DecodedM2Model,
+    textures: &[M2ResolvedTexture<'_>],
+    handles: &[Option<M2TextureImageHandle>],
+    texture_index: usize,
+) -> Result<M2TextureImageHandle, RuntimeTerrainFrameError> {
+    let diagnostic_index = u16::try_from(texture_index).map_err(|_source| {
+        RuntimeTerrainFrameError::M2TextureIndexCapacity {
+            model: model.path().clone(),
+            texture_index,
+        }
+    })?;
+    let texture =
+        textures
+            .get(texture_index)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+                model: model.path().clone(),
+                texture_index: diagnostic_index,
+            })?;
+    match texture {
+        M2ResolvedTexture::Unresolved(kind) => Err(RuntimeTerrainFrameError::M2UnresolvedTexture {
+            model: model.path().clone(),
+            texture_index,
+            kind: *kind,
+        }),
+        M2ResolvedTexture::Authored(_) | M2ResolvedTexture::CharacterAtlas(_) => handles
+            .get(texture_index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+                model: model.path().clone(),
+                texture_index: diagnostic_index,
+            }),
+    }
+}
+
+/// Couples a typed image source to the model declaration's stock sampler.
+fn sampled_texture(
+    image: M2TextureImageHandle,
+    sampler: solarity_rendering::M2SamplerHandle,
+) -> M2SampledTexture {
+    match image {
+        M2TextureImageHandle::Blp(handle) => M2SampledTexture::new(handle, sampler),
+        M2TextureImageHandle::CharacterAtlas(handle) => {
+            M2SampledTexture::character_atlas(handle, sampler)
+        }
+    }
+}
+
+/// Closes the stock shader's one-or-two-stage material domain without panic.
+fn texture_set(
+    model: &DecodedM2Model,
+    draw_index: usize,
+    stages: &[M2SampledTexture],
+) -> Result<M2TextureSet, RuntimeTerrainFrameError> {
+    match stages {
+        [stage] => Ok(M2TextureSet::One(*stage)),
+        [first, second] => Ok(M2TextureSet::Two([*first, *second])),
+        _ => Err(RuntimeTerrainFrameError::M2TextureStageCount {
+            model: model.path().clone(),
+            draw_index,
+            stage_count: stages.len(),
+        }),
+    }
 }
 
 /// Selects the single BLP slot consumed by the ordinary particle shader.

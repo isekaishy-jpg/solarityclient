@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    LightCatalog, MapCatalog, ParticleColorCatalog,
+    HelmetGeosetVisibilityCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -90,6 +90,7 @@ impl ClientServices {
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
+        let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
@@ -174,6 +175,7 @@ impl ClientServices {
                     assets.clone(),
                     creatures,
                     characters,
+                    helmet_visibility,
                     particle_colors,
                 ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
@@ -250,6 +252,10 @@ impl ClientServices {
             self.login_ui.present(&mut self.renderer)?;
             return Ok(());
         };
+        let player = self
+            .player
+            .resident_frame_input()
+            .ok_or(RuntimeTerrainFrameError::MissingPlayerM2FrameInput)?;
         frame.present(
             &mut self.renderer,
             plan,
@@ -257,6 +263,7 @@ impl ClientServices {
             camera,
             global_animation_time_ms,
             &mut self.crt_rand,
+            player,
         )?;
         Ok(())
     }
@@ -480,8 +487,20 @@ impl ClientServices {
                         "local player model became resident"
                     );
                 }
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_player(
+                        &mut self.renderer,
+                        self.player.resident_frame_input(),
+                        &mut self.crt_rand,
+                    )?;
+                }
             }
-            RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending | RuntimePlayerPoll::Current => {}
+            RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_player(&mut self.renderer, None, &mut self.crt_rand)?;
+                }
+            }
+            RuntimePlayerPoll::Current => {}
         }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
@@ -529,6 +548,7 @@ impl ClientServices {
                     WorldModelBaseMip::Zero,
                     &mut self.crt_rand,
                     Arc::clone(&self.particle_twinkle),
+                    self.player.resident_frame_input(),
                 )?;
                 tracing::debug!(
                     tile_x = tile.x(),
