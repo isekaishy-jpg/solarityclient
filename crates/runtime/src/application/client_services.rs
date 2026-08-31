@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
-    CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    ItemVisualCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
+    AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
+    CharacterRaceCatalog, CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -89,6 +89,7 @@ impl ClientServices {
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
         let mut assets = AssetStore::mount(catalog)?;
+        let animations = AnimationDataCatalog::load(&mut assets)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
@@ -181,6 +182,7 @@ impl ClientServices {
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
                     RuntimePlayerCatalogs::new(
+                        animations,
                         creatures,
                         characters,
                         races,

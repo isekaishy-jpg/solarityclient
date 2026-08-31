@@ -11,5 +11,5 @@ mod unit_vitals;
 
 pub use unit_c::UnitIdentity;
 pub use unit_flags::UnitFlags;
-pub use unit_presentation::{UnitPresentation, UnitSheathState};
+pub use unit_presentation::{UnitAnimationTier, UnitPresentation, UnitSheathState};
 pub use unit_vitals::UnitVitals;

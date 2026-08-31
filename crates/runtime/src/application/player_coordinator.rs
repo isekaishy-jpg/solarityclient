@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use solarity_asset::{
-    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
-    CharacterAppearanceCatalog, CharacterRaceCatalog, CreatureCatalog, DecodedM2Model,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    AnimationDataCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
+    BlpTextureSource, CharacterAppearanceCatalog, CharacterRaceCatalog, CreatureCatalog,
+    DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
+    ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
     ActiveWorld, PlayerEquipmentSlot, VisibleEquipmentItem, WorldStateError, WorldTransform,
@@ -20,9 +20,10 @@ use solarity_rendering::{
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
-    PlayerEquipmentAppearanceError, UnitLocomotionAnimation, UnitModelAppearanceError,
-    resolve_model_camera_subject_height, resolve_player_camera_pose, resolve_player_equipment,
-    resolve_unit_locomotion_animation, resolve_unit_model,
+    PlayerEquipmentAppearanceError, UnitLocomotionAnimation, UnitModelAnimation,
+    UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
+    resolve_player_equipment, resolve_unit_locomotion_animation, resolve_unit_model,
+    resolve_unit_model_animation,
 };
 use thiserror::Error;
 
@@ -77,6 +78,18 @@ pub enum RuntimePlayerError {
         /// Absent `ChrRaces.dbc` identifier.
         race_id: u32,
     },
+    /// DBC fallback traversal found no animation sequence present in the M2.
+    #[error(
+        "player M2 {model} has no stock fallback for animation {animation_id} at tier {animation_tier}"
+    )]
+    MissingModelAnimation {
+        /// Model whose sequences exhausted the stock fallback path.
+        model: AssetPath,
+        /// Base AnimationData identifier selected from gameplay state.
+        animation_id: u16,
+        /// Numeric unit animation tier supplied by `UNIT_FIELD_BYTES_1`.
+        animation_tier: u8,
+    },
 }
 
 /// Observable result of one local-player presentation synchronization pass.
@@ -94,6 +107,7 @@ pub enum RuntimePlayerPoll {
 
 /// Immutable client-table dependencies used to resolve player presentation.
 pub struct RuntimePlayerCatalogs {
+    animations: AnimationDataCatalog,
     creatures: CreatureCatalog,
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
@@ -129,6 +143,7 @@ impl RuntimePlayerCatalogs {
     /// Groups the exact stock tables consumed by player presentation.
     #[must_use]
     pub fn new(
+        animations: AnimationDataCatalog,
         creatures: CreatureCatalog,
         characters: CharacterAppearanceCatalog,
         races: CharacterRaceCatalog,
@@ -137,6 +152,7 @@ impl RuntimePlayerCatalogs {
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
+            animations,
             creatures,
             characters,
             races,
@@ -150,6 +166,7 @@ impl RuntimePlayerCatalogs {
 /// Resolves ECS appearance into a shared model without putting assets in ECS.
 pub struct RuntimePlayerPresentation {
     assets: AssetStoreHandle,
+    animations: AnimationDataCatalog,
     creatures: CreatureCatalog,
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
@@ -169,6 +186,7 @@ impl RuntimePlayerPresentation {
     pub fn new(assets: AssetStoreHandle, catalogs: RuntimePlayerCatalogs) -> Self {
         Self {
             assets,
+            animations: catalogs.animations,
             creatures: catalogs.creatures,
             characters: catalogs.characters,
             races: catalogs.races,
@@ -276,13 +294,18 @@ impl RuntimePlayerPresentation {
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
-            let locomotion = world.movement_state(guid).map_or(
+            let requested_animation = world.movement_state(guid).map_or(
                 UnitLocomotionAnimation::STAND,
                 resolve_unit_locomotion_animation,
             );
             if let Some(resident) = self.resident.as_mut() {
                 resident.world_transform = transform;
-                resident.locomotion = locomotion;
+                resident.animation = resolve_player_animation(
+                    &self.animations,
+                    &resident.model,
+                    requested_animation,
+                    unit_presentation.animation_tier(),
+                )?;
                 resident.camera_pose =
                     resolve_player_camera_pose(transform, view, resident.camera_height)?;
             }
@@ -375,10 +398,16 @@ impl RuntimePlayerPresentation {
         )?;
         let particle_colors =
             M2ParticleColorReplacement::resolve(&self.particle_colors, particle_color_id);
-        let locomotion = world.movement_state(guid).map_or(
+        let requested_animation = world.movement_state(guid).map_or(
             UnitLocomotionAnimation::STAND,
             resolve_unit_locomotion_animation,
         );
+        let animation = resolve_player_animation(
+            &self.animations,
+            &model,
+            requested_animation,
+            unit_presentation.animation_tier(),
+        )?;
         self.resident = Some(ResidentPlayerModel {
             guid,
             object_scale: scale,
@@ -396,7 +425,7 @@ impl RuntimePlayerPresentation {
             textures,
             attachments,
             world_transform: world.local_player_transform()?,
-            locomotion,
+            animation,
             camera_height,
             camera_pose,
             model,
@@ -528,7 +557,7 @@ struct ResidentPlayerModel {
     textures: Vec<ResidentPlayerTexture>,
     attachments: Vec<ResidentPlayerAttachment>,
     world_transform: WorldTransform,
-    locomotion: UnitLocomotionAnimation,
+    animation: UnitModelAnimation,
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
@@ -604,7 +633,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
     atlas: &'a CharacterAtlasTexture,
     geosets: &'a CharacterGeosetPlan,
     world_transform: WorldTransform,
-    locomotion: UnitLocomotionAnimation,
+    animation: UnitModelAnimation,
     object_scale: f32,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     attachments: &'a [ResidentPlayerAttachment],
@@ -619,7 +648,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
             atlas: &resident.atlas,
             geosets: &resident.geosets,
             world_transform: resident.world_transform,
-            locomotion: resident.locomotion,
+            animation: resident.animation,
             object_scale: resident.object_scale,
             particle_colors: resident.particle_colors.as_ref(),
             attachments: &resident.attachments,
@@ -650,8 +679,8 @@ impl<'a> ResidentPlayerFrameInput<'a> {
         self.world_transform
     }
 
-    pub(super) const fn locomotion(&self) -> UnitLocomotionAnimation {
-        self.locomotion
+    pub(super) const fn animation(&self) -> UnitModelAnimation {
+        self.animation
     }
 
     pub(super) const fn object_scale(&self) -> f32 {
@@ -665,6 +694,31 @@ impl<'a> ResidentPlayerFrameInput<'a> {
     pub(super) const fn attachments(&self) -> &[ResidentPlayerAttachment] {
         self.attachments
     }
+}
+
+/// Applies stock AnimationData tier and fallback traversal to the resident M2.
+fn resolve_player_animation(
+    catalog: &AnimationDataCatalog,
+    model: &DecodedM2Model,
+    requested: UnitLocomotionAnimation,
+    tier: solarity_ecs::UnitAnimationTier,
+) -> Result<UnitModelAnimation, RuntimePlayerError> {
+    if model.animations().sequences().is_empty() {
+        // The stock resolver returns its requested ID when no sequence table is
+        // active; renderer playback likewise treats an empty table as static.
+        return Ok(UnitModelAnimation::static_request(requested));
+    }
+    let selected = resolve_unit_model_animation(catalog, requested, tier, |animation_id| {
+        model
+            .animations()
+            .available_variation_count(animation_id)
+            .is_some()
+    });
+    selected.ok_or_else(|| RuntimePlayerError::MissingModelAnimation {
+        model: model.path().clone(),
+        animation_id: requested.animation_id(),
+        animation_tier: tier as u8,
+    })
 }
 
 /// Loads one optional character replacement without inventing a substitute.

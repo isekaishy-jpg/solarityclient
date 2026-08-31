@@ -5,8 +5,8 @@ use std::error::Error;
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
-    PlayerEquipmentSlot, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
-    WorldBootstrap, WorldMapId,
+    PlayerEquipmentSlot, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
+    UnitSheathState, UnitVitals, WorldBootstrap, WorldMapId,
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
@@ -36,7 +36,7 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         (67, 20_000),
         (68, 20_001),
         (69, 14_307),
-        (74, u32::from_le_bytes([1, 0, 0, 0])),
+        (74, u32::from_le_bytes([1, 0, 0, 3])),
         (79, 0x0000_0001),
         (122, u32::from_le_bytes([1, 0x20, 0, 0])),
         (153, u32::from_le_bytes([3, 4, 5, 6])),
@@ -73,6 +73,7 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     assert_eq!(presentation.native_display_id(), 20_001);
     assert_eq!(presentation.mount_display_id(), 14_307);
     assert_eq!(presentation.stand_state(), 1);
+    assert_eq!(presentation.animation_tier(), UnitAnimationTier::Fly);
     assert_eq!(presentation.sheath_state(), UnitSheathState::Melee);
 
     let flags = *world.storage().get::<&UnitFlags>(player)?;
@@ -147,6 +148,10 @@ fn projection_requires_the_stock_create_type() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         project_object_fields(&mut world, guid, [(122, 3)]),
         Err(ObjectProjectionError::InvalidSheathState { guid, state: 3 })
+    );
+    assert_eq!(
+        project_object_fields(&mut world, guid, [(74, u32::from_le_bytes([0, 0, 0, 5]))]),
+        Err(ObjectProjectionError::InvalidAnimationTier { guid, tier: 5 })
     );
     Ok(())
 }

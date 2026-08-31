@@ -3,8 +3,10 @@
 //! This behavior is separated from movement components by the stock
 //! `Movement.cpp`, `Movement_C.cpp`, and `MovementShared.cpp` family.
 
+mod animation;
 mod movement_shared;
 mod movement_source;
 mod path;
 
+pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
 pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};

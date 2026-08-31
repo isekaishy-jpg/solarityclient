@@ -1,8 +1,9 @@
 //! Projects the stock build-12340 update table into typed ECS components.
 
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, UnitFlags,
-    UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals, VisibleEquipmentItem,
+    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
+    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
+    VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -55,6 +56,14 @@ pub enum ObjectProjectionError {
         guid: u64,
         /// Unrecognized byte zero of `UNIT_FIELD_BYTES_2`.
         state: u8,
+    },
+    /// The server supplied an animation-tier byte outside build 12340's range.
+    #[error("unit {guid:#018X} has invalid animation tier {tier}")]
+    InvalidAnimationTier {
+        /// Unit carrying the malformed byte.
+        guid: u64,
+        /// Unrecognized byte three of `UNIT_FIELD_BYTES_1`.
+        tier: u8,
     },
 }
 
@@ -139,6 +148,7 @@ where
     let mut native_display_id = unit_presentation_state.native_display_id();
     let mut mount_display_id = unit_presentation_state.mount_display_id();
     let mut stand_state = unit_presentation_state.stand_state();
+    let mut animation_tier = unit_presentation_state.animation_tier();
     let mut sheath_state = unit_presentation_state.sheath_state();
 
     let unit_flags = world
@@ -232,7 +242,10 @@ where
                 presentation_changed = true;
             }
             UNIT_FIELD_BYTES_1 if is_unit(kind) => {
-                stand_state = value.to_le_bytes()[0];
+                let bytes = value.to_le_bytes();
+                stand_state = bytes[0];
+                animation_tier = UnitAnimationTier::try_from(bytes[3])
+                    .map_err(|tier| ObjectProjectionError::InvalidAnimationTier { guid, tier })?;
                 presentation_changed = true;
             }
             UNIT_DYNAMIC_FLAGS if is_unit(kind) => {
@@ -301,6 +314,7 @@ where
                     native_display_id,
                     mount_display_id,
                     stand_state,
+                    animation_tier,
                     sheath_state,
                 ),),
             );

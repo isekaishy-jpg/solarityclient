@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlsShaderStage, ClientDataRoot, DecodedBlpTexture,
-    DecodedBlsShader, Locale, RealmCategoryCatalog, RealmConfigurationCatalog, WdbcTable,
+    AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, BlsShaderStage, ClientDataRoot,
+    DecodedBlpTexture, DecodedBlsShader, Locale, RealmCategoryCatalog, RealmConfigurationCatalog,
+    WdbcTable,
 };
 
 /// Mounts a real client archive set and reads every requested internal path.
@@ -40,6 +41,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             io::Error::new(io::ErrorKind::InvalidInput, "asset path is not UTF-8")
         })?;
         let path = AssetPath::new(requested_path)?;
+        if path.as_str() == "DBFILESCLIENT\\ANIMATIONDATA.DBC" {
+            let animations = AnimationDataCatalog::load(&mut store)?;
+            println!(
+                "{} typed animation definitions\t{}",
+                animations.definitions().len(),
+                path
+            );
+            for animation in animations.definitions() {
+                println!(
+                    "  id={} name={} weapon_flags={:#010x} body_flags={:#010x} flags={:#010x} fallback={} behavior={} tier={}",
+                    animation.id(),
+                    animation.name(),
+                    animation.weapon_flags(),
+                    animation.body_flags(),
+                    animation.flags(),
+                    animation.fallback_id(),
+                    animation.behavior_id(),
+                    animation.behavior_tier()
+                );
+            }
+            continue;
+        }
         if path.as_str() == "DBFILESCLIENT\\CFG_CATEGORIES.DBC" {
             let categories = RealmCategoryCatalog::load(&mut store)?;
             println!(

@@ -456,7 +456,7 @@ impl M2Frame {
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
             input.model(),
-            input.locomotion().animation_id(),
+            input.animation().animation_id(),
             input.particle_colors().cloned(),
             random,
         )?;
@@ -508,7 +508,7 @@ impl M2Frame {
         if let Some(playback) = placement.playback.as_mut() {
             playback.select_animation(
                 &source.model,
-                input.locomotion().animation_id(),
+                input.animation().animation_id(),
                 animation_time_ms,
                 random,
             )?;

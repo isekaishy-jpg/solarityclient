@@ -4,13 +4,13 @@ use std::error::Error;
 use std::path::Path;
 
 use solarity_asset::{
-    AdvancedSoundEntryCatalog, AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError,
-    AssetPath, AssetStore, CharacterAppearanceCatalog, CharacterClassCatalog,
-    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
-    ItemVisualCatalog, LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind,
-    ParticleColorCatalog, SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError,
-    exterior_light_direction,
+    AdvancedSoundEntryCatalog, AnimationDataCatalog, AppearanceError, ArchiveCatalog,
+    AreaTableCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
+    CharacterClassCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
+    CreatureCatalog, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, Locale, M2TextureKind, MapCatalog,
+    MapKind, ParticleColorCatalog, SoundEntryCatalog, WdbcTable, WorldLightQuery,
+    WorldLightSampleError, exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -119,6 +119,67 @@ fn particle_color_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error
 
     assert!(matches!(
         ParticleColorCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { .. })
+    ));
+    Ok(())
+}
+
+/// AnimationData retains flags, fallback links, and behavior-tier families.
+#[test]
+fn animation_data_catalog_decodes_and_maps_tiered_behaviors() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let stand = append_string(&mut strings, "Stand");
+    let walk = append_string(&mut strings, "Walk");
+    let fly_walk = append_string(&mut strings, "FlyWalk");
+    let fields = [
+        0, stand, 0x10, 0x20, 0x80, 0, 0, 0, 4, walk, 1, 2, 3, 0, 4, 0, 233, fly_walk, 5, 6, 7, 4,
+        4, 3,
+    ];
+    let table = create_wdbc(3, 8, &fields, &strings);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\AnimationData.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = AnimationDataCatalog::load(&mut store)?;
+    let definition = catalog.definition(4).ok_or("walk animation is absent")?;
+    assert_eq!(definition.name(), "Walk");
+    assert_eq!(definition.weapon_flags(), 1);
+    assert_eq!(definition.body_flags(), 2);
+    assert_eq!(definition.flags(), 3);
+    assert_eq!(definition.fallback_id(), 0);
+    assert_eq!(definition.behavior_id(), 4);
+    assert_eq!(definition.behavior_tier(), 0);
+    assert_eq!(catalog.tiered_definition(4, 0), Some(definition));
+    assert_eq!(
+        catalog.tiered_definition(4, 3).map(|row| row.id()),
+        Some(233)
+    );
+    assert_eq!(
+        catalog.tiered_definition(233, 0).map(|row| row.id()),
+        Some(233)
+    );
+    assert_eq!(catalog.definitions().len(), 3);
+    Ok(())
+}
+
+/// Another AnimationData layout cannot be interpreted as build 12340.
+#[test]
+fn animation_data_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(1, 7, &[0; 7], b"\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\AnimationData.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert!(matches!(
+        AnimationDataCatalog::load(&mut store),
         Err(AssetError::DatabaseDecode { .. })
     ));
     Ok(())

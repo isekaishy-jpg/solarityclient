@@ -4,6 +4,7 @@
 //! `WDataStore.cpp` family. Table schemas and validation belong here; game
 //! behavior that consumes a table belongs to its owning domain crate.
 
+mod animation;
 mod appearance;
 mod area;
 mod c_data_store;
@@ -26,6 +27,7 @@ mod sound_environment;
 mod w_data_store;
 mod wow_client_db;
 
+pub use animation::{AnimationDataCatalog, AnimationDataDefinition};
 pub use appearance::{
     AppearanceError, CharacterCustomization, CharacterGeosetSelection, CharacterModelAppearance,
     CharacterSectionKind, CreatureModelAppearance,

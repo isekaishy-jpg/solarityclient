@@ -58,7 +58,10 @@ pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
     resolve_player_equipment,
 };
-pub use movement::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
+pub use movement::{
+    UnitLocomotionAnimation, UnitModelAnimation, resolve_unit_locomotion_animation,
+    resolve_unit_model_animation,
+};
 pub use object::{ObjectProjectionError, project_object_fields};
 pub use world::{
     DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,

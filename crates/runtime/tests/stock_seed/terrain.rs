@@ -5,10 +5,10 @@ use std::io::Cursor;
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
-    ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog, ParticleColorCatalog,
-    TerrainTileIndex,
+    AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
+    CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog,
+    ParticleColorCatalog, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
@@ -55,6 +55,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let maps = MapCatalog::load(&mut store)?;
+    let animations = AnimationDataCatalog::load(&mut store)?;
     let creatures = CreatureCatalog::load(&mut store)?;
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let races = CharacterRaceCatalog::load(&mut store)?;
@@ -67,6 +68,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let mut player = RuntimePlayerPresentation::new(
         assets.clone(),
         RuntimePlayerCatalogs::new(
+            animations,
             creatures,
             characters,
             races,
