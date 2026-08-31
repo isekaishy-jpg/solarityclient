@@ -253,6 +253,7 @@ impl M2Bone {
 pub struct M2AnimationSet {
     global_sequence_durations_ms: Vec<u32>,
     sequences: Vec<M2Sequence>,
+    animation_lookup: Vec<u16>,
     sequence_available: Vec<bool>,
     bones: Vec<M2Bone>,
     colors: Vec<M2ColorAnimation>,
@@ -269,7 +270,9 @@ impl M2AnimationSet {
     ) -> Result<Self, AssetError> {
         let globals = decode_global_sequences(model_path, model_bytes)?;
         let sequences = decode_sequences(model_path, model_bytes)?;
+        let animation_lookup = decode_animation_lookup(model_path, model_bytes, sequences.len())?;
         validate_aliases(model_path, &sequences)?;
+        validate_variations(model_path, &sequences)?;
         let mut payloads = Vec::with_capacity(sequences.len());
         let mut available = Vec::with_capacity(sequences.len());
         for sequence in &sequences {
@@ -311,6 +314,7 @@ impl M2AnimationSet {
         Ok(Self {
             global_sequence_durations_ms: globals,
             sequences,
+            animation_lookup,
             sequence_available: available,
             bones,
             colors,
@@ -329,6 +333,11 @@ impl M2AnimationSet {
     pub fn sequences(&self) -> &[M2Sequence] {
         &self.sequences
     }
+    /// Returns the exact build-12340 animation-ID lookup buckets.
+    #[must_use]
+    pub fn animation_lookup(&self) -> &[u16] {
+        &self.animation_lookup
+    }
     /// Reports whether the sequence's required payload is available.
     #[must_use]
     pub fn is_sequence_available(&self, index: usize) -> Option<bool> {
@@ -346,6 +355,133 @@ impl M2AnimationSet {
             };
             current = usize::from(next);
         }
+    }
+
+    /// Selects one available sequence through stock's lookup and variation chain.
+    ///
+    /// `preferred_variation` reproduces the initial primary-variation request.
+    /// If that variation is absent, `weighted_roll` is the raw 15-bit SRand
+    /// result consumed against positive authored frequencies. No whole-array
+    /// scan repairs a missing lookup or broken variation chain.
+    #[must_use]
+    pub fn select_sequence(
+        &self,
+        animation_id: u16,
+        preferred_variation: Option<u16>,
+        weighted_roll: u32,
+    ) -> Option<usize> {
+        let first = self.lookup_sequence(animation_id)?;
+        if let Some(preferred) = preferred_variation {
+            let mut current = Some(first);
+            let mut remaining = self.sequences.len();
+            while let Some(index) = current {
+                let sequence = self.sequences.get(index)?;
+                if sequence.animation_id != animation_id || remaining == 0 {
+                    return None;
+                }
+                if sequence.variation_index == preferred
+                    && self.sequence_available.get(index) == Some(&true)
+                {
+                    return Some(index);
+                }
+                current = sequence.variation_next.map(usize::from);
+                remaining -= 1;
+            }
+        }
+
+        let mut available_count = 0_u64;
+        let mut total_weight = 0_u64;
+        self.visit_variations(first, animation_id, |index, sequence| {
+            if self.sequence_available[index] {
+                available_count += 1;
+                total_weight += u64::from(sequence.frequency.max(0) as u16);
+            }
+        })?;
+        if available_count == 0 {
+            return None;
+        }
+        let mut roll = u64::from(weighted_roll);
+        let mut zero_weight_slot = if total_weight == 0 {
+            Some(roll % available_count)
+        } else {
+            None
+        };
+        let mut selected = None;
+        self.visit_variations(first, animation_id, |index, sequence| {
+            if selected.is_some() || !self.sequence_available[index] {
+                return;
+            }
+            if let Some(slot) = zero_weight_slot.as_mut() {
+                if *slot == 0 {
+                    selected = Some(index);
+                } else {
+                    *slot -= 1;
+                }
+                return;
+            }
+            let weight = u64::from(sequence.frequency.max(0) as u16);
+            if roll < weight {
+                selected = Some(index);
+            } else {
+                roll -= weight;
+            }
+        })?;
+        // Stock retains the base available sequence when incomplete authored
+        // frequencies do not consume the raw SRand range.
+        selected.or_else(|| {
+            self.visit_variations(first, animation_id, |index, _sequence| {
+                if selected.is_none() && self.sequence_available[index] {
+                    selected = Some(index);
+                }
+            })?;
+            selected
+        })
+    }
+
+    /// Probes the on-disk quadratic lookup without a compatibility scan.
+    fn lookup_sequence(&self, animation_id: u16) -> Option<usize> {
+        if self.animation_lookup.is_empty() {
+            return None;
+        }
+        let mut visited = vec![false; self.animation_lookup.len()];
+        let mut bucket = usize::from(animation_id) % self.animation_lookup.len();
+        for stride in 1.. {
+            if visited[bucket] {
+                return None;
+            }
+            visited[bucket] = true;
+            let index = *self.animation_lookup.get(bucket)?;
+            if index == u16::MAX {
+                return None;
+            }
+            let index = usize::from(index);
+            if self.sequences.get(index)?.animation_id == animation_id {
+                return Some(index);
+            }
+            bucket = (bucket + stride * stride) % self.animation_lookup.len();
+        }
+        None
+    }
+
+    /// Visits one closed, already validated same-ID variation chain.
+    fn visit_variations(
+        &self,
+        first: usize,
+        animation_id: u16,
+        mut visitor: impl FnMut(usize, &M2Sequence),
+    ) -> Option<()> {
+        let mut current = Some(first);
+        let mut remaining = self.sequences.len();
+        while let Some(index) = current {
+            let sequence = self.sequences.get(index)?;
+            if sequence.animation_id != animation_id || remaining == 0 {
+                return None;
+            }
+            visitor(index, sequence);
+            current = sequence.variation_next.map(usize::from);
+            remaining -= 1;
+        }
+        Some(())
     }
     /// Returns the validated parent-linked model skeleton.
     #[must_use]
@@ -443,6 +579,28 @@ fn decode_sequences(path: &AssetPath, bytes: &[u8]) -> Result<Vec<M2Sequence>, A
     Ok(result)
 }
 
+/// Decodes the authoritative animation-ID lookup and validates record indices.
+fn decode_animation_lookup(
+    path: &AssetPath,
+    bytes: &[u8],
+    sequence_count: usize,
+) -> Result<Vec<u16>, AssetError> {
+    let array = array_ref(path, bytes, 0x24, "animation lookup")?;
+    validate_array(path, bytes, array, 2, "animation lookup")?;
+    let mut result = Vec::with_capacity(array.count);
+    for bucket in 0..array.count {
+        let index = read_u16(path, bytes, array.offset + bucket * 2, "animation lookup")?;
+        if index != u16::MAX && usize::from(index) >= sequence_count {
+            return Err(model_decode(
+                path,
+                format!("animation lookup bucket {bucket} references missing sequence {index}"),
+            ));
+        }
+        result.push(index);
+    }
+    Ok(result)
+}
+
 /// Converts a signed optional sequence reference and validates positive values.
 fn checked_sequence_ref(
     path: &AssetPath,
@@ -478,6 +636,32 @@ fn validate_aliases(path: &AssetPath, sequences: &[M2Sequence]) -> Result<(), As
             }
             visited[current] = true;
             current = usize::from(next);
+        }
+    }
+    Ok(())
+}
+
+/// Rejects cross-animation links and cycles before selection enters the hot path.
+fn validate_variations(path: &AssetPath, sequences: &[M2Sequence]) -> Result<(), AssetError> {
+    for start in 0..sequences.len() {
+        let animation_id = sequences[start].animation_id;
+        let mut visited = vec![false; sequences.len()];
+        let mut current = start;
+        while let Some(next) = sequences[current].variation_next {
+            if visited[current] {
+                return Err(model_decode(
+                    path,
+                    format!("sequence {start} variation chain cycles"),
+                ));
+            }
+            visited[current] = true;
+            current = usize::from(next);
+            if sequences[current].animation_id != animation_id {
+                return Err(model_decode(
+                    path,
+                    format!("sequence {start} variation chain crosses animation ID {animation_id}"),
+                ));
+            }
         }
     }
     Ok(())

@@ -31,6 +31,8 @@ struct M2GpuSource {
     plan: Arc<M2MeshPlan>,
     mesh: M2MeshHandle,
     draws: Vec<M2GpuDraw>,
+    sequence: usize,
+    sequence_duration_ms: f32,
 }
 
 /// Fixed renderer objects paired with one exact SKIN material batch.
@@ -169,11 +171,12 @@ impl M2Frame {
                 continue;
             }
 
-            let Some(clock) =
-                world_animation_clock(&source.model, animation_time_ms, global_time_ms)
-            else {
-                continue;
-            };
+            let clock = world_animation_clock(
+                source.sequence,
+                source.sequence_duration_ms,
+                animation_time_ms,
+                global_time_ms,
+            );
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let model_view = camera.view() * placement.transform;
@@ -215,51 +218,19 @@ impl M2Frame {
     }
 }
 
-/// Selects stock's initial animation ID/variation, then its available fallback.
+/// Advances the stock sequence selected once when the shared model became resident.
 fn world_animation_clock(
-    model: &DecodedM2Model,
+    sequence: usize,
+    duration_ms: f32,
     animation_time_ms: f32,
     global_time_ms: f32,
-) -> Option<M2AnimationClock> {
-    let animations = model.animations();
-    if animations.sequences().is_empty() {
-        return Some(M2AnimationClock::new(0, animation_time_ms, global_time_ms));
-    }
-    let available = |index: usize| animations.is_sequence_available(index) == Some(true);
-    let sequence = animations
-        .sequences()
-        .iter()
-        .enumerate()
-        .find(|(index, value)| {
-            value.animation_id() == 0 && value.variation_index() == 0 && available(*index)
-        })
-        .or_else(|| {
-            animations
-                .sequences()
-                .iter()
-                .enumerate()
-                .find(|(index, value)| value.animation_id() == 0 && available(*index))
-        })
-        .or_else(|| {
-            animations
-                .sequences()
-                .iter()
-                .enumerate()
-                .find(|(index, _value)| available(*index))
-        })?
-        .0;
-    let resolved = animations.resolve_sequence_alias(sequence)?;
-    let duration_ms = animations.sequences()[resolved].duration_ms() as f32;
+) -> M2AnimationClock {
     let animation_time_ms = if duration_ms > 0.0 {
         animation_time_ms.rem_euclid(duration_ms)
     } else {
         0.0
     };
-    Some(M2AnimationClock::new(
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ))
+    M2AnimationClock::new(sequence, animation_time_ms, global_time_ms)
 }
 
 /// Converts MODD's BGRA bytes to shader RGBA; MDDF already stores white.
@@ -286,6 +257,30 @@ fn prepare_source(
             model_count: model.textures().len(),
         });
     }
+    let (sequence, sequence_duration_ms) = if model.animations().sequences().is_empty() {
+        // Models without a sequence catalog retain the bind-pose channel that
+        // build 12340 addresses as sequence zero.
+        (0, 0.0)
+    } else {
+        let Some(sequence) = model.animations().select_sequence(0, Some(0), 0) else {
+            tracing::debug!(
+                path = %model.path(),
+                "static world M2 omitted because animation ID zero is unavailable"
+            );
+            return Ok(None);
+        };
+        let resolved = model
+            .animations()
+            .resolve_sequence_alias(sequence)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2SequenceIndex {
+                model: model.path().clone(),
+                sequence,
+            })?;
+        (
+            sequence,
+            model.animations().sequences()[resolved].duration_ms() as f32,
+        )
+    };
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     for draw in plan.draws() {
         for binding in draw.texture_bindings() {
@@ -351,5 +346,7 @@ fn prepare_source(
         plan,
         mesh,
         draws,
+        sequence,
+        sequence_duration_ms,
     }))
 }

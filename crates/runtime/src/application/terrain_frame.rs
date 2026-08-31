@@ -179,6 +179,14 @@ pub enum RuntimeTerrainFrameError {
         /// Texture-declaration index selected through the SKIN combo table.
         texture_index: u16,
     },
+    /// A selected M2 animation no longer resolves through its validated aliases.
+    #[error("M2 {model} selected absent animation sequence {sequence}")]
+    M2SequenceIndex {
+        /// Model whose immutable animation catalog became inconsistent.
+        model: AssetPath,
+        /// Selected sequence-table index.
+        sequence: usize,
+    },
 }
 
 /// One immutable resident ADT generation ready for camera selection.

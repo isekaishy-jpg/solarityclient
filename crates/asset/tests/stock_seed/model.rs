@@ -164,6 +164,12 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
     assert_eq!(sequence.duration_ms(), 1_000);
     assert_eq!(sequence.storage(), M2SequenceStorage::Internal);
     assert_eq!(animations.is_sequence_available(0), Some(true));
+    assert_eq!(
+        animations.animation_lookup(),
+        &[u16::MAX, u16::MAX, u16::MAX, u16::MAX, u16::MAX, 0]
+    );
+    assert_eq!(animations.select_sequence(5, Some(0), 0), Some(0));
+    assert_eq!(animations.select_sequence(4, None, 0), None);
     let bone = &animations.bones()[0];
     assert_eq!(bone.parent(), None);
     assert_eq!(bone.pivot(), glam::Vec3::new(1.0, 2.0, 3.0));
@@ -174,6 +180,67 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
         channel.values(),
         &[glam::Vec3::ZERO, glam::Vec3::new(4.0, 5.0, 6.0)]
     );
+    Ok(())
+}
+
+/// Selection does not repair a missing stock lookup by scanning every sequence.
+#[test]
+fn m2_animation_selection_requires_authored_lookup() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_m2_bytes()?;
+    model[0x24..0x2c].fill(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\NoLookup.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\NoLookup00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\NoLookup.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(model.animations().sequences()[0].animation_id(), 5);
+    assert_eq!(model.animations().select_sequence(5, None, 0), None);
+    Ok(())
+}
+
+/// A variation chain cannot cycle even when every referenced record exists.
+#[test]
+fn m2_animation_variation_cycle_is_rejected() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_m2_bytes()?;
+    let sequence_offset = m2_array_offset(&model, 0x1c)?;
+    model[sequence_offset + 60..sequence_offset + 62].copy_from_slice(&0_i16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Cycle.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Cycle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Cycle.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("variation chain cycles")
+    ));
     Ok(())
 }
 
@@ -661,6 +728,10 @@ fn animated_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     for value in [0.0_f32, 0.0, 0.0, 4.0, 5.0, 6.0] {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+    let animation_lookup = u32::try_from(bytes.len())?;
+    for sequence in [u16::MAX, u16::MAX, u16::MAX, u16::MAX, u16::MAX, 0] {
+        bytes.extend_from_slice(&sequence.to_le_bytes());
+    }
 
     bytes[timestamp_data_word..timestamp_data_word + 4]
         .copy_from_slice(&timestamp_data.to_le_bytes());
@@ -672,6 +743,8 @@ fn animated_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     bytes[bone + 32..bone + 36].copy_from_slice(&value_refs.to_le_bytes());
     bytes[0x1c..0x20].copy_from_slice(&1_u32.to_le_bytes());
     bytes[0x20..0x24].copy_from_slice(&sequence_offset.to_le_bytes());
+    bytes[0x24..0x28].copy_from_slice(&6_u32.to_le_bytes());
+    bytes[0x28..0x2c].copy_from_slice(&animation_lookup.to_le_bytes());
     bytes[0x2c..0x30].copy_from_slice(&1_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
     Ok(bytes)
