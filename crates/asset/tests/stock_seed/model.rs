@@ -379,6 +379,62 @@ fn m2_material_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// Version-264 ribbons retain exact static fields and all six nested tracks.
+#[test]
+fn m2_ribbon_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn Error>> {
+    let model = animated_ribbon_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Ribbon.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Ribbon00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Ribbon.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let ribbon = model
+        .animations()
+        .ribbons()
+        .first()
+        .ok_or("ribbon is absent")?;
+
+    assert_eq!(ribbon.id(), 0x5249_424E);
+    assert_eq!(ribbon.bone_index(), Some(0));
+    assert_eq!(ribbon.position(), glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(ribbon.texture_indices(), &[0]);
+    assert_eq!(ribbon.material_indices(), &[0]);
+    assert_eq!(ribbon.color().channels()[0].timestamps_ms(), &[0, 1_000]);
+    assert_eq!(
+        ribbon.color().channels()[0].values(),
+        &[
+            glam::Vec3::new(1.0, 0.5, 0.25),
+            glam::Vec3::new(0.0, 1.0, 0.5)
+        ]
+    );
+    assert_eq!(ribbon.alpha().channels()[0].values()[0], 1.0);
+    assert_eq!(ribbon.height_above().channels()[0].values(), &[1.0, 2.0]);
+    assert_eq!(ribbon.height_below().channels()[0].values(), &[0.5, 1.5]);
+    assert_eq!(ribbon.edges_per_second(), 20.0);
+    assert_eq!(ribbon.edge_lifetime_seconds(), 1.25);
+    assert_eq!(ribbon.gravity(), 9.8);
+    assert_eq!((ribbon.texture_rows(), ribbon.texture_columns()), (2, 4));
+    assert_eq!(ribbon.texture_slot().channels()[0].values(), &[0, 3]);
+    assert_eq!(ribbon.visibility().channels()[0].values(), &[1, 0]);
+    assert_eq!(ribbon.priority_plane(), -3);
+    assert_eq!(ribbon.color_index(), -1);
+    assert_eq!(ribbon.texture_transform_lookup_index(), -1);
+    Ok(())
+}
+
 /// Stock keeps the model usable while disabling a missing external sequence.
 #[test]
 fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
@@ -877,6 +933,70 @@ fn animated_material_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     set_header_array(&mut bytes, 0x48, 1, color_offset)?;
     set_header_array(&mut bytes, 0x58, 1, weight_offset)?;
     set_header_array(&mut bytes, 0x60, 1, transform_offset)?;
+    Ok(bytes)
+}
+
+/// Adds one exact 176-byte ribbon record to the internal-sequence fixture.
+fn animated_ribbon_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = animated_m2_bytes()?;
+    let ribbon_offset = bytes.len();
+    bytes.resize(ribbon_offset + 176, 0);
+    bytes[ribbon_offset..ribbon_offset + 4].copy_from_slice(&0x5249_424E_u32.to_le_bytes());
+    bytes[ribbon_offset + 4..ribbon_offset + 8].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[ribbon_offset + 8..ribbon_offset + 20].copy_from_slice(&f32_values(&[1.0, 2.0, 3.0]));
+
+    let texture_indices = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    set_header_array(&mut bytes, ribbon_offset + 20, 1, texture_indices)?;
+    let material_indices = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    set_header_array(&mut bytes, ribbon_offset + 28, 1, material_indices)?;
+
+    append_linear_track(
+        &mut bytes,
+        ribbon_offset + 36,
+        &[0, 1_000],
+        &f32_values(&[1.0, 0.5, 0.25, 0.0, 1.0, 0.5]),
+        12,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        ribbon_offset + 56,
+        &[0, 1_000],
+        &i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        ribbon_offset + 76,
+        &[0, 1_000],
+        &f32_values(&[1.0, 2.0]),
+        4,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        ribbon_offset + 96,
+        &[0, 1_000],
+        &f32_values(&[0.5, 1.5]),
+        4,
+    )?;
+    bytes[ribbon_offset + 116..ribbon_offset + 120].copy_from_slice(&20.0_f32.to_le_bytes());
+    bytes[ribbon_offset + 120..ribbon_offset + 124].copy_from_slice(&1.25_f32.to_le_bytes());
+    bytes[ribbon_offset + 124..ribbon_offset + 128].copy_from_slice(&9.8_f32.to_le_bytes());
+    bytes[ribbon_offset + 128..ribbon_offset + 130].copy_from_slice(&2_u16.to_le_bytes());
+    bytes[ribbon_offset + 130..ribbon_offset + 132].copy_from_slice(&4_u16.to_le_bytes());
+    append_linear_track(
+        &mut bytes,
+        ribbon_offset + 132,
+        &[0, 1_000],
+        &[0, 0, 3, 0],
+        2,
+    )?;
+    append_linear_track(&mut bytes, ribbon_offset + 152, &[0, 1_000], &[1, 0], 1)?;
+    bytes[ribbon_offset + 172..ribbon_offset + 174].copy_from_slice(&(-3_i16).to_le_bytes());
+    bytes[ribbon_offset + 174] = -1_i8 as u8;
+    bytes[ribbon_offset + 175] = -1_i8 as u8;
+    set_header_array(&mut bytes, 0x120, 1, ribbon_offset)?;
     Ok(bytes)
 }
 

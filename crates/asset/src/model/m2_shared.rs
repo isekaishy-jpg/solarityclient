@@ -53,14 +53,14 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model,
     validate_model_prefix(path, bytes)?;
     validate_model_texture_arrays(path, bytes)?;
 
-    // wow-m2 0.7 reads build-12340's 60-byte texture transform as a later
-    // five-track record. Hide all three material-track arrays from that
-    // dependency parser; `M2AnimationSet` decodes their exact WotLK layouts
-    // from the restored bytes. Patching these 24 header bytes in place avoids
-    // cloning an HD-sized model solely to construct a parser view.
-    let material_arrays = [0x48_usize, 0x58, 0x60];
-    let mut saved = [[0_u8; 8]; 3];
-    for (slot, offset) in saved.iter_mut().zip(material_arrays) {
+    // wow-m2 0.7 reads build-12340's 60-byte texture transform and its
+    // 176/476-byte ribbon/particle records as later incompatible layouts.
+    // Hide those dependency-owned arrays; exact WotLK decoders consume the
+    // restored bytes. Patching the header in place avoids cloning an HD-sized
+    // model solely to construct a parser view.
+    let exact_arrays = [0x48_usize, 0x58, 0x60, 0x120, 0x128];
+    let mut saved = [[0_u8; 8]; 5];
+    for (slot, offset) in saved.iter_mut().zip(exact_arrays) {
         let header = bytes.get_mut(offset..offset + 8).ok_or_else(|| {
             model_decode(
                 path,
@@ -71,7 +71,7 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model,
         header.fill(0);
     }
     let parsed = M2Model::parse_legacy(&mut Cursor::new(&*bytes));
-    for (slot, offset) in saved.iter().zip(material_arrays) {
+    for (slot, offset) in saved.iter().zip(exact_arrays) {
         bytes[offset..offset + 8].copy_from_slice(slot);
     }
     let mut model = parsed

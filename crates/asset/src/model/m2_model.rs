@@ -320,6 +320,41 @@ fn validate_material_animation_references(
             )?;
         }
     }
+    for (ribbon_index, ribbon) in animations.ribbons().iter().enumerate() {
+        for texture_index in ribbon.texture_indices() {
+            if usize::from(*texture_index) >= blob.textures.len() {
+                return Err(model_decode(
+                    path,
+                    format!("ribbon {ribbon_index} references missing texture {texture_index}"),
+                ));
+            }
+        }
+        for material_index in ribbon.material_indices() {
+            if usize::from(*material_index) >= blob.materials.len() {
+                return Err(model_decode(
+                    path,
+                    format!("ribbon {ribbon_index} references missing material {material_index}"),
+                ));
+            }
+        }
+        let color_index = ribbon.color_index();
+        if color_index >= 0 && color_index as usize >= animations.colors().len() {
+            return Err(model_decode(
+                path,
+                format!("ribbon {ribbon_index} references missing color {color_index}"),
+            ));
+        }
+        let transform_lookup = ribbon.texture_transform_lookup_index();
+        if transform_lookup >= 0 && transform_lookup as usize >= blob.texture_animation_lookup.len()
+        {
+            return Err(model_decode(
+                path,
+                format!(
+                    "ribbon {ribbon_index} references missing texture-transform lookup {transform_lookup}"
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 

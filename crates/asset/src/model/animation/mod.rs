@@ -6,8 +6,10 @@ use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
 mod material;
+mod ribbon;
 
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
+pub use ribbon::M2RibbonEmitter;
 
 /// Stock interpolation operation authored by one M2 track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -274,6 +276,7 @@ pub struct M2AnimationSet {
     colors: Vec<M2ColorAnimation>,
     texture_weights: Vec<M2TextureWeight>,
     texture_transforms: Vec<M2TextureTransform>,
+    ribbons: Vec<M2RibbonEmitter>,
 }
 
 impl M2AnimationSet {
@@ -326,6 +329,14 @@ impl M2AnimationSet {
             decode_texture_weights(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let texture_transforms =
             decode_texture_transforms(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let ribbons = ribbon::decode_ribbons(
+            model_path,
+            model_bytes,
+            &globals,
+            &sequences,
+            &payloads,
+            bones.len(),
+        )?;
         Ok(Self {
             global_sequence_durations_ms: globals,
             sequences,
@@ -335,6 +346,7 @@ impl M2AnimationSet {
             colors,
             texture_weights,
             texture_transforms,
+            ribbons,
         })
     }
 
@@ -548,6 +560,12 @@ impl M2AnimationSet {
     #[must_use]
     pub fn texture_transforms(&self) -> &[M2TextureTransform] {
         &self.texture_transforms
+    }
+
+    /// Returns authored ribbon emitters in exact M2 table order.
+    #[must_use]
+    pub fn ribbons(&self) -> &[M2RibbonEmitter] {
+        &self.ribbons
     }
 
     /// Returns the number of model bones without exposing dependency storage.
@@ -1216,6 +1234,14 @@ fn read_i16(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Resul
     Ok(i16::from_le_bytes(read_bytes::<2>(
         path, bytes, offset, field,
     )?))
+}
+/// Reads one unsigned byte.
+fn read_u8(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<u8, AssetError> {
+    Ok(read_bytes::<1>(path, bytes, offset, field)?[0])
+}
+/// Reads one signed byte.
+fn read_i8(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<i8, AssetError> {
+    Ok(read_bytes::<1>(path, bytes, offset, field)?[0] as i8)
 }
 /// Reads one finite little-endian float.
 fn read_f32(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<f32, AssetError> {
