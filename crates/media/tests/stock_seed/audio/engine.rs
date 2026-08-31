@@ -6,9 +6,9 @@ use std::num::NonZeroU16;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
-    SoundCategory, SoundCategorySettings, SoundDecodeMode, SoundEngine, SoundEngineError,
-    SoundEngineSettings, SoundGain, SoundOutput, SoundOutputTarget, SoundPlayRequest,
-    SoundPlayback, SoundVariationMode,
+    OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundDecodeMode, SoundEngine,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundOutput, SoundOutputTarget,
+    SoundPlayRequest, SoundPlayback, SoundVariationMode,
 };
 
 use crate::support::{
@@ -24,6 +24,41 @@ fn stock_sound_gain_rejects_values_outside_cvar_range() {
     assert!(SoundGain::new(-0.1).is_err());
     assert!(SoundGain::new(1.1).is_err());
     assert!(SoundGain::new(f32::NAN).is_err());
+}
+
+/// The process owner retains SDL's mixer until every borrowing track drops.
+#[test]
+fn owned_engine_contains_the_track_to_mixer_lifetime() -> Result<(), Box<dyn Error>> {
+    let sound_entries =
+        sound_entries_fixture(77, [("Tone.wav", 1), ("", 0), ("", 0)], "Sound\\Test");
+    let advanced_entries = empty_advanced_sound_entries_fixture();
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &advanced_entries,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let _sdl_test = sdl_test_lock();
+    let engine = OwnedSoundEngine::load(
+        &mut store,
+        SoundOutputTarget::Memory,
+        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        settings(true)?,
+    )?;
+    assert_eq!(engine.active_voice_count(), 0);
+    assert_eq!(engine.settings(), settings(true)?);
+    Ok(())
 }
 
 /// Advanced slider words map through the executable's eighteen channel names.
