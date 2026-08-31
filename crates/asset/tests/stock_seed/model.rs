@@ -113,6 +113,7 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
         .collision_mesh()
         .ok_or("fixture collision mesh is absent")?;
     assert_eq!(collision.indices(), &[0, 1, 2]);
+    assert_eq!(collision.face_normals(), &[glam::Vec3::Z]);
     assert_eq!(
         collision.vertices(),
         &[glam::Vec3::ZERO, glam::Vec3::X * 2.0, glam::Vec3::Y * 2.0]
@@ -241,6 +242,40 @@ fn m2_replaceable_texture_lookup_rejects_a_missing_texture() -> Result<(), Box<d
             if failed == path
                 && message.contains(
                     "replaceable-texture lookup 11 references missing entry 2"
+                )
+    ));
+    Ok(())
+}
+
+/// Dedicated collision retains exactly one authored normal per triangle.
+#[test]
+fn m2_collision_rejects_a_missing_face_normal() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("BadCollisionNormal", 1)?;
+    model[0xe8..0xf0].fill(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadCollisionNormal.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadCollisionNormal00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadCollisionNormal.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path
+                && message.contains(
+                    "collision must contain vertices and one face normal per triangle"
                 )
     ));
     Ok(())
@@ -1266,6 +1301,12 @@ fn m2_bytes_inner(
                     .bounding_vertices
                     .extend_from_slice(&component.to_le_bytes());
             }
+        }
+        for component in [0.0_f32, 0.0, 1.0] {
+            model
+                .raw_data
+                .bounding_normals
+                .extend_from_slice(&component.to_le_bytes());
         }
     }
     if !combiners.is_empty() {

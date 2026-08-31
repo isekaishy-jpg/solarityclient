@@ -502,6 +502,12 @@ fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
             tex_coords2: Some(C2Vector { x: 0.0, y: 0.0 }),
         });
     }
+    for component in [0.0_f32, 0.0, 1.0] {
+        model
+            .raw_data
+            .bounding_normals
+            .extend_from_slice(&component.to_le_bytes());
+    }
     let mut cursor = Cursor::new(Vec::new());
     model.write(&mut cursor)?;
     let mut bytes = cursor.into_inner();

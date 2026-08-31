@@ -4,6 +4,7 @@
 //! family supports a format boundary separate from GPU model resources.
 
 mod animation;
+mod collision;
 mod lookups;
 mod m2_cache;
 mod m2_model;
@@ -16,9 +17,10 @@ pub use animation::{
     M2RibbonEmitter, M2Sequence, M2SequenceStorage, M2TextureTransform, M2TextureWeight, M2Track,
     M2TrackChannel,
 };
+pub use collision::M2CollisionMesh;
 pub use m2_model::DecodedM2Model;
 pub(crate) use m2_shared::canonical_model_path;
 pub use model_blob::{
-    M2Batch, M2BlendMode, M2CollisionMesh, M2Material, M2ModelBounds, M2SkinProfile, M2Submesh,
-    M2Texture, M2TextureKind, M2Vertex,
+    M2Batch, M2BlendMode, M2Material, M2ModelBounds, M2SkinProfile, M2Submesh, M2Texture,
+    M2TextureKind, M2Vertex,
 };

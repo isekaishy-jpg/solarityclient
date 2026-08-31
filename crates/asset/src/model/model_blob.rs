@@ -5,6 +5,7 @@ use wow_m2::chunks::texture::M2TextureType as DependencyTextureType;
 use wow_m2::model::M2Model;
 use wow_m2::skin::{OldSkin, SkinBatch, SkinSubmesh};
 
+use crate::model::collision::{M2CollisionMesh, decode_collision_mesh};
 use crate::model::lookups::M2LookupTables;
 use crate::model::m2_shared::{ParsedSkin, model_decode};
 use crate::{ArchiveDescriptor, AssetError, AssetPath};
@@ -128,34 +129,6 @@ pub struct M2ModelBounds {
     minimum: Vec3,
     maximum: Vec3,
     sphere_radius: f32,
-}
-
-/// Dedicated unanimated M2 collision mesh from the build-12340 header arrays.
-#[derive(Debug)]
-pub struct M2CollisionMesh {
-    bounds: M2ModelBounds,
-    vertices: Vec<Vec3>,
-    indices: Vec<u16>,
-}
-
-impl M2CollisionMesh {
-    /// Returns collision-local bounds, distinct from render bounds.
-    #[must_use]
-    pub const fn bounds(&self) -> M2ModelBounds {
-        self.bounds
-    }
-
-    /// Returns authored collision vertices in model coordinates.
-    #[must_use]
-    pub fn vertices(&self) -> &[Vec3] {
-        &self.vertices
-    }
-
-    /// Returns the direct collision triangle-list indices.
-    #[must_use]
-    pub fn indices(&self) -> &[u16] {
-        &self.indices
-    }
 }
 
 impl M2ModelBounds {
@@ -404,7 +377,15 @@ impl ModelBlob {
             maximum: Vec3::from_array(model.header.bounding_box_max),
             sphere_radius: model.header.bounding_sphere_radius,
         };
-        let collision = decode_collision_mesh(path, &model)?;
+        let collision = decode_collision_mesh(
+            path,
+            bytes,
+            M2ModelBounds {
+                minimum: Vec3::from_array(model.header.collision_box_min),
+                maximum: Vec3::from_array(model.header.collision_box_max),
+                sphere_radius: model.header.collision_sphere_radius,
+            },
+        )?;
         let texture_combiner_combos = decode_texture_combiner_combos(path, bytes, &model)?;
         let mut vertices = Vec::with_capacity(model.vertices.len());
         for vertex in model.vertices {
@@ -455,79 +436,6 @@ impl ModelBlob {
             texture_combiner_combos,
         })
     }
-}
-
-fn decode_collision_mesh(
-    path: &AssetPath,
-    model: &M2Model,
-) -> Result<Option<M2CollisionMesh>, AssetError> {
-    let triangle_bytes = &model.raw_data.bounding_triangles;
-    let vertex_bytes = &model.raw_data.bounding_vertices;
-    if triangle_bytes.is_empty() && vertex_bytes.is_empty() {
-        return Ok(None);
-    }
-    if triangle_bytes.is_empty()
-        || vertex_bytes.is_empty()
-        || !triangle_bytes.len().is_multiple_of(6)
-        || !vertex_bytes.len().is_multiple_of(12)
-    {
-        return Err(model_decode(
-            path,
-            "M2 collision arrays do not form triangles and C3Vector vertices".to_owned(),
-        ));
-    }
-    let (vertex_records, _vertex_remainder) = vertex_bytes.as_chunks::<12>();
-    let vertices = vertex_records
-        .iter()
-        .map(|bytes| {
-            Vec3::new(
-                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-                f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-                f32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            )
-        })
-        .collect::<Vec<_>>();
-    if vertices.iter().any(|vertex| !vertex.is_finite()) {
-        return Err(model_decode(
-            path,
-            "M2 collision vertex is not finite".to_owned(),
-        ));
-    }
-    let (index_records, _index_remainder) = triangle_bytes.as_chunks::<2>();
-    let indices = index_records
-        .iter()
-        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-        .collect::<Vec<_>>();
-    if indices
-        .iter()
-        .any(|index| usize::from(*index) >= vertices.len())
-    {
-        return Err(model_decode(
-            path,
-            "M2 collision triangle references a missing vertex".to_owned(),
-        ));
-    }
-    let bounds = M2ModelBounds {
-        minimum: Vec3::from_array(model.header.collision_box_min),
-        maximum: Vec3::from_array(model.header.collision_box_max),
-        sphere_radius: model.header.collision_sphere_radius,
-    };
-    if !bounds.minimum.is_finite()
-        || !bounds.maximum.is_finite()
-        || !bounds.sphere_radius.is_finite()
-        || bounds.sphere_radius < 0.0
-        || (0..3).any(|axis| bounds.minimum[axis] > bounds.maximum[axis])
-    {
-        return Err(model_decode(
-            path,
-            "M2 collision bounds are invalid".to_owned(),
-        ));
-    }
-    Ok(Some(M2CollisionMesh {
-        bounds,
-        vertices,
-        indices,
-    }))
 }
 
 /// Reads WotLK's optional trailing `u16` combiner table exactly as `M2Data` stores it.

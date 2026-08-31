@@ -60,9 +60,9 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model,
     // Patching in place avoids cloning an HD-sized model for a parser view.
     let exact_arrays = [
         0x14_usize, 0x1c, 0x24, 0x2c, 0x34, 0x48, 0x58, 0x60, 0x68, 0x78, 0x80, 0x88, 0x90, 0x98,
-        0xf0, 0xf8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128,
+        0xd8, 0xe0, 0xe8, 0xf0, 0xf8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128,
     ];
-    let mut saved = [[0_u8; 8]; 22];
+    let mut saved = [[0_u8; 8]; 25];
     for (slot, offset) in saved.iter_mut().zip(exact_arrays) {
         let header = bytes.get_mut(offset..offset + 8).ok_or_else(|| {
             model_decode(
