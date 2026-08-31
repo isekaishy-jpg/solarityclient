@@ -63,6 +63,40 @@ impl BlpTextureSource {
         (mip_level < self.mip_count()).then(|| self.image.header.mipmap_size(mip_level))
     }
 
+    /// Returns the exact RGBA8 byte count for all authored mip levels.
+    ///
+    /// GPU upload uses this preflight to allocate one staging vector even for
+    /// large same-path HD replacements. Every multiplication and accumulation
+    /// is checked before decompression begins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError::TextureDecode`] when authored dimensions cannot be
+    /// represented in the process address space.
+    pub fn decoded_rgba8_byte_count(&self) -> Result<usize, AssetError> {
+        let mut total = 0_usize;
+        for mip_level in 0..self.mip_count() {
+            let (width, height) = self.image.header.mipmap_size(mip_level);
+            let byte_count = u64::from(width)
+                .checked_mul(u64::from(height))
+                .and_then(|pixels| pixels.checked_mul(4))
+                .and_then(|bytes| usize::try_from(bytes).ok())
+                .ok_or_else(|| AssetError::TextureDecode {
+                    path: self.path.clone(),
+                    message: format!(
+                        "authored mip {mip_level} RGBA8 byte count overflows for {width}x{height}"
+                    ),
+                })?;
+            total = total
+                .checked_add(byte_count)
+                .ok_or_else(|| AssetError::TextureDecode {
+                    path: self.path.clone(),
+                    message: "authored RGBA8 mip-chain byte count overflows".to_owned(),
+                })?;
+        }
+        Ok(total)
+    }
+
     /// Decodes one authored mip to tightly packed row-major RGBA8 pixels.
     ///
     /// # Errors

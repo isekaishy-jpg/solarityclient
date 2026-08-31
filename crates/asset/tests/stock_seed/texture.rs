@@ -57,6 +57,7 @@ fn blp_source_decodes_authored_mips_without_top_level_expansion() -> Result<(), 
 
     assert_eq!((source.width(), source.height()), (2, 2));
     assert_eq!(source.mip_count(), 2);
+    assert_eq!(source.decoded_rgba8_byte_count()?, 20);
     assert_eq!(source.mip_dimensions(1), Some((1, 1)));
     assert_eq!(source.mip_dimensions(2), None);
     let mip = source.decode_mip(1)?;

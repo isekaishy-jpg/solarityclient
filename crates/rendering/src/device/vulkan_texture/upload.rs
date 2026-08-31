@@ -433,7 +433,8 @@ fn upload_sampled_image(
 
 /// Expands authored compressed mips only for the duration of GPU staging.
 fn decode_mips(source: &BlpTextureSource) -> Result<(Vec<u8>, Vec<DecodedMip>), AssetError> {
-    let mut bytes = Vec::new();
+    let decoded_byte_count = source.decoded_rgba8_byte_count()?;
+    let mut bytes = Vec::with_capacity(decoded_byte_count);
     let mut mips = Vec::with_capacity(source.mip_count());
     for mip_level in 0..source.mip_count() {
         let decoded = source.decode_mip(mip_level)?;
@@ -471,6 +472,15 @@ fn decode_mips(source: &BlpTextureSource) -> Result<(Vec<u8>, Vec<DecodedMip>), 
         return Err(AssetError::TextureDecode {
             path: source.path().clone(),
             message: "BLP has no authored mip pixels".to_owned(),
+        });
+    }
+    if bytes.len() != decoded_byte_count {
+        return Err(AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: format!(
+                "decoded mip chain contains {} bytes; expected {decoded_byte_count}",
+                bytes.len()
+            ),
         });
     }
     Ok((bytes, mips))
