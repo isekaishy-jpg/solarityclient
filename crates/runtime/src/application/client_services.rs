@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    LightCatalog, MapCatalog,
+    LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -90,6 +90,7 @@ impl ClientServices {
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
+        let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
         let lights = LightCatalog::load(&mut assets)?;
@@ -169,7 +170,12 @@ impl ClientServices {
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
-                player: RuntimePlayerPresentation::new(assets.clone(), creatures, characters),
+                player: RuntimePlayerPresentation::new(
+                    assets.clone(),
+                    creatures,
+                    characters,
+                    particle_colors,
+                ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 m2_global_clock: std::time::Instant::now(),

@@ -6,6 +6,7 @@
 
 mod lifetime;
 mod mesh;
+mod particle_color;
 mod pose;
 mod random;
 mod rotation;
@@ -15,6 +16,7 @@ mod twinkle;
 
 pub use lifetime::{M2ParticleLifetimePose, M2ParticleLifetimePoseError};
 pub use mesh::{M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticleRenderVertex};
+pub use particle_color::M2ParticleColorReplacement;
 pub use pose::M2ParticlePose;
 pub use random::M2ParticleRandom;
 pub use rotation::M2ParticleRotationPose;

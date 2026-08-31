@@ -7,11 +7,11 @@ mod particle_system2;
 mod ribbon;
 
 pub use particle_system2::{
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan,
-    M2ParticleMeshPlanError, M2ParticlePose, M2ParticleRandom, M2ParticleRenderVertex,
-    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSimulationError,
-    M2ParticleSimulationReport, M2ParticleState, M2ParticleStateError, M2ParticleTwinkleError,
-    M2ParticleTwinkleTable,
+    M2ParticleColorReplacement, M2ParticleLifetimePose, M2ParticleLifetimePoseError,
+    M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRenderVertex, M2ParticleRotationPose, M2ParticleSimulation,
+    M2ParticleSimulationError, M2ParticleSimulationReport, M2ParticleState, M2ParticleStateError,
+    M2ParticleTwinkleError, M2ParticleTwinkleTable,
 };
 
 /// Reproduces stock's float-to-D3DCOLOR conversion and memory byte order.

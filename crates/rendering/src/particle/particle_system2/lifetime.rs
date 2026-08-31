@@ -4,7 +4,7 @@ use glam::{Vec2, Vec3, Vec4};
 use solarity_asset::{M2ParticleEmitter, M2ParticleLifetimeTrack};
 use thiserror::Error;
 
-use super::M2ParticleRandom;
+use super::{M2ParticleColorReplacement, M2ParticleRandom};
 
 /// WotLK's normalized particle-lifetime key corresponding to death.
 const LIFETIME_KEY_MAXIMUM: f32 = i16::MAX as f32;
@@ -17,6 +17,9 @@ const RANDOM_HEAD_TEXTURE_CELL: u32 = 0x0010_0000;
 
 /// Executable lower bound at `0x009E8CD0` for a random scale multiplier.
 const MINIMUM_SCALE_MULTIPLIER: f32 = f32::from_bits(0x38d1_b717);
+
+/// Particle color tracks are authored as byte-domain floats in build 12340.
+const PARTICLE_COLOR_NORMALIZER: f32 = 1.0 / 255.0;
 
 /// One render-state sample at a particle's normalized age.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,11 +47,38 @@ impl M2ParticleLifetimePose {
         normalized_age: f32,
         random_word: u16,
     ) -> Result<Self, M2ParticleLifetimePoseError> {
+        Self::sample_with_particle_color(emitter, normalized_age, random_word, None)
+    }
+
+    /// Samples the same lifetime state after an optional display replacement.
+    ///
+    /// The replacement changes only RGB keys for emitters authored with
+    /// selector 11, 12, or 13. Alpha, scale, atlas cells, and every emitter
+    /// outside those selectors continue to use the shared M2 declaration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2ParticleLifetimePoseError::NonFiniteAge`] for a non-finite
+    /// normalized age, or [`M2ParticleLifetimePoseError::ReplacementColorKeys`]
+    /// when a selected emitter exceeds stock's three replacement key slots.
+    pub fn sample_with_particle_color(
+        emitter: &M2ParticleEmitter,
+        normalized_age: f32,
+        random_word: u16,
+        replacement: Option<&M2ParticleColorReplacement>,
+    ) -> Result<Self, M2ParticleLifetimePoseError> {
         if !normalized_age.is_finite() {
             return Err(M2ParticleLifetimePoseError::NonFiniteAge);
         }
         let key = normalized_age.clamp(0.0, 1.0) * LIFETIME_KEY_MAXIMUM;
-        let color = sample_linear(emitter.color(), key, Vec3::ONE, Vec3::lerp);
+        let color = match replacement.and_then(|colors| colors.ramp(emitter.particle_color_index()))
+        {
+            Some(colors) => sample_replacement_color(emitter.color(), key, colors)?,
+            None => {
+                sample_linear(emitter.color(), key, Vec3::splat(255.0), Vec3::lerp)
+                    * PARTICLE_COLOR_NORMALIZER
+            }
+        };
         let alpha = sample_linear(emitter.alpha(), key, 1.0, |from, to, amount| {
             from + (to - from) * amount
         });
@@ -113,6 +143,28 @@ pub enum M2ParticleLifetimePoseError {
     /// The normalized age was NaN or infinite.
     #[error("particle normalized age must be finite")]
     NonFiniteAge,
+    /// Display substitution has only the three key slots stock allocates.
+    #[error("particle replacement color track has {key_count} keys; stock supports at most 3")]
+    ReplacementColorKeys {
+        /// Authored color-key count which cannot fit the replacement array.
+        key_count: usize,
+    },
+}
+
+/// Samples replacement values against the emitter's unchanged key timestamps.
+fn sample_replacement_color(
+    track: &M2ParticleLifetimeTrack<Vec3>,
+    key: f32,
+    colors: [Vec3; 3],
+) -> Result<Vec3, M2ParticleLifetimePoseError> {
+    let key_count = track.timestamps().len();
+    if key_count > colors.len() {
+        return Err(M2ParticleLifetimePoseError::ReplacementColorKeys { key_count });
+    }
+    let Some((lower, upper, amount)) = interval(track, key) else {
+        return Ok(Vec3::ONE);
+    };
+    Ok(colors[lower].lerp(colors[upper], amount))
 }
 
 /// Locates the two authored keys surrounding one stock normalized-life key.

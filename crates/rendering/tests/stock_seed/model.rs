@@ -8,7 +8,7 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
     DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    Locale, M2BlendMode,
+    Locale, M2BlendMode, ParticleColorCatalog,
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
@@ -17,9 +17,9 @@ use solarity_rendering::{
     CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
-    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
+    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
+    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
@@ -576,6 +576,92 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
         M2ParticleLifetimePose::sample(emitter, f32::NAN, random_word),
         Err(M2ParticleLifetimePoseError::NonFiniteAge)
     );
+    Ok(())
+}
+
+/// Display particle colors replace selectors 11 through 13 per placement.
+#[test]
+fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 0x2a..particle_offset + 0x2c].copy_from_slice(&12_u16.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fields = [
+        17,
+        0x0011_2233,
+        0x00ff_0000,
+        0x0077_8899,
+        0x00aa_bbcc,
+        0x0000_ff00,
+        0x0001_0203,
+        0x0004_0506,
+        0x0000_00ff,
+        0x000a_0b0c,
+    ];
+    let particle_colors = create_wdbc(1, 10, &fields, b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticleColor.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticleColor00.skin",
+            bytes: &skin,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ParticleColor.dbc",
+            bytes: &particle_colors,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let colors = ParticleColorCatalog::load(&mut store)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\ParticleColor.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let replacement =
+        M2ParticleColorReplacement::resolve(&colors, 17).ok_or("replacement is absent")?;
+    let pose = M2ParticleLifetimePose::sample_with_particle_color(
+        emitter,
+        0.5,
+        0x1234,
+        Some(&replacement),
+    )?;
+    assert!((pose.color().truncate() - Vec3::new(0.5, 0.5, 0.0)).length() < 0.000_1);
+
+    assert!(M2ParticleColorReplacement::resolve(&colors, 0).is_none());
+    let missing =
+        M2ParticleColorReplacement::resolve(&colors, 18).ok_or("stock sentinel is absent")?;
+    let missing_pose =
+        M2ParticleLifetimePose::sample_with_particle_color(emitter, 0.5, 0x1234, Some(&missing))?;
+    assert_eq!(missing_pose.color().truncate(), Vec3::Y);
+
+    let emitter_pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particle = M2ParticleState::new(1.0, Vec3::ZERO, Vec3::Y, 0x1234)?;
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let twinkle = solarity_rendering::M2ParticleTwinkleTable::new(0x0029_4823);
+    let mesh = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
+        emitter,
+        emitter_pose,
+        &[particle],
+        camera,
+        Mat4::IDENTITY,
+        1.0,
+        &twinkle,
+        Some(&replacement),
+    )?;
+    assert_eq!(mesh.vertices()[0].color_bgra(), [0, 128, 128, 191]);
     Ok(())
 }
 
@@ -2638,7 +2724,7 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
         bytes,
         particle_offset + 0x104,
         &[0, i16::MAX as u16],
-        &render_f32_values(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        &render_f32_values(&[255.0, 0.0, 0.0, 0.0, 0.0, 255.0]),
         12,
     )?;
     bytes[particle_offset + 0x134..particle_offset + 0x13c]

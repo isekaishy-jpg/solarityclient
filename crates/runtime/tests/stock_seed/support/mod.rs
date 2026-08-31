@@ -108,6 +108,7 @@ fn build_archive(
             "DBFilesClient\\CreatureDisplayInfoExtra.dbc",
         );
         builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\CreatureModelData.dbc");
+        builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\ParticleColor.dbc");
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\CharSections.dbc");
         builder = builder.add_file_data(empty_wdbc(6), "DBFilesClient\\CharHairGeosets.dbc");
         builder = builder.add_file_data(

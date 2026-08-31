@@ -57,12 +57,13 @@ pub use model::{
 };
 pub use model::{compare_m2_transparent, m2_section_distance_key};
 pub use particle::{
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan,
-    M2ParticleMeshPlanError, M2ParticlePose, M2ParticleRandom, M2ParticleRenderVertex,
-    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSimulationError,
-    M2ParticleSimulationReport, M2ParticleState, M2ParticleStateError, M2ParticleTwinkleError,
-    M2ParticleTwinkleTable, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonMeshPlanError,
-    M2RibbonPose, M2RibbonRenderVertex, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
+    M2ParticleColorReplacement, M2ParticleLifetimePose, M2ParticleLifetimePoseError,
+    M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRenderVertex, M2ParticleRotationPose, M2ParticleSimulation,
+    M2ParticleSimulationError, M2ParticleSimulationReport, M2ParticleState, M2ParticleStateError,
+    M2ParticleTwinkleError, M2ParticleTwinkleTable, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonMeshPlanError, M2RibbonPose, M2RibbonRenderVertex, M2RibbonSection, M2RibbonTrail,
+    M2RibbonTrailError,
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler,

@@ -7,8 +7,9 @@ use thiserror::Error;
 use crate::WorldCameraFrame;
 
 use super::{
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRotationPose,
-    M2ParticleState, M2ParticleTwinkleError, M2ParticleTwinkleTable,
+    M2ParticleColorReplacement, M2ParticleLifetimePose, M2ParticleLifetimePoseError,
+    M2ParticlePose, M2ParticleRotationPose, M2ParticleState, M2ParticleTwinkleError,
+    M2ParticleTwinkleTable,
 };
 use crate::particle::pack_bgra;
 
@@ -129,6 +130,7 @@ impl M2ParticleMeshPlan {
             glam::Mat4::IDENTITY,
             alpha_multiplier,
             None,
+            None,
         )
     }
 
@@ -153,6 +155,7 @@ impl M2ParticleMeshPlan {
             glam::Mat4::IDENTITY,
             alpha_multiplier,
             Some(twinkle_table),
+            None,
         )
     }
 
@@ -180,6 +183,7 @@ impl M2ParticleMeshPlan {
             particle_to_world,
             alpha_multiplier,
             None,
+            None,
         )
     }
 
@@ -206,6 +210,39 @@ impl M2ParticleMeshPlan {
             particle_to_world,
             alpha_multiplier,
             Some(twinkle_table),
+            None,
+        )
+    }
+
+    /// Builds transformed geometry with twinkle and placement-local colors.
+    ///
+    /// Static world placements pass no replacement through the existing entry
+    /// points. Creature and item owners use this boundary after their display
+    /// metadata has selected one `ParticleColor.dbc` row.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare_transformed_with_twinkle_table`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_transformed_with_particle_color(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        alpha_multiplier: f32,
+        twinkle_table: &M2ParticleTwinkleTable,
+        replacement: Option<&M2ParticleColorReplacement>,
+    ) -> Result<Self, M2ParticleMeshPlanError> {
+        Self::prepare_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            particle_to_world,
+            alpha_multiplier,
+            Some(twinkle_table),
+            replacement,
         )
     }
 
@@ -219,6 +256,7 @@ impl M2ParticleMeshPlan {
         particle_to_world: glam::Mat4,
         alpha_multiplier: f32,
         twinkle_table: Option<&M2ParticleTwinkleTable>,
+        replacement: Option<&M2ParticleColorReplacement>,
     ) -> Result<Self, M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
@@ -308,10 +346,11 @@ impl M2ParticleMeshPlan {
             };
             let position = particle_to_world.transform_point3(particle.position());
             let velocity = particle_to_world.transform_vector3(particle.velocity());
-            let appearance = M2ParticleLifetimePose::sample(
+            let appearance = M2ParticleLifetimePose::sample_with_particle_color(
                 emitter,
                 particle.normalized_age(pose.lifespan(), emitter.lifespan_variation()),
                 particle.random_word(),
+                replacement,
             )?;
             let mut color = appearance.color();
             color.w *= alpha_multiplier;

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    DecodedM2Model, M2ModelCache,
+    DecodedM2Model, M2ModelCache, ParticleColorCatalog,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
-use solarity_rendering::WorldCamera;
+use solarity_rendering::{M2ParticleColorReplacement, WorldCamera};
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
     UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
@@ -53,6 +53,7 @@ pub struct RuntimePlayerPresentation {
     assets: AssetStoreHandle,
     creatures: CreatureCatalog,
     characters: CharacterAppearanceCatalog,
+    particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
     resident: Option<ResidentPlayerModel>,
 }
@@ -64,11 +65,13 @@ impl RuntimePlayerPresentation {
         assets: AssetStoreHandle,
         creatures: CreatureCatalog,
         characters: CharacterAppearanceCatalog,
+        particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
             assets,
             creatures,
             characters,
+            particle_colors,
             models: M2ModelCache::new(),
             resident: None,
         }
@@ -107,8 +110,12 @@ impl RuntimePlayerPresentation {
         };
         let path = appearance.body().model_path();
         let scale = appearance.object_scale();
+        let particle_color_id = appearance.body().display().particle_color_id();
         if self.resident.as_ref().is_some_and(|resident| {
-            resident.guid == guid && resident.path() == path && resident.object_scale == scale
+            resident.guid == guid
+                && resident.path() == path
+                && resident.object_scale == scale
+                && resident.particle_color_id == particle_color_id
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
@@ -126,9 +133,13 @@ impl RuntimePlayerPresentation {
             world.local_player_view()?,
             camera_height,
         )?;
+        let particle_colors =
+            M2ParticleColorReplacement::resolve(&self.particle_colors, particle_color_id);
         self.resident = Some(ResidentPlayerModel {
             guid,
             object_scale: scale,
+            particle_color_id,
+            particle_colors,
             camera_height,
             camera_pose,
             model,
@@ -147,6 +158,22 @@ impl RuntimePlayerPresentation {
     #[must_use]
     pub fn resident_model(&self) -> Option<&Arc<DecodedM2Model>> {
         self.resident.as_ref().map(|resident| &resident.model)
+    }
+
+    /// Returns the body display's exact `ParticleColor.dbc` identifier.
+    #[must_use]
+    pub fn resident_particle_color_id(&self) -> Option<u32> {
+        self.resident
+            .as_ref()
+            .map(|resident| resident.particle_color_id)
+    }
+
+    /// Returns placement-local body-emitter colors when the display selected them.
+    #[must_use]
+    pub fn resident_particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.particle_colors.as_ref())
     }
 
     /// Returns the authored and stock-clamped camera pivot height.
@@ -191,6 +218,8 @@ impl RuntimePlayerPresentation {
 struct ResidentPlayerModel {
     guid: u64,
     object_scale: f32,
+    particle_color_id: u32,
+    particle_colors: Option<M2ParticleColorReplacement>,
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,

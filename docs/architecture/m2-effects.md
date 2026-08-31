@@ -118,9 +118,12 @@ The asset boundary owns the complete 476-byte WotLK particle record:
   animated enable parameters.
 
 The separate ten-word build-12340 `ParticleColor.dbc` catalog owns its row ID
-and three packed start, middle, and end color triplets. Exact lookup remains a
-presentation input; a missing display-selected row is not replaced by another
-color definition.
+and three packed start, middle, and end color triplets. A nonzero creature or
+item display identifier produces three placement-local setter calls for M2
+emitter selectors 11, 12, and 13. Identifier zero leaves the shared authored
+colors untouched. The executable deliberately substitutes packed green for a
+missing nonzero row; Solarity retains that diagnostic behavior without
+applying it to static ADT or WMO doodads.
 
 Under flag `0x10000000`, the 16-bit texture field contains three five-bit model
 texture indices. Otherwise it is one ordinary index. Admission expands and
@@ -136,7 +139,8 @@ payloads do not create another record type or resource identity.
 Rendering now samples the eleven emitter-time tracks through the selected M2
 and global clocks, while each particle's five lifetime ramps use the stock
 signed fixed-16 normalized domain `0x0000..=0x7FFF`. Continuous color, alpha,
-and scale ramps interpolate; integer head/tail flipbook cells remain held. A
+and scale ramps interpolate; byte-domain particle RGB becomes normalized only
+at the renderer boundary, and integer head/tail flipbook cells remain held. A
 particle-local stream reseeded from its stored 16-bit word applies shared or
 independent scale variation and multiply-high random head-cell selection in
 the executable's call order. Initial rotation and angular velocity use their
