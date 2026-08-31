@@ -133,6 +133,16 @@ fields named `InnerRadius2D` and `OuterRadius2D`. At and inside the inner radius
 it sets FMOD's 3D pan level to zero, beyond the outer radius it sets the level to
 one, and between them it interpolates linearly. This blends a positioned voice
 from two-dimensional to three-dimensional panning; it does not select a lower-
-or higher-resolution asset. Interval, usage-mode, and duck-transition scheduling
-remain unimplemented until their complete state transitions are executable-
-backed.
+or higher-resolution asset.
+
+The same update evaluates `TimeA` through `TimeD` against game-clock
+milliseconds within the realm day. A sound is absent outside a nonempty window,
+ramps from zero to one between A and B, remains at one until C, and ramps back to
+zero at D. Midnight-crossing windows move early-day samples into the following
+integer day. The constructor selects one signed offset from
+`[-RandomOffsetRange, RandomOffsetRange)` using the sound subsystem's Blizzard
+random stream. Stock shifts the window comparisons by that offset but retains
+the unshifted time points in interpolation numerators; `scheduled_gain` preserves
+that executable behavior and accepts the selected offset explicitly. Interval,
+usage-mode, and duck-transition state machines remain unimplemented until their
+complete transitions are executable-backed.

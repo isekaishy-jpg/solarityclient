@@ -96,6 +96,29 @@ fn advanced_sound_applies_stock_constructor_corrections() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// The daily envelope uses realm milliseconds and stock's offset asymmetry.
+#[test]
+fn advanced_sound_evaluates_the_stock_daily_envelope() -> Result<(), Box<dyn Error>> {
+    let (mut store, _fixture) = spatial_catalog_fixture(advanced_sound_entries_fixture(90, 42))?;
+    let catalog = SpatialSoundCatalog::load(&mut store)?;
+    let resolved = catalog.resolve(90)?;
+    let properties = AdvancedSoundProperties::from(resolved.advanced_entry());
+
+    assert_eq!(properties.scheduled_gain(99, 0), None);
+    assert_eq!(properties.scheduled_gain(100, 0), Some(0.0));
+    assert_eq!(properties.scheduled_gain(150, 0), Some(0.5));
+    assert_eq!(properties.scheduled_gain(250, 0), Some(1.0));
+    assert_eq!(properties.scheduled_gain(350, 0), Some(0.5));
+    assert_eq!(properties.scheduled_gain(400, 0), Some(0.0));
+    assert_eq!(properties.scheduled_gain(401, 0), None);
+
+    // Stock moves the admission boundary by the random offset while retaining
+    // the unshifted time point in the interpolation numerator.
+    assert_eq!(properties.scheduled_gain(124, 25), None);
+    assert_eq!(properties.scheduled_gain(125, 25), Some(0.25));
+    Ok(())
+}
+
 /// Missing advanced and base rows remain distinct failures without fallback.
 #[test]
 fn terrain_sound_join_does_not_substitute_another_row() -> Result<(), Box<dyn Error>> {
