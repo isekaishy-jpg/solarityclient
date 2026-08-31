@@ -29,8 +29,9 @@ pub use database::{
     CreatureDisplayInfoExtra, CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
     ItemDisplayCatalog, ItemDisplayInfo, LightCatalog, LightDefinition, LightParameter,
-    LightSkybox, MapCatalog, MapDefinition, MapKind, RealmCategoryCatalog, RealmCategoryDefinition,
-    RealmConfiguration, RealmConfigurationCatalog, SkyboxBlend, SoundAsset, SoundEntry,
+    LightSkybox, LiquidTypeCatalog, LiquidTypeDefinition, MapCatalog, MapDefinition, MapKind,
+    RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,
+    SkyboxBlend, SoundAsset, SoundEmitterCatalog, SoundEmitterDefinition, SoundEntry,
     SoundEntryCatalog, WdbcHeader, WdbcTable, WorldLightCondition, WorldLightQuery,
     WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };

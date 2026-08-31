@@ -11,10 +11,10 @@ mod voice;
 pub use audio::{
     AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
     AdvancedSoundProperties, AdvancedSoundUsage, AdvancedSoundUsageError, DecodedSoundHandle,
-    DecodedSoundInfo, EncodedSound, ResolvedSpatialSound, SoundBackend, SoundBackendError,
-    SoundCache, SoundCategory, SoundCategorySettings, SoundDecodeError, SoundDecodeMode,
-    SoundDecoder, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError,
-    SoundOutput, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundPlayback,
-    SoundVariationSelector, SoundVoiceHandle, SoundVoiceState, SpatialSoundCatalog,
-    SpatialSoundError,
+    DecodedSoundInfo, EncodedSound, LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound,
+    ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundCache, SoundCategory,
+    SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundOutput, SoundOutputInfo,
+    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundVariationSelector, SoundVoiceHandle,
+    SoundVoiceState, SpatialSoundCatalog, SpatialSoundError,
 };

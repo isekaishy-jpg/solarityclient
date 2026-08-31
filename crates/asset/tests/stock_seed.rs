@@ -8,6 +8,8 @@ mod archive;
 mod cache;
 #[path = "stock_seed/database.rs"]
 mod database;
+#[path = "stock_seed/database_sound_environment.rs"]
+mod database_sound_environment;
 #[path = "stock_seed/file_stack.rs"]
 mod file_stack;
 #[path = "stock_seed/model.rs"]

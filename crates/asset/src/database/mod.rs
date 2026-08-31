@@ -21,6 +21,7 @@ mod race;
 mod realm;
 mod sound;
 mod sound_advanced;
+mod sound_environment;
 mod w_data_store;
 mod wow_client_db;
 
@@ -51,4 +52,7 @@ pub use realm::{
 };
 pub use sound::{SoundAsset, SoundEntry, SoundEntryCatalog};
 pub use sound_advanced::{AdvancedSoundEntry, AdvancedSoundEntryCatalog};
+pub use sound_environment::{
+    LiquidTypeCatalog, LiquidTypeDefinition, SoundEmitterCatalog, SoundEmitterDefinition,
+};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

@@ -18,6 +18,8 @@ mod audio_ducking;
 mod audio_emitter;
 #[path = "stock_seed/audio/engine.rs"]
 mod audio_engine;
+#[path = "stock_seed/audio/liquid.rs"]
+mod audio_liquid;
 #[path = "stock_seed/audio/spatial.rs"]
 mod audio_spatial;
 #[path = "stock_seed/cinematic.rs"]
