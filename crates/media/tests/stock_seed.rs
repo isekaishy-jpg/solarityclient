@@ -12,6 +12,8 @@ mod audio_cache;
 mod audio_codec;
 #[path = "stock_seed/audio/dsp.rs"]
 mod audio_dsp;
+#[path = "stock_seed/audio/ducking.rs"]
+mod audio_ducking;
 #[path = "stock_seed/audio/emitter.rs"]
 mod audio_emitter;
 #[path = "stock_seed/audio/engine.rs"]

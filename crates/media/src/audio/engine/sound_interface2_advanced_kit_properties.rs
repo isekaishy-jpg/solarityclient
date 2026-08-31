@@ -24,6 +24,7 @@ pub struct AdvancedSoundProperties {
     inside_cone_angle: f32,
     outside_cone_angle: f32,
     outside_cone_gain: f32,
+    duck_transition_milliseconds: [i32; 2],
 }
 
 impl AdvancedSoundProperties {
@@ -153,6 +154,14 @@ impl AdvancedSoundProperties {
     pub const fn outside_cone_gain(self) -> f32 {
         self.outside_cone_gain
     }
+
+    /// Returns the authored duck and unduck transition durations.
+    ///
+    /// Build 12340 consumes both DBC words as signed milliseconds.
+    #[must_use]
+    pub const fn duck_transition_milliseconds(self) -> [i32; 2] {
+        self.duck_transition_milliseconds
+    }
 }
 
 impl From<&AdvancedSoundEntry> for AdvancedSoundProperties {
@@ -191,6 +200,10 @@ impl From<&AdvancedSoundEntry> for AdvancedSoundProperties {
             inside_cone_angle: cone_angles[0],
             outside_cone_angle: cone_angles[1],
             outside_cone_gain: entry.outside_volume(),
+            duck_transition_milliseconds: [
+                entry.time_to_duck() as i32,
+                entry.time_to_unduck() as i32,
+            ],
         }
     }
 }

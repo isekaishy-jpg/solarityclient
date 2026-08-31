@@ -93,6 +93,7 @@ fn advanced_sound_applies_stock_constructor_corrections() -> Result<(), Box<dyn 
     assert_eq!(properties.influence_radii(), [40.0, 40.0]);
     assert_eq!(properties.cone_angles(), [90.0, 90.0]);
     assert_eq!(properties.outside_cone_gain(), 0.25);
+    assert_eq!(properties.duck_transition_milliseconds(), [500, 750]);
     Ok(())
 }
 
