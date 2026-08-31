@@ -40,6 +40,19 @@ validates every nonnegative index. Missing roles remain missing; camera zero is
 not a compatibility substitute. Runtime presentation will sample shared camera
 tracks into placement-local state rather than mutate the decoded M2.
 
+## Model events
+
+One build-12340 event is 36 bytes, not the dependency's 44-byte range-based
+record. It stores a four-byte identifier, family-specific data word, 32-bit bone
+reference, bone-relative position, and a 12-byte timestamp-only nested track.
+Both `0xFFFF` and `0xFFFF_FFFF` are retained as stock absent-bone sentinels.
+
+Event timelines use the same internal `.m2`, external `.anim`, alias, and global
+clock routing as ordinary tracks, but carry no value array. Trigger timestamps
+remain ordered in their authored outer-channel slots so audio, spell, footstep,
+and presentation systems can interpret the identifier without format-layer
+coercion.
+
 ## Ribbons
 
 The asset boundary now owns every field of the 176-byte ribbon record:

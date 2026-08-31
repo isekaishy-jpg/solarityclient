@@ -6,12 +6,14 @@ use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
 mod camera;
+mod event;
 mod light;
 mod material;
 mod particle;
 mod ribbon;
 
 pub use camera::M2Camera;
+pub use event::{M2Event, M2EventTrack};
 pub use light::{M2Light, M2LightKind};
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
 pub use particle::{M2ParticleEmitter, M2ParticleLifetimeTrack};
@@ -284,6 +286,7 @@ pub struct M2AnimationSet {
     texture_transforms: Vec<M2TextureTransform>,
     cameras: Vec<M2Camera>,
     camera_lookup: Vec<Option<u16>>,
+    events: Vec<M2Event>,
     lights: Vec<M2Light>,
     ribbons: Vec<M2RibbonEmitter>,
     particles: Vec<M2ParticleEmitter>,
@@ -341,6 +344,14 @@ impl M2AnimationSet {
             decode_texture_transforms(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let (cameras, camera_lookup) =
             camera::decode_cameras(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let events = event::decode_events(
+            model_path,
+            model_bytes,
+            &globals,
+            &sequences,
+            &payloads,
+            bones.len(),
+        )?;
         let lights = light::decode_lights(
             model_path,
             model_bytes,
@@ -376,6 +387,7 @@ impl M2AnimationSet {
             texture_transforms,
             cameras,
             camera_lookup,
+            events,
             lights,
             ribbons,
             particles,
@@ -604,6 +616,12 @@ impl M2AnimationSet {
     #[must_use]
     pub fn camera_lookup(&self) -> &[Option<u16>] {
         &self.camera_lookup
+    }
+
+    /// Returns authored model events in exact M2 table order.
+    #[must_use]
+    pub fn events(&self) -> &[M2Event] {
+        &self.events
     }
 
     /// Returns authored model lights in exact M2 table order.

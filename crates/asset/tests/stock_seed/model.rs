@@ -784,6 +784,79 @@ fn m2_camera_lookup_rejects_a_missing_camera() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Version-264 events retain four-byte IDs and timestamp-only nested channels.
+#[test]
+fn m2_events_decode_wotlk_record_and_timeline() -> Result<(), Box<dyn Error>> {
+    let model = animated_event_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Event.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Event00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Event.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let event = model
+        .animations()
+        .events()
+        .first()
+        .ok_or("event is absent")?;
+
+    assert_eq!(event.identifier(), *b"$SND");
+    assert_eq!(event.data(), 42);
+    assert_eq!(event.bone_index(), Some(0));
+    assert_eq!(event.position(), glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(
+        event.timeline().interpolation(),
+        solarity_asset::M2Interpolation::Step
+    );
+    assert_eq!(event.timeline().global_sequence(), None);
+    assert_eq!(event.timeline().channels(), &[vec![125, 750]]);
+    Ok(())
+}
+
+/// Event bone references do not fall back to the model root.
+#[test]
+fn m2_event_rejects_a_missing_bone() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_event_m2_bytes()?;
+    let event_offset = m2_array_offset(&model, 0x100)?;
+    model[event_offset + 8..event_offset + 12].copy_from_slice(&1_u32.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadEvent.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadEvent00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadEvent.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("event 0 references missing bone 1")
+    ));
+    Ok(())
+}
+
 /// Stock keeps the model usable while disabling a missing external sequence.
 #[test]
 fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
@@ -1579,6 +1652,20 @@ fn animated_camera_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 
+/// Adds one exact WotLK event with one timestamp-only sequence channel.
+fn animated_event_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = animated_m2_bytes()?;
+    let event_offset = bytes.len();
+    bytes.resize(event_offset + 36, 0);
+    bytes[event_offset..event_offset + 4].copy_from_slice(b"$SND");
+    bytes[event_offset + 4..event_offset + 8].copy_from_slice(&42_u32.to_le_bytes());
+    bytes[event_offset + 8..event_offset + 12].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[event_offset + 12..event_offset + 24].copy_from_slice(&f32_values(&[1.0, 2.0, 3.0]));
+    append_event_track(&mut bytes, event_offset + 24, &[125, 750])?;
+    set_header_array(&mut bytes, 0x100, 1, event_offset)?;
+    Ok(bytes)
+}
+
 /// Appends one sequence channel and patches its 20-byte nested track header.
 fn append_linear_track(
     bytes: &mut Vec<u8>,
@@ -1617,6 +1704,30 @@ fn append_linear_track(
     bytes[track_offset + 12..track_offset + 16].copy_from_slice(&1_u32.to_le_bytes());
     bytes[track_offset + 16..track_offset + 20]
         .copy_from_slice(&u32::try_from(value_refs)?.to_le_bytes());
+    Ok(())
+}
+
+/// Appends one timestamp-only M2 event channel and patches its 12-byte header.
+fn append_event_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u32],
+) -> Result<(), Box<dyn Error>> {
+    let timestamp_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let timestamp_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = bytes.len();
+    for timestamp in timestamps {
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+    }
+    bytes[timestamp_data_word..timestamp_data_word + 4]
+        .copy_from_slice(&u32::try_from(timestamp_data)?.to_le_bytes());
+    bytes[track_offset..track_offset + 2].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[track_offset + 2..track_offset + 4].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes[track_offset + 4..track_offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 8..track_offset + 12]
+        .copy_from_slice(&u32::try_from(timestamp_refs)?.to_le_bytes());
     Ok(())
 }
 
