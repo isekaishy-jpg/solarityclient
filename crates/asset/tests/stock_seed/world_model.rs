@@ -274,6 +274,15 @@ fn world_model_decodes_stock_doodad_sets() -> Result<(), Box<dyn Error>> {
     assert_eq!(lamp.name_offset(), 9);
     assert_eq!(lamp.flags(), 0x80);
     assert_eq!(lamp.orientation(), [0.0, 0.0, 1.0, 0.0]);
+    assert_eq!(model.active_doodad_indices(0)?, [0]);
+    assert_eq!(model.active_doodad_indices(1)?, [0, 1]);
+    let error = match model.active_doodad_indices(2) {
+        Ok(_) => return Err("selector outside MODS was accepted".into()),
+        Err(error) => error,
+    };
+    assert_eq!(error.path(), model.path());
+    assert_eq!(error.selector(), 2);
+    assert_eq!(error.set_count(), 2);
     Ok(())
 }
 

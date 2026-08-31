@@ -10,7 +10,7 @@ mod map_obj_group;
 mod map_obj_read;
 
 pub use map_obj::{DecodedWorldModel, WorldModelBlendMode, WorldModelMaterial, WorldModelShader};
-pub use map_obj_doodad::{WorldModelDoodad, WorldModelDoodadSet};
+pub use map_obj_doodad::{WorldModelDoodad, WorldModelDoodadSet, WorldModelDoodadSetError};
 pub use map_obj_group::{
     DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
     WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,

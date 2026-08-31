@@ -3,7 +3,7 @@
 use crate::{ArchiveDescriptor, AssetPath};
 
 use super::map_obj_group::DecodedWorldModelGroup;
-use super::{WorldModelDoodad, WorldModelDoodadSet};
+use super::{WorldModelDoodad, WorldModelDoodadSet, WorldModelDoodadSetError};
 
 /// One completely admitted WMO root and its independently resolved groups.
 pub struct DecodedWorldModel {
@@ -101,11 +101,52 @@ impl DecodedWorldModel {
         &self.doodads
     }
 
+    /// Returns MODD indices enabled by one MODF doodad-set selector.
+    ///
+    /// Set zero is the additive global range and is always included. A
+    /// nonzero selector adds exactly that alternative range after the global
+    /// entries. Empty WMO doodad tables accept only selector zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldModelDoodadSetError`] when the selector is outside MODS.
+    pub fn active_doodad_indices(
+        &self,
+        selector: u16,
+    ) -> Result<Vec<usize>, WorldModelDoodadSetError> {
+        if self.doodad_sets.is_empty() {
+            return if selector == 0 {
+                Ok(Vec::new())
+            } else {
+                Err(WorldModelDoodadSetError::new(
+                    self.path.clone(),
+                    selector,
+                    0,
+                ))
+            };
+        }
+        let selected = self.doodad_sets.get(usize::from(selector)).ok_or_else(|| {
+            WorldModelDoodadSetError::new(self.path.clone(), selector, self.doodad_sets.len())
+        })?;
+        let global = &self.doodad_sets[0];
+        let mut indices = Vec::new();
+        append_set_indices(&mut indices, global);
+        if selector != 0 {
+            append_set_indices(&mut indices, selected);
+        }
+        Ok(indices)
+    }
+
     /// Returns every group in exact numeric file order.
     #[must_use]
     pub fn groups(&self) -> &[DecodedWorldModelGroup] {
         &self.groups
     }
+}
+
+fn append_set_indices(indices: &mut Vec<usize>, set: &WorldModelDoodadSet) {
+    let end = set.first_doodad() + set.doodad_count();
+    indices.extend((set.first_doodad()..end).map(|index| index as usize));
 }
 
 /// Build-12340 MapObj shader selector after stock `FinishLoad` normalization.

@@ -1,6 +1,44 @@
 //! Root WMO doodad-set ranges and exact MODD placement records.
 
 use crate::AssetPath;
+use thiserror::Error;
+
+/// A MODF selector references no authored alternative MODS range.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("WMO {path} doodad-set selector {selector} exceeds {set_count} authored sets")]
+pub struct WorldModelDoodadSetError {
+    path: AssetPath,
+    selector: u16,
+    set_count: usize,
+}
+
+impl WorldModelDoodadSetError {
+    pub(super) const fn new(path: AssetPath, selector: u16, set_count: usize) -> Self {
+        Self {
+            path,
+            selector,
+            set_count,
+        }
+    }
+
+    /// Returns the WMO whose MODS table rejected the selector.
+    #[must_use]
+    pub const fn path(&self) -> &AssetPath {
+        &self.path
+    }
+
+    /// Returns the rejected MODF selector.
+    #[must_use]
+    pub const fn selector(&self) -> u16 {
+        self.selector
+    }
+
+    /// Returns the number of authored MODS entries.
+    #[must_use]
+    pub const fn set_count(&self) -> usize {
+        self.set_count
+    }
+}
 
 /// One named MODS range into the root's MODD placement table.
 #[derive(Clone, Debug, Eq, PartialEq)]
