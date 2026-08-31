@@ -25,6 +25,10 @@ pub struct M2ParticleState {
     random_word: u16,
 }
 
+// Twinkle phases shift stock's particle pointer by five; preserve the same
+// pool stride even though fields remain private and serialization-independent.
+const _: () = assert!(std::mem::size_of::<M2ParticleState>() == 32);
+
 impl M2ParticleState {
     /// Creates the common state written by one stock emitter spawn.
     ///

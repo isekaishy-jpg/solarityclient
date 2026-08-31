@@ -725,6 +725,74 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// Twinkle uses one process table and the particle's current 32-byte pool slot.
+#[test]
+fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 0x160..particle_offset + 0x164].copy_from_slice(&0.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x164..particle_offset + 0x168].copy_from_slice(&1.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x168..particle_offset + 0x170]
+        .copy_from_slice(&render_f32_values(&[0.5, 1.5]));
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\TwinkleParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\TwinkleParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\TwinkleParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particles = [M2ParticleState::new(
+        0.5,
+        Vec3::new(10.0, 20.0, 30.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        0x2483,
+    )?];
+    let table = solarity_rendering::M2ParticleTwinkleTable::new(0x0029_4823);
+    let pool_slot = (std::ptr::from_ref(&particles[0]).addr() >> 5) as u8 & 0x7f;
+    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")? * 1.5;
+    assert_eq!(table.sample(emitter, &particles[0])?, Some(expected_scale));
+    assert_eq!(
+        M2ParticleMeshPlan::prepare(
+            emitter,
+            pose,
+            &particles,
+            WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
+            1.0,
+        ),
+        Err(solarity_rendering::M2ParticleMeshPlanError::TwinkleTable)
+    );
+    let mesh = M2ParticleMeshPlan::prepare_with_twinkle_table(
+        emitter,
+        pose,
+        &particles,
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
+        1.0,
+        &table,
+    )?;
+    assert_eq!(mesh.vertices().len(), 8);
+    assert_eq!(mesh.indices().len(), 12);
+    Ok(())
+}
+
 /// Spherical emission samples a bounded shell and its dedicated launch path.
 #[test]
 fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Error>> {

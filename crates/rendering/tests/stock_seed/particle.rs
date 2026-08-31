@@ -1,7 +1,9 @@
 //! External stock-compatibility tests for `rendering/particle` belong here.
 
 use glam::Vec3;
-use solarity_rendering::{M2ParticleRandom, M2ParticleState, M2ParticleStateError};
+use solarity_rendering::{
+    M2ParticleRandom, M2ParticleState, M2ParticleStateError, M2ParticleTwinkleTable,
+};
 
 /// The emitter-owned table generator reproduces recovered executable vectors.
 #[test]
@@ -15,6 +17,17 @@ fn particle_random_reproduces_stock_stream() {
     assert_eq!(unit.next_unit().to_bits(), 0x3f21_e35c);
     let mut signed = M2ParticleRandom::new(0x0029_4823);
     assert_eq!(signed.next_signed().to_bits(), 0x3ebc_3948);
+}
+
+/// M2 initialization fills one shared 128-entry phase table from its seed.
+#[test]
+fn particle_twinkle_table_reproduces_stock_stream() {
+    let table = M2ParticleTwinkleTable::new(0x0029_4823);
+    assert_eq!(table.phase(0).map(f32::to_bits), Some(0x3f21_e35c));
+    assert_eq!(table.phase(1).map(f32::to_bits), Some(0x3e95_9040));
+    assert_eq!(table.phase(2).map(f32::to_bits), Some(0x3e8c_41c8));
+    assert_eq!(table.phase(128), None);
+    assert_eq!(std::mem::size_of::<M2ParticleState>(), 32);
 }
 
 /// Ordinary particle motion follows stock age, gravity, and drag ordering.

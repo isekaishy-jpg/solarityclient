@@ -8,12 +8,12 @@ use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
     M2MeshPlan, M2ParticleMeshPlan, M2ParticlePipelineHandle, M2ParticlePose,
-    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2PipelineHandle,
-    M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2TextureSet,
-    M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    compare_m2_transparent, m2_section_distance_key,
+    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable,
+    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
+    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -178,6 +178,7 @@ impl M2Playback {
 pub(super) struct M2Frame {
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
+    particle_twinkle: Arc<M2ParticleTwinkleTable>,
     animation_started_at: std::time::Instant,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
@@ -207,6 +208,7 @@ impl M2Frame {
         renderer: &mut VulkanRenderer,
         scene: &ResidentM2Scene,
         random: &mut CrtRand,
+        particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let mut sources = Vec::with_capacity(scene.sources().len());
         for source in scene.sources() {
@@ -260,6 +262,7 @@ impl M2Frame {
         Ok(Self {
             sources,
             placements,
+            particle_twinkle,
             animation_started_at: std::time::Instant::now(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -431,13 +434,14 @@ impl M2Frame {
                 } else {
                     Mat4::IDENTITY
                 };
-                let mesh = M2ParticleMeshPlan::prepare_transformed(
+                let mesh = M2ParticleMeshPlan::prepare_transformed_with_twinkle_table(
                     emitter,
                     pose,
                     simulation.particles(),
                     camera,
                     particle_to_world,
                     placement_color(placement.color).w,
+                    &self.particle_twinkle,
                 )?;
                 let first_vertex =
                     u32::try_from(self.particle_vertices.len()).map_err(|_source| {

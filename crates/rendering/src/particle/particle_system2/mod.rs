@@ -11,6 +11,7 @@ mod random;
 mod rotation;
 mod simulation;
 mod state;
+mod twinkle;
 
 pub use lifetime::{M2ParticleLifetimePose, M2ParticleLifetimePoseError};
 pub use mesh::{M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticleRenderVertex};
@@ -19,3 +20,4 @@ pub use random::M2ParticleRandom;
 pub use rotation::M2ParticleRotationPose;
 pub use simulation::{M2ParticleSimulation, M2ParticleSimulationError, M2ParticleSimulationReport};
 pub use state::{M2ParticleState, M2ParticleStateError};
+pub use twinkle::{M2ParticleTwinkleError, M2ParticleTwinkleTable};

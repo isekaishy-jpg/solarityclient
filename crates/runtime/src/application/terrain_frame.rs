@@ -319,6 +319,7 @@ impl TerrainFrame {
         world_model_filtering: WorldModelTextureFiltering,
         world_model_base_mip: WorldModelBaseMip,
         random: &mut CrtRand,
+        particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -400,7 +401,7 @@ impl TerrainFrame {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
-            m2: M2Frame::prepare(renderer, m2_scene, random)?,
+            m2: M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?,
             world_models: WorldModelFrame::prepare(
                 renderer,
                 world_models,

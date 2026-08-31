@@ -144,8 +144,12 @@ executable corner and atlas-coordinate tables. Each live particle samples its
 color, scale, held head/tail cell, and head rotation. Tails extend opposite
 velocity for the authored length, optionally clamp that length to particle
 age, and reproduce the executable's short-projection fallback billboard.
-Twinkle, geometry particles, and specialized orientation flags remain separate
-typed paths instead of being flattened into ordinary quads.
+The process-wide twinkle table consumes one combined two-call CRT seed during
+M2 initialization and generates 128 stock random phases. Active emitters use
+the current 32-byte particle pool address plus nearest-even age/speed phase to
+select visibility and multiply both billboard axes by the authored base plus
+random additive range. Geometry particles and specialized orientation flags
+remain separate typed paths instead of being flattened into ordinary quads.
 
 Particle render state is synthesized through the executable's dedicated blend
 mapper rather than treating the authored byte as a root-material blend id.

@@ -8,7 +8,7 @@ use crate::WorldCameraFrame;
 
 use super::{
     M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRotationPose,
-    M2ParticleState,
+    M2ParticleState, M2ParticleTwinkleError, M2ParticleTwinkleTable,
 };
 use crate::particle::pack_bgra;
 
@@ -112,13 +112,38 @@ impl M2ParticleMeshPlan {
         camera: WorldCameraFrame,
         alpha_multiplier: f32,
     ) -> Result<Self, M2ParticleMeshPlanError> {
-        Self::prepare_transformed(
+        Self::prepare_internal(
             emitter,
             pose,
             particles,
             camera,
             glam::Mat4::IDENTITY,
             alpha_multiplier,
+            None,
+        )
+    }
+
+    /// Builds ordinary geometry with the process-wide stock twinkle phases.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare`].
+    pub fn prepare_with_twinkle_table(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        alpha_multiplier: f32,
+        twinkle_table: &M2ParticleTwinkleTable,
+    ) -> Result<Self, M2ParticleMeshPlanError> {
+        Self::prepare_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            glam::Mat4::IDENTITY,
+            alpha_multiplier,
+            Some(twinkle_table),
         )
     }
 
@@ -137,6 +162,54 @@ impl M2ParticleMeshPlan {
         camera: WorldCameraFrame,
         particle_to_world: glam::Mat4,
         alpha_multiplier: f32,
+    ) -> Result<Self, M2ParticleMeshPlanError> {
+        Self::prepare_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            particle_to_world,
+            alpha_multiplier,
+            None,
+        )
+    }
+
+    /// Builds transformed ordinary geometry with process-wide twinkle phases.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare_transformed`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_transformed_with_twinkle_table(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        alpha_multiplier: f32,
+        twinkle_table: &M2ParticleTwinkleTable,
+    ) -> Result<Self, M2ParticleMeshPlanError> {
+        Self::prepare_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            particle_to_world,
+            alpha_multiplier,
+            Some(twinkle_table),
+        )
+    }
+
+    /// Shared ordinary preparation with an optional explicit twinkle owner.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_internal(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        alpha_multiplier: f32,
+        twinkle_table: Option<&M2ParticleTwinkleTable>,
     ) -> Result<Self, M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
@@ -180,8 +253,9 @@ impl M2ParticleMeshPlan {
         if unsupported != 0 {
             return Err(M2ParticleMeshPlanError::BehaviorFlags(unsupported));
         }
-        if emitter.twinkle_percent() < 1.0 || emitter.twinkle_scale().y != 0.0 {
-            return Err(M2ParticleMeshPlanError::Twinkle);
+        let twinkle_active = emitter.twinkle_percent() < 1.0 || emitter.twinkle_scale().y != 0.0;
+        if twinkle_active && twinkle_table.is_none() {
+            return Err(M2ParticleMeshPlanError::TwinkleTable);
         }
         if emit_tail && !emitter.tail_length().is_finite() {
             return Err(M2ParticleMeshPlanError::TailLength);
@@ -215,6 +289,13 @@ impl M2ParticleMeshPlan {
         let cell_size = Vec2::new(1.0 / columns as f32, rows.recip());
         let normal = -camera.forward();
         for particle in particles {
+            let twinkle_scale = match twinkle_table {
+                Some(table) => match table.sample(emitter, particle)? {
+                    Some(scale) => scale,
+                    None => continue,
+                },
+                None => 1.0,
+            };
             let position = particle_to_world.transform_point3(particle.position());
             let velocity = particle_to_world.transform_vector3(particle.velocity());
             let appearance = M2ParticleLifetimePose::sample(
@@ -229,7 +310,7 @@ impl M2ParticleMeshPlan {
                     .angle_radians(particle.age_seconds());
                 let positions = billboard_positions(
                     position,
-                    appearance.scale(),
+                    appearance.scale() * twinkle_scale,
                     rotation,
                     billboard_right,
                     billboard_up,
@@ -258,8 +339,12 @@ impl M2ParticleMeshPlan {
                 let positions = if projected.length_squared() > TAIL_PROJECTION_THRESHOLD_SQUARED {
                     let reciprocal_length = projected.length_recip();
                     let side = -billboard_right
-                        * (appearance.scale().y * projected.y * reciprocal_length)
-                        + billboard_up * (appearance.scale().x * projected.x * reciprocal_length);
+                        * (appearance.scale().y * twinkle_scale * projected.y * reciprocal_length)
+                        + billboard_up
+                            * (appearance.scale().x
+                                * twinkle_scale
+                                * projected.x
+                                * reciprocal_length);
                     let endpoint = position + tail_vector;
                     [
                         position + side,
@@ -270,7 +355,7 @@ impl M2ParticleMeshPlan {
                 } else {
                     billboard_positions(
                         position,
-                        appearance.scale(),
+                        appearance.scale() * twinkle_scale,
                         0.0,
                         billboard_right,
                         billboard_up,
@@ -386,9 +471,9 @@ pub enum M2ParticleMeshPlanError {
     /// One or more flags select a specialized recovered render path.
     #[error("M2 particle behavior flags 0x{0:08X} are not implemented")]
     BehaviorFlags(u32),
-    /// Stock's pointer-phased twinkle path requires separate identity state.
-    #[error("M2 particle twinkle requires the stock phased render path")]
-    Twinkle,
+    /// Active twinkle requires the process-wide phase table initialized once.
+    #[error("M2 particle twinkle requires the process-wide phase table")]
+    TwinkleTable,
     /// A selected tail cannot produce finite dynamic vertices.
     #[error("M2 particle tail length must be finite")]
     TailLength,
@@ -407,4 +492,7 @@ pub enum M2ParticleMeshPlanError {
     /// One particle's normalized lifetime sample is invalid.
     #[error(transparent)]
     Lifetime(#[from] M2ParticleLifetimePoseError),
+    /// One particle cannot enter the signed twinkle phase calculation.
+    #[error(transparent)]
+    Twinkle(#[from] M2ParticleTwinkleError),
 }

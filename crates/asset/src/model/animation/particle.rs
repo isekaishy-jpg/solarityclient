@@ -346,7 +346,7 @@ impl M2ParticleEmitter {
         self.twinkle_percent
     }
 
-    /// Returns the minimum and maximum random twinkle scale.
+    /// Returns the base and random additive-range twinkle scale.
     #[must_use]
     pub const fn twinkle_scale(&self) -> Vec2 {
         self.twinkle_scale

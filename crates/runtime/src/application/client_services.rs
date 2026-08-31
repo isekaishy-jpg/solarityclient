@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use tokio::runtime::{Builder, Runtime};
 
@@ -14,8 +15,8 @@ use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{
-    VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
-    WorldModelTextureFiltering,
+    M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera,
+    WorldModelBaseMip, WorldModelTextureFiltering,
 };
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
@@ -62,6 +63,7 @@ pub(crate) struct ClientServices {
     terrain_frame: Option<TerrainFrame>,
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
+    particle_twinkle: Arc<M2ParticleTwinkleTable>,
     blizzard_rand: BlizzardRand,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
@@ -147,6 +149,12 @@ impl ClientServices {
             })?;
         let login = RuntimeLoginCoordinator::new(configuration.login().clone());
         let world = RuntimeWorldCoordinator::new();
+        // M2Initialize consumes these before constructing any emitter. The
+        // resulting table remains process-wide across terrain generations.
+        let mut crt_rand = CrtRand::new();
+        let first = u32::from(crt_rand.next_u15());
+        let second = u32::from(crt_rand.next_u15());
+        let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
 
         Ok((
             Self {
@@ -165,7 +173,8 @@ impl ClientServices {
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 m2_global_clock: std::time::Instant::now(),
-                crt_rand: CrtRand::new(),
+                crt_rand,
+                particle_twinkle,
                 blizzard_rand: BlizzardRand::new(sdl3::timer::ticks() as u32),
                 realm_metadata,
                 character_metadata,
@@ -513,6 +522,7 @@ impl ClientServices {
                     WorldModelTextureFiltering::Anisotropic4x,
                     WorldModelBaseMip::Zero,
                     &mut self.crt_rand,
+                    Arc::clone(&self.particle_twinkle),
                 )?;
                 tracing::debug!(
                     tile_x = tile.x(),
