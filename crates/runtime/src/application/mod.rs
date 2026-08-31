@@ -34,7 +34,7 @@ pub use login_coordinator::{
 };
 pub use player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerError, RuntimePlayerItemCatalogs,
-    RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeRemotePlayerPoll,
 };
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;

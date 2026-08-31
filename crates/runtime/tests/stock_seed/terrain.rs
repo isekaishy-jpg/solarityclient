@@ -14,7 +14,8 @@ use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, Wor
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
 use solarity_runtime::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
-    RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
+    RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeTerrainCoordinator,
+    RuntimeTerrainPoll,
 };
 use solarity_systems::{
     CameraSubjectGeometry, project_object_fields, resolve_camera_subject_height,
@@ -267,6 +268,108 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
     Ok(())
 }
 
+/// Visible players use the complete character composer and leave with range state.
+#[test]
+fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<dyn Error>> {
+    let display = creature_display_table();
+    let model_data = player_model_table();
+    let character = character_section_tables();
+    let races = character_race_table();
+    let m2 = m2_collision_fixture()?;
+    let skin = skin_fixture()?;
+    let body_texture = solid_raw3_blp(256, 256, 0xFFFF_FFFF);
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\CreatureDisplayInfo.dbc", &display),
+        ("DBFilesClient\\CreatureModelData.dbc", &model_data),
+        ("DBFilesClient\\CharSections.dbc", &character.sections),
+        (
+            "DBFilesClient\\CharHairGeosets.dbc",
+            &character.hair_geosets,
+        ),
+        (
+            "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            &character.facial_hair,
+        ),
+        ("DBFilesClient\\ChrRaces.dbc", &races),
+        ("Character\\Human\\Male\\HumanMale.m2", &m2),
+        ("Character\\Human\\Male\\HumanMale00.skin", &skin),
+        ("Character\\Human\\Male\\Skin.blp", &body_texture),
+        ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let animations = AnimationDataCatalog::load(&mut store)?;
+    let creatures = CreatureCatalog::load(&mut store)?;
+    let characters = CharacterAppearanceCatalog::load(&mut store)?;
+    let races = CharacterRaceCatalog::load(&mut store)?;
+    let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let item_displays = ItemDisplayCatalog::load(&mut store)?;
+    let item_visuals = ItemVisualCatalog::load(&mut store)?;
+    let particle_colors = ParticleColorCatalog::load(&mut store)?;
+    let assets = AssetStoreHandle::new(store);
+    let mut presentation = RuntimePlayerPresentation::new(
+        assets,
+        RuntimePlayerCatalogs::new(
+            animations,
+            creatures,
+            characters,
+            races,
+            helmet_visibility,
+            RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
+            particle_colors,
+        ),
+    );
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        30,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let guid = 20;
+    let fields = [
+        (4, 1.0_f32.to_bits()),
+        (23, u32::from_le_bytes([1, 1, 0, 0])),
+        (67, 100),
+        (68, 100),
+        (69, 0),
+        (74, 0),
+        (122, 0),
+        (153, 0),
+        (154, 0),
+    ];
+    world.create_object(
+        guid,
+        solarity_ecs::ObjectKind::Player,
+        Some(WorldTransform::new(Vec3::X, 0.5)),
+        fields,
+    )?;
+    project_object_fields(&mut world, guid, fields)?;
+
+    assert_eq!(
+        presentation.synchronize_remote_players(Some(&world))?,
+        RuntimeRemotePlayerPoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_remote_player_count(), 1);
+    world.update_transform(guid, WorldTransform::new(Vec3::Y, 1.0))?;
+    assert_eq!(
+        presentation.synchronize_remote_players(Some(&world))?,
+        RuntimeRemotePlayerPoll::Current
+    );
+    world.remove_object(guid)?;
+    assert_eq!(
+        presentation.synchronize_remote_players(Some(&world))?,
+        RuntimeRemotePlayerPoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_remote_player_count(), 0);
+    assert_eq!(
+        presentation.synchronize_remote_players(None)?,
+        RuntimeRemotePlayerPoll::Idle
+    );
+    Ok(())
+}
+
 /// MCNK references admit one shared MODF generation into camera collision.
 #[test]
 fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Error>> {
@@ -447,17 +550,99 @@ fn creature_model_table() -> Vec<u8> {
     wdbc_fixture(&fields, &strings)
 }
 
+fn player_model_table() -> Vec<u8> {
+    let mut strings = vec![0_u8];
+    let path = append_string(&mut strings, "Character\\Human\\Male\\HumanMale.m2");
+    let mut fields = [0_u32; 28];
+    fields[0] = 7;
+    fields[2] = path;
+    fields[4] = 1.0_f32.to_bits();
+    wdbc_fixture(&fields, &strings)
+}
+
+struct CharacterSectionTables {
+    sections: Vec<u8>,
+    hair_geosets: Vec<u8>,
+    facial_hair: Vec<u8>,
+}
+
+fn character_section_tables() -> CharacterSectionTables {
+    let mut strings = vec![0_u8];
+    let skin = append_string(&mut strings, "Character\\Human\\Male\\Skin.blp");
+    let fields = [
+        10, 1, 0, 0, skin, 0, 0, 8, 0, 0, 11, 1, 0, 1, 0, 0, 0, 0, 0, 0, 12, 1, 0, 2, 0, 0, 0, 0,
+        0, 0, 13, 1, 0, 3, 0, 0, 0, 0, 0, 0, 14, 1, 0, 4, 0, 0, 0, 0, 0, 0,
+    ];
+    CharacterSectionTables {
+        sections: create_wdbc_fixture(5, 10, &fields, &strings),
+        hair_geosets: create_wdbc_fixture(0, 6, &[], b"\0"),
+        facial_hair: create_wdbc_fixture(0, 8, &[], b"\0"),
+    }
+}
+
+fn character_race_table() -> Vec<u8> {
+    let mut strings = vec![0_u8];
+    let prefix = append_string(&mut strings, "Hu");
+    let file_string = append_string(&mut strings, "Human");
+    let name = append_string(&mut strings, "Human");
+    let mut fields = [0_u32; 69];
+    fields[0] = 1;
+    fields[4] = 100;
+    fields[5] = 101;
+    fields[6] = prefix;
+    fields[11] = file_string;
+    fields[14] = name;
+    wdbc_fixture(&fields, &strings)
+}
+
 fn wdbc_fixture(fields: &[u32], strings: &[u8]) -> Vec<u8> {
+    create_wdbc_fixture(1, fields.len() as u32, fields, strings)
+}
+
+fn create_wdbc_fixture(
+    record_count: u32,
+    field_count: u32,
+    fields: &[u32],
+    strings: &[u8],
+) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(20 + fields.len() * 4 + strings.len());
     bytes.extend_from_slice(b"WDBC");
-    bytes.extend_from_slice(&1_u32.to_le_bytes());
-    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&((fields.len() as u32) * 4).to_le_bytes());
+    bytes.extend_from_slice(&record_count.to_le_bytes());
+    bytes.extend_from_slice(&field_count.to_le_bytes());
+    bytes.extend_from_slice(&(field_count * 4).to_le_bytes());
     bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
     for field in fields {
         bytes.extend_from_slice(&field.to_le_bytes());
     }
     bytes.extend_from_slice(strings);
+    bytes
+}
+
+fn solid_raw3_blp(width: u32, height: u32, color: u32) -> Vec<u8> {
+    const HEADER_SIZE: u32 = 148;
+    const PALETTE_SIZE: u32 = 256 * 4;
+    const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
+    let pixel_count = width.saturating_mul(height);
+    let pixel_bytes = pixel_count.saturating_mul(4);
+
+    let mut bytes = Vec::with_capacity((PIXEL_OFFSET + pixel_bytes) as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[3, 8, 8, 0]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.extend_from_slice(&PIXEL_OFFSET.to_le_bytes());
+    for _unused in 1..16 {
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+    }
+    bytes.extend_from_slice(&pixel_bytes.to_le_bytes());
+    for _unused in 1..16 {
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+    }
+    bytes.resize(PIXEL_OFFSET as usize, 0);
+    for _pixel in 0..pixel_count {
+        bytes.extend_from_slice(&color.to_le_bytes());
+    }
     bytes
 }
 

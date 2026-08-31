@@ -116,6 +116,17 @@ pub enum RuntimeCreaturePoll {
     Current,
 }
 
+/// Observable result of one remote-player residency synchronization pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeRemotePlayerPoll {
+    /// No active world exists and no remote character is resident.
+    Idle,
+    /// The remote player set or one complete appearance changed.
+    ModelsChanged,
+    /// Existing remote characters received only transform/animation updates.
+    Current,
+}
+
 /// Immutable client-table dependencies used to resolve player presentation.
 pub struct RuntimePlayerCatalogs {
     animations: AnimationDataCatalog,
@@ -190,6 +201,7 @@ pub struct RuntimePlayerPresentation {
     textures: BlpTextureCache,
     resident: Option<ResidentPlayerModel>,
     creatures_resident: Vec<ResidentCreatureModel>,
+    remote_players: Vec<ResidentPlayerModel>,
 }
 
 impl RuntimePlayerPresentation {
@@ -211,6 +223,7 @@ impl RuntimePlayerPresentation {
             textures: BlpTextureCache::new(),
             resident: None,
             creatures_resident: Vec::new(),
+            remote_players: Vec::new(),
         }
     }
 
@@ -319,8 +332,11 @@ impl RuntimePlayerPresentation {
                     requested_animation,
                     unit_presentation.animation_tier(),
                 )?;
-                resident.camera_pose =
-                    resolve_player_camera_pose(transform, view, resident.camera_height)?;
+                resident.camera_pose = Some(resolve_player_camera_pose(
+                    transform,
+                    view,
+                    resident.camera_height,
+                )?);
             }
             return Ok(RuntimePlayerPoll::Current);
         }
@@ -348,60 +364,14 @@ impl RuntimePlayerPresentation {
             &mut assets,
             &mut self.textures,
         )?;
-        let mut attachments = Vec::with_capacity(attachment_plan.attachments().len());
-        for attachment in attachment_plan.attachments() {
-            let model = self.models.load(&mut assets, attachment.model())?;
-            let uses_replacement = model.textures().iter().any(|texture| {
-                matches!(
-                    texture.kind(),
-                    M2TextureKind::Item
-                        | M2TextureKind::WeaponArmorBasic
-                        | M2TextureKind::WeaponBlade
-                )
-            });
-            let replacement = if uses_replacement {
-                load_optional_texture(attachment.texture(), &mut assets, &mut self.textures)?
-            } else {
-                None
-            };
-            let textures = prepare_attachment_textures(
-                &model,
-                replacement.as_ref(),
-                &mut assets,
-                &mut self.textures,
-            )?;
-            let visual_plan = CharacterItemVisualPlan::resolve(attachment, &self.item_visuals);
-            let mut visual_effects = Vec::with_capacity(visual_plan.effects().len());
-            for effect in visual_plan.effects() {
-                // Stock checks the equipped item model's attachment lookup and
-                // silently omits an effect whose authored link is unavailable.
-                if model.attachment(effect.attachment_id()).is_none() {
-                    continue;
-                }
-                let effect_model = self.models.load(&mut assets, effect.model())?;
-                let effect_textures = prepare_attachment_textures(
-                    &effect_model,
-                    None,
-                    &mut assets,
-                    &mut self.textures,
-                )?;
-                visual_effects.push(ResidentPlayerItemVisualEffect {
-                    point: effect.attachment_id(),
-                    model: effect_model,
-                    textures: effect_textures,
-                });
-            }
-            attachments.push(ResidentPlayerAttachment {
-                point: attachment.point(),
-                model,
-                textures,
-                visual_effects,
-                particle_colors: M2ParticleColorReplacement::resolve(
-                    &self.particle_colors,
-                    attachment.particle_color_id(),
-                ),
-            });
-        }
+        let attachments = load_player_attachments(
+            &attachment_plan,
+            &self.item_visuals,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
         drop(assets);
         let camera_height = resolve_model_camera_subject_height(&model, scale)?;
         let camera_pose = resolve_player_camera_pose(
@@ -440,7 +410,7 @@ impl RuntimePlayerPresentation {
             world_transform: world.local_player_transform()?,
             animation,
             camera_height,
-            camera_pose,
+            camera_pose: Some(camera_pose),
             model,
         });
         self.models.collect_unused();
@@ -555,6 +525,245 @@ impl RuntimePlayerPresentation {
         Ok(RuntimeCreaturePoll::ModelsChanged)
     }
 
+    /// Synchronizes every visible non-local player through character composition.
+    pub fn synchronize_remote_players(
+        &mut self,
+        world: Option<&ActiveWorld>,
+    ) -> Result<RuntimeRemotePlayerPoll, RuntimePlayerError> {
+        let Some(world) = world else {
+            self.remote_players.clear();
+            self.models.collect_unused();
+            self.textures.collect_unused();
+            return Ok(RuntimeRemotePlayerPoll::Idle);
+        };
+        let local_guid = world.local_player_guid()?;
+        let mut desired = Vec::new();
+        for guid in world.visible_unit_guids() {
+            if guid == local_guid
+                || world.object_kind(guid) != Some(solarity_ecs::ObjectKind::Player)
+            {
+                continue;
+            }
+            if let Some(player) = self.resolve_desired_remote_player(world, guid)? {
+                desired.push(player);
+            }
+        }
+
+        let unchanged = desired.len() == self.remote_players.len()
+            && desired
+                .iter()
+                .zip(&self.remote_players)
+                .all(|(desired, resident)| resident.matches_remote(desired));
+        if unchanged {
+            for (desired, resident) in desired.iter().zip(&mut self.remote_players) {
+                resident.world_transform = desired.world_transform;
+                resident.animation = resolve_resident_animation(
+                    &self.animations,
+                    &resident.model,
+                    desired.requested_animation,
+                    desired.animation_tier,
+                )?;
+            }
+            return Ok(RuntimeRemotePlayerPoll::Current);
+        }
+
+        let mut residents = Vec::with_capacity(desired.len());
+        for desired in desired {
+            residents.push(self.load_remote_player(world, desired)?);
+        }
+        self.remote_players = residents;
+        self.models.collect_unused();
+        self.textures.collect_unused();
+        Ok(RuntimeRemotePlayerPoll::ModelsChanged)
+    }
+
+    fn resolve_desired_remote_player(
+        &self,
+        world: &ActiveWorld,
+        guid: u64,
+    ) -> Result<Option<DesiredRemotePlayerModel>, RuntimePlayerError> {
+        let appearance = match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
+            Ok(appearance) => appearance,
+            Err(
+                UnitModelAppearanceError::MissingObjectPresentation { .. }
+                | UnitModelAppearanceError::MissingUnitPresentation { .. }
+                | UnitModelAppearanceError::MissingUnitIdentity { .. }
+                | UnitModelAppearanceError::MissingPlayerAppearance { .. },
+            ) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let Some(world_transform) = world.object_transform(guid) else {
+            return Ok(None);
+        };
+        let Some(unit_presentation) = world.unit_presentation(guid) else {
+            return Ok(None);
+        };
+        let character = appearance
+            .character()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
+        let class_id = appearance
+            .player_class_id()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
+        let equipment = match resolve_player_equipment(
+            world,
+            guid,
+            &self.item_definitions,
+            &self.item_displays,
+        ) {
+            Ok(equipment) => equipment,
+            Err(PlayerEquipmentAppearanceError::MissingEquipment { .. }) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let equipment_items = equipment
+            .items()
+            .iter()
+            .map(|item| {
+                CharacterEquipmentItem::new_visible(
+                    item.slot(),
+                    item.visible(),
+                    item.definition(),
+                    item.display(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let equipment_key = equipment
+            .items()
+            .iter()
+            .map(|item| (item.slot(), item.visible()))
+            .collect();
+        let race = self.races.race(character.race_id()).ok_or(
+            RuntimePlayerError::MissingCharacterRace {
+                race_id: character.race_id(),
+            },
+        )?;
+        let attachment_plan = CharacterAttachmentPlan::equipped_items(
+            equipment_items.iter().copied(),
+            race,
+            character.gender_id(),
+            CharacterWeaponState::new(unit_presentation.sheath_state()),
+        )?;
+        let base_texture_plan = CharacterTexturePlan::base(character)?;
+        let base_geosets = CharacterGeosetPlan::equipped(
+            character,
+            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            std::iter::empty(),
+        )?;
+        let requested_animation = world.movement_state(guid).map_or(
+            UnitLocomotionAnimation::STAND,
+            resolve_unit_locomotion_animation,
+        );
+        Ok(Some(DesiredRemotePlayerModel {
+            guid,
+            object_scale: appearance.object_scale(),
+            particle_color_id: appearance.body().display().particle_color_id(),
+            path: appearance.body().model_path().clone(),
+            base_texture_plan,
+            base_geosets,
+            equipment_key,
+            attachment_plan,
+            world_transform,
+            requested_animation,
+            animation_tier: unit_presentation.animation_tier(),
+        }))
+    }
+
+    fn load_remote_player(
+        &mut self,
+        world: &ActiveWorld,
+        desired: DesiredRemotePlayerModel,
+    ) -> Result<ResidentPlayerModel, RuntimePlayerError> {
+        let appearance =
+            resolve_unit_model(world, desired.guid, &self.creatures, &self.characters)?;
+        let character = appearance
+            .character()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid: desired.guid })?;
+        let class_id = appearance
+            .player_class_id()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid: desired.guid })?;
+        let equipment = resolve_player_equipment(
+            world,
+            desired.guid,
+            &self.item_definitions,
+            &self.item_displays,
+        )?;
+        let equipment_items = equipment
+            .items()
+            .iter()
+            .map(|item| {
+                CharacterEquipmentItem::new_visible(
+                    item.slot(),
+                    item.visible(),
+                    item.definition(),
+                    item.display(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, &desired.path)?;
+        let texture_plan =
+            CharacterTexturePlan::equipped(character, &assets, equipment_items.iter().copied())?;
+        let geosets = CharacterGeosetPlan::equipped(
+            character,
+            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            equipment_items.iter().copied(),
+        )?;
+        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
+        let extra_skin =
+            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
+        let textures = prepare_model_textures(
+            &model,
+            hair.as_ref(),
+            extra_skin.as_ref(),
+            cape.as_ref(),
+            &mut assets,
+            &mut self.textures,
+        )?;
+        let attachments = load_player_attachments(
+            &desired.attachment_plan,
+            &self.item_visuals,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
+        drop(assets);
+        let camera_height = resolve_model_camera_subject_height(&model, desired.object_scale)?;
+        let particle_colors =
+            M2ParticleColorReplacement::resolve(&self.particle_colors, desired.particle_color_id);
+        let animation = resolve_resident_animation(
+            &self.animations,
+            &model,
+            desired.requested_animation,
+            desired.animation_tier,
+        )?;
+        Ok(ResidentPlayerModel {
+            guid: desired.guid,
+            object_scale: desired.object_scale,
+            particle_color_id: desired.particle_color_id,
+            particle_colors,
+            base_texture_plan: desired.base_texture_plan,
+            base_geosets: desired.base_geosets,
+            equipment_key: desired.equipment_key,
+            attachment_plan: desired.attachment_plan,
+            texture_plan,
+            geosets,
+            atlas,
+            hair,
+            extra_skin,
+            textures,
+            attachments,
+            world_transform: desired.world_transform,
+            animation,
+            camera_height,
+            camera_pose: None,
+            model,
+        })
+    }
+
     /// Returns the controlled player's exact server GUID when resident.
     #[must_use]
     pub fn resident_guid(&self) -> Option<u64> {
@@ -571,6 +780,12 @@ impl RuntimePlayerPresentation {
     #[must_use]
     pub fn resident_creature_count(&self) -> usize {
         self.creatures_resident.len()
+    }
+
+    /// Returns the number of fully composed visible remote player models.
+    #[must_use]
+    pub fn resident_remote_player_count(&self) -> usize {
+        self.remote_players.len()
     }
 
     /// Returns the body display's exact `ParticleColor.dbc` identifier.
@@ -634,6 +849,14 @@ impl RuntimePlayerPresentation {
             .collect()
     }
 
+    /// Returns remote character inputs in deterministic GUID order.
+    pub(super) fn resident_remote_player_frame_inputs(&self) -> Vec<ResidentPlayerFrameInput<'_>> {
+        self.remote_players
+            .iter()
+            .map(ResidentPlayerFrameInput::from_resident)
+            .collect()
+    }
+
     /// Returns the authored and stock-clamped camera pivot height.
     #[must_use]
     pub fn camera_subject_height(&self) -> Option<CameraSubjectHeight> {
@@ -645,7 +868,9 @@ impl RuntimePlayerPresentation {
     /// Returns the current pre-collision camera orbit for the resident player.
     #[must_use]
     pub fn camera_pose(&self) -> Option<PlayerCameraPose> {
-        self.resident.as_ref().map(|resident| resident.camera_pose)
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.camera_pose)
     }
 
     /// Builds renderer-owned camera state after far-clip policy has resolved.
@@ -670,6 +895,7 @@ impl RuntimePlayerPresentation {
     pub fn disconnect(&mut self) {
         self.resident = None;
         self.creatures_resident.clear();
+        self.remote_players.clear();
         self.models.collect_unused();
         self.textures.collect_unused();
     }
@@ -694,8 +920,22 @@ struct ResidentPlayerModel {
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
     camera_height: CameraSubjectHeight,
-    camera_pose: PlayerCameraPose,
+    camera_pose: Option<PlayerCameraPose>,
     model: Arc<DecodedM2Model>,
+}
+
+struct DesiredRemotePlayerModel {
+    guid: u64,
+    object_scale: f32,
+    particle_color_id: u32,
+    path: AssetPath,
+    base_texture_plan: CharacterTexturePlan,
+    base_geosets: CharacterGeosetPlan,
+    equipment_key: Vec<(PlayerEquipmentSlot, VisibleEquipmentItem)>,
+    attachment_plan: CharacterAttachmentPlan,
+    world_transform: WorldTransform,
+    requested_animation: UnitLocomotionAnimation,
+    animation_tier: solarity_ecs::UnitAnimationTier,
 }
 
 #[derive(PartialEq)]
@@ -980,6 +1220,62 @@ fn prepare_creature_textures(
         .collect()
 }
 
+/// Loads equipped component models and their attached item-visual effects.
+fn load_player_attachments(
+    attachment_plan: &CharacterAttachmentPlan,
+    item_visuals: &ItemVisualCatalog,
+    particle_colors: &ParticleColorCatalog,
+    models: &mut M2ModelCache,
+    textures: &mut BlpTextureCache,
+    assets: &mut solarity_asset::AssetStore,
+) -> Result<Vec<ResidentPlayerAttachment>, RuntimePlayerError> {
+    let mut attachments = Vec::with_capacity(attachment_plan.attachments().len());
+    for attachment in attachment_plan.attachments() {
+        let model = models.load(assets, attachment.model())?;
+        let uses_replacement = model.textures().iter().any(|texture| {
+            matches!(
+                texture.kind(),
+                M2TextureKind::Item | M2TextureKind::WeaponArmorBasic | M2TextureKind::WeaponBlade
+            )
+        });
+        let replacement = if uses_replacement {
+            load_optional_texture(attachment.texture(), assets, textures)?
+        } else {
+            None
+        };
+        let resolved_textures =
+            prepare_attachment_textures(&model, replacement.as_ref(), assets, textures)?;
+        let visual_plan = CharacterItemVisualPlan::resolve(attachment, item_visuals);
+        let mut visual_effects = Vec::with_capacity(visual_plan.effects().len());
+        for effect in visual_plan.effects() {
+            // Stock omits an effect whose equipped component lacks the
+            // authored attachment link; it does not select another point.
+            if model.attachment(effect.attachment_id()).is_none() {
+                continue;
+            }
+            let effect_model = models.load(assets, effect.model())?;
+            let effect_textures =
+                prepare_attachment_textures(&effect_model, None, assets, textures)?;
+            visual_effects.push(ResidentPlayerItemVisualEffect {
+                point: effect.attachment_id(),
+                model: effect_model,
+                textures: effect_textures,
+            });
+        }
+        attachments.push(ResidentPlayerAttachment {
+            point: attachment.point(),
+            model,
+            textures: resolved_textures,
+            visual_effects,
+            particle_colors: M2ParticleColorReplacement::resolve(
+                particle_colors,
+                attachment.particle_color_id(),
+            ),
+        });
+    }
+    Ok(attachments)
+}
+
 /// Loads one optional character replacement without inventing a substitute.
 fn load_optional_texture(
     path: Option<&AssetPath>,
@@ -1069,5 +1365,16 @@ fn prepare_attachment_textures(
 impl ResidentPlayerModel {
     fn path(&self) -> &AssetPath {
         self.model.path()
+    }
+
+    fn matches_remote(&self, desired: &DesiredRemotePlayerModel) -> bool {
+        self.guid == desired.guid
+            && self.path() == &desired.path
+            && self.object_scale == desired.object_scale
+            && self.particle_color_id == desired.particle_color_id
+            && self.base_texture_plan == desired.base_texture_plan
+            && self.base_geosets == desired.base_geosets
+            && self.equipment_key == desired.equipment_key
+            && self.attachment_plan == desired.attachment_plan
     }
 }

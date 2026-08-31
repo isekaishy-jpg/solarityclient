@@ -242,6 +242,12 @@ pub enum RuntimeTerrainFrameError {
         /// Controlled player GUID absent from the M2 frame.
         guid: u64,
     },
+    /// A remote-player update has no matching placement in the GPU generation.
+    #[error("remote player {guid:#018X} has no M2 placement in the current frame")]
+    MissingRemotePlayerM2Placement {
+        /// Remote player GUID absent from the M2 frame.
+        guid: u64,
+    },
     /// A current creature update has no matching placement in the GPU generation.
     #[error("visible creature {guid:#018X} has no M2 placement in the current frame")]
     MissingCreatureM2Placement {
@@ -387,6 +393,7 @@ impl TerrainFrame {
         particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
         player: Option<ResidentPlayerFrameInput<'_>>,
         creatures: &[ResidentCreatureFrameInput<'_>],
+        remote_players: &[ResidentPlayerFrameInput<'_>],
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -467,6 +474,7 @@ impl TerrainFrame {
         let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
         m2.replace_player(renderer, player, random)?;
         m2.replace_creatures(renderer, creatures, random)?;
+        m2.replace_remote_players(renderer, remote_players, random)?;
         Ok(Self {
             tile: plan.tile(),
             draws,
@@ -497,6 +505,7 @@ impl TerrainFrame {
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
+        remote_players: &[ResidentPlayerFrameInput<'_>],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -551,6 +560,8 @@ impl TerrainFrame {
             .update_player_state(player, local_animation_time_ms, random)?;
         self.m2
             .update_creature_states(creatures, local_animation_time_ms, random)?;
+        self.m2
+            .update_remote_player_states(remote_players, local_animation_time_ms, random)?;
         let m2 = self.m2.prepare_visible_draws(
             renderer,
             frustum,
@@ -592,6 +603,16 @@ impl TerrainFrame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.m2.replace_creatures(renderer, creatures, random)
+    }
+
+    /// Rebuilds visible remote characters after range or appearance changes.
+    pub(super) fn replace_remote_players(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        players: &[ResidentPlayerFrameInput<'_>],
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2.replace_remote_players(renderer, players, random)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

@@ -35,7 +35,7 @@ use crate::application::login_coordinator::{
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
-    RuntimePlayerPresentation,
+    RuntimePlayerPresentation, RuntimeRemotePlayerPoll,
 };
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::sound_coordinator::RuntimeSoundCoordinator;
@@ -275,6 +275,7 @@ impl ClientServices {
             .resident_frame_input()
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2FrameInput)?;
         let creatures = self.player.resident_creature_frame_inputs();
+        let remote_players = self.player.resident_remote_player_frame_inputs();
         frame.present(
             &mut self.renderer,
             plan,
@@ -284,6 +285,7 @@ impl ClientServices {
             &mut self.crt_rand,
             player,
             &creatures,
+            &remote_players,
         )?;
         Ok(())
     }
@@ -536,6 +538,27 @@ impl ClientServices {
             }
             RuntimeCreaturePoll::Current => {}
         }
+        match self
+            .player
+            .synchronize_remote_players(self.gameplay.world())?
+        {
+            RuntimeRemotePlayerPoll::ModelsChanged => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    let players = self.player.resident_remote_player_frame_inputs();
+                    frame.replace_remote_players(
+                        &mut self.renderer,
+                        &players,
+                        &mut self.crt_rand,
+                    )?;
+                }
+            }
+            RuntimeRemotePlayerPoll::Idle => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_remote_players(&mut self.renderer, &[], &mut self.crt_rand)?;
+                }
+            }
+            RuntimeRemotePlayerPoll::Current => {}
+        }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
@@ -584,6 +607,7 @@ impl ClientServices {
                     Arc::clone(&self.particle_twinkle),
                     self.player.resident_frame_input(),
                     &self.player.resident_creature_frame_inputs(),
+                    &self.player.resident_remote_player_frame_inputs(),
                 )?;
                 tracing::debug!(
                     tile_x = tile.x(),
