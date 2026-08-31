@@ -64,13 +64,14 @@ gain changes, memory mixing, and state queries remain backend primitives;
 category buses, spatialization, DSP, fades, and voice priority belong to the
 stock-facing sound-engine layers above this adapter.
 
-`SoundEngine` is the first stock-facing orchestration layer. It owns the exact
-`SoundEntries.dbc` catalog, encoded cache, decoder registry, backend track pool,
-and retained voice policy. A request supplies its entry identifier, calling
-category, already bounded variation ticket, decode residency, and loop intent.
-The engine therefore does not infer category from an unevidenced `SoundType`
-mapping, advance another RNG, reinterpret flags, or guess whether a payload is
-music.
+`SoundEngine` is the first stock-facing orchestration layer. It owns one joined
+catalog containing the exact `SoundEntries.dbc` and
+`SoundEntriesAdvanced.dbc` tables, plus the encoded cache, decoder registry,
+backend track pool, and retained voice policy. A request supplies its entry
+identifier, calling category, already bounded variation ticket, decode
+residency, and loop intent. The engine therefore does not infer category from
+an unevidenced `SoundType` mapping, advance another RNG, reinterpret flags, or
+guess whether a payload is music.
 
 The live settings snapshot mirrors `Sound_EnableAllSound`, the SFX/music/
 ambience enables, and their master/category gains. Those CVar gains validate in
@@ -109,3 +110,12 @@ components. The asset API names this value `advanced_sound_entry_id`; media must
 resolve `MCSE → SoundEntriesAdvanced → SoundEntries` before selecting a file.
 It must not send the MCSE key directly to `SoundEntryCatalog`, even when IDs
 happen to overlap in a particular data set.
+
+Media's `SpatialSoundCatalog` owns those tables once and performs the exact
+two-step lookup. `SoundEngine::resolve_spatial_sound` exposes the advanced and
+base rows as one borrowed result, so the eventual zone service can retain the
+terrain emitter's position and extents separately. An absent key is a typed
+failure and never falls through to another row. Radius, cone, interval,
+influence, and ducking values remain authored data at this boundary; their
+runtime equations and units require executable-backed behavior before they are
+implemented.

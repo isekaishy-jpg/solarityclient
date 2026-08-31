@@ -101,6 +101,16 @@ fn build_archive<'a>(
 
 /// Creates one exact build-12340 `SoundEntries.dbc` row.
 pub(crate) fn sound_entries_fixture(id: u32, files: [(&str, u32); 3], directory: &str) -> Vec<u8> {
+    sound_entries_fixture_with_advanced(id, files, directory, 0)
+}
+
+/// Creates one exact build-12340 `SoundEntries.dbc` row with its advanced key.
+pub(crate) fn sound_entries_fixture_with_advanced(
+    id: u32,
+    files: [(&str, u32); 3],
+    directory: &str,
+    advanced_id: u32,
+) -> Vec<u8> {
     let mut strings = vec![0];
     let name = append_string(&mut strings, "WeightedSound");
     let file_offsets = files.map(|(file, _weight)| append_string(&mut strings, file));
@@ -123,9 +133,47 @@ pub(crate) fn sound_entries_fixture(id: u32, files: [(&str, u32); 3], directory:
         4.0_f32.to_bits(),
         40.0_f32.to_bits(),
         0,
-        0,
+        advanced_id,
     ]);
     create_wdbc(1, 30, &fields, &strings)
+}
+
+/// Creates one exact build-12340 `SoundEntriesAdvanced.dbc` row.
+pub(crate) fn advanced_sound_entries_fixture(id: u32, sound_entry_id: u32) -> Vec<u8> {
+    let mut strings = vec![0];
+    let name = append_string(&mut strings, "TerrainEmitter");
+    let fields = [
+        id,
+        sound_entry_id,
+        8.0_f32.to_bits(),
+        100,
+        200,
+        300,
+        400,
+        25,
+        2,
+        1_000,
+        2_000,
+        3,
+        0.2_f32.to_bits(),
+        0.4_f32.to_bits(),
+        0.6_f32.to_bits(),
+        16.0_f32.to_bits(),
+        64.0_f32.to_bits(),
+        500,
+        750,
+        90.0_f32.to_bits(),
+        180.0_f32.to_bits(),
+        0.25_f32.to_bits(),
+        96.0_f32.to_bits(),
+        name,
+    ];
+    create_wdbc(1, 24, &fields, &strings)
+}
+
+/// Creates the exact empty build-12340 advanced table used by base-only tests.
+pub(crate) fn empty_advanced_sound_entries_fixture() -> Vec<u8> {
+    create_wdbc(0, 24, &[], &[0])
 }
 
 /// Serializes one fixed-field WDBC table.

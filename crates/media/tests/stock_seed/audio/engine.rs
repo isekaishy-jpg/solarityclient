@@ -10,7 +10,10 @@ use solarity_media::{
     SoundPlayback,
 };
 
-use crate::support::{Fixture, FixtureFile, pcm_wav, sdl_test_lock, sound_entries_fixture};
+use crate::support::{
+    Fixture, FixtureFile, advanced_sound_entries_fixture, empty_advanced_sound_entries_fixture,
+    pcm_wav, sdl_test_lock, sound_entries_fixture, sound_entries_fixture_with_advanced,
+};
 
 /// Master and category CVar gains retain their evidenced zero-to-one domain.
 #[test]
@@ -27,16 +30,23 @@ fn stock_sound_gain_rejects_values_outside_cvar_range() {
 fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Error>> {
     let samples = [0, 12_000, 0, -12_000].repeat(2_000);
     let wav = pcm_wav(8_000, &samples)?;
-    let sound_entries = sound_entries_fixture(
+    let sound_entries = sound_entries_fixture_with_advanced(
         42,
         [("Pulse.wav", 2), ("Disabled.wav", 0), ("", 0)],
         "Sound\\Test",
+        90,
     );
+    let advanced_entries = advanced_sound_entries_fixture(90, 42);
     let fixture = Fixture::new(&[
         FixtureFile {
             archive: "common.MPQ",
             path: "DBFilesClient\\SoundEntries.dbc",
             bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &advanced_entries,
         },
         FixtureFile {
             archive: "common.MPQ",
@@ -54,6 +64,9 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
     let enabled = settings(true)?;
     let mut engine = SoundEngine::load(&mut store, &output, capacity, enabled)?;
+    let spatial = engine.resolve_spatial_sound(90)?;
+    assert_eq!(spatial.advanced_entry().id(), 90);
+    assert_eq!(spatial.sound_entry().id(), 42);
     let request =
         SoundPlayRequest::new(42, SoundCategory::Sfx, 0, SoundDecodeMode::Predecoded, true);
     let SoundPlayback::Started(voice) = engine.play(&mut store, request)? else {
@@ -92,11 +105,17 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
     let wav = pcm_wav(8_000, &[0, 8_000, 0, -8_000])?;
     let sound_entries =
         sound_entries_fixture(77, [("Tone.wav", 2), ("", 0), ("", 0)], "Sound\\Test");
+    let advanced_entries = empty_advanced_sound_entries_fixture();
     let fixture = Fixture::new(&[
         FixtureFile {
             archive: "common.MPQ",
             path: "DBFilesClient\\SoundEntries.dbc",
             bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &advanced_entries,
         },
         FixtureFile {
             archive: "common.MPQ",

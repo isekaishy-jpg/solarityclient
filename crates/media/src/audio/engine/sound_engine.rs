@@ -2,12 +2,13 @@
 
 use std::num::NonZeroU16;
 
-use solarity_asset::{AssetStore, SoundEntryCatalog};
+use solarity_asset::AssetStore;
 
 use crate::audio::backend::{SoundBackend, SoundOutput, SoundVoiceHandle, SoundVoiceState};
 use crate::audio::cache::SoundCache;
 use crate::audio::codec::SoundDecoder;
 use crate::audio::selection::SoundVariationSelector;
+use crate::audio::spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSoundError};
 
 use super::status::SoundEngineError;
 use super::types::{SoundCategory, SoundEngineSettings, SoundPlayRequest, SoundPlayback};
@@ -22,7 +23,7 @@ struct ActiveVoice {
 
 /// Stock-facing sound selection, admission, and live-volume owner.
 pub struct SoundEngine<'output> {
-    catalog: SoundEntryCatalog,
+    catalog: SpatialSoundCatalog,
     cache: SoundCache,
     decoder: SoundDecoder,
     backend: SoundBackend<'output>,
@@ -43,7 +44,7 @@ impl<'output> SoundEngine<'output> {
         voice_capacity: NonZeroU16,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
-        let catalog = SoundEntryCatalog::load(store)?;
+        let catalog = SpatialSoundCatalog::load(store)?;
         let decoder = SoundDecoder::new()?;
         let backend = SoundBackend::new(output, voice_capacity)?;
         Ok(Self {
@@ -80,6 +81,20 @@ impl<'output> SoundEngine<'output> {
         self.decoder.len()
     }
 
+    /// Resolves one terrain/advanced identifier to its exact authored rows.
+    ///
+    /// This performs no attenuation, cone, timing, or ducking interpretation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpatialSoundError`] when either exact authored key is absent.
+    pub fn resolve_spatial_sound(
+        &self,
+        advanced_entry_id: u32,
+    ) -> Result<ResolvedSpatialSound<'_>, SpatialSoundError> {
+        self.catalog.resolve(advanced_entry_id)
+    }
+
     /// Selects and starts one sound from an already bounded variation ticket.
     ///
     /// Disabled global/category policy returns [`SoundPlayback::Suppressed`]
@@ -98,7 +113,7 @@ impl<'output> SoundEngine<'output> {
         self.collect_stopped_voices()?;
         let entry =
             self.catalog
-                .entry(request.entry_id())
+                .sound_entry(request.entry_id())
                 .ok_or(SoundEngineError::MissingEntry {
                     entry_id: request.entry_id(),
                 })?;

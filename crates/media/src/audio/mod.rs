@@ -29,3 +29,4 @@ pub use engine::{
     SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
 };
 pub use selection::SoundVariationSelector;
+pub use spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSoundError};
