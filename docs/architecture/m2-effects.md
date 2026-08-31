@@ -63,6 +63,28 @@ remain ordered in their authored outer-channel slots so audio, spell, footstep,
 and presentation systems can interpret the identifier without format-layer
 coercion.
 
+### Mounted-camera markers
+
+Mounted-camera markers are queried declarations, not timeline callbacks. After
+the controlled mount's current bone pose is composed, `$CMA` is transformed
+through its owning bone and placement; its world Z minus the mount origin's
+world Z replaces the principal camera-height target. Changes within 0.05 units
+retain the current target. Accepted changes use the stock cosine transition,
+the default `cameraHeightSmoothSpeed` value 1.2, and the mount duration factor
+0.5, which remains active for three seconds after the last `$CMA` sample.
+
+When `$CMA` is absent, `$CFM` contributes its raw authored local Z as a
+separately smoothed flying-mount collision height. It is read once per mount
+generation and uses the default `cameraFlyingMountHeightSmoothSpeed` value
+2.0. This value remains separate from the principal orbit-pivot height because
+build 12340 consumes it while constructing camera obstruction geometry. A
+missing marker remains missing; `CreatureModelData.mountHeight`, the rider
+attachment, and the other marker are not compatibility substitutes.
+
+These lookups run on the archive-selected mount model. A larger same-path HD
+replacement can therefore carry different marker geometry without acquiring a
+different asset identity or an HD-only camera path.
+
 ## Ribbons
 
 The asset boundary now owns every field of the 176-byte ribbon record:

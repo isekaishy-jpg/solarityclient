@@ -7,8 +7,10 @@ use glam::Vec3;
 use solarity_ecs::{PlayerViewState, WorldTransform};
 use solarity_systems::{
     CameraSubjectGeometry, CameraSubjectHeightError, CameraSubjectHeightSource,
+    MountCameraGeometry, MountCameraHeightError, PlayerCameraHeightState,
     PlayerCameraObstructionError, PlayerCameraPoseError, PlayerCameraWaterError,
-    resolve_camera_subject_height, resolve_player_camera_obstruction, resolve_player_camera_pose,
+    resolve_camera_subject_height, resolve_mounted_player_camera_pose,
+    resolve_player_camera_obstruction, resolve_player_camera_pose,
     resolve_player_camera_water_collision,
 };
 
@@ -95,6 +97,102 @@ fn camera_height_obeys_stock_clamps() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(minimum.value(), 0.833_333_3);
     assert_eq!(maximum.value(), 15.0);
+    Ok(())
+}
+
+/// `$CMA` replaces the principal height with stock's half-duration cosine ease.
+#[test]
+fn animated_mount_marker_drives_smoothed_camera_height() -> Result<(), Box<dyn Error>> {
+    let base = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 0.0, 1.0))?;
+    let mut state = PlayerCameraHeightState::new(base);
+    state.set_mounted(true, 0.0)?;
+    state.update_mount(MountCameraGeometry::new(Some(3.233_333_3), None), 0.0)?;
+
+    assert!((state.sample(0.0)?.subject_height().value() - 0.833_333_3).abs() < 0.000_001);
+    let midpoint = state.sample(500.0)?;
+    assert_eq!(
+        midpoint.subject_height().source(),
+        CameraSubjectHeightSource::AnimatedMountMarker
+    );
+    assert!((midpoint.subject_height().value() - 2.033_333_3).abs() < 0.000_001);
+    assert!((state.sample(1_000.0)?.subject_height().value() - 3.233_333_3).abs() < 0.000_001);
+    Ok(())
+}
+
+/// `$CFM` is a separate authored offset and is not relatched every frame.
+#[test]
+fn fixed_mount_marker_latches_once_per_mount_generation() -> Result<(), Box<dyn Error>> {
+    let base = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 0.0, 1.0))?;
+    let mut state = PlayerCameraHeightState::new(base);
+    state.set_mounted(true, 0.0)?;
+    state.update_mount(MountCameraGeometry::new(None, Some(2.0)), 0.0)?;
+    state.update_mount(MountCameraGeometry::new(None, Some(8.0)), 250.0)?;
+
+    let midpoint = state.sample(500.0)?;
+    assert_eq!(midpoint.subject_height().source(), base.source());
+    assert!((midpoint.subject_height().value() - base.value()).abs() < 0.000_001);
+    assert!((midpoint.flying_mount_height() - 1.0).abs() < 0.000_001);
+    let settled = state.sample(1_000.0)?;
+    assert!((settled.subject_height().value() - base.value()).abs() < 0.000_001);
+    assert!((settled.flying_mount_height() - 2.0).abs() < 0.000_001);
+
+    let pose = resolve_mounted_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::STOCK_VIEW_2,
+        settled,
+    )?;
+    let ordinary = resolve_player_camera_pose(
+        WorldTransform::new(Vec3::ZERO, 0.0),
+        PlayerViewState::STOCK_VIEW_2,
+        base,
+    )?;
+    assert!((pose.orbit_pivot().z - base.value()).abs() < 0.000_001);
+    assert!((pose.eye() - ordinary.eye()).abs_diff_eq(ordinary.up() * 2.0, 0.000_001));
+    assert!((pose.target() - ordinary.target()).abs_diff_eq(ordinary.up() * 2.0, 0.000_001));
+    assert!((pose.flying_mount_height() - 2.0).abs() < 0.000_001);
+
+    state.set_mounted(false, 1_000.0)?;
+    let dismounted = state.sample(2_000.0)?;
+    assert!((dismounted.subject_height().value() - base.value()).abs() < 0.000_001);
+    assert_eq!(dismounted.subject_height().source(), base.source());
+    assert!(dismounted.flying_mount_height().abs() < 0.000_001);
+    Ok(())
+}
+
+/// Stock's 0.05-unit `$CMA` tolerance avoids retargeting on marker jitter.
+#[test]
+fn animated_mount_marker_tolerance_preserves_existing_target() -> Result<(), Box<dyn Error>> {
+    let base = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 0.0, 1.0))?;
+    let mut state = PlayerCameraHeightState::new(base);
+    state.set_mounted(true, 0.0)?;
+    state.update_mount(MountCameraGeometry::new(Some(3.0), None), 0.0)?;
+    let settled_at = 0.5 * (3.0 - base.value()) / 1.2 * 1_000.0;
+    assert!((state.sample(settled_at)?.subject_height().value() - 3.0).abs() < 0.000_001);
+
+    state.update_mount(MountCameraGeometry::new(Some(3.0 + 0.05), None), settled_at)?;
+    assert!((state.sample(settled_at + 1_000.0)?.subject_height().value() - 3.0).abs() < 0.000_001);
+    Ok(())
+}
+
+/// Invalid mount marker data is rejected without changing the active target.
+#[test]
+fn invalid_mount_camera_geometry_has_no_fallback() -> Result<(), Box<dyn Error>> {
+    let base = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 0.0, 1.0))?;
+    let mut state = PlayerCameraHeightState::new(base);
+    state.set_mounted(true, 0.0)?;
+
+    assert_eq!(
+        state.update_mount(MountCameraGeometry::new(Some(f32::NAN), None), 0.0),
+        Err(MountCameraHeightError::NonFiniteAnimatedHeight)
+    );
+    assert_eq!(
+        state.update_mount(MountCameraGeometry::new(None, Some(f32::INFINITY)), 0.0),
+        Err(MountCameraHeightError::NonFiniteFixedHeight)
+    );
+    assert_eq!(
+        state.sample(f32::NAN),
+        Err(MountCameraHeightError::NonFiniteTime)
+    );
     Ok(())
 }
 

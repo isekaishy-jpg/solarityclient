@@ -9,7 +9,8 @@ use solarity_asset::{
     ItemDisplayCatalog, ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
-    ActiveWorld, PlayerEquipmentSlot, VisibleEquipmentItem, WorldStateError, WorldTransform,
+    ActiveWorld, PlayerEquipmentSlot, PlayerViewState, VisibleEquipmentItem, WorldStateError,
+    WorldTransform,
 };
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
@@ -19,11 +20,12 @@ use solarity_rendering::{
     CharacterWeaponState, M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
-    CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
+    CameraSubjectHeight, CameraSubjectHeightError, MountCameraGeometry, MountCameraHeightError,
+    PlayerCameraHeightState, PlayerCameraPose, PlayerCameraPoseError,
     PlayerEquipmentAppearanceError, UnitLocomotionAnimation, UnitModelAnimation,
-    UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
-    resolve_player_equipment, resolve_unit_locomotion_animation, resolve_unit_model,
-    resolve_unit_model_animation,
+    UnitModelAppearanceError, resolve_model_camera_subject_height,
+    resolve_mounted_player_camera_pose, resolve_player_equipment,
+    resolve_unit_locomotion_animation, resolve_unit_model, resolve_unit_model_animation,
 };
 use thiserror::Error;
 
@@ -45,6 +47,9 @@ pub enum RuntimePlayerError {
     /// Authoritative movement and saved view state cannot form a finite orbit.
     #[error(transparent)]
     CameraPose(#[from] PlayerCameraPoseError),
+    /// Live mount camera markers or their animation time are invalid.
+    #[error(transparent)]
+    MountCamera(#[from] MountCameraHeightError),
     /// Resolved customization could not form stock's texture replacement plan.
     #[error(transparent)]
     CharacterTexturePlan(#[from] CharacterTexturePlanError),
@@ -330,6 +335,7 @@ impl RuntimePlayerPresentation {
             );
             if let Some(resident) = self.resident.as_mut() {
                 resident.world_transform = transform;
+                resident.view = view;
                 resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
@@ -348,10 +354,14 @@ impl RuntimePlayerPresentation {
                         unit_presentation.animation_tier(),
                     )?;
                 }
-                resident.camera_pose = Some(resolve_player_camera_pose(
+                let camera_heights = resident
+                    .camera_height_state
+                    .sample(resident.camera_time_ms)?;
+                resident.camera_height = camera_heights.subject_height();
+                resident.camera_pose = Some(resolve_mounted_player_camera_pose(
                     transform,
                     view,
-                    resident.camera_height,
+                    camera_heights,
                 )?);
             }
             return Ok(RuntimePlayerPoll::Current);
@@ -404,12 +414,29 @@ impl RuntimePlayerPresentation {
             &mut assets,
         )?;
         drop(assets);
-        let camera_height = resolve_model_camera_subject_height(&model, scale)?;
-        let camera_pose = resolve_player_camera_pose(
-            world.local_player_transform()?,
-            world.local_player_view()?,
-            camera_height,
-        )?;
+        let base_camera_height = resolve_model_camera_subject_height(&model, scale)?;
+        let previous_camera = self.resident.as_ref().and_then(|resident| {
+            (resident.path() == path && resident.object_scale == scale).then_some((
+                resident.camera_height_state,
+                resident.camera_time_ms,
+                resident.mount_key.clone(),
+            ))
+        });
+        let (mut camera_height_state, camera_time_ms, previous_mount_key) = previous_camera
+            .unwrap_or((PlayerCameraHeightState::new(base_camera_height), 0.0, None));
+        if previous_mount_key != mount_key {
+            if mount_key.is_some() {
+                camera_height_state.begin_mount_generation(camera_time_ms)?;
+            } else {
+                camera_height_state.set_mounted(false, camera_time_ms)?;
+            }
+        }
+        let camera_heights = camera_height_state.sample(camera_time_ms)?;
+        let camera_height = camera_heights.subject_height();
+        let world_transform = world.local_player_transform()?;
+        let view = world.local_player_view()?;
+        let camera_pose =
+            resolve_mounted_player_camera_pose(world_transform, view, camera_heights)?;
         let particle_colors =
             M2ParticleColorReplacement::resolve(&self.particle_colors, particle_color_id);
         let animation = resolve_resident_animation(
@@ -438,9 +465,12 @@ impl RuntimePlayerPresentation {
             extra_skin,
             textures,
             attachments,
-            world_transform: world.local_player_transform()?,
+            world_transform,
+            view,
             animation,
             camera_height,
+            camera_height_state,
+            camera_time_ms,
             camera_pose: Some(camera_pose),
             model,
             mount_key,
@@ -820,8 +850,11 @@ impl RuntimePlayerPresentation {
             textures,
             attachments,
             world_transform: desired.world_transform,
+            view: PlayerViewState::STOCK_VIEW_2,
             animation,
             camera_height,
+            camera_height_state: PlayerCameraHeightState::new(camera_height),
+            camera_time_ms: 0.0,
             camera_pose: None,
             model,
             mount_key: desired.mount_key,
@@ -965,6 +998,38 @@ impl RuntimePlayerPresentation {
             .and_then(|resident| resident.camera_pose)
     }
 
+    /// Applies markers sampled from the current rendered mount bone pose.
+    ///
+    /// The renderer owns the precise animation clock and therefore publishes
+    /// this sample after pose evaluation. The resulting camera state is ready
+    /// for the next target-camera pass without turning M2 events into a second
+    /// gameplay event stream.
+    pub(super) fn apply_mount_camera_sample(
+        &mut self,
+        geometry: Option<MountCameraGeometry>,
+        time_ms: f32,
+    ) -> Result<(), RuntimePlayerError> {
+        let Some(resident) = self.resident.as_mut() else {
+            return Ok(());
+        };
+        resident.camera_time_ms = time_ms;
+        if let Some(geometry) = geometry {
+            resident
+                .camera_height_state
+                .update_mount(geometry, time_ms)?;
+        } else {
+            resident.camera_height_state.set_mounted(false, time_ms)?;
+        }
+        let camera_heights = resident.camera_height_state.sample(time_ms)?;
+        resident.camera_height = camera_heights.subject_height();
+        resident.camera_pose = Some(resolve_mounted_player_camera_pose(
+            resident.world_transform,
+            resident.view,
+            camera_heights,
+        )?);
+        Ok(())
+    }
+
     /// Builds renderer-owned camera state after far-clip policy has resolved.
     ///
     /// This conversion intentionally requires the caller's final far clip;
@@ -1010,8 +1075,11 @@ struct ResidentPlayerModel {
     textures: Vec<ResidentPlayerTexture>,
     attachments: Vec<ResidentPlayerAttachment>,
     world_transform: WorldTransform,
+    view: PlayerViewState,
     animation: UnitModelAnimation,
     camera_height: CameraSubjectHeight,
+    camera_height_state: PlayerCameraHeightState,
+    camera_time_ms: f32,
     camera_pose: Option<PlayerCameraPose>,
     model: Arc<DecodedM2Model>,
     mount_key: Option<MountModelKey>,

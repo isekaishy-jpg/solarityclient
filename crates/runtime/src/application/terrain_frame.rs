@@ -28,7 +28,7 @@ mod m2;
 mod world_model;
 
 use m2::M2Frame;
-pub(super) use m2::RuntimeM2Event;
+pub(super) use m2::{RuntimeM2Event, RuntimeMountCameraSample};
 use world_model::WorldModelFrame;
 
 /// Failure while joining a resident ADT to renderer-local GPU resources.
@@ -657,6 +657,16 @@ impl TerrainFrame {
     /// Transfers callbacks generated while advancing the current M2 frame.
     pub(super) fn drain_m2_events(&mut self) -> Vec<RuntimeM2Event> {
         self.m2.drain_triggered_events()
+    }
+
+    /// Takes camera markers sampled from the latest controlled mount pose.
+    pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
+        self.m2.take_mount_camera_sample()
+    }
+
+    /// Returns the clock used to sample the latest resident M2 pose.
+    pub(super) fn m2_animation_time_ms(&self) -> f32 {
+        self.m2.animation_time_ms()
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

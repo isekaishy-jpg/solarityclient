@@ -16,6 +16,7 @@ pub struct PlayerCameraPose {
     up: Vec3,
     orbit_pivot: Vec3,
     subject: Vec3,
+    flying_mount_height: f32,
 }
 
 impl PlayerCameraPose {
@@ -25,6 +26,7 @@ impl PlayerCameraPose {
         up: Vec3,
         orbit_pivot: Vec3,
         subject: Vec3,
+        flying_mount_height: f32,
     ) -> Self {
         Self {
             eye,
@@ -32,6 +34,7 @@ impl PlayerCameraPose {
             up,
             orbit_pivot,
             subject,
+            flying_mount_height,
         }
     }
 
@@ -64,6 +67,15 @@ impl PlayerCameraPose {
     pub const fn subject(self) -> Vec3 {
         self.subject
     }
+
+    /// Returns the separately smoothed `$CFM` collision-height input.
+    ///
+    /// This is not part of [`Self::orbit_pivot`]. Build 12340 consumes it
+    /// while constructing the camera obstruction traces.
+    #[must_use]
+    pub const fn flying_mount_height(self) -> f32 {
+        self.flying_mount_height
+    }
 }
 
 /// Invalid runtime state at the player-orbit boundary.
@@ -78,6 +90,9 @@ pub enum PlayerCameraPoseError {
     /// The authored camera subject height is not finite.
     #[error("player camera subject height is not finite")]
     NonFiniteSubjectHeight,
+    /// The separately smoothed `$CFM` collision height is not finite.
+    #[error("player camera flying-mount height is not finite")]
+    NonFiniteFlyingMountHeight,
 }
 
 /// Authored M2 inputs consumed by build 12340's unit camera-height path.
@@ -123,6 +138,39 @@ pub enum CameraSubjectHeightSource {
     BreathAttachment,
     /// The stock non-attachment branch used 99% of the model sphere.
     ModelSphere,
+    /// A live `$CMA` event on the mounted model supplied the principal height.
+    AnimatedMountMarker,
+}
+
+/// One sampled pair of build-12340 player-camera height inputs.
+///
+/// The principal height forms the orbit pivot. The `$CFM` value remains a
+/// distinct obstruction input and must never be added to that pivot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerCameraHeightSample {
+    subject_height: CameraSubjectHeight,
+    flying_mount_height: f32,
+}
+
+impl PlayerCameraHeightSample {
+    pub(super) const fn new(subject_height: CameraSubjectHeight, flying_mount_height: f32) -> Self {
+        Self {
+            subject_height,
+            flying_mount_height,
+        }
+    }
+
+    /// Returns the principal camera-pivot height.
+    #[must_use]
+    pub const fn subject_height(self) -> CameraSubjectHeight {
+        self.subject_height
+    }
+
+    /// Returns the separately smoothed `$CFM` collision-height input.
+    #[must_use]
+    pub const fn flying_mount_height(self) -> f32 {
+        self.flying_mount_height
+    }
 }
 
 /// Validated local-player camera pivot height and its authored source.
@@ -162,4 +210,48 @@ pub enum CameraSubjectHeightError {
     /// The fallback model sphere is negative or not finite.
     #[error("camera subject model sphere radius is invalid")]
     InvalidModelSphere,
+}
+
+/// The two mutually exclusive mount-camera declarations read by build 12340.
+///
+/// `$CMA` is evaluated through the current mount bone pose and expressed as a
+/// height above that model's transformed origin. `$CFM` retains its authored
+/// local Z value and is latched once for the current mount generation.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MountCameraGeometry {
+    animated_height: Option<f32>,
+    fixed_height: Option<f32>,
+}
+
+impl MountCameraGeometry {
+    /// Captures the current `$CMA` height and authored `$CFM` height.
+    #[must_use]
+    pub const fn new(animated_height: Option<f32>, fixed_height: Option<f32>) -> Self {
+        Self {
+            animated_height,
+            fixed_height,
+        }
+    }
+
+    pub(super) const fn animated_height(self) -> Option<f32> {
+        self.animated_height
+    }
+
+    pub(super) const fn fixed_height(self) -> Option<f32> {
+        self.fixed_height
+    }
+}
+
+/// Invalid time or marker geometry at the mounted-camera boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+pub enum MountCameraHeightError {
+    /// The caller supplied a non-finite process time.
+    #[error("mount camera time is not finite")]
+    NonFiniteTime,
+    /// The transformed `$CMA` height is not finite.
+    #[error("animated mount camera height is not finite")]
+    NonFiniteAnimatedHeight,
+    /// The authored `$CFM` height is not finite.
+    #[error("fixed mount camera height is not finite")]
+    NonFiniteFixedHeight,
 }

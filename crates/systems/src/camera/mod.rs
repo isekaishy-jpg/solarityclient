@@ -10,11 +10,14 @@ mod types;
 mod water;
 
 pub use controller::{
-    resolve_camera_subject_height, resolve_model_camera_subject_height, resolve_player_camera_pose,
+    resolve_camera_subject_height, resolve_model_camera_subject_height,
+    resolve_mounted_player_camera_pose, resolve_player_camera_pose,
 };
 pub use obstruction::{PlayerCameraObstructionError, resolve_player_camera_obstruction};
+pub use transition::PlayerCameraHeightState;
 pub use types::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
-    CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
+    CameraSubjectHeightSource, MountCameraGeometry, MountCameraHeightError,
+    PlayerCameraHeightSample, PlayerCameraPose, PlayerCameraPoseError,
 };
 pub use water::{PlayerCameraWaterError, resolve_player_camera_water_collision};

@@ -19,6 +19,7 @@ use solarity_rendering::{
     M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera,
     WorldModelBaseMip, WorldModelTextureFiltering,
 };
+use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
     AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
     UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
@@ -287,6 +288,14 @@ impl ClientServices {
             &creatures,
             &remote_players,
         )?;
+        let mount_camera_sample = frame.take_mount_camera_sample();
+        let camera_time_ms = mount_camera_sample
+            .map_or_else(|| frame.m2_animation_time_ms(), |sample| sample.time_ms());
+        let mount_camera = mount_camera_sample.map(|sample| {
+            MountCameraGeometry::new(sample.animated_height(), sample.fixed_height())
+        });
+        self.player
+            .apply_mount_camera_sample(mount_camera, camera_time_ms)?;
         let m2_events = frame.drain_m2_events();
         self.sound
             .play_m2_events(&m2_events, camera, &mut self.blizzard_rand)?;

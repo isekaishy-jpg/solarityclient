@@ -336,6 +336,28 @@ pub(in crate::application) struct RuntimeM2Event {
     owner_guid: Option<u64>,
 }
 
+/// Camera markers sampled from the controlled player's current mount pose.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::application) struct RuntimeMountCameraSample {
+    animated_height: Option<f32>,
+    fixed_height: Option<f32>,
+    time_ms: f32,
+}
+
+impl RuntimeMountCameraSample {
+    pub(in crate::application) const fn animated_height(self) -> Option<f32> {
+        self.animated_height
+    }
+
+    pub(in crate::application) const fn fixed_height(self) -> Option<f32> {
+        self.fixed_height
+    }
+
+    pub(in crate::application) const fn time_ms(self) -> f32 {
+        self.time_ms
+    }
+}
+
 impl RuntimeM2Event {
     pub(in crate::application) const fn identifier(self) -> [u8; 4] {
         self.identifier
@@ -369,6 +391,7 @@ pub(super) struct M2Frame {
     ribbon_vertices: Vec<M2RibbonRenderVertex>,
     ribbon_draws: Vec<M2RibbonPreparedDraw>,
     triggered_events: Vec<RuntimeM2Event>,
+    mount_camera_sample: Option<RuntimeMountCameraSample>,
     last_effect_time_ms: Option<f32>,
 }
 
@@ -455,6 +478,7 @@ impl M2Frame {
             ribbon_vertices: Vec::new(),
             ribbon_draws: Vec::new(),
             triggered_events: Vec::new(),
+            mount_camera_sample: None,
             last_effect_time_ms: None,
         })
     }
@@ -874,6 +898,7 @@ impl M2Frame {
         self.ribbon_vertices.clear();
         self.ribbon_draws.clear();
         self.triggered_events.clear();
+        self.mount_camera_sample = None;
         let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
@@ -1030,6 +1055,14 @@ impl M2Frame {
             if let M2GpuPlacementOwner::PlayerMount { guid }
             | M2GpuPlacementOwner::RemotePlayerMount { guid } = placement.owner
             {
+                if matches!(placement.owner, M2GpuPlacementOwner::PlayerMount { .. }) {
+                    self.mount_camera_sample = Some(sample_mount_camera(
+                        &source.model,
+                        placement.transform,
+                        &bone_pose,
+                        animation_time_ms,
+                    )?);
+                }
                 let attachment = source.model.attachment(0).ok_or_else(|| {
                     RuntimeTerrainFrameError::MissingMountM2Attachment {
                         model: source.model.path().clone(),
@@ -1332,6 +1365,57 @@ impl M2Frame {
     pub(super) fn drain_triggered_events(&mut self) -> Vec<RuntimeM2Event> {
         std::mem::take(&mut self.triggered_events)
     }
+
+    /// Takes the controlled mount's marker sample from the latest model pose.
+    pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
+        self.mount_camera_sample.take()
+    }
+}
+
+/// Reproduces the direct `$CMA`/`$CFM` lookup performed on the active mount M2.
+fn sample_mount_camera(
+    model: &DecodedM2Model,
+    model_transform: Mat4,
+    bone_pose: &M2BonePose,
+    time_ms: f32,
+) -> Result<RuntimeMountCameraSample, RuntimeTerrainFrameError> {
+    let animations = model.animations();
+    if let Some((event_index, event)) = animations
+        .events()
+        .iter()
+        .enumerate()
+        .find(|(_index, event)| event.identifier() == *b"$CMA")
+    {
+        let bone = match event.bone_index() {
+            Some(bone_index) => bone_pose
+                .transforms()
+                .get(bone_index as usize)
+                .copied()
+                .ok_or_else(|| RuntimeTerrainFrameError::M2EventBoneIndex {
+                    model: model.path().clone(),
+                    event_index,
+                    bone_index,
+                })?,
+            None => Mat4::IDENTITY,
+        };
+        let event_world = (model_transform * bone).transform_point3(event.position());
+        let origin_world = model_transform.transform_point3(glam::Vec3::ZERO);
+        return Ok(RuntimeMountCameraSample {
+            animated_height: Some(event_world.z - origin_world.z),
+            fixed_height: None,
+            time_ms,
+        });
+    }
+    let fixed_height = animations
+        .events()
+        .iter()
+        .find(|event| event.identifier() == *b"$CFM")
+        .map(|event| event.position().z);
+    Ok(RuntimeMountCameraSample {
+        animated_height: None,
+        fixed_height,
+        time_ms,
+    })
 }
 
 /// Resolves declaration callbacks through their authored bone and placement.

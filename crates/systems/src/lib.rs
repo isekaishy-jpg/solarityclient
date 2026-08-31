@@ -42,10 +42,12 @@ mod world;
 
 pub use camera::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
-    CameraSubjectHeightSource, PlayerCameraObstructionError, PlayerCameraPose,
-    PlayerCameraPoseError, PlayerCameraWaterError, resolve_camera_subject_height,
-    resolve_model_camera_subject_height, resolve_player_camera_obstruction,
-    resolve_player_camera_pose, resolve_player_camera_water_collision,
+    CameraSubjectHeightSource, MountCameraGeometry, MountCameraHeightError,
+    PlayerCameraHeightSample, PlayerCameraHeightState, PlayerCameraObstructionError,
+    PlayerCameraPose, PlayerCameraPoseError, PlayerCameraWaterError, resolve_camera_subject_height,
+    resolve_model_camera_subject_height, resolve_mounted_player_camera_pose,
+    resolve_player_camera_obstruction, resolve_player_camera_pose,
+    resolve_player_camera_water_collision,
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{

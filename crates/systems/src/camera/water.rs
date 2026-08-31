@@ -81,6 +81,7 @@ pub fn resolve_player_camera_water_collision<E>(
         pose.up(),
         pivot,
         pose.subject(),
+        pose.flying_mount_height(),
     ))
 }
 

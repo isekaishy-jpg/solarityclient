@@ -6,7 +6,7 @@ use solarity_ecs::{PlayerViewState, WorldTransform};
 
 use super::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
-    CameraSubjectHeightSource, PlayerCameraPose, PlayerCameraPoseError,
+    CameraSubjectHeightSource, PlayerCameraHeightSample, PlayerCameraPose, PlayerCameraPoseError,
 };
 
 /// Live orbit pitch bounds recovered from build 12340's `CGCamera` paths.
@@ -51,6 +51,38 @@ pub fn resolve_player_camera_pose(
     view: PlayerViewState,
     subject_height: CameraSubjectHeight,
 ) -> Result<PlayerCameraPose, PlayerCameraPoseError> {
+    resolve_player_camera_pose_with_flying_mount_height(transform, view, subject_height, 0.0)
+}
+
+/// Resolves the mounted player orbit while retaining `$CFM` for obstruction.
+///
+/// The flying-mount height is deliberately not added to the orbit pivot. The
+/// stock client applies it along the camera up vector, then attenuates that
+/// displacement with the obstruction distance.
+///
+/// # Errors
+///
+/// Returns [`PlayerCameraPoseError`] when either sampled height or the
+/// authoritative transform/view state is non-finite.
+pub fn resolve_mounted_player_camera_pose(
+    transform: WorldTransform,
+    view: PlayerViewState,
+    heights: PlayerCameraHeightSample,
+) -> Result<PlayerCameraPose, PlayerCameraPoseError> {
+    resolve_player_camera_pose_with_flying_mount_height(
+        transform,
+        view,
+        heights.subject_height(),
+        heights.flying_mount_height(),
+    )
+}
+
+fn resolve_player_camera_pose_with_flying_mount_height(
+    transform: WorldTransform,
+    view: PlayerViewState,
+    subject_height: CameraSubjectHeight,
+    flying_mount_height: f32,
+) -> Result<PlayerCameraPose, PlayerCameraPoseError> {
     let subject = transform.position();
     if !subject.is_finite() || !transform.orientation().is_finite() {
         return Err(PlayerCameraPoseError::NonFiniteTransform);
@@ -63,6 +95,9 @@ pub fn resolve_player_camera_pose(
     }
     if !subject_height.value().is_finite() {
         return Err(PlayerCameraPoseError::NonFiniteSubjectHeight);
+    }
+    if !flying_mount_height.is_finite() {
+        return Err(PlayerCameraPoseError::NonFiniteFlyingMountHeight);
     }
 
     let yaw = transform.orientation() + view.yaw_offset_radians();
@@ -83,10 +118,26 @@ pub fn resolve_player_camera_pose(
             subject_height.value().max(CAMERA_PIVOT_HEIGHT_MINIMUM),
         );
     let eye = orbit_pivot - facing * horizontal_distance + Vec3::Z * (orbit_distance * pitch.sin());
-    let target = eye + facing * pitch.cos() - Vec3::Z * pitch.sin();
     let up = facing * pitch.sin() + Vec3::Z * pitch.cos();
+    // `CGCamera` leaves logical first person untouched. In third person the
+    // subsequent obstruction interpolation scales this complete displacement,
+    // reproducing the executable's distance/max-distance factor.
+    let flying_mount_offset = if distance > 0.0 {
+        up * flying_mount_height
+    } else {
+        Vec3::ZERO
+    };
+    let eye = eye + flying_mount_offset;
+    let target = eye + facing * pitch.cos() - Vec3::Z * pitch.sin();
 
-    Ok(PlayerCameraPose::new(eye, target, up, orbit_pivot, subject))
+    Ok(PlayerCameraPose::new(
+        eye,
+        target,
+        up,
+        orbit_pivot,
+        subject,
+        flying_mount_height,
+    ))
 }
 
 /// Resolves the stock camera pivot height from already-extracted M2 geometry.
