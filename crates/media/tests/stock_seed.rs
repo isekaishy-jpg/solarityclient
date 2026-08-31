@@ -2,6 +2,8 @@
 
 #[path = "stock_seed/audio.rs"]
 mod audio;
+#[path = "stock_seed/audio/advanced_lifecycle.rs"]
+mod audio_advanced_lifecycle;
 #[path = "stock_seed/audio/backend.rs"]
 mod audio_backend;
 #[path = "stock_seed/audio/cache.rs"]

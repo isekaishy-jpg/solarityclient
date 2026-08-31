@@ -9,7 +9,8 @@ mod cinematic;
 mod voice;
 
 pub use audio::{
-    AdvancedSoundProperties, DecodedSoundHandle, DecodedSoundInfo, EncodedSound,
+    AdvancedSoundDirective, AdvancedSoundLifecycle, AdvancedSoundProperties, AdvancedSoundUsage,
+    AdvancedSoundUsageError, DecodedSoundHandle, DecodedSoundInfo, EncodedSound,
     ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundCache, SoundCategory,
     SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine,
     SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundOutput, SoundOutputInfo,

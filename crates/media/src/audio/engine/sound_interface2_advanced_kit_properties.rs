@@ -15,6 +15,9 @@ pub struct AdvancedSoundProperties {
     inner_pan_radius: f32,
     outer_pan_radius: f32,
     schedule_milliseconds: [i64; 4],
+    random_offset_range: i32,
+    usage: u32,
+    repeat_interval_milliseconds: [i32; 2],
     duck_gains: [f32; 3],
     inner_influence_radius: f32,
     outer_influence_radius: f32,
@@ -100,6 +103,30 @@ impl AdvancedSoundProperties {
         self.schedule_milliseconds
     }
 
+    /// Returns the signed range used for the per-instance schedule offset.
+    ///
+    /// The DBC stores a 32-bit word, while build 12340 reads the field as a
+    /// signed integer and selects from `-range..range`.
+    #[must_use]
+    pub const fn random_offset_range(self) -> i32 {
+        self.random_offset_range
+    }
+
+    /// Returns the raw usage word consumed by the advanced lifecycle.
+    ///
+    /// Interpretation remains in the media layer because the asset layer must
+    /// preserve the exact DBC value without inventing enum semantics.
+    #[must_use]
+    pub const fn usage(self) -> u32 {
+        self.usage
+    }
+
+    /// Returns the signed minimum and maximum repeat intervals.
+    #[must_use]
+    pub const fn repeat_interval_milliseconds(self) -> [i32; 2] {
+        self.repeat_interval_milliseconds
+    }
+
     /// Returns corrected SFX, music, and ambience ducking multipliers.
     ///
     /// Stock replaces any authored value outside the inclusive zero-to-one
@@ -148,6 +175,12 @@ impl From<&AdvancedSoundEntry> for AdvancedSoundProperties {
             inner_pan_radius: entry.inner_radius_2d(),
             outer_pan_radius: entry.outer_radius_2d(),
             schedule_milliseconds: normalize_schedule(entry.times()),
+            random_offset_range: entry.random_offset_range() as i32,
+            usage: entry.usage(),
+            repeat_interval_milliseconds: [
+                entry.time_interval_minimum() as i32,
+                entry.time_interval_maximum() as i32,
+            ],
             duck_gains: [
                 normalize_duck_gain(entry.duck_to_sfx()),
                 normalize_duck_gain(entry.duck_to_music()),

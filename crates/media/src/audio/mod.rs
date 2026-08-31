@@ -25,7 +25,8 @@ pub use codec::{
     DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,
 };
 pub use engine::{
-    AdvancedSoundProperties, SoundCategory, SoundCategorySettings, SoundEngine, SoundEngineError,
+    AdvancedSoundDirective, AdvancedSoundLifecycle, AdvancedSoundProperties, AdvancedSoundUsage,
+    AdvancedSoundUsageError, SoundCategory, SoundCategorySettings, SoundEngine, SoundEngineError,
     SoundEngineSettings, SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
 };
 pub use selection::SoundVariationSelector;
