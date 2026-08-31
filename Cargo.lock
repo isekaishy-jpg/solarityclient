@@ -2147,6 +2147,7 @@ name = "solarity-media"
 version = "0.1.0"
 dependencies = [
  "ffmpeg-next",
+ "glam",
  "sdl3",
  "solarity-asset",
  "solarity-cpu",

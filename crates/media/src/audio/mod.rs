@@ -26,7 +26,8 @@ pub use codec::{
 };
 pub use engine::{
     AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
-    AdvancedSoundProperties, AdvancedSoundUsage, AdvancedSoundUsageError, SoundCategory,
+    AdvancedSoundListener, AdvancedSoundProperties, AdvancedSoundSpatialError,
+    AdvancedSoundSpatialMix, AdvancedSoundUsage, AdvancedSoundUsageError, SoundCategory,
     SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain,
     SoundGainError, SoundPlayRequest, SoundPlayback,
 };

@@ -10,7 +10,8 @@ mod voice;
 
 pub use audio::{
     AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
-    AdvancedSoundProperties, AdvancedSoundUsage, AdvancedSoundUsageError, DecodedSoundHandle,
+    AdvancedSoundListener, AdvancedSoundProperties, AdvancedSoundSpatialError,
+    AdvancedSoundSpatialMix, AdvancedSoundUsage, AdvancedSoundUsageError, DecodedSoundHandle,
     DecodedSoundInfo, EncodedSound, LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound,
     ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundCache, SoundCategory,
     SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine,
