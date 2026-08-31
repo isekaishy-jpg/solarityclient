@@ -7,10 +7,10 @@ use solarity_asset::DecodedM2Model;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2SampledTexture, M2ShaderPermutation,
-    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2TextureSet, M2TextureSetHandle,
-    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_section_distance_key,
+    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonPose,
+    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -60,6 +60,7 @@ struct M2GpuPlacement {
     flags: u16,
     color: [u8; 4],
     playback: Option<M2Playback>,
+    ribbons: Vec<M2RibbonTrail>,
 }
 
 /// Per-instance sequence state retained by stock's `CM2Model` owner.
@@ -159,6 +160,7 @@ pub(super) struct M2Frame {
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     transparent_draws: Vec<M2TransparentDraw>,
+    last_effect_time_ms: Option<f32>,
 }
 
 impl M2Frame {
@@ -191,6 +193,16 @@ impl M2Frame {
                     Some(source) => M2Playback::new(&source.model, random)?,
                     None => None,
                 },
+                ribbons: match sources[placement.source_index()].as_ref() {
+                    Some(source) => source
+                        .model
+                        .animations()
+                        .ribbons()
+                        .iter()
+                        .map(M2RibbonTrail::new)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => Vec::new(),
+                },
             });
         }
         Ok(Self {
@@ -200,6 +212,7 @@ impl M2Frame {
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
+            last_effect_time_ms: None,
         })
     }
 
@@ -261,6 +274,10 @@ impl M2Frame {
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_draws.clear();
+        let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
+            (animation_time_ms - previous).max(0.0) * 0.001
+        });
+        self.last_effect_time_ms = Some(animation_time_ms);
         for placement in &mut self.placements {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
@@ -290,6 +307,13 @@ impl M2Frame {
             let model_view = camera.view() * placement.transform;
             let bone_pose =
                 M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            advance_ribbons(
+                &source.model,
+                placement,
+                &bone_pose,
+                clock,
+                effect_delta_seconds,
+            )?;
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
             let instance_color = placement_color(placement.color);
@@ -359,6 +383,51 @@ impl M2Frame {
             .extend(self.transparent_draws.iter().map(|queued| queued.draw));
         Ok((&self.bone_transforms, &self.visible_draws))
     }
+}
+
+/// Advances every shared declaration through its placement-owned edge history.
+fn advance_ribbons(
+    model: &DecodedM2Model,
+    placement: &mut M2GpuPlacement,
+    bone_pose: &M2BonePose,
+    clock: M2AnimationClock,
+    delta_seconds: f32,
+) -> Result<(), RuntimeTerrainFrameError> {
+    let emitters = model.animations().ribbons();
+    if placement.ribbons.len() != emitters.len() {
+        return Err(RuntimeTerrainFrameError::M2RibbonTrailCount {
+            model: model.path().clone(),
+            trail_count: placement.ribbons.len(),
+            emitter_count: emitters.len(),
+        });
+    }
+    for (ribbon_index, (emitter, trail)) in emitters.iter().zip(&mut placement.ribbons).enumerate()
+    {
+        let bone = match emitter.bone_index() {
+            Some(bone_index) => bone_pose
+                .transforms()
+                .get(bone_index as usize)
+                .copied()
+                .ok_or_else(|| RuntimeTerrainFrameError::M2RibbonBoneIndex {
+                    model: model.path().clone(),
+                    ribbon_index,
+                    bone_index,
+                })?,
+            None => Mat4::IDENTITY,
+        };
+        // Stock appends the emitter-local translation to the animated bone,
+        // then composes the placement. Its column-major matrix passes Y as the
+        // strip width axis and Z as the interpolation tangent.
+        let transform = placement.transform * bone * Mat4::from_translation(emitter.position());
+        let control = M2RibbonControlPoint::new(
+            transform.w_axis.truncate(),
+            transform.y_axis.truncate(),
+            transform.z_axis.truncate(),
+        );
+        let pose = M2RibbonPose::sample(model.animations(), emitter, clock)?;
+        trail.advance(delta_seconds, control, pose)?;
+    }
+    Ok(())
 }
 
 /// Computes stock's animated section-center key, including SKIN radius flags.

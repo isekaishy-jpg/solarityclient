@@ -174,8 +174,12 @@ impl M2RibbonTrail {
             return Err(M2RibbonTrailError::EdgeCapacity);
         }
         let capacity = capacity as usize;
+        let mut sections = VecDeque::new();
+        sections
+            .try_reserve_exact(capacity)
+            .map_err(|_source| M2RibbonTrailError::EdgeCapacity)?;
         Ok(Self {
-            sections: VecDeque::with_capacity(capacity),
+            sections,
             previous: None,
             edge_rate,
             edge_lifetime_seconds,

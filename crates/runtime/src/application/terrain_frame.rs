@@ -6,11 +6,12 @@ use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
-    M2MeshPlanError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount, TerrainLayerCountError,
-    TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanError,
-    VulkanRenderer, WorldCameraError, WorldCameraFrame, WorldFrameReport, WorldFrameScene,
-    WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError, WorldModelPlacementError,
-    WorldModelSceneUniform, WorldModelTextureFiltering, WorldScreenWindow,
+    M2MeshPlanError, M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount,
+    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
+    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
+    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
+    WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -58,6 +59,9 @@ pub enum RuntimeTerrainFrameError {
     /// One visible M2 material could not sample its authored animation tracks.
     #[error(transparent)]
     M2MaterialPose(#[from] M2MaterialPoseError),
+    /// One authored ribbon could not enter bounded placement-local state.
+    #[error(transparent)]
+    M2RibbonTrail(#[from] M2RibbonTrailError),
     /// A runtime-alpha mesh lacked the pipeline prepared for stock promotion.
     #[error("M2 model {model} draw {draw_index} has no runtime-alpha fade pipeline")]
     M2RuntimeFadePipeline {
@@ -203,6 +207,26 @@ pub enum RuntimeTerrainFrameError {
         model: AssetPath,
         /// AnimationData identifier being advanced.
         animation_id: u16,
+    },
+    /// Placement-local ribbon state no longer parallels the shared model.
+    #[error("M2 model {model} retains {trail_count} ribbon trails for {emitter_count} emitters")]
+    M2RibbonTrailCount {
+        /// Model whose immutable emitter table became inconsistent.
+        model: AssetPath,
+        /// Number of mutable trails owned by the placement.
+        trail_count: usize,
+        /// Number of shared decoded ribbon declarations.
+        emitter_count: usize,
+    },
+    /// A validated ribbon unexpectedly references an absent bone transform.
+    #[error("M2 model {model} ribbon {ribbon_index} references absent bone {bone_index}")]
+    M2RibbonBoneIndex {
+        /// Model containing the emitter.
+        model: AssetPath,
+        /// Zero-based ribbon declaration slot.
+        ribbon_index: usize,
+        /// Missing zero-based bone transform.
+        bone_index: u32,
     },
 }
 
