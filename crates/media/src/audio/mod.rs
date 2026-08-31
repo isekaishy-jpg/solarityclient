@@ -18,7 +18,7 @@ mod types;
 
 pub use backend::{
     SoundBackend, SoundBackendError, SoundOutput, SoundOutputInfo, SoundOutputTarget,
-    SoundVoiceHandle, SoundVoiceState,
+    SoundSpatialPosition, SoundVoiceHandle, SoundVoiceState,
 };
 pub use cache::{EncodedSound, SoundCache};
 pub use codec::{

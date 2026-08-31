@@ -6,4 +6,6 @@ mod types;
 
 pub use dependency::{SoundBackend, SoundOutput};
 pub use status::SoundBackendError;
-pub use types::{SoundOutputInfo, SoundOutputTarget, SoundVoiceHandle, SoundVoiceState};
+pub use types::{
+    SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle, SoundVoiceState,
+};

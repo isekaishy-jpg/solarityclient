@@ -61,6 +61,37 @@ pub struct SoundVoiceHandle {
     pub(super) generation: u32,
 }
 
+/// Listener-relative position accepted by the SDL spatialization boundary.
+///
+/// The dependency uses a right-handed listener frame: positive X is right,
+/// positive Y is up, and negative Z is forward. World-to-listener conversion,
+/// stock min/max distance, cone attenuation, and advanced pan-level policy all
+/// remain responsibilities of the media engine rather than this adapter type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundSpatialPosition([f32; 3]);
+
+impl SoundSpatialPosition {
+    /// Validates one finite dependency-space position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`](super::SoundBackendError) when any axis is
+    /// non-finite. The adapter does not replace it with the listener origin.
+    pub fn new(position: [f32; 3]) -> Result<Self, super::SoundBackendError> {
+        if position.iter().all(|axis| axis.is_finite()) {
+            Ok(Self(position))
+        } else {
+            Err(super::SoundBackendError::InvalidSpatialPosition { position })
+        }
+    }
+
+    /// Returns right, up, and back coordinates in listener space.
+    #[must_use]
+    pub const fn coordinates(self) -> [f32; 3] {
+        self.0
+    }
+}
+
 /// Observable playback state without exposing SDL track types.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SoundVoiceState {

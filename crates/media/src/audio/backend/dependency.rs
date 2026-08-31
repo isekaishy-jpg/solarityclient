@@ -3,13 +3,15 @@
 use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sdl3::mixer::{Mixer, Track};
+use sdl3::mixer::{Mixer, Point3D, Track};
 use sdl3::sys::audio::{SDL_AUDIO_S16LE, SDL_AudioSpec};
 
 use crate::audio::codec::{DecodedSoundHandle, SoundDecoder};
 
 use super::status::SoundBackendError;
-use super::types::{SoundOutputInfo, SoundOutputTarget, SoundVoiceHandle, SoundVoiceState};
+use super::types::{
+    SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle, SoundVoiceState,
+};
 
 const STOCK_OUTPUT_SAMPLE_RATE_HZ: i32 = 44_100;
 const STOCK_OUTPUT_CHANNEL_COUNT: i32 = 2;
@@ -271,6 +273,34 @@ impl<'output> SoundBackend<'output> {
             .track
             .set_gain(gain)
             .map_err(|source| SoundBackendError::adapter("set sound voice gain", source))
+    }
+
+    /// Enables or clears SDL spatial mixing for one live voice.
+    ///
+    /// This method accepts listener-relative adapter coordinates only. It does
+    /// not reinterpret world axes or substitute SDL's distance curve for the
+    /// stock min/max-distance and cone policy owned by the engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`] for a stale handle or SDL failure.
+    pub fn set_spatial_position(
+        &self,
+        voice: SoundVoiceHandle,
+        position: Option<SoundSpatialPosition>,
+    ) -> Result<(), SoundBackendError> {
+        let track = &self.voice(voice)?.track;
+        match position {
+            Some(position) => {
+                let [x, y, z] = position.coordinates();
+                track
+                    .set_3d_position(Point3D { x, y, z })
+                    .map_err(|source| SoundBackendError::adapter("position sound voice", source))
+            }
+            None => track
+                .set_stereo(None)
+                .map_err(|source| SoundBackendError::adapter("clear sound voice position", source)),
+        }
     }
 
     /// Stops one voice immediately and releases its decoded input reference.

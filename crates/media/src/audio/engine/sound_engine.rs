@@ -5,7 +5,8 @@ use std::num::NonZeroU16;
 use solarity_asset::AssetStore;
 
 use crate::audio::backend::{
-    SoundBackend, SoundBackendError, SoundOutput, SoundVoiceHandle, SoundVoiceState,
+    SoundBackend, SoundBackendError, SoundOutput, SoundSpatialPosition, SoundVoiceHandle,
+    SoundVoiceState,
 };
 use crate::audio::cache::SoundCache;
 use crate::audio::codec::SoundDecoder;
@@ -206,6 +207,32 @@ impl<'output> SoundEngine<'output> {
         self.backend
             .set_gain(handle, applied_gain(self.settings, voice))?;
         self.active_voices[index].runtime_gain = runtime_gain;
+        Ok(())
+    }
+
+    /// Applies or clears a listener-relative backend position for one voice.
+    ///
+    /// The caller supplies the position after stock world-to-listener, pan,
+    /// distance, and cone policy has been evaluated. This boundary performs no
+    /// coordinate fallback or policy inference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError::UnknownVoice`] when this engine does not own
+    /// the handle, or a backend error when SDL rejects the operation.
+    pub fn set_voice_spatial_position(
+        &self,
+        handle: SoundVoiceHandle,
+        position: Option<SoundSpatialPosition>,
+    ) -> Result<(), SoundEngineError> {
+        if !self
+            .active_voices
+            .iter()
+            .any(|voice| voice.handle == handle)
+        {
+            return Err(SoundEngineError::UnknownVoice);
+        }
+        self.backend.set_spatial_position(handle, position)?;
         Ok(())
     }
 

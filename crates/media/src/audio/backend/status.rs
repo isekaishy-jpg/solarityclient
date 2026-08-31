@@ -36,6 +36,12 @@ pub enum SoundBackendError {
         /// Unmodified caller-provided gain.
         gain: f32,
     },
+    /// A listener-relative spatial coordinate was non-finite.
+    #[error("sound voice spatial position must be finite, got {position:?}")]
+    InvalidSpatialPosition {
+        /// Unmodified right, up, and back coordinates.
+        position: [f32; 3],
+    },
     /// A slot has been reused more times than its stable handle can encode.
     #[error("sound voice generation capacity is exhausted")]
     GenerationCapacity,

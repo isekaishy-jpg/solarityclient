@@ -6,7 +6,7 @@ use std::num::NonZeroU16;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     SoundBackend, SoundBackendError, SoundCache, SoundDecodeMode, SoundDecoder, SoundOutput,
-    SoundOutputTarget, SoundVoiceState,
+    SoundOutputTarget, SoundSpatialPosition, SoundVoiceState,
 };
 
 use crate::support::{Fixture, FixtureFile, pcm_wav, sdl_test_lock};
@@ -60,6 +60,45 @@ fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// SDL spatial positioning receives explicit listener-relative coordinates.
+#[test]
+fn backend_positions_voice_in_the_listener_frame() -> Result<(), Box<dyn Error>> {
+    let wav = pcm_wav(8_000, &vec![12_000; 8_000])?;
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Sound\\Test\\Position.wav",
+        bytes: &wav,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let encoded =
+        SoundCache::new().load(&mut store, &AssetPath::new("Sound/Test/Position.wav")?)?;
+
+    let _sdl_test = sdl_test_lock();
+    let mut decoder = SoundDecoder::new()?;
+    let sound = decoder.load(&encoded, SoundDecodeMode::Predecoded)?;
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
+    let mut backend = SoundBackend::new(&output, capacity)?;
+    let voice = backend.play(&decoder, sound, 1.0, true)?;
+
+    assert!(matches!(
+        SoundSpatialPosition::new([f32::NAN, 0.0, 0.0]),
+        Err(SoundBackendError::InvalidSpatialPosition { .. })
+    ));
+    backend.set_spatial_position(voice, Some(SoundSpatialPosition::new([1.0, 0.0, 0.0])?))?;
+    let mut mixed = [0_u8; 4_096];
+    backend.generate(&mut mixed)?;
+    let (left, right) = stereo_energy(&mixed);
+    assert!(left < right);
+
+    backend.set_spatial_position(voice, None)?;
+    backend.stop(voice)?;
+    Ok(())
+}
+
 /// Reusing a stopped slot invalidates the previous generation only.
 #[test]
 fn reused_voice_rejects_stale_and_foreign_handles() -> Result<(), Box<dyn Error>> {
@@ -102,4 +141,20 @@ fn reused_voice_rejects_stale_and_foreign_handles() -> Result<(), Box<dyn Error>
     ));
     backend.stop(second)?;
     Ok(())
+}
+
+/// Totals absolute signed-16 energy for an interleaved stereo output buffer.
+fn stereo_energy(bytes: &[u8]) -> (u64, u64) {
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .fold((0, 0), |(left, right), frame| {
+            let left_sample = i16::from_le_bytes([frame[0], frame[1]]).unsigned_abs();
+            let right_sample = i16::from_le_bytes([frame[2], frame[3]]).unsigned_abs();
+            (
+                left + u64::from(left_sample),
+                right + u64::from(right_sample),
+            )
+        })
 }
