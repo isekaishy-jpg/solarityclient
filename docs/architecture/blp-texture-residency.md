@@ -36,3 +36,17 @@ eight times in staging and device memory.
 Staging bytes are temporary. The renderer retains only the device-local
 image and its view after the synchronous transfer retires; the shared asset
 cache continues to own the parsed source for other consumers.
+
+## Player composition boundary
+
+A character body does not bind one authored body BLP. Build 12340 composes the
+resolved skin, face, facial-hair, hair-detail, underwear, and equipped-item
+layers into a placement-owned 256-by-256 RGBA8 mip chain. That dynamic atlas
+replaces M2 texture type 1. Authored hair and extra-skin BLPs remain separate
+shared sources for replacement types 7 and 8.
+
+Runtime player residency keys this composition by the complete resolved
+texture plan, not only by the body M2 path. A customization change can therefore
+recompose the atlas without duplicating the decoded M2 or any same-path HD BLP
+source. The dynamic atlas will receive its own GPU image identity; it must not
+be disguised as an archive-backed BLP path.

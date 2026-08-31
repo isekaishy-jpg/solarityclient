@@ -56,7 +56,8 @@ type EquipmentLayers = [[Option<AssetPath>; EQUIPMENT_PRIORITY_COUNT]; 8];
 /// Texture inputs for one stock character M2 before equipped-item composition.
 ///
 /// `atlas_layers` produce the dynamic M2 body texture (texture type 1). Hair
-/// and extra skin independently replace M2 texture types 6 and 8.
+/// and extra skin independently replace M2 texture types 7 and 8.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CharacterTexturePlan {
     atlas_layers: Vec<CharacterAtlasLayer>,
     hair: Option<AssetPath>,
@@ -193,7 +194,7 @@ impl CharacterTexturePlan {
         &self.atlas_layers
     }
 
-    /// Returns the texture replacing M2 hair texture type 6 when authored.
+    /// Returns the texture replacing M2 hair texture type 7 when authored.
     #[must_use]
     pub const fn hair(&self) -> Option<&AssetPath> {
         self.hair.as_ref()

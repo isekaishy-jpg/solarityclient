@@ -3,11 +3,15 @@
 use std::sync::Arc;
 
 use solarity_asset::{
-    AssetError, AssetPath, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    DecodedM2Model, M2ModelCache, ParticleColorCatalog,
+    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
+    CharacterAppearanceCatalog, CreatureCatalog, DecodedM2Model, M2ModelCache,
+    ParticleColorCatalog,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
-use solarity_rendering::{M2ParticleColorReplacement, WorldCamera};
+use solarity_rendering::{
+    CharacterAtlasTexture, CharacterTextureComposeError, CharacterTexturePlan,
+    CharacterTexturePlanError, M2ParticleColorReplacement, WorldCamera,
+};
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
     UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
@@ -33,6 +37,18 @@ pub enum RuntimePlayerError {
     /// Authoritative movement and saved view state cannot form a finite orbit.
     #[error(transparent)]
     CameraPose(#[from] PlayerCameraPoseError),
+    /// Resolved customization could not form stock's texture replacement plan.
+    #[error(transparent)]
+    CharacterTexturePlan(#[from] CharacterTexturePlanError),
+    /// Planned character texture layers could not form the complete body atlas.
+    #[error(transparent)]
+    CharacterTextureCompose(#[from] CharacterTextureComposeError),
+    /// The local player resolved without the character-only appearance join.
+    #[error("local player {guid:#018X} has no character appearance")]
+    MissingCharacterAppearance {
+        /// Player GUID whose object kind promised character appearance.
+        guid: u64,
+    },
 }
 
 /// Observable result of one local-player presentation synchronization pass.
@@ -55,6 +71,7 @@ pub struct RuntimePlayerPresentation {
     characters: CharacterAppearanceCatalog,
     particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
+    textures: BlpTextureCache,
     resident: Option<ResidentPlayerModel>,
 }
 
@@ -73,6 +90,7 @@ impl RuntimePlayerPresentation {
             characters,
             particle_colors,
             models: M2ModelCache::new(),
+            textures: BlpTextureCache::new(),
             resident: None,
         }
     }
@@ -94,6 +112,7 @@ impl RuntimePlayerPresentation {
         let Some(world) = world else {
             self.resident = None;
             self.models.collect_unused();
+            self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
         };
         let guid = world.local_player_guid()?;
@@ -111,11 +130,16 @@ impl RuntimePlayerPresentation {
         let path = appearance.body().model_path();
         let scale = appearance.object_scale();
         let particle_color_id = appearance.body().display().particle_color_id();
+        let character = appearance
+            .character()
+            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
+        let texture_plan = CharacterTexturePlan::base(character)?;
         if self.resident.as_ref().is_some_and(|resident| {
             resident.guid == guid
                 && resident.path() == path
                 && resident.object_scale == scale
                 && resident.particle_color_id == particle_color_id
+                && resident.texture_plan == texture_plan
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
@@ -126,7 +150,13 @@ impl RuntimePlayerPresentation {
             return Ok(RuntimePlayerPoll::Current);
         }
 
-        let model = self.models.load(&mut self.assets.borrow_mut(), path)?;
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, path)?;
+        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
+        let extra_skin =
+            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        drop(assets);
         let camera_height = resolve_model_camera_subject_height(&model, scale)?;
         let camera_pose = resolve_player_camera_pose(
             world.local_player_transform()?,
@@ -140,11 +170,16 @@ impl RuntimePlayerPresentation {
             object_scale: scale,
             particle_color_id,
             particle_colors,
+            texture_plan,
+            atlas,
+            hair,
+            extra_skin,
             camera_height,
             camera_pose,
             model,
         });
         self.models.collect_unused();
+        self.textures.collect_unused();
         Ok(RuntimePlayerPoll::ModelLoaded)
     }
 
@@ -174,6 +209,28 @@ impl RuntimePlayerPresentation {
         self.resident
             .as_ref()
             .and_then(|resident| resident.particle_colors.as_ref())
+    }
+
+    /// Returns the complete placement-owned body atlas mip chain.
+    #[must_use]
+    pub fn resident_body_atlas(&self) -> Option<&CharacterAtlasTexture> {
+        self.resident.as_ref().map(|resident| &resident.atlas)
+    }
+
+    /// Returns the authored texture replacing the character hair slot.
+    #[must_use]
+    pub fn resident_hair_texture(&self) -> Option<&Arc<BlpTextureSource>> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.hair.as_ref())
+    }
+
+    /// Returns the authored texture replacing the character extra-skin slot.
+    #[must_use]
+    pub fn resident_extra_skin_texture(&self) -> Option<&Arc<BlpTextureSource>> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.extra_skin.as_ref())
     }
 
     /// Returns the authored and stock-clamped camera pivot height.
@@ -212,6 +269,7 @@ impl RuntimePlayerPresentation {
     pub fn disconnect(&mut self) {
         self.resident = None;
         self.models.collect_unused();
+        self.textures.collect_unused();
     }
 }
 
@@ -220,9 +278,22 @@ struct ResidentPlayerModel {
     object_scale: f32,
     particle_color_id: u32,
     particle_colors: Option<M2ParticleColorReplacement>,
+    texture_plan: CharacterTexturePlan,
+    atlas: CharacterAtlasTexture,
+    hair: Option<Arc<BlpTextureSource>>,
+    extra_skin: Option<Arc<BlpTextureSource>>,
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
+}
+
+/// Loads one optional character replacement without inventing a substitute.
+fn load_optional_texture(
+    path: Option<&AssetPath>,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<Option<Arc<BlpTextureSource>>, AssetError> {
+    path.map(|path| textures.load(assets, path)).transpose()
 }
 
 impl ResidentPlayerModel {
