@@ -136,9 +136,11 @@ lifetime timestamps instead of making the interval search order-dependent.
 
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. The
-bounded planar path retains stock's fractional emission remainder, randomized
-in-frame age, signed lifetime word, swap-removal, half-step gravity, clamped
-linear drag, and executable epsilon snap. Model-space particles retain local
+bounded planar and spherical-shell paths retain stock's fractional emission
+remainder, randomized in-frame age, signed lifetime word, swap-removal,
+half-step gravity, clamped linear drag, and executable epsilon snap. Sphere
+radius, elevation, azimuth, z-source aiming, and forced vertical launch keep
+their distinct random-call order. Model-space particles retain local
 coordinates; ordinary particles receive their emitter matrix. Recovered but
-not-yet-implemented sphere, spline, collision, inherited-velocity, and follow
-paths return typed errors rather than falling through to planar behavior.
+not-yet-implemented spline, collision, inherited-velocity, and follow paths
+return typed errors rather than falling through to another generator.

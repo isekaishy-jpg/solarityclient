@@ -620,6 +620,56 @@ fn m2_planar_particle_simulation_preserves_stock_capacity() -> Result<(), Box<dy
     Ok(())
 }
 
+/// Spherical emission samples a bounded shell and its dedicated launch path.
+#[test]
+fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x8000_u32.to_le_bytes());
+    bytes[particle_offset + 41] = 2;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\SphereParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SphereParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\SphereParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    assert_eq!(emitter.flags(), 0x8000);
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823, 4);
+    let report = simulation.advance_sphere(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+
+    assert_eq!(report.emitted(), 2);
+    assert_eq!(report.deaths(), 0);
+    assert_eq!(report.live(), 2);
+    assert!(simulation.particles().iter().all(|particle| {
+        let position = particle.position();
+        let horizontal_radius = position.truncate().length();
+        position.is_finite()
+            && particle.velocity().is_finite()
+            && horizontal_radius <= pose.emission_area_width() + pose.emission_speed() * 0.1
+    }));
+    Ok(())
+}
+
 /// M2 geometry resolves SKIN indirection and reaches renderer-owned GPU buffers.
 #[test]
 // SDL and the renderer require an explicit ownership transfer for the native

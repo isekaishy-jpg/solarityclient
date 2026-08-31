@@ -9,6 +9,9 @@ use super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateEr
 /// Particles stay in emitter-local space instead of receiving the bone matrix.
 const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0200;
 
+/// Sphere particles launch along local +Z rather than away from the center.
+const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
+
 /// Recovered behaviors which must not be silently replaced by basic motion.
 const UNSUPPORTED_SIMULATION_FLAGS: u32 =
     0x0000_0800 | 0x0000_1000 | 0x0000_2000 | 0x0004_0000 | 0x0008_0000;
@@ -36,9 +39,9 @@ impl M2ParticleSimulation {
 
     /// Emits planar particles, advances all live particles, and removes deaths.
     ///
-    /// This covers stock emitter type `1`. Sphere, spline, collision, inherited
-    /// velocity, and follow-position paths return typed errors until their own
-    /// recovered implementations are selected.
+    /// This covers stock emitter type `1`. Spline, collision, inherited
+    /// velocity, and follow-position paths use separate entry points or return
+    /// typed errors until their recovered implementations are selected.
     ///
     /// # Errors
     ///
@@ -52,6 +55,50 @@ impl M2ParticleSimulation {
         emitter_transform: Mat4,
         density: f32,
     ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        self.advance(
+            emitter,
+            pose,
+            elapsed_seconds,
+            emitter_transform,
+            density,
+            EmitterShape::Plane,
+        )
+    }
+
+    /// Emits spherical-shell particles and advances the shared lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2ParticleSimulationError`] under the same conditions as
+    /// [`Self::advance_planar`], or when the emitter is not stock type `2`.
+    pub fn advance_sphere(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        self.advance(
+            emitter,
+            pose,
+            elapsed_seconds,
+            emitter_transform,
+            density,
+            EmitterShape::Sphere,
+        )
+    }
+
+    /// Runs emission and live-particle advancement shared by stock shapes.
+    fn advance(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+        shape: EmitterShape,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
             return Err(M2ParticleSimulationError::ElapsedTime);
         }
@@ -61,10 +108,11 @@ impl M2ParticleSimulation {
         if !emitter_transform.is_finite() {
             return Err(M2ParticleSimulationError::Transform);
         }
-        if emitter.emitter_type() != 1 {
-            return Err(M2ParticleSimulationError::EmitterType(
-                emitter.emitter_type(),
-            ));
+        if emitter.emitter_type() != shape.selector() {
+            return Err(M2ParticleSimulationError::EmitterType {
+                expected: shape.selector(),
+                actual: emitter.emitter_type(),
+            });
         }
         let unsupported = emitter.flags() & UNSUPPORTED_SIMULATION_FLAGS;
         if unsupported != 0 {
@@ -85,13 +133,22 @@ impl M2ParticleSimulation {
             let requested = (self.emission_remainder + 0.5).round_ties_even() as usize;
             let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
             for _ in 0..admitted {
-                let particle = spawn_planar(
-                    emitter,
-                    pose,
-                    elapsed_seconds,
-                    emitter_transform,
-                    &mut self.random,
-                )?;
+                let particle = match shape {
+                    EmitterShape::Plane => spawn_planar(
+                        emitter,
+                        pose,
+                        elapsed_seconds,
+                        emitter_transform,
+                        &mut self.random,
+                    )?,
+                    EmitterShape::Sphere => spawn_sphere(
+                        emitter,
+                        pose,
+                        elapsed_seconds,
+                        emitter_transform,
+                        &mut self.random,
+                    )?,
+                };
                 self.particles.push(particle);
                 emitted += 1;
             }
@@ -139,6 +196,22 @@ impl M2ParticleSimulation {
     }
 }
 
+/// Generator selector retained separately from raw authored bytes.
+#[derive(Clone, Copy)]
+enum EmitterShape {
+    Plane,
+    Sphere,
+}
+
+impl EmitterShape {
+    const fn selector(self) -> u8 {
+        match self {
+            Self::Plane => 1,
+            Self::Sphere => 2,
+        }
+    }
+}
+
 /// Emits one ordinary planar particle in executable call order.
 fn spawn_planar(
     emitter: &M2ParticleEmitter,
@@ -175,6 +248,48 @@ fn spawn_planar(
         position = emitter_transform.transform_point3(position);
     }
     M2ParticleState::new(age, position, velocity, random_word).map_err(Into::into)
+}
+
+/// Emits one spherical-shell particle in executable `0x00981950` call order.
+fn spawn_sphere(
+    emitter: &M2ParticleEmitter,
+    pose: M2ParticlePose,
+    elapsed_seconds: f32,
+    emitter_transform: Mat4,
+    random: &mut M2ParticleRandom,
+) -> Result<M2ParticleState, M2ParticleSimulationError> {
+    let age = random.next_unit() * elapsed_seconds;
+    let random_word = random.next_u32() as u16;
+    let minimum_radius = pose.emission_area_length();
+    let radius =
+        minimum_radius + random.next_unit() * (pose.emission_area_width() - minimum_radius);
+    let elevation = random.next_signed() * pose.vertical_range();
+    let azimuth = random.next_signed() * pose.horizontal_range();
+    let mut position = Vec3::new(
+        azimuth.cos() * elevation.cos(),
+        azimuth.sin() * elevation.cos(),
+        elevation.sin(),
+    ) * radius;
+    let mut direction = if pose.z_source() == 0.0 {
+        if emitter.flags() & SPHERE_VERTICAL_VELOCITY != 0 {
+            Vec3::Z
+        } else {
+            position.normalize_or_zero()
+        }
+    } else {
+        let aim = position - Vec3::Z * pose.z_source();
+        if aim.length_squared() == 0.0 {
+            return Err(M2ParticleSimulationError::DegenerateAim);
+        }
+        aim.normalize()
+    };
+    let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
+    direction *= speed;
+    if emitter.flags() & PARTICLES_IN_MODEL_SPACE == 0 {
+        direction = emitter_transform.transform_vector3(direction);
+        position = emitter_transform.transform_point3(position);
+    }
+    M2ParticleState::new(age, position, direction, random_word).map_err(Into::into)
 }
 
 /// Counts produced by one complete emitter update.
@@ -218,8 +333,13 @@ pub enum M2ParticleSimulationError {
     #[error("particle emitter transform must be finite")]
     Transform,
     /// This entry point only implements planar emitters.
-    #[error("particle emitter type {0} is not planar")]
-    EmitterType(u8),
+    #[error("particle emitter type {actual} does not match required type {expected}")]
+    EmitterType {
+        /// Selector required by the chosen update entry point.
+        expected: u8,
+        /// Selector authored by the emitter.
+        actual: u8,
+    },
     /// One or more authored behavior bits require another recovered path.
     #[error("particle behavior flags 0x{0:08X} are not implemented")]
     BehaviorFlags(u32),
