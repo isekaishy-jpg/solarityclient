@@ -991,7 +991,7 @@ fn sound_entry_catalog_decodes_stock_paths_and_weights() -> Result<(), Box<dyn E
     let patch_table = sound_entries_fixture(
         77,
         "SwordImpact",
-        "Sound\\Item\\Weapons",
+        "\\Sound\\Item\\Weapons",
         "impact-a.wav",
         "impact-b.mp3",
         25,

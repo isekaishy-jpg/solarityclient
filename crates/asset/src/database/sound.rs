@@ -145,7 +145,15 @@ impl SoundEntryCatalog {
                 } else {
                     format!("{directory}\\{file}")
                 };
-                let path = AssetPath::new(&authored_path).map_err(|source| {
+                // Shipped build-12340 rows can author a root-relative sound
+                // directory with one leading separator. The client archive
+                // boundary removes that root marker before MPQ lookup; it is
+                // not a search for another path or payload.
+                let archive_path = authored_path
+                    .strip_prefix('\\')
+                    .or_else(|| authored_path.strip_prefix('/'))
+                    .unwrap_or(&authored_path);
+                let path = AssetPath::new(archive_path).map_err(|source| {
                     database_error(
                         &table,
                         format!(
