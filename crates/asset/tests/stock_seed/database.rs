@@ -4,12 +4,12 @@ use std::error::Error;
 use std::path::Path;
 
 use solarity_asset::{
-    AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError, AssetPath, AssetStore,
-    CharacterAppearanceCatalog, CharacterClassCatalog, CharacterCustomization,
-    CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
-    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, LightCatalog, Locale, M2TextureKind,
-    MapCatalog, MapKind, SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError,
-    exterior_light_direction,
+    AdvancedSoundEntryCatalog, AppearanceError, ArchiveCatalog, AreaTableCatalog, AssetError,
+    AssetPath, AssetStore, CharacterAppearanceCatalog, CharacterClassCatalog,
+    CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
+    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
+    LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind, SoundEntryCatalog, WdbcTable,
+    WorldLightQuery, WorldLightSampleError, exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -1084,6 +1084,103 @@ fn sound_entry_catalog_rejects_invalid_asset_path() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// Advanced sound policy preserves every build-12340 field and patch precedence.
+#[test]
+fn advanced_sound_entry_catalog_decodes_complete_stock_row() -> Result<(), Box<dyn Error>> {
+    let base_table = advanced_sound_entry_fixture(12, 11, "BasePolicy");
+    let patch_table = advanced_sound_entry_fixture(90, 77, "WindTunnel");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &base_table,
+        },
+        FixtureFile {
+            archive: "patch-2.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &patch_table,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let catalog = AdvancedSoundEntryCatalog::load(&mut store)?;
+    let entry = catalog
+        .entry(90)
+        .ok_or("advanced sound row was not indexed")?;
+    assert_eq!(catalog.entries().len(), 1);
+    assert_eq!(entry.id(), 90);
+    assert_eq!(entry.sound_entry_id(), 77);
+    assert_eq!(entry.inner_radius_2d(), 8.0);
+    assert_eq!(entry.times(), [10, 20, 30, 40]);
+    assert_eq!(entry.random_offset_range(), 5);
+    assert_eq!(entry.usage(), 2);
+    assert_eq!(entry.time_interval_minimum(), 1_000);
+    assert_eq!(entry.time_interval_maximum(), 3_000);
+    assert_eq!(entry.volume_slider_category(), 3);
+    assert_eq!(entry.duck_to_sfx(), 0.25);
+    assert_eq!(entry.duck_to_music(), 0.5);
+    assert_eq!(entry.duck_to_ambience(), 0.75);
+    assert_eq!(entry.inner_radius_of_influence(), 12.0);
+    assert_eq!(entry.outer_radius_of_influence(), 48.0);
+    assert_eq!(entry.time_to_duck(), 250);
+    assert_eq!(entry.time_to_unduck(), 500);
+    assert_eq!(entry.inside_angle(), 90.0);
+    assert_eq!(entry.outside_angle(), 180.0);
+    assert_eq!(entry.outside_volume(), 0.2);
+    assert_eq!(entry.outer_radius_2d(), 64.0);
+    assert_eq!(entry.name(), "WindTunnel");
+    assert!(catalog.entry(12).is_none());
+    Ok(())
+}
+
+/// Another client-version layout is not partially decoded as build 12340.
+#[test]
+fn advanced_sound_entry_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(1, 25, &[0; 25], &[0]);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    assert!(matches!(
+        AdvancedSoundEntryCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { path, .. })
+            if path == AssetPath::new("DBFilesClient\\SoundEntriesAdvanced.dbc")?
+    ));
+    Ok(())
+}
+
+/// Invalid authored floating-point policy has no zero-value fallback.
+#[test]
+fn advanced_sound_entry_catalog_rejects_nonfinite_policy() -> Result<(), Box<dyn Error>> {
+    let mut table = advanced_sound_entry_fixture(90, 77, "Invalid");
+    let record_offset = 20 + 16 * 4;
+    table[record_offset..record_offset + 4].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    assert!(matches!(
+        AdvancedSoundEntryCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { .. })
+    ));
+    Ok(())
+}
+
 /// Builds one exact 30-field `SoundEntries.dbc` row.
 fn sound_entries_fixture(
     id: u32,
@@ -1113,6 +1210,39 @@ fn sound_entries_fixture(
         90,
     ]);
     create_wdbc(1, 30, &fields, &strings)
+}
+
+/// Builds one complete 24-field `SoundEntriesAdvanced.dbc` row.
+fn advanced_sound_entry_fixture(id: u32, sound_entry_id: u32, name: &str) -> Vec<u8> {
+    let mut strings = vec![0];
+    let name = append_string(&mut strings, name);
+    let fields = [
+        id,
+        sound_entry_id,
+        8.0_f32.to_bits(),
+        10,
+        20,
+        30,
+        40,
+        5,
+        2,
+        1_000,
+        3_000,
+        3,
+        0.25_f32.to_bits(),
+        0.5_f32.to_bits(),
+        0.75_f32.to_bits(),
+        12.0_f32.to_bits(),
+        48.0_f32.to_bits(),
+        250,
+        500,
+        90.0_f32.to_bits(),
+        180.0_f32.to_bits(),
+        0.2_f32.to_bits(),
+        64.0_f32.to_bits(),
+        name,
+    ];
+    create_wdbc(1, 24, &fields, &strings)
 }
 
 /// Generates the fixed WDBC layout used by stock-era client tables.

@@ -20,6 +20,7 @@ mod player_class;
 mod race;
 mod realm;
 mod sound;
+mod sound_advanced;
 mod w_data_store;
 mod wow_client_db;
 
@@ -49,4 +50,5 @@ pub use realm::{
     RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,
 };
 pub use sound::{SoundAsset, SoundEntry, SoundEntryCatalog};
+pub use sound_advanced::{AdvancedSoundEntry, AdvancedSoundEntryCatalog};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

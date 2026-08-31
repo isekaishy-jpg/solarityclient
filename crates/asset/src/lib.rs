@@ -21,12 +21,12 @@ pub use archive::{
 };
 pub use cache::{BlpTextureCache, M2ModelCache, WmoModelCache};
 pub use database::{
-    AppearanceError, AreaDefinition, AreaTableCatalog, CharacterAppearanceCatalog,
-    CharacterClassCatalog, CharacterClassDefinition, CharacterCustomization,
-    CharacterFacialHairStyle, CharacterGeosetSelection, CharacterHairGeoset,
-    CharacterModelAppearance, CharacterRace, CharacterRaceCatalog, CharacterSection,
-    CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra,
-    CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
+    AdvancedSoundEntry, AdvancedSoundEntryCatalog, AppearanceError, AreaDefinition,
+    AreaTableCatalog, CharacterAppearanceCatalog, CharacterClassCatalog, CharacterClassDefinition,
+    CharacterCustomization, CharacterFacialHairStyle, CharacterGeosetSelection,
+    CharacterHairGeoset, CharacterModelAppearance, CharacterRace, CharacterRaceCatalog,
+    CharacterSection, CharacterSectionKind, CreatureCatalog, CreatureDisplayInfo,
+    CreatureDisplayInfoExtra, CreatureModelAppearance, CreatureModelData, HelmetGeosetVisibility,
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
     ItemDisplayCatalog, ItemDisplayInfo, LightCatalog, LightDefinition, LightParameter,
     LightSkybox, MapCatalog, MapDefinition, MapKind, RealmCategoryCatalog, RealmCategoryDefinition,

@@ -90,3 +90,15 @@ main-loop integration rather than a guessed timer.
 The schema is checked against the public build range covering
 3.1.0.9767 through 3.3.5.12340 in the
 [WoWDBDefs SoundEntries definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntries.dbd).
+
+Advanced emitter and ducking policy begins in a separate exact asset catalog.
+For builds 3.0.1.8770 through 3.3.5.12340,
+`SoundEntriesAdvanced.dbc` contains 24 four-byte fields: its identifier and
+SoundEntries relation; inner radius; four time fields; random offset, usage,
+and interval fields; volume-slider category; three category-duck gains; two
+influence radii; duck and unduck times; inside/outside angles and outside gain;
+outer radius; and name. The asset crate preserves every value and rejects a
+later layout or non-finite float before media policy consumes it. Enum meanings,
+time units, and behavioral validation remain uninterpreted until executable or
+call-site evidence establishes them. The layout is checked against the
+[WoWDBDefs SoundEntriesAdvanced definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntriesAdvanced.dbd).
