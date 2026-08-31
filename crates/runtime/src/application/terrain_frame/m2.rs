@@ -122,6 +122,7 @@ enum M2ResolvedTexture<'source> {
 
 /// Per-instance sequence state retained by stock's `CM2Model` owner.
 struct M2Playback {
+    animation_id: u16,
     sequence: usize,
     sequence_duration_ms: f32,
     cycle_count: u32,
@@ -130,14 +131,16 @@ struct M2Playback {
 }
 
 impl M2Playback {
-    /// Selects Stand variation zero and consumes its authored cycle-count roll.
+    /// Selects one base animation and consumes its authored cycle-count roll.
     fn new(
         model: &DecodedM2Model,
+        animation_id: u16,
         random: &mut CrtRand,
     ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
         let animations = model.animations();
         if animations.sequences().is_empty() {
             return Ok(Some(Self {
+                animation_id,
                 sequence: 0,
                 sequence_duration_ms: 0.0,
                 cycle_count: 1,
@@ -146,30 +149,71 @@ impl M2Playback {
             }));
         }
         let sequence = animations
-            .sequence_for_variation(0, 0)
-            .or_else(|| animations.select_sequence(0, None, u32::from(random.next_u15())));
+            .sequence_for_variation(animation_id, 0)
+            .or_else(|| {
+                animations.select_sequence(animation_id, None, u32::from(random.next_u15()))
+            });
         let Some(sequence) = sequence else {
             tracing::debug!(
                 path = %model.path(),
-                "placed world M2 omitted because animation ID zero is unavailable"
+                animation_id,
+                "placed M2 omitted because its selected animation is unavailable"
             );
             return Ok(None);
         };
         let sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
         let cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
-        let variation_count = animations.available_variation_count(0).ok_or_else(|| {
-            RuntimeTerrainFrameError::M2AnimationSelection {
+        let variation_count = animations
+            .available_variation_count(animation_id)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
                 model: model.path().clone(),
-                animation_id: 0,
-            }
-        })?;
+                animation_id,
+            })?;
         Ok(Some(Self {
+            animation_id,
             sequence,
             sequence_duration_ms,
             cycle_count,
             cycle_started_ms: 0.0,
             has_variations: variation_count > 1,
         }))
+    }
+
+    /// Restarts playback when authoritative gameplay selects another base ID.
+    fn select_animation(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_id: u16,
+        animation_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if self.animation_id == animation_id || model.animations().sequences().is_empty() {
+            self.animation_id = animation_id;
+            return Ok(());
+        }
+        let animations = model.animations();
+        let sequence = animations
+            .sequence_for_variation(animation_id, 0)
+            .or_else(|| {
+                animations.select_sequence(animation_id, None, u32::from(random.next_u15()))
+            })
+            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
+                model: model.path().clone(),
+                animation_id,
+            })?;
+        self.animation_id = animation_id;
+        self.sequence = sequence;
+        self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
+        self.cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
+        self.cycle_started_ms = animation_time_ms;
+        self.has_variations = animations
+            .available_variation_count(animation_id)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
+                model: model.path().clone(),
+                animation_id,
+            })?
+            > 1;
+        Ok(())
     }
 
     /// Advances one expired stock timer and returns the selected sequence clock.
@@ -260,7 +304,7 @@ impl M2Frame {
             }
             let (playback, particles, ribbons) = match sources[placement.source_index()].as_ref() {
                 Some(source) => {
-                    let playback = M2Playback::new(&source.model, random)?;
+                    let playback = M2Playback::new(&source.model, 0, random)?;
                     let particles = source
                         .model
                         .animations()
@@ -368,6 +412,7 @@ impl M2Frame {
                     point: attachment.point(),
                 },
                 attachment.model(),
+                0,
                 attachment.particle_colors().cloned(),
                 random,
             )?;
@@ -398,6 +443,7 @@ impl M2Frame {
                         effect_point: effect.point(),
                     },
                     effect.model(),
+                    0,
                     None,
                     random,
                 )?;
@@ -410,6 +456,7 @@ impl M2Frame {
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
             input.model(),
+            input.locomotion().animation_id(),
             input.particle_colors().cloned(),
             random,
         )?;
@@ -439,10 +486,12 @@ impl M2Frame {
         Ok(())
     }
 
-    /// Updates authoritative player movement without rebuilding shared resources.
-    pub(super) fn update_player_transform(
+    /// Updates authoritative player movement and base animation in place.
+    pub(super) fn update_player_state(
         &mut self,
         input: ResidentPlayerFrameInput<'_>,
+        animation_time_ms: f32,
+        random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
         let placement = self
@@ -453,6 +502,17 @@ impl M2Frame {
             })
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
         placement.transform = transform;
+        let Some(source) = self.sources[placement.source_index].as_ref() else {
+            return Ok(());
+        };
+        if let Some(playback) = placement.playback.as_mut() {
+            playback.select_animation(
+                &source.model,
+                input.locomotion().animation_id(),
+                animation_time_ms,
+                random,
+            )?;
+        }
         Ok(())
     }
 
@@ -912,10 +972,11 @@ fn player_gpu_placement(
     transform: Mat4,
     owner: M2GpuPlacementOwner,
     model: &DecodedM2Model,
+    animation_id: u16,
     particle_colors: Option<M2ParticleColorReplacement>,
     random: &mut CrtRand,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
-    let playback = M2Playback::new(model, random)?;
+    let playback = M2Playback::new(model, animation_id, random)?;
     let particles = model
         .animations()
         .particles()

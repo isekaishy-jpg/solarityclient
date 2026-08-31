@@ -535,8 +535,9 @@ impl TerrainFrame {
             environment.world_model_emissive(),
             light.fog_color(),
         )?;
-        self.m2.update_player_transform(player)?;
         let local_animation_time_ms = self.m2.animation_time_ms();
+        self.m2
+            .update_player_state(player, local_animation_time_ms, random)?;
         let m2 = self.m2.prepare_visible_draws(
             renderer,
             frustum,

@@ -20,8 +20,9 @@ use solarity_rendering::{
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
-    PlayerEquipmentAppearanceError, UnitModelAppearanceError, resolve_model_camera_subject_height,
-    resolve_player_camera_pose, resolve_player_equipment, resolve_unit_model,
+    PlayerEquipmentAppearanceError, UnitLocomotionAnimation, UnitModelAppearanceError,
+    resolve_model_camera_subject_height, resolve_player_camera_pose, resolve_player_equipment,
+    resolve_unit_locomotion_animation, resolve_unit_model,
 };
 use thiserror::Error;
 
@@ -275,8 +276,13 @@ impl RuntimePlayerPresentation {
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
+            let locomotion = world.movement_state(guid).map_or(
+                UnitLocomotionAnimation::STAND,
+                resolve_unit_locomotion_animation,
+            );
             if let Some(resident) = self.resident.as_mut() {
                 resident.world_transform = transform;
+                resident.locomotion = locomotion;
                 resident.camera_pose =
                     resolve_player_camera_pose(transform, view, resident.camera_height)?;
             }
@@ -369,6 +375,10 @@ impl RuntimePlayerPresentation {
         )?;
         let particle_colors =
             M2ParticleColorReplacement::resolve(&self.particle_colors, particle_color_id);
+        let locomotion = world.movement_state(guid).map_or(
+            UnitLocomotionAnimation::STAND,
+            resolve_unit_locomotion_animation,
+        );
         self.resident = Some(ResidentPlayerModel {
             guid,
             object_scale: scale,
@@ -386,6 +396,7 @@ impl RuntimePlayerPresentation {
             textures,
             attachments,
             world_transform: world.local_player_transform()?,
+            locomotion,
             camera_height,
             camera_pose,
             model,
@@ -517,6 +528,7 @@ struct ResidentPlayerModel {
     textures: Vec<ResidentPlayerTexture>,
     attachments: Vec<ResidentPlayerAttachment>,
     world_transform: WorldTransform,
+    locomotion: UnitLocomotionAnimation,
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
@@ -592,6 +604,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
     atlas: &'a CharacterAtlasTexture,
     geosets: &'a CharacterGeosetPlan,
     world_transform: WorldTransform,
+    locomotion: UnitLocomotionAnimation,
     object_scale: f32,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     attachments: &'a [ResidentPlayerAttachment],
@@ -606,6 +619,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
             atlas: &resident.atlas,
             geosets: &resident.geosets,
             world_transform: resident.world_transform,
+            locomotion: resident.locomotion,
             object_scale: resident.object_scale,
             particle_colors: resident.particle_colors.as_ref(),
             attachments: &resident.attachments,
@@ -634,6 +648,10 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 
     pub(super) const fn world_transform(&self) -> WorldTransform {
         self.world_transform
+    }
+
+    pub(super) const fn locomotion(&self) -> UnitLocomotionAnimation {
+        self.locomotion
     }
 
     pub(super) const fn object_scale(&self) -> f32 {

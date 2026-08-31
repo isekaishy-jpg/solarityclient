@@ -6,3 +6,5 @@
 mod movement_shared;
 mod movement_source;
 mod path;
+
+pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
