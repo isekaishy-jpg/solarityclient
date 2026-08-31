@@ -12,14 +12,14 @@ use solarity_asset::{
 };
 use solarity_ecs::PlayerEquipmentSlot;
 use solarity_rendering::{
-    BlpColorSpace, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterAttachmentPlan,
-    CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
-    CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
-    CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2LocalLightCount,
-    M2LocalLightState, M2MaterialPose, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
-    M2PixelShader, M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan,
-    M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet,
-    M2VertexShader, VulkanBootstrap, VulkanError,
+    BlpColorSpace, BlpTextureStorage, CharacterAtlasLayerKind, CharacterAtlasRegion,
+    CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
+    CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
+    M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialUniform,
+    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SampledTexture, M2SceneUniform,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap, VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -623,6 +623,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         })
     ));
 
+    let _sdl_test = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let mut window_builder = video.window("Solarity M2 upload test", 64, 64);
@@ -680,9 +681,10 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         .ok_or("uploaded BLP texture handle did not resolve")?;
     assert_eq!(texture_info.path(), &texture_path);
     assert_eq!(texture_info.color_space(), BlpColorSpace::Srgb);
+    assert_eq!(texture_info.storage(), BlpTextureStorage::Rgba8);
     assert_eq!(texture_info.extent(), (2, 2));
     assert_eq!(texture_info.mip_count(), 2);
-    assert_eq!(texture_info.decoded_byte_count(), 20);
+    assert_eq!(texture_info.upload_byte_count(), 20);
     let wrap_u_sampler = renderer.prepare_m2_sampler(&model.textures()[0])?;
     assert_eq!(
         renderer.prepare_m2_sampler(&model.textures()[0])?,

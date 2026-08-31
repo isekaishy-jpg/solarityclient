@@ -9,13 +9,20 @@ It does not eagerly expand every mip of an HD replacement and does not retain a
 parallel low-resolution source. Consumers decode only the mip data required by
 their stock operation.
 
-GPU admission uploads every authored mip. Before decoding, the asset boundary
-computes the exact total RGBA8 byte count with checked native-width arithmetic.
-The renderer allocates the combined staging vector once at that size, appends
-each decoded mip in authored order, and verifies the final byte count before
-creating Vulkan resources. This avoids capacity-growth reallocations and copies
-whose cost scales with larger HD mip chains.
+GPU admission uploads every authored mip. DXT1, DXT3, and DXT5 payloads remain
+compressed and become BC1, BC2, and BC3 Vulkan images respectively. JPEG,
+paletted, and raw BLP encodings are decoded to RGBA8 because Vulkan cannot
+sample those file encodings directly. This is an encoding boundary, not an
+adapter-dependent DXT fallback.
 
-Decoded staging bytes are temporary. The renderer retains only the device-local
+Before either path begins, the asset boundary computes the exact combined
+staging footprint. The renderer allocates one vector, appends each mip in
+authored order, and verifies the final byte count before creating Vulkan
+resources. Stock-compatible undersized DXT tail mips are zero-padded to their
+block-rounded copy footprint, matching the established decoder behavior. This
+avoids capacity-growth copies and prevents HD DXT content from expanding by
+roughly four to eight times in staging and device memory.
+
+Staging bytes are temporary. The renderer retains only the device-local
 image and its view after the synchronous transfer retires; the shared asset
-cache continues to own the compressed source for other consumers.
+cache continues to own the parsed source for other consumers.

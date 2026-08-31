@@ -25,12 +25,12 @@ pub use camera::{
 };
 pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureSourceKind,
-    BlpTextureUploadError, M2FrameReport, M2MeshHandle, M2MeshResourceInfo, M2PipelineHandle,
-    M2PipelineInfo, M2PreparedDraw, M2SampledTexture, M2SamplerHandle, M2SamplerInfo,
-    M2TextureAddressMode, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo, TerrainFrameReport,
-    TerrainMaterialHandle, TerrainMaterialResourceInfo, TerrainMeshHandle, TerrainMeshResourceInfo,
-    TerrainPipelineHandle, TerrainPipelineInfo, TerrainPreparedDraw, TerrainTextureSet,
-    TerrainTextureSetHandle, TerrainTextureSetInfo, UiFrameReport, UiMeshHandle,
+    BlpTextureStorage, BlpTextureUploadError, M2FrameReport, M2MeshHandle, M2MeshResourceInfo,
+    M2PipelineHandle, M2PipelineInfo, M2PreparedDraw, M2SampledTexture, M2SamplerHandle,
+    M2SamplerInfo, M2TextureAddressMode, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
+    TerrainFrameReport, TerrainMaterialHandle, TerrainMaterialResourceInfo, TerrainMeshHandle,
+    TerrainMeshResourceInfo, TerrainPipelineHandle, TerrainPipelineInfo, TerrainPreparedDraw,
+    TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo, UiFrameReport, UiMeshHandle,
     UiMeshResourceInfo, UiPipelineHandle, UiPipelineInfo, UiPreparedDraw, UiSampledTexture,
     UiSamplerHandle, UiSamplerInfo, UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap,
     VulkanError, VulkanRenderer, VulkanReport, WorldFrameReport, WorldFrameScene,

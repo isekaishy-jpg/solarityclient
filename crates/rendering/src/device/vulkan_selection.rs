@@ -59,6 +59,7 @@ impl SelectedAdapter {
                 patch: vk::api_version_patch(properties.api_version),
             });
         }
+        validate_block_compression(bootstrap, physical_device, &features)?;
 
         validate_swapchain_extension(bootstrap, physical_device)?;
         validate_vulkan13_features(bootstrap, physical_device)?;
@@ -111,6 +112,41 @@ impl SelectedAdapter {
             surface_capabilities,
         })
     }
+}
+
+/// Requires direct sampled uploads for every authored WotLK DXT family.
+fn validate_block_compression(
+    bootstrap: &VulkanBootstrap,
+    physical_device: vk::PhysicalDevice,
+    features: &vk::PhysicalDeviceFeatures,
+) -> Result<(), VulkanError> {
+    if features.texture_compression_bc == vk::FALSE {
+        return Err(VulkanError::TextureCompressionBc);
+    }
+
+    let required = vk::FormatFeatureFlags::SAMPLED_IMAGE
+        | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR
+        | vk::FormatFeatureFlags::TRANSFER_DST;
+    let formats = [
+        vk::Format::BC1_RGBA_UNORM_BLOCK,
+        vk::Format::BC1_RGBA_SRGB_BLOCK,
+        vk::Format::BC2_UNORM_BLOCK,
+        vk::Format::BC2_SRGB_BLOCK,
+        vk::Format::BC3_UNORM_BLOCK,
+        vk::Format::BC3_SRGB_BLOCK,
+    ];
+    for format in formats {
+        // SAFETY: The selected physical device belongs to the live instance.
+        let properties = unsafe {
+            bootstrap
+                .instance
+                .get_physical_device_format_properties(physical_device, format)
+        };
+        if !properties.optimal_tiling_features.contains(required) {
+            return Err(VulkanError::TextureCompressionBcFormat);
+        }
+    }
+    Ok(())
 }
 
 /// Requires the direct Vulkan counterpart to stock's 24-bit depth/stencil surface.

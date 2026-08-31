@@ -1309,8 +1309,9 @@ fn create_device(
     let mut vulkan13 = vk::PhysicalDeviceVulkan13Features::default()
         .dynamic_rendering(true)
         .synchronization2(true);
-    let enabled_features =
-        vk::PhysicalDeviceFeatures::default().sampler_anisotropy(selected.sampler_anisotropy);
+    let enabled_features = vk::PhysicalDeviceFeatures::default()
+        .sampler_anisotropy(selected.sampler_anisotropy)
+        .texture_compression_bc(true);
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_infos)
         .enabled_extension_names(&extension_names)

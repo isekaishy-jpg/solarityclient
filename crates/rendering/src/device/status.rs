@@ -64,6 +64,12 @@ pub enum VulkanError {
     /// Required Vulkan 1.3 rendering primitives are unavailable.
     #[error("selected Vulkan adapter lacks dynamic rendering or synchronization2")]
     Vulkan13Features,
+    /// The selected adapter cannot sample authored DXT blocks directly.
+    #[error("selected Vulkan adapter lacks core BC texture compression")]
+    TextureCompressionBc,
+    /// Required BC1/BC2/BC3 image usage is unavailable.
+    #[error("selected Vulkan adapter cannot upload and linearly sample required BC formats")]
+    TextureCompressionBcFormat,
     /// The surface does not expose the stock-compatible BGRA8 format.
     #[error("surface does not expose B8G8R8A8_UNORM with SRGB_NONLINEAR color space")]
     SurfaceFormat,

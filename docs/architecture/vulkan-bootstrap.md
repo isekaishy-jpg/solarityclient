@@ -34,6 +34,8 @@ The selected adapter and SDL surface must provide:
 - Vulkan API 1.3;
 - `VK_KHR_swapchain`;
 - dynamic rendering and synchronization2;
+- core BC texture compression plus transferable, linearly sampled BC1/2/3
+  UNORM and sRGB images;
 - either one combined graphics/present queue family or one family of each;
 - `B8G8R8A8_UNORM` with `SRGB_NONLINEAR` color space;
 - FIFO presentation;

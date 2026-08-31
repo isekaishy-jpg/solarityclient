@@ -2,7 +2,10 @@
 
 use crate::{ArchiveDescriptor, AssetError, AssetPath, AssetStore};
 
-use super::blp::DecodedBlpTexture;
+use super::{
+    block_compression::{BlpBlockCompression, BlpBlockMip},
+    blp::DecodedBlpTexture,
+};
 
 /// A selected archive BLP with compressed authored mip levels kept in memory.
 ///
@@ -61,6 +64,37 @@ impl BlpTextureSource {
     #[must_use]
     pub fn mip_dimensions(&self, mip_level: usize) -> Option<(u32, u32)> {
         (mip_level < self.mip_count()).then(|| self.image.header.mipmap_size(mip_level))
+    }
+
+    /// Returns the authored DXT/BC family when GPU-ready blocks are retained.
+    #[must_use]
+    pub fn block_compression(&self) -> Option<BlpBlockCompression> {
+        match self.image.compression_type() {
+            wow_blp::CompressionType::Dxt1 => Some(BlpBlockCompression::Bc1),
+            wow_blp::CompressionType::Dxt3 => Some(BlpBlockCompression::Bc2),
+            wow_blp::CompressionType::Dxt5 => Some(BlpBlockCompression::Bc3),
+            wow_blp::CompressionType::Jpeg
+            | wow_blp::CompressionType::Raw1
+            | wow_blp::CompressionType::Raw3 => None,
+        }
+    }
+
+    /// Borrows one authored DXT mip without expanding it to RGBA8.
+    ///
+    /// The returned upload count is block-rounded. Some stock-compatible BLP
+    /// tail mips retain fewer whole blocks than that count and must be padded
+    /// with zeroes by the upload owner, matching the established decoder.
+    #[must_use]
+    pub fn block_mip(&self, mip_level: usize) -> Option<BlpBlockMip<'_>> {
+        let compression = self.block_compression()?;
+        let content = match compression {
+            BlpBlockCompression::Bc1 => self.image.content_dxt1(),
+            BlpBlockCompression::Bc2 => self.image.content_dxt3(),
+            BlpBlockCompression::Bc3 => self.image.content_dxt5(),
+        }?;
+        let bytes = content.images.get(mip_level)?.content.as_slice();
+        let (width, height) = self.mip_dimensions(mip_level)?;
+        Some(BlpBlockMip::new(compression, width, height, bytes))
     }
 
     /// Returns the exact RGBA8 byte count for all authored mip levels.

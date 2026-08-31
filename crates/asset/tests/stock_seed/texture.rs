@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, DecodedBlpTexture,
-    Locale,
+    ArchiveCatalog, AssetPath, AssetStore, BlpBlockCompression, BlpTextureSource, ClientDataRoot,
+    DecodedBlpTexture, Locale,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -33,6 +33,31 @@ fn blp_top_mip_decodes_to_resource_sized_rgba8() -> Result<(), Box<dyn Error>> {
         texture.source().relative_path().to_string_lossy(),
         "patch-A.MPQ"
     );
+    Ok(())
+}
+
+/// Authored DXT blocks remain available for direct BC image residency.
+#[test]
+fn blp_source_borrows_authored_block_compressed_mips() -> Result<(), Box<dyn Error>> {
+    let top = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
+    let blp = dxt_blp_mips(2, 0, 0, &[(4, 4, &top)]);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "patch-A.MPQ",
+        path: "Textures\\SolarityBlocks.blp",
+        bytes: &blp,
+    }])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Textures/SolarityBlocks.blp")?;
+    let source = BlpTextureSource::load(&mut store, &path)?;
+
+    assert_eq!(source.block_compression(), Some(BlpBlockCompression::Bc1));
+    let top_mip = source.block_mip(0).ok_or("missing top BC mip")?;
+    assert_eq!((top_mip.width(), top_mip.height()), (4, 4));
+    assert_eq!(top_mip.bytes(), top);
+    assert_eq!(top_mip.upload_byte_count(), 8);
+    assert!(source.block_mip(1).is_none());
     Ok(())
 }
 
@@ -106,6 +131,52 @@ pub(crate) fn raw3_blp_mips(mips: &[(u32, u32, &[u32])]) -> Vec<u8> {
         for pixel in *pixels {
             bytes.extend_from_slice(&pixel.to_le_bytes());
         }
+    }
+    bytes
+}
+
+/// Builds a minimal BLP2/DXT file with internal authored mip blocks.
+pub(crate) fn dxt_blp_mips(
+    compression: u8,
+    alpha_bits: u8,
+    alpha_type: u8,
+    mips: &[(u32, u32, &[u8])],
+) -> Vec<u8> {
+    const HEADER_SIZE: u32 = 148;
+    const PALETTE_SIZE: u32 = 256 * 4;
+    const BLOCK_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
+
+    let (width, height, _) = mips.first().copied().unwrap_or((0, 0, &[]));
+    let mut offsets = [0_u32; 16];
+    let mut sizes = [0_u32; 16];
+    let mut next_offset = BLOCK_OFFSET;
+    for (index, (_width, _height, blocks)) in mips.iter().take(16).enumerate() {
+        let byte_size = u32::try_from(blocks.len()).unwrap_or(u32::MAX);
+        offsets[index] = next_offset;
+        sizes[index] = byte_size;
+        next_offset = next_offset.saturating_add(byte_size);
+    }
+
+    let mut bytes = Vec::with_capacity(next_offset as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[
+        compression,
+        alpha_bits,
+        alpha_type,
+        u8::from(mips.len() > 1),
+    ]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    for offset in offsets {
+        bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+    for size in sizes {
+        bytes.extend_from_slice(&size.to_le_bytes());
+    }
+    bytes.resize(BLOCK_OFFSET as usize, 0);
+    for (_width, _height, blocks) in mips.iter().take(16) {
+        bytes.extend_from_slice(blocks);
     }
     bytes
 }

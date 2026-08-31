@@ -50,7 +50,7 @@ pub use terrain::{
     TerrainLiquidTable, TerrainMap, TerrainShadowMap, TerrainSoundEmitter, TerrainTextureLayer,
     TerrainTile, TerrainTileIndex, TerrainWorldModelPlacement,
 };
-pub use texture::{BlpTextureSource, DecodedBlpTexture};
+pub use texture::{BlpBlockCompression, BlpBlockMip, BlpTextureSource, DecodedBlpTexture};
 pub use world_model::{
     DecodedWorldModel, DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass,
     WorldModelBlendMode, WorldModelBspNode, WorldModelDoodad, WorldModelDoodadSet,

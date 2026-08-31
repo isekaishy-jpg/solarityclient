@@ -3,13 +3,15 @@
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
-use solarity_asset::{AssetError, BlpTextureSource};
+use solarity_asset::{AssetError, BlpBlockCompression, BlpTextureSource};
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 
 use super::status::BlpTextureUploadError;
-use super::types::{BlpColorSpace, BlpTextureResourceInfo, BlpTextureSourceKind};
+use super::types::{
+    BlpColorSpace, BlpTextureResourceInfo, BlpTextureSourceKind, BlpTextureStorage,
+};
 
 /// Borrowed renderer objects required for one synchronous texture transfer.
 #[derive(Clone, Copy)]
@@ -20,11 +22,18 @@ pub(in crate::device) struct TextureUploadContext<'a> {
     pub(in crate::device) graphics_queue_family: u32,
 }
 
-/// One decoded mip's byte offset and exact two-dimensional extent.
-struct DecodedMip {
+/// One upload mip's byte offset and exact two-dimensional extent.
+struct UploadMip {
     offset: vk::DeviceSize,
     width: u32,
     height: u32,
+}
+
+/// One staging payload retaining either authored BC blocks or decoded RGBA8.
+struct PreparedTexture {
+    bytes: Vec<u8>,
+    mips: Vec<UploadMip>,
+    storage: BlpTextureStorage,
 }
 
 /// Device-local image/view pair owned by the renderer texture registry.
@@ -250,31 +259,29 @@ impl Drop for TextureTransfer<'_> {
     }
 }
 
-/// Decodes and uploads every authored BLP mip into one immutable sampled image.
+/// Uploads every authored BLP mip into one immutable sampled image.
 pub(super) fn upload_texture(
     context: TextureUploadContext<'_>,
     source: &BlpTextureSource,
     color_space: BlpColorSpace,
 ) -> Result<GpuBlpTexture, BlpTextureUploadError> {
-    let (bytes, mips) = decode_mips(source)?;
-    let format = match color_space {
-        BlpColorSpace::Linear => vk::Format::R8G8B8A8_UNORM,
-        BlpColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
-    };
+    let prepared = prepare_mips(source)?;
+    let format = texture_format(prepared.storage, color_space);
     let image = upload_sampled_image(
         context,
         format,
         (source.width(), source.height()),
-        &bytes,
-        &mips,
+        &prepared.bytes,
+        &prepared.mips,
     )?;
     let info = BlpTextureResourceInfo::new(
         source.path().clone(),
         BlpTextureSourceKind::Authored,
         color_space,
+        prepared.storage,
         (source.width(), source.height()),
-        mips.len(),
-        bytes.len(),
+        prepared.mips.len(),
+        prepared.bytes.len(),
     );
     Ok(GpuBlpTexture { image, info })
 }
@@ -297,6 +304,7 @@ pub(super) fn upload_stock_world_model_green(
         path,
         BlpTextureSourceKind::StockWorldModelGreen,
         BlpColorSpace::Srgb,
+        BlpTextureStorage::Rgba8,
         EXTENT,
         1,
         bytes.len(),
@@ -335,15 +343,12 @@ fn upload_rgba8_image_with_color_space(
             ),
         ));
     }
-    let mips = [DecodedMip {
+    let mips = [UploadMip {
         offset: 0,
         width: extent.0,
         height: extent.1,
     }];
-    let format = match color_space {
-        BlpColorSpace::Linear => vk::Format::R8G8B8A8_UNORM,
-        BlpColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
-    };
+    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
     upload_sampled_image(context, format, extent, bytes, &mips)
 }
 
@@ -352,7 +357,7 @@ fn upload_sampled_image(
     format: vk::Format,
     extent: (u32, u32),
     bytes: &[u8],
-    mips: &[DecodedMip],
+    mips: &[UploadMip],
 ) -> Result<GpuSampledImage, VulkanError> {
     let mip_levels = u32::try_from(mips.len())
         .map_err(|source| VulkanError::operation("convert sampled image mip count", source))?;
@@ -431,8 +436,12 @@ fn upload_sampled_image(
     guard.finish()
 }
 
-/// Expands authored compressed mips only for the duration of GPU staging.
-fn decode_mips(source: &BlpTextureSource) -> Result<(Vec<u8>, Vec<DecodedMip>), AssetError> {
+/// Preserves authored BC blocks and decodes only encodings Vulkan cannot sample.
+fn prepare_mips(source: &BlpTextureSource) -> Result<PreparedTexture, AssetError> {
+    if let Some(compression) = source.block_compression() {
+        return prepare_block_mips(source, compression);
+    }
+
     let decoded_byte_count = source.decoded_rgba8_byte_count()?;
     let mut bytes = Vec::with_capacity(decoded_byte_count);
     let mut mips = Vec::with_capacity(source.mip_count());
@@ -461,7 +470,7 @@ fn decode_mips(source: &BlpTextureSource) -> Result<(Vec<u8>, Vec<DecodedMip>), 
             path: source.path().clone(),
             message: format!("mip staging offset is not addressable: {error}"),
         })?;
-        mips.push(DecodedMip {
+        mips.push(UploadMip {
             offset,
             width: decoded.width(),
             height: decoded.height(),
@@ -483,7 +492,101 @@ fn decode_mips(source: &BlpTextureSource) -> Result<(Vec<u8>, Vec<DecodedMip>), 
             ),
         });
     }
-    Ok((bytes, mips))
+    Ok(PreparedTexture {
+        bytes,
+        mips,
+        storage: BlpTextureStorage::Rgba8,
+    })
+}
+
+/// Packs authored DXT blocks into one block-aligned transfer payload.
+fn prepare_block_mips(
+    source: &BlpTextureSource,
+    compression: BlpBlockCompression,
+) -> Result<PreparedTexture, AssetError> {
+    let mut byte_count = 0_usize;
+    for mip_level in 0..source.mip_count() {
+        let mip = source
+            .block_mip(mip_level)
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: format!("authored BC mip {mip_level} is unavailable"),
+            })?;
+        byte_count = byte_count
+            .checked_add(mip.upload_byte_count())
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: "authored BC mip-chain byte count overflows".to_owned(),
+            })?;
+    }
+
+    let mut bytes = Vec::with_capacity(byte_count);
+    let mut mips = Vec::with_capacity(source.mip_count());
+    for mip_level in 0..source.mip_count() {
+        let mip = source
+            .block_mip(mip_level)
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: format!("authored BC mip {mip_level} is unavailable"),
+            })?;
+        let offset = u64::try_from(bytes.len()).map_err(|error| AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: format!("BC mip staging offset is not addressable: {error}"),
+        })?;
+        mips.push(UploadMip {
+            offset,
+            width: mip.width(),
+            height: mip.height(),
+        });
+
+        let required = mip.upload_byte_count();
+        let retained = mip.bytes();
+        bytes.extend_from_slice(&retained[..retained.len().min(required)]);
+        // Small authored tail mips can contain fewer whole blocks than their
+        // logical extent. Zero padding is the existing stock-compatible BLP
+        // decoder behavior and produces the exact Vulkan copy footprint.
+        bytes.resize(bytes.len() + required.saturating_sub(retained.len()), 0);
+    }
+    if bytes.is_empty() {
+        return Err(AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: "BLP has no authored BC mip blocks".to_owned(),
+        });
+    }
+    if bytes.len() != byte_count {
+        return Err(AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: format!(
+                "BC mip chain contains {} upload bytes; expected {byte_count}",
+                bytes.len()
+            ),
+        });
+    }
+
+    let storage = match compression {
+        BlpBlockCompression::Bc1 => BlpTextureStorage::Bc1,
+        BlpBlockCompression::Bc2 => BlpTextureStorage::Bc2,
+        BlpBlockCompression::Bc3 => BlpTextureStorage::Bc3,
+    };
+    Ok(PreparedTexture {
+        bytes,
+        mips,
+        storage,
+    })
+}
+
+/// Maps authored storage and caller-owned color interpretation to Vulkan.
+const fn texture_format(storage: BlpTextureStorage, color_space: BlpColorSpace) -> vk::Format {
+    match (storage, color_space) {
+        (BlpTextureStorage::Rgba8, BlpColorSpace::Linear) => vk::Format::R8G8B8A8_UNORM,
+        (BlpTextureStorage::Rgba8, BlpColorSpace::Srgb) => vk::Format::R8G8B8A8_SRGB,
+        (BlpTextureStorage::Bc1, BlpColorSpace::Linear) => vk::Format::BC1_RGBA_UNORM_BLOCK,
+        (BlpTextureStorage::Bc1, BlpColorSpace::Srgb) => vk::Format::BC1_RGBA_SRGB_BLOCK,
+        (BlpTextureStorage::Bc2, BlpColorSpace::Linear) => vk::Format::BC2_UNORM_BLOCK,
+        (BlpTextureStorage::Bc2, BlpColorSpace::Srgb) => vk::Format::BC2_SRGB_BLOCK,
+        (BlpTextureStorage::Bc3, BlpColorSpace::Linear) => vk::Format::BC3_UNORM_BLOCK,
+        (BlpTextureStorage::Bc3, BlpColorSpace::Srgb) => vk::Format::BC3_SRGB_BLOCK,
+    }
 }
 
 /// Transitions, copies all mip regions, and exposes them to fragment sampling.
@@ -493,7 +596,7 @@ fn record_upload(
     staging_buffer: vk::Buffer,
     image: vk::Image,
     mip_levels: u32,
-    mips: &[DecodedMip],
+    mips: &[UploadMip],
 ) -> Result<(), VulkanError> {
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);

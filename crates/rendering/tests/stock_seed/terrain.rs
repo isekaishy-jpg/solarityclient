@@ -10,7 +10,7 @@ use solarity_asset::{
     Locale, MapCatalog, TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureSourceKind, M2LocalLightState, M2SceneUniform,
+    BlpColorSpace, BlpTextureSourceKind, BlpTextureStorage, M2LocalLightState, M2SceneUniform,
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TerrainChunkMeshPlan, TerrainLayerCount,
     TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanBootstrap, WorldCamera,
     WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshPlan,
@@ -161,6 +161,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             .all(|index| usize::from(*index) < tile_mesh.vertices().len())
     );
 
+    let _sdl_test = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let mut window_builder = video.window("Solarity terrain upload test", 64, 64);
@@ -183,9 +184,10 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         BlpTextureSourceKind::StockWorldModelGreen
     );
     assert_eq!(stock_green_info.color_space(), BlpColorSpace::Srgb);
+    assert_eq!(stock_green_info.storage(), BlpTextureStorage::Rgba8);
     assert_eq!(stock_green_info.extent(), (8, 8));
     assert_eq!(stock_green_info.mip_count(), 1);
-    assert_eq!(stock_green_info.decoded_byte_count(), 8 * 8 * 4);
+    assert_eq!(stock_green_info.upload_byte_count(), 8 * 8 * 4);
     let world_model_mesh = renderer.upload_world_model_mesh(&world_model_plan)?;
     let world_model_material = &world_model_plan.materials()[0];
     let world_model_sampler = renderer.prepare_world_model_sampler(

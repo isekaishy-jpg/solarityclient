@@ -17,10 +17,23 @@ pub enum BlpColorSpace {
 /// Origin of one image admitted to the shared sampled-texture registry.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BlpTextureSourceKind {
-    /// Pixels decoded from an authored BLP selected by archive precedence.
+    /// Mips loaded from an authored BLP selected by archive precedence.
     Authored,
     /// Stock's opaque 8x8 green image for an empty WMO material stage.
     StockWorldModelGreen,
+}
+
+/// Device image storage selected from the authored BLP representation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BlpTextureStorage {
+    /// Four uncompressed 8-bit color channels per texel.
+    Rgba8,
+    /// DXT1 blocks retained as Vulkan BC1.
+    Bc1,
+    /// DXT3 blocks retained as Vulkan BC2.
+    Bc2,
+    /// DXT5 blocks retained as Vulkan BC3.
+    Bc3,
 }
 
 /// Stable renderer-local handle to one uploaded BLP image and view.
@@ -36,9 +49,10 @@ pub struct BlpTextureResourceInfo {
     path: AssetPath,
     source_kind: BlpTextureSourceKind,
     color_space: BlpColorSpace,
+    storage: BlpTextureStorage,
     extent: (u32, u32),
     mip_count: usize,
-    decoded_byte_count: usize,
+    upload_byte_count: usize,
 }
 
 impl BlpTextureResourceInfo {
@@ -47,17 +61,19 @@ impl BlpTextureResourceInfo {
         path: AssetPath,
         source_kind: BlpTextureSourceKind,
         color_space: BlpColorSpace,
+        storage: BlpTextureStorage,
         extent: (u32, u32),
         mip_count: usize,
-        decoded_byte_count: usize,
+        upload_byte_count: usize,
     ) -> Self {
         Self {
             path,
             source_kind,
             color_space,
+            storage,
             extent,
             mip_count,
-            decoded_byte_count,
+            upload_byte_count,
         }
     }
 
@@ -82,6 +98,12 @@ impl BlpTextureResourceInfo {
         self.color_space
     }
 
+    /// Returns the exact uncompressed or BC storage family of the image.
+    #[must_use]
+    pub const fn storage(&self) -> BlpTextureStorage {
+        self.storage
+    }
+
     /// Returns the authored top-mip width and height.
     #[must_use]
     pub const fn extent(&self) -> (u32, u32) {
@@ -94,9 +116,9 @@ impl BlpTextureResourceInfo {
         self.mip_count
     }
 
-    /// Returns the total tightly packed RGBA8 staging payload size.
+    /// Returns the total tightly packed staging payload size.
     #[must_use]
-    pub const fn decoded_byte_count(&self) -> usize {
-        self.decoded_byte_count
+    pub const fn upload_byte_count(&self) -> usize {
+        self.upload_byte_count
     }
 }

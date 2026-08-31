@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use wow_mpq::{ArchiveBuilder, ListfileOption};
 
@@ -20,6 +21,15 @@ const REQUIRED_ARCHIVES: [&str; 10] = [
     "enUS/expansion-speech-enUS.MPQ",
     "enUS/lichking-speech-enUS.MPQ",
 ];
+
+/// Serializes SDL video ownership across Rust's parallel integration tests.
+pub(crate) fn sdl_test_lock() -> MutexGuard<'static, ()> {
+    static SDL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    SDL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// One file written into the fixture's `common.MPQ`.
 pub(crate) struct FixtureFile<'bytes> {
