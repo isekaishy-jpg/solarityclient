@@ -80,3 +80,9 @@ Mutable sequence, timer, and variation state belongs to each placed M2. Parsed
 M2/SKIN data, textures, mesh buffers, pipelines, and descriptor sets remain
 shared by asset identity. This keeps independent doodad variation behavior
 without duplicating large HD replacement assets or GPU resources.
+
+The dependency parser receives sequence, lookup, and bone header pairs hidden
+in the same temporary in-place view used for incompatible records. The owned
+decoder is the sole allocation for these arrays; the original header bytes are
+restored immediately, so an HD-sized model is neither cloned nor decoded into
+a redundant animation graph.
