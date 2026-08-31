@@ -5,12 +5,12 @@ use std::sync::Arc;
 use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2MeshPlanError, M2SceneUniform,
-    M2ShaderPlanError, TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw,
-    TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer,
-    WorldCameraError, WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum,
-    WorldModelBaseMip, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
-    WorldModelTextureFiltering, WorldScreenWindow,
+    BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
+    M2MeshPlanError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount, TerrainLayerCountError,
+    TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan, VulkanError,
+    VulkanRenderer, WorldCameraError, WorldCameraFrame, WorldFrameReport, WorldFrameScene,
+    WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError, WorldModelPlacementError,
+    WorldModelSceneUniform, WorldModelTextureFiltering, WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -51,6 +51,12 @@ pub enum RuntimeTerrainFrameError {
     /// One M2 material batch could not select a stock BLS effect.
     #[error(transparent)]
     M2Shader(#[from] M2ShaderPlanError),
+    /// One visible M2 could not form its bone palette.
+    #[error(transparent)]
+    M2BonePose(#[from] M2BonePoseError),
+    /// One visible M2 material could not sample its authored animation tracks.
+    #[error(transparent)]
+    M2MaterialPose(#[from] M2MaterialPoseError),
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"
@@ -293,6 +299,7 @@ impl TerrainFrame {
         plan: &TerrainTileMeshPlan,
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
+        global_animation_time_ms: f32,
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -342,15 +349,22 @@ impl TerrainFrame {
             environment.world_model_emissive(),
             light.fog_color(),
         )?;
-        Ok(
-            renderer.present_world_frame(
-                scene,
-                &[],
-                &self.visible_draws,
-                world_model_draws,
-                &[],
-            )?,
-        )
+        let local_animation_time_ms = self.m2.animation_time_ms();
+        let (m2_bones, m2_draws) = self.m2.prepare_visible_draws(
+            renderer,
+            frustum,
+            camera,
+            light.fog_color(),
+            local_animation_time_ms,
+            global_animation_time_ms,
+        )?;
+        Ok(renderer.present_world_frame(
+            scene,
+            m2_bones,
+            &self.visible_draws,
+            world_model_draws,
+            m2_draws,
+        )?)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

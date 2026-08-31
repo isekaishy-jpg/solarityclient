@@ -56,6 +56,7 @@ pub(crate) struct ClientServices {
     player: RuntimePlayerPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
+    m2_global_clock: std::time::Instant,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -151,6 +152,7 @@ impl ClientServices {
                 player: RuntimePlayerPresentation::new(assets.clone(), creatures, characters),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
+                m2_global_clock: std::time::Instant::now(),
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -210,11 +212,18 @@ impl ClientServices {
             self.login_ui.present(&mut self.renderer)?;
             return Ok(());
         };
+        let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let Some(frame) = self.terrain_frame.as_mut() else {
             self.login_ui.present(&mut self.renderer)?;
             return Ok(());
         };
-        frame.present(&mut self.renderer, plan, environment, camera)?;
+        frame.present(
+            &mut self.renderer,
+            plan,
+            environment,
+            camera,
+            global_animation_time_ms,
+        )?;
         Ok(())
     }
 

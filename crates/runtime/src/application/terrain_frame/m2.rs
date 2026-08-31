@@ -5,9 +5,10 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_rendering::{
-    BlpColorSpace, M2LocalLightCount, M2MeshHandle, M2MeshPlan, M2PipelineHandle, M2SampledTexture,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2TextureSet,
-    M2TextureSetHandle, VulkanRenderer,
+    BlpColorSpace, M2AnimationClock, M2BonePose, M2LocalLightCount, M2MaterialPose,
+    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2PipelineHandle, M2PreparedDraw,
+    M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
+    M2TextureSet, M2TextureSetHandle, VulkanRenderer, WorldCameraFrame, WorldFrustum,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -51,6 +52,9 @@ struct M2GpuPlacement {
 pub(super) struct M2Frame {
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
+    animation_started_at: std::time::Instant,
+    bone_transforms: Vec<Mat4>,
+    visible_draws: Vec<M2PreparedDraw>,
 }
 
 impl M2Frame {
@@ -83,6 +87,9 @@ impl M2Frame {
         Ok(Self {
             sources,
             placements,
+            animation_started_at: std::time::Instant::now(),
+            bone_transforms: Vec::new(),
+            visible_draws: Vec::new(),
         })
     }
 
@@ -123,6 +130,147 @@ impl M2Frame {
         }
         self.placements.len()
     }
+
+    /// Returns elapsed time on this resident generation's local animation clock.
+    pub(super) fn animation_time_ms(&self) -> f32 {
+        self.animation_started_at.elapsed().as_secs_f32() * 1_000.0
+    }
+
+    /// Culls placements and builds their bone/material draw packets in place.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_visible_draws(
+        &mut self,
+        renderer: &VulkanRenderer,
+        frustum: WorldFrustum,
+        camera: WorldCameraFrame,
+        fog_color: glam::Vec3,
+        animation_time_ms: f32,
+        global_time_ms: f32,
+    ) -> Result<(&[Mat4], &[M2PreparedDraw]), RuntimeTerrainFrameError> {
+        self.bone_transforms.clear();
+        self.visible_draws.clear();
+        for placement in &self.placements {
+            let Some(source) = self.sources[placement.source_index].as_ref() else {
+                continue;
+            };
+            let bounds = source.model.bounds();
+            let center = placement
+                .transform
+                .transform_point3((bounds.minimum() + bounds.maximum()) * 0.5);
+            let maximum_scale = placement.transform.x_axis.truncate().length().max(
+                placement
+                    .transform
+                    .y_axis
+                    .truncate()
+                    .length()
+                    .max(placement.transform.z_axis.truncate().length()),
+            );
+            if !frustum.contains_sphere(center, bounds.sphere_radius() * maximum_scale)? {
+                continue;
+            }
+
+            let Some(clock) =
+                world_animation_clock(&source.model, animation_time_ms, global_time_ms)
+            else {
+                continue;
+            };
+            let bone_offset = u32::try_from(self.bone_transforms.len())
+                .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
+            let model_view = camera.view() * placement.transform;
+            let bone_pose =
+                M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            self.bone_transforms
+                .extend_from_slice(bone_pose.transforms());
+            let instance_color = placement_color(placement.color);
+            for (draw_index, resources) in source.draws.iter().enumerate() {
+                let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
+                let draw = &source.plan.draws()[draw_index];
+                let material_state = M2MaterialState::from_material(draw.material());
+                let material = M2MaterialUniform::new(
+                    placement.transform,
+                    pose.texture_transforms(),
+                    model_view,
+                    pose.mesh_color() * instance_color,
+                    fog_color.extend(1.0),
+                    glam::Vec4::new(
+                        material_state.alpha_reference(instance_color.w),
+                        0.0,
+                        0.0,
+                        0.0,
+                    ),
+                );
+                self.visible_draws.push(renderer.prepare_m2_draw(
+                    source.mesh,
+                    resources.pipeline,
+                    resources.texture_set,
+                    &source.plan,
+                    draw_index,
+                    material,
+                    bone_offset,
+                    0,
+                )?);
+            }
+        }
+        Ok((&self.bone_transforms, &self.visible_draws))
+    }
+}
+
+/// Selects stock's initial animation ID/variation, then its available fallback.
+fn world_animation_clock(
+    model: &DecodedM2Model,
+    animation_time_ms: f32,
+    global_time_ms: f32,
+) -> Option<M2AnimationClock> {
+    let animations = model.animations();
+    if animations.sequences().is_empty() {
+        return Some(M2AnimationClock::new(0, animation_time_ms, global_time_ms));
+    }
+    let available = |index: usize| animations.is_sequence_available(index) == Some(true);
+    let sequence = animations
+        .sequences()
+        .iter()
+        .enumerate()
+        .find(|(index, value)| {
+            value.animation_id() == 0 && value.variation_index() == 0 && available(*index)
+        })
+        .or_else(|| {
+            animations
+                .sequences()
+                .iter()
+                .enumerate()
+                .find(|(index, value)| value.animation_id() == 0 && available(*index))
+        })
+        .or_else(|| {
+            animations
+                .sequences()
+                .iter()
+                .enumerate()
+                .find(|(index, _value)| available(*index))
+        })?
+        .0;
+    let resolved = animations.resolve_sequence_alias(sequence)?;
+    let duration_ms = animations.sequences()[resolved].duration_ms() as f32;
+    let animation_time_ms = if duration_ms > 0.0 {
+        animation_time_ms.rem_euclid(duration_ms)
+    } else {
+        0.0
+    };
+    Some(M2AnimationClock::new(
+        sequence,
+        animation_time_ms,
+        global_time_ms,
+    ))
+}
+
+/// Converts MODD's BGRA bytes to shader RGBA; MDDF already stores white.
+fn placement_color(color: [u8; 4]) -> glam::Vec4 {
+    const BYTE_TO_UNIT: f32 = 1.0 / 255.0;
+    glam::Vec4::new(
+        f32::from(color[2]) * BYTE_TO_UNIT,
+        f32::from(color[1]) * BYTE_TO_UNIT,
+        f32::from(color[0]) * BYTE_TO_UNIT,
+        f32::from(color[3]) * BYTE_TO_UNIT,
+    )
 }
 
 /// Publishes a source only when every selected draw has concrete BLP stages.

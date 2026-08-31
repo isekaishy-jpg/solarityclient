@@ -48,6 +48,11 @@ impl M2AnimationClock {
         if !self.animation_time_ms.is_finite() || !self.global_time_ms.is_finite() {
             return Err(M2BonePoseError::NonFiniteTime);
         }
+        // Models without an animation catalog still use the implicit zero
+        // channel/default values carried by their material and bone tracks.
+        if animations.sequences().is_empty() && self.sequence == 0 {
+            return Ok(0);
+        }
         if self.sequence >= animations.sequences().len() {
             return Err(M2BonePoseError::SequenceIndex {
                 requested: self.sequence,
