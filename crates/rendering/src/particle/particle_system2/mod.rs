@@ -7,7 +7,9 @@
 mod lifetime;
 mod pose;
 mod random;
+mod state;
 
 pub use lifetime::{M2ParticleLifetimePose, M2ParticleLifetimePoseError};
 pub use pose::M2ParticlePose;
 pub use random::M2ParticleRandom;
+pub use state::{M2ParticleState, M2ParticleStateError};
