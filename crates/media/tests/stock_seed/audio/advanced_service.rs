@@ -9,8 +9,8 @@ use glam::Vec3;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
-    AdvancedSoundServiceError, SoundCategorySettings, SoundDecodeMode, SoundEngine,
-    SoundEngineSettings, SoundGain, SoundOutput, SoundOutputTarget, SoundVoiceState,
+    AdvancedSoundServiceError, SoundCategorySettings, SoundEngine, SoundEngineSettings, SoundGain,
+    SoundOutput, SoundOutputTarget, SoundResidencyPolicy, SoundVoiceState,
 };
 
 use crate::support::{
@@ -53,12 +53,7 @@ fn one_shot_advanced_instance_owns_a_terminal_backend_voice() -> Result<(), Box<
     let instance = service.create(
         &mut store,
         &mut engine,
-        AdvancedSoundCreateRequest::new(
-            90,
-            Vec3::new(10.0, 0.0, 0.0),
-            -Vec3::X,
-            SoundDecodeMode::Predecoded,
-        ),
+        AdvancedSoundCreateRequest::new(90, Vec3::new(10.0, 0.0, 0.0), -Vec3::X),
         listener,
         &mut next_word,
     )?;
@@ -124,12 +119,7 @@ fn continuous_advanced_instance_drives_shared_variation_state() -> Result<(), Bo
     let instance = service.create(
         &mut store,
         &mut engine,
-        AdvancedSoundCreateRequest::new(
-            90,
-            Vec3::new(10.0, 0.0, 0.0),
-            -Vec3::X,
-            SoundDecodeMode::Predecoded,
-        ),
+        AdvancedSoundCreateRequest::new(90, Vec3::new(10.0, 0.0, 0.0), -Vec3::X),
         listener,
         &mut next_word,
     )?;
@@ -190,12 +180,7 @@ fn periodic_advanced_instance_reuses_backend_after_countdown() -> Result<(), Box
     let instance = service.create(
         &mut store,
         &mut engine,
-        AdvancedSoundCreateRequest::new(
-            90,
-            Vec3::new(10.0, 0.0, 0.0),
-            -Vec3::X,
-            SoundDecodeMode::Predecoded,
-        ),
+        AdvancedSoundCreateRequest::new(90, Vec3::new(10.0, 0.0, 0.0), -Vec3::X),
         listener,
         &mut next_word,
     )?;
@@ -286,6 +271,7 @@ fn settings() -> Result<SoundEngineSettings, Box<dyn Error>> {
         SoundCategorySettings::new(true, full),
         SoundCategorySettings::new(true, full),
         SoundCategorySettings::new(true, full),
+        SoundResidencyPolicy::new(1_048_576),
     ))
 }
 

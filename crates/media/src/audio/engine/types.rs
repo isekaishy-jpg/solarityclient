@@ -1,11 +1,10 @@
 //! Dependency-neutral sound-engine policy and request vocabulary.
 
 use crate::audio::backend::SoundVoiceHandle;
-use crate::audio::codec::SoundDecodeMode;
 use crate::audio::selection::SoundVariationMode;
 
-use super::AdvancedSoundInstanceId;
 use super::status::{SoundCategoryError, SoundGainError};
+use super::{AdvancedSoundInstanceId, SoundLoopMode, SoundResidencyPolicy};
 
 /// Stock volume-control category selected by the calling subsystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,6 +104,7 @@ pub struct SoundEngineSettings {
     sfx: SoundCategorySettings,
     music: SoundCategorySettings,
     ambience: SoundCategorySettings,
+    residency: SoundResidencyPolicy,
 }
 
 impl SoundEngineSettings {
@@ -116,6 +116,7 @@ impl SoundEngineSettings {
         sfx: SoundCategorySettings,
         music: SoundCategorySettings,
         ambience: SoundCategorySettings,
+        residency: SoundResidencyPolicy,
     ) -> Self {
         Self {
             enabled,
@@ -123,6 +124,7 @@ impl SoundEngineSettings {
             sfx,
             music,
             ambience,
+            residency,
         }
     }
 
@@ -151,6 +153,12 @@ impl SoundEngineSettings {
         }
     }
 
+    /// Returns the effective stock encoded-payload residency policy.
+    #[must_use]
+    pub const fn residency(self) -> SoundResidencyPolicy {
+        self.residency
+    }
+
     /// Computes audible gain before the authored per-entry multiplier.
     pub(super) fn category_gain(self, category: SoundCategory) -> Option<f32> {
         let settings = self.category(category);
@@ -165,27 +173,24 @@ pub struct SoundPlayRequest {
     entry_id: u32,
     category: SoundCategory,
     variation_mode: SoundVariationMode,
-    decode_mode: SoundDecodeMode,
-    looping: bool,
+    loop_mode: SoundLoopMode,
     advanced_source: Option<AdvancedSoundInstanceId>,
 }
 
 impl SoundPlayRequest {
-    /// Captures a request without inventing category, selection, or residency policy.
+    /// Captures a request without inventing category or selection policy.
     #[must_use]
     pub const fn new(
         entry_id: u32,
         category: SoundCategory,
         variation_mode: SoundVariationMode,
-        decode_mode: SoundDecodeMode,
-        looping: bool,
+        loop_mode: SoundLoopMode,
     ) -> Self {
         Self {
             entry_id,
             category,
             variation_mode,
-            decode_mode,
-            looping,
+            loop_mode,
             advanced_source: None,
         }
     }
@@ -195,16 +200,14 @@ impl SoundPlayRequest {
         entry_id: u32,
         category: SoundCategory,
         variation_mode: SoundVariationMode,
-        decode_mode: SoundDecodeMode,
-        looping: bool,
+        loop_mode: SoundLoopMode,
         advanced_source: AdvancedSoundInstanceId,
     ) -> Self {
         Self {
             entry_id,
             category,
             variation_mode,
-            decode_mode,
-            looping,
+            loop_mode,
             advanced_source: Some(advanced_source),
         }
     }
@@ -227,16 +230,10 @@ impl SoundPlayRequest {
         self.variation_mode
     }
 
-    /// Returns the explicit decoder residency strategy.
+    /// Returns the stock row/override loop selection for this call site.
     #[must_use]
-    pub const fn decode_mode(self) -> SoundDecodeMode {
-        self.decode_mode
-    }
-
-    /// Reports whether playback repeats indefinitely.
-    #[must_use]
-    pub const fn looping(self) -> bool {
-        self.looping
+    pub const fn loop_mode(self) -> SoundLoopMode {
+        self.loop_mode
     }
 
     /// Returns the advanced instance excluded from its own duck influence.

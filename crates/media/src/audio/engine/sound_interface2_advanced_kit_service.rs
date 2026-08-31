@@ -5,10 +5,10 @@ use solarity_asset::AssetStore;
 use thiserror::Error;
 
 use crate::audio::backend::{SoundVoiceHandle, SoundVoiceState};
-use crate::audio::codec::SoundDecodeMode;
 use crate::audio::selection::SoundVariationMode;
 use crate::audio::spatial::SpatialSoundError;
 
+use super::SoundLoopMode;
 use super::sound_engine::SoundEngine;
 use super::sound_interface2_advanced_kit_ducking::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 use super::sound_interface2_advanced_kit_lifecycle::{
@@ -21,13 +21,12 @@ use super::sound_interface2_advanced_kit_spatial::{
 use super::status::{SoundCategoryError, SoundEngineError};
 use super::types::{SoundCategory, SoundPlayRequest, SoundPlayback};
 
-/// Authored identity, transform, and residency needed to create one instance.
+/// Authored identity and transform needed to create one instance.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AdvancedSoundCreateRequest {
     advanced_entry_id: u32,
     emitter_position: Vec3,
     cone_orientation: Vec3,
-    decode_mode: SoundDecodeMode,
 }
 
 impl AdvancedSoundCreateRequest {
@@ -37,13 +36,11 @@ impl AdvancedSoundCreateRequest {
         advanced_entry_id: u32,
         emitter_position: Vec3,
         cone_orientation: Vec3,
-        decode_mode: SoundDecodeMode,
     ) -> Self {
         Self {
             advanced_entry_id,
             emitter_position,
             cone_orientation,
-            decode_mode,
         }
     }
 }
@@ -121,7 +118,6 @@ impl AdvancedSoundService {
             variation_count,
             properties,
             category,
-            decode_mode: request.decode_mode,
             emitter_position: request.emitter_position,
             cone_orientation: request.cone_orientation,
             lifecycle,
@@ -441,7 +437,6 @@ struct AdvancedSoundInstance {
     variation_count: usize,
     properties: AdvancedSoundProperties,
     category: SoundCategory,
-    decode_mode: SoundDecodeMode,
     emitter_position: Vec3,
     cone_orientation: Vec3,
     lifecycle: AdvancedSoundLifecycle,
@@ -459,8 +454,11 @@ fn play_instance(
         instance.sound_entry_id,
         instance.category,
         SoundVariationMode::Random,
-        instance.decode_mode,
-        instance.lifecycle.usage() == AdvancedSoundUsage::Continuous,
+        if instance.lifecycle.usage() == AdvancedSoundUsage::Continuous {
+            SoundLoopMode::Loop
+        } else {
+            SoundLoopMode::Once
+        },
         instance.id,
     );
     match engine.play(store, request, next_random_word)? {

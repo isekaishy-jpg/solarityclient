@@ -77,6 +77,8 @@ impl UiCVarRegistry {
             ("Sound_MusicVolume", "0.4"),
             ("Sound_AmbienceVolume", "0.6"),
             ("Sound_NumChannels", "64"),
+            ("Sound_MaxCacheSizeInBytes", "16777216"),
+            ("Sound_MaxCacheableSizeInBytes", "1048576"),
             ("Sound_OutputQuality", "2"),
             ("Sound_OutputDriverIndex", "0"),
             ("Sound_ZoneMusicNoDelay", "0"),

@@ -21,6 +21,7 @@ use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 #[derive(Clone, Copy, Debug)]
 struct ActiveVoice {
     handle: SoundVoiceHandle,
+    sound: crate::audio::codec::DecodedSoundHandle,
     category: SoundCategory,
     source_gain: f32,
     runtime_gain: f32,
@@ -32,8 +33,9 @@ struct ActiveVoice {
 pub struct SoundEngine<'output> {
     catalog: SpatialSoundCatalog,
     cache: SoundCache,
-    decoder: SoundDecoder,
+    // Tracks must drop before their referenced SDL Audio resources.
     backend: SoundBackend<'output>,
+    decoder: SoundDecoder,
     settings: SoundEngineSettings,
     active_voices: Vec<ActiveVoice>,
     variation_selectors: Vec<(u32, SoundVariationSelector)>,
@@ -58,8 +60,8 @@ impl<'output> SoundEngine<'output> {
         Ok(Self {
             catalog,
             cache: SoundCache::new(),
-            decoder,
             backend,
+            decoder,
             settings,
             active_voices: Vec::with_capacity(usize::from(voice_capacity.get())),
             variation_selectors: Vec::new(),
@@ -175,16 +177,27 @@ impl<'output> SoundEngine<'output> {
             .path()
             .clone();
         let encoded = self.cache.load(store, &asset_path)?;
-        let sound = self.decoder.load(&encoded, request.decode_mode())?;
+        let decode_mode = self
+            .settings
+            .residency()
+            .decode_mode(encoded.path(), encoded.bytes().len());
+        let sound = self.decoder.load(&encoded, decode_mode)?;
         let source_gain = entry.volume();
-        let voice = self.backend.play(
+        let voice = match self.backend.play(
             &self.decoder,
             sound,
             category_gain * source_gain,
-            request.looping(),
-        )?;
+            request.loop_mode().is_looping(entry.flags()),
+        ) {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.decoder.release_streaming(sound);
+                return Err(error.into());
+            }
+        };
         self.active_voices.push(ActiveVoice {
             handle: voice,
+            sound,
             category: request.category(),
             source_gain,
             runtime_gain: 1.0,
@@ -359,7 +372,8 @@ impl<'output> SoundEngine<'output> {
             .position(|voice| voice.handle == handle)
             .ok_or(SoundEngineError::UnknownVoice)?;
         self.backend.stop(handle)?;
-        self.active_voices.remove(index);
+        let voice = self.active_voices.remove(index);
+        self.decoder.release_streaming(voice.sound);
         Ok(())
     }
 
@@ -374,7 +388,9 @@ impl<'output> SoundEngine<'output> {
         let mut index = 0;
         while index < self.active_voices.len() {
             if self.backend.state(self.active_voices[index].handle)? == SoundVoiceState::Stopped {
-                self.active_voices.remove(index);
+                self.backend.stop(self.active_voices[index].handle)?;
+                let voice = self.active_voices.remove(index);
+                self.decoder.release_streaming(voice.sound);
             } else {
                 index += 1;
             }
@@ -391,7 +407,9 @@ impl<'output> SoundEngine<'output> {
             if voice.duck_source.is_none()
                 && self.backend.state(voice.handle)? == SoundVoiceState::Stopped
             {
-                self.active_voices.remove(index);
+                self.backend.stop(voice.handle)?;
+                let voice = self.active_voices.remove(index);
+                self.decoder.release_streaming(voice.sound);
             } else {
                 index += 1;
             }

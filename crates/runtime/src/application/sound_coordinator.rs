@@ -7,8 +7,8 @@ use glam::Vec3;
 use solarity_asset::{AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
-    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundDecodeMode,
-    SoundEngineError, SoundEngineSettings, SoundGain, SoundOutputInfo, SoundOutputTarget,
+    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundEngineError,
+    SoundEngineSettings, SoundGain, SoundOutputInfo, SoundOutputTarget, SoundResidencyPolicy,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_ui::GlueManager;
@@ -48,6 +48,12 @@ pub enum RuntimeSoundError {
     /// `Sound_NumChannels` is outside its registered build-12340 range.
     #[error("Sound_NumChannels must be an integer in 32..=64, got {value:?}")]
     InvalidVoiceCapacity {
+        /// Unmodified live text.
+        value: String,
+    },
+    /// `Sound_MaxCacheableSizeInBytes` is not a signed 32-bit integer.
+    #[error("Sound_MaxCacheableSizeInBytes has invalid integer value {value:?}")]
+    InvalidMaximumCacheableSize {
         /// Unmodified live text.
         value: String,
     },
@@ -175,10 +181,6 @@ impl RuntimeSoundCoordinator {
                         emitter.advanced_sound_entry_id,
                         emitter.position,
                         emitter.cone_orientation,
-                        // MCSE payloads enter one stable decoded resource. A
-                        // later executable-backed flag mapping may select the
-                        // existing streaming mode at this explicit boundary.
-                        SoundDecodeMode::Predecoded,
                     ),
                     listener,
                     &mut || random.next_u32(),
@@ -239,6 +241,15 @@ impl SoundPolicy {
             .ok_or_else(|| RuntimeSoundError::InvalidVoiceCapacity {
                 value: voice_capacity_text.clone(),
             })?;
+        let maximum_cacheable_size_text = cvar(glue, "Sound_MaxCacheableSizeInBytes")?;
+        // The stock CVar is a signed integer, but SoundEngine.cpp reads its raw
+        // 32-bit word and then applies an unsigned two-megabyte ceiling.
+        let configured_maximum_cacheable_size = maximum_cacheable_size_text
+            .parse::<i32>()
+            .map(|value| value as u32)
+            .map_err(|_source| RuntimeSoundError::InvalidMaximumCacheableSize {
+                value: maximum_cacheable_size_text,
+            })?;
         Ok(Self {
             voice_capacity,
             settings: SoundEngineSettings::new(
@@ -256,6 +267,7 @@ impl SoundPolicy {
                     boolean(glue, "Sound_EnableAmbience")?,
                     gain(glue, "Sound_AmbienceVolume")?,
                 ),
+                SoundResidencyPolicy::new(configured_maximum_cacheable_size),
             ),
         })
     }

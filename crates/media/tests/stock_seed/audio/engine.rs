@@ -4,11 +4,11 @@ use std::cell::Cell;
 use std::error::Error;
 use std::num::NonZeroU16;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
+use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundDecodeMode, SoundEngine,
-    SoundEngineError, SoundEngineSettings, SoundGain, SoundOutput, SoundOutputTarget,
-    SoundPlayRequest, SoundPlayback, SoundVariationMode,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode, SoundOutput,
+    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy, SoundVariationMode,
 };
 
 use crate::support::{
@@ -24,6 +24,113 @@ fn stock_sound_gain_rejects_values_outside_cvar_range() {
     assert!(SoundGain::new(-0.1).is_err());
     assert!(SoundGain::new(1.1).is_err());
     assert!(SoundGain::new(f32::NAN).is_err());
+}
+
+/// SoundEngine.cpp selects cache residency from extension, size, and CVar clamp.
+#[test]
+fn stock_sound_residency_uses_exact_cacheable_size_policy() -> Result<(), Box<dyn Error>> {
+    let one_megabyte = SoundResidencyPolicy::new(1_048_576);
+    let wav = AssetPath::new("Sound/Test.wav")?;
+    let mp3 = AssetPath::new("Sound/Test.mp3")?;
+
+    assert_eq!(
+        one_megabyte.decode_mode(&wav, 1_048_576),
+        SoundDecodeMode::Predecoded
+    );
+    assert_eq!(
+        one_megabyte.decode_mode(&wav, 1_048_577),
+        SoundDecodeMode::Streaming
+    );
+    assert_eq!(
+        one_megabyte.decode_mode(&mp3, 1),
+        SoundDecodeMode::Streaming
+    );
+    assert_eq!(
+        SoundResidencyPolicy::new(u32::MAX).maximum_cacheable_size_bytes(),
+        2_097_152
+    );
+    Ok(())
+}
+
+/// The default request state reads bit 0x200; explicit callers can override it.
+#[test]
+fn stock_sound_loop_mode_uses_entry_flag_or_exact_override() {
+    assert!(SoundLoopMode::Entry.is_looping(0x200));
+    assert!(!SoundLoopMode::Entry.is_looping(0));
+    assert!(SoundLoopMode::Loop.is_looping(0));
+    assert!(!SoundLoopMode::Once.is_looping(0x200));
+}
+
+/// Every streamed play owns one decoder object and retires it with its voice.
+#[test]
+fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>> {
+    let wav = pcm_wav(8_000, &[0, 8_000, 0, -8_000])?;
+    let sound_entries =
+        sound_entries_fixture(77, [("Tone.wav", 1), ("", 0), ("", 0)], "Sound\\Test");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &empty_advanced_sound_entries_fixture(),
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Sound\\Test\\Tone.wav",
+            bytes: &wav,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let _sdl_test = sdl_test_lock();
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let mut engine = SoundEngine::load(
+        &mut store,
+        &output,
+        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        settings_with_residency(true, 0)?,
+    )?;
+    let request = SoundPlayRequest::new(
+        77,
+        SoundCategory::Sfx,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+    );
+
+    let SoundPlayback::Started(voice) = engine.play(&mut store, request, &mut || 0)? else {
+        return Err("enabled stream was suppressed".into());
+    };
+    assert_eq!(engine.decoded_sound_count(), 1);
+    assert!(matches!(
+        engine.play(&mut store, request, &mut || 0),
+        Err(SoundEngineError::Backend(
+            solarity_media::SoundBackendError::VoiceCapacity
+        ))
+    ));
+    assert_eq!(engine.decoded_sound_count(), 1);
+    engine.stop(voice)?;
+    assert_eq!(engine.decoded_sound_count(), 0);
+
+    let once = SoundPlayRequest::new(
+        77,
+        SoundCategory::Sfx,
+        SoundVariationMode::Random,
+        SoundLoopMode::Once,
+    );
+    let SoundPlayback::Started(_voice) = engine.play(&mut store, once, &mut || 0)? else {
+        return Err("enabled one-shot stream was suppressed".into());
+    };
+    let mut mixed = [0_u8; 4_096];
+    engine.generate(&mut mixed)?;
+    assert_eq!(engine.collect_stopped_voices()?, 1);
+    assert_eq!(engine.decoded_sound_count(), 0);
+    Ok(())
 }
 
 /// The process owner retains SDL's mixer until every borrowing track drops.
@@ -146,8 +253,7 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
         42,
         SoundCategory::Sfx,
         SoundVariationMode::Random,
-        SoundDecodeMode::Predecoded,
-        true,
+        SoundLoopMode::Loop,
     );
     let SoundPlayback::Started(voice) = engine.play(&mut store, request, &mut || 0)? else {
         return Err("enabled sound was suppressed".into());
@@ -236,8 +342,7 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
         999,
         SoundCategory::Sfx,
         SoundVariationMode::Random,
-        SoundDecodeMode::Predecoded,
-        false,
+        SoundLoopMode::Once,
     );
     let random_calls = Cell::new(0);
     let mut next_word = || {
@@ -254,8 +359,7 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
         77,
         SoundCategory::Sfx,
         SoundVariationMode::Random,
-        SoundDecodeMode::Predecoded,
-        true,
+        SoundLoopMode::Loop,
     );
     assert_eq!(
         engine.play(&mut store, valid, &mut next_word)?,
@@ -283,6 +387,13 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
 
 /// Builds explicit CVar policy without relying on media-layer defaults.
 fn settings(sfx_enabled: bool) -> Result<SoundEngineSettings, Box<dyn Error>> {
+    settings_with_residency(sfx_enabled, 1_048_576)
+}
+
+fn settings_with_residency(
+    sfx_enabled: bool,
+    maximum_cacheable_size_bytes: u32,
+) -> Result<SoundEngineSettings, Box<dyn Error>> {
     let full = SoundGain::new(1.0)?;
     Ok(SoundEngineSettings::new(
         true,
@@ -290,5 +401,6 @@ fn settings(sfx_enabled: bool) -> Result<SoundEngineSettings, Box<dyn Error>> {
         SoundCategorySettings::new(sfx_enabled, full),
         SoundCategorySettings::new(true, SoundGain::new(0.4)?),
         SoundCategorySettings::new(true, SoundGain::new(0.6)?),
+        SoundResidencyPolicy::new(maximum_cacheable_size_bytes),
     ))
 }

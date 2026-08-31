@@ -44,9 +44,15 @@ policy is introduced.
 
 SDL3_mixer admission is device-independent. A memory mixer uses build 12340's
 44.1 kHz output default and signed-16 stereo minimum, while every resource still
-reports its authored sample rate and channel count. The caller explicitly
-chooses streaming or complete predecode residency; the normalized path and that
-mode form the decoder identity.
+reports its authored sample rate and channel count. `SoundEngine.cpp` at
+executable `0x0087ee60` selects residency after the exact archive payload has
+been opened. An `.mp3` path always streams. Every other supported payload is
+predecoded when its archive-reported logical size is less than or equal to
+`Sound_MaxCacheableSizeInBytes`, and streams when larger. The CVar defaults to
+1 MiB and the executable caps its effective value at 2 MiB. The normalized path
+forms reusable sample identity. Streamed playback creates a distinct decoder
+resource per voice and releases it when that voice clears its backend track;
+the noncacheable stock branch does not reuse a stream object.
 
 The pinned safe SDL wrapper copies the original encoded file into its `Audio`
 resource during admission. This is the one adapter-boundary copy: the temporary
@@ -76,10 +82,9 @@ stock-facing sound-engine layers above this adapter.
 catalog containing the exact `SoundEntries.dbc` and
 `SoundEntriesAdvanced.dbc` tables, plus the encoded cache, decoder registry,
 backend track pool, and retained voice policy. A request supplies its entry
-identifier, calling category, already bounded variation ticket, decode
-residency, and loop intent. The engine therefore does not infer category from
-an unevidenced `SoundType` mapping, advance another RNG, reinterpret flags, or
-guess whether a payload is music.
+identifier, calling category, already bounded variation ticket, and loop mode.
+The engine therefore does not infer category from an unevidenced `SoundType`
+mapping, advance another RNG, or guess whether a payload is music.
 
 The live settings snapshot mirrors `Sound_EnableAllSound`, the SFX/music/
 ambience enables, and their master/category gains. Those CVar gains validate in
@@ -155,6 +160,11 @@ four prime-length cursors, accumulator, and timer seed separately from the CRT
 the unshifted time points in interpolation numerators; `scheduled_gain`
 preserves that executable behavior.
 
+`SoundInterface2.cpp` at executable `0x004c6a40` resolves the ordinary default
+loop state from `SoundEntries.Flags & 0x200`. Request state can explicitly force
+looping or one-shot playback; advanced usage-zero continuous objects force the
+former, while periodic and terminal objects force the latter.
+
 `AdvancedSoundService` now owns usage-zero continuous, usage-one periodic, and
 usage-two terminal instances; shared variation state; scheduled gain; camera-
 relative position and cone mixing; and the global category-duck list. Completed
@@ -168,7 +178,6 @@ the fixed startup `Sound_NumChannels` pool. A live capacity change requires a
 restart instead of resizing the backend. Resident MCSE records are staged in
 authored chunk order and updated from the rendered `WorldCameraFrame` and the
 server-anchored `RealmClock`; neither local wall time nor another listener is
-substituted. MCSE payloads currently use the explicit predecoded admission
-mode. Streaming selection remains at that boundary until a build-12340 flag
-mapping is recovered; the runtime does not infer one from file extension or
-size.
+substituted. MCSE payloads use the same recovered extension/size residency rule
+as every other stock sound. A larger HD archive override can therefore cross
+the normal stream threshold without introducing an HD-specific path or mode.

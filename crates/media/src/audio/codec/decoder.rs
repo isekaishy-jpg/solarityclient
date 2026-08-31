@@ -29,13 +29,15 @@ struct DecodedSoundResource {
 /// Single-threaded decoded-audio registry independent of an output device.
 ///
 /// SDL documents `Audio` objects as shareable across mixer devices. Loading
-/// against a memory mixer therefore admits and deduplicates resources before a
-/// playback engine creates its output tracks.
+/// against a memory mixer admits reusable predecoded samples before a playback
+/// engine creates its output tracks. Stock streaming admission remains
+/// per-play and is not inserted into that reusable sample map.
 pub struct SoundDecoder {
     decoder_id: u64,
     mixer: Mixer,
     handles: HashMap<DecodedSoundKey, DecodedSoundHandle>,
-    resources: Vec<DecodedSoundResource>,
+    resources: Vec<Option<DecodedSoundResource>>,
+    resource_count: usize,
 }
 
 impl SoundDecoder {
@@ -65,26 +67,28 @@ impl SoundDecoder {
             mixer,
             handles: HashMap::new(),
             resources: Vec::new(),
+            resource_count: 0,
         })
     }
 
-    /// Returns the number of distinct path/mode resources retained.
+    /// Returns the number of retained samples and live per-play streams.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.resources.len()
+        self.resource_count
     }
 
     /// Reports whether no SDL audio resources are retained.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.resources.is_empty()
+        self.resource_count == 0
     }
 
     /// Admits one encoded payload in the caller-selected residency mode.
     ///
     /// SDL3_mixer copies the original encoded file during this call. The input
-    /// stream can retire immediately, and subsequent requests for the same
-    /// normalized path and mode reuse the existing audio object.
+    /// stream can retire immediately. Subsequent predecoded requests for the
+    /// same normalized path reuse the sample; streaming requests create one
+    /// distinct resource per play, matching the stock noncacheable branch.
     ///
     /// # Errors
     ///
@@ -99,7 +103,9 @@ impl SoundDecoder {
             path: encoded.path().clone(),
             mode,
         };
-        if let Some(handle) = self.handles.get(&key) {
+        if mode == SoundDecodeMode::Predecoded
+            && let Some(handle) = self.handles.get(&key)
+        {
             return Ok(*handle);
         }
         let slot =
@@ -136,9 +142,36 @@ impl SoundDecoder {
             decoder_id: self.decoder_id,
             slot,
         };
-        self.resources.push(DecodedSoundResource { audio, info });
-        self.handles.insert(key, handle);
+        self.resources
+            .push(Some(DecodedSoundResource { audio, info }));
+        self.resource_count += 1;
+        if mode == SoundDecodeMode::Predecoded {
+            self.handles.insert(key, handle);
+        }
         Ok(handle)
+    }
+
+    /// Releases one noncached stream after its sole backend voice stops.
+    ///
+    /// The caller must first clear the stream from its backend track. Cached
+    /// samples, foreign handles, and already released streams return `false`.
+    pub fn release_streaming(&mut self, handle: DecodedSoundHandle) -> bool {
+        if handle.decoder_id != self.decoder_id {
+            return false;
+        }
+        let Some(resource) = self
+            .resources
+            .get_mut(handle.slot as usize)
+            .and_then(Option::as_mut)
+        else {
+            return false;
+        };
+        if resource.info.mode() != SoundDecodeMode::Streaming {
+            return false;
+        }
+        self.resources[handle.slot as usize] = None;
+        self.resource_count -= 1;
+        true
     }
 
     /// Resolves diagnostics only for handles created by this decoder.
@@ -149,6 +182,7 @@ impl SoundDecoder {
         }
         self.resources
             .get(handle.slot as usize)
+            .and_then(Option::as_ref)
             .map(|resource| &resource.info)
     }
 
@@ -159,6 +193,7 @@ impl SoundDecoder {
         }
         self.resources
             .get(handle.slot as usize)
+            .and_then(Option::as_ref)
             .map(|resource| &resource.audio)
     }
 }

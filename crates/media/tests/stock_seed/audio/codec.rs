@@ -7,7 +7,7 @@ use solarity_media::{SoundCache, SoundDecodeMode, SoundDecoder};
 
 use crate::support::{Fixture, FixtureFile, pcm_wav, sdl_test_lock};
 
-/// One WAV path deduplicates within each explicit residency strategy.
+/// Samples deduplicate while each stream owns a distinct decoder resource.
 #[test]
 fn wav_admission_preserves_format_and_mode_identity() -> Result<(), Box<dyn Error>> {
     let wav = pcm_wav(8_000, &[0, 1_000, -1_000, 0])?;
@@ -33,7 +33,9 @@ fn wav_admission_preserves_format_and_mode_identity() -> Result<(), Box<dyn Erro
     );
     let streaming = decoder.load(&encoded, SoundDecodeMode::Streaming)?;
     assert_ne!(streaming, predecoded);
-    assert_eq!(decoder.len(), 2);
+    let second_streaming = decoder.load(&encoded, SoundDecodeMode::Streaming)?;
+    assert_ne!(second_streaming, streaming);
+    assert_eq!(decoder.len(), 3);
 
     let info = decoder
         .info(predecoded)
@@ -43,6 +45,10 @@ fn wav_admission_preserves_format_and_mode_identity() -> Result<(), Box<dyn Erro
     assert_eq!(info.sample_rate_hz(), 8_000);
     assert_eq!(info.channel_count(), 1);
     assert_eq!(info.duration_frames(), Some(4));
+    assert!(decoder.release_streaming(streaming));
+    assert!(decoder.release_streaming(second_streaming));
+    assert!(!decoder.release_streaming(predecoded));
+    assert_eq!(decoder.len(), 1);
     Ok(())
 }
 
