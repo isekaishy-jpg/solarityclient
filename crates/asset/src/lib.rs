@@ -30,9 +30,9 @@ pub use database::{
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
     ItemDisplayCatalog, ItemDisplayInfo, LightCatalog, LightDefinition, LightParameter,
     LightSkybox, MapCatalog, MapDefinition, MapKind, RealmCategoryCatalog, RealmCategoryDefinition,
-    RealmConfiguration, RealmConfigurationCatalog, SkyboxBlend, WdbcHeader, WdbcTable,
-    WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    exterior_light_direction,
+    RealmConfiguration, RealmConfigurationCatalog, SkyboxBlend, SoundAsset, SoundEntry,
+    SoundEntryCatalog, WdbcHeader, WdbcTable, WorldLightCondition, WorldLightQuery,
+    WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle};
 pub use model::{

@@ -8,7 +8,7 @@ use solarity_asset::{
     CharacterAppearanceCatalog, CharacterClassCatalog, CharacterCustomization,
     CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
     InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, LightCatalog, Locale, M2TextureKind,
-    MapCatalog, MapKind, WdbcTable, WorldLightQuery, WorldLightSampleError,
+    MapCatalog, MapKind, SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError,
     exterior_light_direction,
 };
 
@@ -982,6 +982,137 @@ fn constant_light_float_bands() -> Vec<u8> {
         fields.extend([0; 15]);
     }
     create_wdbc(6, 34, &fields, &[0])
+}
+
+/// Sound identities retain authored variation order and ordinary patch precedence.
+#[test]
+fn sound_entry_catalog_decodes_stock_paths_and_weights() -> Result<(), Box<dyn Error>> {
+    let base_table = sound_entries_fixture(12, "Base", "Sound\\Base", "old.wav", "", 1, 0);
+    let patch_table = sound_entries_fixture(
+        77,
+        "SwordImpact",
+        "Sound\\Item\\Weapons",
+        "impact-a.wav",
+        "impact-b.mp3",
+        25,
+        75,
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &base_table,
+        },
+        FixtureFile {
+            archive: "patch-2.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &patch_table,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let catalog = SoundEntryCatalog::load(&mut store)?;
+    let entry = catalog.entry(77).ok_or("sound row was not indexed")?;
+    assert_eq!(catalog.entries().len(), 1);
+    assert_eq!(entry.id(), 77);
+    assert_eq!(entry.sound_type(), 4);
+    assert_eq!(entry.internal_name(), "SwordImpact");
+    assert_eq!(entry.volume(), 0.75);
+    assert_eq!(entry.flags(), 0x20);
+    assert_eq!(entry.minimum_distance(), 8.0);
+    assert_eq!(entry.distance_cutoff(), 50.0);
+    assert_eq!(entry.eax_definition_id(), 12);
+    assert_eq!(entry.advanced_id(), 90);
+    assert_eq!(entry.assets().len(), 2);
+    assert_eq!(
+        entry.assets()[0].path().as_str(),
+        "SOUND\\ITEM\\WEAPONS\\IMPACT-A.WAV"
+    );
+    assert_eq!(entry.assets()[0].frequency(), 25);
+    assert_eq!(
+        entry.assets()[1].path().as_str(),
+        "SOUND\\ITEM\\WEAPONS\\IMPACT-B.MP3"
+    );
+    assert_eq!(entry.assets()[1].frequency(), 75);
+    assert!(catalog.entry(12).is_none());
+    Ok(())
+}
+
+/// Another client-version layout is rejected rather than guessed.
+#[test]
+fn sound_entry_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(1, 29, &[0; 29], &[0]);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\SoundEntries.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    assert!(matches!(
+        SoundEntryCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { path, .. })
+            if path == AssetPath::new("DBFilesClient\\SoundEntries.dbc")?
+    ));
+    Ok(())
+}
+
+/// Invalid authored media paths do not receive a loose-file or basename fallback.
+#[test]
+fn sound_entry_catalog_rejects_invalid_asset_path() -> Result<(), Box<dyn Error>> {
+    let table = sound_entries_fixture(77, "Invalid", "Sound\\..", "escape.wav", "", 1, 0);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\SoundEntries.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    assert!(matches!(
+        SoundEntryCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { .. })
+    ));
+    Ok(())
+}
+
+/// Builds one exact 30-field `SoundEntries.dbc` row.
+fn sound_entries_fixture(
+    id: u32,
+    name: &str,
+    directory: &str,
+    first_file: &str,
+    second_file: &str,
+    first_frequency: u32,
+    second_frequency: u32,
+) -> Vec<u8> {
+    let mut strings = vec![0];
+    let name = append_string(&mut strings, name);
+    let first_file = append_string(&mut strings, first_file);
+    let second_file = append_string(&mut strings, second_file);
+    let directory = append_string(&mut strings, directory);
+    let mut fields = vec![id, 4, name, first_file, second_file];
+    fields.extend([0; 8]);
+    fields.extend([first_frequency, second_frequency]);
+    fields.extend([0; 8]);
+    fields.extend([
+        directory,
+        0.75_f32.to_bits(),
+        0x20,
+        8.0_f32.to_bits(),
+        50.0_f32.to_bits(),
+        12,
+        90,
+    ]);
+    create_wdbc(1, 30, &fields, &strings)
 }
 
 /// Generates the fixed WDBC layout used by stock-era client tables.
