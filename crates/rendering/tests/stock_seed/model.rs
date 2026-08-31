@@ -18,12 +18,12 @@ use solarity_rendering::{
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRandom, M2ParticleSimulation,
-    M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
-    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
-    M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError,
-    WorldFrameScene, WorldModelSceneUniform,
+    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRandom, M2ParticleRotationPose,
+    M2ParticleSimulation, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
+    VulkanError, WorldFrameScene, WorldModelSceneUniform,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -561,6 +561,16 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     );
     assert_eq!(lifetime.head_texture_cell(), 2);
     assert_eq!(lifetime.tail_texture_cell(), 4);
+    let rotation = M2ParticleRotationPose::sample(emitter, random_word);
+    let mut rotation_random = M2ParticleRandom::new(u32::from(random_word));
+    let expected_initial = 0.8 + rotation_random.next_signed() * 0.9;
+    let expected_speed = 1.1 + rotation_random.next_signed() * 1.2;
+    assert_eq!(rotation.initial_radians(), expected_initial);
+    assert_eq!(rotation.radians_per_second(), expected_speed);
+    assert_eq!(
+        rotation.angle_radians(0.5),
+        expected_speed * 0.5 + expected_initial
+    );
     assert_eq!(
         M2ParticleLifetimePose::sample(emitter, f32::NAN, random_word),
         Err(M2ParticleLifetimePoseError::NonFiniteAge)
@@ -2287,6 +2297,10 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
         &render_u16_values(&[4, 9]),
         2,
     )?;
+    for (relative, value) in [(0x178, 0.8_f32), (0x17c, 0.9), (0x180, 1.1), (0x184, 1.2)] {
+        bytes[particle_offset + relative..particle_offset + relative + 4]
+            .copy_from_slice(&value.to_le_bytes());
+    }
     append_render_track(bytes, particle_offset + 0x1c8, &[0, 1_000], &[1, 0], 1)?;
     set_render_header_array(bytes, 0x128, 1, particle_offset)?;
     Ok(())
