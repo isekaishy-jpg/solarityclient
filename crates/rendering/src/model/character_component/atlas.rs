@@ -62,6 +62,7 @@ pub struct CharacterTexturePlan {
     atlas_layers: Vec<CharacterAtlasLayer>,
     hair: Option<AssetPath>,
     extra_skin: Option<AssetPath>,
+    cape: Option<AssetPath>,
 }
 
 impl CharacterTexturePlan {
@@ -100,8 +101,12 @@ impl CharacterTexturePlan {
     where
         I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
     {
-        let equipment = plan_equipment_layers(appearance.gender_id(), store, equipment)?;
-        Self::build(appearance, Some(&equipment))
+        let equipment = equipment.into_iter().collect::<Vec<_>>();
+        let layers =
+            plan_equipment_layers(appearance.gender_id(), store, equipment.iter().copied())?;
+        let mut plan = Self::build(appearance, Some(&layers))?;
+        plan.cape = cape_texture(equipment.iter().copied())?;
+        Ok(plan)
     }
 
     /// Builds the shared region sequence with optional item-priority cells.
@@ -179,6 +184,7 @@ impl CharacterTexturePlan {
             atlas_layers,
             hair: optional_path(appearance.hair(), 0)?,
             extra_skin: optional_path(appearance.skin(), 1)?,
+            cape: None,
         })
     }
 
@@ -205,6 +211,33 @@ impl CharacterTexturePlan {
     pub const fn extra_skin(&self) -> Option<&AssetPath> {
         self.extra_skin.as_ref()
     }
+
+    /// Returns the texture replacing M2 item/cape slot 2 when equipped.
+    #[must_use]
+    pub const fn cape(&self) -> Option<&AssetPath> {
+        self.cape.as_ref()
+    }
+}
+
+/// Resolves the equipped back display's first model-texture channel.
+fn cape_texture<'catalog, I>(equipment: I) -> Result<Option<AssetPath>, CharacterTexturePlanError>
+where
+    I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+{
+    let Some(item) = equipment
+        .into_iter()
+        .filter(|item| item.slot() == PlayerEquipmentSlot::Back)
+        .last()
+    else {
+        return Ok(None);
+    };
+    let [texture, _] = item.display().model_textures();
+    if texture.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(AssetPath::new(format!(
+        "Item\\ObjectComponents\\Cape\\{texture}.blp"
+    ))?))
 }
 
 /// Plans all nonempty item component stems into their final priority cells.

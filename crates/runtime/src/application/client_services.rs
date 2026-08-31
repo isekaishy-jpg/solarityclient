@@ -9,7 +9,8 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, LightCatalog,
+    MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -91,6 +92,8 @@ impl ClientServices {
         let creatures = CreatureCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
+        let item_definitions = ItemDefinitionCatalog::load(&mut assets)?;
+        let item_displays = ItemDisplayCatalog::load(&mut assets)?;
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
@@ -176,6 +179,8 @@ impl ClientServices {
                     creatures,
                     characters,
                     helmet_visibility,
+                    item_definitions,
+                    item_displays,
                     particle_colors,
                 ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),

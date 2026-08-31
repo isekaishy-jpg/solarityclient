@@ -343,9 +343,11 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
     let shirt_definition = definitions.item(50_001).ok_or("shirt item is absent")?;
     let chest_definition = definitions.item(50_002).ok_or("chest item is absent")?;
     let glove_definition = definitions.item(50_003).ok_or("glove item is absent")?;
+    let cape_definition = definitions.item(50_004).ok_or("cape item is absent")?;
     let shirt_display = displays.display(55_001).ok_or("shirt display is absent")?;
     let chest_display = displays.display(55_002).ok_or("chest display is absent")?;
     let glove_display = displays.display(55_003).ok_or("glove display is absent")?;
+    let cape_display = displays.display(55_004).ok_or("cape display is absent")?;
 
     let plan = CharacterTexturePlan::equipped(
         &appearance,
@@ -366,6 +368,7 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
                 glove_definition,
                 glove_display,
             ),
+            CharacterEquipmentItem::new(PlayerEquipmentSlot::Back, cape_definition, cape_display),
         ],
     )?;
 
@@ -420,6 +423,10 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
         layer.region() == CharacterAtlasRegion::LegUpper
             && layer.kind() == CharacterAtlasLayerKind::Underwear
     }));
+    assert_eq!(
+        plan.cape().map(AssetPath::as_str),
+        Some("ITEM\\OBJECTCOMPONENTS\\CAPE\\FIXTURECAPE.BLP")
+    );
     Ok(())
 }
 
@@ -2269,10 +2276,10 @@ struct EquipmentTables {
     displays: Vec<u8>,
 }
 
-/// Builds shirt, chest, and glove rows with overlapping component regions.
+/// Builds body armor plus a cape with overlapping component regions.
 fn equipment_tables() -> EquipmentTables {
     let definitions = create_wdbc(
-        3,
+        4,
         8,
         &[
             50_001,
@@ -2299,6 +2306,14 @@ fn equipment_tables() -> EquipmentTables {
             55_003,
             10,
             0,
+            50_004,
+            4,
+            0,
+            u32::MAX,
+            1,
+            55_004,
+            16,
+            0,
         ],
         b"\0",
     );
@@ -2312,7 +2327,8 @@ fn equipment_tables() -> EquipmentTables {
     let chest_tu = append_string(&mut strings, "ChestTU");
     let glove_al = append_string(&mut strings, "GloveAL");
     let glove_ha = append_string(&mut strings, "GloveHA");
-    let mut display_fields = Vec::with_capacity(75);
+    let cape = append_string(&mut strings, "FixtureCape");
+    let mut display_fields = Vec::with_capacity(100);
     display_fields.extend(item_display_fields(
         55_001,
         [0, 0, 0],
@@ -2328,9 +2344,12 @@ fn equipment_tables() -> EquipmentTables {
         [1, 0, 0],
         [0, glove_al, glove_ha, 0, 0, 0, 0, 0],
     ));
+    let mut cape_fields = item_display_fields(55_004, [2, 0, 0], [0; 8]);
+    cape_fields[3] = cape;
+    display_fields.extend(cape_fields);
     EquipmentTables {
         definitions,
-        displays: create_wdbc(3, 25, &display_fields, &strings),
+        displays: create_wdbc(4, 25, &display_fields, &strings),
     }
 }
 

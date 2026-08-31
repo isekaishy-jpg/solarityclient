@@ -60,7 +60,9 @@ owning its transform, animation clock, particle/ribbon histories, particle
 color replacement, geoset visibility, and composed body atlas. Authoritative
 movement updates only the placement matrix. A customization generation replaces
 only the player source; it does not rebuild terrain M2s or duplicate same-path
-HD replacement assets.
+HD replacement assets. Visible equipment now drives the body atlas, helmet and
+armor geoset selection, and the body's cape texture slot before that source is
+published into the frame.
 
-Pass-zero compatible grouping, attachment/equipment models, and the remaining
-callback producers still need to enter the final unified scene queue.
+Pass-zero compatible grouping, attached head/shoulder/weapon models, and the
+remaining callback producers still need to enter the final unified scene queue.

@@ -45,10 +45,15 @@ layers into a placement-owned 256-by-256 RGBA8 mip chain. That dynamic atlas
 replaces M2 texture type 1. Authored hair and extra-skin BLPs remain separate
 shared sources for character special-texture slots 6 and 8. Stock playable body
 M2s label slot 6 with the generic `Environment` texture category; the character
-component still binds its resolved hair image there.
+component still binds its resolved hair image there. An equipped cloak resolves
+its first `ItemDisplayInfo` model-texture channel beneath
+`Item\ObjectComponents\Cape` and binds it to M2 item slot 2.
 
-Runtime player residency keys this composition by the complete resolved
-texture plan, not only by the body M2 path. A customization change can therefore
+Runtime player residency keys this composition by base customization and the
+complete public visible-equipment snapshot, not only by the body M2 path. The
+runtime joins every nonempty slot through `Item.dbc` and
+`ItemDisplayInfo.dbc`; unknown entries and displays are errors rather than
+appearance fallbacks. A customization or equipment change can therefore
 recompose the atlas without duplicating the decoded M2 or any same-path HD BLP
 source. The dynamic atlas receives its own placement-owned GPU image identity
 and complete sRGB mip upload; it is not disguised as an archive-backed BLP

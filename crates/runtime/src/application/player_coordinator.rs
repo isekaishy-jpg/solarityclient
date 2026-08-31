@@ -5,18 +5,20 @@ use std::sync::Arc;
 use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CreatureCatalog, DecodedM2Model, HelmetGeosetVisibilityCatalog,
-    M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    ItemDefinitionCatalog, ItemDisplayCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
-use solarity_ecs::{ActiveWorld, WorldStateError, WorldTransform};
+use solarity_ecs::{
+    ActiveWorld, PlayerEquipmentSlot, VisibleEquipmentItem, WorldStateError, WorldTransform,
+};
 use solarity_rendering::{
-    CharacterAtlasTexture, CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError,
-    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, M2ParticleColorReplacement, WorldCamera,
+    CharacterAtlasTexture, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
+    CharacterGeosetPlanError, CharacterTabardMode, CharacterTextureComposeError,
+    CharacterTexturePlan, CharacterTexturePlanError, M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
-    UnitModelAppearanceError, resolve_model_camera_subject_height, resolve_player_camera_pose,
-    resolve_unit_model,
+    PlayerEquipmentAppearanceError, UnitModelAppearanceError, resolve_model_camera_subject_height,
+    resolve_player_camera_pose, resolve_player_equipment, resolve_unit_model,
 };
 use thiserror::Error;
 
@@ -47,6 +49,9 @@ pub enum RuntimePlayerError {
     /// Resolved customization could not form stock's body-geoset mask.
     #[error(transparent)]
     CharacterGeosetPlan(#[from] CharacterGeosetPlanError),
+    /// Public visible-item fields could not resolve through client item tables.
+    #[error(transparent)]
+    Equipment(#[from] PlayerEquipmentAppearanceError),
     /// A hardcoded model texture declaration omitted its required BLP path.
     #[error("player M2 {model} has a hardcoded texture without a filename")]
     MissingHardcodedTexturePath {
@@ -80,6 +85,8 @@ pub struct RuntimePlayerPresentation {
     creatures: CreatureCatalog,
     characters: CharacterAppearanceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
+    item_definitions: ItemDefinitionCatalog,
+    item_displays: ItemDisplayCatalog,
     particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
     textures: BlpTextureCache,
@@ -94,6 +101,8 @@ impl RuntimePlayerPresentation {
         creatures: CreatureCatalog,
         characters: CharacterAppearanceCatalog,
         helmet_visibility: HelmetGeosetVisibilityCatalog,
+        item_definitions: ItemDefinitionCatalog,
+        item_displays: ItemDisplayCatalog,
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
@@ -101,6 +110,8 @@ impl RuntimePlayerPresentation {
             creatures,
             characters,
             helmet_visibility,
+            item_definitions,
+            item_displays,
             particle_colors,
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
@@ -149,8 +160,20 @@ impl RuntimePlayerPresentation {
         let class_id = appearance
             .player_class_id()
             .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
-        let texture_plan = CharacterTexturePlan::base(character)?;
-        let geosets = CharacterGeosetPlan::equipped(
+        let equipment =
+            resolve_player_equipment(world, guid, &self.item_definitions, &self.item_displays)?;
+        let equipment_items = equipment
+            .items()
+            .iter()
+            .map(|item| CharacterEquipmentItem::new(item.slot(), item.definition(), item.display()))
+            .collect::<Vec<_>>();
+        let equipment_key = equipment
+            .items()
+            .iter()
+            .map(|item| (item.slot(), item.visible()))
+            .collect::<Vec<_>>();
+        let base_texture_plan = CharacterTexturePlan::base(character)?;
+        let base_geosets = CharacterGeosetPlan::equipped(
             character,
             CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
             &self.helmet_visibility,
@@ -161,8 +184,9 @@ impl RuntimePlayerPresentation {
                 && resident.path() == path
                 && resident.object_scale == scale
                 && resident.particle_color_id == particle_color_id
-                && resident.texture_plan == texture_plan
-                && resident.geosets == geosets
+                && resident.base_texture_plan == base_texture_plan
+                && resident.base_geosets == base_geosets
+                && resident.equipment_key == equipment_key
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
@@ -176,14 +200,24 @@ impl RuntimePlayerPresentation {
 
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, path)?;
+        let texture_plan =
+            CharacterTexturePlan::equipped(character, &assets, equipment_items.iter().copied())?;
+        let geosets = CharacterGeosetPlan::equipped(
+            character,
+            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            equipment_items.iter().copied(),
+        )?;
         let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
         let textures = prepare_model_textures(
             &model,
             hair.as_ref(),
             extra_skin.as_ref(),
+            cape.as_ref(),
             &mut assets,
             &mut self.textures,
         )?;
@@ -201,6 +235,9 @@ impl RuntimePlayerPresentation {
             object_scale: scale,
             particle_color_id,
             particle_colors,
+            base_texture_plan,
+            base_geosets,
+            equipment_key,
             texture_plan,
             geosets,
             atlas,
@@ -267,6 +304,14 @@ impl RuntimePlayerPresentation {
             .and_then(|resident| resident.extra_skin.as_ref())
     }
 
+    /// Returns the complete stock texture plan for the resident appearance.
+    #[must_use]
+    pub fn resident_texture_plan(&self) -> Option<&CharacterTexturePlan> {
+        self.resident
+            .as_ref()
+            .map(|resident| &resident.texture_plan)
+    }
+
     /// Returns the complete player-frame input without exposing mutable residency.
     pub(super) fn resident_frame_input(&self) -> Option<ResidentPlayerFrameInput<'_>> {
         self.resident
@@ -319,6 +364,9 @@ struct ResidentPlayerModel {
     object_scale: f32,
     particle_color_id: u32,
     particle_colors: Option<M2ParticleColorReplacement>,
+    base_texture_plan: CharacterTexturePlan,
+    base_geosets: CharacterGeosetPlan,
+    equipment_key: Vec<(PlayerEquipmentSlot, VisibleEquipmentItem)>,
     texture_plan: CharacterTexturePlan,
     geosets: CharacterGeosetPlan,
     atlas: CharacterAtlasTexture,
@@ -414,6 +462,7 @@ fn prepare_model_textures(
     model: &DecodedM2Model,
     hair: Option<&Arc<BlpTextureSource>>,
     extra_skin: Option<&Arc<BlpTextureSource>>,
+    cape: Option<&Arc<BlpTextureSource>>,
     assets: &mut solarity_asset::AssetStore,
     textures: &mut BlpTextureCache,
 ) -> Result<Vec<ResidentPlayerTexture>, RuntimePlayerError> {
@@ -442,6 +491,10 @@ fn prepare_model_textures(
             )),
             M2TextureKind::SkinExtra => Ok(extra_skin.map_or(
                 ResidentPlayerTexture::Unresolved(M2TextureKind::SkinExtra),
+                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
+            )),
+            M2TextureKind::Item => Ok(cape.map_or(
+                ResidentPlayerTexture::Unresolved(M2TextureKind::Item),
                 |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
             )),
             kind => Ok(ResidentPlayerTexture::Unresolved(kind)),

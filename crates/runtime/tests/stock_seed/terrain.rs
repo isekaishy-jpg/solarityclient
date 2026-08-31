@@ -6,8 +6,8 @@ use std::io::Cursor;
 use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, ClientDataRoot,
-    CreatureCatalog, HelmetGeosetVisibilityCatalog, Locale, MapCatalog, ParticleColorCatalog,
-    TerrainTileIndex,
+    CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
+    Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
@@ -56,6 +56,8 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let creatures = CreatureCatalog::load(&mut store)?;
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let item_displays = ItemDisplayCatalog::load(&mut store)?;
     let particle_colors = ParticleColorCatalog::load(&mut store)?;
     let assets = AssetStoreHandle::new(store);
     let mut player = RuntimePlayerPresentation::new(
@@ -63,6 +65,8 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         creatures,
         characters,
         helmet_visibility,
+        item_definitions,
+        item_displays,
         particle_colors,
     );
     let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
