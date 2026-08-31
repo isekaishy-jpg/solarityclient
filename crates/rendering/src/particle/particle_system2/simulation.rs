@@ -6,6 +6,9 @@ use thiserror::Error;
 
 use super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateError};
 
+/// Executable constant at `0x009F23CC` used to overprovision emitter storage.
+const STOCK_CAPACITY_HEADROOM: f64 = f32::from_bits(0x3F93_3333) as f64;
+
 /// Particles stay in emitter-local space instead of receiving the bone matrix.
 const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0200;
 
@@ -26,12 +29,12 @@ pub struct M2ParticleSimulation {
 }
 
 impl M2ParticleSimulation {
-    /// Creates a bounded emitter owner from its runtime-provided stock seed.
+    /// Creates an emitter owner from its runtime-provided stock seed.
     #[must_use]
-    pub fn new(seed: u32, capacity: usize) -> Self {
+    pub fn new(seed: u32) -> Self {
         Self {
-            particles: Vec::with_capacity(capacity),
-            capacity,
+            particles: Vec::new(),
+            capacity: 0,
             emission_remainder: 0.0,
             random: M2ParticleRandom::new(seed),
         }
@@ -118,6 +121,7 @@ impl M2ParticleSimulation {
         if unsupported != 0 {
             return Err(M2ParticleSimulationError::BehaviorFlags(unsupported));
         }
+        self.grow_stock_capacity(emitter, pose)?;
 
         // The executable samples rate variation once per update before testing
         // whether emission is enabled, preserving PRNG call order across keys.
@@ -183,7 +187,7 @@ impl M2ParticleSimulation {
         &self.particles
     }
 
-    /// Returns the preallocated maximum number of live particles.
+    /// Returns the current grow-only stock particle-pool limit.
     #[must_use]
     pub const fn capacity(&self) -> usize {
         self.capacity
@@ -193,6 +197,31 @@ impl M2ParticleSimulation {
     #[must_use]
     pub const fn emission_remainder(&self) -> f32 {
         self.emission_remainder
+    }
+
+    /// Grows the particle pool using build 12340's current-rate estimate.
+    ///
+    /// The original evaluates the float inputs in x87 extended precision,
+    /// rounds to nearest-even, and only reallocates when the estimate grows.
+    fn grow_stock_capacity(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+    ) -> Result<(), M2ParticleSimulationError> {
+        let rate = f64::from(pose.emission_rate()) + f64::from(emitter.emission_rate_variation());
+        let lifetime = f64::from(pose.lifespan()) + f64::from(emitter.lifespan_variation());
+        let estimate = rate * lifetime * STOCK_CAPACITY_HEADROOM;
+        if !estimate.is_finite() || estimate < 0.0 || estimate > usize::MAX as f64 {
+            return Err(M2ParticleSimulationError::Capacity);
+        }
+        let required = estimate.round_ties_even() as usize;
+        if required > self.capacity {
+            self.particles
+                .try_reserve_exact(required.saturating_sub(self.particles.len()))
+                .map_err(|_| M2ParticleSimulationError::Allocation)?;
+            self.capacity = required;
+        }
+        Ok(())
     }
 }
 
@@ -346,6 +375,12 @@ pub enum M2ParticleSimulationError {
     /// Authored rate and variation produced an invalid effective rate.
     #[error("particle emission rate must be finite and nonnegative")]
     EmissionRate,
+    /// Current authored rate and lifetime cannot produce a stock pool size.
+    #[error("particle capacity estimate is outside the native allocation domain")]
+    Capacity,
+    /// The native allocator could not grow the stock particle pool.
+    #[error("particle pool allocation failed")]
+    Allocation,
     /// A z-source emitter cannot aim from a coincident source point.
     #[error("particle z-source aim is degenerate")]
     DegenerateAim,

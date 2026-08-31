@@ -560,9 +560,9 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Planar emission owns a bounded placement-local stream and live-particle set.
+/// Planar emission grows its placement-local pool from the stock estimate.
 #[test]
-fn m2_planar_particle_simulation_preserves_stock_capacity() -> Result<(), Box<dyn Error>> {
+fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Error>> {
     let bytes = render_m2_bytes("Particle.blp", 1)?;
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
@@ -590,7 +590,17 @@ fn m2_planar_particle_simulation_preserves_stock_capacity() -> Result<(), Box<dy
         emitter,
         M2AnimationClock::new(0, 500.0, 0.0),
     )?;
-    let mut simulation = M2ParticleSimulation::new(0x0029_4823, 3);
+    let initial_pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 0.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    let initial = simulation.advance_planar(emitter, initial_pose, 0.0, Mat4::IDENTITY, 1.0)?;
+    assert_eq!(initial.live(), 0);
+    // The executable constant is the float immediately below 1.15, so the
+    // nominal 11.5 estimate rounds down after extended-precision evaluation.
+    assert_eq!(simulation.capacity(), 11);
     let report = simulation.advance_planar(
         emitter,
         pose,
@@ -599,12 +609,12 @@ fn m2_planar_particle_simulation_preserves_stock_capacity() -> Result<(), Box<dy
         1.0,
     )?;
 
-    assert_eq!(report.emitted(), 3);
+    assert_eq!(report.emitted(), 4);
     assert_eq!(report.deaths(), 0);
-    assert_eq!(report.live(), 3);
-    assert_eq!(simulation.capacity(), 3);
-    assert_eq!(simulation.particles().len(), 3);
-    assert_eq!(simulation.emission_remainder(), 0.0);
+    assert_eq!(report.live(), 4);
+    assert_eq!(simulation.capacity(), 34);
+    assert_eq!(simulation.particles().len(), 4);
+    assert_eq!(simulation.emission_remainder(), -1.0);
     assert!(
         simulation.particles().iter().all(|particle| {
             particle.position().is_finite()
@@ -654,7 +664,7 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
         emitter,
         M2AnimationClock::new(0, 500.0, 0.0),
     )?;
-    let mut simulation = M2ParticleSimulation::new(0x0029_4823, 4);
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
     let report = simulation.advance_sphere(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
 
     assert_eq!(report.emitted(), 2);
