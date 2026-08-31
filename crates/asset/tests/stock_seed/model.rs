@@ -755,6 +755,40 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Lifetime ramps must be ordered for the stock interval search.
+#[test]
+fn m2_particle_lifetime_timestamps_must_be_ordered() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_particle_m2_bytes()?;
+    let particle_offset = m2_array_offset(&model, 0x128)?;
+    let timestamps = m2_array_offset(&model, particle_offset + 0x104)?;
+    model[timestamps..timestamps + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    model[timestamps + 2..timestamps + 4].copy_from_slice(&0_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticleLifetime.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticleLifetime00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadParticleLifetime.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("color timestamps are not ordered")
+    ));
+    Ok(())
+}
+
 /// Packed multi-texture slots are each validated against the model texture table.
 #[test]
 fn m2_particle_multi_texture_references_do_not_receive_a_fallback() -> Result<(), Box<dyn Error>> {

@@ -17,7 +17,8 @@ use solarity_rendering::{
     CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
+    M2ParticleLifetimePoseError, M2ParticlePose, M2PixelShader, M2RibbonControlPoint,
     M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail,
     M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
     M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
@@ -484,6 +485,77 @@ fn m2_ribbon_pose_samples_placement_effect_values() -> Result<(), Box<dyn Error>
     assert!(!final_pose.visible());
     trail.advance(0.1, second, final_pose)?;
     assert_eq!(trail.sections().len(), 3);
+    Ok(())
+}
+
+/// Emitter-clock tracks and per-particle lifetime ramps retain separate clocks.
+#[test]
+fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> {
+    let bytes = render_m2_bytes("Particle.blp", 1)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticlePose.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticlePose00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\ParticlePose.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    assert_eq!(pose.emission_speed(), 3.0);
+    assert_eq!(pose.speed_variation(), 0.3);
+    assert_eq!(pose.vertical_range(), 0.6);
+    assert!((pose.horizontal_range() - 0.9).abs() < f32::EPSILON * 2.0);
+    assert_eq!(pose.gravity(), 9.0);
+    assert_eq!(pose.lifespan(), 2.0);
+    assert_eq!(pose.emission_rate(), 15.0);
+    assert_eq!(pose.emission_area_width(), 6.0);
+    assert_eq!(pose.emission_area_length(), 4.0);
+    assert_eq!(pose.z_source(), 2.0);
+    assert!(pose.enabled());
+    let disabled = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 1_000.0, 0.0),
+    )?;
+    assert!(!disabled.enabled());
+
+    let lifetime = M2ParticleLifetimePose::sample(emitter, 0.5)?;
+    assert!(
+        (lifetime.color() - Vec4::new(0.5, 0.0, 0.5, 0.75))
+            .abs()
+            .max_element()
+            < 0.0001
+    );
+    assert!(
+        (lifetime.scale() - glam::Vec2::new(2.0, 3.0))
+            .abs()
+            .max_element()
+            < 0.0001
+    );
+    assert_eq!(lifetime.head_texture_cell(), 2);
+    assert_eq!(lifetime.tail_texture_cell(), 4);
+    assert_eq!(
+        M2ParticleLifetimePose::sample(emitter, f32::NAN),
+        Err(M2ParticleLifetimePoseError::NonFiniteAge)
+    );
     Ok(())
 }
 
@@ -1912,6 +1984,7 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
     append_render_material_tracks(bytes)?;
     append_render_ribbon(bytes)?;
+    append_render_particle(bytes)?;
     Ok(())
 }
 
@@ -1970,6 +2043,80 @@ fn append_render_ribbon(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     bytes[ribbon_offset + 174] = u8::MAX;
     bytes[ribbon_offset + 175] = u8::MAX;
     set_render_header_array(bytes, 0x120, 1, ribbon_offset)?;
+    Ok(())
+}
+
+/// Adds one planar particle emitter with both emitter-time and lifetime ramps.
+fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let particle_offset = bytes.len();
+    bytes.resize(particle_offset + 476, 0);
+    bytes[particle_offset..particle_offset + 4].copy_from_slice(&0x5041_5254_u32.to_le_bytes());
+    bytes[particle_offset + 20..particle_offset + 22].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[particle_offset + 22..particle_offset + 24].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[particle_offset + 40] = 2;
+    bytes[particle_offset + 41] = 1;
+    bytes[particle_offset + 45] = 2;
+    bytes[particle_offset + 48..particle_offset + 50].copy_from_slice(&2_u16.to_le_bytes());
+    bytes[particle_offset + 50..particle_offset + 52].copy_from_slice(&4_u16.to_le_bytes());
+
+    let animated = [
+        (0x034, [2.0_f32, 4.0_f32]),
+        (0x048, [0.2, 0.4]),
+        (0x05c, [0.4, 0.8]),
+        (0x070, [0.6, 1.2]),
+        (0x084, [8.0, 10.0]),
+        (0x098, [1.0, 3.0]),
+        (0x0b0, [10.0, 20.0]),
+        (0x0c8, [4.0, 8.0]),
+        (0x0dc, [2.0, 6.0]),
+        (0x0f0, [1.0, 3.0]),
+    ];
+    for (field, values) in animated {
+        append_render_track(
+            bytes,
+            particle_offset + field,
+            &[0, 1_000],
+            &render_f32_values(&values),
+            4,
+        )?;
+    }
+    append_render_lifetime_track(
+        bytes,
+        particle_offset + 0x104,
+        &[0, u16::MAX],
+        &render_f32_values(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        12,
+    )?;
+    append_render_lifetime_track(
+        bytes,
+        particle_offset + 0x114,
+        &[0, u16::MAX],
+        &render_i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_render_lifetime_track(
+        bytes,
+        particle_offset + 0x124,
+        &[0, u16::MAX],
+        &render_f32_values(&[1.0, 1.0, 3.0, 5.0]),
+        8,
+    )?;
+    append_render_lifetime_track(
+        bytes,
+        particle_offset + 0x13c,
+        &[0, u16::MAX],
+        &render_u16_values(&[2, 7]),
+        2,
+    )?;
+    append_render_lifetime_track(
+        bytes,
+        particle_offset + 0x14c,
+        &[0, u16::MAX],
+        &render_u16_values(&[4, 9]),
+        2,
+    )?;
+    append_render_track(bytes, particle_offset + 0x1c8, &[0, 1_000], &[1, 0], 1)?;
+    set_render_header_array(bytes, 0x128, 1, particle_offset)?;
     Ok(())
 }
 
@@ -2079,6 +2226,35 @@ fn append_render_track(
     Ok(())
 }
 
+fn append_render_lifetime_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u16],
+    values: &[u8],
+    value_stride: usize,
+) -> Result<(), Box<dyn Error>> {
+    if values.len() != timestamps.len() * value_stride {
+        return Err("render fixture lifetime value count differs from timestamps".into());
+    }
+    let timestamp_data = bytes.len();
+    bytes.extend_from_slice(&render_u16_values(timestamps));
+    let value_data = bytes.len();
+    bytes.extend_from_slice(values);
+    set_render_header_array(
+        bytes,
+        track_offset,
+        u32::try_from(timestamps.len())?,
+        timestamp_data,
+    )?;
+    set_render_header_array(
+        bytes,
+        track_offset + 8,
+        u32::try_from(timestamps.len())?,
+        value_data,
+    )?;
+    Ok(())
+}
+
 fn set_render_header_array(
     bytes: &mut [u8],
     pair_offset: usize,
@@ -2098,6 +2274,13 @@ fn render_f32_values(values: &[f32]) -> Vec<u8> {
 }
 
 fn render_i16_values(values: &[i16]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn render_u16_values(values: &[u16]) -> Vec<u8> {
     values
         .iter()
         .flat_map(|value| value.to_le_bytes())
