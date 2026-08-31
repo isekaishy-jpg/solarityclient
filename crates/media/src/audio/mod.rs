@@ -17,4 +17,7 @@ mod spatial;
 mod types;
 
 pub use cache::{EncodedSound, SoundCache};
+pub use codec::{
+    DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,
+};
 pub use selection::SoundVariationSelector;

@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use wow_mpq::{ArchiveBuilder, ListfileOption};
 
@@ -148,4 +149,14 @@ fn append_string(strings: &mut Vec<u8>, value: &str) -> u32 {
     strings.extend_from_slice(value.as_bytes());
     strings.push(0);
     offset
+}
+
+/// Serializes SDL_mixer initialization inside this integration-test process.
+pub(crate) fn sdl_test_lock() -> MutexGuard<'static, ()> {
+    static SDL_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    match SDL_TEST_LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }

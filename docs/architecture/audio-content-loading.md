@@ -37,6 +37,18 @@ once, retains no parallel stock/pack version, and can collect entries after the
 cache becomes their sole owner. No unevidenced byte limit or age-based eviction
 policy is introduced.
 
+SDL3_mixer admission is device-independent. A memory mixer uses build 12340's
+44.1 kHz output default and signed-16 stereo minimum, while every resource still
+reports its authored sample rate and channel count. The caller explicitly
+chooses streaming or complete predecode residency; the normalized path and that
+mode form the decoder identity.
+
+The pinned safe SDL wrapper copies the original encoded file into its `Audio`
+resource during admission. This is the one adapter-boundary copy: the temporary
+`IOStream` retires immediately, and the encoded cache can collect its source
+once other owners release it. Unsupported or corrupt bytes fail admission and
+do not trigger another codec, filesystem search, or extension substitution.
+
 The schema is checked against the public build range covering
 3.1.0.9767 through 3.3.5.12340 in the
 [WoWDBDefs SoundEntries definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntries.dbd).
