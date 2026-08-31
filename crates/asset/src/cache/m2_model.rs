@@ -45,7 +45,7 @@ impl M2ModelCache {
     /// # Errors
     ///
     /// Returns [`AssetError`] when a cache miss cannot resolve or decode the M2
-    /// and all required external SKIN profiles. Failed loads are not retained.
+    /// and its stock-selected primary SKIN profile. Failed loads are not retained.
     pub fn load(
         &mut self,
         store: &mut AssetStore,
@@ -56,7 +56,10 @@ impl M2ModelCache {
             return Ok(Arc::clone(model));
         }
 
-        let model = Arc::new(DecodedM2Model::load(store, &canonical_path)?);
+        let model = Arc::new(DecodedM2Model::load_primary_profile(
+            store,
+            &canonical_path,
+        )?);
         self.models.insert(canonical_path, Arc::clone(&model));
         Ok(model)
     }

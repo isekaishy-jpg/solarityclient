@@ -10,7 +10,7 @@ use crate::{
     M2SkinProfile, M2Texture, M2Vertex,
 };
 
-/// A decoded M2 and every external SKIN profile named by its build-12340 header.
+/// A decoded M2 and the external SKIN profiles requested by its load boundary.
 #[derive(Debug)]
 pub struct DecodedM2Model {
     path: AssetPath,
@@ -32,6 +32,33 @@ impl DecodedM2Model {
     /// the model is not exact build-12340 MD20 data, a required external profile
     /// is missing or malformed, or cross-file geometry references are invalid.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
+        Self::load_profiles(store, path, SkinProfileLoad::All)
+    }
+
+    /// Resolves only build 12340's highest-capability `00.skin` companion.
+    ///
+    /// The stock runtime selects one external view when the shared M2 enters
+    /// memory. Vulkan 1.3 satisfies that highest-capability branch, so runtime
+    /// caches should not read the other, potentially HD-sized, profiles.
+    /// [`Self::load`] remains the exhaustive validation/tooling boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same strict M2 and SKIN failures as [`Self::load`], scoped
+    /// to the required primary external profile.
+    pub fn load_primary_profile(
+        store: &mut AssetStore,
+        path: &AssetPath,
+    ) -> Result<Self, AssetError> {
+        Self::load_profiles(store, path, SkinProfileLoad::Primary)
+    }
+
+    /// Shares body/animation decoding while varying only external view demand.
+    fn load_profiles(
+        store: &mut AssetStore,
+        path: &AssetPath,
+        profile_load: SkinProfileLoad,
+    ) -> Result<Self, AssetError> {
         let path = canonical_model_path(path)?;
         let read = store.read(&path)?;
         let source = read.source().clone();
@@ -53,8 +80,12 @@ impl DecodedM2Model {
         let model_vertex_count = model.vertices.len();
         let animations = M2AnimationSet::load(store, &path, &model_bytes)?;
         let blob = ModelBlob::from_model(&path, &model_bytes, model)?;
-        let mut skins = Vec::with_capacity(profile_count as usize);
-        for profile in 0..profile_count {
+        let loaded_profile_count = match profile_load {
+            SkinProfileLoad::All => profile_count,
+            SkinProfileLoad::Primary => 1,
+        };
+        let mut skins = Vec::with_capacity(loaded_profile_count as usize);
+        for profile in 0..loaded_profile_count {
             let profile_path = skin_path(&path, profile)?;
             let profile_read = store.read(&profile_path)?;
             let profile_source = profile_read.source().clone();
@@ -150,7 +181,7 @@ impl DecodedM2Model {
         self.blob.collision.as_ref()
     }
 
-    /// Returns every external view/LOD profile in header order.
+    /// Returns loaded external view/LOD profiles in header order.
     #[must_use]
     pub fn skins(&self) -> &[M2SkinProfile] {
         &self.skins
@@ -233,6 +264,13 @@ impl DecodedM2Model {
     pub const fn material_count(&self) -> usize {
         self.blob.materials.len()
     }
+}
+
+/// External SKIN demand for exhaustive tooling versus the stock live runtime.
+#[derive(Clone, Copy)]
+enum SkinProfileLoad {
+    All,
+    Primary,
 }
 
 /// Proves every SKIN animation selector against the decoded M2 tables.

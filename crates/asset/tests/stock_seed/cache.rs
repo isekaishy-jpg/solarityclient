@@ -4,7 +4,8 @@ use std::error::Error;
 use std::sync::Arc;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, Locale, M2ModelCache,
+    ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, DecodedM2Model, Locale,
+    M2ModelCache,
 };
 
 use crate::model::{m2_bytes, skin_bytes};
@@ -61,6 +62,37 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     assert_eq!(cache.collect_unused(), 1);
     assert!(cache.is_empty());
     assert!(weak.upgrade().is_none());
+    Ok(())
+}
+
+/// Runtime cache reads only the one SKIN selected by the Vulkan capability tier.
+#[test]
+fn m2_cache_does_not_read_unselected_hd_skin_profiles() -> Result<(), Box<dyn Error>> {
+    let model = m2_bytes("PrimaryOnly", 2)?;
+    let skin = skin_bytes(96, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\PrimaryOnly.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\PrimaryOnly00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\PrimaryOnly.m2")?;
+
+    // Exhaustive tooling still proves that the header's second companion is absent.
+    assert!(DecodedM2Model::load(&mut store, &path).is_err());
+    let mut cache = M2ModelCache::new();
+    let selected = cache.load(&mut store, &path)?;
+    assert_eq!(selected.skins().len(), 1);
+    assert_eq!(selected.skins()[0].bone_count_max(), 96);
     Ok(())
 }
 
