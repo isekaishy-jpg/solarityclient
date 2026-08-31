@@ -8,8 +8,8 @@ use solarity_asset::{
     AssetPath, AssetStore, CharacterAppearanceCatalog, CharacterClassCatalog,
     CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
-    LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind, SoundEntryCatalog, WdbcTable,
-    WorldLightQuery, WorldLightSampleError, exterior_light_direction,
+    LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind, ParticleColorCatalog,
+    SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError, exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -66,6 +66,59 @@ fn truncated_wdbc_is_rejected() -> Result<(), Box<dyn Error>> {
     assert!(matches!(
         WdbcTable::load(&mut store, &path),
         Err(AssetError::DatabaseDecode { path: failed, .. }) if failed == path
+    ));
+    Ok(())
+}
+
+/// Particle replacement ramps preserve all three stock color triplets.
+#[test]
+fn particle_color_catalog_decodes_exact_stock_layout() -> Result<(), Box<dyn Error>> {
+    let fields = [
+        17,
+        0x0011_2233,
+        0x0044_5566,
+        0x0077_8899,
+        0x00aa_bbcc,
+        0x00dd_eeff,
+        0x0001_0203,
+        0x0004_0506,
+        0x0007_0809,
+        0x000a_0b0c,
+    ];
+    let table = create_wdbc(1, 10, &fields, b"\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\ParticleColor.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = ParticleColorCatalog::load(&mut store)?;
+    let definition = catalog.definition(17).ok_or("particle color is absent")?;
+    assert_eq!(definition.id(), 17);
+    assert_eq!(definition.start(), fields[1..4]);
+    assert_eq!(definition.middle(), fields[4..7]);
+    assert_eq!(definition.end(), fields[7..10]);
+    assert!(catalog.definition(18).is_none());
+    Ok(())
+}
+
+/// Another ParticleColor layout cannot be reinterpreted as build 12340.
+#[test]
+fn particle_color_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(1, 9, &[0; 9], b"\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\ParticleColor.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert!(matches!(
+        ParticleColorCatalog::load(&mut store),
+        Err(AssetError::DatabaseDecode { .. })
     ));
     Ok(())
 }

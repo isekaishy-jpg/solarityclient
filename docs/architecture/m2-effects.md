@@ -117,6 +117,11 @@ The asset boundary owns the complete 476-byte WotLK particle record:
 - variation, tail, twinkle, drag, spin, tumble, wind, follow, spline, and
   animated enable parameters.
 
+The separate ten-word build-12340 `ParticleColor.dbc` catalog owns its row ID
+and three packed start, middle, and end color triplets. Exact lookup remains a
+presentation input; a missing display-selected row is not replaced by another
+color definition.
+
 Under flag `0x10000000`, the 16-bit texture field contains three five-bit model
 texture indices. Otherwise it is one ordinary index. Admission expands and
 validates the applicable representation instead of assuming every emitter has

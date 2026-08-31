@@ -16,6 +16,7 @@ mod item;
 mod light;
 mod localized;
 mod map;
+mod particle_color;
 mod player_class;
 mod race;
 mod realm;
@@ -45,6 +46,7 @@ pub use light::{
     WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use map::{MapCatalog, MapDefinition, MapKind};
+pub use particle_color::{ParticleColorCatalog, ParticleColorDefinition};
 pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};
 pub use race::{CharacterRace, CharacterRaceCatalog};
 pub use realm::{
