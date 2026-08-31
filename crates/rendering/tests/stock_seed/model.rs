@@ -469,7 +469,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
                 )
             })
             .collect::<Vec<_>>(),
-        [(0, 0, 0), (1, 1, 3)]
+        [(0, 0, 0), (1, 1, -1)]
     );
     let specialized = M2ShaderPlan::resolve(&model, draw)?;
     assert_eq!(specialized.requested_shader_id(), 0x8001);
@@ -1647,7 +1647,7 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
         },
     ];
     model.raw_data.texture_lookup_table = vec![0, 1];
-    model.raw_data.texture_units = vec![0, 3];
+    model.raw_data.texture_units = vec![0, u16::MAX];
     model.raw_data.bone_lookup_table = vec![2];
     for index in 0..3 {
         model.vertices.push(RawM2Vertex {

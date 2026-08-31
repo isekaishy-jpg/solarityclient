@@ -1,6 +1,7 @@
 //! Archive-backed build-12340 M2 model ownership.
 
 use crate::model::M2AnimationSet;
+use crate::model::lookups::M2LookupTables;
 use crate::model::m2_shared::{
     canonical_model_path, model_decode, parse_model, parse_skin, skin_path,
 };
@@ -79,7 +80,15 @@ impl DecodedM2Model {
 
         let model_vertex_count = model.vertices.len();
         let animations = M2AnimationSet::load(store, &path, &model_bytes)?;
-        let blob = ModelBlob::from_model(&path, &model_bytes, model)?;
+        let lookups = M2LookupTables::decode(
+            &path,
+            &model_bytes,
+            animations.bones().len(),
+            model.textures.len(),
+            animations.texture_weights().len(),
+            animations.texture_transforms().len(),
+        )?;
+        let blob = ModelBlob::from_model(&path, &model_bytes, model, lookups)?;
         let loaded_profile_count = match profile_load {
             SkinProfileLoad::All => profile_count,
             SkinProfileLoad::Primary => 1,
@@ -205,16 +214,22 @@ impl DecodedM2Model {
         &self.blob.bone_lookup
     }
 
+    /// Returns texture-kind slots mapped to replaceable texture declarations.
+    #[must_use]
+    pub fn replaceable_texture_lookup(&self) -> &[u16] {
+        &self.blob.replaceable_texture_lookup
+    }
+
     /// Returns texture indices selected by SKIN batch texture combos.
     #[must_use]
     pub fn texture_lookup(&self) -> &[u16] {
         &self.blob.texture_lookup
     }
 
-    /// Returns stock texture-unit values parallel to texture combos.
+    /// Returns signed stock texture-coordinate selectors parallel to combos.
     #[must_use]
-    pub fn texture_units(&self) -> &[u16] {
-        &self.blob.texture_units
+    pub fn texture_coordinate_lookup(&self) -> &[i16] {
+        &self.blob.texture_coordinate_lookup
     }
 
     /// Returns texture-weight indices selected by SKIN batches.

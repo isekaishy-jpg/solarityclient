@@ -5,6 +5,7 @@ use wow_m2::chunks::texture::M2TextureType as DependencyTextureType;
 use wow_m2::model::M2Model;
 use wow_m2::skin::{OldSkin, SkinBatch, SkinSubmesh};
 
+use crate::model::lookups::M2LookupTables;
 use crate::model::m2_shared::{ParsedSkin, model_decode};
 use crate::{ArchiveDescriptor, AssetError, AssetPath};
 
@@ -380,9 +381,10 @@ pub(super) struct ModelBlob {
     pub(super) vertices: Vec<M2Vertex>,
     pub(super) textures: Vec<M2Texture>,
     pub(super) materials: Vec<M2Material>,
+    pub(super) replaceable_texture_lookup: Vec<u16>,
     pub(super) bone_lookup: Vec<u16>,
     pub(super) texture_lookup: Vec<u16>,
-    pub(super) texture_units: Vec<u16>,
+    pub(super) texture_coordinate_lookup: Vec<i16>,
     pub(super) transparency_lookup: Vec<u16>,
     pub(super) texture_animation_lookup: Vec<u16>,
     pub(super) texture_combiner_combos: Vec<u16>,
@@ -394,6 +396,7 @@ impl ModelBlob {
         path: &AssetPath,
         bytes: &[u8],
         model: M2Model,
+        lookups: M2LookupTables,
     ) -> Result<Self, AssetError> {
         let flags = model.header.flags.bits();
         let bounds = M2ModelBounds {
@@ -443,11 +446,12 @@ impl ModelBlob {
             vertices,
             textures,
             materials,
-            bone_lookup: model.raw_data.bone_lookup_table,
-            texture_lookup: model.raw_data.texture_lookup_table,
-            texture_units: model.raw_data.texture_units,
-            transparency_lookup: model.raw_data.transparency_lookup_table,
-            texture_animation_lookup: model.raw_data.texture_animation_lookup,
+            replaceable_texture_lookup: lookups.replaceable_textures,
+            bone_lookup: lookups.bones,
+            texture_lookup: lookups.textures,
+            texture_coordinate_lookup: lookups.texture_coordinates,
+            transparency_lookup: lookups.texture_weights,
+            texture_animation_lookup: lookups.texture_transforms,
             texture_combiner_combos,
         })
     }

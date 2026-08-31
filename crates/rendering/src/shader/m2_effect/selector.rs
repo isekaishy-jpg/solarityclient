@@ -151,7 +151,7 @@ fn substitute_simple_shader(
             1
         };
         let coordinate = draw.texture_bindings()[0].texture_coordinate();
-        if coordinate > 2 {
+        if !(0..=2).contains(&coordinate) {
             stage |= ENVIRONMENT_BIT;
         }
         let mut shader = stage << STAGE_SHIFT;
@@ -179,7 +179,7 @@ fn substitute_simple_shader(
                         combo_index,
                     })?
             };
-        if binding.texture_coordinate() > 2 {
+        if !(0..=2).contains(&binding.texture_coordinate()) {
             combiner |= ENVIRONMENT_BIT;
         }
         stages[stage_index] = combiner;

@@ -4,6 +4,7 @@
 //! family supports a format boundary separate from GPU model resources.
 
 mod animation;
+mod lookups;
 mod m2_cache;
 mod m2_model;
 mod m2_shared;

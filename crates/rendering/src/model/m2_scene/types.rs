@@ -86,12 +86,12 @@ impl M2RenderVertex {
 pub struct M2TextureBinding {
     stage: u16,
     texture_index: u16,
-    texture_coordinate: u16,
+    texture_coordinate: i16,
 }
 
 impl M2TextureBinding {
     /// Creates one validated material-stage binding.
-    pub(super) const fn new(stage: u16, texture_index: u16, texture_coordinate: u16) -> Self {
+    pub(super) const fn new(stage: u16, texture_index: u16, texture_coordinate: i16) -> Self {
         Self {
             stage,
             texture_index,
@@ -113,7 +113,7 @@ impl M2TextureBinding {
 
     /// Returns the stock texture-coordinate lookup value.
     #[must_use]
-    pub const fn texture_coordinate(self) -> u16 {
+    pub const fn texture_coordinate(self) -> i16 {
         self.texture_coordinate
     }
 }

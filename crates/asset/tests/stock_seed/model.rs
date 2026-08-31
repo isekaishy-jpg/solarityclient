@@ -103,7 +103,9 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert_eq!(model.textures()[1].filename(), None);
     assert_eq!(model.materials()[0].blend_mode(), M2BlendMode::Alpha);
     assert_eq!(model.texture_lookup(), &[0, 1]);
-    assert_eq!(model.texture_units(), &[0, 1]);
+    assert_eq!(model.texture_coordinate_lookup(), &[0, -1]);
+    assert_eq!(model.replaceable_texture_lookup().len(), 12);
+    assert_eq!(model.replaceable_texture_lookup()[11], 1);
     assert_eq!(model.bounds().minimum(), glam::Vec3::new(-1.0, -2.0, -3.0));
     assert_eq!(model.bounds().maximum(), glam::Vec3::new(4.0, 5.0, 6.0));
     assert_eq!(model.bounds().sphere_radius(), 7.25);
@@ -205,6 +207,41 @@ fn m2_key_bone_lookup_rejects_an_invalid_signed_value() -> Result<(), Box<dyn Er
         Err(AssetError::ModelDecode { path: failed, message })
             if failed == path
                 && message.contains("key-bone lookup 1 references missing bone -2")
+    ));
+    Ok(())
+}
+
+/// Replacement roles may not point at a texture declaration that is absent.
+#[test]
+fn m2_replaceable_texture_lookup_rejects_a_missing_texture() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("BadReplacement", 1)?;
+    let lookup_offset = m2_array_offset(&model, 0x68)?;
+    model[lookup_offset + 22..lookup_offset + 24].copy_from_slice(&2_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadReplacement.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadReplacement00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadReplacement.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path
+                && message.contains(
+                    "replaceable-texture lookup 11 references missing entry 2"
+                )
     ));
     Ok(())
 }
@@ -1259,7 +1296,7 @@ fn m2_bytes_inner(
         blend_mode: RawBlendMode::ALPHA,
     }];
     model.raw_data.texture_lookup_table = vec![0, 1];
-    model.raw_data.texture_units = vec![0, 1];
+    model.raw_data.texture_units = vec![0, u16::MAX];
     for index in 0..3 {
         model.vertices.push(RawM2Vertex {
             position: C3Vector {
@@ -1325,6 +1362,13 @@ fn append_build_12340_attachment_metadata(bytes: &mut Vec<u8>) -> Result<(), Box
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     set_header_array(bytes, 0x34, 3, key_bone_lookup_offset)?;
+
+    let replaceable_texture_lookup_offset = bytes.len();
+    for slot in 0..12 {
+        let value = if slot == 11 { 1 } else { u16::MAX };
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    set_header_array(bytes, 0x68, 12, replaceable_texture_lookup_offset)?;
 
     let attachment_offset = bytes.len();
     let mut attachment = [0_u8; 40];

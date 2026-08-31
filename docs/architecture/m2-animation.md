@@ -50,6 +50,19 @@ Runtime consumers resolve a semantic role through the authored table only.
 They do not scan the bone array's `key_bone_id` fields to repair an absent or
 malformed lookup.
 
+## Owned header lookups
+
+The fixed-width lookup tables at `0x68` and `0x78` through `0x98` are decoded
+directly rather than retained from `wow-m2`. This prevents the dependency's
+malformed-header repair from silently converting stock data to an empty table
+and avoids duplicate lookup allocations for larger HD replacements.
+
+Bone and texture lookups require an existing record. Replaceable-texture,
+texture-weight, and texture-transform lookups preserve only `0xFFFF` as an
+absent entry. Texture-coordinate selectors remain signed because negative
+values participate in the stock environment-coordinate branch; the format
+boundary does not reinterpret them as ordinary UV-set numbers.
+
 ## Cycle count and ownership
 
 Sequence timer construction at `0x00826B00` calculates the total number of

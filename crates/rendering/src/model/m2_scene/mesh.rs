@@ -279,7 +279,7 @@ fn resolve_texture_bindings(
         let coordinate_combo =
             usize::from(batch.texture_coordinate_combo_index) + usize::from(stage);
         let texture_coordinate = model
-            .texture_units()
+            .texture_coordinate_lookup()
             .get(coordinate_combo)
             .copied()
             .ok_or_else(|| M2MeshPlanError::MissingCoordinateCombo {
