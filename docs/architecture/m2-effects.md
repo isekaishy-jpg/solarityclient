@@ -79,9 +79,18 @@ resolution as bones and material animation. Texture, material, color, bone, and
 texture-transform references are validated during model admission. Missing or
 invalid references do not receive compatibility substitutions.
 
-The decoder does not yet simulate edge history or submit ribbon geometry. That
-state must be owned per placement, while decoded tracks, BLP sources, and GPU
-resources remain shared—including larger same-path HD replacements.
+Rendering samples ribbon color, fixed16 alpha, both heights, the held texture
+slot, and byte visibility through the same local/global clock routing used by
+bones. Each placed emitter owns its edge history; the decoded declaration and
+its BLP source remain shared, including when a larger same-path HD replacement
+wins archive precedence.
+
+The build-12340 executable rounds edge rate upward, clamps edge lifetime to
+0.25 seconds, and allocates `ceil(rate * lifetime) + 2` edge pairs. The retained
+trail reproduces that bound, its nominal one-interval first update, lifetime
+expiry, quadratic gravity integration, and the two-handle interpolation used
+when a frame crosses an edge boundary. Vulkan strip upload and submission are
+the remaining ribbon presentation boundary.
 
 ## Particles
 

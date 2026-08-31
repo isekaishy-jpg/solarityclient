@@ -2,7 +2,7 @@
 
 mod material;
 mod pose;
-mod sample;
+pub(crate) mod sample;
 mod status;
 
 pub use material::M2MaterialPose;

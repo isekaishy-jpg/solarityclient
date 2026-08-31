@@ -6,7 +6,7 @@
 mod character_component;
 mod character_model_base;
 mod component_utils;
-mod m2_animation;
+pub(crate) mod m2_animation;
 mod m2_scene;
 mod world_model_scene;
 

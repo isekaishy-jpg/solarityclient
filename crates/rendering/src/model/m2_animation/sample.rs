@@ -76,7 +76,7 @@ const fn values_per_key(interpolation: M2Interpolation) -> usize {
 }
 
 /// Evaluates one vector-valued bone track.
-pub(super) fn sample_vec3(
+pub(crate) fn sample_vec3(
     animations: &M2AnimationSet,
     track: &M2Track<Vec3>,
     sequence: usize,
@@ -117,7 +117,7 @@ pub(super) fn sample_vec3(
 }
 
 /// Evaluates one scalar material track with the shared cubic basis.
-pub(super) fn sample_scalar(
+pub(crate) fn sample_scalar(
     animations: &M2AnimationSet,
     track: &M2Track<f32>,
     sequence: usize,
@@ -238,6 +238,45 @@ pub(super) fn sample_quaternion(
         }
     };
     sampled.normalize()
+}
+
+/// Evaluates a selector or enable track without inventing fractional states.
+///
+/// Build 12340 stores ribbon texture slots and visibility in ordinary M2
+/// tracks, but consumes their values as discrete integers. The selected key is
+/// therefore held even when malformed content labels the track as a spline.
+pub(crate) fn sample_discrete<T>(
+    animations: &M2AnimationSet,
+    track: &M2Track<T>,
+    sequence: usize,
+    animation_time_ms: f32,
+    global_time_ms: f32,
+    default: T,
+) -> T
+where
+    T: Copy,
+{
+    let Some(location) = locate(
+        animations,
+        track,
+        sequence,
+        animation_time_ms,
+        global_time_ms,
+    ) else {
+        return default;
+    };
+    let Some((lower, _upper, _amount)) =
+        interval(location.channel, M2Interpolation::Step, location.time_ms)
+    else {
+        return default;
+    };
+    let stride = values_per_key(track.interpolation());
+    location
+        .channel
+        .values()
+        .get(lower * stride)
+        .copied()
+        .unwrap_or(default)
 }
 
 /// Shares the recovered cubic basis between vectors and quaternions.

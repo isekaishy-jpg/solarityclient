@@ -17,9 +17,10 @@ use solarity_rendering::{
     CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialUniform,
-    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2SampledTexture, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap, VulkanError,
+    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint, M2RibbonPose, M2RibbonTrail,
+    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    VulkanBootstrap, VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -390,6 +391,73 @@ fn equipped_character_plan_orders_item_components() -> Result<(), Box<dyn Error>
         layer.region() == CharacterAtlasRegion::LegUpper
             && layer.kind() == CharacterAtlasLayerKind::Underwear
     }));
+    Ok(())
+}
+
+/// Ribbon animation uses the model sequence clock while retaining discrete selectors.
+#[test]
+fn m2_ribbon_pose_samples_placement_effect_values() -> Result<(), Box<dyn Error>> {
+    let model = render_m2_bytes("RibbonPose", 1)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\RibbonPose.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\RibbonPose00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\RibbonPose.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .ribbons()
+        .first()
+        .ok_or("ribbon emitter is absent")?;
+
+    let pose = M2RibbonPose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    assert_eq!(pose.color().truncate(), Vec3::new(2.0, 1.5, 1.0));
+    assert!((pose.color().w - 0.75).abs() < 0.000_1);
+    assert_eq!(pose.height_above(), 2.0);
+    assert_eq!(pose.height_below(), 1.0);
+    assert_eq!(pose.texture_slot(), 1);
+    assert!(pose.visible());
+
+    let mut trail = M2RibbonTrail::new(emitter)?;
+    assert_eq!(trail.capacity(), 27);
+    let first = M2RibbonControlPoint::new(Vec3::ZERO, Vec3::Y, Vec3::X);
+    trail.advance(4.0, first, pose)?;
+    assert_eq!(trail.sections().len(), 2);
+    let first_sections = trail.sections().copied().collect::<Vec<_>>();
+    assert_eq!(first_sections[0].above(), Vec3::new(0.0, 2.0, 0.0));
+    assert_eq!(first_sections[0].below(), Vec3::new(0.0, -1.0, 0.0));
+
+    let second = M2RibbonControlPoint::new(Vec3::X, Vec3::Y, Vec3::X);
+    trail.advance(0.05, second, pose)?;
+    assert_eq!(trail.sections().len(), 3);
+    let aged = trail.sections().next().ok_or("ribbon trail is empty")?;
+    assert!((aged.age_seconds() - 0.05).abs() < 0.000_1);
+    assert!((aged.above().z - 0.0245).abs() < 0.000_1);
+    assert_eq!(trail.texture_slot(), 1);
+
+    let final_pose = M2RibbonPose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 1_000.0, 0.0),
+    )?;
+    assert_eq!(final_pose.texture_slot(), 3);
+    assert!(!final_pose.visible());
+    trail.advance(0.1, second, final_pose)?;
+    assert_eq!(trail.sections().len(), 3);
     Ok(())
 }
 
@@ -1749,6 +1817,65 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     bytes[0x2c..0x30].copy_from_slice(&3_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
     append_render_material_tracks(bytes)?;
+    append_render_ribbon(bytes)?;
+    Ok(())
+}
+
+/// Adds one build-12340 ribbon whose six tracks share the fixture sequence.
+fn append_render_ribbon(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let ribbon_offset = bytes.len();
+    bytes.resize(ribbon_offset + 176, 0);
+    bytes[ribbon_offset..ribbon_offset + 4].copy_from_slice(&0x5249_424E_u32.to_le_bytes());
+    bytes[ribbon_offset + 4..ribbon_offset + 8].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[ribbon_offset + 8..ribbon_offset + 20]
+        .copy_from_slice(&render_f32_values(&[1.0, 2.0, 3.0]));
+
+    let texture_indices = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    set_render_header_array(bytes, ribbon_offset + 20, 1, texture_indices)?;
+    let material_indices = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    set_render_header_array(bytes, ribbon_offset + 28, 1, material_indices)?;
+
+    append_render_track(
+        bytes,
+        ribbon_offset + 36,
+        &[0, 1_000],
+        &render_f32_values(&[1.0, 1.0, 1.0, 3.0, 2.0, 1.0]),
+        12,
+    )?;
+    append_render_track(
+        bytes,
+        ribbon_offset + 56,
+        &[0, 1_000],
+        &render_i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_render_track(
+        bytes,
+        ribbon_offset + 76,
+        &[0, 1_000],
+        &render_f32_values(&[1.0, 3.0]),
+        4,
+    )?;
+    append_render_track(
+        bytes,
+        ribbon_offset + 96,
+        &[0, 1_000],
+        &render_f32_values(&[0.5, 1.5]),
+        4,
+    )?;
+    bytes[ribbon_offset + 116..ribbon_offset + 120].copy_from_slice(&20.0_f32.to_le_bytes());
+    bytes[ribbon_offset + 120..ribbon_offset + 124].copy_from_slice(&1.25_f32.to_le_bytes());
+    bytes[ribbon_offset + 124..ribbon_offset + 128].copy_from_slice(&9.8_f32.to_le_bytes());
+    bytes[ribbon_offset + 128..ribbon_offset + 130].copy_from_slice(&2_u16.to_le_bytes());
+    bytes[ribbon_offset + 130..ribbon_offset + 132].copy_from_slice(&4_u16.to_le_bytes());
+    append_render_track(bytes, ribbon_offset + 132, &[0, 1_000], &[1, 0, 3, 0], 2)?;
+    append_render_track(bytes, ribbon_offset + 152, &[0, 1_000], &[1, 0], 1)?;
+    bytes[ribbon_offset + 172..ribbon_offset + 174].copy_from_slice(&(-3_i16).to_le_bytes());
+    bytes[ribbon_offset + 174] = u8::MAX;
+    bytes[ribbon_offset + 175] = u8::MAX;
+    set_render_header_array(bytes, 0x120, 1, ribbon_offset)?;
     Ok(())
 }
 

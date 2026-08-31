@@ -44,7 +44,7 @@ impl M2AnimationClock {
     }
 
     /// Validates availability and returns the final non-alias sequence slot.
-    pub(super) fn resolve(self, animations: &M2AnimationSet) -> Result<usize, M2BonePoseError> {
+    pub(crate) fn resolve(self, animations: &M2AnimationSet) -> Result<usize, M2BonePoseError> {
         if !self.animation_time_ms.is_finite() || !self.global_time_ms.is_finite() {
             return Err(M2BonePoseError::NonFiniteTime);
         }

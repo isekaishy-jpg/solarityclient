@@ -4,3 +4,8 @@
 //! ECS effects and spell systems provide state without owning GPU resources.
 
 mod particle_system2;
+mod ribbon;
+
+pub use ribbon::{
+    M2RibbonControlPoint, M2RibbonPose, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
+};
