@@ -271,8 +271,8 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
 /// Visible players use the complete character composer and leave with range state.
 #[test]
 fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<dyn Error>> {
-    let display = creature_display_table();
-    let model_data = player_model_table();
+    let display = mounted_player_display_table();
+    let model_data = mounted_player_model_table();
     let character = character_section_tables();
     let races = character_race_table();
     let m2 = m2_collision_fixture()?;
@@ -333,7 +333,7 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
         (23, u32::from_le_bytes([1, 1, 0, 0])),
         (67, 100),
         (68, 100),
-        (69, 0),
+        (69, 200),
         (74, 0),
         (122, 0),
         (153, 0),
@@ -352,11 +352,20 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
         RuntimeRemotePlayerPoll::ModelsChanged
     );
     assert_eq!(presentation.resident_remote_player_count(), 1);
+    assert_eq!(presentation.resident_remote_mount_count(), 1);
     world.update_transform(guid, WorldTransform::new(Vec3::Y, 1.0))?;
     assert_eq!(
         presentation.synchronize_remote_players(Some(&world))?,
         RuntimeRemotePlayerPoll::Current
     );
+    let dismount = [(69, 0)];
+    world.update_fields(guid, dismount)?;
+    project_object_fields(&mut world, guid, dismount)?;
+    assert_eq!(
+        presentation.synchronize_remote_players(Some(&world))?,
+        RuntimeRemotePlayerPoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_remote_mount_count(), 0);
     world.remove_object(guid)?;
     assert_eq!(
         presentation.synchronize_remote_players(Some(&world))?,
@@ -550,14 +559,31 @@ fn creature_model_table() -> Vec<u8> {
     wdbc_fixture(&fields, &strings)
 }
 
-fn player_model_table() -> Vec<u8> {
+fn mounted_player_display_table() -> Vec<u8> {
+    let mut fields = vec![0_u32; 32];
+    fields[0] = 100;
+    fields[1] = 7;
+    fields[4] = 1.0_f32.to_bits();
+    fields[5] = u32::MAX;
+    fields[16] = 200;
+    fields[17] = 8;
+    fields[20] = 1.5_f32.to_bits();
+    fields[21] = u32::MAX;
+    create_wdbc_fixture(2, 16, &fields, b"\0")
+}
+
+fn mounted_player_model_table() -> Vec<u8> {
     let mut strings = vec![0_u8];
     let path = append_string(&mut strings, "Character\\Human\\Male\\HumanMale.m2");
-    let mut fields = [0_u32; 28];
+    let mut fields = vec![0_u32; 56];
     fields[0] = 7;
     fields[2] = path;
     fields[4] = 1.0_f32.to_bits();
-    wdbc_fixture(&fields, &strings)
+    fields[28] = 8;
+    fields[30] = path;
+    fields[32] = 2.0_f32.to_bits();
+    fields[44] = 3.25_f32.to_bits();
+    create_wdbc_fixture(2, 28, &fields, &strings)
 }
 
 struct CharacterSectionTables {

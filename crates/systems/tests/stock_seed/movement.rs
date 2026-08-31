@@ -4,7 +4,9 @@ use std::error::Error;
 
 use solarity_asset::{AnimationDataCatalog, ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ecs::{UnitAnimationTier, WorldMovementSpeeds, WorldMovementState};
-use solarity_systems::{resolve_unit_locomotion_animation, resolve_unit_model_animation};
+use solarity_systems::{
+    UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_model_animation,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -13,6 +15,13 @@ const SPEEDS: WorldMovementSpeeds =
 
 fn animation(flags: u64) -> u16 {
     resolve_unit_locomotion_animation(WorldMovementState::new(flags, SPEEDS)).animation_id()
+}
+
+/// A mounted rider requests the stock character `Mount` sequence, not the
+/// locomotion sequence which continues to animate the independently owned mount.
+#[test]
+fn mounted_rider_uses_stock_mount_sequence() {
+    assert_eq!(UnitLocomotionAnimation::MOUNT.animation_id(), 91);
 }
 
 /// The recovered selector preserves stock's common ground locomotion IDs.

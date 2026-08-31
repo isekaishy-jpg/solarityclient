@@ -100,8 +100,12 @@ enum M2GpuPlacementOwner {
     Static(ResidentM2Owner),
     /// The one authoritative character controlled by this client.
     PlayerBody { guid: u64 },
+    /// Mount-main parent beneath the controlled character.
+    PlayerMount { guid: u64 },
     /// One visible player character controlled by another client.
     RemotePlayerBody { guid: u64 },
+    /// Mount-main parent beneath one visible remote character.
+    RemotePlayerMount { guid: u64 },
     /// One visible non-player unit projected from authoritative ECS state.
     CreatureBody { guid: u64 },
     /// One equipment M2 driven by an animated player attachment point.
@@ -569,7 +573,34 @@ impl M2Frame {
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let transform = unit_placement_transform(input.world_transform(), input.object_scale())?;
+        let transform = if let Some(mount) = input.mount() {
+            let transform =
+                unit_placement_transform(input.world_transform(), mount.object_scale())?;
+            let placement = self
+                .placements
+                .iter_mut()
+                .find(|placement| {
+                    placement.owner == (M2GpuPlacementOwner::PlayerMount { guid: input.guid() })
+                })
+                .ok_or(RuntimeTerrainFrameError::MissingPlayerMountM2Placement {
+                    guid: input.guid(),
+                })?;
+            placement.transform = transform;
+            let Some(source) = self.sources[placement.source_index].as_ref() else {
+                return Ok(());
+            };
+            if let Some(playback) = placement.playback.as_mut() {
+                playback.select_animation(
+                    &source.model,
+                    mount.animation().animation_id(),
+                    animation_time_ms,
+                    random,
+                )?;
+            }
+            transform
+        } else {
+            unit_placement_transform(input.world_transform(), input.object_scale())?
+        };
         let placement = self
             .placements
             .iter_mut()
@@ -635,8 +666,37 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         for input in inputs {
-            let transform =
-                unit_placement_transform(input.world_transform(), input.object_scale())?;
+            let transform = if let Some(mount) = input.mount() {
+                let transform =
+                    unit_placement_transform(input.world_transform(), mount.object_scale())?;
+                let placement = self
+                    .placements
+                    .iter_mut()
+                    .find(|placement| {
+                        placement.owner
+                            == (M2GpuPlacementOwner::RemotePlayerMount { guid: input.guid() })
+                    })
+                    .ok_or(
+                        RuntimeTerrainFrameError::MissingRemotePlayerMountM2Placement {
+                            guid: input.guid(),
+                        },
+                    )?;
+                placement.transform = transform;
+                let Some(source) = self.sources[placement.source_index].as_ref() else {
+                    continue;
+                };
+                if let Some(playback) = placement.playback.as_mut() {
+                    playback.select_animation(
+                        &source.model,
+                        mount.animation().animation_id(),
+                        animation_time_ms,
+                        random,
+                    )?;
+                }
+                transform
+            } else {
+                unit_placement_transform(input.world_transform(), input.object_scale())?
+            };
             let placement = self
                 .placements
                 .iter_mut()
@@ -675,11 +735,13 @@ impl M2Frame {
         let mut player_sources = Vec::new();
         self.placements.retain(|placement| {
             let owned = match placement.owner {
-                M2GpuPlacementOwner::PlayerBody { .. } => true,
+                M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerMount { .. } => true,
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => local_guid == Some(guid),
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. } => false,
             };
             if owned {
@@ -725,13 +787,15 @@ impl M2Frame {
         let mut remote_sources = Vec::new();
         self.placements.retain(|placement| {
             let owned = match placement.owner {
-                M2GpuPlacementOwner::RemotePlayerBody { .. } => true,
+                M2GpuPlacementOwner::RemotePlayerBody { .. }
+                | M2GpuPlacementOwner::RemotePlayerMount { .. } => true,
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => {
                     remote_guids.contains(&guid)
                 }
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. } => false,
             };
             if owned {
@@ -821,7 +885,9 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
             })
@@ -837,15 +903,49 @@ impl M2Frame {
                 } => Some((guid, item_point, effect_point)),
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
                 | M2GpuPlacementOwner::PlayerItem { .. } => None,
             })
             .collect::<Vec<_>>();
+        let mounted_guids = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                M2GpuPlacementOwner::PlayerMount { guid }
+                | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut rider_transforms = Vec::with_capacity(mounted_guids.len());
         let mut item_transforms = Vec::with_capacity(requested_items.len());
         let mut visual_transforms = Vec::with_capacity(requested_visuals.len());
         for placement in &mut self.placements {
+            if let M2GpuPlacementOwner::PlayerBody { guid }
+            | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
+                && mounted_guids.contains(&guid)
+            {
+                let transform = rider_transforms
+                    .iter()
+                    .find_map(|(owner_guid, transform)| (*owner_guid == guid).then_some(*transform))
+                    .ok_or(RuntimeTerrainFrameError::MissingMountM2AttachmentPose {
+                        guid,
+                        attachment_id: 0,
+                    })?;
+                let Some(transform) = transform else {
+                    continue;
+                };
+                placement.transform = transform;
+            }
             if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
+                if rider_transforms
+                    .iter()
+                    .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
+                {
+                    continue;
+                }
                 let transform = item_transforms
                     .iter()
                     .find_map(|(owner_guid, owner_point, transform)| {
@@ -866,6 +966,12 @@ impl M2Frame {
                 effect_point,
             } = placement.owner
             {
+                if rider_transforms
+                    .iter()
+                    .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
+                {
+                    continue;
+                }
                 let transform = visual_transforms
                     .iter()
                     .find_map(
@@ -921,6 +1027,23 @@ impl M2Frame {
                 &bone_pose,
                 event_window,
             )?;
+            if let M2GpuPlacementOwner::PlayerMount { guid }
+            | M2GpuPlacementOwner::RemotePlayerMount { guid } = placement.owner
+            {
+                let attachment = source.model.attachment(0).ok_or_else(|| {
+                    RuntimeTerrainFrameError::MissingMountM2Attachment {
+                        model: source.model.path().clone(),
+                        attachment_id: 0,
+                    }
+                })?;
+                let transform = bone_pose.attachment_transform(
+                    source.model.animations(),
+                    attachment,
+                    clock,
+                    placement.transform,
+                )?;
+                rider_transforms.push((guid, transform));
+            }
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
             {
@@ -1248,7 +1371,9 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
     match owner {
         M2GpuPlacementOwner::Static(_) => None,
         M2GpuPlacementOwner::PlayerBody { guid }
+        | M2GpuPlacementOwner::PlayerMount { guid }
         | M2GpuPlacementOwner::RemotePlayerBody { guid }
+        | M2GpuPlacementOwner::RemotePlayerMount { guid }
         | M2GpuPlacementOwner::CreatureBody { guid }
         | M2GpuPlacementOwner::PlayerItem { guid, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
@@ -1262,6 +1387,51 @@ fn prepare_character_gpu(
     body_owner: M2GpuPlacementOwner,
     random: &mut CrtRand,
 ) -> Result<Vec<(M2GpuSource, M2GpuPlacement)>, RuntimeTerrainFrameError> {
+    let mount = input.mount();
+    let world_transform = if let Some(mount) = mount {
+        unit_placement_transform(input.world_transform(), mount.object_scale())?
+    } else {
+        unit_placement_transform(input.world_transform(), input.object_scale())?
+    };
+    let mut prepared = Vec::new();
+    if let Some(mount) = mount {
+        if mount.model().attachment(0).is_none() {
+            return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
+                model: mount.model().path().clone(),
+                attachment_id: 0,
+            });
+        }
+        let resolved = mount
+            .textures()
+            .iter()
+            .map(|texture| match texture {
+                ResidentCreatureTexture::Authored(source) => {
+                    M2ResolvedTexture::Authored(source.as_ref())
+                }
+                ResidentCreatureTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
+            })
+            .collect::<Vec<_>>();
+        let source = prepare_gpu_source(renderer, mount.model(), &resolved, None)?;
+        let owner = match body_owner {
+            M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
+            M2GpuPlacementOwner::RemotePlayerBody { guid } => {
+                M2GpuPlacementOwner::RemotePlayerMount { guid }
+            }
+            _ => unreachable!("character preparation requires a player body owner"),
+        };
+        let placement = unit_gpu_placement(
+            0,
+            world_transform,
+            owner,
+            mount.model(),
+            mount.animation().animation_id(),
+            mount.particle_colors().cloned(),
+            random,
+        )?;
+        // Parent-first insertion lets the current mount bone pose determine
+        // the rider transform before the body and its equipment are visited.
+        prepared.push((source, placement));
+    }
     let resolved = input
         .textures()
         .iter()
@@ -1272,17 +1442,16 @@ fn prepare_character_gpu(
         })
         .collect::<Vec<_>>();
     let source = prepare_gpu_source(renderer, input.model(), &resolved, Some(input.geosets()))?;
-    let transform = unit_placement_transform(input.world_transform(), input.object_scale())?;
     let body = unit_gpu_placement(
         0,
-        transform,
+        world_transform,
         body_owner,
         input.model(),
         input.animation().animation_id(),
         input.particle_colors().cloned(),
         random,
     )?;
-    let mut prepared = vec![(source, body)];
+    prepared.push((source, body));
     for attachment in input.attachments() {
         if input.model().attachment(attachment.point().id()).is_none() {
             return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
@@ -1306,7 +1475,7 @@ fn prepare_character_gpu(
         let source = prepare_gpu_source(renderer, attachment.model(), &resolved, None)?;
         let placement = unit_gpu_placement(
             0,
-            transform,
+            world_transform,
             M2GpuPlacementOwner::PlayerItem {
                 guid: input.guid(),
                 point: attachment.point(),
@@ -1334,7 +1503,7 @@ fn prepare_character_gpu(
             let source = prepare_gpu_source(renderer, effect.model(), &resolved, None)?;
             let placement = unit_gpu_placement(
                 0,
-                transform,
+                world_transform,
                 M2GpuPlacementOwner::PlayerItemVisual {
                     guid: input.guid(),
                     item_point: attachment.point(),

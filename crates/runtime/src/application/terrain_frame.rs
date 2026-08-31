@@ -249,6 +249,18 @@ pub enum RuntimeTerrainFrameError {
         /// Remote player GUID absent from the M2 frame.
         guid: u64,
     },
+    /// A mounted local-player update has no matching mount placement.
+    #[error("local player {guid:#018X} has no mount M2 placement in the current frame")]
+    MissingPlayerMountM2Placement {
+        /// Controlled player GUID whose mount is absent.
+        guid: u64,
+    },
+    /// A mounted remote-player update has no matching mount placement.
+    #[error("remote player {guid:#018X} has no mount M2 placement in the current frame")]
+    MissingRemotePlayerMountM2Placement {
+        /// Remote player GUID whose mount is absent.
+        guid: u64,
+    },
     /// A current creature update has no matching placement in the GPU generation.
     #[error("visible creature {guid:#018X} has no M2 placement in the current frame")]
     MissingCreatureM2Placement {
@@ -269,6 +281,22 @@ pub enum RuntimeTerrainFrameError {
         /// Controlled player GUID.
         guid: u64,
         /// Exact build-12340 attachment identifier.
+        attachment_id: u32,
+    },
+    /// An active mount lacks its authored mount-main attachment.
+    #[error("mount M2 {model} has no attachment point {attachment_id}")]
+    MissingMountM2Attachment {
+        /// Mount model lacking the selected semantic attachment.
+        model: AssetPath,
+        /// Exact build-12340 mount-main attachment identifier.
+        attachment_id: u32,
+    },
+    /// A rider was evaluated before its active mount attachment pose.
+    #[error("mounted player {guid:#018X} attachment point {attachment_id} has no current pose")]
+    MissingMountM2AttachmentPose {
+        /// Mounted player GUID.
+        guid: u64,
+        /// Exact build-12340 mount-main attachment identifier.
         attachment_id: u32,
     },
     /// Camera presentation exists without the corresponding resident M2 input.

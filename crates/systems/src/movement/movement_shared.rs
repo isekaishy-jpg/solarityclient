@@ -24,6 +24,8 @@ pub struct UnitLocomotionAnimation {
 impl UnitLocomotionAnimation {
     /// The ordinary stationary animation selected when no movement exists yet.
     pub const STAND: Self = Self::new(0);
+    /// The rider pose selected while a separate mount model owns locomotion.
+    pub const MOUNT: Self = Self::new(91);
 
     const fn new(animation_id: u16) -> Self {
         Self { animation_id }

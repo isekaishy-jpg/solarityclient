@@ -262,6 +262,9 @@ impl RuntimePlayerPresentation {
         let path = appearance.body().model_path();
         let scale = appearance.object_scale();
         let particle_color_id = appearance.body().display().particle_color_id();
+        let mount_key = appearance
+            .mount()
+            .map(|mount| mount_model_key(mount, appearance.object_scale()));
         let character = appearance
             .character()
             .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
@@ -317,6 +320,7 @@ impl RuntimePlayerPresentation {
                 && resident.base_geosets == base_geosets
                 && resident.equipment_key == equipment_key
                 && resident.attachment_plan == attachment_plan
+                && resident.mount_key == mount_key
         }) {
             let transform = world.local_player_transform()?;
             let view = world.local_player_view()?;
@@ -329,9 +333,21 @@ impl RuntimePlayerPresentation {
                 resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
-                    requested_animation,
+                    if resident.mount.is_some() {
+                        UnitLocomotionAnimation::MOUNT
+                    } else {
+                        requested_animation
+                    },
                     unit_presentation.animation_tier(),
                 )?;
+                if let Some(mount) = resident.mount.as_mut() {
+                    mount.animation = resolve_resident_animation(
+                        &self.animations,
+                        &mount.model,
+                        requested_animation,
+                        unit_presentation.animation_tier(),
+                    )?;
+                }
                 resident.camera_pose = Some(resolve_player_camera_pose(
                     transform,
                     view,
@@ -341,6 +357,10 @@ impl RuntimePlayerPresentation {
             return Ok(RuntimePlayerPoll::Current);
         }
 
+        let requested_animation = world.movement_state(guid).map_or(
+            UnitLocomotionAnimation::STAND,
+            resolve_unit_locomotion_animation,
+        );
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, path)?;
         let texture_plan =
@@ -372,6 +392,17 @@ impl RuntimePlayerPresentation {
             &mut self.textures,
             &mut assets,
         )?;
+        let mount = load_mount_model(
+            appearance.mount(),
+            appearance.object_scale(),
+            requested_animation,
+            unit_presentation.animation_tier(),
+            &self.animations,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
         drop(assets);
         let camera_height = resolve_model_camera_subject_height(&model, scale)?;
         let camera_pose = resolve_player_camera_pose(
@@ -381,14 +412,14 @@ impl RuntimePlayerPresentation {
         )?;
         let particle_colors =
             M2ParticleColorReplacement::resolve(&self.particle_colors, particle_color_id);
-        let requested_animation = world.movement_state(guid).map_or(
-            UnitLocomotionAnimation::STAND,
-            resolve_unit_locomotion_animation,
-        );
         let animation = resolve_resident_animation(
             &self.animations,
             &model,
-            requested_animation,
+            if mount.is_some() {
+                UnitLocomotionAnimation::MOUNT
+            } else {
+                requested_animation
+            },
             unit_presentation.animation_tier(),
         )?;
         self.resident = Some(ResidentPlayerModel {
@@ -412,6 +443,8 @@ impl RuntimePlayerPresentation {
             camera_height,
             camera_pose: Some(camera_pose),
             model,
+            mount_key,
+            mount,
         });
         self.models.collect_unused();
         self.textures.collect_unused();
@@ -560,9 +593,21 @@ impl RuntimePlayerPresentation {
                 resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
-                    desired.requested_animation,
+                    if resident.mount.is_some() {
+                        UnitLocomotionAnimation::MOUNT
+                    } else {
+                        desired.requested_animation
+                    },
                     desired.animation_tier,
                 )?;
+                if let Some(mount) = resident.mount.as_mut() {
+                    mount.animation = resolve_resident_animation(
+                        &self.animations,
+                        &mount.model,
+                        desired.requested_animation,
+                        desired.animation_tier,
+                    )?;
+                }
             }
             return Ok(RuntimeRemotePlayerPoll::Current);
         }
@@ -665,6 +710,9 @@ impl RuntimePlayerPresentation {
             world_transform,
             requested_animation,
             animation_tier: unit_presentation.animation_tier(),
+            mount_key: appearance
+                .mount()
+                .map(|mount| mount_model_key(mount, appearance.object_scale())),
         }))
     }
 
@@ -730,6 +778,17 @@ impl RuntimePlayerPresentation {
             &mut self.textures,
             &mut assets,
         )?;
+        let mount = load_mount_model(
+            appearance.mount(),
+            appearance.object_scale(),
+            desired.requested_animation,
+            desired.animation_tier,
+            &self.animations,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
         drop(assets);
         let camera_height = resolve_model_camera_subject_height(&model, desired.object_scale)?;
         let particle_colors =
@@ -737,7 +796,11 @@ impl RuntimePlayerPresentation {
         let animation = resolve_resident_animation(
             &self.animations,
             &model,
-            desired.requested_animation,
+            if mount.is_some() {
+                UnitLocomotionAnimation::MOUNT
+            } else {
+                desired.requested_animation
+            },
             desired.animation_tier,
         )?;
         Ok(ResidentPlayerModel {
@@ -761,6 +824,8 @@ impl RuntimePlayerPresentation {
             camera_height,
             camera_pose: None,
             model,
+            mount_key: desired.mount_key,
+            mount,
         })
     }
 
@@ -776,6 +841,24 @@ impl RuntimePlayerPresentation {
         self.resident.as_ref().map(|resident| &resident.model)
     }
 
+    /// Returns the archive-selected active mount M2 when the server supplies one.
+    #[must_use]
+    pub fn resident_mount_model(&self) -> Option<&Arc<DecodedM2Model>> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.mount.as_ref())
+            .map(|mount| &mount.model)
+    }
+
+    /// Returns the mount's stock DBC and object-field scale product.
+    #[must_use]
+    pub fn resident_mount_scale(&self) -> Option<f32> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.mount.as_ref())
+            .map(|mount| mount.object_scale)
+    }
+
     /// Returns the number of visible non-player unit models currently resident.
     #[must_use]
     pub fn resident_creature_count(&self) -> usize {
@@ -786,6 +869,15 @@ impl RuntimePlayerPresentation {
     #[must_use]
     pub fn resident_remote_player_count(&self) -> usize {
         self.remote_players.len()
+    }
+
+    /// Returns the number of visible remote characters with active mount models.
+    #[must_use]
+    pub fn resident_remote_mount_count(&self) -> usize {
+        self.remote_players
+            .iter()
+            .filter(|player| player.mount.is_some())
+            .count()
     }
 
     /// Returns the body display's exact `ParticleColor.dbc` identifier.
@@ -922,6 +1014,8 @@ struct ResidentPlayerModel {
     camera_height: CameraSubjectHeight,
     camera_pose: Option<PlayerCameraPose>,
     model: Arc<DecodedM2Model>,
+    mount_key: Option<MountModelKey>,
+    mount: Option<ResidentMountModel>,
 }
 
 struct DesiredRemotePlayerModel {
@@ -936,6 +1030,26 @@ struct DesiredRemotePlayerModel {
     world_transform: WorldTransform,
     requested_animation: UnitLocomotionAnimation,
     animation_tier: solarity_ecs::UnitAnimationTier,
+    mount_key: Option<MountModelKey>,
+}
+
+/// Stable DBC/model identity which invalidates one resident mount generation.
+#[derive(Clone, PartialEq)]
+struct MountModelKey {
+    display_id: u32,
+    path: AssetPath,
+    object_scale: f32,
+    particle_color_id: u32,
+    mount_height: f32,
+}
+
+/// Archive-selected mount model and its independently animated presentation.
+struct ResidentMountModel {
+    model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentCreatureTexture>,
+    object_scale: f32,
+    particle_colors: Option<M2ParticleColorReplacement>,
+    animation: UnitModelAnimation,
 }
 
 #[derive(PartialEq)]
@@ -1045,6 +1159,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
     object_scale: f32,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     attachments: &'a [ResidentPlayerAttachment],
+    mount: Option<ResidentMountFrameInput<'a>>,
 }
 
 impl<'a> ResidentPlayerFrameInput<'a> {
@@ -1060,6 +1175,10 @@ impl<'a> ResidentPlayerFrameInput<'a> {
             object_scale: resident.object_scale,
             particle_colors: resident.particle_colors.as_ref(),
             attachments: &resident.attachments,
+            mount: resident
+                .mount
+                .as_ref()
+                .map(ResidentMountFrameInput::from_resident),
         }
     }
 
@@ -1101,6 +1220,52 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 
     pub(super) const fn attachments(&self) -> &[ResidentPlayerAttachment] {
         self.attachments
+    }
+
+    pub(super) const fn mount(&self) -> Option<ResidentMountFrameInput<'a>> {
+        self.mount
+    }
+}
+
+/// Borrowed mount resources composed beneath one resident rider.
+#[derive(Clone, Copy)]
+pub(super) struct ResidentMountFrameInput<'a> {
+    model: &'a Arc<DecodedM2Model>,
+    textures: &'a [ResidentCreatureTexture],
+    object_scale: f32,
+    animation: UnitModelAnimation,
+    particle_colors: Option<&'a M2ParticleColorReplacement>,
+}
+
+impl<'a> ResidentMountFrameInput<'a> {
+    fn from_resident(resident: &'a ResidentMountModel) -> Self {
+        Self {
+            model: &resident.model,
+            textures: &resident.textures,
+            object_scale: resident.object_scale,
+            animation: resident.animation,
+            particle_colors: resident.particle_colors.as_ref(),
+        }
+    }
+
+    pub(super) const fn model(self) -> &'a Arc<DecodedM2Model> {
+        self.model
+    }
+
+    pub(super) const fn textures(self) -> &'a [ResidentCreatureTexture] {
+        self.textures
+    }
+
+    pub(super) const fn object_scale(self) -> f32 {
+        self.object_scale
+    }
+
+    pub(super) const fn animation(self) -> UnitModelAnimation {
+        self.animation
+    }
+
+    pub(super) const fn particle_colors(self) -> Option<&'a M2ParticleColorReplacement> {
+        self.particle_colors
     }
 }
 
@@ -1218,6 +1383,59 @@ fn prepare_creature_textures(
             kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
         })
         .collect()
+}
+
+/// Captures the complete display/model identity and stock base-scale product.
+fn mount_model_key(appearance: &CreatureModelAppearance<'_>, object_scale: f32) -> MountModelKey {
+    let authored_scale = appearance.display().model_scale() * appearance.model().model_scale();
+    // `CGUnit_C::GetModelScale` replaces a non-positive authored product with
+    // one. The authoritative OBJECT_FIELD_SCALE_X remains an independent
+    // instance multiplier applied after that DBC result.
+    let model_scale = if authored_scale > 0.0 {
+        authored_scale
+    } else {
+        1.0
+    };
+    MountModelKey {
+        display_id: appearance.display().id(),
+        path: appearance.model_path().clone(),
+        object_scale: object_scale * model_scale,
+        particle_color_id: appearance.display().particle_color_id(),
+        mount_height: appearance.model().mount_height(),
+    }
+}
+
+/// Loads one active mount without substituting body textures or animation.
+#[allow(clippy::too_many_arguments)]
+fn load_mount_model(
+    appearance: Option<&CreatureModelAppearance<'_>>,
+    object_scale: f32,
+    requested_animation: UnitLocomotionAnimation,
+    animation_tier: solarity_ecs::UnitAnimationTier,
+    animations: &AnimationDataCatalog,
+    particle_colors: &ParticleColorCatalog,
+    models: &mut M2ModelCache,
+    textures: &mut BlpTextureCache,
+    assets: &mut solarity_asset::AssetStore,
+) -> Result<Option<ResidentMountModel>, RuntimePlayerError> {
+    let Some(appearance) = appearance else {
+        return Ok(None);
+    };
+    let key = mount_model_key(appearance, object_scale);
+    let model = models.load(assets, appearance.model_path())?;
+    let textures = prepare_creature_textures(&model, appearance, assets, textures)?;
+    let animation =
+        resolve_resident_animation(animations, &model, requested_animation, animation_tier)?;
+    Ok(Some(ResidentMountModel {
+        model,
+        textures,
+        object_scale: key.object_scale,
+        particle_colors: M2ParticleColorReplacement::resolve(
+            particle_colors,
+            key.particle_color_id,
+        ),
+        animation,
+    }))
 }
 
 /// Loads equipped component models and their attached item-visual effects.
@@ -1376,5 +1594,6 @@ impl ResidentPlayerModel {
             && self.base_geosets == desired.base_geosets
             && self.equipment_key == desired.equipment_key
             && self.attachment_plan == desired.attachment_plan
+            && self.mount_key == desired.mount_key
     }
 }
