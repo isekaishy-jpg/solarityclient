@@ -1,6 +1,6 @@
 //! Upload-ready ordinary particle head and tail preparation.
 
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Quat, Vec2, Vec3, Vec4};
 use solarity_asset::M2ParticleEmitter;
 use thiserror::Error;
 
@@ -15,8 +15,17 @@ use crate::particle::pack_bgra;
 /// Recovered branches shared by the ordinary head and tail preparation.
 const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0000_0400 | 0x0100_0000;
 
-/// Recovered branches that replace the ordinary camera-facing head quad.
-const UNSUPPORTED_HEAD_FLAGS: u32 = 0x0000_4000 | 0x0001_0000 | 0x0020_0000;
+/// Keeps head offsets in the transformed emitter X/Y basis.
+const FIXED_EMITTER_BASIS_HEAD: u32 = 0x0000_4000;
+
+/// Alternates the authored head spin direction between adjacent pool slots.
+const ALTERNATING_HEAD_ROTATION: u32 = 0x0001_0000;
+
+/// Aligns the head to its camera-projected velocity with foreshortening.
+const VELOCITY_ALIGNED_HEAD: u32 = 0x0020_0000;
+
+/// Exact direction threshold loaded at executable address `0x009EA27C`.
+const DIRECTION_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3480_0000);
 
 /// Exact projected tail-length threshold loaded at executable `0x00AA2CEC`.
 const TAIL_PROJECTION_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3a4a_4588);
@@ -232,6 +241,9 @@ impl M2ParticleMeshPlan {
                 .transform_vector3(camera.up())
                 .normalize(),
         );
+        let emitter_right = particle_to_world.transform_vector3(Vec3::X);
+        let emitter_up = particle_to_world.transform_vector3(Vec3::Y);
+        let emitter_normal = particle_to_world.transform_vector3(Vec3::Z).normalize();
         let (emit_head, emit_tail) = match emitter.head_or_tail() {
             0 => (true, false),
             1 => (false, true),
@@ -247,9 +259,7 @@ impl M2ParticleMeshPlan {
         if emitter.geometry_model_path().is_some() {
             return Err(M2ParticleMeshPlanError::GeometryParticle);
         }
-        let selected_flags =
-            UNSUPPORTED_SHARED_FLAGS | if emit_head { UNSUPPORTED_HEAD_FLAGS } else { 0 };
-        let unsupported = emitter.flags() & selected_flags;
+        let unsupported = emitter.flags() & UNSUPPORTED_SHARED_FLAGS;
         if unsupported != 0 {
             return Err(M2ParticleMeshPlanError::BehaviorFlags(unsupported));
         }
@@ -306,15 +316,46 @@ impl M2ParticleMeshPlan {
             let mut color = appearance.color();
             color.w *= alpha_multiplier;
             if emit_head {
-                let rotation = M2ParticleRotationPose::sample(emitter, particle.random_word())
-                    .angle_radians(particle.age_seconds());
-                let positions = billboard_positions(
-                    position,
-                    appearance.scale() * twinkle_scale,
-                    rotation,
-                    billboard_right,
-                    billboard_up,
-                );
+                let scale = appearance.scale() * twinkle_scale;
+                let positions = if emitter.flags() & VELOCITY_ALIGNED_HEAD != 0
+                    && particle.velocity().length_squared() > DIRECTION_THRESHOLD_SQUARED
+                {
+                    velocity_aligned_billboard_positions(
+                        position,
+                        scale,
+                        velocity,
+                        camera,
+                        billboard_right,
+                        billboard_up,
+                    )
+                } else {
+                    let mut rotation =
+                        M2ParticleRotationPose::sample(emitter, particle.random_word())
+                            .angle_radians(particle.age_seconds());
+                    if emitter.flags() & ALTERNATING_HEAD_ROTATION != 0
+                        && std::ptr::from_ref(particle).addr() & 0x20 != 0
+                    {
+                        rotation = -rotation;
+                    }
+                    if emitter.flags() & FIXED_EMITTER_BASIS_HEAD != 0 {
+                        fixed_basis_positions(
+                            position,
+                            scale,
+                            rotation,
+                            emitter_right,
+                            emitter_up,
+                            emitter_normal,
+                        )
+                    } else {
+                        billboard_positions(
+                            position,
+                            scale,
+                            rotation,
+                            billboard_right,
+                            billboard_up,
+                        )
+                    }
+                };
                 push_quad(
                     &mut vertices,
                     &mut indices,
@@ -415,6 +456,54 @@ fn billboard_positions(
             scaled.x * sine + scaled.y * cosine,
         );
         center + right * rotated.x + up * rotated.y
+    })
+}
+
+/// Applies local X/Y offsets before rotating around transformed local Z.
+fn fixed_basis_positions(
+    center: Vec3,
+    scale: Vec2,
+    rotation: f32,
+    right: Vec3,
+    up: Vec3,
+    normal: Vec3,
+) -> [Vec3; 4] {
+    let rotation = Quat::from_axis_angle(normal, rotation);
+    CORNERS.map(|corner| {
+        let offset = right * (corner.x * scale.x) + up * (corner.y * scale.y);
+        center + rotation * offset
+    })
+}
+
+/// Reproduces the camera-projected, foreshortened velocity head basis.
+fn velocity_aligned_billboard_positions(
+    center: Vec3,
+    scale: Vec2,
+    velocity: Vec3,
+    camera: WorldCameraFrame,
+    right: Vec3,
+    up: Vec3,
+) -> [Vec3; 4] {
+    let direction = -velocity;
+    let projected = Vec2::new(direction.dot(camera.right()), direction.dot(camera.up()));
+    let projected_length_squared = projected.length_squared();
+    let reciprocal_projected_length = if projected_length_squared <= DIRECTION_THRESHOLD_SQUARED {
+        0.0
+    } else {
+        projected_length_squared.sqrt().recip()
+    };
+    let aligned_scale = if reciprocal_projected_length > DIRECTION_THRESHOLD_SQUARED {
+        scale.x * direction.length_recip() / reciprocal_projected_length
+    } else {
+        scale.x
+    };
+    let along = projected * reciprocal_projected_length;
+    CORNERS.map(|corner| {
+        let offset = Vec2::new(
+            corner.x * aligned_scale * along.x - corner.y * scale.y * along.y,
+            corner.y * scale.y * along.x + corner.x * aligned_scale * along.y,
+        );
+        center + right * offset.x + up * offset.y
     })
 }
 

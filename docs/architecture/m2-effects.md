@@ -148,8 +148,16 @@ The process-wide twinkle table consumes one combined two-call CRT seed during
 M2 initialization and generates 128 stock random phases. Active emitters use
 the current 32-byte particle pool address plus nearest-even age/speed phase to
 select visibility and multiply both billboard axes by the authored base plus
-random additive range. Geometry particles and specialized orientation flags
-remain separate typed paths instead of being flattened into ordinary quads.
+random additive range. Geometry particles remain a separate typed path instead
+of being flattened into ordinary quads.
+Flag `0x10000` retains its pointer-derived alternating spin direction: adjacent
+32-byte ordinary pool slots negate the authored head angle independently of
+twinkle visibility. Flag `0x200000` instead aligns heads to negative velocity
+in camera space, foreshortens the aligned axis by projected speed over full
+speed, and returns to the rotating billboard branch below stock's exact
+direction threshold. Flag `0x4000` keeps local head offsets in the transformed
+emitter X/Y basis and applies authored spin about transformed local Z instead
+of substituting the camera billboard basis.
 
 Particle render state is synthesized through the executable's dedicated blend
 mapper rather than treating the authored byte as a root-material blend id.

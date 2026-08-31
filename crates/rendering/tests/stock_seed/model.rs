@@ -793,6 +793,196 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+/// Flag `0x10000` reverses head spin on alternating 32-byte pool slots.
+#[test]
+fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0001_0000;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\AlternatingParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\AlternatingParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\AlternatingParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particles = [
+        M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?,
+        M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?,
+    ];
+    assert_ne!(
+        std::ptr::from_ref(&particles[0]).addr() & 0x20,
+        std::ptr::from_ref(&particles[1]).addr() & 0x20
+    );
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let mesh = M2ParticleMeshPlan::prepare(emitter, pose, &particles, camera, 1.0)?;
+    let appearance = M2ParticleLifetimePose::sample(
+        emitter,
+        particles[0].normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+        particles[0].random_word(),
+    )?;
+    let authored_angle = M2ParticleRotationPose::sample(emitter, particles[0].random_word())
+        .angle_radians(particles[0].age_seconds());
+    for (particle_index, particle) in particles.iter().enumerate() {
+        let angle = if std::ptr::from_ref(particle).addr() & 0x20 != 0 {
+            -authored_angle
+        } else {
+            authored_angle
+        };
+        let (sine, cosine) = angle.sin_cos();
+        let corner_x = -appearance.scale().x;
+        let corner_y = appearance.scale().y;
+        let rotated_x = corner_x * cosine - corner_y * sine;
+        let rotated_y = corner_x * sine + corner_y * cosine;
+        let expected = camera.right() * rotated_x + camera.up() * rotated_y;
+        let actual = Vec3::from_array(mesh.vertices()[particle_index * 8].position());
+        assert!((actual - expected).abs().max_element() < 0.0001);
+    }
+    Ok(())
+}
+
+/// Flag `0x200000` aligns and foreshortens heads by camera-space velocity.
+#[test]
+fn m2_particle_mesh_aligns_heads_to_projected_velocity() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0020_0000;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\VelocityParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\VelocityParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\VelocityParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let velocity = camera.right() * 3.0 + camera.up() * 4.0 + camera.forward() * 12.0;
+    let particles = [M2ParticleState::new(0.5, Vec3::ZERO, velocity, 0x2483)?];
+    let mesh = M2ParticleMeshPlan::prepare(emitter, pose, &particles, camera, 1.0)?;
+    let appearance = M2ParticleLifetimePose::sample(
+        emitter,
+        particles[0].normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+        particles[0].random_word(),
+    )?;
+    let direction = -velocity;
+    let projected = glam::Vec2::new(direction.dot(camera.right()), direction.dot(camera.up()));
+    let along = projected.normalize();
+    let aligned_scale = appearance.scale().x * projected.length() / direction.length();
+    let corner = glam::Vec2::new(-1.0, 1.0);
+    let offset = glam::Vec2::new(
+        corner.x * aligned_scale * along.x - corner.y * appearance.scale().y * along.y,
+        corner.y * appearance.scale().y * along.x + corner.x * aligned_scale * along.y,
+    );
+    let expected = camera.right() * offset.x + camera.up() * offset.y;
+    let actual = Vec3::from_array(mesh.vertices()[0].position());
+    assert!((actual - expected).abs().max_element() < 0.0001);
+    Ok(())
+}
+
+/// Flag `0x4000` keeps head offsets in the transformed emitter X/Y plane.
+#[test]
+fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_4000;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    for relative in [0x178, 0x17c, 0x180, 0x184] {
+        bytes[particle_offset + relative..particle_offset + relative + 4]
+            .copy_from_slice(&0.0_f32.to_le_bytes());
+    }
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\FixedParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\FixedParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\FixedParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particles = [M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?];
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let particle_to_world = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0))
+        * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let mesh = M2ParticleMeshPlan::prepare_transformed(
+        emitter,
+        pose,
+        &particles,
+        camera,
+        particle_to_world,
+        1.0,
+    )?;
+    let appearance = M2ParticleLifetimePose::sample(
+        emitter,
+        particles[0].normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+        particles[0].random_word(),
+    )?;
+    let expected = particle_to_world.transform_point3(Vec3::ZERO)
+        - particle_to_world.transform_vector3(Vec3::X) * appearance.scale().x
+        + particle_to_world.transform_vector3(Vec3::Y) * appearance.scale().y;
+    let actual = Vec3::from_array(mesh.vertices()[0].position());
+    assert!((actual - expected).abs().max_element() < 0.0001);
+    Ok(())
+}
+
 /// Spherical emission samples a bounded shell and its dedicated launch path.
 #[test]
 fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Error>> {
