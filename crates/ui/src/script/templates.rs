@@ -19,6 +19,27 @@ pub struct UiRuntimeTemplate {
     node_count: usize,
 }
 
+/// A registered virtual template awaiting a later AddOn dependency.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiDeferredRuntimeTemplate {
+    name: String,
+    dependency: String,
+}
+
+impl UiDeferredRuntimeTemplate {
+    /// Returns the template already registered by the current document.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the later template required before dynamic instantiation.
+    #[must_use]
+    pub fn dependency(&self) -> &str {
+        &self.dependency
+    }
+}
+
 impl UiRuntimeTemplate {
     /// Returns the stock global template name.
     #[must_use]
@@ -93,6 +114,7 @@ enum UiRuntimeAnchorTarget {
     Parent,
     Object(usize),
     Global(String),
+    Dynamic(String),
 }
 
 impl UiRuntimeTemplateNode {
@@ -140,6 +162,7 @@ impl UiRuntimeTemplateNode {
 /// Owned prototypes and compiled `OnLoad` functions for dynamic UI creation.
 pub struct UiRuntimeTemplatePlan {
     templates: Vec<UiRuntimeTemplate>,
+    deferred_templates: Vec<UiDeferredRuntimeTemplate>,
     nodes: Vec<UiRuntimeTemplateNode>,
     functions: Vec<RegistryKey>,
 }
@@ -160,13 +183,23 @@ impl UiRuntimeTemplatePlan {
     ) -> Result<Self, UiScriptError> {
         let mut plan = Self {
             templates: Vec::new(),
+            deferred_templates: Vec::new(),
             nodes: Vec::new(),
             functions: Vec::new(),
         };
         for definition in catalog.templates() {
             let template_name = definition.name();
-            let tree = UiObjectTree::from_definition(catalog, fonts, definition)
-                .map_err(|error| template_error(template_name, error))?;
+            let tree = match UiObjectTree::from_definition(catalog, fonts, definition) {
+                Ok(tree) => tree,
+                Err(crate::UiObjectError::UnavailableTemplate { template, .. }) => {
+                    plan.deferred_templates.push(UiDeferredRuntimeTemplate {
+                        name: template_name.to_owned(),
+                        dependency: template,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(template_error(template_name, error)),
+            };
             let layout = UiLayoutPlan::from_tree(&tree)
                 .map_err(|error| template_error(template_name, error))?;
             let scripts = UiScriptPlan::from_tree(&tree, lua)
@@ -250,6 +283,12 @@ impl UiRuntimeTemplatePlan {
     #[must_use]
     pub fn templates(&self) -> &[UiRuntimeTemplate] {
         &self.templates
+    }
+
+    /// Returns registered templates awaiting later AddOn declarations.
+    #[must_use]
+    pub fn deferred_templates(&self) -> &[UiDeferredRuntimeTemplate] {
+        &self.deferred_templates
     }
 
     /// Returns one prototype node by flat index.
@@ -351,6 +390,10 @@ impl UiRuntimeTemplatePlan {
                             anchor_record.raw_set("target_kind", "global")?;
                             anchor_record.raw_set("target", name.as_str())?;
                         }
+                        UiRuntimeAnchorTarget::Dynamic(name) => {
+                            anchor_record.raw_set("target_kind", "dynamic")?;
+                            anchor_record.raw_set("target", name.as_str())?;
+                        }
                     }
                     anchors.raw_set(anchor.point.index() + 1, anchor_record)?;
                 }
@@ -392,6 +435,11 @@ impl UiRuntimeTemplatePlan {
                 nodes.raw_set(local_index + 1, record)?;
             }
             descriptor.raw_set("nodes", nodes)?;
+            templates.raw_set(template.name.as_str(), descriptor)?;
+        }
+        for template in &self.deferred_templates {
+            let descriptor = lua.create_table()?;
+            descriptor.raw_set("deferred_dependency", template.dependency.as_str())?;
             templates.raw_set(template.name.as_str(), descriptor)?;
         }
         lua.set_named_registry_value(TEMPLATE_REGISTRY, templates)
@@ -608,6 +656,9 @@ fn resolve_local_region(
         if layer.anchors_present() {
             for anchor in layout.anchors_for(*layer) {
                 let target = match anchor.relative_to() {
+                    Some(name) if name.contains("$parent") => {
+                        UiRuntimeAnchorTarget::Dynamic(name.to_owned())
+                    }
                     Some(name) => tree.node_index(name).map_or_else(
                         || UiRuntimeAnchorTarget::Global(name.to_owned()),
                         |index| UiRuntimeAnchorTarget::Object(first_node + index),

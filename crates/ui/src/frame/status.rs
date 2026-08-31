@@ -14,6 +14,16 @@ pub enum UiObjectError {
         /// Type, name, boolean, or inheritance context.
         message: String,
     },
+    /// A virtual child depends on a template registered by a later AddOn.
+    #[error("UI object {object} in {path} awaits template {template}")]
+    UnavailableTemplate {
+        /// XML source containing the deferred child.
+        path: AssetPath,
+        /// Expanded or authored object name.
+        object: String,
+        /// Template not yet registered in the current catalog.
+        template: String,
+    },
 }
 
 /// A failure while decoding frame ordering or interaction properties.

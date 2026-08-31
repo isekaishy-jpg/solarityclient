@@ -9,12 +9,18 @@ use super::wow_client_db::WdbcTable;
 const CHARACTER_CLASSES_PATH: &str = "DBFilesClient\\ChrClasses.dbc";
 const CHARACTER_CLASSES_FIELD_COUNT: u32 = 60;
 const LOCALIZED_NAME_FIRST_FIELD: u32 = 4;
+const LOCALIZED_FEMALE_NAME_FIRST_FIELD: u32 = 21;
+const LOCALIZED_MALE_NAME_FIRST_FIELD: u32 = 38;
+const FILE_STRING_FIELD: u32 = 55;
 
 /// One build-12340 character class and its selected-locale display name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CharacterClassDefinition {
     id: u32,
     name: String,
+    female_name: String,
+    male_name: String,
+    file_string: String,
 }
 
 impl CharacterClassDefinition {
@@ -28,6 +34,24 @@ impl CharacterClassDefinition {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the exact selected-locale female class name.
+    #[must_use]
+    pub fn female_name(&self) -> &str {
+        &self.female_name
+    }
+
+    /// Returns the exact selected-locale male class name.
+    #[must_use]
+    pub fn male_name(&self) -> &str {
+        &self.male_name
+    }
+
+    /// Returns the stock class filename token before API-specific casing.
+    #[must_use]
+    pub fn file_string(&self) -> &str {
+        &self.file_string
     }
 }
 
@@ -52,6 +76,14 @@ impl CharacterClassCatalog {
             classes.push(CharacterClassDefinition {
                 id: field(&table, row, 0)?,
                 name: localized_string(&table, row, LOCALIZED_NAME_FIRST_FIELD, locale)?,
+                female_name: localized_string(
+                    &table,
+                    row,
+                    LOCALIZED_FEMALE_NAME_FIRST_FIELD,
+                    locale,
+                )?,
+                male_name: localized_string(&table, row, LOCALIZED_MALE_NAME_FIRST_FIELD, locale)?,
+                file_string: string(&table, row, FILE_STRING_FIELD)?,
             });
         }
         classes.sort_unstable_by_key(CharacterClassDefinition::id);
@@ -71,6 +103,11 @@ impl CharacterClassCatalog {
             .binary_search_by_key(&id, CharacterClassDefinition::id)
             .ok()
             .map(|index| &self.classes[index])
+    }
+
+    /// Iterates classes in ascending protocol-identifier order.
+    pub fn classes(&self) -> impl ExactSizeIterator<Item = &CharacterClassDefinition> {
+        self.classes.iter()
     }
 }
 
@@ -95,4 +132,21 @@ fn field(table: &WdbcTable, row: u32, column: u32) -> Result<u32, AssetError> {
     table
         .field_u32(row, column)
         .ok_or_else(|| database_error(table, format!("record {row} field {column} is truncated")))
+}
+
+fn string(table: &WdbcTable, row: u32, column: u32) -> Result<String, AssetError> {
+    let offset = field(table, row, column)?;
+    let bytes = table.string_bytes(offset).ok_or_else(|| {
+        database_error(
+            table,
+            format!("record {row} field {column} has invalid string offset {offset}"),
+        )
+    })?;
+    if !bytes.is_ascii() || bytes.contains(&0) {
+        return Err(database_error(
+            table,
+            format!("record {row} field {column} contains an invalid class file string"),
+        ));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|error| database_error(table, error.to_string()))
 }

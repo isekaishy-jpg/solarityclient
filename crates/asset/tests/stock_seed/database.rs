@@ -947,9 +947,15 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
 fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn Error>> {
     let mut class_strings = vec![0];
     let class_name = append_string(&mut class_strings, "Mage");
+    let female_class_name = append_string(&mut class_strings, "Sorceress");
+    let male_class_name = append_string(&mut class_strings, "Sorcerer");
+    let class_file = append_string(&mut class_strings, "Mage");
     let mut class_fields = [0_u32; 60];
     class_fields[0] = 8;
     class_fields[4] = class_name;
+    class_fields[21] = female_class_name;
+    class_fields[38] = male_class_name;
+    class_fields[55] = class_file;
     let classes = create_wdbc(1, 60, &class_fields, &class_strings);
 
     let mut area_strings = vec![0];
@@ -976,6 +982,11 @@ fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn 
 
     let classes = CharacterClassCatalog::load(&mut store)?;
     assert_eq!(classes.class(8).map(|class| class.name()), Some("Mage"));
+    let mage = classes.class(8).ok_or("Mage class is absent")?;
+    assert_eq!(mage.female_name(), "Sorceress");
+    assert_eq!(mage.male_name(), "Sorcerer");
+    assert_eq!(mage.file_string(), "Mage");
+    assert_eq!(classes.classes().count(), 1);
     assert_eq!(classes.class(9), None);
     let areas = AreaTableCatalog::load(&mut store)?;
     let area = areas.area(4395).ok_or("Dalaran area is absent")?;

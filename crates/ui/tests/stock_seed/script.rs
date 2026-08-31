@@ -111,6 +111,77 @@ fn script_plan_rejects_handler_from_another_widget() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// A built-in virtual template may await a concrete template from a later AddOn.
+#[test]
+fn runtime_template_plan_retains_later_addon_dependencies() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\FrameXML\\FrameXML.toc",
+            bytes: b"Templates.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Templates.xml",
+            bytes: br#"<Ui>
+  <Frame name="DeferredAlert" virtual="true"><Frames>
+    <Frame name="$parentIcon" inherits="LaterAddonIconTemplate"/>
+  </Frames></Frame>
+  <Frame name="UIParent"/>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Frame)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+
+    assert!(templates.templates().is_empty());
+    assert_eq!(templates.deferred_templates().len(), 1);
+    assert_eq!(templates.deferred_templates()[0].name(), "DeferredAlert");
+    assert_eq!(
+        templates.deferred_templates()[0].dependency(),
+        "LaterAddonIconTemplate"
+    );
+
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
+    let _runtime = UiScriptRuntime::new(
+        &bundle,
+        &runtime_plan,
+        UiScriptEnvironment::new(1024, 768, false)?,
+    )?;
+    bundle
+        .lua()
+        .load(
+            r#"local ok, message = pcall(CreateFrame, "Frame", "Alert", UIParent, "DeferredAlert")
+DEFERRED_RESULT = ok
+DEFERRED_MESSAGE = tostring(message)"#,
+        )
+        .exec()?;
+
+    assert!(!bundle.lua().globals().get::<bool>("DEFERRED_RESULT")?);
+    assert!(
+        bundle
+            .lua()
+            .globals()
+            .get::<String>("DEFERRED_MESSAGE")?
+            .contains("awaits template LaterAddonIconTemplate")
+    );
+    Ok(())
+}
+
 /// Handler bodies compile inside their exact callback parameter list.
 #[test]
 fn script_plan_rejects_varargs_in_non_vararg_handler() -> Result<(), Box<dyn Error>> {
@@ -135,6 +206,87 @@ fn script_plan_rejects_varargs_in_non_vararg_handler() -> Result<(), Box<dyn Err
     let result = UiScriptPlan::from_tree(&tree, bundle.lua());
 
     assert!(matches!(result, Err(UiScriptError::Lua { .. })));
+    Ok(())
+}
+
+/// A virtual root resolves its stock `$parent` anchor against each instance.
+#[test]
+fn runtime_template_resolves_dynamic_root_parent_anchor() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\FrameXML\\FrameXML.toc",
+            bytes: b"Objects.xml\nCheck.lua\n",
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Objects.xml",
+            bytes: br#"<Ui>
+  <Button name="RosterTemplate" virtual="true"><Anchors>
+    <Anchor point="BOTTOM" relativeTo="$parentUpButton" relativePoint="TOP"/>
+  </Anchors></Button>
+  <Frame name="Panel"><Frames><Button name="$parentUpButton"/></Frames></Frame>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Check.lua",
+            bytes: br#"local roster = CreateFrame("Button", "PanelRoster", Panel, "RosterTemplate")
+assert(CreateFrame("FRAME"):GetObjectType() == "Frame")
+roster:RegisterEvent("player_login")
+assert(roster:IsEventRegistered("PLAYER_LOGIN"))
+roster:RegisterEvent("NOT_A_STOCK_FRAME_EVENT")
+assert(roster:IsEventRegistered("NOT_A_STOCK_FRAME_EVENT") == nil)
+roster:UnregisterEvent("PLAYER_LOGIN")
+assert(roster:IsEventRegistered("PLAYER_LOGIN") == nil)
+Panel:SetDepth(1.25)
+roster:SetDepth(0.75)
+assert(roster:GetDepth() == 0.75 and roster:GetEffectiveDepth() == 2.0)
+roster:IgnoreDepth(true)
+assert(roster:IsIgnoringDepth())
+roster:EnableMouse(true)
+assert(roster:IsMouseEnabled())
+roster:EnableMouse()
+assert(roster:IsMouseEnabled() == nil)
+local point, relative, relativePoint, x, y = roster:GetPoint(1)
+assert(point == "BOTTOM")
+assert(relative == PanelUpButton)
+assert(relativePoint == "TOP" and x == 0 and y == 0)
+DYNAMIC_ANCHOR_TARGET = relative:GetName()"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Frame)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
+    let mut runtime = UiScriptRuntime::new(
+        &bundle,
+        &runtime_plan,
+        UiScriptEnvironment::new(1024, 768, false)?,
+    )?;
+
+    runtime.execute_all(&bundle, &tree, &scripts)?;
+
+    assert_eq!(
+        bundle
+            .lua()
+            .globals()
+            .get::<String>("DYNAMIC_ANCHOR_TARGET")?,
+        "PanelUpButton"
+    );
     Ok(())
 }
 
@@ -177,6 +329,24 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
 </Frames><Scripts><OnLoad>
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
   assert(GetScreenHeight() == 768)
+  assert(bit.tobit(4294967295) == -1)
+  assert(bit.bnot(0) == -1)
+  assert(bit.band(0xff, 0x0f) == 0x0f)
+  assert(bit.bor(0xf0, 0x0f) == 0xff)
+  assert(bit.bxor(0xff, 0x0f) == 0xf0)
+  assert(bit.lshift(1, 31) == -2147483648)
+  assert(bit.rshift(0x80000000, 31) == 1)
+  assert(bit.arshift(0x80000000, 31) == -1)
+  assert(bit.rol(1, 1) == 2 and bit.ror(2, 1) == 1)
+  local lagTypes = {}
+  RegisterStaticConstants(lagTypes)
+  assert(lagTypes.Loot == 1 and lagTypes.AuctionHouse == 2)
+  assert(lagTypes.Mail == 3 and lagTypes.Chat == 4)
+  assert(lagTypes.Movement == 5 and lagTypes.Spell == 6)
+  local qualityRed, qualityGreen, qualityBlue, qualityHex = GetItemQualityColor(4)
+  assert(qualityRed == 0.64 and qualityGreen == 0.21 and qualityBlue == 0.93)
+  assert(qualityHex == "ffa335ee")
+  assert(({GetItemQualityColor(-1)})[4] == "ffffffff")
   assert(issecure())
   local secureValue, secureExtra = securecall(function(value) return value, "secure", 4 end, 3)
   assert(secureValue == 3 and secureExtra == "secure")
@@ -341,6 +511,8 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   FontLabel:SetText("Label")
   assert(FontLabel:GetText() == "Label")
   assert(FontLabel:GetFontObject() == GlueFontTest)
+  local face, height, flags = FontLabel:GetFont()
+  assert(face == "FONTS\\FRIZQT__.TTF" and height == 12 and flags == "")
   assert(FontLabel:GetJustifyH() == "RIGHT")
   assert(FontLabel:GetJustifyV() == "BOTTOM")
   FontLabel:SetJustifyH("left")
@@ -396,6 +568,15 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   self:LockHighlight()
   self:UnlockHighlight()
   self:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
+  local childLabel = self:CreateFontString("$parentDynamicLabel", "OVERLAY", "GlueFontTest", 3)
+  assert(childLabel:GetName() == "FontButtonDynamicLabel")
+  assert(childLabel:GetParent() == self and childLabel:GetFontObject() == GlueFontTest)
+  assert(childLabel:GetDrawLayer() == "OVERLAY")
+  self:SetFontString(childLabel)
+  assert(self:GetFontString() == childLabel)
+  local childTexture = self:CreateTexture("$parentDynamicTexture", "BACKGROUND")
+  assert(childTexture:GetName() == "FontButtonDynamicTexture")
+  assert(childTexture:GetParent() == self and childTexture:GetDrawLayer() == "BACKGROUND")
   local bare = CreateFrame("FontString", "BareLabel", self)
   assert(bare:GetJustifyH() == "CENTER" and bare:GetJustifyV() == "MIDDLE")
   assert(not pcall(function() bare:SetText("invalid") end))

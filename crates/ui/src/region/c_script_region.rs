@@ -181,14 +181,19 @@ impl UiLayoutPlan {
             anchors: Vec::new(),
         };
 
-        for node in tree.nodes() {
+        for (node_index, node) in tree.nodes().iter().enumerate() {
             let first_layer = plan.layers.len();
             let parent_context = node
                 .parent()
                 .and_then(|index| tree.nodes().get(index))
                 .and_then(|parent| parent.name_context());
             for source in node.layers() {
-                if let Some(layer) = parse_layer(source, parent_context, &mut plan.anchors)? {
+                if let Some(layer) = parse_layer(
+                    source,
+                    parent_context,
+                    tree.is_dynamic_root(node_index),
+                    &mut plan.anchors,
+                )? {
                     plan.layers.push(layer);
                 }
             }
@@ -240,6 +245,7 @@ impl UiLayoutPlan {
 fn parse_layer(
     source: &UiElementLayer<'_>,
     parent_context: Option<&str>,
+    allow_dynamic_parent: bool,
     anchors: &mut Vec<UiAnchor>,
 ) -> Result<Option<UiLayoutLayer>, UiLayoutError> {
     let path = source.source_path();
@@ -255,6 +261,7 @@ fn parse_layer(
             source.document(),
             anchors_element,
             parent_context,
+            allow_dynamic_parent,
             anchors,
         )?;
     }
@@ -301,6 +308,7 @@ fn parse_anchors(
     document: &XmlDocument,
     element: &XmlElement,
     parent_context: Option<&str>,
+    allow_dynamic_parent: bool,
     output: &mut Vec<UiAnchor>,
 ) -> Result<(), UiLayoutError> {
     for content in element.content() {
@@ -321,7 +329,7 @@ fn parse_anchors(
             .and_then(|value| parse_point(path, value))?;
         let relative_to = attribute(anchor, "relativeTo")
             .filter(|value| !value.is_empty())
-            .map(|value| expand_parent(path, value, parent_context))
+            .map(|value| expand_parent(path, value, parent_context, allow_dynamic_parent))
             .transpose()?;
         let relative_point = attribute(anchor, "relativePoint")
             .filter(|value| !value.is_empty())
@@ -425,17 +433,21 @@ fn expand_parent(
     path: &AssetPath,
     value: &str,
     parent_context: Option<&str>,
+    allow_dynamic_parent: bool,
 ) -> Result<String, UiLayoutError> {
     if !value.contains("$parent") {
         return Ok(value.to_owned());
     }
-    let parent = parent_context.ok_or_else(|| {
-        layout_error(
-            path,
-            format!("relativeTo {value} has no named parent context"),
-        )
-    })?;
-    Ok(value.replace("$parent", parent))
+    if let Some(parent) = parent_context {
+        return Ok(value.replace("$parent", parent));
+    }
+    if allow_dynamic_parent {
+        return Ok(value.to_owned());
+    }
+    Err(layout_error(
+        path,
+        format!("relativeTo {value} has no named parent context"),
+    ))
 }
 
 fn child_named<'a>(

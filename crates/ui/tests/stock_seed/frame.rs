@@ -56,6 +56,40 @@ fn object_catalog_resolves_earlier_virtual_templates() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// A generic Frame factory adopts the concrete class of its inherited template.
+#[test]
+fn generic_frame_instantiates_the_stock_template_kind() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\FrameXML\\FrameXML.toc",
+            bytes: b"Objects.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Objects.xml",
+            bytes: br#"<Ui>
+  <Slider name="SliderTemplate" virtual="true"><Scripts>
+    <OnValueChanged>VALUE = value</OnValueChanged>
+  </Scripts></Slider>
+  <ScrollFrame name="Container"><Frames>
+    <Frame name="$parentScrollBar" inherits="SliderTemplate"/>
+  </Frames></ScrollFrame>
+</Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Frame)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let scroll_bar = tree
+        .node("ContainerScrollBar")
+        .ok_or("missing inherited scroll bar")?;
+
+    assert_eq!(scroll_bar.kind(), UiObjectKind::Slider);
+    Ok(())
+}
+
 /// Live roots retain action batches and structural ownership for ordered Lua exposure.
 #[test]
 fn object_tree_retains_stock_construction_schedule() -> Result<(), Box<dyn Error>> {

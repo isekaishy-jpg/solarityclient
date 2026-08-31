@@ -2,6 +2,8 @@
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
+use solarity_asset::CharacterClassCatalog;
+
 use crate::{UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
 
 use super::UiScriptEnvironment;
@@ -47,6 +49,10 @@ pub(super) fn register_base_globals(
         "securecallfunction",
         create_secure_call(lua, "securecallfunction")?,
     )?;
+    register_bit_library(lua, &globals)?;
+    register_localized_class_list(lua, &globals, environment)?;
+    register_static_constants(lua, &globals)?;
+    register_item_quality_color(lua, &globals)?;
     if manifest_kind == UiManifestKind::Glue {
         register_glue_globals(lua, &globals, environment)?;
     }
@@ -70,6 +76,181 @@ pub(super) fn register_base_globals(
         .set_name("compat.lua")
         .exec()?;
     Ok(())
+}
+
+fn register_item_quality_color(lua: &Lua, globals: &Table) -> mlua::Result<()> {
+    const COLORS: [(f64, f64, f64, &str); 9] = [
+        (1.00, 1.00, 1.00, "ffffffff"),
+        (0.62, 0.62, 0.62, "ff9d9d9d"),
+        (1.00, 1.00, 1.00, "ffffffff"),
+        (0.12, 1.00, 0.00, "ff1eff00"),
+        (0.00, 0.44, 0.87, "ff0070dd"),
+        (0.64, 0.21, 0.93, "ffa335ee"),
+        (1.00, 0.50, 0.00, "ffff8000"),
+        (0.90, 0.80, 0.50, "ffe6cc80"),
+        (0.00, 0.80, 1.00, "ff00ccff"),
+    ];
+    globals.raw_set(
+        "GetItemQualityColor",
+        lua.create_function(|_, quality: i32| {
+            let index = quality
+                .checked_add(1)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| mlua::Error::runtime("invalid item quality"))?;
+            COLORS
+                .get(index)
+                .copied()
+                .ok_or_else(|| mlua::Error::runtime("invalid item quality"))
+        })?,
+    )
+}
+
+fn register_static_constants(lua: &Lua, globals: &Table) -> mlua::Result<()> {
+    globals.raw_set(
+        "RegisterStaticConstants",
+        lua.create_function(|_, output: Table| {
+            // These are the six build-12340 LagReportType wire values. The
+            // stock HelpFrame passes the resulting integer to GMReportLag.
+            for (name, value) in [
+                ("Loot", 1_u8),
+                ("AuctionHouse", 2),
+                ("Mail", 3),
+                ("Chat", 4),
+                ("Movement", 5),
+                ("Spell", 6),
+            ] {
+                output.raw_set(name, value)?;
+            }
+            Ok(())
+        })?,
+    )
+}
+
+fn register_bit_library(lua: &Lua, globals: &Table) -> mlua::Result<()> {
+    let bit = lua.create_table()?;
+    bit.raw_set(
+        "tobit",
+        lua.create_function(|lua, value: Value| Ok(bit_result(bit_argument(lua, &value)?)))?,
+    )?;
+    bit.raw_set(
+        "bnot",
+        lua.create_function(|lua, value: Value| Ok(bit_result(!bit_argument(lua, &value)?)))?,
+    )?;
+    bit.raw_set(
+        "band",
+        lua.create_function(|lua, values: Variadic<Value>| {
+            let mut result = u32::MAX;
+            for value in values {
+                result &= bit_argument(lua, &value)?;
+            }
+            Ok(bit_result(result))
+        })?,
+    )?;
+    bit.raw_set(
+        "bor",
+        lua.create_function(|lua, values: Variadic<Value>| {
+            let mut result = 0_u32;
+            for value in values {
+                result |= bit_argument(lua, &value)?;
+            }
+            Ok(bit_result(result))
+        })?,
+    )?;
+    bit.raw_set(
+        "bxor",
+        lua.create_function(|lua, values: Variadic<Value>| {
+            let mut result = 0_u32;
+            for value in values {
+                result ^= bit_argument(lua, &value)?;
+            }
+            Ok(bit_result(result))
+        })?,
+    )?;
+    bit.raw_set(
+        "lshift",
+        lua.create_function(|lua, (value, shift): (Value, Value)| {
+            Ok(bit_result(
+                bit_argument(lua, &value)? << (bit_argument(lua, &shift)? & 31),
+            ))
+        })?,
+    )?;
+    bit.raw_set(
+        "rshift",
+        lua.create_function(|lua, (value, shift): (Value, Value)| {
+            Ok(bit_result(
+                bit_argument(lua, &value)? >> (bit_argument(lua, &shift)? & 31),
+            ))
+        })?,
+    )?;
+    bit.raw_set(
+        "arshift",
+        lua.create_function(|lua, (value, shift): (Value, Value)| {
+            let value = bit_argument(lua, &value)? as i32;
+            Ok(bit_result(
+                (value >> (bit_argument(lua, &shift)? & 31)) as u32,
+            ))
+        })?,
+    )?;
+    bit.raw_set(
+        "rol",
+        lua.create_function(|lua, (value, shift): (Value, Value)| {
+            Ok(bit_result(
+                bit_argument(lua, &value)?.rotate_left(bit_argument(lua, &shift)? & 31),
+            ))
+        })?,
+    )?;
+    bit.raw_set(
+        "ror",
+        lua.create_function(|lua, (value, shift): (Value, Value)| {
+            Ok(bit_result(
+                bit_argument(lua, &value)?.rotate_right(bit_argument(lua, &shift)? & 31),
+            ))
+        })?,
+    )?;
+    globals.raw_set("bit", bit)
+}
+
+fn bit_argument(lua: &Lua, value: &Value) -> mlua::Result<u32> {
+    lua.coerce_number(value.clone())?
+        .map(|number| number as i64 as u32)
+        .ok_or_else(|| mlua::Error::runtime("bit operation requires a number"))
+}
+
+const fn bit_result(value: u32) -> i32 {
+    value as i32
+}
+
+fn register_localized_class_list(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let assets = environment.assets();
+    globals.raw_set(
+        "FillLocalizedClassList",
+        lua.create_function(move |_, (output, female): (Table, bool)| {
+            let assets = assets.as_ref().ok_or_else(|| {
+                mlua::Error::runtime(
+                    "FillLocalizedClassList requires the mounted client database stack",
+                )
+            })?;
+            let classes = CharacterClassCatalog::load(&mut assets.borrow_mut())
+                .map_err(|error| mlua::Error::runtime(error.to_string()))?;
+            for class in classes.classes() {
+                // The DBC authors file strings in display casing, while this
+                // native API exposes the uppercase class tokens consumed by
+                // FrameXML's RAID_CLASS_COLORS and CLASS_ICON_TCOORDS tables.
+                let token = class.file_string().to_ascii_uppercase();
+                let name = if female {
+                    class.female_name()
+                } else {
+                    class.male_name()
+                };
+                output.raw_set(token, name)?;
+            }
+            Ok(())
+        })?,
+    )
 }
 
 fn create_secure_call(lua: &Lua, name: &'static str) -> mlua::Result<Function> {

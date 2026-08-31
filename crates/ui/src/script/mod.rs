@@ -20,7 +20,9 @@ pub use simple_script::{
     UiGlueMediaIntent, UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan,
 };
 pub use status::UiScriptError;
-pub use templates::{UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan};
+pub use templates::{
+    UiDeferredRuntimeTemplate, UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan,
+};
 
 pub(crate) use network_intent::UiGlueNetworkBridge;
 pub(crate) use runtime_state::{UiRuntimeAnchor, UiRuntimeObject, UiRuntimeObjectPlan};

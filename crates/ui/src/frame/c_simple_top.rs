@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use solarity_asset::AssetPath;
 
+use crate::frame::c_simple_frame::inherited_object_kind;
 use crate::frame::{UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind};
 use crate::{FontCatalog, XmlContent, XmlDocument, XmlElement};
 
@@ -201,6 +202,7 @@ pub struct UiObjectTree<'bundle> {
     top_level: Vec<usize>,
     batches: Vec<UiObjectBatch>,
     pending_parents: Vec<(usize, String, AssetPath)>,
+    dynamic_root: Option<usize>,
 }
 
 impl<'bundle> UiObjectTree<'bundle> {
@@ -222,6 +224,7 @@ impl<'bundle> UiObjectTree<'bundle> {
             top_level: Vec::new(),
             batches: Vec::new(),
             pending_parents: Vec::new(),
+            dynamic_root: None,
         };
         for definition in catalog.roots() {
             let first_node = tree.nodes.len();
@@ -248,9 +251,14 @@ impl<'bundle> UiObjectTree<'bundle> {
             top_level: Vec::new(),
             batches: Vec::new(),
             pending_parents: Vec::new(),
+            dynamic_root: None,
         };
         let first_node = tree.nodes.len();
         let root = tree.instantiate_root(catalog, fonts, definition)?;
+        // A virtual definition is planned before its eventual CreateFrame
+        // parent exists. Root-level `$parent` properties therefore remain
+        // dynamic until that particular template instance is constructed.
+        tree.dynamic_root = Some(root);
         tree.batches.push(UiObjectBatch {
             action_index: definition.action_index(),
             root,
@@ -265,6 +273,10 @@ impl<'bundle> UiObjectTree<'bundle> {
             .iter()
             .find(|(index, _, _)| *index == node_index)
             .map(|(_, name, _)| name.as_str())
+    }
+
+    pub(crate) fn is_dynamic_root(&self, node_index: usize) -> bool {
+        self.dynamic_root == Some(node_index)
     }
 
     /// Returns all objects in construction order.
@@ -352,7 +364,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         fonts: &FontCatalog,
         structural_parent: usize,
         layer: UiElementLayer<'bundle>,
-        kind: UiObjectKind,
+        authored_kind: UiObjectKind,
         role: UiObjectRole,
     ) -> Result<(), UiObjectError> {
         let parent_name = self.nodes[structural_parent].name_context.as_deref();
@@ -372,6 +384,7 @@ impl<'bundle> UiObjectTree<'bundle> {
             .unwrap_or(structural_parent);
 
         let mut layers = Vec::new();
+        let mut kind = authored_kind;
         if let Some(parents) = attribute(layer.element, "inherits") {
             for template_name in parents.split(',').map(str::trim) {
                 if let Some(template) = catalog.definition(template_name) {
@@ -381,17 +394,25 @@ impl<'bundle> UiObjectTree<'bundle> {
                             format!("nested object inherits non-virtual object {template_name}"),
                         ));
                     }
+                    kind = inherited_object_kind(
+                        layer.source_path,
+                        name.as_deref().unwrap_or("<unnamed>"),
+                        authored_kind,
+                        kind,
+                        template.kind(),
+                    )?;
                     layers.extend(definition_layers(catalog, template)?);
-                } else if kind == UiObjectKind::FontString
+                } else if authored_kind == UiObjectKind::FontString
                     && fonts.definition(template_name).is_some()
                 {
                     // Font properties are resolved by the font-string stage and
                     // contribute no XML object layer here.
                 } else {
-                    return Err(object_error(
-                        layer.source_path,
-                        format!("nested object inherits unavailable object {template_name}"),
-                    ));
+                    return Err(UiObjectError::UnavailableTemplate {
+                        path: layer.source_path.clone(),
+                        object: name.clone().unwrap_or_else(|| "<unnamed>".to_owned()),
+                        template: template_name.to_owned(),
+                    });
                 }
             }
         }

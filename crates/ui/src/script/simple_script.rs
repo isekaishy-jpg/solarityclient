@@ -12,14 +12,14 @@ use std::rc::Rc;
 use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
 use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle};
 
-use crate::event::{UiEventArgument, UiEventPayload, canonical_glue_event};
+use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canonical_glue_event};
 use crate::script::UiGlueNetworkBridge;
 use crate::{
-    FontCatalog, FontDefinition, HorizontalJustification, UiAnchorTarget, UiBlendMode, UiBundle,
-    UiDrawLayer, UiFrameStatePlan, UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch,
-    UiObjectKind, UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent,
-    UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
-    UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
+    FontCatalog, FontDefinition, FontOutline, HorizontalJustification, UiAnchorTarget, UiBlendMode,
+    UiBundle, UiDrawLayer, UiFrameStatePlan, UiFrameStrata, UiLoadAction, UiManifestKind,
+    UiObjectBatch, UiObjectKind, UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan,
+    UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
 };
 
 use self::cvars::UiCVarRegistry;
@@ -92,6 +92,12 @@ static NON_BLOCKING_TOKEN: u8 = 58;
 static DRAW_LAYER_TOKEN: u8 = 59;
 static DRAW_SUB_LEVEL_TOKEN: u8 = 60;
 static FRAME_STRATA_TOKEN: u8 = 61;
+static FRAME_DEPTH_TOKEN: u8 = 62;
+static IGNORE_DEPTH_TOKEN: u8 = 63;
+static FONT_FACE_TOKEN: u8 = 64;
+static FONT_HEIGHT_TOKEN: u8 = 65;
+static FONT_FLAGS_TOKEN: u8 = 66;
+static MOUSE_ENABLED_TOKEN: u8 = 67;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -202,6 +208,7 @@ pub struct UiScriptRuntime {
     frame_levels: Vec<Option<i32>>,
     frame_strata: Vec<Option<&'static str>>,
     frame_keyboard_enabled: Vec<Option<bool>>,
+    frame_mouse_enabled: Vec<Option<bool>>,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
@@ -388,6 +395,14 @@ impl UiScriptRuntime {
         let metatables = lua
             .create_table()
             .map_err(|error| execution_error("object metatables", error))?;
+        let registered_objects = Rc::new(Cell::new(0));
+        let dynamic_objects = Rc::new(Cell::new(0));
+        let static_object_count = plan.regions.state_count();
+        let dynamic_arena = DynamicArenaState {
+            static_object_count,
+            registered_objects: registered_objects.clone(),
+            dynamic_objects,
+        };
         let font_definitions = Rc::new(
             plan.fonts
                 .definitions()
@@ -421,6 +436,7 @@ impl UiScriptRuntime {
                     kind,
                     environment.assets(),
                     button_measurement.clone(),
+                    dynamic_arena.clone(),
                 )
                 .map_err(|error| execution_error("object metatable", error))?;
                 metatables
@@ -533,18 +549,14 @@ impl UiScriptRuntime {
                     .map(|state| state.keyboard_enabled())
             })
             .collect();
+        let frame_mouse_enabled = (0..plan.regions.state_count())
+            .map(|index| plan.frames.state(index).map(|state| state.mouse_enabled()))
+            .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
         let textures = tree_textures(plan.tree, plan.texture_states)?;
-        let registered_objects = Rc::new(Cell::new(0));
-        let dynamic_objects = Rc::new(Cell::new(0));
-        register_create_frame(
-            lua,
-            plan.regions.state_count(),
-            registered_objects.clone(),
-            dynamic_objects,
-        )
-        .map_err(|error| execution_error("CreateFrame", error))?;
+        register_create_frame(lua, dynamic_arena)
+            .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
             next_action: 0,
             object_metatables,
@@ -562,6 +574,7 @@ impl UiScriptRuntime {
             frame_levels,
             frame_strata,
             frame_keyboard_enabled,
+            frame_mouse_enabled,
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
@@ -864,6 +877,21 @@ impl UiScriptRuntime {
         } else {
             None
         };
+        let mouse_enabled = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_mouse_enabled
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!(
+                            "frame object {node_index} has no resolved mouse-input state"
+                        ),
+                    })?,
+            )
+        } else {
+            None
+        };
         let frame_strata = if is_frame_object(object.kind()) {
             Some(
                 self.frame_strata
@@ -978,6 +1006,9 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_level_key(), frame_level))
                 .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
+                .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
+                .and_then(|()| table.raw_set(frame_depth_key(), 0.0))
+                .and_then(|()| table.raw_set(ignore_depth_key(), false))
                 .and_then(|()| table.raw_set(script_handlers_key(), script_handlers))
                 .map_err(|error| execution_error("object registration", error))?;
         }
@@ -1213,12 +1244,7 @@ impl UiScriptRuntime {
     }
 }
 
-fn register_create_frame(
-    lua: &Lua,
-    static_object_count: usize,
-    registered_objects: Rc<Cell<usize>>,
-    dynamic_objects: Rc<Cell<usize>>,
-) -> mlua::Result<()> {
+fn register_create_frame(lua: &Lua, dynamic_arena: DynamicArenaState) -> mlua::Result<()> {
     lua.globals().raw_set(
         "CreateFrame",
         lua.create_function(
@@ -1229,36 +1255,56 @@ fn register_create_frame(
                 Option<Table>,
                 Option<String>,
             )| {
-                let templates: Table = lua.named_registry_value(TEMPLATE_REGISTRY)?;
-                let descriptor = if let Some(template) = template {
-                    if template.contains(',') {
-                        return Err(mlua::Error::runtime(
-                            "CreateFrame multiple-template inheritance is not implemented",
-                        ));
-                    }
-                    Some(templates.raw_get::<Table>(template.as_str()).map_err(|_| {
-                        mlua::Error::runtime(format!(
-                            "CreateFrame template {template} is unavailable"
-                        ))
-                    })?)
-                } else {
-                    None
-                };
+                let descriptor = runtime_template_descriptor(lua, template.as_deref())?;
                 create_dynamic_frame(
                     lua,
                     &kind,
                     name.as_deref(),
                     parent,
                     descriptor,
-                    &DynamicArenaCounters {
-                        static_object_count,
-                        registered_objects: &registered_objects,
-                        dynamic_objects: &dynamic_objects,
-                    },
+                    &dynamic_arena.counters(),
                 )
             },
         )?,
     )
+}
+
+#[derive(Clone)]
+struct DynamicArenaState {
+    static_object_count: usize,
+    registered_objects: Rc<Cell<usize>>,
+    dynamic_objects: Rc<Cell<usize>>,
+}
+
+impl DynamicArenaState {
+    fn counters(&self) -> DynamicArenaCounters<'_> {
+        DynamicArenaCounters {
+            static_object_count: self.static_object_count,
+            registered_objects: &self.registered_objects,
+            dynamic_objects: &self.dynamic_objects,
+        }
+    }
+}
+
+fn runtime_template_descriptor(lua: &Lua, template: Option<&str>) -> mlua::Result<Option<Table>> {
+    let Some(template) = template else {
+        return Ok(None);
+    };
+    if template.contains(',') {
+        return Err(mlua::Error::runtime(
+            "CreateFrame multiple-template inheritance is not implemented",
+        ));
+    }
+    let templates: Table = lua.named_registry_value(TEMPLATE_REGISTRY)?;
+    let descriptor = templates.raw_get::<Table>(template).map_err(|_| {
+        mlua::Error::runtime(format!("CreateFrame template {template} is unavailable"))
+    })?;
+    if let Some(dependency) = descriptor.raw_get::<Option<String>>("deferred_dependency")? {
+        return Err(mlua::Error::runtime(format!(
+            "CreateFrame template {template} awaits template {dependency}"
+        )));
+    }
+    Ok(Some(descriptor))
 }
 
 struct DynamicArenaCounters<'state> {
@@ -1275,6 +1321,12 @@ fn create_dynamic_frame(
     descriptor: Option<Table>,
     counters: &DynamicArenaCounters<'_>,
 ) -> mlua::Result<Table> {
+    let requested_kind = OBJECT_KINDS
+        .iter()
+        .copied()
+        .map(object_type_name)
+        .find(|kind| kind.eq_ignore_ascii_case(requested_kind))
+        .ok_or_else(|| mlua::Error::runtime(format!("unknown frame type {requested_kind}")))?;
     let records = if let Some(descriptor) = &descriptor {
         descriptor.raw_get::<Table>("nodes")?
     } else {
@@ -1451,6 +1503,9 @@ fn create_dynamic_object(
             .unwrap_or_else(|| "MEDIUM".to_owned());
         object.raw_set(frame_strata_key(), strata)?;
         object.raw_set(keyboard_enabled_key(), false)?;
+        object.raw_set(mouse_enabled_key(), false)?;
+        object.raw_set(frame_depth_key(), 0.0)?;
+        object.raw_set(ignore_depth_key(), false)?;
         let handlers = lua.create_table()?;
         if let Some(initial) = record.raw_get::<Option<Table>>("scripts")? {
             for pair in initial.pairs::<String, Value>() {
@@ -1590,6 +1645,24 @@ fn apply_dynamic_anchors(lua: &Lua, records: &Table, objects: &[Table]) -> mlua:
                             "runtime template anchor target {name} is unavailable"
                         ))
                     })?;
+                    Some(target.raw_get::<usize>(index_key())?)
+                }
+                "dynamic" => {
+                    let source = prototype.raw_get::<String>("target")?;
+                    let registry: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+                    let parent = object
+                        .raw_get::<Option<usize>>(parent_key())?
+                        .map(|index| registry.raw_get::<Table>(index))
+                        .transpose()?;
+                    let name = expand_dynamic_parent_name(lua, &source, parent.as_ref())?;
+                    let target = lua
+                        .globals()
+                        .raw_get::<Option<Table>>(name.as_str())?
+                        .ok_or_else(|| {
+                            mlua::Error::runtime(format!(
+                                "runtime template anchor target {name} is unavailable"
+                            ))
+                        })?;
                     Some(target.raw_get::<usize>(index_key())?)
                 }
                 _ => {
@@ -1739,6 +1812,14 @@ fn register_font(
     table
         .raw_set(name_key(), definition.name())
         .and_then(|()| table.raw_set(type_key(), "Font"))
+        .and_then(|()| {
+            table.raw_set(
+                font_face_key(),
+                definition.face().map(solarity_asset::AssetPath::as_str),
+            )
+        })
+        .and_then(|()| table.raw_set(font_height_key(), definition.height().map(f64::from)))
+        .and_then(|()| table.raw_set(font_flags_key(), font_flags(definition)))
         .map_err(|error| execution_error("font registration", error))?;
     let metatable: Table = lua
         .registry_value(metatable_key)
@@ -1782,12 +1863,27 @@ fn create_font_metatable(lua: &Lua) -> mlua::Result<Table> {
     Ok(metatable)
 }
 
+fn font_flags(definition: &FontDefinition) -> String {
+    let mut flags = Vec::with_capacity(2);
+    if let Some(outline) = definition.outline() {
+        flags.push(match outline {
+            FontOutline::Normal => "OUTLINE",
+            FontOutline::Thick => "THICKOUTLINE",
+        });
+    }
+    if definition.monochrome() == Some(true) {
+        flags.push("MONOCHROME");
+    }
+    flags.join(", ")
+}
+
 fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
     assets: Option<AssetStoreHandle>,
     button_measurement: Option<buttons::ButtonTextMeasurement>,
+    dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
     methods.raw_set(
@@ -1821,6 +1917,7 @@ fn create_object_metatable(
         register_frame_backdrop_methods(lua, &methods)?;
         register_frame_visibility_methods(lua, &methods)?;
         register_frame_script_methods(lua, &methods, kind)?;
+        register_frame_region_factory_methods(lua, &methods, dynamic_arena)?;
     }
     if is_enabled_control(kind) {
         register_enabled_methods(lua, &methods, kind)?;
@@ -1893,6 +1990,107 @@ fn register_frame_script_methods(
     )
 }
 
+fn register_frame_region_factory_methods(
+    lua: &Lua,
+    methods: &Table,
+    dynamic_arena: DynamicArenaState,
+) -> mlua::Result<()> {
+    let texture_arena = dynamic_arena.clone();
+    methods.raw_set(
+        "CreateTexture",
+        lua.create_function(
+            move |lua,
+                  (parent, name, layer, template, sub_level): (
+                Table,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i32>,
+            )| {
+                create_dynamic_region(
+                    lua,
+                    "Texture",
+                    parent,
+                    name.as_deref(),
+                    layer.as_deref(),
+                    template.as_deref(),
+                    sub_level,
+                    &texture_arena.counters(),
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "CreateFontString",
+        lua.create_function(
+            move |lua,
+                  (parent, name, layer, template, sub_level): (
+                Table,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i32>,
+            )| {
+                create_dynamic_region(
+                    lua,
+                    "FontString",
+                    parent,
+                    name.as_deref(),
+                    layer.as_deref(),
+                    template.as_deref(),
+                    sub_level,
+                    &dynamic_arena.counters(),
+                )
+            },
+        )?,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_dynamic_region(
+    lua: &Lua,
+    kind: &str,
+    parent: Table,
+    name: Option<&str>,
+    layer: Option<&str>,
+    template: Option<&str>,
+    sub_level: Option<i32>,
+    counters: &DynamicArenaCounters<'_>,
+) -> mlua::Result<Table> {
+    let inherited_font = if kind == "FontString" {
+        template
+            .and_then(|name| lua.globals().raw_get::<Option<Table>>(name).ok().flatten())
+            .filter(|font| {
+                font.raw_get::<String>(type_key())
+                    .is_ok_and(|kind| kind == "Font")
+            })
+    } else {
+        None
+    };
+    let descriptor = if inherited_font.is_some() {
+        None
+    } else {
+        runtime_template_descriptor(lua, template)?
+    };
+    let object = create_dynamic_frame(lua, kind, name, Some(parent), descriptor, counters)?;
+    if let Some(layer) = layer {
+        let layer = parse_draw_layer_name(layer)
+            .ok_or_else(|| mlua::Error::runtime("invalid draw layer"))?;
+        object.raw_set(draw_layer_key(), layer)?;
+    }
+    if let Some(sub_level) = sub_level {
+        object.raw_set(
+            draw_sub_level_key(),
+            sub_level.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+        )?;
+    }
+    if let Some(font) = inherited_font {
+        object.raw_set(font_object_key(), font)?;
+        object.raw_set(font_set_key(), true)?;
+    }
+    Ok(object)
+}
+
 fn object_script_function(
     lua: &Lua,
     object: &Table,
@@ -1933,6 +2131,19 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
         "GetFontObject",
         lua.create_function(|_, font_string: Table| {
             font_string.raw_get::<Option<Table>>(font_object_key())
+        })?,
+    )?;
+    methods.raw_set(
+        "GetFont",
+        lua.create_function(|_, font_string: Table| {
+            let Some(font) = font_string.raw_get::<Option<Table>>(font_object_key())? else {
+                return Ok((None::<String>, None::<f64>, None::<String>));
+            };
+            Ok((
+                font.raw_get::<Option<String>>(font_face_key())?,
+                font.raw_get::<Option<f64>>(font_height_key())?,
+                font.raw_get::<Option<String>>(font_flags_key())?,
+            ))
         })?,
     )?;
     methods.raw_set(
@@ -2412,7 +2623,74 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 .raw_get::<bool>(keyboard_enabled_key())?
                 .then_some(Value::Number(1.0)))
         })?,
+    )?;
+    methods.raw_set(
+        "EnableMouse",
+        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+            let enabled = arguments
+                .first()
+                .is_some_and(|value| lua_bool(value, false));
+            object.raw_set(mouse_enabled_key(), enabled)
+        })?,
+    )?;
+    methods.raw_set(
+        "IsMouseEnabled",
+        lua.create_function(|_, object: Table| {
+            Ok(object
+                .raw_get::<bool>(mouse_enabled_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
+    )?;
+    methods.raw_set(
+        "SetDepth",
+        lua.create_function(|_, (object, depth): (Table, f64)| {
+            if !depth.is_finite() {
+                return Err(mlua::Error::runtime("SetDepth(): invalid additive depth"));
+            }
+            object.raw_set(frame_depth_key(), depth)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetDepth",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(frame_depth_key()))?,
+    )?;
+    methods.raw_set(
+        "GetEffectiveDepth",
+        lua.create_function(|lua, object: Table| effective_frame_depth(lua, object))?,
+    )?;
+    methods.raw_set(
+        "IgnoreDepth",
+        lua.create_function(|_, (object, ignored): (Table, bool)| {
+            object.raw_set(ignore_depth_key(), ignored)
+        })?,
+    )?;
+    methods.raw_set(
+        "IsIgnoringDepth",
+        lua.create_function(|_, object: Table| {
+            Ok(object
+                .raw_get::<bool>(ignore_depth_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
     )
+}
+
+fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut depth = 0.0;
+    loop {
+        depth += object.raw_get::<f64>(frame_depth_key())?;
+        let Some(parent) = object.raw_get::<Option<usize>>(parent_key())? else {
+            return Ok(depth);
+        };
+        let Some(parent) = objects.raw_get::<Option<Table>>(parent)? else {
+            return Ok(depth);
+        };
+        // Regions have no additive frame depth and terminate the frame chain.
+        if parent.raw_get::<Option<f64>>(frame_depth_key())?.is_none() {
+            return Ok(depth);
+        }
+        object = parent;
+    }
 }
 
 fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -3042,9 +3320,7 @@ fn registered_event(
 ) -> mlua::Result<Option<&'static str>> {
     match manifest_kind {
         UiManifestKind::Glue => Ok(canonical_glue_event(name)),
-        UiManifestKind::Frame => Err(mlua::Error::runtime(
-            "FrameXML event registry is not implemented",
-        )),
+        UiManifestKind::Frame => Ok(canonical_frame_event(name)),
     }
 }
 
@@ -3599,6 +3875,30 @@ pub(super) fn draw_sub_level_key() -> LightUserData {
 
 pub(super) fn frame_strata_key() -> LightUserData {
     hidden_key(&FRAME_STRATA_TOKEN)
+}
+
+fn frame_depth_key() -> LightUserData {
+    hidden_key(&FRAME_DEPTH_TOKEN)
+}
+
+fn ignore_depth_key() -> LightUserData {
+    hidden_key(&IGNORE_DEPTH_TOKEN)
+}
+
+fn mouse_enabled_key() -> LightUserData {
+    hidden_key(&MOUSE_ENABLED_TOKEN)
+}
+
+fn font_face_key() -> LightUserData {
+    hidden_key(&FONT_FACE_TOKEN)
+}
+
+fn font_height_key() -> LightUserData {
+    hidden_key(&FONT_HEIGHT_TOKEN)
+}
+
+fn font_flags_key() -> LightUserData {
+    hidden_key(&FONT_FLAGS_TOKEN)
 }
 
 fn normal_texture_key() -> LightUserData {

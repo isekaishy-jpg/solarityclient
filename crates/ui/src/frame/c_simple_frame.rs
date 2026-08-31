@@ -269,7 +269,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
         element: &'bundle XmlElement,
         fonts: &FontCatalog,
     ) -> Result<(), UiObjectError> {
-        let kind = UiObjectKind::from_element_name(element.name()).ok_or_else(|| {
+        let authored_kind = UiObjectKind::from_element_name(element.name()).ok_or_else(|| {
             declaration_error(path, format!("unsupported root type {}", element.name()))
         })?;
         let name = attribute(element, "name")
@@ -288,6 +288,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             .unwrap_or(false);
         let mut inherited_from = Vec::new();
         let mut resolved_layers = Vec::new();
+        let mut kind = authored_kind;
         if let Some(parents) = attribute(element, "inherits") {
             for parent_name in parents.split(',').map(str::trim) {
                 if let Some(index) = self.by_name.get(parent_name).copied() {
@@ -297,9 +298,16 @@ impl<'bundle> UiObjectCatalog<'bundle> {
                             format!("object {name} inherits non-virtual object {parent_name}"),
                         ));
                     }
+                    kind = inherited_object_kind(
+                        path,
+                        &name,
+                        authored_kind,
+                        kind,
+                        self.definitions[index].kind(),
+                    )?;
                     resolved_layers.extend_from_slice(self.definitions[index].resolved_layers());
                     inherited_from.push(UiInheritanceTarget::Object(index));
-                } else if kind == UiObjectKind::FontString
+                } else if authored_kind == UiObjectKind::FontString
                     && fonts.definition(parent_name).is_some()
                 {
                     inherited_from.push(UiInheritanceTarget::Font(parent_name.to_owned()));
@@ -335,6 +343,33 @@ impl<'bundle> UiObjectCatalog<'bundle> {
         }
         Ok(())
     }
+}
+
+/// Resolves stock's generic `<Frame inherits="ConcreteTemplate">` factory form.
+///
+/// FrameXML uses this for `BasicHybridScrollFrameTemplateScrollBar`: the
+/// authored element is `Frame`, while `HybridScrollBarTemplate` is a `Slider`
+/// and supplies `OnValueChanged`. A non-generic tag remains authoritative, and
+/// incompatible concrete templates fail instead of choosing one implicitly.
+pub(crate) fn inherited_object_kind(
+    path: &AssetPath,
+    object: &str,
+    authored: UiObjectKind,
+    current: UiObjectKind,
+    inherited: UiObjectKind,
+) -> Result<UiObjectKind, UiObjectError> {
+    if authored != UiObjectKind::Frame || inherited == UiObjectKind::Frame {
+        return Ok(current);
+    }
+    if current == UiObjectKind::Frame || current == inherited {
+        return Ok(inherited);
+    }
+    Err(declaration_error(
+        path,
+        format!(
+            "generic frame {object} inherits incompatible concrete types {current:?} and {inherited:?}"
+        ),
+    ))
 }
 
 fn attribute<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {

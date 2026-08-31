@@ -5,6 +5,7 @@
 //! coercions or silent event fallbacks.
 
 mod dispatch;
+mod frame_registry;
 mod payload;
 mod registry;
 mod types;
@@ -12,5 +13,6 @@ mod types;
 pub use payload::{UiEventArgument, UiEventPayload};
 pub use types::{UiEventDispatch, UiEventError};
 
+pub(crate) use frame_registry::canonical_frame_event;
 pub(crate) use payload::MAX_EVENT_ARGUMENTS;
 pub(crate) use registry::canonical_glue_event;
