@@ -17,10 +17,10 @@ use solarity_rendering::{
     CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialUniform,
-    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint, M2RibbonPose, M2RibbonTrail,
-    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
-    VulkanBootstrap, VulkanError,
+    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPose, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneUniform,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap, VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -448,6 +448,26 @@ fn m2_ribbon_pose_samples_placement_effect_values() -> Result<(), Box<dyn Error>
     assert!((aged.age_seconds() - 0.05).abs() < 0.000_1);
     assert!((aged.above().z - 0.0245).abs() < 0.000_1);
     assert_eq!(trail.texture_slot(), 1);
+
+    let mesh = M2RibbonMeshPlan::prepare(emitter, &trail)?;
+    assert_eq!(mesh.vertices().len(), 6);
+    assert_eq!(
+        mesh.vertex_bytes().len(),
+        6 * M2RibbonRenderVertex::BYTE_SIZE
+    );
+    let oldest_above = mesh.vertices().first().ok_or("ribbon mesh is empty")?;
+    assert_eq!(oldest_above.position(), aged.above().to_array());
+    assert_eq!(oldest_above.color_bgra(), [255, 255, 255, 191]);
+    assert!((oldest_above.texture_coordinates()[0] - 0.26).abs() < 0.000_1);
+    assert_eq!(oldest_above.texture_coordinates()[1], 0.0);
+    assert_eq!(mesh.vertices()[1].texture_coordinates()[1], 0.5);
+    assert_eq!(
+        mesh.vertices()
+            .last()
+            .ok_or("ribbon mesh is empty")?
+            .texture_coordinates(),
+        [0.25, 0.5]
+    );
 
     let final_pose = M2RibbonPose::sample(
         model.animations(),

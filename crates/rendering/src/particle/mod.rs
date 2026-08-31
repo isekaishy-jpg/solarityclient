@@ -7,5 +7,6 @@ mod particle_system2;
 mod ribbon;
 
 pub use ribbon::{
-    M2RibbonControlPoint, M2RibbonPose, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonMeshPlanError, M2RibbonPose,
+    M2RibbonRenderVertex, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
 };

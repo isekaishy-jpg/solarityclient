@@ -56,7 +56,8 @@ pub use model::{
 };
 pub use model::{compare_m2_transparent, m2_section_distance_key};
 pub use particle::{
-    M2RibbonControlPoint, M2RibbonPose, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonMeshPlanError, M2RibbonPose,
+    M2RibbonRenderVertex, M2RibbonSection, M2RibbonTrail, M2RibbonTrailError,
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,

@@ -89,8 +89,10 @@ The build-12340 executable rounds edge rate upward, clamps edge lifetime to
 0.25 seconds, and allocates `ceil(rate * lifetime) + 2` edge pairs. The retained
 trail reproduces that bound, its nominal one-interval first update, lifetime
 expiry, quadratic gravity integration, and the two-handle interpolation used
-when a frame crosses an edge boundary. Vulkan strip upload and submission are
-the remaining ribbon presentation boundary.
+when a frame crosses an edge boundary. Dynamic mesh preparation emits stock's
+24-byte position/color/texture-coordinate vertex layout, including packed BGRA
+color and age-progressed coordinates within the selected flipbook cell. Vulkan
+strip upload and submission are the remaining ribbon presentation boundary.
 
 ## Particles
 

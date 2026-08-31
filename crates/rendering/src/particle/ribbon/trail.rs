@@ -1,26 +1,12 @@
-//! Animated ribbon-emitter values shared by simulation and draw preparation.
+//! Placement-local stock ribbon edge history.
 
 use std::collections::VecDeque;
 
 use glam::{Vec3, Vec4};
-use solarity_asset::{M2AnimationSet, M2RibbonEmitter};
+use solarity_asset::M2RibbonEmitter;
 use thiserror::Error;
 
-use crate::model::m2_animation::sample::{sample_discrete, sample_scalar, sample_vec3};
-use crate::{M2AnimationClock, M2BonePoseError};
-
-/// One immutable sample of an authored ribbon declaration.
-///
-/// Mutable edge history belongs to each placed M2. This value contains only
-/// the animation result that can be copied into newly emitted edge pairs.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct M2RibbonPose {
-    color: Vec4,
-    height_above: f32,
-    height_below: f32,
-    texture_slot: u16,
-    visible: bool,
-}
+use super::M2RibbonPose;
 
 /// A transformed ribbon spine and its two orientation vectors.
 ///
@@ -273,6 +259,12 @@ impl M2RibbonTrail {
         self.capacity
     }
 
+    /// Returns stock's minimum-clamped lifetime used for UV progression.
+    #[must_use]
+    pub const fn edge_lifetime_seconds(&self) -> f32 {
+        self.edge_lifetime_seconds
+    }
+
     /// Returns the most recently sampled flipbook cell.
     #[must_use]
     pub const fn texture_slot(&self) -> u16 {
@@ -307,116 +299,12 @@ impl M2RibbonTrail {
     }
 }
 
-impl M2RibbonPose {
-    /// Samples the emitter through the same local/global sequence routing used
-    /// by bones and M2 materials.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`M2BonePoseError`] when the selected sequence or either clock
-    /// is unavailable to the decoded model.
-    pub fn sample(
-        animations: &M2AnimationSet,
-        emitter: &M2RibbonEmitter,
-        clock: M2AnimationClock,
-    ) -> Result<Self, M2BonePoseError> {
-        let sequence = clock.resolve(animations)?;
-        let animation_time_ms = clock.animation_time_ms();
-        let global_time_ms = clock.global_time_ms();
-        let color = sample_vec3(
-            animations,
-            emitter.color(),
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-            Vec3::ONE,
-        );
-        let alpha = sample_scalar(
-            animations,
-            emitter.alpha(),
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-            1.0,
-        );
-        Ok(Self {
-            color: color.extend(alpha),
-            height_above: sample_scalar(
-                animations,
-                emitter.height_above(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0.0,
-            ),
-            height_below: sample_scalar(
-                animations,
-                emitter.height_below(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0.0,
-            ),
-            texture_slot: sample_discrete(
-                animations,
-                emitter.texture_slot(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0,
-            ),
-            visible: sample_discrete(
-                animations,
-                emitter.visibility(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                1,
-            ) != 0,
-        })
-    }
-
-    /// Returns authored linear RGB and signed-fixed16 opacity.
-    #[must_use]
-    pub const fn color(self) -> Vec4 {
-        self.color
-    }
-
-    /// Returns the edge distance above the transformed emitter center.
-    #[must_use]
-    pub const fn height_above(self) -> f32 {
-        self.height_above
-    }
-
-    /// Returns the edge distance below the transformed emitter center.
-    #[must_use]
-    pub const fn height_below(self) -> f32 {
-        self.height_below
-    }
-
-    /// Returns the held flipbook cell selector.
-    #[must_use]
-    pub const fn texture_slot(self) -> u16 {
-        self.texture_slot
-    }
-
-    /// Reports whether the byte-valued emitter visibility key is nonzero.
-    #[must_use]
-    pub const fn visible(self) -> bool {
-        self.visible
-    }
-
-    fn is_finite(self) -> bool {
-        self.color.is_finite() && self.height_above.is_finite() && self.height_below.is_finite()
-    }
-}
-
 /// Produces one pair at an exact transformed emitter frame.
 fn section(control: M2RibbonControlPoint, pose: M2RibbonPose) -> M2RibbonSection {
     M2RibbonSection {
-        above: control.center + control.width_axis * pose.height_above,
-        below: control.center - control.width_axis * pose.height_below,
-        color: pose.color,
+        above: control.center + control.width_axis * pose.height_above(),
+        below: control.center - control.width_axis * pose.height_below(),
+        color: pose.color(),
         age_seconds: 0.0,
     }
 }
@@ -439,7 +327,7 @@ fn interpolated_section(
             + (current_section.above - current_handle * inverse) * amount,
         below: (previous_section.below + previous_handle * amount) * inverse
             + (current_section.below - current_handle * inverse) * amount,
-        color: pose.color,
+        color: pose.color(),
         age_seconds: 0.0,
     }
 }
