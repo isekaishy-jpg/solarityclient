@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use solarity_asset::{AssetPath, BlpTextureCache};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureHandle, UiFrameReport, UiPreparedDraw, UiRenderSource,
-    UiSampledTexture, UiSamplerInfo, UiShaderSource, VulkanRenderer,
+    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, UiFrameReport, UiPreparedDraw,
+    UiRenderSource, UiSampledTexture, UiSamplerInfo, UiShaderSource, VulkanRenderer,
 };
 use solarity_ui::GlueManager;
 
@@ -28,6 +28,8 @@ impl LoginUiFrame {
         let mut cache = BlpTextureCache::new();
         let bindings = glue.load_blocking_render_textures(&mut cache)?;
         let mut textures = HashMap::<AssetPath, BlpTextureHandle>::new();
+        let mut texture_paths = Vec::new();
+        let mut texture_uploads = Vec::new();
         for (request_index, request) in render_plan.texture_assets().requests().iter().enumerate() {
             let Some(source) = bindings.source(request_index) else {
                 // Stock marks this source non-blocking. Its material batch remains
@@ -36,8 +38,14 @@ impl LoginUiFrame {
             };
             // Build 12340's fixed-function UI path samples color bytes linearly;
             // the BLP container itself carries no transfer-function metadata.
-            let handle = renderer.upload_blp_texture(source, BlpColorSpace::Linear)?;
-            textures.insert(request.path().clone(), handle);
+            texture_paths.push(request.path().clone());
+            texture_uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear));
+        }
+        for (path, handle) in texture_paths
+            .into_iter()
+            .zip(renderer.upload_blp_textures(&texture_uploads)?)
+        {
+            textures.insert(path, handle);
         }
 
         let mesh = renderer.upload_ui_mesh(mesh_plan)?;

@@ -36,6 +36,22 @@ struct PreparedTexture {
     storage: BlpTextureStorage,
 }
 
+/// One allocated image awaiting the shared transfer and view creation.
+struct PendingBatchTexture {
+    image: GpuSampledImage,
+    format: vk::Format,
+    mip_levels: u32,
+    mips: Vec<UploadMip>,
+    info: BlpTextureResourceInfo,
+}
+
+/// Borrowed recording description for one destination image.
+struct ImageUpload<'mips> {
+    image: vk::Image,
+    mip_levels: u32,
+    mips: &'mips [UploadMip],
+}
+
 /// Device-local image/view pair owned by the renderer texture registry.
 pub(super) struct GpuBlpTexture {
     image: GpuSampledImage,
@@ -110,6 +126,34 @@ impl Drop for TextureGuard<'_> {
     fn drop(&mut self) {
         if let Some(texture) = self.texture.as_mut() {
             texture.destroy(self.device, self.allocator);
+        }
+    }
+}
+
+/// Guard ensuring a partially admitted batch releases every permanent image.
+struct TextureBatchGuard<'a> {
+    device: &'a Device,
+    allocator: &'a vk_mem::Allocator,
+    textures: Vec<PendingBatchTexture>,
+}
+
+impl TextureBatchGuard<'_> {
+    /// Transfers fully initialized images into registry-owned resources.
+    fn finish(mut self) -> Vec<GpuBlpTexture> {
+        std::mem::take(&mut self.textures)
+            .into_iter()
+            .map(|pending| GpuBlpTexture {
+                image: pending.image,
+                info: pending.info,
+            })
+            .collect()
+    }
+}
+
+impl Drop for TextureBatchGuard<'_> {
+    fn drop(&mut self) {
+        for pending in self.textures.iter_mut().rev() {
+            pending.image.destroy(self.device, self.allocator);
         }
     }
 }
@@ -259,31 +303,136 @@ impl Drop for TextureTransfer<'_> {
     }
 }
 
-/// Uploads every authored BLP mip into one immutable sampled image.
-pub(super) fn upload_texture(
+/// Uploads all requested sources through one staging allocation and submission.
+pub(super) fn upload_textures(
     context: TextureUploadContext<'_>,
-    source: &BlpTextureSource,
-    color_space: BlpColorSpace,
-) -> Result<GpuBlpTexture, BlpTextureUploadError> {
-    let prepared = prepare_mips(source)?;
-    let format = texture_format(prepared.storage, color_space);
-    let image = upload_sampled_image(
-        context,
-        format,
-        (source.width(), source.height()),
-        &prepared.bytes,
-        &prepared.mips,
+    requests: &[(&BlpTextureSource, BlpColorSpace)],
+) -> Result<Vec<GpuBlpTexture>, BlpTextureUploadError> {
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut staging_byte_count = 0_usize;
+    for (source, _color_space) in requests {
+        staging_byte_count = align_up(
+            staging_byte_count,
+            texel_block_byte_count(source_storage(source)),
+        )
+        .ok_or_else(|| AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: "BLP batch staging alignment overflows".to_owned(),
+        })?;
+        staging_byte_count = staging_byte_count
+            .checked_add(prepared_byte_count(source)?)
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: "BLP batch staging byte count overflows".to_owned(),
+            })?;
+    }
+
+    let mut staging_bytes = Vec::with_capacity(staging_byte_count);
+    let mut prepared_textures = Vec::with_capacity(requests.len());
+    for (source, color_space) in requests {
+        let mut prepared = prepare_mips(source)?;
+        let aligned_offset = align_up(
+            staging_bytes.len(),
+            texel_block_byte_count(prepared.storage),
+        )
+        .ok_or_else(|| AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: "BLP batch staging alignment overflows".to_owned(),
+        })?;
+        staging_bytes.resize(aligned_offset, 0);
+        let base_offset =
+            u64::try_from(staging_bytes.len()).map_err(|error| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: format!("BLP batch staging offset is not addressable: {error}"),
+            })?;
+        for mip in &mut prepared.mips {
+            mip.offset =
+                mip.offset
+                    .checked_add(base_offset)
+                    .ok_or_else(|| AssetError::TextureDecode {
+                        path: source.path().clone(),
+                        message: "BLP batch mip offset overflows".to_owned(),
+                    })?;
+        }
+        staging_bytes.extend_from_slice(&prepared.bytes);
+        let format = texture_format(prepared.storage, *color_space);
+        let mip_levels = u32::try_from(prepared.mips.len())
+            .map_err(|error| VulkanError::operation("convert sampled image mip count", error))?;
+        let info = BlpTextureResourceInfo::new(
+            source.path().clone(),
+            BlpTextureSourceKind::Authored,
+            *color_space,
+            prepared.storage,
+            (source.width(), source.height()),
+            prepared.mips.len(),
+            prepared.bytes.len(),
+        );
+        prepared_textures.push((
+            format,
+            mip_levels,
+            (source.width(), source.height()),
+            prepared.mips,
+            info,
+        ));
+    }
+    if staging_bytes.len() != staging_byte_count {
+        let source = requests[0].0;
+        return Err(AssetError::TextureDecode {
+            path: source.path().clone(),
+            message: format!(
+                "BLP batch contains {} upload bytes; expected {staging_byte_count}",
+                staging_bytes.len()
+            ),
+        }
+        .into());
+    }
+
+    let mut guard = TextureBatchGuard {
+        device: context.device,
+        allocator: context.allocator,
+        textures: Vec::with_capacity(prepared_textures.len()),
+    };
+    for (format, mip_levels, extent, mips, info) in prepared_textures {
+        let image = allocate_sampled_image(context, format, extent, mip_levels)?;
+        guard.textures.push(PendingBatchTexture {
+            image,
+            format,
+            mip_levels,
+            mips,
+            info,
+        });
+    }
+
+    let transfer = TextureTransfer::create(context, &staging_bytes)?;
+    let command_buffer = transfer.command_buffer()?;
+    let uploads = guard
+        .textures
+        .iter()
+        .map(|pending| ImageUpload {
+            image: pending.image.image,
+            mip_levels: pending.mip_levels,
+            mips: &pending.mips,
+        })
+        .collect::<Vec<_>>();
+    record_uploads(
+        context.device,
+        command_buffer,
+        transfer.staging_buffer,
+        &uploads,
     )?;
-    let info = BlpTextureResourceInfo::new(
-        source.path().clone(),
-        BlpTextureSourceKind::Authored,
-        color_space,
-        prepared.storage,
-        (source.width(), source.height()),
-        prepared.mips.len(),
-        prepared.bytes.len(),
-    );
-    Ok(GpuBlpTexture { image, info })
+    transfer.submit_and_wait(command_buffer)?;
+    for pending in &mut guard.textures {
+        pending.image.view = create_sampled_image_view(
+            context.device,
+            pending.image.image,
+            pending.format,
+            pending.mip_levels,
+        )?;
+    }
+    Ok(guard.finish())
 }
 
 /// Uploads stock's opaque 8x8 green WMO placeholder as an sRGB image.
@@ -367,6 +516,54 @@ fn upload_sampled_image(
             "image has no mip pixels",
         ));
     }
+    let image = allocate_sampled_image(context, format, extent, mip_levels)?;
+    let mut guard = TextureGuard {
+        device: context.device,
+        allocator: context.allocator,
+        texture: Some(image),
+    };
+    let transfer = TextureTransfer::create(context, bytes)?;
+    let command_buffer = transfer.command_buffer()?;
+    let image_handle = guard
+        .texture
+        .as_ref()
+        .ok_or_else(|| {
+            VulkanError::operation("record sampled image upload", "image is unavailable")
+        })?
+        .image;
+    let upload = ImageUpload {
+        image: image_handle,
+        mip_levels,
+        mips,
+    };
+    record_uploads(
+        context.device,
+        command_buffer,
+        transfer.staging_buffer,
+        &[upload],
+    )?;
+    transfer.submit_and_wait(command_buffer)?;
+    let view = create_sampled_image_view(context.device, image_handle, format, mip_levels)?;
+    let sampled_image = guard.texture.as_mut().ok_or_else(|| {
+        VulkanError::operation("retain sampled image view", "image is unavailable")
+    })?;
+    sampled_image.view = view;
+    guard.finish()
+}
+
+/// Allocates one device-local sampled transfer destination without a view.
+fn allocate_sampled_image(
+    context: TextureUploadContext<'_>,
+    format: vk::Format,
+    extent: (u32, u32),
+    mip_levels: u32,
+) -> Result<GpuSampledImage, VulkanError> {
+    if extent.0 == 0 || extent.1 == 0 || mip_levels == 0 {
+        return Err(VulkanError::operation(
+            "validate sampled image allocation",
+            "image extent and mip count must be nonzero",
+        ));
+    }
     let image_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .format(format)
@@ -394,26 +591,20 @@ fn upload_sampled_image(
             .create_image(&image_info, &allocation_info)
     }
     .map_err(|source| VulkanError::operation("create sampled image", source))?;
-    let mut guard = TextureGuard {
-        device: context.device,
-        allocator: context.allocator,
-        texture: Some(GpuSampledImage {
-            image,
-            allocation: Some(allocation),
-            view: vk::ImageView::null(),
-        }),
-    };
-    let transfer = TextureTransfer::create(context, bytes)?;
-    let command_buffer = transfer.command_buffer()?;
-    record_upload(
-        context.device,
-        command_buffer,
-        transfer.staging_buffer,
+    Ok(GpuSampledImage {
         image,
-        mip_levels,
-        mips,
-    )?;
-    transfer.submit_and_wait(command_buffer)?;
+        allocation: Some(allocation),
+        view: vk::ImageView::null(),
+    })
+}
+
+/// Creates the full color-mip view after transfer completion.
+fn create_sampled_image_view(
+    device: &Device,
+    image: vk::Image,
+    format: vk::Format,
+    mip_levels: u32,
+) -> Result<vk::ImageView, VulkanError> {
     let view_info = vk::ImageViewCreateInfo::default()
         .image(image)
         .view_type(vk::ImageViewType::TYPE_2D)
@@ -427,13 +618,60 @@ fn upload_sampled_image(
                 .layer_count(1),
         );
     // SAFETY: The image is live and the view covers its exact format/mip range.
-    let view = unsafe { context.device.create_image_view(&view_info, None) }
-        .map_err(|source| VulkanError::operation("create BLP image view", source))?;
-    let sampled_image = guard.texture.as_mut().ok_or_else(|| {
-        VulkanError::operation("retain sampled image view", "image is unavailable")
-    })?;
-    sampled_image.view = view;
-    guard.finish()
+    unsafe { device.create_image_view(&view_info, None) }
+        .map_err(|source| VulkanError::operation("create BLP image view", source))
+}
+
+/// Preflights one exact upload footprint without expanding source pixels.
+fn prepared_byte_count(source: &BlpTextureSource) -> Result<usize, AssetError> {
+    if source.block_compression().is_none() {
+        return source.decoded_rgba8_byte_count();
+    }
+
+    let mut byte_count = 0_usize;
+    for mip_level in 0..source.mip_count() {
+        let mip = source
+            .block_mip(mip_level)
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: format!("authored BC mip {mip_level} is unavailable"),
+            })?;
+        byte_count = byte_count
+            .checked_add(mip.upload_byte_count())
+            .ok_or_else(|| AssetError::TextureDecode {
+                path: source.path().clone(),
+                message: "authored BC mip-chain byte count overflows".to_owned(),
+            })?;
+    }
+    Ok(byte_count)
+}
+
+/// Returns the destination format's Vulkan texel-block size.
+const fn texel_block_byte_count(storage: BlpTextureStorage) -> usize {
+    match storage {
+        BlpTextureStorage::Rgba8 => 4,
+        BlpTextureStorage::Bc1 => 8,
+        BlpTextureStorage::Bc2 | BlpTextureStorage::Bc3 => 16,
+    }
+}
+
+/// Determines destination storage without decoding any authored mip.
+fn source_storage(source: &BlpTextureSource) -> BlpTextureStorage {
+    match source.block_compression() {
+        Some(BlpBlockCompression::Bc1) => BlpTextureStorage::Bc1,
+        Some(BlpBlockCompression::Bc2) => BlpTextureStorage::Bc2,
+        Some(BlpBlockCompression::Bc3) => BlpTextureStorage::Bc3,
+        None => BlpTextureStorage::Rgba8,
+    }
+}
+
+/// Rounds one byte offset to a power-of-two texel-block boundary.
+const fn align_up(value: usize, alignment: usize) -> Option<usize> {
+    let mask = alignment - 1;
+    match value.checked_add(mask) {
+        Some(sum) => Some(sum & !mask),
+        None => None,
+    }
 }
 
 /// Preserves authored BC blocks and decodes only encodings Vulkan cannot sample.
@@ -504,21 +742,7 @@ fn prepare_block_mips(
     source: &BlpTextureSource,
     compression: BlpBlockCompression,
 ) -> Result<PreparedTexture, AssetError> {
-    let mut byte_count = 0_usize;
-    for mip_level in 0..source.mip_count() {
-        let mip = source
-            .block_mip(mip_level)
-            .ok_or_else(|| AssetError::TextureDecode {
-                path: source.path().clone(),
-                message: format!("authored BC mip {mip_level} is unavailable"),
-            })?;
-        byte_count = byte_count
-            .checked_add(mip.upload_byte_count())
-            .ok_or_else(|| AssetError::TextureDecode {
-                path: source.path().clone(),
-                message: "authored BC mip-chain byte count overflows".to_owned(),
-            })?;
-    }
+    let byte_count = prepared_byte_count(source)?;
 
     let mut bytes = Vec::with_capacity(byte_count);
     let mut mips = Vec::with_capacity(source.mip_count());
@@ -589,87 +813,88 @@ const fn texture_format(storage: BlpTextureStorage, color_space: BlpColorSpace) 
     }
 }
 
-/// Transitions, copies all mip regions, and exposes them to fragment sampling.
-fn record_upload(
+/// Transitions and copies every destination in one command buffer.
+fn record_uploads(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     staging_buffer: vk::Buffer,
-    image: vk::Image,
-    mip_levels: u32,
-    mips: &[UploadMip],
+    uploads: &[ImageUpload<'_>],
 ) -> Result<(), VulkanError> {
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: The primary command buffer is newly allocated and not pending.
     unsafe { device.begin_command_buffer(command_buffer, &begin) }
         .map_err(|source| VulkanError::operation("begin BLP transfer commands", source))?;
-    let range = vk::ImageSubresourceRange::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(mip_levels)
-        .base_array_layer(0)
-        .layer_count(1);
-    let to_transfer = vk::ImageMemoryBarrier2::default()
-        .src_stage_mask(vk::PipelineStageFlags2::NONE)
-        .src_access_mask(vk::AccessFlags2::NONE)
-        .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .image(image)
-        .subresource_range(range);
-    let to_transfer_barriers = [to_transfer];
-    let dependency = vk::DependencyInfo::default().image_memory_barriers(&to_transfer_barriers);
-    // SAFETY: Synchronization2 is enabled and the image is newly allocated.
-    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
+    for upload in uploads {
+        let range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(upload.mip_levels)
+            .base_array_layer(0)
+            .layer_count(1);
+        let to_transfer = vk::ImageMemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+            .src_access_mask(vk::AccessFlags2::NONE)
+            .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .image(upload.image)
+            .subresource_range(range);
+        let to_transfer_barriers = [to_transfer];
+        let dependency = vk::DependencyInfo::default().image_memory_barriers(&to_transfer_barriers);
+        // SAFETY: Synchronization2 is enabled and the image is newly allocated.
+        unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
 
-    let regions = mips
-        .iter()
-        .enumerate()
-        .map(|(level, mip)| {
-            Ok(vk::BufferImageCopy::default()
-                .buffer_offset(mip.offset)
-                .buffer_row_length(0)
-                .buffer_image_height(0)
-                .image_subresource(
-                    vk::ImageSubresourceLayers::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .mip_level(u32::try_from(level).map_err(|source| {
-                            VulkanError::operation("convert BLP mip level", source)
-                        })?)
-                        .base_array_layer(0)
-                        .layer_count(1),
-                )
-                .image_extent(vk::Extent3D {
-                    width: mip.width,
-                    height: mip.height,
-                    depth: 1,
-                }))
-        })
-        .collect::<Result<Vec<_>, VulkanError>>()?;
-    // SAFETY: Each tightly packed region addresses its exact decoded mip range.
-    unsafe {
-        device.cmd_copy_buffer_to_image(
-            command_buffer,
-            staging_buffer,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &regions,
-        );
+        let regions = upload
+            .mips
+            .iter()
+            .enumerate()
+            .map(|(level, mip)| {
+                Ok(vk::BufferImageCopy::default()
+                    .buffer_offset(mip.offset)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .mip_level(u32::try_from(level).map_err(|source| {
+                                VulkanError::operation("convert BLP mip level", source)
+                            })?)
+                            .base_array_layer(0)
+                            .layer_count(1),
+                    )
+                    .image_extent(vk::Extent3D {
+                        width: mip.width,
+                        height: mip.height,
+                        depth: 1,
+                    }))
+            })
+            .collect::<Result<Vec<_>, VulkanError>>()?;
+        // SAFETY: Every region addresses its exact nonoverlapping staging span.
+        unsafe {
+            device.cmd_copy_buffer_to_image(
+                command_buffer,
+                staging_buffer,
+                upload.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &regions,
+            );
+        }
+        let to_sample = vk::ImageMemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image(upload.image)
+            .subresource_range(range);
+        let to_sample_barriers = [to_sample];
+        let dependency = vk::DependencyInfo::default().image_memory_barriers(&to_sample_barriers);
+        // SAFETY: The transfer writes precede every future fragment sample.
+        unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
     }
-    let to_sample = vk::ImageMemoryBarrier2::default()
-        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-        .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
-        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .image(image)
-        .subresource_range(range);
-    let to_sample_barriers = [to_sample];
-    let dependency = vk::DependencyInfo::default().image_memory_barriers(&to_sample_barriers);
-    // SAFETY: The transfer writes precede every future fragment sample.
-    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
     // SAFETY: All referenced resources remain live through submission retirement.
     unsafe { device.end_command_buffer(command_buffer) }
         .map_err(|source| VulkanError::operation("end BLP transfer commands", source))

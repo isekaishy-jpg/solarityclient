@@ -1,14 +1,15 @@
 //! Renderer-local WMO resources and allocation-reusing MODF visibility.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec3;
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureHandle, PlacedWorldModelDrawPlan, VulkanError, VulkanRenderer,
-    WorldFrustum, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshHandle,
-    WorldModelMeshPlan, WorldModelPipelineHandle, WorldModelPreparedDraw, WorldModelSampledTexture,
-    WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
-    WorldModelTextureSetHandle,
+    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, PlacedWorldModelDrawPlan,
+    VulkanError, VulkanRenderer, WorldFrustum, WorldModelBaseMip, WorldModelMaterialState,
+    WorldModelMeshHandle, WorldModelMeshPlan, WorldModelPipelineHandle, WorldModelPreparedDraw,
+    WorldModelSampledTexture, WorldModelSurfacePassPlan, WorldModelTextureFiltering,
+    WorldModelTextureSet, WorldModelTextureSetHandle,
 };
 
 use crate::application::terrain_coordinator::world_model_residency::{
@@ -63,22 +64,49 @@ impl WorldModelFrame {
         for source in scene.sources() {
             let plan = Arc::new(WorldModelMeshPlan::prepare(source.model())?);
             let mesh = renderer.upload_world_model_mesh(&plan)?;
+            let mut uploads = Vec::new();
+            let mut needs_stock_green = false;
+            for textures in source.materials() {
+                match textures {
+                    ResidentWorldModelMaterialTextures::One(texture) => {
+                        collect_texture_upload(texture, &mut uploads, &mut needs_stock_green);
+                    }
+                    ResidentWorldModelMaterialTextures::Two(textures) => {
+                        collect_texture_upload(&textures[0], &mut uploads, &mut needs_stock_green);
+                        collect_texture_upload(&textures[1], &mut uploads, &mut needs_stock_green);
+                    }
+                }
+            }
+            let uploaded = renderer.upload_blp_textures(&uploads)?;
+            let texture_handles = uploads
+                .iter()
+                .zip(uploaded)
+                .map(|(request, handle)| (request.source().path().clone(), handle))
+                .collect::<HashMap<_, _>>();
+            let stock_green = if needs_stock_green {
+                Some(renderer.upload_stock_world_model_green()?)
+            } else {
+                None
+            };
             let mut texture_requests = Vec::with_capacity(source.materials().len());
             for (material, textures) in plan.materials().iter().zip(source.materials()) {
                 let state = WorldModelMaterialState::from_material(material);
                 let sampler = renderer.prepare_world_model_sampler(state, filtering, base_mip)?;
                 texture_requests.push(match textures {
-                    ResidentWorldModelMaterialTextures::One(texture) => WorldModelTextureSet::One(
-                        WorldModelSampledTexture::new(upload_texture(renderer, texture)?, sampler),
-                    ),
+                    ResidentWorldModelMaterialTextures::One(texture) => {
+                        WorldModelTextureSet::One(WorldModelSampledTexture::new(
+                            resolve_texture(texture, &texture_handles, stock_green)?,
+                            sampler,
+                        ))
+                    }
                     ResidentWorldModelMaterialTextures::Two(textures) => {
                         WorldModelTextureSet::Two([
                             WorldModelSampledTexture::new(
-                                upload_texture(renderer, &textures[0])?,
+                                resolve_texture(&textures[0], &texture_handles, stock_green)?,
                                 sampler,
                             ),
                             WorldModelSampledTexture::new(
-                                upload_texture(renderer, &textures[1])?,
+                                resolve_texture(&textures[1], &texture_handles, stock_green)?,
                                 sampler,
                             ),
                         ])
@@ -228,14 +256,31 @@ fn prepare_draw_resources(
     Ok(resources)
 }
 
-fn upload_texture(
-    renderer: &mut VulkanRenderer,
-    texture: &ResidentWorldModelTexture,
-) -> Result<BlpTextureHandle, RuntimeTerrainFrameError> {
+fn collect_texture_upload<'source>(
+    texture: &'source ResidentWorldModelTexture,
+    uploads: &mut Vec<BlpTextureUploadRequest<'source>>,
+    needs_stock_green: &mut bool,
+) {
     match texture {
         ResidentWorldModelTexture::Authored(source) => {
-            Ok(renderer.upload_blp_texture(source, BlpColorSpace::Srgb)?)
+            uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb))
         }
-        ResidentWorldModelTexture::StockGreen => Ok(renderer.upload_stock_world_model_green()?),
+        ResidentWorldModelTexture::StockGreen => *needs_stock_green = true,
+    }
+}
+
+fn resolve_texture(
+    texture: &ResidentWorldModelTexture,
+    authored: &HashMap<solarity_asset::AssetPath, BlpTextureHandle>,
+    stock_green: Option<BlpTextureHandle>,
+) -> Result<BlpTextureHandle, RuntimeTerrainFrameError> {
+    match texture {
+        ResidentWorldModelTexture::Authored(source) => authored
+            .get(source.path())
+            .copied()
+            .ok_or(VulkanError::UnknownWorldModelTextureHandle.into()),
+        ResidentWorldModelTexture::StockGreen => {
+            stock_green.ok_or(VulkanError::UnknownWorldModelTextureHandle.into())
+        }
     }
 }

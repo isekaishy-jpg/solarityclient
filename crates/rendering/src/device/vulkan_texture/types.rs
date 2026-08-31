@@ -1,6 +1,6 @@
 //! Explicit color interpretation, typed identity, and allocation diagnostics.
 
-use solarity_asset::AssetPath;
+use solarity_asset::{AssetPath, BlpTextureSource};
 
 /// Caller-selected color interpretation for one stock texture role.
 ///
@@ -34,6 +34,36 @@ pub enum BlpTextureStorage {
     Bc2,
     /// DXT5 blocks retained as Vulkan BC3.
     Bc3,
+}
+
+/// One ordered authored-texture admission request.
+#[derive(Clone, Copy, Debug)]
+pub struct BlpTextureUploadRequest<'source> {
+    source: &'source BlpTextureSource,
+    color_space: BlpColorSpace,
+}
+
+impl<'source> BlpTextureUploadRequest<'source> {
+    /// Couples one selected archive source to its material-owned color space.
+    #[must_use]
+    pub const fn new(source: &'source BlpTextureSource, color_space: BlpColorSpace) -> Self {
+        Self {
+            source,
+            color_space,
+        }
+    }
+
+    /// Returns the parsed source retained by the asset cache.
+    #[must_use]
+    pub const fn source(self) -> &'source BlpTextureSource {
+        self.source
+    }
+
+    /// Returns the requested sampling transfer function.
+    #[must_use]
+    pub const fn color_space(self) -> BlpColorSpace {
+        self.color_space
+    }
 }
 
 /// Stable renderer-local handle to one uploaded BLP image and view.

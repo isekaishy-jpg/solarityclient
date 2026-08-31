@@ -5,11 +5,12 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_rendering::{
-    BlpColorSpace, M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount, M2MaterialPose,
-    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2PipelineHandle, M2PreparedDraw,
-    M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
-    WorldFrustum, compare_m2_transparent, m2_section_distance_key,
+    BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
+    M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
+    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2SampledTexture, M2ShaderPermutation,
+    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2TextureSet, M2TextureSetHandle,
+    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
+    m2_section_distance_key,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -456,6 +457,23 @@ fn prepare_source(
         }
     }
 
+    let mut upload_indices = Vec::new();
+    let mut uploads = Vec::new();
+    for (texture_index, texture) in source.textures().iter().enumerate() {
+        if let ResidentM2Texture::Authored(source_texture) = texture {
+            upload_indices.push(texture_index);
+            uploads.push(BlpTextureUploadRequest::new(
+                source_texture,
+                BlpColorSpace::Srgb,
+            ));
+        }
+    }
+    let uploaded = renderer.upload_blp_textures(&uploads)?;
+    let mut texture_handles = vec![None; source.textures().len()];
+    for (texture_index, handle) in upload_indices.into_iter().zip(uploaded) {
+        texture_handles[texture_index] = Some(handle);
+    }
+
     let mesh = renderer.upload_m2_mesh(&plan)?;
     let mut texture_requests = Vec::with_capacity(plan.draws().len());
     let mut pipelines = Vec::with_capacity(plan.draws().len());
@@ -479,11 +497,16 @@ fn prepare_source(
         let mut stages = Vec::with_capacity(draw.texture_bindings().len());
         for binding in draw.texture_bindings() {
             let texture_index = usize::from(binding.texture_index());
-            let ResidentM2Texture::Authored(source_texture) = &source.textures()[texture_index]
+            let ResidentM2Texture::Authored(_source_texture) = &source.textures()[texture_index]
             else {
                 unreachable!("selected replacement textures returned before GPU preparation");
             };
-            let texture = renderer.upload_blp_texture(source_texture, BlpColorSpace::Srgb)?;
+            let texture = texture_handles[texture_index].ok_or_else(|| {
+                RuntimeTerrainFrameError::M2TextureIndex {
+                    model: model.path().clone(),
+                    texture_index: binding.texture_index(),
+                }
+            })?;
             let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_index])?;
             stages.push(M2SampledTexture::new(texture, sampler));
         }

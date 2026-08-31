@@ -7,7 +7,10 @@ use std::error::Error;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, Locale,
 };
-use solarity_rendering::{BlpColorSpace, BlpTextureSourceKind, BlpTextureStorage, VulkanBootstrap};
+use solarity_rendering::{
+    BlpColorSpace, BlpTextureSourceKind, BlpTextureStorage, BlpTextureUploadRequest,
+    VulkanBootstrap,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -56,12 +59,26 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
     let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
     // SAFETY: SDL transfers this exact surface's ownership to the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
-    for (source, (storage, byte_count)) in sources.iter().zip([
-        (BlpTextureStorage::Bc1, 8),
-        (BlpTextureStorage::Bc2, 16),
-        (BlpTextureStorage::Bc3, 16),
-    ]) {
-        let handle = renderer.upload_blp_texture(source, BlpColorSpace::Srgb)?;
+    let requests = [
+        BlpTextureUploadRequest::new(&sources[0], BlpColorSpace::Srgb),
+        BlpTextureUploadRequest::new(&sources[1], BlpColorSpace::Srgb),
+        BlpTextureUploadRequest::new(&sources[0], BlpColorSpace::Srgb),
+        BlpTextureUploadRequest::new(&sources[2], BlpColorSpace::Srgb),
+    ];
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 0);
+    assert!(renderer.upload_blp_textures(&[])?.is_empty());
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 0);
+    let handles = renderer.upload_blp_textures(&requests)?;
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 1);
+    assert_eq!(handles[0], handles[2]);
+    assert_eq!(renderer.upload_blp_textures(&requests)?, handles);
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 1);
+
+    for (source, handle, storage, byte_count) in [
+        (&sources[0], handles[0], BlpTextureStorage::Bc1, 8),
+        (&sources[1], handles[1], BlpTextureStorage::Bc2, 16),
+        (&sources[2], handles[3], BlpTextureStorage::Bc3, 16),
+    ] {
         let info = renderer
             .blp_texture_info(handle)
             .ok_or("uploaded BC image is absent")?;

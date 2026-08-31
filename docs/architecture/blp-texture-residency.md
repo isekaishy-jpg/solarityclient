@@ -15,13 +15,23 @@ paletted, and raw BLP encodings are decoded to RGBA8 because Vulkan cannot
 sample those file encodings directly. This is an encoding boundary, not an
 adapter-dependent DXT fallback.
 
-Before either path begins, the asset boundary computes the exact combined
-staging footprint. The renderer allocates one vector, appends each mip in
-authored order, and verifies the final byte count before creating Vulkan
-resources. Stock-compatible undersized DXT tail mips are zero-padded to their
-block-rounded copy footprint, matching the established decoder behavior. This
-avoids capacity-growth copies and prevents HD DXT content from expanding by
-roughly four to eight times in staging and device memory.
+Before either path begins, the asset boundary computes each texture's exact
+combined mip footprint. The renderer appends every requested texture and mip
+in authored order to one exactly sized staging vector, padding only between
+textures where Vulkan's destination texel-block alignment requires it. It
+verifies the final byte count before creating Vulkan resources.
+
+One admission batch uses one staging allocation, one command buffer, one queue
+submission, and one fence retirement for every new path/color-space identity.
+Requests retain their original order, while duplicate and already-resident
+identities resolve to the existing image without another transfer. Registry
+state changes only after the complete batch succeeds.
+
+Stock-compatible undersized DXT tail mips are zero-padded to their
+block-rounded copy footprint, matching the established decoder behavior. The
+batch avoids per-texture submission overhead and capacity-growth copies, while
+direct BC storage prevents HD DXT content from expanding by roughly four to
+eight times in staging and device memory.
 
 Staging bytes are temporary. The renderer retains only the device-local
 image and its view after the synchronous transfer retires; the shared asset

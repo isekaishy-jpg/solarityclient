@@ -235,10 +235,13 @@ impl TerrainFrame {
         // generation, while MTEX images deduplicate by selected asset identity.
         let mesh = renderer.upload_terrain_mesh(plan)?;
         let material = renderer.upload_terrain_material(plan)?;
-        let textures = sources
+        let texture_uploads = sources
             .iter()
-            .map(|source| renderer.upload_blp_texture(source, BlpColorSpace::Srgb))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|source| {
+                solarity_rendering::BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb)
+            })
+            .collect::<Vec<_>>();
+        let textures = renderer.upload_blp_textures(&texture_uploads)?;
 
         let mut requests = Vec::with_capacity(plan.chunks().len());
         let mut layer_counts = Vec::with_capacity(plan.chunks().len());

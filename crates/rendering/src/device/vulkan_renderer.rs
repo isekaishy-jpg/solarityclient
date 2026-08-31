@@ -37,7 +37,7 @@ use crate::device::vulkan_terrain_texture_set::{
 };
 use crate::device::vulkan_texture::{
     BlpColorSpace, BlpTextureHandle, BlpTextureRegistry, BlpTextureResourceInfo,
-    BlpTextureUploadError, TextureUploadContext,
+    BlpTextureUploadError, BlpTextureUploadRequest, TextureUploadContext,
 };
 use crate::device::vulkan_ui_draw::{UiPreparedDraw, prepare_draw as prepare_ui_draw};
 use crate::device::vulkan_ui_frame::{UiFrameContext, UiFrameRenderer, UiFrameReport};
@@ -596,6 +596,34 @@ impl VulkanRenderer {
         )
     }
 
+    /// Uploads all newly encountered path/color-space identities together.
+    ///
+    /// Returned handles preserve request order and duplicates. Already resident
+    /// identities cause no transfer; all remaining identities share one exact
+    /// staging allocation, command buffer, queue submission, and fence wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlpTextureUploadError`] when any source cannot decode or the
+    /// all-or-nothing Vulkan admission batch cannot complete.
+    pub fn upload_blp_textures(
+        &mut self,
+        requests: &[BlpTextureUploadRequest<'_>],
+    ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.blp_textures.upload_batch(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            requests,
+        )
+    }
+
     /// Creates or retrieves stock's opaque 8x8 green WMO placeholder.
     ///
     /// This is the recovered MapObj image for a valid empty material stage,
@@ -624,6 +652,12 @@ impl VulkanRenderer {
     #[must_use]
     pub fn blp_texture_info(&self, handle: BlpTextureHandle) -> Option<&BlpTextureResourceInfo> {
         self.blp_textures.info(handle)
+    }
+
+    /// Returns retired queue submissions spent admitting BLP resources.
+    #[must_use]
+    pub const fn blp_texture_upload_submission_count(&self) -> u64 {
+        self.blp_textures.upload_submission_count()
     }
 
     /// Creates or retrieves one exact simple-render source/blend pipeline.
