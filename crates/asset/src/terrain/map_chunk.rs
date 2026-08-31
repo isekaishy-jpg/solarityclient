@@ -230,27 +230,31 @@ impl TerrainChunk {
     }
 }
 
-/// One positioned `SoundEntries.dbc` reference from MCSE.
+/// One positioned `SoundEntriesAdvanced.dbc` reference from WotLK MCSE.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerrainSoundEmitter {
-    sound_entry_id: u32,
+    advanced_sound_entry_id: u32,
     position: [f32; 3],
     size: [f32; 3],
 }
 
 impl TerrainSoundEmitter {
-    pub(super) const fn new(sound_entry_id: u32, position: [f32; 3], size: [f32; 3]) -> Self {
+    pub(super) const fn new(
+        advanced_sound_entry_id: u32,
+        position: [f32; 3],
+        size: [f32; 3],
+    ) -> Self {
         Self {
-            sound_entry_id,
+            advanced_sound_entry_id,
             position,
             size,
         }
     }
 
-    /// Returns the `SoundEntries.dbc` identifier.
+    /// Returns the `SoundEntriesAdvanced.dbc` identifier.
     #[must_use]
-    pub const fn sound_entry_id(self) -> u32 {
-        self.sound_entry_id
+    pub const fn advanced_sound_entry_id(self) -> u32 {
+        self.advanced_sound_entry_id
     }
 
     /// Returns the authored world position.

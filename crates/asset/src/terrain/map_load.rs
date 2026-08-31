@@ -443,6 +443,8 @@ fn decode_chunk(
         .map_or_else(Vec::new, |emitters| emitters.emitters)
         .into_iter()
         .map(|emitter| {
+            // The dependency retains its historical field label, but WotLK's
+            // 28-byte MCSE record references SoundEntriesAdvanced.ID.
             TerrainSoundEmitter::new(emitter.sound_entry_id, emitter.position, emitter.size_min)
         })
         .collect::<Vec<_>>();

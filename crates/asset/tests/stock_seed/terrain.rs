@@ -11,8 +11,8 @@ use solarity_asset::{
 use wow_adt::builder::{AdtBuilder, BuiltAdt};
 use wow_adt::chunks::MtxfChunk;
 use wow_adt::{
-    AdtVersion, DoodadPlacement, McalChunk, MclyChunk, MclyFlags, MclyLayer, ParsedAdt,
-    WmoPlacement, parse_adt,
+    AdtVersion, DoodadPlacement, McalChunk, MclyChunk, MclyFlags, MclyLayer, McseChunk, ParsedAdt,
+    SoundEmitter, WmoPlacement, parse_adt,
 };
 use wow_wdt::chunks::MphdFlags;
 use wow_wdt::chunks::MwmoChunk;
@@ -188,6 +188,10 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks()[255].index().y(), 15);
     assert_eq!(tile.doodads().len(), 1);
     assert_eq!(tile.world_models().len(), 1);
+    assert_eq!(tile.chunks()[0].sound_emitters().len(), 1);
+    let sound_emitter = tile.chunks()[0].sound_emitters()[0];
+    assert_eq!(sound_emitter.advanced_sound_entry_id(), 90);
+    assert_eq!(sound_emitter.size(), [4.0, 8.0, 12.0]);
     assert_position(tile.doodads()[0].position(), [1_066.666, 5_066.666, 250.0]);
     assert_position(
         tile.world_models()[0].position(),
@@ -332,6 +336,14 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     }
     alpha.extend_from_slice(&[0x80 | 32, 42]);
     first.alpha = Some(McalChunk::new(alpha));
+    first.sound_emitters = Some(McseChunk {
+        emitters: vec![SoundEmitter {
+            sound_entry_id: 90,
+            position: [16_000.0, 250.0, 12_000.0],
+            size_min: [4.0, 8.0, 12.0],
+            _padding: [],
+        }],
+    });
     Ok(BuiltAdt::from_root_adt(*root, None).to_bytes()?)
 }
 

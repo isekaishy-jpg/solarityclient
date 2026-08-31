@@ -102,3 +102,10 @@ later layout or non-finite float before media policy consumes it. Enum meanings,
 time units, and behavioral validation remain uninterpreted until executable or
 call-site evidence establishes them. The layout is checked against the
 [WoWDBDefs SoundEntriesAdvanced definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntriesAdvanced.dbd).
+
+WotLK's 28-byte terrain `MCSE` record stores a
+`SoundEntriesAdvanced.ID` followed by an authored position and three size
+components. The asset API names this value `advanced_sound_entry_id`; media must
+resolve `MCSE → SoundEntriesAdvanced → SoundEntries` before selecting a file.
+It must not send the MCSE key directly to `SoundEntryCatalog`, even when IDs
+happen to overlap in a particular data set.
