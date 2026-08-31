@@ -4,7 +4,9 @@ use std::num::NonZeroU16;
 
 use solarity_asset::AssetStore;
 
-use crate::audio::backend::{SoundBackend, SoundOutput, SoundVoiceHandle, SoundVoiceState};
+use crate::audio::backend::{
+    SoundBackend, SoundBackendError, SoundOutput, SoundVoiceHandle, SoundVoiceState,
+};
 use crate::audio::cache::SoundCache;
 use crate::audio::codec::SoundDecoder;
 use crate::audio::selection::SoundVariationSelector;
@@ -19,6 +21,7 @@ struct ActiveVoice {
     handle: SoundVoiceHandle,
     category: SoundCategory,
     source_gain: f32,
+    runtime_gain: f32,
 }
 
 /// Stock-facing sound selection, admission, and live-volume owner.
@@ -120,7 +123,7 @@ impl<'output> SoundEngine<'output> {
         let Some(category_gain) = self.settings.category_gain(request.category()) else {
             return Ok(SoundPlayback::Suppressed);
         };
-        if entry.volume() < 0.0 {
+        if !entry.volume().is_finite() || entry.volume() < 0.0 {
             return Err(SoundEngineError::InvalidEntryVolume {
                 entry_id: entry.id(),
                 volume: entry.volume(),
@@ -150,6 +153,7 @@ impl<'output> SoundEngine<'output> {
             handle: voice,
             category: request.category(),
             source_gain,
+            runtime_gain: 1.0,
         });
         Ok(SoundPlayback::Started(voice))
     }
@@ -167,9 +171,41 @@ impl<'output> SoundEngine<'output> {
         self.collect_stopped_voices()?;
         self.settings = settings;
         for voice in &self.active_voices {
-            let gain = settings.category_gain(voice.category).unwrap_or(0.0) * voice.source_gain;
+            let gain = applied_gain(settings, *voice);
             self.backend.set_gain(voice.handle, gain)?;
         }
+        Ok(())
+    }
+
+    /// Applies one live schedule, spatial, and ducking multiplier to a voice.
+    ///
+    /// The multiplier is retained separately from source and CVar gains, so a
+    /// later [`Self::set_settings`] call cannot erase current advanced-sound
+    /// policy. Values above one remain representable because the backend and
+    /// stock authored source path both permit amplification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError::UnknownVoice`] for an unowned handle, or a
+    /// backend error for a negative, non-finite, or unrepresentable gain.
+    pub fn set_voice_runtime_gain(
+        &mut self,
+        handle: SoundVoiceHandle,
+        runtime_gain: f32,
+    ) -> Result<(), SoundEngineError> {
+        if !runtime_gain.is_finite() || runtime_gain < 0.0 {
+            return Err(SoundBackendError::InvalidGain { gain: runtime_gain }.into());
+        }
+        let index = self
+            .active_voices
+            .iter()
+            .position(|voice| voice.handle == handle)
+            .ok_or(SoundEngineError::UnknownVoice)?;
+        let mut voice = self.active_voices[index];
+        voice.runtime_gain = runtime_gain;
+        self.backend
+            .set_gain(handle, applied_gain(self.settings, voice))?;
+        self.active_voices[index].runtime_gain = runtime_gain;
         Ok(())
     }
 
@@ -246,4 +282,9 @@ impl<'output> SoundEngine<'output> {
     pub fn generate(&self, buffer: &mut [u8]) -> Result<usize, SoundEngineError> {
         Ok(self.backend.generate(buffer)?)
     }
+}
+
+/// Composes independent source, live CVar, and runtime policy exactly once.
+fn applied_gain(settings: SoundEngineSettings, voice: ActiveVoice) -> f32 {
+    settings.category_gain(voice.category).unwrap_or(0.0) * voice.source_gain * voice.runtime_gain
 }

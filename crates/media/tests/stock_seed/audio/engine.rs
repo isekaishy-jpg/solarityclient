@@ -89,6 +89,26 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     let mut restored = [0_u8; 4_096];
     engine.generate(&mut restored)?;
     assert!(restored.iter().any(|byte| *byte != 0));
+
+    // Advanced schedule/spatial policy remains independent of later CVar
+    // snapshots and can therefore mute without changing playback position.
+    engine.set_voice_runtime_gain(voice, 0.0)?;
+    engine.set_settings(settings(false)?)?;
+    engine.set_settings(enabled)?;
+    let mut runtime_muted = [0xFF_u8; 4_096];
+    engine.generate(&mut runtime_muted)?;
+    assert!(runtime_muted.iter().all(|byte| *byte == 0));
+    engine.set_voice_runtime_gain(voice, 1.0)?;
+    let mut runtime_restored = [0_u8; 4_096];
+    engine.generate(&mut runtime_restored)?;
+    assert!(runtime_restored.iter().any(|byte| *byte != 0));
+
+    assert!(matches!(
+        engine.set_voice_runtime_gain(voice, f32::NAN),
+        Err(SoundEngineError::Backend(
+            solarity_media::SoundBackendError::InvalidGain { .. }
+        ))
+    ));
     engine.stop(voice)?;
     assert_eq!(engine.active_voice_count(), 0);
     assert!(matches!(
