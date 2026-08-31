@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use solarity_network::WorldTimeSpeed;
 
 const DAY_HALF_MINUTES: f32 = 2_880.0;
+const DAY_MILLISECONDS: f64 = 86_400_000.0;
 
 /// A running realm clock anchored to the instant its server packet arrived.
 ///
@@ -53,5 +54,23 @@ impl RealmClock {
         let base = f32::from(self.source.hour()) * 120.0 + f32::from(self.source.minute()) * 2.0;
         let advanced = elapsed.as_secs_f32() * self.source.game_time_speed() * 2.0;
         (base + advanced).rem_euclid(DAY_HALF_MINUTES)
+    }
+
+    /// Returns current cyclic realm-day milliseconds for scheduled media.
+    #[must_use]
+    pub fn day_milliseconds(&self) -> u32 {
+        self.day_milliseconds_after(self.received_at.elapsed())
+    }
+
+    /// Advances the realm clock and returns cyclic day milliseconds.
+    ///
+    /// Build 12340 evaluates advanced sound schedules from the same server-
+    /// anchored day progression used by lighting. The integer conversion
+    /// truncates the fractional millisecond after the 24-hour wrap.
+    #[must_use]
+    pub fn day_milliseconds_after(&self, elapsed: Duration) -> u32 {
+        let base_minutes = f64::from(self.source.hour()) * 60.0 + f64::from(self.source.minute());
+        let advanced_minutes = elapsed.as_secs_f64() * f64::from(self.source.game_time_speed());
+        ((base_minutes + advanced_minutes) * 60_000.0).rem_euclid(DAY_MILLISECONDS) as u32
     }
 }

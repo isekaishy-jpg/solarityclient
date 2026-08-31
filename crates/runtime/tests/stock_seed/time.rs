@@ -16,6 +16,12 @@ fn realm_clock_advances_stock_half_minutes() -> Result<(), Box<dyn Error>> {
     assert_eq!(clock.half_minutes_after(Duration::ZERO), 2_594);
     assert_eq!(clock.half_minutes_after(Duration::from_secs(30)), 2_595);
     assert_eq!(clock.half_minutes_after(Duration::from_secs(8_580)), 0);
+    assert_eq!(clock.day_milliseconds_after(Duration::ZERO), 77_820_000);
+    assert_eq!(
+        clock.day_milliseconds_after(Duration::from_secs(30)),
+        77_850_000
+    );
+    assert_eq!(clock.day_milliseconds_after(Duration::from_secs(8_580)), 0);
     Ok(())
 }
 
@@ -38,6 +44,10 @@ fn zero_speed_realm_clock_does_not_advance() -> Result<(), Box<dyn Error>> {
     let clock = RealmClock::new(WorldTimeSpeed::new((3 << 6) | 5, 0.0, 0)?);
 
     assert_eq!(clock.half_minutes_after(Duration::from_secs(86_400)), 370);
+    assert_eq!(
+        clock.day_milliseconds_after(Duration::from_secs(86_400)),
+        11_100_000
+    );
     Ok(())
 }
 
