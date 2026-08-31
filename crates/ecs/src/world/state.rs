@@ -109,6 +109,16 @@ impl ActiveWorld {
         self.objects.find(guid)
     }
 
+    /// Returns the create-time object category for a loaded GUID.
+    #[must_use]
+    pub fn object_kind(&self, guid: u64) -> Option<ObjectKind> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&ObjectKind>(entity)
+            .map(|kind| **kind)
+            .ok()
+    }
+
     /// Returns the latest complete living movement state for a loaded GUID.
     #[must_use]
     pub fn movement_state(&self, guid: u64) -> Option<WorldMovementState> {
@@ -116,6 +126,44 @@ impl ActiveWorld {
         self.storage
             .get::<&WorldMovementState>(entity)
             .map(|movement| **movement)
+            .ok()
+    }
+
+    /// Returns every visible unit/player GUID in deterministic identifier order.
+    #[must_use]
+    pub fn visible_unit_guids(&self) -> Vec<u64> {
+        let mut guids = self
+            .objects
+            .entries()
+            .filter_map(|(guid, entity)| {
+                self.storage
+                    .get::<&ObjectKind>(entity)
+                    .ok()
+                    .filter(|kind| matches!(**kind, ObjectKind::Unit | ObjectKind::Player))
+                    .map(|_kind| guid)
+            })
+            .collect::<Vec<_>>();
+        guids.sort_unstable();
+        guids
+    }
+
+    /// Returns the authoritative transform for any visible object.
+    #[must_use]
+    pub fn object_transform(&self, guid: u64) -> Option<WorldTransform> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&WorldTransform>(entity)
+            .map(|transform| **transform)
+            .ok()
+    }
+
+    /// Returns projected unit presentation state for any visible unit/player.
+    #[must_use]
+    pub fn unit_presentation(&self, guid: u64) -> Option<UnitPresentation> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&UnitPresentation>(entity)
+            .map(|presentation| **presentation)
             .ok()
     }
 

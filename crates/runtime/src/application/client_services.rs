@@ -34,7 +34,8 @@ use crate::application::login_coordinator::{
 };
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::player_coordinator::{
-    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
+    RuntimePlayerPresentation,
 };
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::sound_coordinator::RuntimeSoundCoordinator;
@@ -273,6 +274,7 @@ impl ClientServices {
             .player
             .resident_frame_input()
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2FrameInput)?;
+        let creatures = self.player.resident_creature_frame_inputs();
         frame.present(
             &mut self.renderer,
             plan,
@@ -281,6 +283,7 @@ impl ClientServices {
             global_animation_time_ms,
             &mut self.crt_rand,
             player,
+            &creatures,
         )?;
         Ok(())
     }
@@ -519,6 +522,20 @@ impl ClientServices {
             }
             RuntimePlayerPoll::Current => {}
         }
+        match self.player.synchronize_creatures(self.gameplay.world())? {
+            RuntimeCreaturePoll::ModelsChanged => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    let creatures = self.player.resident_creature_frame_inputs();
+                    frame.replace_creatures(&mut self.renderer, &creatures, &mut self.crt_rand)?;
+                }
+            }
+            RuntimeCreaturePoll::Idle => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_creatures(&mut self.renderer, &[], &mut self.crt_rand)?;
+                }
+            }
+            RuntimeCreaturePoll::Current => {}
+        }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
@@ -566,6 +583,7 @@ impl ClientServices {
                     &mut self.crt_rand,
                     Arc::clone(&self.particle_twinkle),
                     self.player.resident_frame_input(),
+                    &self.player.resident_creature_frame_inputs(),
                 )?;
                 tracing::debug!(
                     tile_x = tile.x(),

@@ -22,4 +22,8 @@ impl ObjectRegistry {
     pub(crate) fn remove(&mut self, guid: u64) -> Option<EntityId> {
         self.by_guid.remove(&guid)
     }
+
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (u64, EntityId)> + '_ {
+        self.by_guid.iter().map(|(guid, entity)| (*guid, *entity))
+    }
 }

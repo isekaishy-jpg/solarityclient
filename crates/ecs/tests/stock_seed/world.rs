@@ -5,7 +5,8 @@ use std::error::Error;
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, LocalPlayer, ObjectFields, ObjectGuid, ObjectKind, PlayerIdentity,
-    PlayerViewState, WorldBootstrap, WorldMapId, WorldStateError, WorldTransform,
+    PlayerViewState, UnitAnimationTier, UnitPresentation, UnitSheathState, WorldBootstrap,
+    WorldMapId, WorldStateError, WorldTransform,
 };
 
 /// World entry creates one indexed local player from authoritative login facts.
@@ -53,6 +54,48 @@ fn world_entry_owns_the_initial_local_player() -> Result<(), Box<dyn Error>> {
         1.75
     );
     let _local_marker = world.storage().get::<&LocalPlayer>(local_player)?;
+    Ok(())
+}
+
+/// Visible-unit queries include players and creatures but no other object kind.
+#[test]
+fn visible_unit_queries_follow_guid_lifecycle() -> Result<(), Box<dyn Error>> {
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        30,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    world.create_object(
+        20,
+        ObjectKind::Unit,
+        Some(WorldTransform::new(Vec3::X, 1.0)),
+        [],
+    )?;
+    world.create_object(10, ObjectKind::GameObject, None, [])?;
+    world.create_object(30, ObjectKind::Player, None, [])?;
+    let presentation = UnitPresentation::new(
+        7,
+        7,
+        0,
+        0,
+        UnitAnimationTier::Ground,
+        UnitSheathState::Unarmed,
+    );
+    let entity = world
+        .entity_by_guid(20)
+        .ok_or(WorldStateError::UnknownObject { guid: 20 })?;
+    world.storage_mut().add_component(entity, (presentation,));
+
+    assert_eq!(world.visible_unit_guids(), [20, 30]);
+    assert_eq!(
+        world.object_transform(20).map(|value| value.position()),
+        Some(Vec3::X)
+    );
+    assert_eq!(world.unit_presentation(20), Some(presentation));
+    world.remove_object(20)?;
+    assert_eq!(world.visible_unit_guids(), [30]);
     Ok(())
 }
 

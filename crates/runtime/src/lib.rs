@@ -23,7 +23,7 @@ pub use time::RealmClock;
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, CharacterProjectionError,
     ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
-    RuntimeCameraError, RuntimeCameraSceneError, RuntimeCharacterSelection,
+    RuntimeCameraError, RuntimeCameraSceneError, RuntimeCharacterSelection, RuntimeCreaturePoll,
     RuntimeGameplayCoordinator, RuntimeGameplayError, RuntimeLoginCoordinator, RuntimeLoginError,
     RuntimeLoginPoll, RuntimeLoginState, RuntimePlayerCatalogs, RuntimePlayerError,
     RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeSoundError,

@@ -19,7 +19,10 @@ use solarity_rendering::{
     m2_section_distance_key,
 };
 
-use crate::application::player_coordinator::{ResidentPlayerFrameInput, ResidentPlayerTexture};
+use crate::application::player_coordinator::{
+    ResidentCreatureFrameInput, ResidentCreatureTexture, ResidentPlayerFrameInput,
+    ResidentPlayerTexture,
+};
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
 };
@@ -97,6 +100,8 @@ enum M2GpuPlacementOwner {
     Static(ResidentM2Owner),
     /// The one authoritative character controlled by this client.
     PlayerBody { guid: u64 },
+    /// One visible non-player unit projected from authoritative ECS state.
+    CreatureBody { guid: u64 },
     /// One equipment M2 driven by an animated player attachment point.
     PlayerItem {
         guid: u64,
@@ -381,7 +386,7 @@ impl M2Frame {
             })
             .collect::<Vec<_>>();
         let source = prepare_gpu_source(renderer, input.model(), &resolved, Some(input.geosets()))?;
-        let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
+        let transform = unit_placement_transform(input.world_transform(), input.object_scale())?;
         let mut attachment_sources = Vec::with_capacity(input.attachments().len());
         for attachment in input.attachments() {
             if input.model().attachment(attachment.point().id()).is_none() {
@@ -404,7 +409,7 @@ impl M2Frame {
                 })
                 .collect::<Vec<_>>();
             let source = prepare_gpu_source(renderer, attachment.model(), &resolved, None)?;
-            let placement = player_gpu_placement(
+            let placement = unit_gpu_placement(
                 0,
                 transform,
                 M2GpuPlacementOwner::PlayerItem {
@@ -434,7 +439,7 @@ impl M2Frame {
                     })
                     .collect::<Vec<_>>();
                 let effect_source = prepare_gpu_source(renderer, effect.model(), &resolved, None)?;
-                let effect_placement = player_gpu_placement(
+                let effect_placement = unit_gpu_placement(
                     0,
                     transform,
                     M2GpuPlacementOwner::PlayerItemVisual {
@@ -451,7 +456,7 @@ impl M2Frame {
             }
             attachment_sources.push((source, placement, visual_sources));
         }
-        let body_placement = player_gpu_placement(
+        let body_placement = unit_gpu_placement(
             0,
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
@@ -486,6 +491,54 @@ impl M2Frame {
         Ok(())
     }
 
+    /// Replaces all visible creature sources and placements transactionally.
+    pub(super) fn replace_creatures(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        inputs: &[ResidentCreatureFrameInput<'_>],
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut prepared = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let resolved = input
+                .textures()
+                .iter()
+                .map(|texture| match texture {
+                    ResidentCreatureTexture::Authored(source) => {
+                        M2ResolvedTexture::Authored(source.as_ref())
+                    }
+                    ResidentCreatureTexture::Unresolved(kind) => {
+                        M2ResolvedTexture::Unresolved(*kind)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let source = prepare_gpu_source(renderer, input.model(), &resolved, None)?;
+            let transform =
+                unit_placement_transform(input.world_transform(), input.object_scale())?;
+            let placement = unit_gpu_placement(
+                0,
+                transform,
+                M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
+                input.model(),
+                input.animation().animation_id(),
+                input.particle_colors().cloned(),
+                random,
+            )?;
+            prepared.push((source, placement));
+        }
+
+        self.remove_creatures();
+        for (source, placement) in prepared {
+            let source_index = self.sources.len();
+            self.sources.push(Some(source));
+            self.placements.push(M2GpuPlacement {
+                source_index,
+                ..placement
+            });
+        }
+        Ok(())
+    }
+
     /// Updates authoritative player movement and base animation in place.
     pub(super) fn update_player_state(
         &mut self,
@@ -493,7 +546,7 @@ impl M2Frame {
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
+        let transform = unit_placement_transform(input.world_transform(), input.object_scale())?;
         let placement = self
             .placements
             .iter_mut()
@@ -516,6 +569,41 @@ impl M2Frame {
         Ok(())
     }
 
+    /// Updates every authoritative creature transform and selected animation.
+    pub(super) fn update_creature_states(
+        &mut self,
+        inputs: &[ResidentCreatureFrameInput<'_>],
+        animation_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        for input in inputs {
+            let transform =
+                unit_placement_transform(input.world_transform(), input.object_scale())?;
+            let placement = self
+                .placements
+                .iter_mut()
+                .find(|placement| {
+                    placement.owner == (M2GpuPlacementOwner::CreatureBody { guid: input.guid() })
+                })
+                .ok_or(RuntimeTerrainFrameError::MissingCreatureM2Placement {
+                    guid: input.guid(),
+                })?;
+            placement.transform = transform;
+            let Some(source) = self.sources[placement.source_index].as_ref() else {
+                continue;
+            };
+            if let Some(playback) = placement.playback.as_mut() {
+                playback.select_animation(
+                    &source.model,
+                    input.animation().animation_id(),
+                    animation_time_ms,
+                    random,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Drops local references to the previous player generation.
     fn remove_player(&mut self) {
         let mut player_sources = Vec::new();
@@ -533,6 +621,24 @@ impl M2Frame {
             }
         });
         for source_index in player_sources {
+            if let Some(source) = self.sources.get_mut(source_index) {
+                *source = None;
+            }
+        }
+    }
+
+    /// Drops local references to the previous visible-creature generation.
+    fn remove_creatures(&mut self) {
+        let mut creature_sources = Vec::new();
+        self.placements.retain(|placement| {
+            if matches!(placement.owner, M2GpuPlacementOwner::CreatureBody { .. }) {
+                creature_sources.push(placement.source_index);
+                false
+            } else {
+                true
+            }
+        });
+        for source_index in creature_sources {
             if let Some(source) = self.sources.get_mut(source_index) {
                 *source = None;
             }
@@ -613,6 +719,7 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::CreatureBody { .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -627,6 +734,7 @@ impl M2Frame {
                 } => Some((guid, item_point, effect_point)),
                 M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::CreatureBody { .. }
                 | M2GpuPlacementOwner::PlayerItem { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -966,8 +1074,8 @@ impl M2Frame {
     }
 }
 
-/// Creates placement-local animation and effect histories for one player M2.
-fn player_gpu_placement(
+/// Creates placement-local animation and effect histories for one living M2.
+fn unit_gpu_placement(
     source_index: usize,
     transform: Mat4,
     owner: M2GpuPlacementOwner,
@@ -1137,7 +1245,7 @@ fn placement_color(color: [u8; 4]) -> glam::Vec4 {
 }
 
 /// Converts authoritative unit movement into the character's model matrix.
-fn player_placement_transform(
+fn unit_placement_transform(
     transform: WorldTransform,
     object_scale: f32,
 ) -> Result<Mat4, RuntimeTerrainFrameError> {
@@ -1146,13 +1254,13 @@ fn player_placement_transform(
         || !object_scale.is_finite()
         || object_scale <= 0.0
     {
-        return Err(RuntimeTerrainFrameError::InvalidPlayerM2Transform);
+        return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
     }
     let matrix = Mat4::from_translation(transform.position())
         * Mat4::from_rotation_z(transform.orientation())
         * Mat4::from_scale(glam::Vec3::splat(object_scale));
     if !matrix.is_finite() || matrix.determinant().abs() <= f32::EPSILON {
-        return Err(RuntimeTerrainFrameError::InvalidPlayerM2Transform);
+        return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
     }
     Ok(matrix)
 }

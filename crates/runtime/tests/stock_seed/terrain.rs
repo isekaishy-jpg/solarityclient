@@ -13,11 +13,12 @@ use solarity_asset::{
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
 use solarity_runtime::{
-    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
-    RuntimeTerrainCoordinator, RuntimeTerrainPoll,
+    RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
+    RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
 };
 use solarity_systems::{
-    CameraSubjectGeometry, resolve_camera_subject_height, resolve_player_camera_pose,
+    CameraSubjectGeometry, project_object_fields, resolve_camera_subject_height,
+    resolve_player_camera_pose,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -184,6 +185,88 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// Visible creature create, movement, and out-of-range state drives M2 residency.
+#[test]
+fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<dyn Error>> {
+    let display = creature_display_table();
+    let model_data = creature_model_table();
+    let m2 = m2_collision_fixture()?;
+    let skin = skin_fixture()?;
+    let texture = bootstrap_texture_blp();
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\CreatureDisplayInfo.dbc", &display),
+        ("DBFilesClient\\CreatureModelData.dbc", &model_data),
+        ("World\\Fixture\\Collision.m2", &m2),
+        ("World\\Fixture\\Collision00.skin", &skin),
+        ("World\\Fixture\\Collision.blp", &texture),
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let animations = AnimationDataCatalog::load(&mut store)?;
+    let creatures = CreatureCatalog::load(&mut store)?;
+    let characters = CharacterAppearanceCatalog::load(&mut store)?;
+    let races = CharacterRaceCatalog::load(&mut store)?;
+    let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let item_displays = ItemDisplayCatalog::load(&mut store)?;
+    let item_visuals = ItemVisualCatalog::load(&mut store)?;
+    let particle_colors = ParticleColorCatalog::load(&mut store)?;
+    let assets = AssetStoreHandle::new(store);
+    let mut presentation = RuntimePlayerPresentation::new(
+        assets,
+        RuntimePlayerCatalogs::new(
+            animations,
+            creatures,
+            characters,
+            races,
+            helmet_visibility,
+            RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
+            particle_colors,
+        ),
+    );
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        30,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let guid = 20;
+    let fields = [
+        (4, 1.0_f32.to_bits()),
+        (67, 100),
+        (68, 100),
+        (69, 0),
+        (74, u32::from_le_bytes([0, 0, 0, 0])),
+        (122, 0),
+    ];
+    world.create_object(
+        guid,
+        solarity_ecs::ObjectKind::Unit,
+        Some(WorldTransform::new(Vec3::X, 0.5)),
+        fields,
+    )?;
+    project_object_fields(&mut world, guid, fields)?;
+
+    assert_eq!(
+        presentation.synchronize_creatures(Some(&world))?,
+        RuntimeCreaturePoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_creature_count(), 1);
+    world.update_transform(guid, WorldTransform::new(Vec3::Y, 1.0))?;
+    assert_eq!(
+        presentation.synchronize_creatures(Some(&world))?,
+        RuntimeCreaturePoll::Current
+    );
+    world.remove_object(guid)?;
+    assert_eq!(
+        presentation.synchronize_creatures(Some(&world))?,
+        RuntimeCreaturePoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_creature_count(), 0);
+    Ok(())
+}
+
 /// MCNK references admit one shared MODF generation into camera collision.
 #[test]
 fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Error>> {
@@ -342,6 +425,39 @@ fn map_table() -> Vec<u8> {
         bytes.extend_from_slice(&field.to_le_bytes());
     }
     bytes.extend_from_slice(&strings);
+    bytes
+}
+
+fn creature_display_table() -> Vec<u8> {
+    let mut fields = [0_u32; 16];
+    fields[0] = 100;
+    fields[1] = 7;
+    fields[4] = 1.0_f32.to_bits();
+    fields[5] = u32::MAX;
+    wdbc_fixture(&fields, b"\0")
+}
+
+fn creature_model_table() -> Vec<u8> {
+    let mut strings = vec![0_u8];
+    let path = append_string(&mut strings, "World\\Fixture\\Collision.m2");
+    let mut fields = [0_u32; 28];
+    fields[0] = 7;
+    fields[2] = path;
+    fields[4] = 1.0_f32.to_bits();
+    wdbc_fixture(&fields, &strings)
+}
+
+fn wdbc_fixture(fields: &[u32], strings: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(20 + fields.len() * 4 + strings.len());
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&((fields.len() as u32) * 4).to_le_bytes());
+    bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+    for field in fields {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.extend_from_slice(strings);
     bytes
 }
 

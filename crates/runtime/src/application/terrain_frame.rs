@@ -17,7 +17,9 @@ use solarity_rendering::{
 use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
-use crate::application::player_coordinator::ResidentPlayerFrameInput;
+use crate::application::player_coordinator::{
+    ResidentCreatureFrameInput, ResidentPlayerFrameInput,
+};
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::random::CrtRand;
@@ -231,13 +233,19 @@ pub enum RuntimeTerrainFrameError {
         /// Resolved stage count outside the closed shader domain.
         stage_count: usize,
     },
-    /// Authoritative player placement data cannot form a finite model matrix.
-    #[error("local player M2 transform is invalid")]
-    InvalidPlayerM2Transform,
+    /// Authoritative unit placement data cannot form a finite model matrix.
+    #[error("unit M2 transform is invalid")]
+    InvalidUnitM2Transform,
     /// A current player update has no matching placement in the GPU generation.
     #[error("local player {guid:#018X} has no M2 placement in the current frame")]
     MissingPlayerM2Placement {
         /// Controlled player GUID absent from the M2 frame.
+        guid: u64,
+    },
+    /// A current creature update has no matching placement in the GPU generation.
+    #[error("visible creature {guid:#018X} has no M2 placement in the current frame")]
+    MissingCreatureM2Placement {
+        /// Creature GUID absent from the M2 frame.
         guid: u64,
     },
     /// Equipped gear selected an attachment absent from the player body M2.
@@ -378,6 +386,7 @@ impl TerrainFrame {
         random: &mut CrtRand,
         particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
         player: Option<ResidentPlayerFrameInput<'_>>,
+        creatures: &[ResidentCreatureFrameInput<'_>],
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -457,6 +466,7 @@ impl TerrainFrame {
 
         let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
         m2.replace_player(renderer, player, random)?;
+        m2.replace_creatures(renderer, creatures, random)?;
         Ok(Self {
             tile: plan.tile(),
             draws,
@@ -486,6 +496,7 @@ impl TerrainFrame {
         global_animation_time_ms: f32,
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
+        creatures: &[ResidentCreatureFrameInput<'_>],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -538,6 +549,8 @@ impl TerrainFrame {
         let local_animation_time_ms = self.m2.animation_time_ms();
         self.m2
             .update_player_state(player, local_animation_time_ms, random)?;
+        self.m2
+            .update_creature_states(creatures, local_animation_time_ms, random)?;
         let m2 = self.m2.prepare_visible_draws(
             renderer,
             frustum,
@@ -569,6 +582,16 @@ impl TerrainFrame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.m2.replace_player(renderer, player, random)
+    }
+
+    /// Rebuilds only visible creature sources after range/appearance changes.
+    pub(super) fn replace_creatures(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        creatures: &[ResidentCreatureFrameInput<'_>],
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2.replace_creatures(renderer, creatures, random)
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

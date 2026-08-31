@@ -5,8 +5,8 @@ use std::sync::Arc;
 use solarity_asset::{
     AnimationDataCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
     BlpTextureSource, CharacterAppearanceCatalog, CharacterRaceCatalog, CreatureCatalog,
-    DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    CreatureModelAppearance, DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
     ActiveWorld, PlayerEquipmentSlot, VisibleEquipmentItem, WorldStateError, WorldTransform,
@@ -105,6 +105,17 @@ pub enum RuntimePlayerPoll {
     Current,
 }
 
+/// Observable result of one visible-creature residency synchronization pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeCreaturePoll {
+    /// No active world exists and no creature model is resident.
+    Idle,
+    /// The visible creature set or one of its appearances changed.
+    ModelsChanged,
+    /// Existing creature models received only transform/animation updates.
+    Current,
+}
+
 /// Immutable client-table dependencies used to resolve player presentation.
 pub struct RuntimePlayerCatalogs {
     animations: AnimationDataCatalog,
@@ -178,6 +189,7 @@ pub struct RuntimePlayerPresentation {
     models: M2ModelCache,
     textures: BlpTextureCache,
     resident: Option<ResidentPlayerModel>,
+    creatures_resident: Vec<ResidentCreatureModel>,
 }
 
 impl RuntimePlayerPresentation {
@@ -198,6 +210,7 @@ impl RuntimePlayerPresentation {
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
             resident: None,
+            creatures_resident: Vec::new(),
         }
     }
 
@@ -300,7 +313,7 @@ impl RuntimePlayerPresentation {
             );
             if let Some(resident) = self.resident.as_mut() {
                 resident.world_transform = transform;
-                resident.animation = resolve_player_animation(
+                resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
                     requested_animation,
@@ -402,7 +415,7 @@ impl RuntimePlayerPresentation {
             UnitLocomotionAnimation::STAND,
             resolve_unit_locomotion_animation,
         );
-        let animation = resolve_player_animation(
+        let animation = resolve_resident_animation(
             &self.animations,
             &model,
             requested_animation,
@@ -435,6 +448,113 @@ impl RuntimePlayerPresentation {
         Ok(RuntimePlayerPoll::ModelLoaded)
     }
 
+    /// Synchronizes every visible non-player unit into shared M2 residency.
+    ///
+    /// Player objects require character atlas and equipment composition and
+    /// remain on the dedicated player path. This pass admits creature objects
+    /// only after their complete display, transform, and tier state exists.
+    pub fn synchronize_creatures(
+        &mut self,
+        world: Option<&ActiveWorld>,
+    ) -> Result<RuntimeCreaturePoll, RuntimePlayerError> {
+        let Some(world) = world else {
+            self.creatures_resident.clear();
+            self.models.collect_unused();
+            self.textures.collect_unused();
+            return Ok(RuntimeCreaturePoll::Idle);
+        };
+
+        let mut desired = Vec::new();
+        for guid in world.visible_unit_guids() {
+            if world.object_kind(guid) != Some(solarity_ecs::ObjectKind::Unit) {
+                continue;
+            }
+            let Some(transform) = world.object_transform(guid) else {
+                continue;
+            };
+            let Some(presentation) = world.unit_presentation(guid) else {
+                continue;
+            };
+            let appearance =
+                match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
+                    Ok(appearance) => appearance,
+                    Err(
+                        UnitModelAppearanceError::MissingObjectPresentation { .. }
+                        | UnitModelAppearanceError::MissingUnitPresentation { .. },
+                    ) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+            let requested_animation = world.movement_state(guid).map_or(
+                UnitLocomotionAnimation::STAND,
+                resolve_unit_locomotion_animation,
+            );
+            desired.push(DesiredCreatureModel {
+                key: CreatureModelKey {
+                    guid,
+                    display_id: appearance.body().display().id(),
+                    path: appearance.body().model_path().clone(),
+                    object_scale: appearance.object_scale(),
+                    particle_color_id: appearance.body().display().particle_color_id(),
+                },
+                transform,
+                requested_animation,
+                animation_tier: presentation.animation_tier(),
+            });
+        }
+
+        let unchanged = desired.len() == self.creatures_resident.len()
+            && desired
+                .iter()
+                .zip(&self.creatures_resident)
+                .all(|(desired, resident)| desired.key == resident.key);
+        if unchanged {
+            for (desired, resident) in desired.iter().zip(&mut self.creatures_resident) {
+                resident.world_transform = desired.transform;
+                resident.animation = resolve_resident_animation(
+                    &self.animations,
+                    &resident.model,
+                    desired.requested_animation,
+                    desired.animation_tier,
+                )?;
+            }
+            return Ok(RuntimeCreaturePoll::Current);
+        }
+
+        let mut assets = self.assets.borrow_mut();
+        let mut residents = Vec::with_capacity(desired.len());
+        for desired in desired {
+            let appearance = self
+                .creatures
+                .resolve_model(desired.key.display_id)
+                .map_err(UnitModelAppearanceError::from)?;
+            let model = self.models.load(&mut assets, appearance.model_path())?;
+            let textures =
+                prepare_creature_textures(&model, &appearance, &mut assets, &mut self.textures)?;
+            let animation = resolve_resident_animation(
+                &self.animations,
+                &model,
+                desired.requested_animation,
+                desired.animation_tier,
+            )?;
+            residents.push(ResidentCreatureModel {
+                key: desired.key,
+                model,
+                textures,
+                particle_colors: M2ParticleColorReplacement::resolve(
+                    &self.particle_colors,
+                    appearance.display().particle_color_id(),
+                ),
+                world_transform: desired.transform,
+                animation,
+            });
+        }
+        drop(assets);
+        self.creatures_resident = residents;
+        self.models.collect_unused();
+        self.textures.collect_unused();
+        Ok(RuntimeCreaturePoll::ModelsChanged)
+    }
+
     /// Returns the controlled player's exact server GUID when resident.
     #[must_use]
     pub fn resident_guid(&self) -> Option<u64> {
@@ -445,6 +565,12 @@ impl RuntimePlayerPresentation {
     #[must_use]
     pub fn resident_model(&self) -> Option<&Arc<DecodedM2Model>> {
         self.resident.as_ref().map(|resident| &resident.model)
+    }
+
+    /// Returns the number of visible non-player unit models currently resident.
+    #[must_use]
+    pub fn resident_creature_count(&self) -> usize {
+        self.creatures_resident.len()
     }
 
     /// Returns the body display's exact `ParticleColor.dbc` identifier.
@@ -500,6 +626,14 @@ impl RuntimePlayerPresentation {
             .map(ResidentPlayerFrameInput::from_resident)
     }
 
+    /// Returns all visible creature inputs in deterministic GUID order.
+    pub(super) fn resident_creature_frame_inputs(&self) -> Vec<ResidentCreatureFrameInput<'_>> {
+        self.creatures_resident
+            .iter()
+            .map(ResidentCreatureFrameInput::from_resident)
+            .collect()
+    }
+
     /// Returns the authored and stock-clamped camera pivot height.
     #[must_use]
     pub fn camera_subject_height(&self) -> Option<CameraSubjectHeight> {
@@ -535,6 +669,7 @@ impl RuntimePlayerPresentation {
     /// Releases local-player residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.resident = None;
+        self.creatures_resident.clear();
         self.models.collect_unused();
         self.textures.collect_unused();
     }
@@ -561,6 +696,39 @@ struct ResidentPlayerModel {
     camera_height: CameraSubjectHeight,
     camera_pose: PlayerCameraPose,
     model: Arc<DecodedM2Model>,
+}
+
+#[derive(PartialEq)]
+struct CreatureModelKey {
+    guid: u64,
+    display_id: u32,
+    path: AssetPath,
+    object_scale: f32,
+    particle_color_id: u32,
+}
+
+struct DesiredCreatureModel {
+    key: CreatureModelKey,
+    transform: WorldTransform,
+    requested_animation: UnitLocomotionAnimation,
+    animation_tier: solarity_ecs::UnitAnimationTier,
+}
+
+struct ResidentCreatureModel {
+    key: CreatureModelKey,
+    model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentCreatureTexture>,
+    particle_colors: Option<M2ParticleColorReplacement>,
+    world_transform: WorldTransform,
+    animation: UnitModelAnimation,
+}
+
+/// One creature texture after display replacement resolution.
+pub(super) enum ResidentCreatureTexture {
+    /// A concrete hardcoded or monster-skin BLP.
+    Authored(Arc<BlpTextureSource>),
+    /// An unsupported replacement category remains explicitly unresolved.
+    Unresolved(M2TextureKind),
 }
 
 /// One player M2 texture declaration after customization resolution.
@@ -696,8 +864,61 @@ impl<'a> ResidentPlayerFrameInput<'a> {
     }
 }
 
+/// Borrowed immutable inputs required to publish one visible creature M2.
+pub(super) struct ResidentCreatureFrameInput<'a> {
+    guid: u64,
+    model: &'a Arc<DecodedM2Model>,
+    textures: &'a [ResidentCreatureTexture],
+    world_transform: WorldTransform,
+    object_scale: f32,
+    animation: UnitModelAnimation,
+    particle_colors: Option<&'a M2ParticleColorReplacement>,
+}
+
+impl<'a> ResidentCreatureFrameInput<'a> {
+    fn from_resident(resident: &'a ResidentCreatureModel) -> Self {
+        Self {
+            guid: resident.key.guid,
+            model: &resident.model,
+            textures: &resident.textures,
+            world_transform: resident.world_transform,
+            object_scale: resident.key.object_scale,
+            animation: resident.animation,
+            particle_colors: resident.particle_colors.as_ref(),
+        }
+    }
+
+    pub(super) const fn guid(&self) -> u64 {
+        self.guid
+    }
+
+    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+        self.model
+    }
+
+    pub(super) const fn textures(&self) -> &[ResidentCreatureTexture] {
+        self.textures
+    }
+
+    pub(super) const fn world_transform(&self) -> WorldTransform {
+        self.world_transform
+    }
+
+    pub(super) const fn object_scale(&self) -> f32 {
+        self.object_scale
+    }
+
+    pub(super) const fn animation(&self) -> UnitModelAnimation {
+        self.animation
+    }
+
+    pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
+        self.particle_colors
+    }
+}
+
 /// Applies stock AnimationData tier and fallback traversal to the resident M2.
-fn resolve_player_animation(
+fn resolve_resident_animation(
     catalog: &AnimationDataCatalog,
     model: &DecodedM2Model,
     requested: UnitLocomotionAnimation,
@@ -719,6 +940,44 @@ fn resolve_player_animation(
         animation_id: requested.animation_id(),
         animation_tier: tier as u8,
     })
+}
+
+/// Resolves hardcoded and display-selected monster texture categories.
+fn prepare_creature_textures(
+    model: &DecodedM2Model,
+    appearance: &CreatureModelAppearance<'_>,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<Vec<ResidentCreatureTexture>, RuntimePlayerError> {
+    model
+        .textures()
+        .iter()
+        .map(|texture| match texture.kind() {
+            M2TextureKind::Hardcoded => {
+                let path = texture.filename().ok_or_else(|| {
+                    RuntimePlayerError::MissingHardcodedTexturePath {
+                        model: model.path().clone(),
+                    }
+                })?;
+                Ok(ResidentCreatureTexture::Authored(
+                    textures.load(assets, path)?,
+                ))
+            }
+            kind
+            @ (M2TextureKind::Monster1 | M2TextureKind::Monster2 | M2TextureKind::Monster3) => {
+                appearance.texture_for(kind).map_or_else(
+                    || Ok(ResidentCreatureTexture::Unresolved(kind)),
+                    |path| {
+                        textures
+                            .load(assets, path)
+                            .map(ResidentCreatureTexture::Authored)
+                            .map_err(RuntimePlayerError::from)
+                    },
+                )
+            }
+            kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
+        })
+        .collect()
 }
 
 /// Loads one optional character replacement without inventing a substitute.
