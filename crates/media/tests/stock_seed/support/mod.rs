@@ -160,3 +160,32 @@ pub(crate) fn sdl_test_lock() -> MutexGuard<'static, ()> {
         Err(poisoned) => poisoned.into_inner(),
     }
 }
+
+/// Builds a mono signed-16 PCM RIFF/WAVE fixture.
+pub(crate) fn pcm_wav(sample_rate_hz: u32, samples: &[i16]) -> Result<Vec<u8>, Box<dyn Error>> {
+    const FORMAT_CHUNK_SIZE: u32 = 16;
+    const PCM_FORMAT: u16 = 1;
+    const CHANNEL_COUNT: u16 = 1;
+    const BITS_PER_SAMPLE: u16 = 16;
+
+    let data_byte_count = u32::try_from(samples.len())?
+        .checked_mul(size_of::<i16>() as u32)
+        .ok_or("WAV fixture byte count overflows")?;
+    let mut bytes = Vec::with_capacity(44 + data_byte_count as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_byte_count).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&FORMAT_CHUNK_SIZE.to_le_bytes());
+    bytes.extend_from_slice(&PCM_FORMAT.to_le_bytes());
+    bytes.extend_from_slice(&CHANNEL_COUNT.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate_hz.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate_hz * 2).to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_byte_count.to_le_bytes());
+    for sample in samples {
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    Ok(bytes)
+}

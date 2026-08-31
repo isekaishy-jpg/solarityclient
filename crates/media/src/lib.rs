@@ -9,6 +9,7 @@ mod cinematic;
 mod voice;
 
 pub use audio::{
-    DecodedSoundHandle, DecodedSoundInfo, EncodedSound, SoundCache, SoundDecodeError,
-    SoundDecodeMode, SoundDecoder, SoundVariationSelector,
+    DecodedSoundHandle, DecodedSoundInfo, EncodedSound, SoundBackend, SoundBackendError,
+    SoundCache, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundOutput, SoundOutputInfo,
+    SoundOutputTarget, SoundVariationSelector, SoundVoiceHandle, SoundVoiceState,
 };

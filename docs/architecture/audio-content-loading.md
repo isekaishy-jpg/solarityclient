@@ -49,6 +49,21 @@ resource during admission. This is the one adapter-boundary copy: the temporary
 once other owners release it. Unsupported or corrupt bytes fail admission and
 do not trigger another codec, filesystem search, or extension substitution.
 
+Output and track ownership are separate safe Rust values. `SoundOutput` owns
+one explicitly selected default-device or memory mixer; `SoundBackend` borrows
+that output and preallocates exactly the caller-provided track count. Runtime
+policy must pass the authoritative `Sound_NumChannels` value, whose build-12340
+default is 64. Exhaustion is reported instead of allocating another track or
+stealing an active voice without an evidenced priority rule.
+
+Each voice handle carries the backend, slot, and slot generation. Stopping a
+voice permits reuse, and the next generation invalidates the earlier handle.
+Playback accepts finite nonnegative gain without clamping amplification and
+retains explicit one-shot versus infinite-loop behavior. Pause, resume, stop,
+gain changes, memory mixing, and state queries remain backend primitives;
+category buses, spatialization, DSP, fades, and voice priority belong to the
+stock-facing sound-engine layers above this adapter.
+
 The schema is checked against the public build range covering
 3.1.0.9767 through 3.3.5.12340 in the
 [WoWDBDefs SoundEntries definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntries.dbd).

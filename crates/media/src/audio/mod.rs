@@ -16,6 +16,10 @@ mod spatial;
 
 mod types;
 
+pub use backend::{
+    SoundBackend, SoundBackendError, SoundOutput, SoundOutputInfo, SoundOutputTarget,
+    SoundVoiceHandle, SoundVoiceState,
+};
 pub use cache::{EncodedSound, SoundCache};
 pub use codec::{
     DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,

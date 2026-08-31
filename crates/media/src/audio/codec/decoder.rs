@@ -22,7 +22,7 @@ struct DecodedSoundKey {
 
 /// One SDL-owned audio object and its dependency-neutral description.
 struct DecodedSoundResource {
-    _audio: Audio,
+    audio: Audio,
     info: DecodedSoundInfo,
 }
 
@@ -136,10 +136,7 @@ impl SoundDecoder {
             decoder_id: self.decoder_id,
             slot,
         };
-        self.resources.push(DecodedSoundResource {
-            _audio: audio,
-            info,
-        });
+        self.resources.push(DecodedSoundResource { audio, info });
         self.handles.insert(key, handle);
         Ok(handle)
     }
@@ -153,5 +150,15 @@ impl SoundDecoder {
         self.resources
             .get(handle.slot as usize)
             .map(|resource| &resource.info)
+    }
+
+    /// Resolves the SDL resource only inside the media crate's backend adapter.
+    pub(in crate::audio) fn audio(&self, handle: DecodedSoundHandle) -> Option<&Audio> {
+        if handle.decoder_id != self.decoder_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| &resource.audio)
     }
 }
