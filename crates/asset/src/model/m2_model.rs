@@ -35,8 +35,8 @@ impl DecodedM2Model {
         let path = canonical_model_path(path)?;
         let read = store.read(&path)?;
         let source = read.source().clone();
-        let model_bytes = read.into_bytes();
-        let model = parse_model(&path, &model_bytes)?;
+        let mut model_bytes = read.into_bytes();
+        let model = parse_model(&path, &mut model_bytes)?;
         let profile_count = model.header.num_skin_profiles.ok_or_else(|| {
             model_decode(
                 &path,
@@ -66,6 +66,7 @@ impl DecodedM2Model {
                 model_vertex_count,
             )?);
         }
+        validate_material_animation_references(&path, &blob, &animations, &skins)?;
 
         Ok(Self {
             path,
@@ -185,15 +186,15 @@ impl DecodedM2Model {
         &self.blob.texture_units
     }
 
-    /// Returns transparency-animation indices selected by SKIN batches.
+    /// Returns texture-weight indices selected by SKIN batches.
     #[must_use]
-    pub fn transparency_lookup(&self) -> &[u16] {
+    pub fn texture_weight_lookup(&self) -> &[u16] {
         &self.blob.transparency_lookup
     }
 
-    /// Returns texture-animation indices selected by SKIN batches.
+    /// Returns texture-transform indices selected by SKIN batches.
     #[must_use]
-    pub fn texture_animation_lookup(&self) -> &[u16] {
+    pub fn texture_transform_lookup(&self) -> &[u16] {
         &self.blob.texture_animation_lookup
     }
 
@@ -232,4 +233,98 @@ impl DecodedM2Model {
     pub const fn material_count(&self) -> usize {
         self.blob.materials.len()
     }
+}
+
+/// Proves every SKIN animation selector against the decoded M2 tables.
+fn validate_material_animation_references(
+    path: &AssetPath,
+    blob: &ModelBlob,
+    animations: &M2AnimationSet,
+    skins: &[M2SkinProfile],
+) -> Result<(), AssetError> {
+    validate_lookup(
+        path,
+        "texture-weight lookup",
+        &blob.transparency_lookup,
+        animations.texture_weights().len(),
+    )?;
+    validate_lookup(
+        path,
+        "texture-transform lookup",
+        &blob.texture_animation_lookup,
+        animations.texture_transforms().len(),
+    )?;
+    for skin in skins {
+        for (batch_index, batch) in skin.batches().iter().enumerate() {
+            if batch.color_index != u16::MAX
+                && usize::from(batch.color_index) >= animations.colors().len()
+            {
+                return Err(model_decode(
+                    skin.path(),
+                    format!("batch {batch_index} color {} is missing", batch.color_index),
+                ));
+            }
+            validate_combo_span(
+                skin.path(),
+                batch_index,
+                "texture-weight",
+                batch.texture_weight_combo_index,
+                batch.texture_count,
+                &blob.transparency_lookup,
+            )?;
+            validate_combo_span(
+                skin.path(),
+                batch_index,
+                "texture-transform",
+                batch.texture_transform_combo_index,
+                batch.texture_count,
+                &blob.texture_animation_lookup,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_lookup(
+    path: &AssetPath,
+    field: &str,
+    lookup: &[u16],
+    target_count: usize,
+) -> Result<(), AssetError> {
+    for (index, value) in lookup.iter().copied().enumerate() {
+        if value != u16::MAX && usize::from(value) >= target_count {
+            return Err(model_decode(
+                path,
+                format!("{field} {index} references missing entry {value}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_combo_span(
+    path: &AssetPath,
+    batch_index: usize,
+    field: &str,
+    first: u16,
+    count: u16,
+    lookup: &[u16],
+) -> Result<(), AssetError> {
+    if first == u16::MAX {
+        return Ok(());
+    }
+    let start = usize::from(first);
+    let end = start.checked_add(usize::from(count)).ok_or_else(|| {
+        model_decode(
+            path,
+            format!("batch {batch_index} {field} combo span overflows"),
+        )
+    })?;
+    if end > lookup.len() {
+        return Err(model_decode(
+            path,
+            format!("batch {batch_index} {field} combo span is missing"),
+        ));
+    }
+    Ok(())
 }

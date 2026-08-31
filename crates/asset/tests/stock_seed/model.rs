@@ -177,6 +177,71 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Version-264 material tracks preserve their nested values and fixed16 domain.
+#[test]
+fn m2_material_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
+    let model = animated_material_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\MaterialAnimated.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\MaterialAnimated00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\MaterialAnimated.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    let animations = model.animations();
+    let color = animations.colors().first().ok_or("color track is absent")?;
+    assert_eq!(color.color().channels()[0].timestamps_ms(), &[0, 1_000]);
+    assert_eq!(
+        color.color().channels()[0].values(),
+        &[
+            glam::Vec3::new(1.0, 0.5, 0.25),
+            glam::Vec3::new(2.0, 1.0, 0.5)
+        ]
+    );
+    let color_alpha = color.alpha().channels()[0].values();
+    assert!((color_alpha[0] - (16_384.0 / 32_767.0)).abs() < f32::EPSILON);
+    assert_eq!(color_alpha[1], 1.0);
+
+    let weight = animations
+        .texture_weights()
+        .first()
+        .ok_or("texture weight is absent")?;
+    assert_eq!(weight.weight().channels()[0].values()[0], 1.0);
+    assert!(
+        (weight.weight().channels()[0].values()[1] - (16_384.0 / 32_767.0)).abs() < f32::EPSILON
+    );
+
+    let transform = animations
+        .texture_transforms()
+        .first()
+        .ok_or("texture transform is absent")?;
+    assert_eq!(
+        transform.translation().channels()[0].values(),
+        &[glam::Vec3::ZERO, glam::Vec3::new(0.25, 0.5, 0.0)]
+    );
+    assert_eq!(
+        transform.rotation().channels()[0].values(),
+        &[glam::Quat::IDENTITY, glam::Quat::IDENTITY]
+    );
+    assert_eq!(
+        transform.scale().channels()[0].values(),
+        &[glam::Vec3::ONE, glam::Vec3::new(2.0, 0.5, 1.0)]
+    );
+    Ok(())
+}
+
 /// Stock keeps the model usable while disabling a missing external sequence.
 #[test]
 fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
@@ -610,6 +675,132 @@ fn animated_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     bytes[0x2c..0x30].copy_from_slice(&1_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
     Ok(bytes)
+}
+
+/// Adds color, texture-weight, and texture-transform tracks to one sequence.
+fn animated_material_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = animated_m2_bytes()?;
+
+    let color_offset = bytes.len();
+    bytes.resize(color_offset + 40, 0);
+    let weight_offset = bytes.len();
+    bytes.resize(weight_offset + 20, 0);
+    let transform_offset = bytes.len();
+    bytes.resize(transform_offset + 60, 0);
+
+    append_linear_track(
+        &mut bytes,
+        color_offset,
+        &[0, 1_000],
+        &f32_values(&[1.0, 0.5, 0.25, 2.0, 1.0, 0.5]),
+        12,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        color_offset + 20,
+        &[0, 1_000],
+        &i16_values(&[16_384, 32_767]),
+        2,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        weight_offset,
+        &[0, 1_000],
+        &i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        transform_offset,
+        &[0, 1_000],
+        &f32_values(&[0.0, 0.0, 0.0, 0.25, 0.5, 0.0]),
+        12,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        transform_offset + 20,
+        &[0, 1_000],
+        &i16_values(&[-32_768, -32_768, -32_768, -1, -32_768, -32_768, -32_768, -1]),
+        8,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        transform_offset + 40,
+        &[0, 1_000],
+        &f32_values(&[1.0, 1.0, 1.0, 2.0, 0.5, 1.0]),
+        12,
+    )?;
+
+    set_header_array(&mut bytes, 0x48, 1, color_offset)?;
+    set_header_array(&mut bytes, 0x58, 1, weight_offset)?;
+    set_header_array(&mut bytes, 0x60, 1, transform_offset)?;
+    Ok(bytes)
+}
+
+/// Appends one sequence channel and patches its 20-byte nested track header.
+fn append_linear_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u32],
+    values: &[u8],
+    value_stride: usize,
+) -> Result<(), Box<dyn Error>> {
+    if values.len() != timestamps.len() * value_stride {
+        return Err("fixture track value count differs from timestamps".into());
+    }
+    let timestamp_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let timestamp_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let value_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let value_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = bytes.len();
+    for timestamp in timestamps {
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+    }
+    let value_data = bytes.len();
+    bytes.extend_from_slice(values);
+
+    bytes[timestamp_data_word..timestamp_data_word + 4]
+        .copy_from_slice(&u32::try_from(timestamp_data)?.to_le_bytes());
+    bytes[value_data_word..value_data_word + 4]
+        .copy_from_slice(&u32::try_from(value_data)?.to_le_bytes());
+    bytes[track_offset..track_offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[track_offset + 2..track_offset + 4].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes[track_offset + 4..track_offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 8..track_offset + 12]
+        .copy_from_slice(&u32::try_from(timestamp_refs)?.to_le_bytes());
+    bytes[track_offset + 12..track_offset + 16].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 16..track_offset + 20]
+        .copy_from_slice(&u32::try_from(value_refs)?.to_le_bytes());
+    Ok(())
+}
+
+fn set_header_array(
+    bytes: &mut [u8],
+    pair_offset: usize,
+    count: u32,
+    offset: usize,
+) -> Result<(), Box<dyn Error>> {
+    bytes[pair_offset..pair_offset + 4].copy_from_slice(&count.to_le_bytes());
+    bytes[pair_offset + 4..pair_offset + 8].copy_from_slice(&u32::try_from(offset)?.to_le_bytes());
+    Ok(())
+}
+
+fn f32_values(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn i16_values(values: &[i16]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
 }
 
 /// Reads the offset word of one M2 header array used by fixture mutation.

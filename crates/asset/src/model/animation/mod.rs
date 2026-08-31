@@ -5,6 +5,10 @@ use glam::{Quat, Vec3};
 use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
+mod material;
+
+pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
+
 /// Stock interpolation operation authored by one M2 track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2Interpolation {
@@ -251,6 +255,9 @@ pub struct M2AnimationSet {
     sequences: Vec<M2Sequence>,
     sequence_available: Vec<bool>,
     bones: Vec<M2Bone>,
+    colors: Vec<M2ColorAnimation>,
+    texture_weights: Vec<M2TextureWeight>,
+    texture_transforms: Vec<M2TextureTransform>,
 }
 
 impl M2AnimationSet {
@@ -296,11 +303,19 @@ impl M2AnimationSet {
             }
         }
         let bones = decode_bones(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let colors = decode_colors(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let texture_weights =
+            decode_texture_weights(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let texture_transforms =
+            decode_texture_transforms(model_path, model_bytes, &globals, &sequences, &payloads)?;
         Ok(Self {
             global_sequence_durations_ms: globals,
             sequences,
             sequence_available: available,
             bones,
+            colors,
+            texture_weights,
+            texture_transforms,
         })
     }
 
@@ -336,6 +351,24 @@ impl M2AnimationSet {
     #[must_use]
     pub fn bones(&self) -> &[M2Bone] {
         &self.bones
+    }
+
+    /// Returns animated mesh colors in exact M2 table order.
+    #[must_use]
+    pub fn colors(&self) -> &[M2ColorAnimation] {
+        &self.colors
+    }
+
+    /// Returns animated texture opacity multipliers in table order.
+    #[must_use]
+    pub fn texture_weights(&self) -> &[M2TextureWeight] {
+        &self.texture_weights
+    }
+
+    /// Returns animated texture transforms in exact M2 table order.
+    #[must_use]
+    pub fn texture_transforms(&self) -> &[M2TextureTransform] {
+        &self.texture_transforms
     }
 
     /// Returns the number of model bones without exposing dependency storage.
@@ -519,6 +552,127 @@ fn decode_bones(
         });
     }
     validate_bone_hierarchy(path, &result)?;
+    Ok(result)
+}
+
+/// Decodes the 40-byte RGB/fixed16-alpha material animation records.
+fn decode_colors(
+    path: &AssetPath,
+    bytes: &[u8],
+    globals: &[u32],
+    sequences: &[M2Sequence],
+    payloads: &[Option<(AssetPath, Vec<u8>)>],
+) -> Result<Vec<M2ColorAnimation>, AssetError> {
+    let array = array_ref(path, bytes, 0x48, "colors")?;
+    validate_array(path, bytes, array, 40, "colors")?;
+    let mut result = Vec::with_capacity(array.count);
+    for index in 0..array.count {
+        let offset = array.offset + index * 40;
+        result.push(M2ColorAnimation::new(
+            decode_track(
+                path,
+                bytes,
+                offset,
+                &format!("color {index} RGB"),
+                globals,
+                sequences,
+                payloads,
+                12,
+                decode_vec3,
+            )?,
+            decode_track(
+                path,
+                bytes,
+                offset + 20,
+                &format!("color {index} alpha"),
+                globals,
+                sequences,
+                payloads,
+                2,
+                decode_fixed16,
+            )?,
+        ));
+    }
+    Ok(result)
+}
+
+/// Decodes the 20-byte fixed16 texture-weight animation records.
+fn decode_texture_weights(
+    path: &AssetPath,
+    bytes: &[u8],
+    globals: &[u32],
+    sequences: &[M2Sequence],
+    payloads: &[Option<(AssetPath, Vec<u8>)>],
+) -> Result<Vec<M2TextureWeight>, AssetError> {
+    let array = array_ref(path, bytes, 0x58, "texture weights")?;
+    validate_array(path, bytes, array, 20, "texture weights")?;
+    let mut result = Vec::with_capacity(array.count);
+    for index in 0..array.count {
+        let offset = array.offset + index * 20;
+        result.push(M2TextureWeight::new(decode_track(
+            path,
+            bytes,
+            offset,
+            &format!("texture weight {index}"),
+            globals,
+            sequences,
+            payloads,
+            2,
+            decode_fixed16,
+        )?));
+    }
+    Ok(result)
+}
+
+/// Decodes the 60-byte translation/rotation/scale texture records.
+fn decode_texture_transforms(
+    path: &AssetPath,
+    bytes: &[u8],
+    globals: &[u32],
+    sequences: &[M2Sequence],
+    payloads: &[Option<(AssetPath, Vec<u8>)>],
+) -> Result<Vec<M2TextureTransform>, AssetError> {
+    let array = array_ref(path, bytes, 0x60, "texture transforms")?;
+    validate_array(path, bytes, array, 60, "texture transforms")?;
+    let mut result = Vec::with_capacity(array.count);
+    for index in 0..array.count {
+        let offset = array.offset + index * 60;
+        result.push(M2TextureTransform::new(
+            decode_track(
+                path,
+                bytes,
+                offset,
+                &format!("texture transform {index} translation"),
+                globals,
+                sequences,
+                payloads,
+                12,
+                decode_vec3,
+            )?,
+            decode_track(
+                path,
+                bytes,
+                offset + 20,
+                &format!("texture transform {index} rotation"),
+                globals,
+                sequences,
+                payloads,
+                8,
+                decode_quaternion,
+            )?,
+            decode_track(
+                path,
+                bytes,
+                offset + 40,
+                &format!("texture transform {index} scale"),
+                globals,
+                sequences,
+                payloads,
+                12,
+                decode_vec3,
+            )?,
+        ));
+    }
     Ok(result)
 }
 
@@ -717,6 +871,16 @@ fn decode_quaternion(
         ));
     }
     Ok(value.normalize())
+}
+
+/// Normalizes stock's signed fixed16 material scalar by exactly `32767`.
+fn decode_fixed16(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<f32, AssetError> {
+    Ok(f32::from(read_i16(path, bytes, offset, field)?) / 32_767.0)
 }
 
 /// Reproduces the version-264 external companion naming rule.

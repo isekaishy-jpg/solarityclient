@@ -49,12 +49,32 @@ pub(crate) fn canonical_model_path(path: &AssetPath) -> Result<AssetPath, AssetE
 }
 
 /// Parses an exact build-12340 legacy M2 without retaining dependency types.
-pub(super) fn parse_model(path: &AssetPath, bytes: &[u8]) -> Result<M2Model, AssetError> {
+pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model, AssetError> {
     validate_model_prefix(path, bytes)?;
     validate_model_texture_arrays(path, bytes)?;
 
-    let mut cursor = Cursor::new(bytes);
-    let mut model = M2Model::parse_legacy(&mut cursor)
+    // wow-m2 0.7 reads build-12340's 60-byte texture transform as a later
+    // five-track record. Hide all three material-track arrays from that
+    // dependency parser; `M2AnimationSet` decodes their exact WotLK layouts
+    // from the restored bytes. Patching these 24 header bytes in place avoids
+    // cloning an HD-sized model solely to construct a parser view.
+    let material_arrays = [0x48_usize, 0x58, 0x60];
+    let mut saved = [[0_u8; 8]; 3];
+    for (slot, offset) in saved.iter_mut().zip(material_arrays) {
+        let header = bytes.get_mut(offset..offset + 8).ok_or_else(|| {
+            model_decode(
+                path,
+                "build-12340 material-track header is truncated".to_owned(),
+            )
+        })?;
+        slot.copy_from_slice(header);
+        header.fill(0);
+    }
+    let parsed = M2Model::parse_legacy(&mut Cursor::new(&*bytes));
+    for (slot, offset) in saved.iter().zip(material_arrays) {
+        bytes[offset..offset + 8].copy_from_slice(slot);
+    }
+    let mut model = parsed
         .map_err(|source| model_decode(path, format!("invalid build-12340 MD20 data: {source}")))?;
 
     if model.header.version != BUILD_12340_M2_VERSION {
