@@ -75,6 +75,7 @@ fn one_shot_advanced_instance_owns_a_terminal_backend_voice() -> Result<(), Box<
     let mut mixed = [0_u8; 4_096];
     engine.generate(&mut mixed)?;
     assert_eq!(engine.voice_state(voice)?, SoundVoiceState::Stopped);
+    assert_eq!(engine.collect_stopped_voices()?, 1);
     let report = service.update(&mut store, &mut engine, 16, 0, listener, &mut next_word)?;
     assert_eq!(report.retired, 1);
     assert_eq!(report.active, 0);
@@ -213,6 +214,9 @@ fn periodic_advanced_instance_reuses_backend_after_countdown() -> Result<(), Box
     let repeated = service.update(&mut store, &mut engine, 985, 0, listener, &mut next_word)?;
     assert_eq!(repeated.started, 1);
     assert!(service.voice(instance).is_some());
+    assert_eq!(service.clear(&mut engine)?, 1);
+    assert_eq!(service.active_instance_count(), 0);
+    assert_eq!(engine.active_voice_count(), 0);
     Ok(())
 }
 

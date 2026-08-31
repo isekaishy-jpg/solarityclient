@@ -171,6 +171,21 @@ impl AdvancedSoundService {
                 elapsed_milliseconds,
             });
         }
+        // Release every completed service-owned generation before any later
+        // instance can reuse its backend slot during this update.
+        for instance in &mut self.instances {
+            let Some(voice) = instance.voice else {
+                continue;
+            };
+            if !engine.owns_voice(voice) {
+                instance.voice = None;
+                continue;
+            }
+            if engine.voice_state(voice)? == SoundVoiceState::Stopped {
+                engine.stop(voice)?;
+                instance.voice = None;
+            }
+        }
         let mut report = AdvancedSoundUpdateReport::default();
         let mut index = 0;
         while index < self.instances.len() {
@@ -178,8 +193,6 @@ impl AdvancedSoundService {
                 Some(voice) => match engine.voice_state(voice)? {
                     SoundVoiceState::Playing | SoundVoiceState::Paused => true,
                     SoundVoiceState::Stopped => {
-                        // Retire the completed SDL generation before periodic
-                        // countdown or continuous restart policy runs.
                         engine.stop(voice)?;
                         self.instances[index].voice = None;
                         false
@@ -289,6 +302,26 @@ impl AdvancedSoundService {
             .ok_or(AdvancedSoundServiceError::UnknownInstance { instance_id })?;
         instance.lifecycle.request_retire();
         Ok(())
+    }
+
+    /// Stops and destroys every instance at a world-residency boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdvancedSoundServiceError`] when an owned backend voice cannot
+    /// be stopped or the cleared ducking state cannot be applied.
+    pub fn clear(
+        &mut self,
+        engine: &mut SoundEngine<'_>,
+    ) -> Result<usize, AdvancedSoundServiceError> {
+        for instance in &mut self.instances {
+            stop_instance(instance, engine)?;
+        }
+        let cleared = self.instances.len();
+        self.instances.clear();
+        self.ducking = AdvancedSoundDucking::new();
+        engine.apply_advanced_ducking(&self.ducking)?;
+        Ok(cleared)
     }
 
     /// Returns the number of constructed advanced objects not yet retired.
@@ -447,7 +480,9 @@ fn stop_instance(
     instance: &mut AdvancedSoundInstance,
     engine: &mut SoundEngine<'_>,
 ) -> Result<(), AdvancedSoundServiceError> {
-    if let Some(voice) = instance.voice.take() {
+    if let Some(voice) = instance.voice.take()
+        && engine.owns_voice(voice)
+    {
         engine.stop(voice)?;
     }
     Ok(())

@@ -11,6 +11,7 @@ use solarity_asset::{
     LightCatalog, MapCatalog,
 };
 use solarity_cpu::CpuExecutor;
+use solarity_media::SoundOutputTarget;
 use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
 use solarity_rendering::{
     VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
@@ -32,6 +33,7 @@ use crate::application::login_coordinator::{
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::player_coordinator::{RuntimePlayerPoll, RuntimePlayerPresentation};
 use crate::application::realm_directory::RuntimeRealmMetadata;
+use crate::application::sound_coordinator::RuntimeSoundCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainPoll;
 use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
@@ -40,12 +42,13 @@ use crate::application::world_coordinator::{
 };
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
-use crate::random::CrtRand;
+use crate::random::{BlizzardRand, CrtRand};
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: LoginUiFrame,
+    sound: RuntimeSoundCoordinator,
     platform: SdlPlatform,
     glue: GlueManager,
     cpu: CpuExecutor,
@@ -59,6 +62,7 @@ pub(crate) struct ClientServices {
     terrain_frame: Option<TerrainFrame>,
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
+    blizzard_rand: BlizzardRand,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -123,6 +127,11 @@ impl ClientServices {
         let assets = AssetStoreHandle::new(assets);
         let glue = GlueManager::start_shared(assets.clone(), platform.logical_extent(), false)?;
         glue.set_realm_directory(realm_metadata.empty_directory());
+        let sound = RuntimeSoundCoordinator::start(
+            assets.clone(),
+            &glue,
+            SoundOutputTarget::DefaultDevice,
+        )?;
         let login_ui = LoginUiFrame::prepare(&mut renderer, &glue)?;
         login_ui.present(&mut renderer)?;
         platform.show()?;
@@ -143,6 +152,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                sound,
                 platform,
                 glue,
                 cpu,
@@ -156,6 +166,7 @@ impl ClientServices {
                 terrain_frame: None,
                 m2_global_clock: std::time::Instant::now(),
                 crt_rand: CrtRand::new(),
+                blizzard_rand: BlizzardRand::new(sdl3::timer::ticks() as u32),
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -211,6 +222,10 @@ impl ClientServices {
             environment.view_distance().value(),
         )
         .frame(aspect_ratio)?;
+        if let Some(clock) = self.gameplay.realm_clock() {
+            self.sound
+                .update(&self.glue, clock, camera, &mut self.blizzard_rand)?;
+        }
         let Some(plan) = self.terrain.resident_mesh_plan() else {
             self.login_ui.present(&mut self.renderer)?;
             return Ok(());
@@ -266,6 +281,7 @@ impl ClientServices {
                     self.environment.disconnect();
                     self.player.disconnect();
                     self.terrain.disconnect();
+                    self.sound.disconnect()?;
                     self.terrain_frame = None;
                     self.realm_directory_published = false;
                     self.world_session_published = false;
@@ -454,6 +470,13 @@ impl ClientServices {
         }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
+                let resident_tile = self.terrain.resident_tile().ok_or(
+                    RuntimeTerrainFrameError::MissingMeshPlan {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    },
+                )?;
+                self.sound.stage_terrain_tile(resident_tile);
                 let plan = self.terrain.resident_mesh_plan().ok_or(
                     RuntimeTerrainFrameError::MissingMeshPlan {
                         tile_x: tile.x(),
@@ -503,6 +526,7 @@ impl ClientServices {
                 self.terrain_frame = Some(frame);
             }
             RuntimeTerrainPoll::Idle | RuntimeTerrainPoll::GlobalWorldModel { .. } => {
+                self.sound.disconnect()?;
                 self.terrain_frame = None;
             }
             RuntimeTerrainPoll::Current { tile, .. } => {
@@ -556,6 +580,16 @@ impl ClientServices {
         )
     }
 
+    /// Returns the actual output format and fixed stock track capacity.
+    pub(crate) fn sound_facts(&self) -> (u32, u8, usize) {
+        let info = self.sound.output_info();
+        (
+            info.sample_rate_hz(),
+            info.channel_count(),
+            self.sound.voice_capacity(),
+        )
+    }
+
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
         self.login.disconnect();
@@ -564,6 +598,7 @@ impl ClientServices {
         self.environment.disconnect();
         self.player.disconnect();
         self.terrain.disconnect();
+        self.sound.disconnect()?;
         self.terrain_frame = None;
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);

@@ -96,6 +96,8 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");
+        builder = builder.add_file_data(empty_wdbc(30), "DBFilesClient\\SoundEntries.dbc");
+        builder = builder.add_file_data(empty_wdbc(24), "DBFilesClient\\SoundEntriesAdvanced.dbc");
         builder = builder.add_file_data(empty_wdbc(9), "DBFilesClient\\LightParams.dbc");
         builder = builder.add_file_data(empty_wdbc(3), "DBFilesClient\\LightSkybox.dbc");
         builder = builder.add_file_data(empty_wdbc(34), "DBFilesClient\\LightIntBand.dbc");

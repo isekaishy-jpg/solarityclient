@@ -5,8 +5,8 @@ use std::num::NonZeroU16;
 use solarity_asset::AssetStore;
 
 use crate::audio::backend::{
-    SoundBackend, SoundBackendError, SoundOutput, SoundSpatialPosition, SoundVoiceHandle,
-    SoundVoiceState,
+    SoundBackend, SoundBackendError, SoundOutput, SoundOutputInfo, SoundSpatialPosition,
+    SoundVoiceHandle, SoundVoiceState,
 };
 use crate::audio::cache::SoundCache;
 use crate::audio::codec::SoundDecoder;
@@ -72,6 +72,18 @@ impl<'output> SoundEngine<'output> {
         self.settings
     }
 
+    /// Returns the selected output target and actual SDL mixer format.
+    #[must_use]
+    pub const fn output_info(&self) -> SoundOutputInfo {
+        self.backend.output_info()
+    }
+
+    /// Returns the exact preallocated `Sound_NumChannels` track count.
+    #[must_use]
+    pub fn voice_capacity(&self) -> usize {
+        self.backend.voice_capacity()
+    }
+
     /// Returns the number of voices that have not yet been collected.
     #[must_use]
     pub fn active_voice_count(&self) -> usize {
@@ -122,7 +134,7 @@ impl<'output> SoundEngine<'output> {
         request: SoundPlayRequest,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        self.collect_stopped_voices()?;
+        self.collect_stopped_unmanaged_voices()?;
         let entry =
             self.catalog
                 .sound_entry(request.entry_id())
@@ -192,7 +204,7 @@ impl<'output> SoundEngine<'output> {
     /// Returns [`SoundEngineError`] when backend state or gain application
     /// fails.
     pub fn set_settings(&mut self, settings: SoundEngineSettings) -> Result<(), SoundEngineError> {
-        self.collect_stopped_voices()?;
+        self.collect_stopped_unmanaged_voices()?;
         self.settings = settings;
         for voice in &self.active_voices {
             let gain = applied_gain(settings, *voice);
@@ -295,7 +307,7 @@ impl<'output> SoundEngine<'output> {
         &mut self,
         ducking: &AdvancedSoundDucking,
     ) -> Result<(), SoundEngineError> {
-        self.collect_stopped_voices()?;
+        self.collect_stopped_unmanaged_voices()?;
         for voice in &mut self.active_voices {
             let duck_gain = ducking.category_gain(voice.category, voice.duck_source);
             let mut updated = *voice;
@@ -327,6 +339,13 @@ impl<'output> SoundEngine<'output> {
         Ok(self.backend.state(handle)?)
     }
 
+    /// Reports whether this exact generation remains in the engine registry.
+    pub(super) fn owns_voice(&self, handle: SoundVoiceHandle) -> bool {
+        self.active_voices
+            .iter()
+            .any(|voice| voice.handle == handle)
+    }
+
     /// Stops and retires one engine-owned voice immediately.
     ///
     /// # Errors
@@ -355,6 +374,23 @@ impl<'output> SoundEngine<'output> {
         let mut index = 0;
         while index < self.active_voices.len() {
             if self.backend.state(self.active_voices[index].handle)? == SoundVoiceState::Stopped {
+                self.active_voices.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        Ok(before - self.active_voices.len())
+    }
+
+    /// Collects ordinary voices while service-owned generations remain stable.
+    fn collect_stopped_unmanaged_voices(&mut self) -> Result<usize, SoundEngineError> {
+        let before = self.active_voices.len();
+        let mut index = 0;
+        while index < self.active_voices.len() {
+            let voice = self.active_voices[index];
+            if voice.duck_source.is_none()
+                && self.backend.state(voice.handle)? == SoundVoiceState::Stopped
+            {
                 self.active_voices.remove(index);
             } else {
                 index += 1;

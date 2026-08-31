@@ -37,6 +37,7 @@ pub struct GlueManager {
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
     report: GlueStartupReport,
+    environment: UiScriptEnvironment,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     assets: AssetStoreHandle,
@@ -102,7 +103,7 @@ impl GlueManager {
             &fonts,
             &texture_states,
         );
-        let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
+        let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
         runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
         let login_payload = UiEventPayload::new([UiEventArgument::String("login".to_owned())])
@@ -145,6 +146,7 @@ impl GlueManager {
             objects,
             child_indices,
             report,
+            environment,
             media_intent,
             network,
             assets,
@@ -232,6 +234,12 @@ impl GlueManager {
     #[must_use]
     pub fn media_intent(&self) -> UiGlueMediaIntent {
         self.media_intent.borrow().clone()
+    }
+
+    /// Returns one live script-visible CVar for native subsystem policy.
+    #[must_use]
+    pub fn cvar_value(&self, name: &str) -> Option<String> {
+        self.environment.cvar_value(name)
     }
 
     /// Takes the oldest native network action emitted by built-in Glue Lua.

@@ -321,6 +321,12 @@ impl UiScriptEnvironment {
         self.streaming_trial
     }
 
+    /// Returns one registered console variable's current script-visible text.
+    #[must_use]
+    pub fn cvar_value(&self, name: &str) -> Option<String> {
+        self.cvars.get(name)
+    }
+
     /// Attaches the mounted stock archive stack used by synchronous UI loads.
     #[must_use]
     pub fn with_asset_store(mut self, store: AssetStore) -> Self {

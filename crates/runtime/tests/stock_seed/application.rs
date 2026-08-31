@@ -29,6 +29,9 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert_eq!(report.logical_window_extent(), (960, 540));
     assert!(report.pixel_window_extent().0 >= 960);
     assert!(report.pixel_window_extent().1 >= 540);
+    assert_eq!(report.sound_sample_rate_hz(), 44_100);
+    assert_eq!(report.sound_output_channels(), 2);
+    assert_eq!(report.sound_voice_capacity(), 64);
     let vulkan = application.vulkan_report();
     assert!(!vulkan.device_name().is_empty());
     assert!(vulkan.api_version() >= ash::vk::API_VERSION_1_3);

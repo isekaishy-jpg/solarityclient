@@ -17,6 +17,11 @@ frequency values. Empty slots stay absent. The catalog does not substitute a
 neighboring slot, basename, loose file, or alternate codec when a selected path
 is invalid or missing.
 
+Some shipped build-12340 rows place one root separator before `DirectoryBase`.
+The DBC boundary removes that archive-root marker before constructing the
+normalized `AssetPath`; parent traversal and every other invalid path remain an
+error. This is the same single logical MPQ identity, not a second lookup.
+
 The media crate will consume these typed definitions, apply stock variation
 and channel policy, and request the chosen encoded payload through
 `AssetStore`. The codec/backend boundary receives those selected bytes; it does
@@ -49,12 +54,15 @@ resource during admission. This is the one adapter-boundary copy: the temporary
 once other owners release it. Unsupported or corrupt bytes fail admission and
 do not trigger another codec, filesystem search, or extension substitution.
 
-Output and track ownership are separate safe Rust values. `SoundOutput` owns
-one explicitly selected default-device or memory mixer; `SoundBackend` borrows
-that output and preallocates exactly the caller-provided track count. Runtime
-policy must pass the authoritative `Sound_NumChannels` value, whose build-12340
-default is 64. Exhaustion is reported instead of allocating another track or
-stealing an active voice without an evidenced priority rule.
+Output and track ownership remain separate at the adapter boundary.
+`SoundOutput` owns one explicitly selected default-device or memory mixer;
+`SoundBackend` borrows that output and preallocates exactly the caller-provided
+track count. `OwnedSoundEngine` contains their self-reference behind one tested
+safe boundary: a stable boxed mixer allocation outlives the engine field and
+Rust's field destruction order drops every track first. Runtime policy passes
+the authoritative `Sound_NumChannels` value, whose build-12340 default is 64.
+Exhaustion is reported instead of allocating another track or stealing an
+active voice without an evidenced priority rule.
 
 Each voice handle carries the backend, slot, and slot generation. Stopping a
 voice permits reuse, and the next generation invalidates the earlier handle.
@@ -140,9 +148,27 @@ milliseconds within the realm day. A sound is absent outside a nonempty window,
 ramps from zero to one between A and B, remains at one until C, and ramps back to
 zero at D. Midnight-crossing windows move early-day samples into the following
 integer day. The constructor selects one signed offset from
-`[-RandomOffsetRange, RandomOffsetRange)` using the sound subsystem's Blizzard
-random stream. Stock shifts the window comparisons by that offset but retains
-the unshifted time points in interpolation numerators; `scheduled_gain` preserves
-that executable behavior and accepts the selected offset explicitly. Interval,
-usage-mode, and duck-transition state machines remain unimplemented until their
-complete transitions are executable-backed.
+`[-RandomOffsetRange, RandomOffsetRange)` using the process-wide Blizzard table
+generator at executable `0x00464580`. Runtime retains that exact 61-word table,
+four prime-length cursors, accumulator, and timer seed separately from the CRT
+`rand` stream. Stock shifts the window comparisons by that offset but retains
+the unshifted time points in interpolation numerators; `scheduled_gain`
+preserves that executable behavior.
+
+`AdvancedSoundService` now owns usage-zero continuous, usage-one periodic, and
+usage-two terminal instances; shared variation state; scheduled gain; camera-
+relative position and cone mixing; and the global category-duck list. Completed
+service-owned generations are released before a later instance can reuse the
+same backend track. Whole-world and ADT replacement boundaries stop and destroy
+all earlier instances explicitly.
+
+The runtime composition root opens the default SDL output after Glue CVar
+registration, reads the live master/SFX/music/ambience snapshot, and allocates
+the fixed startup `Sound_NumChannels` pool. A live capacity change requires a
+restart instead of resizing the backend. Resident MCSE records are staged in
+authored chunk order and updated from the rendered `WorldCameraFrame` and the
+server-anchored `RealmClock`; neither local wall time nor another listener is
+substituted. MCSE payloads currently use the explicit predecoded admission
+mode. Streaming selection remains at that boundary until a build-12340 flag
+mapping is recovered; the runtime does not infer one from file extension or
+size.

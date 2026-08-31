@@ -15,6 +15,7 @@ mod login_ui;
 mod player_coordinator;
 mod realm_directory;
 mod run;
+mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
 mod world_coordinator;
@@ -33,6 +34,7 @@ pub use login_coordinator::{
 };
 pub use player_coordinator::{RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation};
 pub use run::{ApplicationExitReason, ApplicationRunReport};
+pub use sound_coordinator::RuntimeSoundError;
 pub use terrain_coordinator::{
     RuntimeCameraError, RuntimeCameraSceneError, RuntimeTerrainCoordinator, RuntimeTerrainError,
     RuntimeTerrainPoll,

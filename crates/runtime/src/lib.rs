@@ -17,7 +17,7 @@ mod security;
 mod telemetry;
 mod time;
 
-pub use random::CrtRand;
+pub use random::{BlizzardRand, CrtRand};
 pub use time::RealmClock;
 
 pub use application::{
@@ -26,7 +26,7 @@ pub use application::{
     RuntimeCameraError, RuntimeCameraSceneError, RuntimeCharacterSelection,
     RuntimeGameplayCoordinator, RuntimeGameplayError, RuntimeLoginCoordinator, RuntimeLoginError,
     RuntimeLoginPoll, RuntimeLoginState, RuntimePlayerError, RuntimePlayerPoll,
-    RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimePlayerPresentation, RuntimeSoundError, RuntimeTerrainCoordinator, RuntimeTerrainError,
     RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator, RuntimeWorldEntry,
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
     RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,

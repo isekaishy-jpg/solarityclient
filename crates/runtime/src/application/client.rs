@@ -15,6 +15,7 @@ use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::player_coordinator::RuntimePlayerError;
 use crate::application::run::{self, ApplicationRunReport};
+use crate::application::sound_coordinator::RuntimeSoundError;
 use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
@@ -78,6 +79,9 @@ pub enum ApplicationError {
     /// A selected UI BLP could not decode or enter device-local storage.
     #[error(transparent)]
     BlpTextureUpload(#[from] BlpTextureUploadError),
+    /// Device output, sound policy, or advanced-emitter service failed.
+    #[error(transparent)]
+    Sound(#[from] RuntimeSoundError),
     /// Tokio could not construct the private network runtime.
     #[error("failed to create network runtime: {message}")]
     NetworkRuntime {
@@ -96,6 +100,9 @@ pub struct StartupReport {
     window_id: u32,
     logical_window_extent: (u32, u32),
     pixel_window_extent: (u32, u32),
+    sound_sample_rate_hz: u32,
+    sound_output_channels: u8,
+    sound_voice_capacity: usize,
     glue: GlueStartupReport,
 }
 
@@ -142,6 +149,24 @@ impl StartupReport {
         self.pixel_window_extent
     }
 
+    /// Returns the actual sample rate selected by SDL's default device.
+    #[must_use]
+    pub const fn sound_sample_rate_hz(self) -> u32 {
+        self.sound_sample_rate_hz
+    }
+
+    /// Returns the actual speaker-channel count selected by SDL.
+    #[must_use]
+    pub const fn sound_output_channels(self) -> u8 {
+        self.sound_output_channels
+    }
+
+    /// Returns the fixed track count from startup `Sound_NumChannels`.
+    #[must_use]
+    pub const fn sound_voice_capacity(self) -> usize {
+        self.sound_voice_capacity
+    }
+
     /// Returns facts proving the stock built-in login UI executed.
     #[must_use]
     pub const fn glue(self) -> GlueStartupReport {
@@ -167,6 +192,8 @@ impl ClientApplication {
         let network_worker_count = configuration.network_workers().get();
         let (services, archive_count, addon_count) = ClientServices::start(&configuration)?;
         let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
+        let (sound_sample_rate_hz, sound_output_channels, sound_voice_capacity) =
+            services.sound_facts();
         let glue = services.glue_report();
 
         Ok(Self {
@@ -179,6 +206,9 @@ impl ClientApplication {
                 window_id,
                 logical_window_extent,
                 pixel_window_extent,
+                sound_sample_rate_hz,
+                sound_output_channels,
+                sound_voice_capacity,
                 glue,
             },
         })
