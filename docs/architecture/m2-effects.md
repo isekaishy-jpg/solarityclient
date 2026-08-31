@@ -11,6 +11,23 @@ restored immediately afterward. Solarity's owned decoders then read the exact
 records directly from the original bytes. This in-place parser view avoids
 cloning an HD-sized M2 solely to bypass incompatible dependency structures.
 
+The same isolation covers build-12340 events, lights, cameras, and the camera
+lookup. `wow-m2 0.7` exposes later record shapes for those arrays; none may be
+used as an implicit conversion or fallback.
+
+## Model lights
+
+One build-12340 model light is 156 bytes. It contains a `u16` directional/point
+selector, an optional signed bone index, a bone-relative position, and seven
+nested tracks: ambient RGB/intensity, diffuse RGB/intensity, attenuation
+start/end, and byte visibility. The owned decoder resolves those tracks through
+the same sequence storage rules as model animation and rejects later light type
+selectors rather than coercing them to point lights.
+
+Mutable light state belongs to a model placement. The decoded declaration and
+animation keys remain shared with the M2 asset, including when a higher-priority
+HD patch supplies a larger file at the same virtual path.
+
 ## Ribbons
 
 The asset boundary now owns every field of the 176-byte ribbon record:

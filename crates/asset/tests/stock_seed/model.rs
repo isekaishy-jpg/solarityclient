@@ -606,6 +606,100 @@ fn m2_particle_multi_texture_references_do_not_receive_a_fallback() -> Result<()
     Ok(())
 }
 
+/// Version-264 model lights use the exact 156-byte seven-track record.
+#[test]
+fn m2_lights_decode_wotlk_record_and_channels() -> Result<(), Box<dyn Error>> {
+    let model = animated_light_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Light.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Light00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Light.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let light = model
+        .animations()
+        .lights()
+        .first()
+        .ok_or("light is absent")?;
+
+    assert_eq!(light.kind(), solarity_asset::M2LightKind::Point);
+    assert_eq!(light.bone_index(), Some(0));
+    assert_eq!(light.position(), glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(
+        light.ambient_color().channels()[0].values(),
+        &[
+            glam::Vec3::new(0.1, 0.2, 0.3),
+            glam::Vec3::new(0.4, 0.5, 0.6)
+        ]
+    );
+    assert_eq!(
+        light.ambient_intensity().channels()[0].values(),
+        &[0.5, 1.0]
+    );
+    assert_eq!(
+        light.diffuse_color().channels()[0].values(),
+        &[
+            glam::Vec3::new(0.7, 0.8, 0.9),
+            glam::Vec3::new(1.0, 0.9, 0.8)
+        ]
+    );
+    assert_eq!(
+        light.diffuse_intensity().channels()[0].values(),
+        &[1.0, 2.0]
+    );
+    assert_eq!(
+        light.attenuation_start().channels()[0].values(),
+        &[3.0, 4.0]
+    );
+    assert_eq!(light.attenuation_end().channels()[0].values(), &[5.0, 6.0]);
+    assert_eq!(light.visibility().channels()[0].values(), &[1, 0]);
+    Ok(())
+}
+
+/// Later light selectors are rejected instead of being coerced to point lights.
+#[test]
+fn m2_light_type_has_no_later_version_fallback() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_light_m2_bytes()?;
+    let light_offset = m2_array_offset(&model, 0x108)?;
+    model[light_offset..light_offset + 2].copy_from_slice(&2_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadLight.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadLight00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadLight.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("light 0 has unsupported type 2")
+    ));
+    Ok(())
+}
+
 /// Stock keeps the model usable while disabling a missing external sequence.
 #[test]
 fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
@@ -1303,6 +1397,61 @@ fn animated_particle_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     set_header_array(&mut bytes, particle_offset + 0x1c0, 2, spline_points)?;
     append_linear_track(&mut bytes, particle_offset + 0x1c8, &[0, 1_000], &[1, 0], 1)?;
     set_header_array(&mut bytes, 0x128, 1, particle_offset)?;
+    Ok(bytes)
+}
+
+/// Adds one exact WotLK model-light record to the internal sequence fixture.
+fn animated_light_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = animated_m2_bytes()?;
+    let light_offset = bytes.len();
+    bytes.resize(light_offset + 156, 0);
+    bytes[light_offset..light_offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[light_offset + 2..light_offset + 4].copy_from_slice(&0_i16.to_le_bytes());
+    bytes[light_offset + 4..light_offset + 16].copy_from_slice(&f32_values(&[1.0, 2.0, 3.0]));
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x10,
+        &[0, 1_000],
+        &f32_values(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
+        12,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x24,
+        &[0, 1_000],
+        &f32_values(&[0.5, 1.0]),
+        4,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x38,
+        &[0, 1_000],
+        &f32_values(&[0.7, 0.8, 0.9, 1.0, 0.9, 0.8]),
+        12,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x4c,
+        &[0, 1_000],
+        &f32_values(&[1.0, 2.0]),
+        4,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x60,
+        &[0, 1_000],
+        &f32_values(&[3.0, 4.0]),
+        4,
+    )?;
+    append_linear_track(
+        &mut bytes,
+        light_offset + 0x74,
+        &[0, 1_000],
+        &f32_values(&[5.0, 6.0]),
+        4,
+    )?;
+    append_linear_track(&mut bytes, light_offset + 0x88, &[0, 1_000], &[1, 0], 1)?;
+    set_header_array(&mut bytes, 0x108, 1, light_offset)?;
     Ok(bytes)
 }
 

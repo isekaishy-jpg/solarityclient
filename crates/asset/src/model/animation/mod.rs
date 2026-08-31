@@ -5,10 +5,12 @@ use glam::{Quat, Vec3};
 use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
+mod light;
 mod material;
 mod particle;
 mod ribbon;
 
+pub use light::{M2Light, M2LightKind};
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
 pub use particle::{M2ParticleEmitter, M2ParticleLifetimeTrack};
 pub use ribbon::M2RibbonEmitter;
@@ -278,6 +280,7 @@ pub struct M2AnimationSet {
     colors: Vec<M2ColorAnimation>,
     texture_weights: Vec<M2TextureWeight>,
     texture_transforms: Vec<M2TextureTransform>,
+    lights: Vec<M2Light>,
     ribbons: Vec<M2RibbonEmitter>,
     particles: Vec<M2ParticleEmitter>,
 }
@@ -332,6 +335,14 @@ impl M2AnimationSet {
             decode_texture_weights(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let texture_transforms =
             decode_texture_transforms(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let lights = light::decode_lights(
+            model_path,
+            model_bytes,
+            &globals,
+            &sequences,
+            &payloads,
+            bones.len(),
+        )?;
         let ribbons = ribbon::decode_ribbons(
             model_path,
             model_bytes,
@@ -357,6 +368,7 @@ impl M2AnimationSet {
             colors,
             texture_weights,
             texture_transforms,
+            lights,
             ribbons,
             particles,
         })
@@ -572,6 +584,12 @@ impl M2AnimationSet {
     #[must_use]
     pub fn texture_transforms(&self) -> &[M2TextureTransform] {
         &self.texture_transforms
+    }
+
+    /// Returns authored model lights in exact M2 table order.
+    #[must_use]
+    pub fn lights(&self) -> &[M2Light] {
+        &self.lights
     }
 
     /// Returns authored ribbon emitters in exact M2 table order.

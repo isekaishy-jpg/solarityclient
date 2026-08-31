@@ -53,18 +53,19 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model,
     validate_model_prefix(path, bytes)?;
     validate_model_texture_arrays(path, bytes)?;
 
-    // wow-m2 0.7 reads build-12340's 60-byte texture transform and its
-    // 176/476-byte ribbon/particle records as later incompatible layouts.
-    // Hide those dependency-owned arrays; exact WotLK decoders consume the
-    // restored bytes. Patching the header in place avoids cloning an HD-sized
-    // model solely to construct a parser view.
-    let exact_arrays = [0x48_usize, 0x58, 0x60, 0x120, 0x128];
-    let mut saved = [[0_u8; 8]; 5];
+    // wow-m2 0.7 reads build-12340 material tracks, events, lights, cameras,
+    // ribbons, and particles as later incompatible layouts. Hide those arrays
+    // and the camera lookup; exact WotLK decoders consume the restored bytes.
+    // Patching in place avoids cloning an HD-sized model for a parser view.
+    let exact_arrays = [
+        0x48_usize, 0x58, 0x60, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128,
+    ];
+    let mut saved = [[0_u8; 8]; 9];
     for (slot, offset) in saved.iter_mut().zip(exact_arrays) {
         let header = bytes.get_mut(offset..offset + 8).ok_or_else(|| {
             model_decode(
                 path,
-                "build-12340 material-track header is truncated".to_owned(),
+                "build-12340 exact-array header is truncated".to_owned(),
             )
         })?;
         slot.copy_from_slice(header);
