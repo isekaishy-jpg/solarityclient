@@ -6,6 +6,8 @@ use thiserror::Error;
 use crate::audio::backend::SoundBackendError;
 use crate::audio::codec::SoundDecodeError;
 
+use super::AdvancedSoundSpatialError;
+
 /// Invalid stock master or category CVar gain.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 #[error("sound gain must be finite and in 0..=1, got {value}")]
@@ -70,6 +72,9 @@ pub enum SoundEngineError {
     /// A voice handle is not currently owned by this engine.
     #[error("sound voice is not owned by this engine")]
     UnknownVoice,
+    /// A positioned ordinary voice has invalid authored or runtime spatial data.
+    #[error(transparent)]
+    Spatial(#[from] AdvancedSoundSpatialError),
     /// Exact archive lookup or read failed.
     #[error(transparent)]
     Asset(#[from] AssetError),

@@ -7,16 +7,16 @@ use solarity_asset::{DecodedM2Model, M2ParticleEmitter};
 use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
-    CharacterGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount,
-    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan,
-    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticlePipelineHandle, M2ParticlePose,
-    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable,
-    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
+    CharacterGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall, M2EventTimeWindow,
+    M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
+    M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticlePipelineHandle,
+    M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation,
+    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
+    M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan,
+    M2ShadowFiltering, M2ShadowPermutation, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
     M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_section_distance_key,
+    m2_section_distance_key, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -135,6 +135,21 @@ struct M2Playback {
     cycle_count: u32,
     cycle_started_ms: f32,
     has_variations: bool,
+    previous_event_elapsed_ms: f32,
+    previous_global_event_elapsed_ms: f32,
+    event_timeline_started: bool,
+}
+
+/// Current bone clock plus an expired variation tail awaiting event dispatch.
+struct M2PlaybackAdvance {
+    clock: M2AnimationClock,
+    expired_variation: Option<M2ExpiredVariation>,
+}
+
+/// Final event interval and pose clock from one replaced sequence variation.
+struct M2ExpiredVariation {
+    clock: M2AnimationClock,
+    event_window: M2EventTimeWindow,
 }
 
 impl M2Playback {
@@ -153,6 +168,9 @@ impl M2Playback {
                 cycle_count: 1,
                 cycle_started_ms: 0.0,
                 has_variations: false,
+                previous_event_elapsed_ms: 0.0,
+                previous_global_event_elapsed_ms: 0.0,
+                event_timeline_started: false,
             }));
         }
         let sequence = animations
@@ -183,6 +201,9 @@ impl M2Playback {
             cycle_count,
             cycle_started_ms: 0.0,
             has_variations: variation_count > 1,
+            previous_event_elapsed_ms: 0.0,
+            previous_global_event_elapsed_ms: 0.0,
+            event_timeline_started: false,
         }))
     }
 
@@ -213,6 +234,8 @@ impl M2Playback {
         self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
         self.cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
         self.cycle_started_ms = animation_time_ms;
+        self.previous_event_elapsed_ms = 0.0;
+        self.event_timeline_started = false;
         self.has_variations = animations
             .available_variation_count(animation_id)
             .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
@@ -230,11 +253,29 @@ impl M2Playback {
         animation_time_ms: f32,
         global_time_ms: f32,
         random: &mut CrtRand,
-    ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         let elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
         let selected_span_ms = self.sequence_duration_ms * self.cycle_count as f32;
+        let mut expired_variation = None;
         if self.has_variations && self.sequence_duration_ms > 0.0 && elapsed_ms >= selected_span_ms
         {
+            // Stock finishes the old sequence's event interval before replacing
+            // its timer. Bone-relative callbacks from that tail must also use
+            // the old sequence's terminal pose, not the newly selected pose.
+            expired_variation = Some(M2ExpiredVariation {
+                clock: M2AnimationClock::new(
+                    self.sequence,
+                    self.sequence_duration_ms,
+                    global_time_ms,
+                ),
+                event_window: M2EventTimeWindow::new(
+                    self.sequence,
+                    self.previous_event_elapsed_ms,
+                    selected_span_ms,
+                    !self.event_timeline_started,
+                    true,
+                ),
+            });
             let animation_id = model.animations().sequences()[self.sequence].animation_id();
             self.sequence = model
                 .animations()
@@ -250,13 +291,62 @@ impl M2Playback {
             // current client tick, so a stalled presentation does not replay
             // an unbounded backlog of expired fidget variations.
             self.cycle_started_ms = animation_time_ms;
+            self.previous_event_elapsed_ms = 0.0;
+            self.event_timeline_started = false;
         }
-        Ok(world_animation_clock(
+        Ok(M2PlaybackAdvance {
+            clock: world_animation_clock(
+                self.sequence,
+                self.sequence_duration_ms,
+                animation_time_ms - self.cycle_started_ms,
+                global_time_ms,
+            ),
+            expired_variation,
+        })
+    }
+
+    /// Advances the unwrapped clocks retained exclusively for event crossing.
+    fn event_window(&mut self, animation_time_ms: f32, global_time_ms: f32) -> M2EventTimeWindow {
+        let current_event_elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
+        let window = M2EventTimeWindow::new(
             self.sequence,
-            self.sequence_duration_ms,
-            animation_time_ms - self.cycle_started_ms,
-            global_time_ms,
-        ))
+            self.previous_event_elapsed_ms,
+            current_event_elapsed_ms,
+            !self.event_timeline_started,
+            true,
+        )
+        .with_global_time(self.previous_global_event_elapsed_ms, global_time_ms);
+        self.previous_event_elapsed_ms = current_event_elapsed_ms;
+        self.previous_global_event_elapsed_ms = global_time_ms;
+        self.event_timeline_started = true;
+        window
+    }
+}
+
+/// One generic authored M2 callback resolved into world space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::application) struct RuntimeM2Event {
+    identifier: [u8; 4],
+    data: u32,
+    position: glam::Vec3,
+    owner_guid: Option<u64>,
+}
+
+impl RuntimeM2Event {
+    pub(in crate::application) const fn identifier(self) -> [u8; 4] {
+        self.identifier
+    }
+
+    pub(in crate::application) const fn data(self) -> u32 {
+        self.data
+    }
+
+    pub(in crate::application) const fn position(self) -> glam::Vec3 {
+        self.position
+    }
+
+    pub(in crate::application) const fn owner_guid(self) -> Option<u64> {
+        self.owner_guid
     }
 }
 
@@ -274,6 +364,7 @@ pub(super) struct M2Frame {
     particle_draws: Vec<M2ParticlePreparedDraw>,
     ribbon_vertices: Vec<M2RibbonRenderVertex>,
     ribbon_draws: Vec<M2RibbonPreparedDraw>,
+    triggered_events: Vec<RuntimeM2Event>,
     last_effect_time_ms: Option<f32>,
 }
 
@@ -359,6 +450,7 @@ impl M2Frame {
             particle_draws: Vec::new(),
             ribbon_vertices: Vec::new(),
             ribbon_draws: Vec::new(),
+            triggered_events: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -717,6 +809,7 @@ impl M2Frame {
         self.particle_draws.clear();
         self.ribbon_vertices.clear();
         self.ribbon_draws.clear();
+        self.triggered_events.clear();
         let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
@@ -798,10 +891,36 @@ impl M2Frame {
             let Some(playback) = placement.playback.as_mut() else {
                 continue;
             };
-            let clock = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+            let advance =
+                playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+            if let Some(expired) = advance.expired_variation {
+                let expired_pose = M2BonePose::compose_with_model_view(
+                    source.model.animations(),
+                    expired.clock,
+                    camera.view() * placement.transform,
+                )?;
+                append_triggered_events(
+                    &mut self.triggered_events,
+                    &source.model,
+                    placement.owner,
+                    placement.transform,
+                    &expired_pose,
+                    expired.event_window,
+                )?;
+            }
+            let clock = advance.clock;
+            let event_window = playback.event_window(animation_time_ms, global_time_ms);
             let model_view = camera.view() * placement.transform;
             let bone_pose =
                 M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            append_triggered_events(
+                &mut self.triggered_events,
+                &source.model,
+                placement.owner,
+                placement.transform,
+                &bone_pose,
+                event_window,
+            )?;
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
             {
@@ -1084,6 +1203,55 @@ impl M2Frame {
             ribbon_vertices: &self.ribbon_vertices,
             ribbon_draws: &self.ribbon_draws,
         })
+    }
+
+    /// Transfers every event generated by the most recent presentation frame.
+    pub(super) fn drain_triggered_events(&mut self) -> Vec<RuntimeM2Event> {
+        std::mem::take(&mut self.triggered_events)
+    }
+}
+
+/// Resolves declaration callbacks through their authored bone and placement.
+fn append_triggered_events(
+    destination: &mut Vec<RuntimeM2Event>,
+    model: &DecodedM2Model,
+    owner: M2GpuPlacementOwner,
+    model_transform: Mat4,
+    bone_pose: &M2BonePose,
+    window: M2EventTimeWindow,
+) -> Result<(), RuntimeTerrainFrameError> {
+    for event_index in triggered_m2_event_indices(model.animations(), window) {
+        let event = &model.animations().events()[event_index];
+        let bone = match event.bone_index() {
+            Some(bone_index) => bone_pose
+                .transforms()
+                .get(bone_index as usize)
+                .copied()
+                .ok_or_else(|| RuntimeTerrainFrameError::M2EventBoneIndex {
+                    model: model.path().clone(),
+                    event_index,
+                    bone_index,
+                })?,
+            None => Mat4::IDENTITY,
+        };
+        destination.push(RuntimeM2Event {
+            identifier: event.identifier(),
+            data: event.data(),
+            position: (model_transform * bone).transform_point3(event.position()),
+            owner_guid: placement_owner_guid(owner),
+        });
+    }
+    Ok(())
+}
+
+const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
+    match owner {
+        M2GpuPlacementOwner::Static(_) => None,
+        M2GpuPlacementOwner::PlayerBody { guid }
+        | M2GpuPlacementOwner::RemotePlayerBody { guid }
+        | M2GpuPlacementOwner::CreatureBody { guid }
+        | M2GpuPlacementOwner::PlayerItem { guid, .. }
+        | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
     }
 }
 

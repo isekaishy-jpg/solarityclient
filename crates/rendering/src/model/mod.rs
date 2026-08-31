@@ -20,7 +20,8 @@ pub use character_component::{
     CharacterWeaponState,
 };
 pub use m2_animation::{
-    M2AnimationClock, M2BonePose, M2BonePoseError, M2MaterialPose, M2MaterialPoseError,
+    M2AnimationClock, M2BonePose, M2BonePoseError, M2EventTimeWindow, M2MaterialPose,
+    M2MaterialPoseError, triggered_m2_event_indices,
 };
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan,

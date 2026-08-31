@@ -16,15 +16,15 @@ use solarity_rendering::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
     CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants,
-    M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform,
-    M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
-    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
+    M2EventTimeWindow, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
+    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
+    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
     M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera,
-    WorldFrameScene, WorldModelSceneUniform,
+    WorldFrameScene, WorldModelSceneUniform, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -37,6 +37,96 @@ use wow_m2::skin::{OldSkinHeader, SkinBatch, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
+
+/// Event windows preserve start, loop, long-frame, and global-clock crossings.
+#[test]
+fn m2_event_timeline_crosses_stock_intervals() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Events", 1)?;
+    append_render_events(&mut bytes)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Events.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Events00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Events.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let animations = model.animations();
+
+    assert_eq!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 0.0, 0.0, true, true).with_global_time(200.0, 200.0),
+        ),
+        [0]
+    );
+    assert!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 0.0, 0.0, false, true).with_global_time(200.0, 200.0),
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 0.0, 125.0, false, true).with_global_time(200.0, 200.0),
+        ),
+        [0]
+    );
+    assert_eq!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 900.0, 1_125.0, false, true).with_global_time(200.0, 200.0),
+        ),
+        [0]
+    );
+    assert!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 900.0, 1_125.0, false, false).with_global_time(200.0, 200.0),
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 800.0, 2_750.0, false, true).with_global_time(200.0, 200.0),
+        ),
+        [0]
+    );
+    assert_eq!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 200.0, 200.0, false, true).with_global_time(450.0, 500.0),
+        ),
+        [1]
+    );
+    assert!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, 0.0, 500.0, true, true),
+        )
+        .iter()
+        .all(|index| *index != 1)
+    );
+    assert!(
+        triggered_m2_event_indices(
+            animations,
+            M2EventTimeWindow::new(0, f32::NAN, 1.0, false, true),
+        )
+        .is_empty()
+    );
+    Ok(())
+}
 
 /// Base player customization produces stock atlas and M2 replacement bindings.
 #[test]
@@ -2803,6 +2893,56 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     append_render_material_tracks(bytes)?;
     append_render_ribbon(bytes)?;
     append_render_particle(bytes)?;
+    Ok(())
+}
+
+/// Adds one sequence-local and one global-sequence event declaration.
+fn append_render_events(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let global_duration_offset = bytes.len();
+    bytes.extend_from_slice(&400_u32.to_le_bytes());
+    set_render_header_array(bytes, 0x14, 1, global_duration_offset)?;
+
+    let event_offset = bytes.len();
+    bytes.resize(event_offset + 72, 0);
+    bytes[event_offset..event_offset + 4].copy_from_slice(b"$SND");
+    bytes[event_offset + 4..event_offset + 8].copy_from_slice(&42_u32.to_le_bytes());
+    bytes[event_offset + 8..event_offset + 12].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[event_offset + 12..event_offset + 24]
+        .copy_from_slice(&render_f32_values(&[1.0, 2.0, 3.0]));
+    bytes[event_offset + 36..event_offset + 40].copy_from_slice(b"$DSO");
+    bytes[event_offset + 40..event_offset + 44].copy_from_slice(&43_u32.to_le_bytes());
+    bytes[event_offset + 44..event_offset + 48].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[event_offset + 48..event_offset + 60]
+        .copy_from_slice(&render_f32_values(&[4.0, 5.0, 6.0]));
+    append_render_event_track(bytes, event_offset + 24, &[0, 125, 750], None)?;
+    append_render_event_track(bytes, event_offset + 60, &[100], Some(0))?;
+    set_render_header_array(bytes, 0x100, 2, event_offset)?;
+    Ok(())
+}
+
+/// Appends one timestamp-only channel and patches its 12-byte track header.
+fn append_render_event_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u32],
+    global_sequence: Option<u16>,
+) -> Result<(), Box<dyn Error>> {
+    let timestamp_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let timestamp_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = bytes.len();
+    for timestamp in timestamps {
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+    }
+    bytes[timestamp_data_word..timestamp_data_word + 4]
+        .copy_from_slice(&u32::try_from(timestamp_data)?.to_le_bytes());
+    bytes[track_offset..track_offset + 2].copy_from_slice(&0_u16.to_le_bytes());
+    let global_sequence = global_sequence.map_or(-1_i16, |value| value as i16);
+    bytes[track_offset + 2..track_offset + 4].copy_from_slice(&global_sequence.to_le_bytes());
+    bytes[track_offset + 4..track_offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 8..track_offset + 12]
+        .copy_from_slice(&u32::try_from(timestamp_refs)?.to_le_bytes());
     Ok(())
 }
 

@@ -287,6 +287,9 @@ impl ClientServices {
             &creatures,
             &remote_players,
         )?;
+        let m2_events = frame.drain_m2_events();
+        self.sound
+            .play_m2_events(&m2_events, camera, &mut self.blizzard_rand)?;
         Ok(())
     }
 

@@ -49,6 +49,40 @@ fn advanced_mix_uses_camera_basis_and_fmod_inverse_rolloff() -> Result<(), Box<d
     Ok(())
 }
 
+/// Ordinary model callbacks use the base row as a fully positional voice.
+#[test]
+fn positioned_mix_uses_sound_entry_distance_without_advanced_policy() -> Result<(), Box<dyn Error>>
+{
+    let (mut store, _fixture) = spatial_fixture()?;
+    let catalog = SpatialSoundCatalog::load(&mut store)?;
+    let resolved = catalog.resolve(90)?;
+    let listener = AdvancedSoundListener::new(Vec3::ZERO, Vec3::X, -Vec3::Y, Vec3::Z)?;
+    let emitter = Vec3::new(8.0, 0.0, 0.0);
+    let mix =
+        AdvancedSoundSpatialMix::evaluate_positioned(listener, emitter, resolved.sound_entry())?;
+
+    assert_eq!(mix.pan_level(), 1.0);
+    assert_eq!(mix.cone_gain(), 1.0);
+    assert_close(mix.distance_gain(), 0.5);
+    assert_close(mix.three_dimensional_gain(), 0.5);
+    assert_eq!(
+        mix.backend_position()
+            .ok_or("positioned emitter omitted its backend coordinate")?
+            .coordinates(),
+        [0.0, 0.0, -1.0]
+    );
+    let origin =
+        AdvancedSoundSpatialMix::evaluate_positioned(listener, Vec3::ZERO, resolved.sound_entry())?;
+    assert_eq!(
+        origin
+            .backend_position()
+            .ok_or("world-origin callback was changed into a 2D sound")?
+            .coordinates(),
+        [0.0; 3]
+    );
+    Ok(())
+}
+
 /// FMOD cone spreads use full angles and interpolate linearly between them.
 #[test]
 fn advanced_mix_applies_authored_cone_spread() -> Result<(), Box<dyn Error>> {

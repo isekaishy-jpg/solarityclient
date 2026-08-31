@@ -83,6 +83,49 @@ pub struct AdvancedSoundSpatialMix {
 }
 
 impl AdvancedSoundSpatialMix {
+    /// Evaluates an ordinary fully positional `SoundEntries` voice.
+    ///
+    /// Model callbacks enter the stock `playSoundEntryAt` path without an
+    /// advanced row, so they have neither an advanced pan-radius blend nor an
+    /// emitter cone. They still use the base row's FMOD minimum and cutoff
+    /// distances and the same listener-space conversion as advanced sounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdvancedSoundSpatialError`] for an invalid emitter or
+    /// authored distance interval. No distance or coordinate is repaired.
+    pub fn evaluate_positioned(
+        listener: AdvancedSoundListener,
+        emitter_position: Vec3,
+        sound_entry: &SoundEntry,
+    ) -> Result<Self, AdvancedSoundSpatialError> {
+        if !emitter_position.is_finite() {
+            return Err(AdvancedSoundSpatialError::NonFiniteEmitter);
+        }
+        let minimum_distance = sound_entry.minimum_distance();
+        let maximum_distance = sound_entry.distance_cutoff();
+        if minimum_distance < 0.0 || maximum_distance < minimum_distance {
+            return Err(AdvancedSoundSpatialError::DistanceRange {
+                minimum: minimum_distance,
+                maximum: maximum_distance,
+            });
+        }
+
+        let listener_to_emitter = emitter_position - listener.position;
+        let distance_gain = inverse_distance_gain(
+            listener_to_emitter.length(),
+            minimum_distance,
+            maximum_distance,
+        );
+        Ok(Self {
+            backend_position: Some(listener_position(listener, listener_to_emitter)?),
+            pan_level: 1.0,
+            distance_gain,
+            cone_gain: 1.0,
+            three_dimensional_gain: distance_gain,
+        })
+    }
+
     /// Evaluates listener coordinates, inverse roll-off, cone, and 3D blend.
     ///
     /// Build 12340 passes `SoundEntries` minimum/maximum distances and the

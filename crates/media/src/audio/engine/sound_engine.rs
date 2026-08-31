@@ -18,7 +18,9 @@ use super::types::{
     SoundCategory, SoundChannel, SoundEngineSettings, SoundPlayRequest, SoundPlayback,
     SoundSoftwareChannelCount,
 };
-use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
+use super::{
+    AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundListener, AdvancedSoundSpatialMix,
+};
 
 /// Hard `maxchannels` argument passed to FMOD System::init by build 12340.
 const STOCK_VIRTUAL_VOICE_CAPACITY: u16 = 512;
@@ -269,6 +271,42 @@ impl<'output> SoundEngine<'output> {
             duck_source: request.advanced_source(),
         });
         Ok(SoundPlayback::Started(voice))
+    }
+
+    /// Selects and starts one ordinary voice at an exact world position.
+    ///
+    /// This is the `playSoundEntryAt` boundary used by model callbacks. It
+    /// applies the base `SoundEntries` minimum/cutoff distances with a fully
+    /// three-dimensional pan, but does not invent advanced-kit cone, schedule,
+    /// influence, or ducking state for a row that has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] for the same exact playback failures as
+    /// [`Self::play`], or when the emitter/base-row spatial values are invalid.
+    pub fn play_positioned(
+        &mut self,
+        store: &mut AssetStore,
+        request: SoundPlayRequest,
+        listener: AdvancedSoundListener,
+        emitter_position: glam::Vec3,
+        next_random_word: &mut impl FnMut() -> u32,
+    ) -> Result<SoundPlayback, SoundEngineError> {
+        let mix = {
+            let entry = self.catalog.sound_entry(request.entry_id()).ok_or(
+                SoundEngineError::MissingEntry {
+                    entry_id: request.entry_id(),
+                },
+            )?;
+            AdvancedSoundSpatialMix::evaluate_positioned(listener, emitter_position, entry)?
+        };
+        let playback = self.play(store, request, next_random_word)?;
+        let SoundPlayback::Started(voice) = playback else {
+            return Ok(playback);
+        };
+        self.set_voice_runtime_gain(voice, mix.three_dimensional_gain())?;
+        self.set_voice_spatial_position(voice, mix.backend_position())?;
+        Ok(playback)
     }
 
     /// Applies one validated CVar snapshot to every retained active voice.

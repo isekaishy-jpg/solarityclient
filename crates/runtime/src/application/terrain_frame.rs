@@ -28,6 +28,7 @@ mod m2;
 mod world_model;
 
 use m2::M2Frame;
+pub(super) use m2::RuntimeM2Event;
 use world_model::WorldModelFrame;
 
 /// Failure while joining a resident ADT to renderer-local GPU resources.
@@ -298,6 +299,16 @@ pub enum RuntimeTerrainFrameError {
         trail_count: usize,
         /// Number of shared decoded ribbon declarations.
         emitter_count: usize,
+    },
+    /// A decoded event no longer resolves through its validated model bone.
+    #[error("M2 model {model} event {event_index} references missing bone {bone_index}")]
+    M2EventBoneIndex {
+        /// Model whose event-to-bone relationship became inconsistent.
+        model: AssetPath,
+        /// Zero-based event declaration index.
+        event_index: usize,
+        /// Missing model-bone index.
+        bone_index: u32,
     },
     /// A validated ribbon unexpectedly references an absent bone transform.
     #[error("M2 model {model} ribbon {ribbon_index} references absent bone {bone_index}")]
@@ -613,6 +624,11 @@ impl TerrainFrame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.m2.replace_remote_players(renderer, players, random)
+    }
+
+    /// Transfers callbacks generated while advancing the current M2 frame.
+    pub(super) fn drain_m2_events(&mut self) -> Vec<RuntimeM2Event> {
+        self.m2.drain_triggered_events()
     }
 
     /// Returns the ADT whose renderer resources this generation represents.

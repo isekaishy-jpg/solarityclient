@@ -6,9 +6,10 @@ use glam::Vec3;
 use solarity_asset::{AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
-    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundEngineError,
-    SoundEngineSettings, SoundGain, SoundOutputInfo, SoundOutputTarget, SoundResidencyPolicy,
-    SoundSoftwareChannelCount,
+    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundChannel,
+    SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode,
+    SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundResidencyPolicy,
+    SoundSoftwareChannelCount, SoundVariationMode,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_ui::GlueManager;
@@ -16,6 +17,10 @@ use thiserror::Error;
 
 use crate::random::BlizzardRand;
 use crate::time::RealmClock;
+
+use super::terrain_frame::RuntimeM2Event;
+
+const M2_ONE_SHOT_SOUND_IDENTIFIERS: [[u8; 4]; 3] = [*b"$SND", *b"$CSD", *b"$DSO"];
 
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
@@ -195,6 +200,48 @@ impl RuntimeSoundCoordinator {
         )?;
         self.engine.collect_unused_encoded();
         Ok(())
+    }
+
+    /// Dispatches the model callback families routed to `playSoundEntryAt`.
+    ///
+    /// `$DSL` and every non-audio callback remain with their future owning
+    /// subsystem. In particular, a loop callback cannot be represented as a
+    /// one-shot without losing the stock stop/update lifecycle.
+    pub(crate) fn play_m2_events(
+        &mut self,
+        events: &[RuntimeM2Event],
+        camera: WorldCameraFrame,
+        random: &mut BlizzardRand,
+    ) -> Result<usize, RuntimeSoundError> {
+        let listener = AdvancedSoundListener::from_world_camera(camera);
+        let mut dispatched = 0;
+        for event in events {
+            if !M2_ONE_SHOT_SOUND_IDENTIFIERS.contains(&event.identifier()) {
+                continue;
+            }
+            let request = SoundPlayRequest::new(
+                event.data(),
+                SoundChannel::SFX,
+                SoundVariationMode::Sequential,
+                SoundLoopMode::Once,
+                SoundConcurrencyMode::Entry,
+            );
+            self.engine.play_positioned(
+                &mut self.assets.borrow_mut(),
+                request,
+                listener,
+                event.position(),
+                &mut || random.next_u32(),
+            )?;
+            tracing::trace!(
+                identifier = ?event.identifier(),
+                sound_entry_id = event.data(),
+                owner_guid = ?event.owner_guid(),
+                "dispatched M2 positional sound callback"
+            );
+            dispatched += 1;
+        }
+        Ok(dispatched)
     }
 }
 
