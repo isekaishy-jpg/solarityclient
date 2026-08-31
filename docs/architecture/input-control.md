@@ -15,10 +15,11 @@ movement, zoom, mouselook, and vehicle aim. This supports one raw-input owner
 feeding later named-command resolution rather than placing key state in the
 player, UI, or renderer.
 
-The current unit deliberately stops at the physical boundary. It does not
-hard-code default bindings or synthesize a binding when FrameXML has not
-declared one. Binding catalog loading and command routing can therefore consume
-the same retained state without turning SDL scancodes into gameplay policy.
+`InputBindingRouter` is the next boundary after retained state. It converts a
+known physical location to the exact stock chord text, looks that chord up in
+the selected assignment set, and returns the authored UI action. It does not
+hard-code a gameplay command or synthesize a binding when FrameXML has not
+declared one.
 
 ## State and frame behavior
 
@@ -36,3 +37,28 @@ the same retained state without turning SDL scancodes into gameplay policy.
 The held-key hash table reserves a small process-lifetime capacity and is
 cleared without being reallocated. Mouse buttons use a fixed mask corresponding
 to FrameXML `BUTTON1` through `BUTTON5`; unknown buttons are not substituted.
+
+## Binding transitions
+
+Keyboard chords use physical SDL scancodes internally but expose no SDL type.
+Generic modifiers serialize in the stock `ALT-CTRL-SHIFT` order. Key names,
+mouse `BUTTON1` through `BUTTON5`, and vertical `MOUSEWHEELUP`/
+`MOUSEWHEELDOWN` names are assembled in a fixed stack buffer and probe the
+assignment hash table without allocating.
+
+Repeated key-down events do not execute a second binding transition. A named
+command is admitted only when the catalog contains its declaration and its
+platform gate permits Windows. Dynamic spell, item, macro, and click actions
+remain typed assignments and do not pretend to own a binding declaration.
+
+A `runOnUp` press retains the compact assignment index against the physical
+control. Release therefore invokes the exact pressed action even if Control,
+Shift, or Alt was released first. Focus loss and application backgrounding
+drain all such releases in press order, preventing movement or camera commands
+from sticking. Wheel actions have no fabricated release.
+
+The locally installed build-12340 profile validates 147 Windows-routable
+default chords through this physical translation. Six serialized defaults are
+correctly inactive at this catalog boundary: four are Mac-only movie commands,
+and two name commands not declared by the currently loaded binding documents.
+No Windows fallback is substituted for them.

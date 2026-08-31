@@ -9,8 +9,8 @@ mod ui_macro_options;
 mod ui_macros;
 
 pub use assignments::{
-    UiBindingAction, UiBindingAssignment, UiBindingAssignments, UiBindingMode,
-    UiModifiedClickAssignment,
+    UiBindingAction, UiBindingAssignment, UiBindingAssignmentId, UiBindingAssignments,
+    UiBindingMode, UiModifiedClickAssignment,
 };
 pub use error::{UiBindingAssignmentError, UiBindingError};
 pub use key::{UiBindingKey, UiModifiedClickChord};

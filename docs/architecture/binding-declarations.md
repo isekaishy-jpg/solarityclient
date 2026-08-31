@@ -31,11 +31,12 @@ appended AddOn documents. It does not invent first- or last-wins replacement.
 
 ## Runtime boundary
 
-Physical key state remains owned by `runtime/input`. A later assignment layer
-will join saved key chords to these authored command names, then execute the
-selected Lua body in the active FrameXML environment. Player movement and
-camera systems therefore receive stock Lua API calls such as
-`MoveForwardStart` and `CameraZoomIn`; SDL key values do not become gameplay
+Physical key state and chord routing remain owned by `runtime/input`.
+`InputBindingRouter` joins physical keyboard, pointer-button, and vertical
+wheel transitions to these assignments, then returns the selected declaration
+and stock `down`/`up` phase for the active FrameXML environment. Player
+movement and camera systems will therefore receive authored Lua API calls such
+as `MoveForwardStart` and `CameraZoomIn`; SDL key values do not become gameplay
 policy directly.
 
 ## Assignment streams
@@ -54,14 +55,24 @@ types. Modified-click actions must have been declared by `Bindings.xml`.
 
 Key chords remain validated stock tokens rather than being split at every
 hyphen: both the bare minus key `-` and the modified chord `CTRL--` occur in
-the real default file. SDL-to-stock key naming is therefore a later input
-translation boundary and cannot misinterpret minus as an empty component.
+the real default file. Runtime input builds the complete chord in a fixed
+stack buffer and performs a borrowed lookup, so minus is never misinterpreted
+as an empty component.
 
 Validate the full built-in vocabulary against a locally owned client without
 copying its assets into the repository:
 
 ```powershell
 cargo run -p solarity-ui --example validate_bindings -- `
+    'C:\path\to\World of Warcraft\Data' `
+    enUS
+```
+
+Validate that every active Windows default can be reached from the physical
+input vocabulary:
+
+```powershell
+cargo run -p solarity-runtime --example validate_input_bindings -- `
     'C:\path\to\World of Warcraft\Data' `
     enUS
 ```

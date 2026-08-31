@@ -1,6 +1,6 @@
 //! Ordered loading and strict decoding of stock `Bindings.xml` documents.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use mlua::Lua;
 use solarity_asset::{AssetPath, AssetStore};
@@ -25,7 +25,7 @@ const BUILTIN_BINDINGS_PATH: &str = "Interface\\FrameXML\\Bindings.xml";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiBindingCatalog {
     documents: Vec<UiBindingDocument>,
-    binding_names: HashSet<String>,
+    binding_locations: HashMap<String, BindingLocation>,
     binding_headers: HashSet<String>,
     modified_click_actions: HashSet<String>,
 }
@@ -41,7 +41,7 @@ impl UiBindingCatalog {
         let document = load_document(store, path, DocumentSource::Archive)?;
         let mut catalog = Self {
             documents: Vec::new(),
-            binding_names: HashSet::new(),
+            binding_locations: HashMap::new(),
             binding_headers: HashSet::new(),
             modified_click_actions: HashSet::new(),
         };
@@ -94,6 +94,16 @@ impl UiBindingCatalog {
         }
     }
 
+    /// Looks up a command declaration by its exact global action name.
+    #[must_use]
+    pub fn binding(&self, name: &str) -> Option<&UiBindingDefinition> {
+        let location = self.binding_locations.get(name)?;
+        self.documents
+            .get(location.document)?
+            .bindings()
+            .get(location.binding)
+    }
+
     /// Iterates every modified-click declaration in source order.
     pub fn modified_clicks(&self) -> impl Iterator<Item = &UiModifiedClickDefinition> {
         self.documents
@@ -107,7 +117,9 @@ impl UiBindingCatalog {
         let mut local_headers = HashSet::new();
         let mut local_actions = HashSet::with_capacity(document.modified_clicks().len());
         for binding in document.bindings() {
-            if self.binding_names.contains(binding.name()) || !local_names.insert(binding.name()) {
+            if self.binding_locations.contains_key(binding.name())
+                || !local_names.insert(binding.name())
+            {
                 return Err(schema_error(
                     document.path(),
                     format!("Binding {} is defined more than once", binding.name()),
@@ -138,15 +150,30 @@ impl UiBindingCatalog {
             }
         }
 
-        self.binding_names
-            .extend(local_names.into_iter().map(str::to_owned));
         self.binding_headers
             .extend(local_headers.into_iter().map(str::to_owned));
         self.modified_click_actions
             .extend(local_actions.into_iter().map(str::to_owned));
+        let document_index = self.documents.len();
+        for (binding_index, binding) in document.bindings().iter().enumerate() {
+            self.binding_locations.insert(
+                binding.name().to_owned(),
+                BindingLocation {
+                    document: document_index,
+                    binding: binding_index,
+                },
+            );
+        }
         self.documents.push(document);
         Ok(())
     }
+}
+
+/// Arena location of a globally unique binding declaration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BindingLocation {
+    document: usize,
+    binding: usize,
 }
 
 /// Selects the one permitted storage boundary for a binding document.

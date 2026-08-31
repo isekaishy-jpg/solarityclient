@@ -12,6 +12,8 @@ mod event;
 mod foundation;
 #[path = "stock_seed/input.rs"]
 mod input;
+#[path = "stock_seed/input_binding.rs"]
+mod input_binding;
 #[path = "stock_seed/legal.rs"]
 mod legal;
 #[path = "stock_seed/loading.rs"]

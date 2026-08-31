@@ -108,6 +108,14 @@ pub struct UiBindingAssignment {
     action: UiBindingAction,
 }
 
+/// Stable index of an assignment in one immutable effective binding set.
+///
+/// Input routing retains this compact identity between a key-down and its
+/// matching `runOnUp` release. It is meaningful only with the assignments that
+/// produced it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct UiBindingAssignmentId(usize);
+
 impl UiBindingAssignment {
     /// Returns the exact stock key token.
     #[must_use]
@@ -251,9 +259,25 @@ impl UiBindingAssignments {
     /// Looks up one exact serialized key without allocating a wrapper.
     #[must_use]
     pub fn binding_for(&self, key: &str) -> Option<&UiBindingAssignment> {
+        self.binding_with_id(key)
+            .map(|(_identifier, assignment)| assignment)
+    }
+
+    /// Looks up one exact key and returns its compact identity without cloning.
+    #[must_use]
+    pub fn binding_with_id(
+        &self,
+        key: &str,
+    ) -> Option<(UiBindingAssignmentId, &UiBindingAssignment)> {
         self.binding_indices
             .get(key)
-            .map(|index| &self.bindings[*index])
+            .map(|index| (UiBindingAssignmentId(*index), &self.bindings[*index]))
+    }
+
+    /// Resolves an identity previously returned by [`Self::binding_with_id`].
+    #[must_use]
+    pub fn assignment(&self, identifier: UiBindingAssignmentId) -> Option<&UiBindingAssignment> {
+        self.bindings.get(identifier.0)
     }
 
     /// Returns effective modified-click assignments in declaration order.

@@ -21,10 +21,10 @@ pub use addon::{
     STOCK_INTERFACE_VERSION,
 };
 pub use binding::{
-    UiBindingAction, UiBindingAssignment, UiBindingAssignmentError, UiBindingAssignments,
-    UiBindingCatalog, UiBindingDefinition, UiBindingDocument, UiBindingError, UiBindingKey,
-    UiBindingMode, UiBindingPlatform, UiModifiedClickAssignment, UiModifiedClickChord,
-    UiModifiedClickDefinition,
+    UiBindingAction, UiBindingAssignment, UiBindingAssignmentError, UiBindingAssignmentId,
+    UiBindingAssignments, UiBindingCatalog, UiBindingDefinition, UiBindingDocument, UiBindingError,
+    UiBindingKey, UiBindingMode, UiBindingPlatform, UiModifiedClickAssignment,
+    UiModifiedClickChord, UiModifiedClickDefinition,
 };
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use font::{

@@ -74,6 +74,13 @@ impl KeyCode {
 pub struct KeyModifiers(u16);
 
 impl KeyModifiers {
+    const LEFT_SHIFT: u16 = 0x0001;
+    const RIGHT_SHIFT: u16 = 0x0002;
+    const LEFT_CONTROL: u16 = 0x0040;
+    const RIGHT_CONTROL: u16 = 0x0080;
+    const LEFT_ALT: u16 = 0x0100;
+    const RIGHT_ALT: u16 = 0x0200;
+
     /// No modifier or lock keys are active.
     pub const NONE: Self = Self(0);
 
@@ -87,6 +94,24 @@ impl KeyModifiers {
     #[must_use]
     pub const fn bits(self) -> u16 {
         self.0
+    }
+
+    /// Reports whether either physical Shift key is active.
+    #[must_use]
+    pub const fn has_shift(self) -> bool {
+        self.0 & (Self::LEFT_SHIFT | Self::RIGHT_SHIFT) != 0
+    }
+
+    /// Reports whether either physical Control key is active.
+    #[must_use]
+    pub const fn has_control(self) -> bool {
+        self.0 & (Self::LEFT_CONTROL | Self::RIGHT_CONTROL) != 0
+    }
+
+    /// Reports whether either physical Alt key is active.
+    #[must_use]
+    pub const fn has_alt(self) -> bool {
+        self.0 & (Self::LEFT_ALT | Self::RIGHT_ALT) != 0
     }
 
     /// Preserves every modifier bit, including mode and lock state.

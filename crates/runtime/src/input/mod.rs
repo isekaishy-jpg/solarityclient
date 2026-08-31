@@ -4,9 +4,11 @@
 //! boundary. UI bindings and player control consume actions without polling
 //! SDL directly.
 
+mod binding;
 mod input_control;
 mod state;
 mod types;
 
+pub use binding::{InputBindingInvocation, InputBindingPhase, InputBindingRouter};
 pub use input_control::InputControl;
 pub use types::{InputFrameMotion, PointerPosition};
