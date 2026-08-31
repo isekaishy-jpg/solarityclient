@@ -100,11 +100,10 @@ impl AssetStore {
     /// [`AssetError::AssetNotFound`] when no mounted archive contains the path.
     pub fn read(&mut self, path: &AssetPath) -> Result<AssetRead, AssetError> {
         for archive in &mut self.archives {
-            if !archive.contains(path)? {
+            let Some(bytes) = archive.read_if_present(path)? else {
                 continue;
-            }
+            };
 
-            let bytes = archive.read(path)?;
             return Ok(AssetRead {
                 bytes,
                 source: archive.descriptor().clone(),

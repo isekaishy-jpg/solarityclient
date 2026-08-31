@@ -69,6 +69,12 @@ small number of mounted archives, while a complete cross-archive filename map
 would scale with every entry in multi-gigabyte data files. The dependency's MPQ
 types and errors remain private to the adapter.
 
+An ordinary read performs one MPQ hash lookup per visited archive. The selected
+archive's read operation owns that lookup and decompression together, avoiding
+a separate presence probe followed by a second lookup. Explicit `contains`
+calls remain payload-free probes for call sites that need presence before
+choosing stock behavior.
+
 WDBC loading consumes the same arbitrary-file lookup. It has no database-only
 archive search or loose-file fallback.
 

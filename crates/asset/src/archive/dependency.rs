@@ -1,6 +1,6 @@
 //! Private `wow-mpq` adapter used by the stock archive stack.
 
-use wow_mpq::Archive;
+use wow_mpq::{Archive, Error as MpqError};
 
 use crate::archive::{ArchiveDescriptor, AssetError, AssetPath};
 
@@ -42,14 +42,19 @@ impl MountedArchive {
             })
     }
 
-    /// Reads a previously selected file entry from this archive.
-    pub(crate) fn read(&mut self, path: &AssetPath) -> Result<Vec<u8>, AssetError> {
-        self.archive
-            .read_file(path.as_str())
-            .map_err(|source| AssetError::ArchiveRead {
+    /// Performs one lookup and reads the entry when this archive contains it.
+    pub(crate) fn read_if_present(
+        &mut self,
+        path: &AssetPath,
+    ) -> Result<Option<Vec<u8>>, AssetError> {
+        match self.archive.read_file(path.as_str()) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(MpqError::FileNotFound(_)) => Ok(None),
+            Err(source) => Err(AssetError::ArchiveRead {
                 archive: self.descriptor.path().to_path_buf(),
                 asset: path.clone(),
                 message: source.to_string(),
-            })
+            }),
+        }
     }
 }
