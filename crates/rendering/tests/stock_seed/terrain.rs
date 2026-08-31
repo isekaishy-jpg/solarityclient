@@ -304,6 +304,9 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         &[],
         &[],
         &[],
+        &[],
+        &[],
+        &[],
     )?;
     assert_eq!(frame.terrain_draw_count(), 1);
     assert_eq!(frame.world_model_draw_count(), 2);

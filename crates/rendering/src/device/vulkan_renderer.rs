@@ -8,6 +8,12 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture}
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
+use crate::device::vulkan_m2_particle_draw::{
+    M2ParticlePreparedDraw, prepare_draw as prepare_particle_draw,
+};
+use crate::device::vulkan_m2_particle_pipeline::{
+    M2ParticlePipelineHandle, M2ParticlePipelineInfo, M2ParticlePipelineRegistry,
+};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
 use crate::device::vulkan_m2_ribbon_draw::{
     M2RibbonPreparedDraw, prepare_draw as prepare_ribbon_draw,
@@ -78,8 +84,8 @@ use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
 use crate::{
-    M2RibbonMeshPlan, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend,
-    UiShaderSource, WorldModelSurfacePass,
+    M2ParticleMeshPlan, M2RibbonMeshPlan, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan,
+    UiRenderBlend, UiShaderSource, WorldModelSurfacePass,
 };
 use glam::{Mat4, Vec3};
 
@@ -154,6 +160,7 @@ pub struct VulkanRenderer {
     device: Device,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
+    m2_particle_pipelines: M2ParticlePipelineRegistry,
     m2_ribbon_pipelines: M2RibbonPipelineRegistry,
     m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
@@ -213,6 +220,7 @@ impl VulkanRenderer {
             device,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
+            m2_particle_pipelines: M2ParticlePipelineRegistry::default(),
             m2_ribbon_pipelines: M2RibbonPipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
@@ -854,6 +862,68 @@ impl VulkanRenderer {
         self.m2_pipelines.info(handle)
     }
 
+    /// Creates or retrieves the stock PNC0T0 pipeline for one particle emitter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for descriptor ABI creation, pinned shader
+    /// compilation, handle exhaustion, or graphics-pipeline creation failure.
+    pub fn prepare_m2_particle_pipeline(
+        &mut self,
+        blending_type: u8,
+        particle_flags: u32,
+    ) -> Result<M2ParticlePipelineHandle, VulkanError> {
+        let scene_set = self.m2_pipelines.frame_set_layouts(&self.device)?[0];
+        let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
+        self.m2_particle_pipelines.prepare(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            scene_set,
+            texture_set,
+            crate::M2MaterialState::from_particle(blending_type, particle_flags),
+        )
+    }
+
+    /// Returns immutable diagnostics for one live particle pipeline.
+    #[must_use]
+    pub fn m2_particle_pipeline_info(
+        &self,
+        handle: M2ParticlePipelineHandle,
+    ) -> Option<M2ParticlePipelineInfo> {
+        self.m2_particle_pipelines.info(handle)
+    }
+
+    /// Joins one dynamic ordinary-particle mesh to compatible GPU resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, material or texture-set
+    /// disagreement, or ranges outside Vulkan's indexed-draw domains.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_m2_particle_draw(
+        &self,
+        pipeline: M2ParticlePipelineHandle,
+        texture_set: M2TextureSetHandle,
+        blending_type: u8,
+        particle_flags: u32,
+        first_vertex: u32,
+        first_index: u32,
+        mesh: &M2ParticleMeshPlan,
+    ) -> Result<M2ParticlePreparedDraw, VulkanError> {
+        prepare_particle_draw(
+            &self.m2_particle_pipelines,
+            &self.m2_texture_sets,
+            pipeline,
+            texture_set,
+            blending_type,
+            particle_flags,
+            first_vertex,
+            first_index,
+            mesh,
+        )
+    }
+
     /// Creates or retrieves the stock PCT0 ribbon pipeline for one material.
     ///
     /// # Errors
@@ -1060,6 +1130,9 @@ impl VulkanRenderer {
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
@@ -1101,6 +1174,7 @@ impl VulkanRenderer {
                 m2_pipelines: &self.m2_pipelines,
                 m2_meshes: &self.m2_meshes,
                 m2_texture_sets: &self.m2_texture_sets,
+                m2_particle_pipelines: &self.m2_particle_pipelines,
                 m2_ribbon_pipelines: &self.m2_ribbon_pipelines,
             },
             descriptor_layouts,
@@ -1109,6 +1183,9 @@ impl VulkanRenderer {
             terrain_draws,
             world_model_draws,
             m2_draws,
+            particle_vertices,
+            particle_indices,
+            particle_draws,
             ribbon_vertices,
             ribbon_draws,
         )?;
@@ -1371,6 +1448,7 @@ impl Drop for VulkanRenderer {
         self.ui_pipelines.destroy(&self.device);
         self.terrain_pipelines.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);
+        self.m2_particle_pipelines.destroy(&self.device);
         self.m2_ribbon_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner

@@ -10,8 +10,8 @@ use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
-    M2MaterialUniform, M2RibbonRenderVertex, M2SceneUniform, TerrainSceneUniform, WorldFrameScene,
-    WorldModelMaterialUniform, WorldModelSceneUniform,
+    M2MaterialUniform, M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform,
+    TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
 const DESCRIPTOR_SET_COUNT: usize = 6;
@@ -26,6 +26,8 @@ pub(super) struct FrameCreateContext<'a> {
     pub(super) world_model_draw_capacity: usize,
     pub(super) m2_draw_capacity: usize,
     pub(super) bone_capacity: usize,
+    pub(super) particle_vertex_capacity: usize,
+    pub(super) particle_index_capacity: usize,
     pub(super) ribbon_vertex_capacity: usize,
     pub(super) uniform_alignment: vk::DeviceSize,
     pub(super) storage_alignment: vk::DeviceSize,
@@ -44,6 +46,8 @@ struct FrameBufferLayout {
     bone_bytes: vk::DeviceSize,
     m2_material_offset: vk::DeviceSize,
     m2_material_stride: vk::DeviceSize,
+    particle_vertex_offset: vk::DeviceSize,
+    particle_index_offset: vk::DeviceSize,
     ribbon_vertex_offset: vk::DeviceSize,
     total_bytes: vk::DeviceSize,
 }
@@ -96,7 +100,25 @@ impl FrameBufferLayout {
         let m2_end = m2_material_offset
             .checked_add(m2_material_bytes)
             .ok_or(VulkanError::WorldFrameCapacity)?;
-        let ribbon_vertex_offset = align_up(m2_end, 4)?;
+        let particle_vertex_offset = align_up(m2_end, 4)?;
+        let particle_vertex_bytes = (context.particle_vertex_capacity.max(1) as u64)
+            .checked_mul(M2ParticleRenderVertex::BYTE_SIZE as u64)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        let particle_index_offset = align_up(
+            particle_vertex_offset
+                .checked_add(particle_vertex_bytes)
+                .ok_or(VulkanError::WorldFrameCapacity)?,
+            4,
+        )?;
+        let particle_index_bytes = (context.particle_index_capacity.max(1) as u64)
+            .checked_mul(size_of::<u32>() as u64)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        let ribbon_vertex_offset = align_up(
+            particle_index_offset
+                .checked_add(particle_index_bytes)
+                .ok_or(VulkanError::WorldFrameCapacity)?,
+            4,
+        )?;
         let ribbon_vertex_bytes = (context.ribbon_vertex_capacity.max(1) as u64)
             .checked_mul(M2RibbonRenderVertex::BYTE_SIZE as u64)
             .ok_or(VulkanError::WorldFrameCapacity)?;
@@ -113,6 +135,8 @@ impl FrameBufferLayout {
             bone_bytes,
             m2_material_offset,
             m2_material_stride,
+            particle_vertex_offset,
+            particle_index_offset,
             ribbon_vertex_offset,
             total_bytes,
         })
@@ -191,6 +215,14 @@ impl WorldFrameSlot {
         (self.buffer, self.layout.ribbon_vertex_offset)
     }
 
+    pub(super) const fn particle_vertex_buffer(&self) -> (vk::Buffer, vk::DeviceSize) {
+        (self.buffer, self.layout.particle_vertex_offset)
+    }
+
+    pub(super) const fn particle_index_buffer(&self) -> (vk::Buffer, vk::DeviceSize) {
+        (self.buffer, self.layout.particle_index_offset)
+    }
+
     pub(super) fn wait_and_reset(&self, device: &Device) -> Result<(), VulkanError> {
         // SAFETY: This slot owns both objects and prior use is fence-protected.
         unsafe {
@@ -223,6 +255,7 @@ impl WorldFrameSlot {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn write(
         &mut self,
         allocator: &vk_mem::Allocator,
@@ -230,6 +263,8 @@ impl WorldFrameSlot {
         bone_transforms: &[Mat4],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[M2ParticleRenderVertex],
+        particle_indices: &[u32],
         ribbon_vertices: &[M2RibbonRenderVertex],
     ) -> Result<(), VulkanError> {
         let allocation = self.buffer_allocation.as_mut().ok_or_else(|| {
@@ -298,6 +333,30 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             }
+            for (index, vertex) in particle_vertices.iter().copied().enumerate() {
+                copy_bytes(
+                    destination,
+                    indexed_offset(
+                        self.layout.particle_vertex_offset,
+                        M2ParticleRenderVertex::BYTE_SIZE as u64,
+                        index,
+                    )?,
+                    &vertex.to_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
+            for (index, particle_index) in particle_indices.iter().copied().enumerate() {
+                copy_bytes(
+                    destination,
+                    indexed_offset(
+                        self.layout.particle_index_offset,
+                        size_of::<u32>() as u64,
+                        index,
+                    )?,
+                    &particle_index.to_le_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
             for (index, vertex) in ribbon_vertices.iter().copied().enumerate() {
                 copy_bytes(
                     destination,
@@ -325,7 +384,8 @@ impl WorldFrameSlot {
             .usage(
                 vk::BufferUsageFlags::UNIFORM_BUFFER
                     | vk::BufferUsageFlags::STORAGE_BUFFER
-                    | vk::BufferUsageFlags::VERTEX_BUFFER,
+                    | vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER,
             )
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_info = vk_mem::AllocationCreateInfo {
@@ -565,6 +625,8 @@ pub(super) struct WorldFrameResources {
     world_model_draw_capacity: usize,
     m2_draw_capacity: usize,
     bone_capacity: usize,
+    particle_vertex_capacity: usize,
+    particle_index_capacity: usize,
     ribbon_vertex_capacity: usize,
     extent: (u32, u32),
 }
@@ -576,6 +638,8 @@ impl WorldFrameResources {
             && self.world_model_draw_capacity >= context.world_model_draw_capacity
             && self.m2_draw_capacity >= context.m2_draw_capacity
             && self.bone_capacity >= context.bone_capacity
+            && self.particle_vertex_capacity >= context.particle_vertex_capacity
+            && self.particle_index_capacity >= context.particle_index_capacity
             && self.ribbon_vertex_capacity >= context.ribbon_vertex_capacity
             && self.extent == context.extent
         {
@@ -592,6 +656,12 @@ impl WorldFrameResources {
             .max(context.world_model_draw_capacity);
         let m2_draw_capacity = self.m2_draw_capacity.max(context.m2_draw_capacity);
         let bone_capacity = self.bone_capacity.max(context.bone_capacity);
+        let particle_vertex_capacity = self
+            .particle_vertex_capacity
+            .max(context.particle_vertex_capacity);
+        let particle_index_capacity = self
+            .particle_index_capacity
+            .max(context.particle_index_capacity);
         let ribbon_vertex_capacity = self
             .ribbon_vertex_capacity
             .max(context.ribbon_vertex_capacity);
@@ -600,6 +670,8 @@ impl WorldFrameResources {
             world_model_draw_capacity,
             m2_draw_capacity,
             bone_capacity,
+            particle_vertex_capacity,
+            particle_index_capacity,
             ribbon_vertex_capacity,
             ..context
         };
@@ -647,6 +719,8 @@ impl WorldFrameResources {
         self.world_model_draw_capacity = world_model_draw_capacity;
         self.m2_draw_capacity = m2_draw_capacity;
         self.bone_capacity = bone_capacity;
+        self.particle_vertex_capacity = particle_vertex_capacity;
+        self.particle_index_capacity = particle_index_capacity;
         self.ribbon_vertex_capacity = ribbon_vertex_capacity;
         self.extent = expanded.extent;
         self.next_slot = 0;
@@ -689,6 +763,8 @@ impl WorldFrameResources {
         self.world_model_draw_capacity = 0;
         self.m2_draw_capacity = 0;
         self.bone_capacity = 0;
+        self.particle_vertex_capacity = 0;
+        self.particle_index_capacity = 0;
         self.ribbon_vertex_capacity = 0;
         self.extent = (0, 0);
     }

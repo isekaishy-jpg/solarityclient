@@ -251,6 +251,33 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit pipeline handle.
     #[error("M2 pipeline registry exhausted its 32-bit handle space")]
     M2PipelineCapacity,
+    /// A stock particle shader pair could not compile to the pinned target.
+    #[error("M2 particle shader preparation failed: {message}")]
+    M2ParticleShader {
+        /// Stable shader compiler diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable particle pipeline handle.
+    #[error("M2 particle pipeline registry exhausted its 32-bit handle space")]
+    M2ParticlePipelineCapacity,
+    /// The borrowed M2 scene or texture descriptor layout changed in place.
+    #[error("M2 particle descriptor layouts changed without renderer recreation")]
+    M2ParticleDescriptorLayoutChanged,
+    /// A particle draw references a pipeline owned by another renderer.
+    #[error("M2 particle draw references an unknown pipeline handle")]
+    UnknownM2ParticlePipelineHandle,
+    /// The particle pipeline material differs from the emitter's synthesized state.
+    #[error("M2 particle draw pipeline does not match its emitter material")]
+    M2ParticleDrawPipelineMismatch,
+    /// An ordinary particle draw requires exactly one sampled model texture.
+    #[error("M2 particle draw texture set does not contain exactly one stage")]
+    M2ParticleDrawTextureSetMismatch,
+    /// Dynamic particle vertices cannot enter Vulkan's signed base-vertex range.
+    #[error("M2 particle draw vertex range exceeds addressable capacity")]
+    M2ParticleDrawVertexRange,
+    /// Dynamic particle indices cannot enter Vulkan's 32-bit index range.
+    #[error("M2 particle draw index range exceeds addressable capacity")]
+    M2ParticleDrawIndexRange,
     /// A stock ribbon shader pair could not compile to the pinned target.
     #[error("M2 ribbon shader preparation failed: {message}")]
     M2RibbonShader {

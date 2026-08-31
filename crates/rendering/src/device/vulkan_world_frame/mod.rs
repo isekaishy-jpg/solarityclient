@@ -9,9 +9,10 @@ mod types;
 use ash::{Device, vk};
 use glam::Mat4;
 
-use crate::M2RibbonRenderVertex;
 use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
+use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
+use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
 use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
@@ -25,6 +26,7 @@ use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
 use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
 use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
+use crate::{M2ParticleRenderVertex, M2RibbonRenderVertex};
 
 use command::{RecordContext, record, submit_and_present};
 use resource::{FrameCreateContext, WorldFrameResources};
@@ -54,6 +56,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) m2_pipelines: &'a M2PipelineRegistry,
     pub(in crate::device) m2_meshes: &'a M2MeshRegistry,
     pub(in crate::device) m2_texture_sets: &'a M2TextureSetRegistry,
+    pub(in crate::device) m2_particle_pipelines: &'a M2ParticlePipelineRegistry,
     pub(in crate::device) m2_ribbon_pipelines: &'a M2RibbonPipelineRegistry,
 }
 
@@ -73,12 +76,16 @@ impl WorldFrameRenderer {
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
         if terrain_draws.is_empty()
             && world_model_draws.is_empty()
             && m2_draws.is_empty()
+            && particle_draws.is_empty()
             && ribbon_draws.is_empty()
         {
             return Err(VulkanError::EmptyWorldFrame);
@@ -94,6 +101,31 @@ impl WorldFrameRenderer {
                 .is_none_or(|end| end > ribbon_vertices.len())
         }) {
             return Err(VulkanError::M2RibbonDrawVertexRange);
+        }
+        if particle_draws.iter().any(|draw| {
+            let Some(first_index) = usize::try_from(draw.first_index()).ok() else {
+                return true;
+            };
+            let Some(index_count) = usize::try_from(draw.index_count()).ok() else {
+                return true;
+            };
+            let Some(end_index) = first_index.checked_add(index_count) else {
+                return true;
+            };
+            let Some(indices) = particle_indices.get(first_index..end_index) else {
+                return true;
+            };
+            let Some(vertex_offset) = usize::try_from(draw.vertex_offset()).ok() else {
+                return true;
+            };
+            indices.iter().copied().any(|index| {
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|index| vertex_offset.checked_add(index))
+                    .is_none_or(|index| index >= particle_vertices.len())
+            })
+        }) {
+            return Err(VulkanError::M2ParticleDrawIndexRange);
         }
         if m2_draws.iter().any(|draw| {
             context
@@ -123,6 +155,8 @@ impl WorldFrameRenderer {
             world_model_draw_capacity: world_model_draws.len(),
             m2_draw_capacity: m2_draws.len(),
             bone_capacity: bone_transforms.len(),
+            particle_vertex_capacity: particle_vertices.len(),
+            particle_index_capacity: particle_indices.len(),
             ribbon_vertex_capacity: ribbon_vertices.len(),
             uniform_alignment: context.uniform_alignment,
             storage_alignment: context.storage_alignment,
@@ -139,6 +173,8 @@ impl WorldFrameRenderer {
                 bone_transforms,
                 world_model_draws,
                 m2_draws,
+                particle_vertices,
+                particle_indices,
                 ribbon_vertices,
             )?;
             // SAFETY: Swapchain and acquire semaphore live through submission.
@@ -184,11 +220,15 @@ impl WorldFrameRenderer {
             m2_pipelines: context.m2_pipelines,
             m2_meshes: context.m2_meshes,
             m2_texture_sets: context.m2_texture_sets,
+            m2_particle_pipelines: context.m2_particle_pipelines,
             m2_ribbon_pipelines: context.m2_ribbon_pipelines,
             terrain_draws,
             world_model_draws,
             m2_draws,
+            particle_draws,
             ribbon_draws,
+            particle_vertex_buffer: slot.particle_vertex_buffer(),
+            particle_index_buffer: slot.particle_index_buffer(),
             ribbon_vertex_buffer: slot.ribbon_vertex_buffer(),
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
@@ -196,6 +236,9 @@ impl WorldFrameRenderer {
             terrain_draws.len(),
             world_model_draws.len(),
             m2_draws.len(),
+            particle_draws.len(),
+            particle_vertices.len(),
+            particle_indices.len(),
             ribbon_draws.len(),
             ribbon_vertices.len(),
             bone_transforms.len(),

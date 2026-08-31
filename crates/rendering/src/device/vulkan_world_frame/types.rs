@@ -44,16 +44,23 @@ pub struct WorldFrameReport {
     terrain_draw_count: usize,
     world_model_draw_count: usize,
     m2_draw_count: usize,
+    particle_draw_count: usize,
+    particle_vertex_count: usize,
+    particle_index_count: usize,
     ribbon_draw_count: usize,
     ribbon_vertex_count: usize,
     bone_transform_count: usize,
 }
 
 impl WorldFrameReport {
+    #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(
         terrain_draw_count: usize,
         world_model_draw_count: usize,
         m2_draw_count: usize,
+        particle_draw_count: usize,
+        particle_vertex_count: usize,
+        particle_index_count: usize,
         ribbon_draw_count: usize,
         ribbon_vertex_count: usize,
         bone_transform_count: usize,
@@ -62,6 +69,9 @@ impl WorldFrameReport {
             terrain_draw_count,
             world_model_draw_count,
             m2_draw_count,
+            particle_draw_count,
+            particle_vertex_count,
+            particle_index_count,
             ribbon_draw_count,
             ribbon_vertex_count,
             bone_transform_count,
@@ -84,6 +94,24 @@ impl WorldFrameReport {
     #[must_use]
     pub const fn m2_draw_count(self) -> usize {
         self.m2_draw_count
+    }
+
+    /// Returns submitted placement-local ordinary-particle emitter count.
+    #[must_use]
+    pub const fn particle_draw_count(self) -> usize {
+        self.particle_draw_count
+    }
+
+    /// Returns uploaded dynamic PNC0T0 particle vertex count.
+    #[must_use]
+    pub const fn particle_vertex_count(self) -> usize {
+        self.particle_vertex_count
+    }
+
+    /// Returns uploaded dynamic UINT32 particle index count.
+    #[must_use]
+    pub const fn particle_index_count(self) -> usize {
+        self.particle_index_count
     }
 
     /// Returns submitted placement-local M2 ribbon strip count.

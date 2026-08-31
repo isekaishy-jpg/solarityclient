@@ -6,6 +6,8 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
+use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
+use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
 use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
@@ -43,11 +45,15 @@ pub(super) struct RecordContext<'a> {
     pub(super) m2_pipelines: &'a M2PipelineRegistry,
     pub(super) m2_meshes: &'a M2MeshRegistry,
     pub(super) m2_texture_sets: &'a M2TextureSetRegistry,
+    pub(super) m2_particle_pipelines: &'a M2ParticlePipelineRegistry,
     pub(super) m2_ribbon_pipelines: &'a M2RibbonPipelineRegistry,
     pub(super) terrain_draws: &'a [TerrainPreparedDraw],
     pub(super) world_model_draws: &'a [WorldModelPreparedDraw],
     pub(super) m2_draws: &'a [M2PreparedDraw],
+    pub(super) particle_draws: &'a [M2ParticlePreparedDraw],
     pub(super) ribbon_draws: &'a [M2RibbonPreparedDraw],
+    pub(super) particle_vertex_buffer: (vk::Buffer, vk::DeviceSize),
+    pub(super) particle_index_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ribbon_vertex_buffer: (vk::Buffer, vk::DeviceSize),
 }
 
@@ -129,6 +135,9 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     for (index, draw) in context.m2_draws.iter().copied().enumerate() {
         record_m2(&context, index, draw)?;
     }
+    for draw in context.particle_draws.iter().copied() {
+        record_particle(&context, draw)?;
+    }
     for draw in context.ribbon_draws.iter().copied() {
         record_ribbon(&context, draw)?;
     }
@@ -138,6 +147,59 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))
+}
+
+fn record_particle(
+    context: &RecordContext<'_>,
+    draw: M2ParticlePreparedDraw,
+) -> Result<(), VulkanError> {
+    let (pipeline, layout) = context
+        .m2_particle_pipelines
+        .raw(draw.pipeline())
+        .ok_or(VulkanError::UnknownM2ParticlePipelineHandle)?;
+    let texture = context
+        .m2_texture_sets
+        .raw(draw.texture_set())
+        .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
+    let sets = [context.frame_sets[3], texture];
+    // SAFETY: The prepared packet proves compatible renderer-local handles;
+    // frame validation proves every UINT32 index addresses the PNC0T0 stream.
+    unsafe {
+        context.device.cmd_bind_pipeline(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline,
+        );
+        context.device.cmd_bind_vertex_buffers(
+            context.command_buffer,
+            0,
+            &[context.particle_vertex_buffer.0],
+            &[context.particle_vertex_buffer.1],
+        );
+        context.device.cmd_bind_index_buffer(
+            context.command_buffer,
+            context.particle_index_buffer.0,
+            context.particle_index_buffer.1,
+            vk::IndexType::UINT32,
+        );
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &sets,
+            &[],
+        );
+        context.device.cmd_draw_indexed(
+            context.command_buffer,
+            draw.index_count(),
+            1,
+            draw.first_index(),
+            draw.vertex_offset(),
+            0,
+        );
+    }
+    Ok(())
 }
 
 fn record_ribbon(

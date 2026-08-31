@@ -1097,12 +1097,79 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
         texture_sets[..2]
     );
-    let emitter = model
+    let particle_emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let particle_pipeline = renderer
+        .prepare_m2_particle_pipeline(particle_emitter.blending_type(), particle_emitter.flags())?;
+    assert_eq!(
+        renderer.prepare_m2_particle_pipeline(
+            particle_emitter.blending_type(),
+            particle_emitter.flags(),
+        )?,
+        particle_pipeline
+    );
+    assert_eq!(
+        renderer
+            .m2_particle_pipeline_info(particle_pipeline)
+            .ok_or("particle pipeline did not resolve")?
+            .material(),
+        M2MaterialState::from_particle(particle_emitter.blending_type(), particle_emitter.flags())
+    );
+    let particle_pose = M2ParticlePose::sample(
+        model.animations(),
+        particle_emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particle_state = M2ParticleState::new(
+        0.5,
+        Vec3::new(10.0, 20.0, 30.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        0x2483,
+    )?;
+    let particle_camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let particle_mesh = M2ParticleMeshPlan::prepare(
+        particle_emitter,
+        particle_pose,
+        &[particle_state],
+        particle_camera,
+        1.0,
+    )?;
+    let particle_draw = renderer.prepare_m2_particle_draw(
+        particle_pipeline,
+        texture_sets[1],
+        particle_emitter.blending_type(),
+        particle_emitter.flags(),
+        0,
+        0,
+        &particle_mesh,
+    )?;
+    assert_eq!(particle_draw.vertex_offset(), 0);
+    assert_eq!(particle_draw.first_index(), 0);
+    assert_eq!(
+        particle_draw.index_count() as usize,
+        particle_mesh.indices().len()
+    );
+    assert!(matches!(
+        renderer.prepare_m2_particle_draw(
+            particle_pipeline,
+            texture_sets[0],
+            particle_emitter.blending_type(),
+            particle_emitter.flags(),
+            0,
+            0,
+            &particle_mesh,
+        ),
+        Err(VulkanError::M2ParticleDrawTextureSetMismatch)
+    ));
+    let ribbon_emitter = model
         .animations()
         .ribbons()
         .first()
         .ok_or("ribbon emitter is absent")?;
-    let ribbon_material = model.materials()[usize::from(emitter.material_indices()[0])];
+    let ribbon_material = model.materials()[usize::from(ribbon_emitter.material_indices()[0])];
     let ribbon_pipeline = renderer.prepare_m2_ribbon_pipeline(ribbon_material)?;
     assert_eq!(
         renderer.prepare_m2_ribbon_pipeline(ribbon_material)?,
@@ -1117,16 +1184,16 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     );
     let ribbon_pose = M2RibbonPose::sample(
         model.animations(),
-        emitter,
+        ribbon_emitter,
         M2AnimationClock::new(0, 500.0, 0.0),
     )?;
-    let mut ribbon_trail = M2RibbonTrail::new(emitter)?;
+    let mut ribbon_trail = M2RibbonTrail::new(ribbon_emitter)?;
     ribbon_trail.advance(
         0.05,
         M2RibbonControlPoint::new(Vec3::ZERO, Vec3::Y, Vec3::X),
         ribbon_pose,
     )?;
-    let ribbon_mesh = M2RibbonMeshPlan::prepare(emitter, &ribbon_trail)?;
+    let ribbon_mesh = M2RibbonMeshPlan::prepare(ribbon_emitter, &ribbon_trail)?;
     let ribbon_draw = renderer.prepare_m2_ribbon_draw(
         ribbon_pipeline,
         texture_sets[1],
@@ -1211,10 +1278,22 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         &[],
         &[],
         &[],
+        particle_mesh.vertices(),
+        particle_mesh.indices(),
+        &[particle_draw],
         ribbon_mesh.vertices(),
         &[ribbon_draw],
     )?;
     assert_eq!(ribbon_frame.ribbon_draw_count(), 1);
+    assert_eq!(ribbon_frame.particle_draw_count(), 1);
+    assert_eq!(
+        ribbon_frame.particle_vertex_count(),
+        particle_mesh.vertices().len()
+    );
+    assert_eq!(
+        ribbon_frame.particle_index_count(),
+        particle_mesh.indices().len()
+    );
     assert_eq!(
         ribbon_frame.ribbon_vertex_count(),
         ribbon_mesh.vertices().len()

@@ -74,7 +74,7 @@ impl M2ParticleRenderVertex {
         self.texture_coordinates
     }
 
-    fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+    pub(crate) fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
         let mut bytes = [0_u8; Self::BYTE_SIZE];
         let mut offset = 0;
         for component in self.position.into_iter().chain(self.normal) {

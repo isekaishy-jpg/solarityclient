@@ -423,6 +423,9 @@ impl TerrainFrame {
             &self.visible_draws,
             world_model_draws,
             m2.draws,
+            &[],
+            &[],
+            &[],
             m2.ribbon_vertices,
             m2.ribbon_draws,
         )?)
