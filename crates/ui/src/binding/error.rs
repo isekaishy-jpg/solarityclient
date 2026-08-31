@@ -23,3 +23,27 @@ pub enum UiBindingError {
         message: String,
     },
 }
+
+/// A failure while loading stock default or saved binding assignments.
+#[derive(Debug, Error)]
+pub enum UiBindingAssignmentError {
+    /// The selected default-binding archive member could not be read.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+    /// A binding command file was not valid UTF-8.
+    #[error("failed to decode binding assignment asset {path}: {message}")]
+    TextEncoding {
+        /// Exact archive-relative source path.
+        path: AssetPath,
+        /// Decoder context.
+        message: String,
+    },
+    /// One line did not match the stock assignment command grammar.
+    #[error("invalid binding assignment at line {line}: {message}")]
+    Record {
+        /// One-based source line.
+        line: usize,
+        /// Rejected command, token, or state invariant.
+        message: String,
+    },
+}

@@ -7,7 +7,8 @@ use solarity_asset::{AssetPath, AssetStore};
 
 use crate::addon::AddonDefinition;
 use crate::binding::{
-    UiBindingDefinition, UiBindingDocument, UiBindingError, UiModifiedClickDefinition,
+    UiBindingDefinition, UiBindingDocument, UiBindingError, UiBindingPlatform,
+    UiModifiedClickChord, UiModifiedClickDefinition,
 };
 use crate::xml::{UiLoadError, XmlContent, XmlDocument, XmlElement};
 
@@ -222,7 +223,7 @@ fn parse_binding(
     let mut run_on_up = None;
     let mut hidden = None;
     let mut debug = None;
-    let mut mac_only = None;
+    let mut platform = None;
     for attribute in element.attributes() {
         let slot = match attribute.name() {
             "name" => &mut name,
@@ -230,7 +231,7 @@ fn parse_binding(
             "runOnUp" => &mut run_on_up,
             "hidden" => &mut hidden,
             "debug" => &mut debug,
-            "platform" => &mut mac_only,
+            "platform" => &mut platform,
             unknown => {
                 return Err(schema_error(
                     path,
@@ -251,9 +252,10 @@ fn parse_binding(
     let run_on_up = stock_bool(path, "Binding", "runOnUp", run_on_up)?;
     let hidden = stock_bool(path, "Binding", "hidden", hidden)?;
     let debug = stock_bool(path, "Binding", "debug", debug)?;
-    let mac_only = match mac_only {
-        None => false,
-        Some("mac") => true,
+    let platform = match platform {
+        None => None,
+        Some("windows") => Some(UiBindingPlatform::Windows),
+        Some("mac") => Some(UiBindingPlatform::Mac),
         Some(value) => {
             return Err(schema_error(
                 path,
@@ -283,7 +285,7 @@ fn parse_binding(
         run_on_up,
         hidden,
         debug,
-        mac_only,
+        platform,
     ))
 }
 
@@ -317,10 +319,9 @@ fn parse_modified_click(
     }
     let action = required_token(path, "ModifiedClick", "action", action)?;
     let default = required_token(path, "ModifiedClick", "default", default)?;
-    Ok(UiModifiedClickDefinition::new(
-        action.to_owned(),
-        default.to_owned(),
-    ))
+    let default = UiModifiedClickChord::parse(default)
+        .map_err(|message| schema_error(path, format!("ModifiedClick default {message}")))?;
+    Ok(UiModifiedClickDefinition::new(action.to_owned(), default))
 }
 
 /// Concatenates direct character data and rejects nested binding markup.

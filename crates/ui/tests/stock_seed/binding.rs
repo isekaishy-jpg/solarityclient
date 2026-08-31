@@ -3,7 +3,7 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{AddonCatalog, UiBindingCatalog, UiBindingError};
+use solarity_ui::{AddonCatalog, UiBindingCatalog, UiBindingError, UiBindingPlatform};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -24,6 +24,9 @@ fn builtin_catalog_decodes_stock_binding_vocabulary() -> Result<(), Box<dyn Erro
   <Binding name="ITUNES_PLAYPAUSE" platform="mac">
     MusicPlayer_PlayPause()
   </Binding>
+  <Binding name="WINDOWS_ONLY" platform="windows">
+    WindowsBody()
+  </Binding>
   <ModifiedClick action="SELFCAST" default="ALT"/>
   <ModifiedClick action="CHATLINK" default="SHIFT-BUTTON1"/>
 </Bindings>"#,
@@ -37,7 +40,7 @@ fn builtin_catalog_decodes_stock_binding_vocabulary() -> Result<(), Box<dyn Erro
         catalog.documents()[0].path().as_str(),
         BUILTIN_PATH.to_ascii_uppercase()
     );
-    assert_eq!(catalog.bindings().len(), 3);
+    assert_eq!(catalog.bindings().len(), 4);
     let bindings = catalog.bindings().collect::<Vec<_>>();
     assert_eq!(bindings[0].name(), "MOVEFORWARD");
     assert_eq!(bindings[0].header(), Some("MOVEMENT"));
@@ -46,7 +49,10 @@ fn builtin_catalog_decodes_stock_binding_vocabulary() -> Result<(), Box<dyn Erro
     assert!(!bindings[0].is_hidden());
     assert!(bindings[1].is_hidden());
     assert!(bindings[1].is_debug());
-    assert!(bindings[2].is_mac_only());
+    assert_eq!(bindings[2].platform(), Some(UiBindingPlatform::Mac));
+    assert!(!bindings[2].is_available_on(UiBindingPlatform::Windows));
+    assert_eq!(bindings[3].platform(), Some(UiBindingPlatform::Windows));
+    assert!(bindings[3].is_available_on(UiBindingPlatform::Windows));
     let clicks = catalog.modified_clicks().collect::<Vec<_>>();
     assert_eq!(clicks.len(), 2);
     assert_eq!(clicks[0].action(), "SELFCAST");
@@ -121,11 +127,12 @@ fn addon_without_bindings_document_is_not_fabricated() -> Result<(), Box<dyn Err
 /// Unknown elements and attributes do not receive permissive compatibility handling.
 #[test]
 fn binding_catalog_rejects_non_stock_document_shapes() -> Result<(), Box<dyn Error>> {
-    let invalid_sources: [&[u8]; 4] = [
+    let invalid_sources: [&[u8]; 5] = [
         br#"<Ui><Binding name="ACTION">Body()</Binding></Ui>"#,
         br#"<Bindings><Unknown/></Bindings>"#,
         br#"<Bindings><Binding name="ACTION" runOnUp="1">Body()</Binding></Bindings>"#,
-        br#"<Bindings><Binding name="ACTION" platform="windows">Body()</Binding></Bindings>"#,
+        br#"<Bindings><Binding name="ACTION" platform="linux">Body()</Binding></Bindings>"#,
+        br#"<Bindings><ModifiedClick action="SELFCAST" default="META"/></Bindings>"#,
     ];
 
     for source in invalid_sources {

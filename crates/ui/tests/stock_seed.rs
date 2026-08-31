@@ -9,6 +9,8 @@ mod addon;
 mod animation;
 #[path = "stock_seed/binding.rs"]
 mod binding;
+#[path = "stock_seed/binding/assignments.rs"]
+mod binding_assignments;
 #[path = "stock_seed/event.rs"]
 mod event;
 #[path = "stock_seed/feature/action_bar.rs"]

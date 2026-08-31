@@ -2,6 +2,17 @@
 
 use solarity_asset::AssetPath;
 
+use crate::binding::UiModifiedClickChord;
+
+/// Client platform selected by a binding declaration's exact gate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiBindingPlatform {
+    /// The Win32 client token embedded by build 12340.
+    Windows,
+    /// The stock Mac client token used by platform-specific media commands.
+    Mac,
+}
+
 /// One Lua command declared by a `<Binding>` element.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiBindingDefinition {
@@ -11,7 +22,7 @@ pub struct UiBindingDefinition {
     run_on_up: bool,
     hidden: bool,
     debug: bool,
-    mac_only: bool,
+    platform: Option<UiBindingPlatform>,
 }
 
 impl UiBindingDefinition {
@@ -23,7 +34,7 @@ impl UiBindingDefinition {
         run_on_up: bool,
         hidden: bool,
         debug: bool,
-        mac_only: bool,
+        platform: Option<UiBindingPlatform>,
     ) -> Self {
         Self {
             name,
@@ -32,7 +43,7 @@ impl UiBindingDefinition {
             run_on_up,
             hidden,
             debug,
-            mac_only,
+            platform,
         }
     }
 
@@ -72,10 +83,16 @@ impl UiBindingDefinition {
         self.debug
     }
 
-    /// Reports whether the declaration's exact `platform="mac"` gate excludes Windows.
+    /// Returns the exact client-platform gate, or no gate for shared commands.
     #[must_use]
-    pub const fn is_mac_only(&self) -> bool {
-        self.mac_only
+    pub const fn platform(&self) -> Option<UiBindingPlatform> {
+        self.platform
+    }
+
+    /// Reports whether stock admits the command on the selected client platform.
+    #[must_use]
+    pub fn is_available_on(&self, platform: UiBindingPlatform) -> bool {
+        self.platform.is_none() || self.platform == Some(platform)
     }
 }
 
@@ -83,12 +100,12 @@ impl UiBindingDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiModifiedClickDefinition {
     action: String,
-    default: String,
+    default: UiModifiedClickChord,
 }
 
 impl UiModifiedClickDefinition {
     /// Constructs a declaration after required-token validation.
-    pub(super) fn new(action: String, default: String) -> Self {
+    pub(super) fn new(action: String, default: UiModifiedClickChord) -> Self {
         Self { action, default }
     }
 
@@ -101,6 +118,12 @@ impl UiModifiedClickDefinition {
     /// Returns the exact stock default chord token.
     #[must_use]
     pub fn default(&self) -> &str {
+        self.default.as_str()
+    }
+
+    /// Returns the validated stock default chord.
+    #[must_use]
+    pub const fn default_chord(&self) -> &UiModifiedClickChord {
         &self.default
     }
 }

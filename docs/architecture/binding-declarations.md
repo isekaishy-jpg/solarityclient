@@ -11,9 +11,9 @@ both `keystate = "down"` and `keystate = "up"` transitions.
 `solarity-ui` owns this authored command vocabulary. `UiBindingCatalog` loads
 the built-in document through ordinary MPQ precedence, validates its exact XML
 shape, and compiles every Lua body before input can reach it. It retains source
-order, grouping headers, release behavior, hidden/debug status, the stock Mac
-platform gate, and modified-click defaults without converting any of them into
-hard-coded Rust gameplay commands.
+order, grouping headers, release behavior, hidden/debug status, the exact
+`windows`/`mac` platform gate, and modified-click defaults without converting
+any of them into hard-coded Rust gameplay commands.
 
 ## AddOn boundary
 
@@ -37,6 +37,25 @@ selected Lua body in the active FrameXML environment. Player movement and
 camera systems therefore receive stock Lua API calls such as
 `MoveForwardStart` and `CameraZoomIn`; SDL key values do not become gameplay
 policy directly.
+
+## Assignment streams
+
+The same archive stack exposes `WTF\DefaultBindings.wtf`. The installed
+build-12340 member contains 153 unique key chords selecting 144 actions. Its
+grammar is the executable's exact line-oriented `bind KEY ACTION` command,
+while saved state may also contain `modifiedclick ACTION CHORD` and
+`BINDINGMODE 0|1|2` records for default, account, and character modes.
+
+`UiBindingAssignments` parses those records sequentially. Repeating a key or
+modified-click action replaces its earlier value without rebuilding the map,
+matching command execution order. Named declarations and the dynamic `SPELL`,
+`ITEM`, `MACRO`, and `CLICK button:mouseButton` action forms remain distinct
+types. Modified-click actions must have been declared by `Bindings.xml`.
+
+Key chords remain validated stock tokens rather than being split at every
+hyphen: both the bare minus key `-` and the modified chord `CTRL--` occur in
+the real default file. SDL-to-stock key naming is therefore a later input
+translation boundary and cannot misinterpret minus as an empty component.
 
 Validate the full built-in vocabulary against a locally owned client without
 copying its assets into the repository:
