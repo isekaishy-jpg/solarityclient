@@ -20,6 +20,10 @@ pub use addon::{
     AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
     STOCK_INTERFACE_VERSION,
 };
+pub use binding::{
+    UiBindingCatalog, UiBindingDefinition, UiBindingDocument, UiBindingError,
+    UiModifiedClickDefinition,
+};
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
