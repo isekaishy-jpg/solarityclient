@@ -139,6 +139,12 @@ own particle-word reseed and conditionally skip zero-variation draws, matching
 the stock render preparation. Admission rejects out-of-domain or unordered
 lifetime timestamps instead of making the interval search order-dependent.
 
+Ordinary particle heads now prepare four camera-facing PNC0T0 vertices from
+the executable corner and atlas-coordinate tables. Each live particle samples
+its color, scale, cell, and rotation before producing two indexed triangles.
+Twinkle, geometry particles, tail strips, and specialized orientation flags
+remain separate typed paths instead of being flattened into ordinary quads.
+
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
 pool grows, but never shrinks, to the executable's nearest-even estimate of

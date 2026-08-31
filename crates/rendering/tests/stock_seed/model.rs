@@ -18,12 +18,13 @@ use solarity_rendering::{
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRandom, M2ParticleRotationPose,
-    M2ParticleSimulation, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
-    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
-    VulkanError, WorldFrameScene, WorldModelSceneUniform,
+    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRotationPose, M2ParticleSimulation, M2PixelShader, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail,
+    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
+    WorldModelSceneUniform,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -685,6 +686,18 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         "{:?}",
         simulation.particles()
     );
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let mesh =
+        M2ParticleMeshPlan::prepare_head(emitter, pose, simulation.particles(), camera, 1.0)?;
+    assert_eq!(mesh.vertices().len(), 16);
+    assert_eq!(mesh.indices().len(), 24);
+    assert_eq!(&mesh.indices()[..6], &[0, 1, 2, 2, 1, 3]);
+    assert!(
+        mesh.vertices()
+            .iter()
+            .all(|vertex| vertex.normal() == Vec3::NEG_X.to_array())
+    );
+    assert_eq!(mesh.vertex_bytes().len(), 16 * 36);
     Ok(())
 }
 
@@ -2269,6 +2282,7 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     )?;
     bytes[particle_offset + 0x134..particle_offset + 0x13c]
         .copy_from_slice(&render_f32_values(&[0.5, 0.25]));
+    bytes[particle_offset + 0x164..particle_offset + 0x168].copy_from_slice(&1.0_f32.to_le_bytes());
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x114,

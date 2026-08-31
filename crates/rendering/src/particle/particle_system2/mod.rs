@@ -5,6 +5,7 @@
 //! live-particle storage that subsequent modules add.
 
 mod lifetime;
+mod mesh;
 mod pose;
 mod random;
 mod rotation;
@@ -12,6 +13,7 @@ mod simulation;
 mod state;
 
 pub use lifetime::{M2ParticleLifetimePose, M2ParticleLifetimePoseError};
+pub use mesh::{M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticleRenderVertex};
 pub use pose::M2ParticlePose;
 pub use random::M2ParticleRandom;
 pub use rotation::M2ParticleRotationPose;

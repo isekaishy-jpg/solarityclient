@@ -4,6 +4,7 @@ use solarity_asset::M2RibbonEmitter;
 use thiserror::Error;
 
 use super::M2RibbonTrail;
+use crate::particle::pack_bgra;
 
 /// Fixed 24-byte ribbon vertex matching stock's `CGxVertexPCT0` payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -133,14 +134,4 @@ impl M2RibbonMeshPlan {
         }
         bytes
     }
-}
-
-/// Reproduces stock's float-to-D3DCOLOR conversion and memory byte order.
-fn pack_bgra(color: [f32; 4]) -> [u8; 4] {
-    let [red, green, blue, alpha] = color.map(quantize_color);
-    [blue, green, red, alpha]
-}
-
-fn quantize_color(component: f32) -> u8 {
-    (component.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
