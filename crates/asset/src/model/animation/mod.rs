@@ -283,6 +283,7 @@ pub struct M2AnimationSet {
     animation_lookup: Vec<u16>,
     sequence_available: Vec<bool>,
     bones: Vec<M2Bone>,
+    key_bone_lookup: Vec<Option<u16>>,
     attachments: Vec<M2Attachment>,
     attachment_lookup: Vec<u16>,
     colors: Vec<M2ColorAnimation>,
@@ -341,6 +342,7 @@ impl M2AnimationSet {
             }
         }
         let bones = decode_bones(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let key_bone_lookup = decode_key_bone_lookup(model_path, model_bytes, bones.len())?;
         let (attachments, attachment_lookup) = attachment::decode_attachments(
             model_path,
             model_bytes,
@@ -394,6 +396,7 @@ impl M2AnimationSet {
             animation_lookup,
             sequence_available: available,
             bones,
+            key_bone_lookup,
             attachments,
             attachment_lookup,
             colors,
@@ -602,6 +605,19 @@ impl M2AnimationSet {
         &self.bones
     }
 
+    /// Returns signed semantic key-bone slots with `-1` represented as absent.
+    #[must_use]
+    pub fn key_bone_lookup(&self) -> &[Option<u16>] {
+        &self.key_bone_lookup
+    }
+
+    /// Resolves one semantic key-bone slot without scanning bone records.
+    #[must_use]
+    pub fn key_bone(&self, id: u16) -> Option<&M2Bone> {
+        let bone = self.key_bone_lookup.get(usize::from(id))?.as_ref()?;
+        self.bones.get(usize::from(*bone))
+    }
+
     /// Returns authored model attachments in exact M2 table order.
     #[must_use]
     pub fn attachments(&self) -> &[M2Attachment] {
@@ -760,6 +776,31 @@ fn decode_animation_lookup(
         result.push(index);
     }
     Ok(result)
+}
+
+/// Decodes the signed semantic key-bone lookup without an unsigned repair.
+fn decode_key_bone_lookup(
+    path: &AssetPath,
+    bytes: &[u8],
+    bone_count: usize,
+) -> Result<Vec<Option<u16>>, AssetError> {
+    let array = array_ref(path, bytes, 0x34, "key-bone lookup")?;
+    validate_array(path, bytes, array, 2, "key-bone lookup")?;
+    let mut lookup = Vec::with_capacity(array.count);
+    for slot in 0..array.count {
+        let value = read_i16(path, bytes, array.offset + slot * 2, "key-bone lookup")?;
+        if value == -1 {
+            lookup.push(None);
+        } else if value < -1 || value as usize >= bone_count {
+            return Err(model_decode(
+                path,
+                format!("key-bone lookup {slot} references missing bone {value}"),
+            ));
+        } else {
+            lookup.push(Some(value as u16));
+        }
+    }
+    Ok(lookup)
 }
 
 /// Converts a signed optional sequence reference and validates positive values.

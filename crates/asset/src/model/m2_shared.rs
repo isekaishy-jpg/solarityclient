@@ -53,14 +53,15 @@ pub(super) fn parse_model(path: &AssetPath, bytes: &mut [u8]) -> Result<M2Model,
     validate_model_prefix(path, bytes)?;
     validate_model_texture_arrays(path, bytes)?;
 
-    // wow-m2 0.7 reads build-12340 material tracks, attachments, events, lights,
-    // cameras, ribbons, and particles as later incompatible layouts. Hide those
-    // arrays and their lookups; exact WotLK decoders consume restored bytes.
+    // wow-m2 0.7 reads the signed key-bone lookup as unsigned and reads
+    // build-12340 material tracks, attachments, events, lights, cameras,
+    // ribbons, and particles as later incompatible layouts. Hide those arrays
+    // and their lookups; exact WotLK decoders consume restored bytes.
     // Patching in place avoids cloning an HD-sized model for a parser view.
     let exact_arrays = [
-        0x48_usize, 0x58, 0x60, 0xf0, 0xf8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128,
+        0x34_usize, 0x48, 0x58, 0x60, 0xf0, 0xf8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128,
     ];
-    let mut saved = [[0_u8; 8]; 11];
+    let mut saved = [[0_u8; 8]; 12];
     for (slot, offset) in saved.iter_mut().zip(exact_arrays) {
         let header = bytes.get_mut(offset..offset + 8).ok_or_else(|| {
             model_decode(

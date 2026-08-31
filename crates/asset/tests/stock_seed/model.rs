@@ -130,6 +130,13 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
     assert!(breath.enabled().channels().is_empty());
     assert_eq!(model.attachments().len(), 1);
     assert_eq!(model.attachments().first(), Some(breath));
+    assert_eq!(model.animations().key_bone_lookup(), &[None, Some(0), None]);
+    assert_eq!(
+        model.animations().key_bone(1),
+        model.animations().bones().first()
+    );
+    assert!(model.animations().key_bone(0).is_none());
+    assert!(model.animations().key_bone(3).is_none());
     assert_eq!(model.attachment_lookup().len(), 18);
     assert!(model.attachment(16).is_none());
     assert!(model.attachment(18).is_none());
@@ -165,6 +172,39 @@ fn m2_attachment_lookup_rejects_a_missing_attachment() -> Result<(), Box<dyn Err
         Err(AssetError::ModelDecode { path: failed, message })
             if failed == path
                 && message.contains("attachment lookup 17 references missing attachment 1")
+    ));
+    Ok(())
+}
+
+/// Values below the sole `-1` key-bone sentinel have no compatibility meaning.
+#[test]
+fn m2_key_bone_lookup_rejects_an_invalid_signed_value() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("BadKeyBone", 1)?;
+    let lookup_offset = m2_array_offset(&model, 0x34)?;
+    model[lookup_offset + 2..lookup_offset + 4].copy_from_slice(&(-2_i16).to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadKeyBone.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadKeyBone00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadKeyBone.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path
+                && message.contains("key-bone lookup 1 references missing bone -2")
     ));
     Ok(())
 }
@@ -1279,6 +1319,12 @@ fn append_build_12340_attachment_metadata(bytes: &mut Vec<u8>) -> Result<(), Box
     bone[58..60].copy_from_slice(&(-1_i16).to_le_bytes());
     bytes.extend_from_slice(&bone);
     set_header_array(bytes, 0x2c, 1, bone_offset)?;
+
+    let key_bone_lookup_offset = bytes.len();
+    for value in [-1_i16, 0, -1] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    set_header_array(bytes, 0x34, 3, key_bone_lookup_offset)?;
 
     let attachment_offset = bytes.len();
     let mut attachment = [0_u8; 40];

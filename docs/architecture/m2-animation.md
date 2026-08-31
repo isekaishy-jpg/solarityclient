@@ -39,6 +39,17 @@ An exact requested variation is resolved before the weighted selector. Finding
 that exact variation consumes no selection roll. Sequence timer construction
 then consumes the next roll for its cycle count.
 
+## Key-bone lookup
+
+The semantic key-bone table at header offset `0x34` contains signed 16-bit bone
+indices. Exactly `-1` denotes an absent role; all other negative values and
+nonnegative indices beyond the skeleton are invalid. Solarity decodes this
+table directly because `wow-m2 0.7` exposes it as unsigned.
+
+Runtime consumers resolve a semantic role through the authored table only.
+They do not scan the bone array's `key_bone_id` fields to repair an absent or
+malformed lookup.
+
 ## Cycle count and ownership
 
 Sequence timer construction at `0x00826B00` calculates the total number of
