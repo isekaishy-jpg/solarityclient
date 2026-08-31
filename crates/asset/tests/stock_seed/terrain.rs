@@ -191,7 +191,7 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks()[0].sound_emitters().len(), 1);
     let sound_emitter = tile.chunks()[0].sound_emitters()[0];
     assert_eq!(sound_emitter.advanced_sound_entry_id(), 90);
-    assert_eq!(sound_emitter.size(), [4.0, 8.0, 12.0]);
+    assert_eq!(sound_emitter.cone_orientation(), [4.0, 8.0, 12.0]);
     assert_position(tile.doodads()[0].position(), [1_066.666, 5_066.666, 250.0]);
     assert_position(
         tile.world_models()[0].position(),

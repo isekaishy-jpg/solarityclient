@@ -9,10 +9,10 @@ mod cinematic;
 mod voice;
 
 pub use audio::{
-    DecodedSoundHandle, DecodedSoundInfo, EncodedSound, ResolvedSpatialSound, SoundBackend,
-    SoundBackendError, SoundCache, SoundCategory, SoundCategorySettings, SoundDecodeError,
-    SoundDecodeMode, SoundDecoder, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain,
-    SoundGainError, SoundOutput, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest,
-    SoundPlayback, SoundVariationSelector, SoundVoiceHandle, SoundVoiceState, SpatialSoundCatalog,
-    SpatialSoundError,
+    AdvancedSoundProperties, DecodedSoundHandle, DecodedSoundInfo, EncodedSound,
+    ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundCache, SoundCategory,
+    SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundOutput, SoundOutputInfo,
+    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundVariationSelector, SoundVoiceHandle,
+    SoundVoiceState, SpatialSoundCatalog, SpatialSoundError,
 };

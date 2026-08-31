@@ -105,17 +105,34 @@ call-site evidence establishes them. The layout is checked against the
 [WoWDBDefs SoundEntriesAdvanced definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntriesAdvanced.dbd).
 
 WotLK's 28-byte terrain `MCSE` record stores a
-`SoundEntriesAdvanced.ID` followed by an authored position and three size
-components. The asset API names this value `advanced_sound_entry_id`; media must
-resolve `MCSE → SoundEntriesAdvanced → SoundEntries` before selecting a file.
-It must not send the MCSE key directly to `SoundEntryCatalog`, even when IDs
-happen to overlap in a particular data set.
+`SoundEntriesAdvanced.ID` followed by an authored position and a three-component
+directional-cone orientation. The stock map-chunk path passes that final vector
+through `SE2__PlaySoundKit`; the sound engine normalizes it, reverses Z for its
+FMOD coordinate boundary, and installs it with `set3DConeOrientation`. The asset
+API therefore exposes `cone_orientation`, not a guessed attenuation size. Media
+must resolve `MCSE → SoundEntriesAdvanced → SoundEntries` before selecting a
+file. It must not send the MCSE key directly to `SoundEntryCatalog`, even when
+IDs happen to overlap in a particular data set.
 
 Media's `SpatialSoundCatalog` owns those tables once and performs the exact
 two-step lookup. `SoundEngine::resolve_spatial_sound` exposes the advanced and
 base rows as one borrowed result, so the eventual zone service can retain the
-terrain emitter's position and extents separately. An absent key is a typed
-failure and never falls through to another row. Radius, cone, interval,
-influence, and ducking values remain authored data at this boundary; their
-runtime equations and units require executable-backed behavior before they are
-implemented.
+terrain emitter's position and cone orientation separately. An absent key is a
+typed failure and never falls through to another row.
+
+`AdvancedSoundProperties` applies the corrections recovered from build 12340's
+`SoundInterface2AdvancedKitProperties.cpp` constructor. Decreasing `TimeA`
+through `TimeD` values roll into the next 86,400,000-millisecond day. Duck gains
+outside zero through one become the neutral `1.0`; an inverted influence pair
+moves the inner radius down to the outer radius; and an inverted cone pair moves
+the inside angle down to the outside angle. These are stock fallbacks, not new
+compatibility behavior.
+
+The advanced update path uses full three-dimensional listener distance for the
+fields named `InnerRadius2D` and `OuterRadius2D`. At and inside the inner radius
+it sets FMOD's 3D pan level to zero, beyond the outer radius it sets the level to
+one, and between them it interpolates linearly. This blends a positioned voice
+from two-dimensional to three-dimensional panning; it does not select a lower-
+or higher-resolution asset. Interval, usage-mode, and duck-transition scheduling
+remain unimplemented until their complete state transitions are executable-
+backed.

@@ -235,19 +235,19 @@ impl TerrainChunk {
 pub struct TerrainSoundEmitter {
     advanced_sound_entry_id: u32,
     position: [f32; 3],
-    size: [f32; 3],
+    cone_orientation: [f32; 3],
 }
 
 impl TerrainSoundEmitter {
     pub(super) const fn new(
         advanced_sound_entry_id: u32,
         position: [f32; 3],
-        size: [f32; 3],
+        cone_orientation: [f32; 3],
     ) -> Self {
         Self {
             advanced_sound_entry_id,
             position,
-            size,
+            cone_orientation,
         }
     }
 
@@ -263,10 +263,13 @@ impl TerrainSoundEmitter {
         self.position
     }
 
-    /// Returns the three authored attenuation extents.
+    /// Returns the authored FMOD 3D cone-orientation vector.
+    ///
+    /// Build 12340 normalizes this vector and reverses its Z component at the
+    /// sound-backend boundary. An all-zero vector disables cone orientation.
     #[must_use]
-    pub const fn size(self) -> [f32; 3] {
-        self.size
+    pub const fn cone_orientation(self) -> [f32; 3] {
+        self.cone_orientation
     }
 }
 

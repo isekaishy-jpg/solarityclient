@@ -25,8 +25,8 @@ pub use codec::{
     DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,
 };
 pub use engine::{
-    SoundCategory, SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings,
-    SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
+    AdvancedSoundProperties, SoundCategory, SoundCategorySettings, SoundEngine, SoundEngineError,
+    SoundEngineSettings, SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
 };
 pub use selection::SoundVariationSelector;
 pub use spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSoundError};

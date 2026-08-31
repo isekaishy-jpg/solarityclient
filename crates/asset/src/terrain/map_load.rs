@@ -443,8 +443,9 @@ fn decode_chunk(
         .map_or_else(Vec::new, |emitters| emitters.emitters)
         .into_iter()
         .map(|emitter| {
-            // The dependency retains its historical field label, but WotLK's
-            // 28-byte MCSE record references SoundEntriesAdvanced.ID.
+            // The dependency retains historical labels for both values. The
+            // first references SoundEntriesAdvanced.ID; `size_min` is passed
+            // to FMOD as a directional-cone orientation by build 12340.
             TerrainSoundEmitter::new(emitter.sound_entry_id, emitter.position, emitter.size_min)
         })
         .collect::<Vec<_>>();
