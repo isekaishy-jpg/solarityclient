@@ -20,6 +20,7 @@ use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrain
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::RuntimeConfiguration;
+use crate::input::{InputControl, InputFrameMotion};
 use crate::platform::{PlatformError, PlatformEvent};
 
 /// A failure while constructing or stopping concrete client services.
@@ -236,6 +237,17 @@ impl ClientApplication {
     #[must_use]
     pub fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
         self.services.poll_platform_event()
+    }
+
+    /// Returns raw keyboard, pointer-button, modifier, and focus state.
+    #[must_use]
+    pub const fn input_control(&self) -> &InputControl {
+        self.services.input_control()
+    }
+
+    /// Takes relative pointer and wheel movement accumulated since the last take.
+    pub fn take_input_frame_motion(&mut self) -> InputFrameMotion {
+        self.services.take_input_frame_motion()
     }
 
     /// Keeps the process alive on the main thread until stock termination.

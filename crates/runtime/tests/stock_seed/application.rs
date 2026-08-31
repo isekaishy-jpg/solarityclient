@@ -4,10 +4,11 @@ use std::error::Error;
 use std::ffi::OsString;
 
 use sdl3::event::{Event as SdlEvent, WindowEvent as SdlWindowEvent};
+use sdl3::keyboard::{Keycode, Mod, Scancode as SdlScanCode};
 use solarity_rendering::VulkanError;
 use solarity_runtime::{
     ApplicationError, ApplicationExitReason, ClientApplication, ConfigurationError, PlatformEvent,
-    RuntimeConfiguration, WindowEvent,
+    RuntimeConfiguration, ScanCode, WindowEvent,
 };
 
 use crate::support::ClientFixture;
@@ -49,8 +50,29 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     // Exercise SDL's real process queue so the test covers both translation
     // and the composition root's ownership of the sole event pump.
     let sdl = sdl3::init()?;
-    sdl.event()?.push_event(SdlEvent::Window {
+    sdl.event()?.push_event(SdlEvent::KeyDown {
         timestamp: 1,
+        window_id: report.window_id(),
+        keycode: Some(Keycode::W),
+        scancode: Some(SdlScanCode::W),
+        keymod: Mod::NOMOD,
+        repeat: false,
+        which: 0,
+        raw: 0,
+    })?;
+    let translated_key = (0..32).find_map(|_| {
+        let event = application.poll_platform_event()?;
+        matches!(&event, PlatformEvent::Key(_)).then_some(event)
+    });
+    assert!(translated_key.is_some());
+    assert!(
+        application
+            .input_control()
+            .is_key_down(ScanCode::new(SdlScanCode::W as i32))
+    );
+
+    sdl.event()?.push_event(SdlEvent::Window {
+        timestamp: 2,
         window_id: report.window_id(),
         win_event: SdlWindowEvent::PixelSizeChanged(1919, 1079),
     })?;
@@ -72,12 +94,12 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
 
     // Another SDL window cannot terminate the primary client lifetime.
     sdl.event()?.push_event(SdlEvent::Window {
-        timestamp: 2,
+        timestamp: 3,
         window_id: report.window_id().saturating_add(1),
         win_event: SdlWindowEvent::CloseRequested,
     })?;
     sdl.event()?.push_event(SdlEvent::Window {
-        timestamp: 3,
+        timestamp: 4,
         window_id: report.window_id(),
         win_event: SdlWindowEvent::CloseRequested,
     })?;
@@ -89,7 +111,7 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     assert!(run_report.admitted_event_count() >= 2);
 
     // The process-wide route ends a subsequent loop without window identity.
-    sdl.event()?.push_event(SdlEvent::Quit { timestamp: 4 })?;
+    sdl.event()?.push_event(SdlEvent::Quit { timestamp: 5 })?;
     assert_eq!(
         application.run()?.exit_reason(),
         ApplicationExitReason::QuitRequested

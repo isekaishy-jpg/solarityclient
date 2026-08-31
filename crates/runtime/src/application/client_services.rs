@@ -47,6 +47,7 @@ use crate::application::world_coordinator::{
     RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
 };
 use crate::configuration::RuntimeConfiguration;
+use crate::input::{InputControl, InputFrameMotion};
 use crate::platform::{PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
@@ -56,6 +57,7 @@ pub(crate) struct ClientServices {
     login_ui: LoginUiFrame,
     sound: RuntimeSoundCoordinator,
     platform: SdlPlatform,
+    input: InputControl,
     glue: GlueManager,
     cpu: CpuExecutor,
     network: Option<Runtime>,
@@ -128,6 +130,7 @@ impl ClientServices {
         // construction can make lifecycle mistakes harder to diagnose.
         let mut platform = SdlPlatform::start(configuration.window())?;
         let total_physical_memory_bytes = platform.total_physical_memory_bytes();
+        let input = InputControl::new(platform.window_id());
         let instance_extensions = platform.vulkan_instance_extensions()?;
         let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
         // SAFETY: The bootstrap enabled SDL's exact extension list and remains
@@ -174,6 +177,7 @@ impl ClientServices {
                 login_ui,
                 sound,
                 platform,
+                input,
                 glue,
                 cpu,
                 network: Some(network),
@@ -231,7 +235,19 @@ impl ClientServices {
 
     /// Polls one translated main-thread platform event without allocating a batch.
     pub(crate) fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
-        self.platform.poll_event()
+        let event = self.platform.poll_event()?;
+        self.input.admit(&event);
+        Some(event)
+    }
+
+    /// Returns the retained raw input state committed during event polling.
+    pub(crate) const fn input_control(&self) -> &InputControl {
+        &self.input
+    }
+
+    /// Takes relative pointer and wheel motion accumulated for one frame.
+    pub(crate) fn take_input_frame_motion(&mut self) -> InputFrameMotion {
+        self.input.take_frame_motion()
     }
 
     /// Presents one FIFO-paced Glue or resident-world frame.

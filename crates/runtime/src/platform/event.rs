@@ -5,6 +5,12 @@
 pub struct WindowId(u32);
 
 impl WindowId {
+    /// Wraps a platform window identifier for an event-producing boundary.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
     /// Returns the platform identifier for diagnostic correlation.
     #[must_use]
     pub const fn value(self) -> u32 {
@@ -13,7 +19,7 @@ impl WindowId {
 
     /// Wraps an identifier emitted by the owned SDL event source.
     pub(super) const fn from_sdl(value: u32) -> Self {
-        Self(value)
+        Self::new(value)
     }
 }
 
@@ -22,6 +28,12 @@ impl WindowId {
 pub struct ScanCode(i32);
 
 impl ScanCode {
+    /// Wraps a platform-neutral physical-key number.
+    #[must_use]
+    pub const fn new(value: i32) -> Self {
+        Self(value)
+    }
+
     /// Returns SDL's stable physical-key numeric value.
     #[must_use]
     pub const fn value(self) -> i32 {
@@ -30,7 +42,7 @@ impl ScanCode {
 
     /// Preserves the SDL scancode without exposing an SDL enum downstream.
     pub(super) const fn from_sdl(value: i32) -> Self {
-        Self(value)
+        Self::new(value)
     }
 }
 
@@ -39,6 +51,12 @@ impl ScanCode {
 pub struct KeyCode(u32);
 
 impl KeyCode {
+    /// Wraps a layout-resolved Unicode or special-key number.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
     /// Returns SDL's Unicode-or-special-key numeric value.
     #[must_use]
     pub const fn value(self) -> u32 {
@@ -47,7 +65,7 @@ impl KeyCode {
 
     /// Preserves the SDL keycode without exposing an SDL enum downstream.
     pub(super) const fn from_sdl(value: u32) -> Self {
-        Self(value)
+        Self::new(value)
     }
 }
 
@@ -56,6 +74,15 @@ impl KeyCode {
 pub struct KeyModifiers(u16);
 
 impl KeyModifiers {
+    /// No modifier or lock keys are active.
+    pub const NONE: Self = Self(0);
+
+    /// Wraps the platform modifier mask without discarding unknown bits.
+    #[must_use]
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+
     /// Returns the unmodified SDL-compatible mask for binding serialization.
     #[must_use]
     pub const fn bits(self) -> u16 {
@@ -64,7 +91,7 @@ impl KeyModifiers {
 
     /// Preserves every modifier bit, including mode and lock state.
     pub(super) const fn from_sdl(bits: u16) -> Self {
-        Self(bits)
+        Self::from_bits(bits)
     }
 }
 

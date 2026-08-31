@@ -5,3 +5,8 @@
 //! SDL directly.
 
 mod input_control;
+mod state;
+mod types;
+
+pub use input_control::InputControl;
+pub use types::{InputFrameMotion, PointerPosition};
