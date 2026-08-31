@@ -1,62 +1,128 @@
-//! Weighted selection over the authored `SoundEntries.dbc` file slots.
+//! Stateful stock selection over authored `SoundEntries.dbc` file slots.
 
 use solarity_asset::{SoundAsset, SoundEntry};
 
-/// Borrowed weighted file slots for one sound entry.
-///
-/// The selector deliberately accepts an already bounded weight ticket. Random
-/// number generation and conversion to that ticket remain with the runtime's
-/// process-wide stock CRT stream, so this layer cannot accidentally introduce
-/// a second RNG or change call ordering.
-#[derive(Clone, Copy, Debug)]
-pub struct SoundVariationSelector<'entry> {
-    entry: &'entry SoundEntry,
-    total_weight: u64,
+/// Selection behavior passed to build 12340's sound-definition routine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SoundVariationMode {
+    /// Selects the first available slot after the previous one.
+    Sequential = 0,
+    /// Selects by weight and clears live weights after each selection.
+    RandomReset = 1,
+    /// Selects by weight while retaining live availability weights.
+    Random = 2,
 }
 
-impl<'entry> SoundVariationSelector<'entry> {
-    /// Builds a selector when the entry has at least one positive-weight file.
+/// Per-`SoundEntries` selection state shared by every playback of that row.
+///
+/// Build 12340 retains the previous slot and a mutable copy of the ten authored
+/// frequencies on its loaded sound definition. This owned form can live beside
+/// the immutable asset catalog without creating a self-referential engine.
+#[derive(Clone, Debug)]
+pub struct SoundVariationSelector {
+    assets: Vec<SoundAsset>,
+    original_weights: Vec<u32>,
+    current_weights: Vec<u32>,
+    last_index: Option<usize>,
+}
+
+impl SoundVariationSelector {
+    /// Copies the row's nonempty slots and their exact authored frequencies.
     ///
-    /// Zero-frequency slots are stock-authored disabled variations. They remain
-    /// visible through [`SoundEntry::assets`] but do not occupy ticket space.
+    /// An entry with no file names has no selector. Zero-frequency named slots
+    /// remain present because stock sequential mode can activate them.
     #[must_use]
-    pub fn new(entry: &'entry SoundEntry) -> Option<Self> {
-        let total_weight = entry
-            .assets()
-            .iter()
-            .map(|asset| u64::from(asset.frequency()))
-            .sum();
-        (total_weight != 0).then_some(Self {
-            entry,
-            total_weight,
+    pub fn new(entry: &SoundEntry) -> Option<Self> {
+        if entry.assets().is_empty() {
+            return None;
+        }
+        let assets = entry.assets().to_vec();
+        let original_weights = assets.iter().map(SoundAsset::frequency).collect::<Vec<_>>();
+        Some(Self {
+            current_weights: original_weights.clone(),
+            original_weights,
+            assets,
+            last_index: None,
         })
     }
 
-    /// Returns the exclusive upper bound for a caller-supplied weight ticket.
+    /// Selects one slot using stock last-slot exclusion and range conversion.
+    ///
+    /// Random modes consume one Blizzard PRNG word only after a nonzero bound
+    /// has been prepared. Sequential mode always uses ticket zero and does not
+    /// advance the supplied generator. If the previous slot is the only
+    /// weighted choice, stock clears that exclusion on its third attempt.
     #[must_use]
-    pub const fn total_weight(self) -> u64 {
-        self.total_weight
+    pub fn select(
+        &mut self,
+        mode: SoundVariationMode,
+        next_random_word: &mut impl FnMut() -> u32,
+    ) -> Option<&SoundAsset> {
+        let total_weight = self.prepare_weight(mode)?;
+        let mut ticket = match mode {
+            SoundVariationMode::Sequential => 0,
+            SoundVariationMode::RandomReset | SoundVariationMode::Random => {
+                multiply_high_range(next_random_word(), total_weight)
+            }
+        };
+        let selected_index =
+            self.current_weights
+                .iter()
+                .enumerate()
+                .find_map(|(index, weight)| {
+                    if Some(index) == self.last_index {
+                        return None;
+                    }
+                    if ticket < *weight {
+                        Some(index)
+                    } else {
+                        ticket -= *weight;
+                        None
+                    }
+                })?;
+
+        self.last_index = Some(selected_index);
+        if mode == SoundVariationMode::RandomReset {
+            self.current_weights.fill(0);
+        }
+        self.assets.get(selected_index)
     }
 
-    /// Resolves one ticket in `0..total_weight` to its authored file slot.
-    ///
-    /// Returning `None` for an out-of-range ticket keeps range conversion at
-    /// the RNG-owning call site explicit. No modulo or clamping fallback is
-    /// performed here.
+    /// Returns the last selected nonempty-slot index in catalog order.
     #[must_use]
-    pub fn select(self, ticket: u64) -> Option<&'entry SoundAsset> {
-        if ticket >= self.total_weight {
-            return None;
-        }
+    pub const fn last_index(&self) -> Option<usize> {
+        self.last_index
+    }
 
-        let mut remaining = ticket;
-        for asset in self.entry.assets() {
-            let weight = u64::from(asset.frequency());
-            if remaining < weight {
-                return Some(asset);
+    /// Prepares the exact selection bound, retrying stock weight resets.
+    fn prepare_weight(&mut self, mode: SoundVariationMode) -> Option<u32> {
+        for attempt in 0..3 {
+            if attempt == 2 {
+                self.last_index = None;
             }
-            remaining -= weight;
+            let total_weight = self
+                .current_weights
+                .iter()
+                .enumerate()
+                .filter(|(index, _weight)| Some(*index) != self.last_index)
+                .fold(0_u32, |total, (_index, weight)| total.wrapping_add(*weight));
+            if total_weight != 0 {
+                return Some(total_weight);
+            }
+
+            match mode {
+                SoundVariationMode::Sequential => self.current_weights.fill(1),
+                SoundVariationMode::RandomReset | SoundVariationMode::Random => {
+                    self.current_weights.clone_from(&self.original_weights);
+                }
+            }
         }
         None
     }
+}
+
+/// Maps one 32-bit random word into a 64-bit weight bound with multiply-high.
+fn multiply_high_range(random_word: u32, total_weight: u32) -> u32 {
+    ((u64::from(random_word) * u64::from(total_weight)) >> u32::BITS) as u32
 }

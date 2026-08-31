@@ -2,6 +2,7 @@
 
 use crate::audio::backend::SoundVoiceHandle;
 use crate::audio::codec::SoundDecodeMode;
+use crate::audio::selection::SoundVariationMode;
 
 use super::status::SoundGainError;
 
@@ -128,30 +129,30 @@ impl SoundEngineSettings {
     }
 }
 
-/// One fully explicit request after the runtime has advanced stock randomness.
+/// One fully explicit request whose playback call advances stock randomness.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SoundPlayRequest {
     entry_id: u32,
     category: SoundCategory,
-    variation_ticket: u64,
+    variation_mode: SoundVariationMode,
     decode_mode: SoundDecodeMode,
     looping: bool,
 }
 
 impl SoundPlayRequest {
-    /// Captures a request without inventing category, random, or residency policy.
+    /// Captures a request without inventing category, selection, or residency policy.
     #[must_use]
     pub const fn new(
         entry_id: u32,
         category: SoundCategory,
-        variation_ticket: u64,
+        variation_mode: SoundVariationMode,
         decode_mode: SoundDecodeMode,
         looping: bool,
     ) -> Self {
         Self {
             entry_id,
             category,
-            variation_ticket,
+            variation_mode,
             decode_mode,
             looping,
         }
@@ -169,10 +170,10 @@ impl SoundPlayRequest {
         self.category
     }
 
-    /// Returns the already bounded weighted-selection ticket.
+    /// Returns the exact stock selection mode for this call site.
     #[must_use]
-    pub const fn variation_ticket(self) -> u64 {
-        self.variation_ticket
+    pub const fn variation_mode(self) -> SoundVariationMode {
+        self.variation_mode
     }
 
     /// Returns the explicit decoder residency strategy.

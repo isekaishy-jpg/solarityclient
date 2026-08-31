@@ -29,16 +29,6 @@ pub enum SoundEngineError {
         /// Exact requested identifier.
         entry_id: u32,
     },
-    /// The runtime supplied a ticket outside the selector's advertised bound.
-    #[error("sound {entry_id} variation ticket {ticket} is outside 0..{total_weight}")]
-    VariationTicket {
-        /// Exact requested identifier.
-        entry_id: u32,
-        /// Unmodified caller-provided ticket.
-        ticket: u64,
-        /// Exclusive bound advertised by the selector.
-        total_weight: u64,
-    },
     /// Authored source volume cannot form a backend gain.
     #[error("sound {entry_id} has invalid authored volume {volume}")]
     InvalidEntryVolume {

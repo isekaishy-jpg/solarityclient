@@ -33,6 +33,7 @@ pub struct SoundEngine<'output> {
     backend: SoundBackend<'output>,
     settings: SoundEngineSettings,
     active_voices: Vec<ActiveVoice>,
+    variation_selectors: Vec<(u32, SoundVariationSelector)>,
 }
 
 impl<'output> SoundEngine<'output> {
@@ -58,6 +59,7 @@ impl<'output> SoundEngine<'output> {
             backend,
             settings,
             active_voices: Vec::with_capacity(usize::from(voice_capacity.get())),
+            variation_selectors: Vec::new(),
         })
     }
 
@@ -99,20 +101,23 @@ impl<'output> SoundEngine<'output> {
         self.catalog.resolve(advanced_entry_id)
     }
 
-    /// Selects and starts one sound from an already bounded variation ticket.
+    /// Selects and starts one sound through its stock shared variation state.
     ///
     /// Disabled global/category policy returns [`SoundPlayback::Suppressed`]
-    /// before selecting a file or reading its payload. No neighboring entry,
-    /// path, codec, or voice is substituted after any failure.
+    /// before consuming a random word, selecting a file, or reading its
+    /// payload. No neighboring entry, path, codec, or voice is substituted
+    /// after any failure.
     ///
     /// # Errors
     ///
-    /// Returns [`SoundEngineError`] for an unknown definition, invalid ticket
-    /// or authored volume, exact asset/decode failure, or backend exhaustion.
+    /// Returns [`SoundEngineError`] for an unknown or unselectable definition,
+    /// invalid authored volume, exact asset/decode failure, or backend
+    /// exhaustion.
     pub fn play(
         &mut self,
         store: &mut AssetStore,
         request: SoundPlayRequest,
+        next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<SoundPlayback, SoundEngineError> {
         self.collect_stopped_voices()?;
         let entry =
@@ -130,18 +135,31 @@ impl<'output> SoundEngine<'output> {
                 volume: entry.volume(),
             });
         }
-        let selector =
-            SoundVariationSelector::new(entry).ok_or(SoundEngineError::NoPlayableVariation {
+        let selector_index = match self
+            .variation_selectors
+            .binary_search_by_key(&entry.id(), |(entry_id, _selector)| *entry_id)
+        {
+            Ok(index) => index,
+            Err(index) => {
+                let selector = SoundVariationSelector::new(entry).ok_or(
+                    SoundEngineError::NoPlayableVariation {
+                        entry_id: entry.id(),
+                    },
+                )?;
+                self.variation_selectors
+                    .insert(index, (entry.id(), selector));
+                index
+            }
+        };
+        let asset_path = self.variation_selectors[selector_index]
+            .1
+            .select(request.variation_mode(), next_random_word)
+            .ok_or(SoundEngineError::NoPlayableVariation {
                 entry_id: entry.id(),
-            })?;
-        let asset = selector.select(request.variation_ticket()).ok_or(
-            SoundEngineError::VariationTicket {
-                entry_id: entry.id(),
-                ticket: request.variation_ticket(),
-                total_weight: selector.total_weight(),
-            },
-        )?;
-        let encoded = self.cache.load(store, asset.path())?;
+            })?
+            .path()
+            .clone();
+        let encoded = self.cache.load(store, &asset_path)?;
         let sound = self.decoder.load(&encoded, request.decode_mode())?;
         let source_gain = entry.volume();
         let voice = self.backend.play(

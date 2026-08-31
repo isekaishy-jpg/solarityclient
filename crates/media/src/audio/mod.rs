@@ -31,7 +31,7 @@ pub use engine::{
     SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain,
     SoundGainError, SoundPlayRequest, SoundPlayback,
 };
-pub use selection::SoundVariationSelector;
+pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{
     LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound, ResolvedSpatialSound,
     SpatialSoundCatalog, SpatialSoundError,

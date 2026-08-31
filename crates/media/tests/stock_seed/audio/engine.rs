@@ -1,5 +1,6 @@
 //! External stock-compatibility tests for SoundEntries-driven orchestration.
 
+use std::cell::Cell;
 use std::error::Error;
 use std::num::NonZeroU16;
 
@@ -7,7 +8,7 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     SoundCategory, SoundCategorySettings, SoundDecodeMode, SoundEngine, SoundEngineError,
     SoundEngineSettings, SoundGain, SoundOutput, SoundOutputTarget, SoundPlayRequest,
-    SoundPlayback,
+    SoundPlayback, SoundVariationMode,
 };
 
 use crate::support::{
@@ -67,9 +68,14 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     let spatial = engine.resolve_spatial_sound(90)?;
     assert_eq!(spatial.advanced_entry().id(), 90);
     assert_eq!(spatial.sound_entry().id(), 42);
-    let request =
-        SoundPlayRequest::new(42, SoundCategory::Sfx, 0, SoundDecodeMode::Predecoded, true);
-    let SoundPlayback::Started(voice) = engine.play(&mut store, request)? else {
+    let request = SoundPlayRequest::new(
+        42,
+        SoundCategory::Sfx,
+        SoundVariationMode::Random,
+        SoundDecodeMode::Predecoded,
+        true,
+    );
+    let SoundPlayback::Started(voice) = engine.play(&mut store, request, &mut || 0)? else {
         return Err("enabled sound was suppressed".into());
     };
     assert_eq!(engine.active_voice_count(), 1);
@@ -155,50 +161,48 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
     let missing = SoundPlayRequest::new(
         999,
         SoundCategory::Sfx,
-        0,
+        SoundVariationMode::Random,
         SoundDecodeMode::Predecoded,
         false,
     );
+    let random_calls = Cell::new(0);
+    let mut next_word = || {
+        random_calls.set(random_calls.get() + 1);
+        u32::MAX
+    };
     assert!(matches!(
-        engine.play(&mut store, missing),
+        engine.play(&mut store, missing, &mut next_word),
         Err(SoundEngineError::MissingEntry { entry_id: 999 })
     ));
+    assert_eq!(random_calls.get(), 0);
 
-    let invalid_ticket = SoundPlayRequest::new(
+    let valid = SoundPlayRequest::new(
         77,
         SoundCategory::Sfx,
-        2,
+        SoundVariationMode::Random,
         SoundDecodeMode::Predecoded,
-        false,
+        true,
     );
     assert_eq!(
-        engine.play(&mut store, invalid_ticket)?,
+        engine.play(&mut store, valid, &mut next_word)?,
         SoundPlayback::Suppressed
     );
+    assert_eq!(random_calls.get(), 0);
     assert_eq!(engine.cached_sound_count(), 0);
     assert_eq!(engine.decoded_sound_count(), 0);
 
     engine.set_settings(settings(true)?)?;
-    assert!(matches!(
-        engine.play(&mut store, invalid_ticket),
-        Err(SoundEngineError::VariationTicket {
-            entry_id: 77,
-            ticket: 2,
-            total_weight: 2,
-        })
-    ));
-    assert_eq!(engine.cached_sound_count(), 0);
-
-    let valid = SoundPlayRequest::new(77, SoundCategory::Sfx, 1, SoundDecodeMode::Predecoded, true);
-    let SoundPlayback::Started(voice) = engine.play(&mut store, valid)? else {
+    let SoundPlayback::Started(voice) = engine.play(&mut store, valid, &mut next_word)? else {
         return Err("enabled sound was suppressed".into());
     };
+    assert_eq!(random_calls.get(), 1);
     assert!(matches!(
-        engine.play(&mut store, valid),
+        engine.play(&mut store, valid, &mut next_word),
         Err(SoundEngineError::Backend(
             solarity_media::SoundBackendError::VoiceCapacity
         ))
     ));
+    assert_eq!(random_calls.get(), 2);
     engine.stop(voice)?;
     Ok(())
 }
