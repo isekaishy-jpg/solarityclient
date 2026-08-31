@@ -6,12 +6,12 @@ use std::num::NonZeroU16;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     SoundBackend, SoundBackendError, SoundCache, SoundDecodeMode, SoundDecoder, SoundOutput,
-    SoundOutputTarget, SoundSpatialPosition, SoundVoiceState,
+    SoundOutputTarget, SoundSpatialPosition, SoundVoicePriority, SoundVoiceState,
 };
 
 use crate::support::{Fixture, FixtureFile, pcm_wav, sdl_test_lock};
 
-/// A configured voice remains owned until it stops; exhaustion never steals it.
+/// Priority chooses the one real voice while both virtual timelines advance.
 #[test]
 fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error>> {
     let samples = [0, 12_000, 0, -12_000].repeat(2_000);
@@ -36,15 +36,21 @@ fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error
     assert_eq!(output.info().sample_rate_hz(), 44_100);
     assert_eq!(output.info().channel_count(), 2);
     let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
-    let mut backend = SoundBackend::new(&output, capacity)?;
-    assert_eq!(backend.voice_capacity(), 1);
+    let virtual_capacity = NonZeroU16::new(2).ok_or("voice capacity is zero")?;
+    let mut backend = SoundBackend::new(&output, capacity, virtual_capacity)?;
+    assert_eq!(backend.software_channel_count(), 1);
+    assert_eq!(backend.voice_capacity(), 2);
 
-    let voice = backend.play(&decoder, sound, 0.5, true)?;
+    let voice = backend
+        .play(&decoder, sound, 0.5, true, SoundVoicePriority::DEFAULT)?
+        .voice();
     assert_eq!(backend.state(voice)?, SoundVoiceState::Playing);
-    assert!(matches!(
-        backend.play(&decoder, sound, 0.5, true),
-        Err(SoundBackendError::VoiceCapacity)
-    ));
+    let more_important = backend
+        .play(&decoder, sound, 0.5, true, SoundVoicePriority::new(100))?
+        .voice();
+    assert_eq!(backend.state(more_important)?, SoundVoiceState::Playing);
+    assert!(backend.is_virtual(voice)?);
+    assert!(!backend.is_virtual(more_important)?);
     backend.pause(voice)?;
     assert_eq!(backend.state(voice)?, SoundVoiceState::Paused);
     backend.resume(voice)?;
@@ -57,6 +63,7 @@ fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error
     assert!(mixed.iter().any(|byte| *byte != 0));
     backend.stop(voice)?;
     assert_eq!(backend.state(voice)?, SoundVoiceState::Stopped);
+    backend.stop(more_important)?;
     Ok(())
 }
 
@@ -81,8 +88,10 @@ fn backend_positions_voice_in_the_listener_frame() -> Result<(), Box<dyn Error>>
     let sound = decoder.load(&encoded, SoundDecodeMode::Predecoded)?;
     let output = SoundOutput::open(SoundOutputTarget::Memory)?;
     let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
-    let mut backend = SoundBackend::new(&output, capacity)?;
-    let voice = backend.play(&decoder, sound, 1.0, true)?;
+    let mut backend = SoundBackend::new(&output, capacity, capacity)?;
+    let voice = backend
+        .play(&decoder, sound, 1.0, true, SoundVoicePriority::DEFAULT)?
+        .voice();
 
     assert!(matches!(
         SoundSpatialPosition::new([f32::NAN, 0.0, 0.0]),
@@ -117,7 +126,7 @@ fn backend_positions_voice_in_the_listener_frame() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// Reusing a stopped slot invalidates the previous generation only.
+/// Hard virtual-pool exhaustion steals the weakest current generation.
 #[test]
 fn reused_voice_rejects_stale_and_foreign_handles() -> Result<(), Box<dyn Error>> {
     let wav = pcm_wav(8_000, &[0, 8_000, 0, -8_000])?;
@@ -138,26 +147,66 @@ fn reused_voice_rejects_stale_and_foreign_handles() -> Result<(), Box<dyn Error>
     let sound = decoder.load(&encoded, SoundDecodeMode::Predecoded)?;
     let output = SoundOutput::open(SoundOutputTarget::Memory)?;
     let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
-    let mut backend = SoundBackend::new(&output, capacity)?;
-    let foreign_backend = SoundBackend::new(&output, capacity)?;
+    let mut backend = SoundBackend::new(&output, capacity, capacity)?;
+    let foreign_backend = SoundBackend::new(&output, capacity, capacity)?;
 
     assert!(matches!(
-        backend.play(&decoder, sound, -0.1, false),
+        backend.play(&decoder, sound, -0.1, false, SoundVoicePriority::DEFAULT),
         Err(SoundBackendError::InvalidGain { .. })
     ));
-    let first = backend.play(&decoder, sound, 1.0, false)?;
+    let first = backend
+        .play(&decoder, sound, 1.0, false, SoundVoicePriority::DEFAULT)?
+        .voice();
     assert!(matches!(
         foreign_backend.state(first),
         Err(SoundBackendError::UnknownVoice)
     ));
-    backend.stop(first)?;
-    let second = backend.play(&decoder, sound, 1.0, false)?;
+    let replacement = backend.play(&decoder, sound, 1.0, false, SoundVoicePriority::new(100))?;
+    assert_eq!(replacement.stolen(), Some(first));
+    let second = replacement.voice();
     assert_ne!(second, first);
     assert!(matches!(
         backend.state(first),
         Err(SoundBackendError::UnknownVoice)
     ));
     backend.stop(second)?;
+    Ok(())
+}
+
+/// Stock promotes a real default-priority one-shot, but not a looping voice.
+#[test]
+fn backend_promotes_only_real_default_priority_one_shots() -> Result<(), Box<dyn Error>> {
+    let wav = pcm_wav(8_000, &vec![8_000; 8_000])?;
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Sound\\Test\\Priority.wav",
+        bytes: &wav,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let encoded =
+        SoundCache::new().load(&mut store, &AssetPath::new("Sound/Test/Priority.wav")?)?;
+    let _sdl_test = sdl_test_lock();
+    let mut decoder = SoundDecoder::new()?;
+    let sound = decoder.load(&encoded, SoundDecodeMode::Predecoded)?;
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let one = NonZeroU16::new(1).ok_or("software channel count is zero")?;
+    let two = NonZeroU16::new(2).ok_or("virtual voice capacity is zero")?;
+    let mut backend = SoundBackend::new(&output, one, two)?;
+
+    let looping = backend
+        .play(&decoder, sound, 1.0, true, SoundVoicePriority::DEFAULT)?
+        .voice();
+    assert_eq!(backend.effective_priority(looping)?, 128);
+    backend.stop(looping)?;
+
+    let one_shot = backend
+        .play(&decoder, sound, 1.0, false, SoundVoicePriority::DEFAULT)?
+        .voice();
+    assert_eq!(backend.effective_priority(one_shot)?, 127);
+    backend.stop(one_shot)?;
     Ok(())
 }
 

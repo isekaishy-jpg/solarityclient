@@ -69,21 +69,37 @@ do not trigger another codec, filesystem search, or extension substitution.
 
 Output and track ownership remain separate at the adapter boundary.
 `SoundOutput` owns one explicitly selected default-device or memory mixer;
-`SoundBackend` borrows that output and preallocates exactly the caller-provided
-track count. `OwnedSoundEngine` contains their self-reference behind one tested
-safe boundary: a stable boxed mixer allocation outlives the engine field and
-Rust's field destruction order drops every track first. Runtime policy passes
-the authoritative `Sound_NumChannels` value, whose build-12340 default is 64.
-Exhaustion is reported instead of allocating another track or stealing an
-active voice without an evidenced priority rule.
+`SoundBackend` borrows that output and preallocates build 12340's hard 512
+virtual voices. `OwnedSoundEngine` contains their self-reference behind one
+tested safe boundary: a stable boxed mixer allocation outlives the engine
+field and Rust's field destruction order drops every track first. Runtime
+policy separately passes the authoritative `Sound_NumChannels` real software
+mix count, whose build-12340 default is 64 and whose executable clamp is
+12 through 128. The CVar is read only during sound initialization; a later
+change has no effect until the next initialization.
+
+SDL has no FMOD-equivalent virtual channel. Every logical voice therefore
+retains a timeline on an SDL track, while voices outside the real software set
+advance at zero adapter gain. FMOD priority buckets select that real set: zero
+is most important, 256 least important, and the untouched signed option word
+`-1` retains FMOD's default 128. Within one bucket the voice with greater
+current audibility remains real. Only exhaustion of the hard 512-voice pool
+reuses the weakest generation and reports that stolen handle to the engine for
+immediate decoder-reference retirement.
+
+The per-frame stock pass also distinguishes default one-shots from loops. A
+non-looping voice whose authored priority word is negative or exactly 128 is
+promoted from 128 to 127 only after FMOD reports it playing and non-virtual.
+Virtual and looping voices do not take this promotion, and positive words above
+256 retain FMOD's default without entering that branch.
 
 Each voice handle carries the backend, slot, and slot generation. Stopping a
 voice permits reuse, and the next generation invalidates the earlier handle.
 Playback accepts finite nonnegative gain without clamping amplification and
 retains explicit one-shot versus infinite-loop behavior. Pause, resume, stop,
 gain changes, memory mixing, and state queries remain backend primitives;
-category buses, spatialization, DSP, fades, and voice priority belong to the
-stock-facing sound-engine layers above this adapter.
+category buses, spatialization, DSP, and fades belong to the stock-facing
+sound-engine layers above this adapter.
 
 `SoundEngine` is the first stock-facing orchestration layer. It owns one joined
 catalog containing the exact `SoundEntries.dbc` and
@@ -188,9 +204,10 @@ same backend track. Whole-world and ADT replacement boundaries stop and destroy
 all earlier instances explicitly.
 
 The runtime composition root opens the default SDL output after Glue CVar
-registration, reads the live master/SFX/music/ambience snapshot, and allocates
-the fixed startup `Sound_NumChannels` pool. A live capacity change requires a
-restart instead of resizing the backend. Resident MCSE records are staged in
+registration, reads the live master/SFX/music/ambience snapshot, allocates the
+fixed 512 logical voices, and applies `Sound_NumChannels` as the startup real
+software count. A live software-count change requires a restart instead of
+rewiring the backend during an active session. Resident MCSE records are staged in
 authored chunk order and updated from the rendered `WorldCameraFrame` and the
 server-anchored `RealmClock`; neither local wall time nor another listener is
 substituted. MCSE payloads use the same recovered extension/size residency rule

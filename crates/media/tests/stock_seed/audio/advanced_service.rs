@@ -3,14 +3,14 @@
 use std::cell::Cell;
 use std::error::Error;
 use std::mem::size_of;
-use std::num::NonZeroU16;
 
 use glam::Vec3;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
     AdvancedSoundServiceError, SoundCategorySettings, SoundEngine, SoundEngineSettings, SoundGain,
-    SoundOutput, SoundOutputTarget, SoundResidencyPolicy, SoundVoiceState,
+    SoundOutput, SoundOutputTarget, SoundResidencyPolicy, SoundSoftwareChannelCount,
+    SoundVoiceState,
 };
 
 use crate::support::{
@@ -40,7 +40,7 @@ fn one_shot_advanced_instance_owns_a_terminal_backend_voice() -> Result<(), Box<
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(2).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(2),
         settings()?,
     )?;
     let listener = listener()?;
@@ -110,7 +110,7 @@ fn continuous_advanced_instance_drives_shared_variation_state() -> Result<(), Bo
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(2).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(2),
         settings()?,
     )?;
     let listener = listener()?;
@@ -171,7 +171,7 @@ fn periodic_advanced_instance_reuses_backend_after_countdown() -> Result<(), Box
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(1),
         settings()?,
     )?;
     let listener = listener()?;
@@ -217,7 +217,7 @@ fn advanced_service_rejects_negative_elapsed_time() -> Result<(), Box<dyn Error>
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(1),
         settings()?,
     )?;
     let mut service = AdvancedSoundService::new();

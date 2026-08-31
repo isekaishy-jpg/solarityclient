@@ -580,13 +580,14 @@ impl ClientServices {
         )
     }
 
-    /// Returns the actual output format and fixed stock track capacity.
-    pub(crate) fn sound_facts(&self) -> (u32, u8, usize) {
+    /// Returns output format, software count, and hard virtual capacity.
+    pub(crate) fn sound_facts(&self) -> (u32, u8, usize, usize) {
         let info = self.sound.output_info();
         (
             info.sample_rate_hz(),
             info.channel_count(),
-            self.sound.voice_capacity(),
+            self.sound.software_channel_count(),
+            self.sound.engine_voice_capacity(),
         )
     }
 

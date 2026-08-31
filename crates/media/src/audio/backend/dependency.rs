@@ -10,7 +10,8 @@ use crate::audio::codec::{DecodedSoundHandle, SoundDecoder};
 
 use super::status::SoundBackendError;
 use super::types::{
-    SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle, SoundVoiceState,
+    SoundBackendPlayback, SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition,
+    SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
 };
 
 const STOCK_OUTPUT_SAMPLE_RATE_HZ: i32 = 44_100;
@@ -20,6 +21,12 @@ const STOCK_OUTPUT_CHANNEL_COUNT: i32 = 2;
 struct VoiceSlot<'output> {
     track: Track<'output>,
     generation: u32,
+    logical_gain: f32,
+    priority_word: i32,
+    priority: u16,
+    looping: bool,
+    admission_sequence: u64,
+    virtualized: bool,
 }
 
 /// Owner of one explicitly selected SDL output mixer.
@@ -107,15 +114,18 @@ impl SoundOutput {
     }
 }
 
-/// Fixed-capacity owner of reusable tracks on one borrowed output.
+/// Fixed-capacity owner of reusable virtual voices on one borrowed output.
 ///
-/// Capacity is always explicit because the stock `Sound_NumChannels` CVar is
-/// the policy authority. The backend never creates an extra voice, steals one,
-/// or changes output target after a failure.
+/// Build 12340 gives FMOD a hard virtual pool independently of the smaller
+/// `Sound_NumChannels` software-mix count. SDL has no matching virtual-voice
+/// facility, so every logical voice retains a track and voices outside the
+/// software set advance silently at zero gain.
 pub struct SoundBackend<'output> {
     backend_id: u64,
     output: &'output SoundOutput,
     voices: Vec<VoiceSlot<'output>>,
+    software_channel_count: usize,
+    next_admission_sequence: u64,
 }
 
 impl<'output> SoundBackend<'output> {
@@ -127,9 +137,17 @@ impl<'output> SoundBackend<'output> {
     /// requested track.
     pub fn new(
         output: &'output SoundOutput,
+        software_channel_count: NonZeroU16,
         voice_capacity: NonZeroU16,
     ) -> Result<Self, SoundBackendError> {
         static NEXT_BACKEND_ID: AtomicU64 = AtomicU64::new(1);
+
+        if software_channel_count > voice_capacity {
+            return Err(SoundBackendError::InvalidChannelLimits {
+                software: software_channel_count.get(),
+                virtual_voices: voice_capacity.get(),
+            });
+        }
 
         let mut voices = Vec::with_capacity(usize::from(voice_capacity.get()));
         for _slot in 0..voice_capacity.get() {
@@ -140,12 +158,20 @@ impl<'output> SoundBackend<'output> {
             voices.push(VoiceSlot {
                 track,
                 generation: 0,
+                logical_gain: 0.0,
+                priority_word: SoundVoicePriority::DEFAULT.value(),
+                priority: SoundVoicePriority::DEFAULT.effective(),
+                looping: false,
+                admission_sequence: 0,
+                virtualized: false,
             });
         }
         Ok(Self {
             backend_id: NEXT_BACKEND_ID.fetch_add(1, Ordering::Relaxed),
             output,
             voices,
+            software_channel_count: usize::from(software_channel_count.get()),
+            next_admission_sequence: 0,
         })
     }
 
@@ -161,7 +187,13 @@ impl<'output> SoundBackend<'output> {
         self.voices.len()
     }
 
-    /// Starts one decoded sound on the first stopped track.
+    /// Returns the `Sound_NumChannels` real software-mix count.
+    #[must_use]
+    pub const fn software_channel_count(&self) -> usize {
+        self.software_channel_count
+    }
+
+    /// Starts one decoded sound on a stopped or weakest virtual slot.
     ///
     /// A gain above one is retained because SDL and stock source-volume policy
     /// both permit amplification. Only negative and non-finite gains are
@@ -170,30 +202,47 @@ impl<'output> SoundBackend<'output> {
     /// # Errors
     ///
     /// Returns [`SoundBackendError`] for a foreign sound, invalid gain,
-    /// exhausted pool, generation overflow, or SDL playback failure.
+    /// identity-capacity exhaustion, or SDL playback failure.
     pub fn play(
         &mut self,
         decoder: &SoundDecoder,
         sound: DecodedSoundHandle,
         gain: f32,
         looping: bool,
-    ) -> Result<SoundVoiceHandle, SoundBackendError> {
+        priority: SoundVoicePriority,
+    ) -> Result<SoundBackendPlayback, SoundBackendError> {
         if !gain.is_finite() || gain < 0.0 {
             return Err(SoundBackendError::InvalidGain { gain });
         }
         let audio = decoder
             .audio(sound)
             .ok_or(SoundBackendError::UnknownSound)?;
-        let (slot_index, slot) = self
+        let stopped_slot = self
             .voices
-            .iter_mut()
-            .enumerate()
-            .find(|(_index, slot)| !slot.track.is_playing() && !slot.track.is_paused())
+            .iter()
+            .position(|slot| !slot.track.is_playing() && !slot.track.is_paused());
+        let slot_index = stopped_slot
+            .or_else(|| self.weakest_voice_index())
             .ok_or(SoundBackendError::VoiceCapacity)?;
+        let stolen = stopped_slot
+            .is_none()
+            .then(|| self.handle_for_slot(slot_index));
+        let admission_sequence = self
+            .next_admission_sequence
+            .checked_add(1)
+            .ok_or(SoundBackendError::AdmissionSequenceCapacity)?;
+        let slot = &mut self.voices[slot_index];
         let generation = slot
             .generation
             .checked_add(1)
             .ok_or(SoundBackendError::GenerationCapacity)?;
+
+        if stolen.is_some() {
+            slot.track
+                .stop(0)
+                .and_then(|()| slot.track.clear_audio())
+                .map_err(|source| SoundBackendError::adapter("replace sound voice", source))?;
+        }
 
         if let Err(source) = slot.track.set_audio(audio) {
             return Err(SoundBackendError::adapter(
@@ -204,18 +253,27 @@ impl<'output> SoundBackend<'output> {
         let result = slot
             .track
             .set_loops(if looping { -1 } else { 0 })
-            .and_then(|()| slot.track.set_gain(gain))
+            .and_then(|()| slot.track.set_gain(0.0))
             .and_then(|()| slot.track.play());
         if let Err(source) = result {
             let _cleanup_result = slot.track.clear_audio();
             return Err(SoundBackendError::adapter("start sound voice", source));
         }
         slot.generation = generation;
-        Ok(SoundVoiceHandle {
+        slot.logical_gain = gain;
+        slot.priority_word = priority.value();
+        slot.priority = priority.effective();
+        slot.looping = looping;
+        slot.admission_sequence = admission_sequence;
+        slot.virtualized = true;
+        self.next_admission_sequence = admission_sequence;
+        let voice = SoundVoiceHandle {
             backend_id: self.backend_id,
             slot: slot_index as u16,
             generation,
-        })
+        };
+        self.rebalance()?;
+        Ok(SoundBackendPlayback { voice, stolen })
     }
 
     /// Returns the current state of one live voice generation.
@@ -235,16 +293,44 @@ impl<'output> SoundBackend<'output> {
         }
     }
 
+    /// Reports whether a playing logical voice is outside the software mix.
+    ///
+    /// This mirrors FMOD Channel::isVirtual. Paused and stopped voices return
+    /// false because neither participates in real-voice ordering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError::UnknownVoice`] for a stale or foreign
+    /// handle.
+    pub fn is_virtual(&self, voice: SoundVoiceHandle) -> Result<bool, SoundBackendError> {
+        let slot = self.voice(voice)?;
+        Ok(slot.track.is_playing() && !slot.track.is_paused() && slot.virtualized)
+    }
+
+    /// Returns the priority currently used for real/virtual ordering.
+    ///
+    /// A default non-looping voice can report 127 after stock's real-voice
+    /// promotion pass; all other requests retain their resolved bucket.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError::UnknownVoice`] for a stale or foreign
+    /// handle.
+    pub fn effective_priority(&self, voice: SoundVoiceHandle) -> Result<u16, SoundBackendError> {
+        Ok(self.voice(voice)?.priority)
+    }
+
     /// Pauses one live voice without changing its playback position.
     ///
     /// # Errors
     ///
     /// Returns [`SoundBackendError`] for a stale handle or SDL failure.
-    pub fn pause(&self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
+    pub fn pause(&mut self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
         self.voice(voice)?
             .track
             .pause()
-            .map_err(|source| SoundBackendError::adapter("pause sound voice", source))
+            .map_err(|source| SoundBackendError::adapter("pause sound voice", source))?;
+        self.rebalance()
     }
 
     /// Resumes one paused live voice.
@@ -252,11 +338,12 @@ impl<'output> SoundBackend<'output> {
     /// # Errors
     ///
     /// Returns [`SoundBackendError`] for a stale handle or SDL failure.
-    pub fn resume(&self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
+    pub fn resume(&mut self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
         self.voice(voice)?
             .track
             .resume()
-            .map_err(|source| SoundBackendError::adapter("resume sound voice", source))
+            .map_err(|source| SoundBackendError::adapter("resume sound voice", source))?;
+        self.rebalance()
     }
 
     /// Changes one live voice's nonnegative gain without clamping it.
@@ -265,14 +352,16 @@ impl<'output> SoundBackend<'output> {
     ///
     /// Returns [`SoundBackendError`] for an invalid gain, stale handle, or SDL
     /// failure.
-    pub fn set_gain(&self, voice: SoundVoiceHandle, gain: f32) -> Result<(), SoundBackendError> {
+    pub fn set_gain(
+        &mut self,
+        voice: SoundVoiceHandle,
+        gain: f32,
+    ) -> Result<(), SoundBackendError> {
         if !gain.is_finite() || gain < 0.0 {
             return Err(SoundBackendError::InvalidGain { gain });
         }
-        self.voice(voice)?
-            .track
-            .set_gain(gain)
-            .map_err(|source| SoundBackendError::adapter("set sound voice gain", source))
+        self.voice_mut(voice)?.logical_gain = gain;
+        self.rebalance()
     }
 
     /// Enables or clears SDL spatial mixing for one live voice.
@@ -347,14 +436,17 @@ impl<'output> SoundBackend<'output> {
     /// # Errors
     ///
     /// Returns [`SoundBackendError`] for a stale handle or SDL failure.
-    pub fn stop(&self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
-        let track = &self.voice(voice)?.track;
-        track
+    pub fn stop(&mut self, voice: SoundVoiceHandle) -> Result<(), SoundBackendError> {
+        let slot = self.voice_mut(voice)?;
+        slot.track
             .stop(0)
             .map_err(|source| SoundBackendError::adapter("stop sound voice", source))?;
-        track
+        slot.track
             .clear_audio()
-            .map_err(|source| SoundBackendError::adapter("release sound voice input", source))
+            .map_err(|source| SoundBackendError::adapter("release sound voice input", source))?;
+        slot.logical_gain = 0.0;
+        slot.virtualized = false;
+        self.rebalance()
     }
 
     /// Pulls mixed bytes from the borrowed output.
@@ -383,6 +475,110 @@ impl<'output> SoundBackend<'output> {
             return Err(SoundBackendError::UnknownVoice);
         }
         Ok(slot)
+    }
+
+    /// Resolves one mutable slot only for its current generation.
+    fn voice_mut(
+        &mut self,
+        voice: SoundVoiceHandle,
+    ) -> Result<&mut VoiceSlot<'output>, SoundBackendError> {
+        if voice.backend_id != self.backend_id {
+            return Err(SoundBackendError::UnknownVoice);
+        }
+        let slot = self
+            .voices
+            .get_mut(usize::from(voice.slot))
+            .ok_or(SoundBackendError::UnknownVoice)?;
+        if slot.generation != voice.generation {
+            return Err(SoundBackendError::UnknownVoice);
+        }
+        Ok(slot)
+    }
+
+    /// Returns the least important active voice at hard-pool exhaustion.
+    fn weakest_voice_index(&self) -> Option<usize> {
+        let mut indices = (0..self.voices.len()).collect::<Vec<_>>();
+        self.sort_real_voice_order(&mut indices);
+        indices.last().copied()
+    }
+
+    /// Applies FMOD's priority buckets and equal-priority audibility ordering.
+    fn rebalance(&mut self) -> Result<(), SoundBackendError> {
+        let mut indices = self
+            .voices
+            .iter()
+            .enumerate()
+            .filter(|(_index, slot)| slot.track.is_playing() && !slot.track.is_paused())
+            .map(|(index, _slot)| index)
+            .collect::<Vec<_>>();
+        self.sort_real_voice_order(&mut indices);
+        let mut real = vec![false; self.voices.len()];
+        for index in indices.into_iter().take(self.software_channel_count) {
+            real[index] = true;
+        }
+        // SoundEngine.cpp promotes only default-priority one-shots that FMOD
+        // already reports as playing and real. Virtual voices remain at 128
+        // until they first enter the real set.
+        for (index, slot) in self.voices.iter_mut().enumerate() {
+            if real[index] && !slot.looping && (slot.priority_word < 0 || slot.priority_word == 128)
+            {
+                slot.priority = 127;
+            }
+        }
+        let mut promoted_indices = self
+            .voices
+            .iter()
+            .enumerate()
+            .filter(|(_index, slot)| slot.track.is_playing() && !slot.track.is_paused())
+            .map(|(index, _slot)| index)
+            .collect::<Vec<_>>();
+        self.sort_real_voice_order(&mut promoted_indices);
+        real.fill(false);
+        for index in promoted_indices
+            .into_iter()
+            .take(self.software_channel_count)
+        {
+            real[index] = true;
+        }
+        for (index, slot) in self.voices.iter_mut().enumerate() {
+            if !slot.track.is_playing() || slot.track.is_paused() {
+                slot.virtualized = false;
+                continue;
+            }
+            slot.virtualized = !real[index];
+            slot.track
+                .set_gain(if real[index] { slot.logical_gain } else { 0.0 })
+                .map_err(|source| {
+                    SoundBackendError::adapter("order virtual sound voices", source)
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Sorts best first: lower priority, then greater current audibility.
+    fn sort_real_voice_order(&self, indices: &mut [usize]) {
+        indices.sort_by(|left, right| {
+            let left_slot = &self.voices[*left];
+            let right_slot = &self.voices[*right];
+            left_slot
+                .priority
+                .cmp(&right_slot.priority)
+                .then_with(|| right_slot.logical_gain.total_cmp(&left_slot.logical_gain))
+                .then_with(|| {
+                    left_slot
+                        .admission_sequence
+                        .cmp(&right_slot.admission_sequence)
+                })
+        });
+    }
+
+    /// Reconstructs the currently exposed generation for one slot.
+    fn handle_for_slot(&self, slot: usize) -> SoundVoiceHandle {
+        SoundVoiceHandle {
+            backend_id: self.backend_id,
+            slot: slot as u16,
+            generation: self.voices[slot].generation,
+        }
     }
 }
 

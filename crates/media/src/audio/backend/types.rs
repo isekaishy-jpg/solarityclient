@@ -61,6 +61,63 @@ pub struct SoundVoiceHandle {
     pub(super) generation: u32,
 }
 
+/// FMOD virtual-voice priority carried by build 12340's play options.
+///
+/// The client initializes this word to `-1`. `SoundEngine.cpp` leaves FMOD's
+/// default priority of 128 in place for negative values and values above 256;
+/// values in `0..=256` are used directly. Lower effective values are more
+/// important.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundVoicePriority(i32);
+
+impl SoundVoicePriority {
+    /// Stock's untouched play-option word.
+    pub const DEFAULT: Self = Self(-1);
+
+    /// Captures the unmodified signed play-option word.
+    #[must_use]
+    pub const fn new(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the unmodified play-option word.
+    #[must_use]
+    pub const fn value(self) -> i32 {
+        self.0
+    }
+
+    /// Resolves the priority FMOD uses for virtual-voice ordering.
+    #[must_use]
+    pub const fn effective(self) -> u16 {
+        if self.0 >= 0 && self.0 <= 256 {
+            self.0 as u16
+        } else {
+            128
+        }
+    }
+}
+
+/// Result of admitting one backend voice, including a hard-pool replacement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundBackendPlayback {
+    pub(super) voice: SoundVoiceHandle,
+    pub(super) stolen: Option<SoundVoiceHandle>,
+}
+
+impl SoundBackendPlayback {
+    /// Returns the newly admitted voice generation.
+    #[must_use]
+    pub const fn voice(self) -> SoundVoiceHandle {
+        self.voice
+    }
+
+    /// Returns the generation replaced at the hard virtual-voice limit.
+    #[must_use]
+    pub const fn stolen(self) -> Option<SoundVoiceHandle> {
+        self.stolen
+    }
+}
+
 /// Listener-relative position accepted by the SDL spatialization boundary.
 ///
 /// The dependency uses a right-handed listener frame: positive X is right,

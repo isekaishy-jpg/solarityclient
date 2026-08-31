@@ -2,14 +2,13 @@
 
 #![allow(unsafe_code)]
 
-use std::num::NonZeroU16;
 use std::ops::{Deref, DerefMut};
 
 use solarity_asset::AssetStore;
 
 use crate::audio::backend::{SoundOutput, SoundOutputTarget};
 
-use super::{SoundEngine, SoundEngineError, SoundEngineSettings};
+use super::{SoundEngine, SoundEngineError, SoundEngineSettings, SoundSoftwareChannelCount};
 
 /// Movable owner of one output allocation and every track borrowing it.
 ///
@@ -31,7 +30,7 @@ impl OwnedSoundEngine {
     pub fn load(
         store: &mut AssetStore,
         target: SoundOutputTarget,
-        voice_capacity: NonZeroU16,
+        software_channel_count: SoundSoftwareChannelCount,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
         let output = Box::new(SoundOutput::open(target)?);
@@ -42,7 +41,7 @@ impl OwnedSoundEngine {
         // reference carrying this artificial lifetime can be moved out of the
         // private engine field.
         let output_reference = unsafe { &*output_pointer };
-        let engine = SoundEngine::load(store, output_reference, voice_capacity, settings)?;
+        let engine = SoundEngine::load(store, output_reference, software_channel_count, settings)?;
         Ok(Self {
             engine,
             _output: output,

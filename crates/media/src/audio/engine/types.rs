@@ -1,10 +1,34 @@
 //! Dependency-neutral sound-engine policy and request vocabulary.
 
-use crate::audio::backend::SoundVoiceHandle;
+use crate::audio::backend::{SoundVoiceHandle, SoundVoicePriority};
 use crate::audio::selection::SoundVariationMode;
 
 use super::status::{SoundChannelError, SoundGainError};
 use super::{AdvancedSoundInstanceId, SoundConcurrencyMode, SoundLoopMode, SoundResidencyPolicy};
+
+/// Real FMOD software-channel count selected during sound initialization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundSoftwareChannelCount(u16);
+
+impl SoundSoftwareChannelCount {
+    /// Applies build 12340's signed `12..=128` initialization clamp.
+    #[must_use]
+    pub const fn new(configured: i32) -> Self {
+        if configured < 12 {
+            Self(12)
+        } else if configured > 128 {
+            Self(128)
+        } else {
+            Self(configured as u16)
+        }
+    }
+
+    /// Returns the clamped real software-mix count.
+    #[must_use]
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+}
 
 /// Stock volume-control category selected by the calling subsystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -214,6 +238,7 @@ pub struct SoundPlayRequest {
     variation_mode: SoundVariationMode,
     loop_mode: SoundLoopMode,
     concurrency_mode: SoundConcurrencyMode,
+    priority: SoundVoicePriority,
     advanced_source: Option<AdvancedSoundInstanceId>,
 }
 
@@ -233,6 +258,7 @@ impl SoundPlayRequest {
             variation_mode,
             loop_mode,
             concurrency_mode,
+            priority: SoundVoicePriority::DEFAULT,
             advanced_source: None,
         }
     }
@@ -252,8 +278,16 @@ impl SoundPlayRequest {
             variation_mode,
             loop_mode,
             concurrency_mode,
+            priority: SoundVoicePriority::DEFAULT,
             advanced_source: Some(advanced_source),
         }
+    }
+
+    /// Replaces the stock default play-option priority word.
+    #[must_use]
+    pub const fn with_priority(mut self, priority: SoundVoicePriority) -> Self {
+        self.priority = priority;
+        self
     }
 
     /// Returns the exact `SoundEntries.dbc` identifier.
@@ -284,6 +318,12 @@ impl SoundPlayRequest {
     #[must_use]
     pub const fn concurrency_mode(self) -> SoundConcurrencyMode {
         self.concurrency_mode
+    }
+
+    /// Returns the exact signed priority word from the play options.
+    #[must_use]
+    pub const fn priority(self) -> SoundVoicePriority {
+        self.priority
     }
 
     /// Returns the advanced instance excluded from its own duck influence.

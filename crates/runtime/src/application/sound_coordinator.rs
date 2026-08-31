@@ -1,6 +1,5 @@
 //! Main-thread sound output, live CVar policy, and terrain-emitter ownership.
 
-use std::num::NonZeroU16;
 use std::time::Instant;
 
 use glam::Vec3;
@@ -9,6 +8,7 @@ use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
     AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundEngineError,
     SoundEngineSettings, SoundGain, SoundOutputInfo, SoundOutputTarget, SoundResidencyPolicy,
+    SoundSoftwareChannelCount,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_ui::GlueManager;
@@ -16,9 +16,6 @@ use thiserror::Error;
 
 use crate::random::BlizzardRand;
 use crate::time::RealmClock;
-
-const MINIMUM_STOCK_CHANNELS: u16 = 32;
-const MAXIMUM_STOCK_CHANNELS: u16 = 64;
 
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
@@ -45,8 +42,8 @@ pub enum RuntimeSoundError {
         /// Unmodified live text.
         value: String,
     },
-    /// `Sound_NumChannels` is outside its registered build-12340 range.
-    #[error("Sound_NumChannels must be an integer in 32..=64, got {value:?}")]
+    /// `Sound_NumChannels` is not a signed integer that stock can clamp.
+    #[error("Sound_NumChannels must be a signed integer, got {value:?}")]
     InvalidVoiceCapacity {
         /// Unmodified live text.
         value: String,
@@ -62,16 +59,6 @@ pub enum RuntimeSoundError {
     InvalidMaximumCacheSize {
         /// Unmodified live text.
         value: String,
-    },
-    /// A valid channel count changed after the fixed backend pool was created.
-    #[error(
-        "Sound_NumChannels changed from allocated {allocated} to {configured}; restart is required"
-    )]
-    VoiceCapacityRestartRequired {
-        /// Current live CVar value.
-        configured: u16,
-        /// Track count retained by the active backend.
-        allocated: usize,
     },
     /// A main-loop pause exceeded the signed sound-engine tick representation.
     #[error("sound update elapsed time exceeds signed milliseconds")]
@@ -102,10 +89,11 @@ impl RuntimeSoundCoordinator {
         target: SoundOutputTarget,
     ) -> Result<Self, RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
+        let software_channel_count = software_channel_count(glue)?;
         let engine = OwnedSoundEngine::load(
             &mut assets.borrow_mut(),
             target,
-            policy.voice_capacity,
+            software_channel_count,
             policy.settings,
         )?;
         Ok(Self {
@@ -124,9 +112,15 @@ impl RuntimeSoundCoordinator {
         self.engine.output_info()
     }
 
-    /// Returns the exact track pool allocated from `Sound_NumChannels`.
+    /// Returns the exact real software-mix count from `Sound_NumChannels`.
     #[must_use]
-    pub(crate) fn voice_capacity(&self) -> usize {
+    pub(crate) fn software_channel_count(&self) -> usize {
+        self.engine.software_channel_count()
+    }
+
+    /// Returns build 12340's fixed logical FMOD voice pool.
+    #[must_use]
+    pub(crate) fn engine_voice_capacity(&self) -> usize {
         self.engine.voice_capacity()
     }
 
@@ -166,14 +160,6 @@ impl RuntimeSoundCoordinator {
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
-        // Stock requires restart to resize Sound_NumChannels. Live changes do
-        // not silently allocate or discard tracks inside the current engine.
-        if usize::from(policy.voice_capacity.get()) != self.engine.voice_capacity() {
-            return Err(RuntimeSoundError::VoiceCapacityRestartRequired {
-                configured: policy.voice_capacity.get(),
-                allocated: self.engine.voice_capacity(),
-            });
-        }
         self.engine.set_settings(policy.settings)?;
 
         let listener = AdvancedSoundListener::from_world_camera(camera);
@@ -232,21 +218,11 @@ impl From<solarity_asset::TerrainSoundEmitter> for StagedTerrainEmitter {
 
 /// One complete live CVar snapshot applied atomically to the engine.
 struct SoundPolicy {
-    voice_capacity: NonZeroU16,
     settings: SoundEngineSettings,
 }
 
 impl SoundPolicy {
     fn read(glue: &GlueManager) -> Result<Self, RuntimeSoundError> {
-        let voice_capacity_text = cvar(glue, "Sound_NumChannels")?;
-        let voice_capacity = voice_capacity_text
-            .parse::<u16>()
-            .ok()
-            .filter(|value| (MINIMUM_STOCK_CHANNELS..=MAXIMUM_STOCK_CHANNELS).contains(value))
-            .and_then(NonZeroU16::new)
-            .ok_or_else(|| RuntimeSoundError::InvalidVoiceCapacity {
-                value: voice_capacity_text.clone(),
-            })?;
         let maximum_cacheable_size_text = cvar(glue, "Sound_MaxCacheableSizeInBytes")?;
         // The stock CVar is a signed integer, but SoundEngine.cpp reads its raw
         // 32-bit word and then applies an unsigned two-megabyte ceiling.
@@ -264,7 +240,6 @@ impl SoundPolicy {
                 value: maximum_cache_size_text,
             })?;
         Ok(Self {
-            voice_capacity,
             settings: SoundEngineSettings::new(
                 boolean(glue, "Sound_EnableAllSound")?,
                 gain(glue, "Sound_MasterVolume")?,
@@ -287,6 +262,19 @@ impl SoundPolicy {
             ),
         })
     }
+}
+
+/// Applies the signed initialization clamp recovered from SoundEngine.cpp.
+fn software_channel_count(
+    glue: &GlueManager,
+) -> Result<SoundSoftwareChannelCount, RuntimeSoundError> {
+    let text = cvar(glue, "Sound_NumChannels")?;
+    let configured =
+        text.parse::<i32>()
+            .map_err(|_source| RuntimeSoundError::InvalidVoiceCapacity {
+                value: text.clone(),
+            })?;
+    Ok(SoundSoftwareChannelCount::new(configured))
 }
 
 fn cvar(glue: &GlueManager, name: &'static str) -> Result<String, RuntimeSoundError> {

@@ -102,7 +102,8 @@ pub struct StartupReport {
     pixel_window_extent: (u32, u32),
     sound_sample_rate_hz: u32,
     sound_output_channels: u8,
-    sound_voice_capacity: usize,
+    sound_software_channel_count: usize,
+    sound_virtual_voice_capacity: usize,
     glue: GlueStartupReport,
 }
 
@@ -161,10 +162,16 @@ impl StartupReport {
         self.sound_output_channels
     }
 
-    /// Returns the fixed track count from startup `Sound_NumChannels`.
+    /// Returns the real software-mix count from startup `Sound_NumChannels`.
     #[must_use]
-    pub const fn sound_voice_capacity(self) -> usize {
-        self.sound_voice_capacity
+    pub const fn sound_software_channel_count(self) -> usize {
+        self.sound_software_channel_count
+    }
+
+    /// Returns build 12340's hard FMOD virtual-voice capacity.
+    #[must_use]
+    pub const fn sound_virtual_voice_capacity(self) -> usize {
+        self.sound_virtual_voice_capacity
     }
 
     /// Returns facts proving the stock built-in login UI executed.
@@ -192,8 +199,12 @@ impl ClientApplication {
         let network_worker_count = configuration.network_workers().get();
         let (services, archive_count, addon_count) = ClientServices::start(&configuration)?;
         let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
-        let (sound_sample_rate_hz, sound_output_channels, sound_voice_capacity) =
-            services.sound_facts();
+        let (
+            sound_sample_rate_hz,
+            sound_output_channels,
+            sound_software_channel_count,
+            sound_virtual_voice_capacity,
+        ) = services.sound_facts();
         let glue = services.glue_report();
 
         Ok(Self {
@@ -208,7 +219,8 @@ impl ClientApplication {
                 pixel_window_extent,
                 sound_sample_rate_hz,
                 sound_output_channels,
-                sound_voice_capacity,
+                sound_software_channel_count,
+                sound_virtual_voice_capacity,
                 glue,
             },
         })

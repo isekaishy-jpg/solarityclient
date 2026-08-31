@@ -16,8 +16,12 @@ use crate::audio::spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSo
 use super::status::SoundEngineError;
 use super::types::{
     SoundCategory, SoundChannel, SoundEngineSettings, SoundPlayRequest, SoundPlayback,
+    SoundSoftwareChannelCount,
 };
 use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
+
+/// Hard `maxchannels` argument passed to FMOD System::init by build 12340.
+const STOCK_VIRTUAL_VOICE_CAPACITY: u16 = 512;
 
 /// Policy retained for one voice while live CVar settings can change.
 #[derive(Clone, Copy, Debug)]
@@ -46,7 +50,7 @@ pub struct SoundEngine<'output> {
 }
 
 impl<'output> SoundEngine<'output> {
-    /// Loads the stock sound catalog and allocates the explicit backend pool.
+    /// Loads the stock sound catalog and allocates the exact virtual pool.
     ///
     /// # Errors
     ///
@@ -55,19 +59,25 @@ impl<'output> SoundEngine<'output> {
     pub fn load(
         store: &mut AssetStore,
         output: &'output SoundOutput,
-        voice_capacity: NonZeroU16,
+        software_channel_count: SoundSoftwareChannelCount,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
         let catalog = SpatialSoundCatalog::load(store)?;
         let decoder = SoundDecoder::new()?;
-        let backend = SoundBackend::new(output, voice_capacity)?;
+        let Some(virtual_voice_capacity) = NonZeroU16::new(STOCK_VIRTUAL_VOICE_CAPACITY) else {
+            return Err(SoundBackendError::VoiceCapacity.into());
+        };
+        let Some(software_channel_count) = NonZeroU16::new(software_channel_count.value()) else {
+            return Err(SoundBackendError::VoiceCapacity.into());
+        };
+        let backend = SoundBackend::new(output, software_channel_count, virtual_voice_capacity)?;
         Ok(Self {
             catalog,
             cache: SoundCache::new(),
             backend,
             decoder,
             settings,
-            active_voices: Vec::with_capacity(usize::from(voice_capacity.get())),
+            active_voices: Vec::with_capacity(usize::from(STOCK_VIRTUAL_VOICE_CAPACITY)),
             variation_selectors: Vec::new(),
         })
     }
@@ -84,10 +94,16 @@ impl<'output> SoundEngine<'output> {
         self.backend.output_info()
     }
 
-    /// Returns the exact preallocated `Sound_NumChannels` track count.
+    /// Returns the executable's hard maximum number of virtual voices.
     #[must_use]
     pub fn voice_capacity(&self) -> usize {
         self.backend.voice_capacity()
+    }
+
+    /// Returns the real software-mix count sourced from `Sound_NumChannels`.
+    #[must_use]
+    pub const fn software_channel_count(&self) -> usize {
+        self.backend.software_channel_count()
     }
 
     /// Returns the number of voices that have not yet been collected.
@@ -218,18 +234,29 @@ impl<'output> SoundEngine<'output> {
             .decode_mode(encoded.path(), encoded.bytes().len());
         let sound = self.decoder.load(&encoded, decode_mode)?;
         let source_gain = entry.volume();
-        let voice = match self.backend.play(
+        let playback = match self.backend.play(
             &self.decoder,
             sound,
             category_gain * source_gain,
             request.loop_mode().is_looping(entry.flags()),
+            request.priority(),
         ) {
-            Ok(voice) => voice,
+            Ok(playback) => playback,
             Err(error) => {
                 self.decoder.release(sound);
                 return Err(error.into());
             }
         };
+        if let Some(stolen) = playback.stolen()
+            && let Some(index) = self
+                .active_voices
+                .iter()
+                .position(|voice| voice.handle == stolen)
+        {
+            let stolen_voice = self.active_voices.remove(index);
+            self.decoder.release(stolen_voice.sound);
+        }
+        let voice = playback.voice();
         self.active_voices.push(ActiveVoice {
             handle: voice,
             sound,

@@ -17,8 +17,8 @@ mod spatial;
 mod types;
 
 pub use backend::{
-    SoundBackend, SoundBackendError, SoundOutput, SoundOutputInfo, SoundOutputTarget,
-    SoundSpatialPosition, SoundVoiceHandle, SoundVoiceState,
+    SoundBackend, SoundBackendError, SoundBackendPlayback, SoundOutput, SoundOutputInfo,
+    SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
 };
 pub use cache::{EncodedSound, SoundCache};
 pub use codec::{
@@ -32,7 +32,7 @@ pub use engine::{
     AdvancedSoundUsage, AdvancedSoundUsageError, OwnedSoundEngine, SoundCategory,
     SoundCategorySettings, SoundChannel, SoundChannelError, SoundConcurrencyMode, SoundEngine,
     SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundLoopMode,
-    SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
+    SoundPlayRequest, SoundPlayback, SoundResidencyPolicy, SoundSoftwareChannelCount,
 };
 pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{

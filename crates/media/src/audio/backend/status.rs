@@ -27,9 +27,19 @@ pub enum SoundBackendError {
     /// A voice handle is stale or belongs to another backend.
     #[error("sound voice handle is stale or belongs to another backend")]
     UnknownVoice,
-    /// Every explicitly configured track is still playing or paused.
+    /// No reusable logical voice slot exists in the backend pool.
     #[error("configured sound voice capacity is exhausted")]
     VoiceCapacity,
+    /// The requested real software count exceeded the virtual pool.
+    #[error(
+        "sound software channel count {software} exceeds virtual voice capacity {virtual_voices}"
+    )]
+    InvalidChannelLimits {
+        /// Requested real software-mix channels.
+        software: u16,
+        /// Requested logical virtual voices.
+        virtual_voices: u16,
+    },
     /// A requested gain was negative or non-finite.
     #[error("sound voice gain must be finite and nonnegative, got {gain}")]
     InvalidGain {
@@ -51,6 +61,9 @@ pub enum SoundBackendError {
     /// A slot has been reused more times than its stable handle can encode.
     #[error("sound voice generation capacity is exhausted")]
     GenerationCapacity,
+    /// Admission ordering exceeded its stable monotonic representation.
+    #[error("sound voice admission sequence capacity is exhausted")]
+    AdmissionSequenceCapacity,
     /// Memory generation was requested from a device output.
     #[error("sound output is not a memory target")]
     NotMemoryOutput,

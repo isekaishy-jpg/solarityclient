@@ -30,5 +30,5 @@ pub use sound_interface2_internal::{SoundConcurrencyMode, SoundLoopMode, SoundRe
 pub use status::{SoundChannelError, SoundEngineError, SoundGainError};
 pub use types::{
     SoundCategory, SoundCategorySettings, SoundChannel, SoundEngineSettings, SoundGain,
-    SoundPlayRequest, SoundPlayback,
+    SoundPlayRequest, SoundPlayback, SoundSoftwareChannelCount,
 };

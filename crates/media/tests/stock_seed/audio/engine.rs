@@ -2,14 +2,13 @@
 
 use std::cell::Cell;
 use std::error::Error;
-use std::num::NonZeroU16;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
     OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundChannel, SoundConcurrencyMode,
     SoundDecodeMode, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode,
     SoundOutput, SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
-    SoundVariationMode,
+    SoundSoftwareChannelCount, SoundVariationMode,
 };
 
 use crate::support::{
@@ -71,6 +70,31 @@ fn stock_sound_loop_mode_uses_entry_flag_or_exact_override() {
     assert!(!SoundLoopMode::Once.is_looping(0x200));
 }
 
+/// SoundInterface2's signed option word maps to FMOD's priority bucket.
+#[test]
+fn stock_sound_priority_preserves_default_and_explicit_buckets() {
+    use solarity_media::SoundVoicePriority;
+
+    assert_eq!(SoundVoicePriority::DEFAULT.value(), -1);
+    assert_eq!(SoundVoicePriority::DEFAULT.effective(), 128);
+    assert_eq!(SoundVoicePriority::new(0).effective(), 0);
+    assert_eq!(SoundVoicePriority::new(110).effective(), 110);
+    assert_eq!(SoundVoicePriority::new(256).effective(), 256);
+    assert_eq!(SoundVoicePriority::new(-2).effective(), 128);
+    assert_eq!(SoundVoicePriority::new(257).effective(), 128);
+}
+
+/// SoundEngine.cpp clamps the signed real-channel CVar only at initialization.
+#[test]
+fn stock_software_channel_count_uses_executable_clamp() {
+    assert_eq!(SoundSoftwareChannelCount::new(i32::MIN).value(), 12);
+    assert_eq!(SoundSoftwareChannelCount::new(11).value(), 12);
+    assert_eq!(SoundSoftwareChannelCount::new(64).value(), 64);
+    assert_eq!(SoundSoftwareChannelCount::new(128).value(), 128);
+    assert_eq!(SoundSoftwareChannelCount::new(129).value(), 128);
+    assert_eq!(SoundSoftwareChannelCount::new(i32::MAX).value(), 128);
+}
+
 /// Every streamed play owns one decoder object and retires it with its voice.
 #[test]
 fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>> {
@@ -103,7 +127,7 @@ fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>>
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(1),
         settings_with_residency(true, 0)?,
     )?;
     let request = SoundPlayRequest::new(
@@ -118,13 +142,11 @@ fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>>
         return Err("enabled stream was suppressed".into());
     };
     assert_eq!(engine.decoded_sound_count(), 1);
-    assert!(matches!(
-        engine.play(&mut store, request, &mut || 0),
-        Err(SoundEngineError::Backend(
-            solarity_media::SoundBackendError::VoiceCapacity
-        ))
-    ));
-    assert_eq!(engine.decoded_sound_count(), 1);
+    let SoundPlayback::Started(second_voice) = engine.play(&mut store, request, &mut || 0)? else {
+        return Err("second enabled stream was suppressed".into());
+    };
+    assert_eq!(engine.decoded_sound_count(), 2);
+    engine.stop(second_voice)?;
     engine.stop(voice)?;
     assert_eq!(engine.decoded_sound_count(), 0);
 
@@ -172,7 +194,7 @@ fn owned_engine_contains_the_track_to_mixer_lifetime() -> Result<(), Box<dyn Err
     let engine = OwnedSoundEngine::load(
         &mut store,
         SoundOutputTarget::Memory,
-        NonZeroU16::new(1).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(1),
         settings(true)?,
     )?;
     assert_eq!(engine.active_voice_count(), 0);
@@ -282,7 +304,7 @@ fn engine_enforces_stock_channel_caps_and_exclusivity() -> Result<(), Box<dyn Er
     let mut engine = SoundEngine::load(
         &mut store,
         &output,
-        NonZeroU16::new(2).ok_or("voice capacity is zero")?,
+        SoundSoftwareChannelCount::new(2),
         settings(true)?,
     )?;
     let capped = SoundPlayRequest::new(
@@ -369,7 +391,7 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
 
     let _sdl_test = sdl_test_lock();
     let output = SoundOutput::open(SoundOutputTarget::Memory)?;
-    let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
+    let capacity = SoundSoftwareChannelCount::new(1);
     let enabled = settings(true)?;
     let mut engine = SoundEngine::load(&mut store, &output, capacity, enabled)?;
     let spatial = engine.resolve_spatial_sound(90)?;
@@ -463,7 +485,7 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
 
     let _sdl_test = sdl_test_lock();
     let output = SoundOutput::open(SoundOutputTarget::Memory)?;
-    let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
+    let capacity = SoundSoftwareChannelCount::new(1);
     let mut engine = SoundEngine::load(&mut store, &output, capacity, settings(false)?)?;
     let missing = SoundPlayRequest::new(
         999,
@@ -503,13 +525,12 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
         return Err("enabled sound was suppressed".into());
     };
     assert_eq!(random_calls.get(), 0);
-    assert!(matches!(
-        engine.play(&mut store, valid, &mut next_word),
-        Err(SoundEngineError::Backend(
-            solarity_media::SoundBackendError::VoiceCapacity
-        ))
-    ));
+    let SoundPlayback::Started(second_voice) = engine.play(&mut store, valid, &mut next_word)?
+    else {
+        return Err("second enabled sound was suppressed".into());
+    };
     assert_eq!(random_calls.get(), 0);
+    engine.stop(second_voice)?;
     engine.stop(voice)?;
     Ok(())
 }
