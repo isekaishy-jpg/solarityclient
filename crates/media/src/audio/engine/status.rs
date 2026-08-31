@@ -14,6 +14,22 @@ pub struct SoundGainError {
     pub(super) value: f32,
 }
 
+/// Invalid advanced-sound volume-slider category.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("unsupported sound volume-slider category {value}")]
+pub struct SoundCategoryError {
+    /// Unmodified DBC category word.
+    pub(super) value: u32,
+}
+
+impl SoundCategoryError {
+    /// Returns the unrecognized DBC word.
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        self.value
+    }
+}
+
 /// Failure while selecting, admitting, or controlling a stock sound.
 #[derive(Debug, Error)]
 pub enum SoundEngineError {

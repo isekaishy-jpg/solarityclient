@@ -19,7 +19,7 @@ pub use sound_interface2_advanced_kit_properties::AdvancedSoundProperties;
 pub use sound_interface2_advanced_kit_spatial::{
     AdvancedSoundListener, AdvancedSoundSpatialError, AdvancedSoundSpatialMix,
 };
-pub use status::{SoundEngineError, SoundGainError};
+pub use status::{SoundCategoryError, SoundEngineError, SoundGainError};
 pub use types::{
     SoundCategory, SoundCategorySettings, SoundEngineSettings, SoundGain, SoundPlayRequest,
     SoundPlayback,

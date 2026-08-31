@@ -112,6 +112,7 @@ fn category_gain_uses_stock_minimum_and_self_exclusion() -> Result<(), Box<dyn E
 
     assert_eq!(ducking.category_gain(SoundCategory::Sfx, None), 0.1);
     assert_eq!(ducking.category_gain(SoundCategory::Sfx, Some(second)), 0.2);
+    assert_eq!(ducking.category_gain(SoundCategory::Cinematic, None), 1.0);
     assert_eq!(
         ducking.category_gain(SoundCategory::Music, Some(first)),
         0.8

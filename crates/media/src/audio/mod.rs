@@ -28,8 +28,8 @@ pub use engine::{
     AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
     AdvancedSoundListener, AdvancedSoundProperties, AdvancedSoundSpatialError,
     AdvancedSoundSpatialMix, AdvancedSoundUsage, AdvancedSoundUsageError, SoundCategory,
-    SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain,
-    SoundGainError, SoundPlayRequest, SoundPlayback,
+    SoundCategoryError, SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings,
+    SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
 };
 pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{

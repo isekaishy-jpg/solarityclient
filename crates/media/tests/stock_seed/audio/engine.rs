@@ -26,6 +26,45 @@ fn stock_sound_gain_rejects_values_outside_cvar_range() {
     assert!(SoundGain::new(f32::NAN).is_err());
 }
 
+/// Advanced slider words map through the executable's eighteen channel names.
+#[test]
+fn advanced_volume_slider_categories_use_stock_channel_mapping() {
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(0),
+        Ok(SoundCategory::Sfx)
+    );
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(5),
+        Ok(SoundCategory::Music)
+    );
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(2),
+        Ok(SoundCategory::Ambience)
+    );
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(3),
+        Ok(SoundCategory::Cinematic)
+    );
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(4),
+        Ok(SoundCategory::ScriptSound)
+    );
+    assert_eq!(
+        SoundCategory::from_volume_slider_category(6),
+        Ok(SoundCategory::RacialCinematic)
+    );
+    for category in 7..=17 {
+        assert_eq!(
+            SoundCategory::from_volume_slider_category(category),
+            Ok(SoundCategory::Sfx)
+        );
+    }
+    let Err(error) = SoundCategory::from_volume_slider_category(18) else {
+        panic!("out-of-table category was accepted");
+    };
+    assert_eq!(error.value(), 18);
+}
+
 /// Live category policy mutes and restores a voice without restarting it.
 #[test]
 fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Error>> {

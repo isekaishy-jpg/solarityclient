@@ -117,7 +117,9 @@ impl AdvancedSoundDucking {
         category: SoundCategory,
         excluded_source: Option<AdvancedSoundInstanceId>,
     ) -> f32 {
-        let category_index = category_index(category);
+        let Some(category_index) = category_index(category) else {
+            return 1.0;
+        };
         self.influences
             .iter()
             .filter(|influence| influence.source != excluded_source || influence.source.is_none())
@@ -235,11 +237,14 @@ fn recover_gain(current: &mut f32, elapsed_milliseconds: i32, duration: i32) {
 }
 
 /// Maps stock category discriminators to the node's SFX/music/ambience order.
-const fn category_index(category: SoundCategory) -> usize {
+const fn category_index(category: SoundCategory) -> Option<usize> {
     match category {
-        SoundCategory::Sfx => 0,
-        SoundCategory::Music => 1,
-        SoundCategory::Ambience => 2,
+        SoundCategory::Sfx => Some(0),
+        SoundCategory::Music => Some(1),
+        SoundCategory::Ambience => Some(2),
+        SoundCategory::Cinematic | SoundCategory::ScriptSound | SoundCategory::RacialCinematic => {
+            None
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use crate::audio::backend::SoundVoiceHandle;
 use crate::audio::codec::SoundDecodeMode;
 use crate::audio::selection::SoundVariationMode;
 
-use super::status::SoundGainError;
+use super::status::{SoundCategoryError, SoundGainError};
 
 /// Stock volume-control category selected by the calling subsystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,6 +15,32 @@ pub enum SoundCategory {
     Music,
     /// Glue, zone, and positioned environment ambience.
     Ambience,
+    /// Cinematic playback controlled by master policy only.
+    Cinematic,
+    /// Script-sound playback controlled by master policy only.
+    ScriptSound,
+    /// Racial cinematic playback controlled by master policy only.
+    RacialCinematic,
+}
+
+impl SoundCategory {
+    /// Interprets `SoundEntriesAdvanced.dbc::VolumeSliderCategory` exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundCategoryError`] for words outside the executable's
+    /// eighteen-entry channel table.
+    pub fn from_volume_slider_category(value: u32) -> Result<Self, SoundCategoryError> {
+        match value {
+            0 | 7..=17 => Ok(Self::Sfx),
+            1 | 5 => Ok(Self::Music),
+            2 => Ok(Self::Ambience),
+            3 => Ok(Self::Cinematic),
+            4 => Ok(Self::ScriptSound),
+            6 => Ok(Self::RacialCinematic),
+            value => Err(SoundCategoryError { value }),
+        }
+    }
 }
 
 /// Validated stock CVar gain in the inclusive zero-to-one range.
@@ -118,6 +144,9 @@ impl SoundEngineSettings {
             SoundCategory::Sfx => self.sfx,
             SoundCategory::Music => self.music,
             SoundCategory::Ambience => self.ambience,
+            SoundCategory::Cinematic
+            | SoundCategory::ScriptSound
+            | SoundCategory::RacialCinematic => SoundCategorySettings::new(true, SoundGain(1.0)),
         }
     }
 
