@@ -127,3 +127,18 @@ buffer. Particle simulation must own mutable instances per model placement;
 the decoded declarations, BLP sources, and GPU resources remain shared. HD
 patches follow the same MPQ precedence and virtual asset paths, so larger
 payloads do not create another record type or resource identity.
+
+Rendering now samples the eleven emitter-time tracks through the selected M2
+and global clocks, while each particle's five lifetime ramps use independent
+normalized `u16` time. Continuous color, alpha, and scale ramps interpolate;
+integer head/tail flipbook cells remain held. Admission rejects unordered
+lifetime timestamps instead of making the interval search order-dependent.
+
+Each placed simulation owns the exact table-driven `CParticleEmitter` random
+stream seeded from the composition root's two Visual C++ `rand()` results. The
+bounded planar path retains stock's fractional emission remainder, randomized
+in-frame age, signed lifetime word, swap-removal, half-step gravity, clamped
+linear drag, and executable epsilon snap. Model-space particles retain local
+coordinates; ordinary particles receive their emitter matrix. Recovered but
+not-yet-implemented sphere, spline, collision, inherited-velocity, and follow
+paths return typed errors rather than falling through to planar behavior.

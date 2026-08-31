@@ -18,11 +18,12 @@ use solarity_rendering::{
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticlePose, M2PixelShader, M2RibbonControlPoint,
-    M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail,
-    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
-    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldFrameScene, WorldModelSceneUniform,
+    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleSimulation, M2PixelShader,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
+    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
+    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
+    M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError,
+    WorldFrameScene, WorldModelSceneUniform,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -555,6 +556,66 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     assert_eq!(
         M2ParticleLifetimePose::sample(emitter, f32::NAN),
         Err(M2ParticleLifetimePoseError::NonFiniteAge)
+    );
+    Ok(())
+}
+
+/// Planar emission owns a bounded placement-local stream and live-particle set.
+#[test]
+fn m2_planar_particle_simulation_preserves_stock_capacity() -> Result<(), Box<dyn Error>> {
+    let bytes = render_m2_bytes("Particle.blp", 1)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticleSimulation.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\ParticleSimulation00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\ParticleSimulation.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823, 3);
+    let report = simulation.advance_planar(
+        emitter,
+        pose,
+        0.2,
+        Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0)),
+        1.0,
+    )?;
+
+    assert_eq!(report.emitted(), 3);
+    assert_eq!(report.deaths(), 0);
+    assert_eq!(report.live(), 3);
+    assert_eq!(simulation.capacity(), 3);
+    assert_eq!(simulation.particles().len(), 3);
+    assert_eq!(simulation.emission_remainder(), 0.0);
+    assert!(
+        simulation.particles().iter().all(|particle| {
+            particle.position().is_finite()
+                && particle.velocity().is_finite()
+                && particle.position().x >= 7.0
+                && particle.position().x <= 13.0
+                && particle.position().y >= 16.0
+                && particle.position().y <= 24.0
+        }),
+        "{:?}",
+        simulation.particles()
     );
     Ok(())
 }

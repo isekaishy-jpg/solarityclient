@@ -139,6 +139,11 @@ impl M2ParticleState {
     pub const fn random_word(self) -> u16 {
         self.random_word
     }
+
+    /// Adds an authored acceleration impulse before ordinary ballistic motion.
+    pub(super) fn add_velocity(&mut self, impulse: Vec3) {
+        self.velocity += impulse;
+    }
 }
 
 /// Invalid input cannot participate in stock particle simulation.
