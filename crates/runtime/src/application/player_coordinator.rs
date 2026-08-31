@@ -5,8 +5,8 @@ use std::sync::Arc;
 use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CharacterRaceCatalog, CreatureCatalog, DecodedM2Model,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, M2ModelCache,
-    M2TextureKind, ParticleColorCatalog,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
+    M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
     ActiveWorld, PlayerEquipmentSlot, VisibleEquipmentItem, WorldStateError, WorldTransform,
@@ -14,9 +14,9 @@ use solarity_ecs::{
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
-    CharacterGeosetPlanError, CharacterTabardMode, CharacterTextureComposeError,
-    CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState,
-    M2ParticleColorReplacement, WorldCamera,
+    CharacterGeosetPlanError, CharacterItemVisualPlan, CharacterTabardMode,
+    CharacterTextureComposeError, CharacterTexturePlan, CharacterTexturePlanError,
+    CharacterWeaponState, M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, PlayerCameraPose, PlayerCameraPoseError,
@@ -97,9 +97,31 @@ pub struct RuntimePlayerCatalogs {
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
-    item_definitions: ItemDefinitionCatalog,
-    item_displays: ItemDisplayCatalog,
+    items: RuntimePlayerItemCatalogs,
     particle_colors: ParticleColorCatalog,
+}
+
+/// Item-table group consumed together by player equipment presentation.
+pub struct RuntimePlayerItemCatalogs {
+    definitions: ItemDefinitionCatalog,
+    displays: ItemDisplayCatalog,
+    visuals: ItemVisualCatalog,
+}
+
+impl RuntimePlayerItemCatalogs {
+    /// Groups exact item definition, display, and visual joins.
+    #[must_use]
+    pub const fn new(
+        definitions: ItemDefinitionCatalog,
+        displays: ItemDisplayCatalog,
+        visuals: ItemVisualCatalog,
+    ) -> Self {
+        Self {
+            definitions,
+            displays,
+            visuals,
+        }
+    }
 }
 
 impl RuntimePlayerCatalogs {
@@ -110,8 +132,7 @@ impl RuntimePlayerCatalogs {
         characters: CharacterAppearanceCatalog,
         races: CharacterRaceCatalog,
         helmet_visibility: HelmetGeosetVisibilityCatalog,
-        item_definitions: ItemDefinitionCatalog,
-        item_displays: ItemDisplayCatalog,
+        items: RuntimePlayerItemCatalogs,
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
@@ -119,8 +140,7 @@ impl RuntimePlayerCatalogs {
             characters,
             races,
             helmet_visibility,
-            item_definitions,
-            item_displays,
+            items,
             particle_colors,
         }
     }
@@ -135,6 +155,7 @@ pub struct RuntimePlayerPresentation {
     helmet_visibility: HelmetGeosetVisibilityCatalog,
     item_definitions: ItemDefinitionCatalog,
     item_displays: ItemDisplayCatalog,
+    item_visuals: ItemVisualCatalog,
     particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
     textures: BlpTextureCache,
@@ -151,8 +172,9 @@ impl RuntimePlayerPresentation {
             characters: catalogs.characters,
             races: catalogs.races,
             helmet_visibility: catalogs.helmet_visibility,
-            item_definitions: catalogs.item_definitions,
-            item_displays: catalogs.item_displays,
+            item_definitions: catalogs.items.definitions,
+            item_displays: catalogs.items.displays,
+            item_visuals: catalogs.items.visuals,
             particle_colors: catalogs.particle_colors,
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
@@ -209,7 +231,14 @@ impl RuntimePlayerPresentation {
         let equipment_items = equipment
             .items()
             .iter()
-            .map(|item| CharacterEquipmentItem::new(item.slot(), item.definition(), item.display()))
+            .map(|item| {
+                CharacterEquipmentItem::new_visible(
+                    item.slot(),
+                    item.visible(),
+                    item.definition(),
+                    item.display(),
+                )
+            })
             .collect::<Vec<_>>();
         let equipment_key = equipment
             .items()
@@ -299,10 +328,32 @@ impl RuntimePlayerPresentation {
                 &mut assets,
                 &mut self.textures,
             )?;
+            let visual_plan = CharacterItemVisualPlan::resolve(attachment, &self.item_visuals);
+            let mut visual_effects = Vec::with_capacity(visual_plan.effects().len());
+            for effect in visual_plan.effects() {
+                // Stock checks the equipped item model's attachment lookup and
+                // silently omits an effect whose authored link is unavailable.
+                if model.attachment(effect.attachment_id()).is_none() {
+                    continue;
+                }
+                let effect_model = self.models.load(&mut assets, effect.model())?;
+                let effect_textures = prepare_attachment_textures(
+                    &effect_model,
+                    None,
+                    &mut assets,
+                    &mut self.textures,
+                )?;
+                visual_effects.push(ResidentPlayerItemVisualEffect {
+                    point: effect.attachment_id(),
+                    model: effect_model,
+                    textures: effect_textures,
+                });
+            }
             attachments.push(ResidentPlayerAttachment {
                 point: attachment.point(),
                 model,
                 textures,
+                visual_effects,
                 particle_colors: M2ParticleColorReplacement::resolve(
                     &self.particle_colors,
                     attachment.particle_color_id(),
@@ -486,6 +537,7 @@ pub(super) struct ResidentPlayerAttachment {
     point: CharacterAttachmentPoint,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
+    visual_effects: Vec<ResidentPlayerItemVisualEffect>,
     particle_colors: Option<M2ParticleColorReplacement>,
 }
 
@@ -502,8 +554,33 @@ impl ResidentPlayerAttachment {
         &self.textures
     }
 
+    pub(super) fn visual_effects(&self) -> &[ResidentPlayerItemVisualEffect] {
+        &self.visual_effects
+    }
+
     pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
         self.particle_colors.as_ref()
+    }
+}
+
+/// One effect model driven by an equipped item model's animated pose.
+pub(super) struct ResidentPlayerItemVisualEffect {
+    point: u32,
+    model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentPlayerTexture>,
+}
+
+impl ResidentPlayerItemVisualEffect {
+    pub(super) const fn point(&self) -> u32 {
+        self.point
+    }
+
+    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+        &self.model
+    }
+
+    pub(super) fn textures(&self) -> &[ResidentPlayerTexture] {
+        &self.textures
     }
 }
 

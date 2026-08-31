@@ -39,7 +39,8 @@ pub use creature::{
 };
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, ItemVisual, ItemVisualCatalog,
+    ItemVisualEffect, SpellItemEnchantment,
 };
 pub use light::{
     LightCatalog, LightDefinition, LightParameter, LightSkybox, SkyboxBlend, WorldLightCondition,

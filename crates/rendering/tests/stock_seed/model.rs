@@ -8,16 +8,16 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
     DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    Locale, M2BlendMode, ParticleColorCatalog,
+    ItemVisualCatalog, Locale, M2BlendMode, ParticleColorCatalog,
 };
-use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
+use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState, VisibleEquipmentItem};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureStorage, CharacterAtlasLayerKind, CharacterAtlasRegion,
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode, CharacterTexturePlan,
-    CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2LocalLightCount,
-    M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan,
-    M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan, CharacterTabardMode,
+    CharacterTexturePlan, CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants,
+    M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform,
+    M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
     M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
     M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
@@ -2203,6 +2203,124 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
             CharacterAttachmentPoint::SheathShield,
             CharacterAttachmentPoint::HandLeft,
         ]
+    );
+    Ok(())
+}
+
+/// Built-in item visuals win; otherwise permanent enchants win over temporary ones.
+#[test]
+fn item_visual_plan_resolves_stock_precedence_and_effect_slots() -> Result<(), Box<dyn Error>> {
+    let items = held_equipment_tables();
+    let visuals = create_wdbc(
+        3,
+        6,
+        &[
+            701, 101, 0, 0, 0, 0, 9_001, 102, 0, 0, 0, 0, 9_002, 103, 0, 0, 0, 0,
+        ],
+        b"\0",
+    );
+    let mut effect_strings = vec![0];
+    let built_in = append_string(&mut effect_strings, "Spells\\Enchantments\\BuiltInGlow.mdx");
+    let permanent = append_string(
+        &mut effect_strings,
+        "Spells\\Enchantments\\PermanentGlow.mdx",
+    );
+    let temporary = append_string(
+        &mut effect_strings,
+        "Spells\\Enchantments\\TemporaryGlow.mdx",
+    );
+    let effects = create_wdbc(
+        3,
+        2,
+        &[101, built_in, 102, permanent, 103, temporary],
+        &effect_strings,
+    );
+    let mut enchantment_fields = vec![0; 3 * 38];
+    enchantment_fields[0] = 501;
+    enchantment_fields[31] = 9_001;
+    enchantment_fields[38] = 502;
+    enchantment_fields[38 + 31] = 9_002;
+    enchantment_fields[2 * 38] = 503;
+    let enchantments = create_wdbc(3, 38, &enchantment_fields, b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\Item.dbc",
+            bytes: &items.definitions,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &items.displays,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemVisuals.dbc",
+            bytes: &visuals,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ItemVisualEffects.dbc",
+            bytes: &effects,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\SpellItemEnchantment.dbc",
+            bytes: &enchantments,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let definitions = ItemDefinitionCatalog::load(&mut store)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let visual_catalog = ItemVisualCatalog::load(&mut store)?;
+    let main = CharacterEquipmentItem::new_visible(
+        PlayerEquipmentSlot::MainHand,
+        VisibleEquipmentItem::new(60_001, (u32::from(502_u16) << 16) | u32::from(501_u16)),
+        definitions.item(60_001).ok_or("main-hand item is absent")?,
+        displays
+            .display(61_001)
+            .ok_or("main-hand display is absent")?,
+    );
+    let off = CharacterEquipmentItem::new_visible(
+        PlayerEquipmentSlot::OffHand,
+        VisibleEquipmentItem::new(60_002, (u32::from(502_u16) << 16) | u32::from(501_u16)),
+        definitions.item(60_002).ok_or("off-hand item is absent")?,
+        displays
+            .display(61_002)
+            .ok_or("off-hand display is absent")?,
+    );
+    let ranged = CharacterEquipmentItem::new_visible(
+        PlayerEquipmentSlot::Ranged,
+        VisibleEquipmentItem::new(60_003, (u32::from(502_u16) << 16) | u32::from(503_u16)),
+        definitions.item(60_003).ok_or("ranged item is absent")?,
+        displays.display(61_003).ok_or("ranged display is absent")?,
+    );
+    let attachments = CharacterAttachmentPlan::held_items(
+        [main, off, ranged],
+        CharacterWeaponState::new(UnitSheathState::Melee),
+    )?;
+
+    let built_in = CharacterItemVisualPlan::resolve(&attachments.attachments()[0], &visual_catalog);
+    assert_eq!(built_in.visual_id(), Some(701));
+    assert_eq!(built_in.effects()[0].attachment_id(), 0);
+    assert_eq!(
+        built_in.effects()[0].model().as_str(),
+        "SPELLS\\ENCHANTMENTS\\BUILTINGLOW.MDX"
+    );
+
+    let permanent =
+        CharacterItemVisualPlan::resolve(&attachments.attachments()[1], &visual_catalog);
+    assert_eq!(permanent.visual_id(), Some(9_001));
+    assert_eq!(permanent.effects()[0].attachment_id(), 0);
+    assert_eq!(
+        permanent.effects()[0].model().as_str(),
+        "SPELLS\\ENCHANTMENTS\\PERMANENTGLOW.MDX"
+    );
+
+    let temporary =
+        CharacterItemVisualPlan::resolve(&attachments.attachments()[2], &visual_catalog);
+    assert_eq!(temporary.visual_id(), Some(9_002));
+    assert_eq!(
+        temporary.effects()[0].model().as_str(),
+        "SPELLS\\ENCHANTMENTS\\TEMPORARYGLOW.MDX"
     );
     Ok(())
 }

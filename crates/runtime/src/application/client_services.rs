@@ -10,7 +10,7 @@ use tokio::runtime::{Builder, Runtime};
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
     CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    LightCatalog, MapCatalog, ParticleColorCatalog,
+    ItemVisualCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -34,7 +34,7 @@ use crate::application::login_coordinator::{
 };
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::player_coordinator::{
-    RuntimePlayerCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
 };
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::sound_coordinator::RuntimeSoundCoordinator;
@@ -97,6 +97,7 @@ impl ClientServices {
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
         let item_definitions = ItemDefinitionCatalog::load(&mut assets)?;
         let item_displays = ItemDisplayCatalog::load(&mut assets)?;
+        let item_visuals = ItemVisualCatalog::load(&mut assets)?;
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
@@ -184,8 +185,11 @@ impl ClientServices {
                         characters,
                         races,
                         helmet_visibility,
-                        item_definitions,
-                        item_displays,
+                        RuntimePlayerItemCatalogs::new(
+                            item_definitions,
+                            item_displays,
+                            item_visuals,
+                        ),
                         particle_colors,
                     ),
                 ),

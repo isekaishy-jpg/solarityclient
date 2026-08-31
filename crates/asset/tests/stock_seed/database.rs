@@ -8,8 +8,9 @@ use solarity_asset::{
     AssetPath, AssetStore, CharacterAppearanceCatalog, CharacterClassCatalog,
     CharacterCustomization, CharacterRaceCatalog, ClientDataRoot, CreatureCatalog,
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
-    LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind, ParticleColorCatalog,
-    SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError, exterior_light_direction,
+    ItemVisualCatalog, LightCatalog, Locale, M2TextureKind, MapCatalog, MapKind,
+    ParticleColorCatalog, SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError,
+    exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -701,6 +702,68 @@ fn item_display_catalog_decodes_stock_equipment_layout() -> Result<(), Box<dyn E
         ]
     );
     assert_eq!(catalog.display(55_001), None);
+    Ok(())
+}
+
+/// Item visuals retain five attachment slots and join public enchantments.
+#[test]
+fn item_visual_catalog_decodes_stock_effect_stack() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let blue_glow = append_string(&mut strings, "Spells\\Enchantments\\BlueGlow_High.mdx");
+    let empty_effect = append_string(&mut strings, "Spells\\Enchantments\\");
+    let visuals = create_wdbc(1, 6, &[24, 1, 1, 0xFFFF_FFFF, 61, 0], &[0]);
+    let effects = create_wdbc(2, 2, &[1, blue_glow, 61, empty_effect], &strings);
+    let mut enchantment = [0_u32; 38];
+    enchantment[0] = 1_896;
+    enchantment[31] = 24;
+    let enchantments = create_wdbc(1, 38, &enchantment, &[0]);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\ItemVisuals.dbc",
+            bytes: &visuals,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\ItemVisualEffects.dbc",
+            bytes: &effects,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SpellItemEnchantment.dbc",
+            bytes: &enchantments,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = ItemVisualCatalog::load(&mut store)?;
+    assert_eq!(
+        catalog
+            .visual(24)
+            .ok_or("item visual is absent")?
+            .effect_ids(),
+        [1, 1, u32::MAX, 61, 0]
+    );
+    assert_eq!(
+        catalog
+            .effect(1)
+            .and_then(|effect| effect.model_path())
+            .map(AssetPath::as_str),
+        Some("SPELLS\\ENCHANTMENTS\\BLUEGLOW_HIGH.MDX")
+    );
+    assert_eq!(
+        catalog.effect(61).and_then(|effect| effect.model_path()),
+        None
+    );
+    assert_eq!(catalog.effect(u32::MAX), None);
+    assert_eq!(
+        catalog
+            .enchantment(1_896)
+            .ok_or("enchantment is absent")?
+            .item_visual_id(),
+        24
+    );
     Ok(())
 }
 

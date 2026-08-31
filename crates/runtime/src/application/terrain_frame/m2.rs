@@ -98,9 +98,15 @@ enum M2GpuPlacementOwner {
     /// The one authoritative character controlled by this client.
     PlayerBody { guid: u64 },
     /// One equipment M2 driven by an animated player attachment point.
-    PlayerAttachment {
+    PlayerItem {
         guid: u64,
         point: CharacterAttachmentPoint,
+    },
+    /// One enchant/display effect driven by its equipped item M2.
+    PlayerItemVisual {
+        guid: u64,
+        item_point: CharacterAttachmentPoint,
+        effect_point: u32,
     },
 }
 
@@ -357,7 +363,7 @@ impl M2Frame {
             let placement = player_gpu_placement(
                 0,
                 transform,
-                M2GpuPlacementOwner::PlayerAttachment {
+                M2GpuPlacementOwner::PlayerItem {
                     guid: input.guid(),
                     point: attachment.point(),
                 },
@@ -365,7 +371,39 @@ impl M2Frame {
                 attachment.particle_colors().cloned(),
                 random,
             )?;
-            attachment_sources.push((source, placement));
+            let mut visual_sources = Vec::with_capacity(attachment.visual_effects().len());
+            for effect in attachment.visual_effects() {
+                let resolved = effect
+                    .textures()
+                    .iter()
+                    .map(|texture| match texture {
+                        ResidentPlayerTexture::Authored(source) => {
+                            M2ResolvedTexture::Authored(source.as_ref())
+                        }
+                        ResidentPlayerTexture::BodyAtlas => {
+                            M2ResolvedTexture::CharacterAtlas(input.atlas())
+                        }
+                        ResidentPlayerTexture::Unresolved(kind) => {
+                            M2ResolvedTexture::Unresolved(*kind)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let effect_source = prepare_gpu_source(renderer, effect.model(), &resolved, None)?;
+                let effect_placement = player_gpu_placement(
+                    0,
+                    transform,
+                    M2GpuPlacementOwner::PlayerItemVisual {
+                        guid: input.guid(),
+                        item_point: attachment.point(),
+                        effect_point: effect.point(),
+                    },
+                    effect.model(),
+                    None,
+                    random,
+                )?;
+                visual_sources.push((effect_source, effect_placement));
+            }
+            attachment_sources.push((source, placement, visual_sources));
         }
         let body_placement = player_gpu_placement(
             0,
@@ -382,13 +420,21 @@ impl M2Frame {
             source_index,
             ..body_placement
         });
-        for (source, placement) in attachment_sources {
+        for (source, placement, visual_sources) in attachment_sources {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
                 source_index,
                 ..placement
             });
+            for (source, placement) in visual_sources {
+                let source_index = self.sources.len();
+                self.sources.push(Some(source));
+                self.placements.push(M2GpuPlacement {
+                    source_index,
+                    ..placement
+                });
+            }
         }
         Ok(())
     }
@@ -417,7 +463,8 @@ impl M2Frame {
             if matches!(
                 placement.owner,
                 M2GpuPlacementOwner::PlayerBody { .. }
-                    | M2GpuPlacementOwner::PlayerAttachment { .. }
+                    | M2GpuPlacementOwner::PlayerItem { .. }
+                    | M2GpuPlacementOwner::PlayerItemVisual { .. }
             ) {
                 player_sources.push(placement.source_index);
                 false
@@ -499,18 +546,35 @@ impl M2Frame {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
         self.last_effect_time_ms = Some(animation_time_ms);
-        let requested_attachments = self
+        let requested_items = self
             .placements
             .iter()
             .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::PlayerAttachment { guid, point } => Some((guid, point)),
-                M2GpuPlacementOwner::Static(_) | M2GpuPlacementOwner::PlayerBody { .. } => None,
+                M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
+                M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
             })
             .collect::<Vec<_>>();
-        let mut attachment_transforms = Vec::with_capacity(requested_attachments.len());
+        let requested_visuals = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                M2GpuPlacementOwner::PlayerItemVisual {
+                    guid,
+                    item_point,
+                    effect_point,
+                } => Some((guid, item_point, effect_point)),
+                M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::PlayerBody { .. }
+                | M2GpuPlacementOwner::PlayerItem { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let mut item_transforms = Vec::with_capacity(requested_items.len());
+        let mut visual_transforms = Vec::with_capacity(requested_visuals.len());
         for placement in &mut self.placements {
-            if let M2GpuPlacementOwner::PlayerAttachment { guid, point } = placement.owner {
-                let transform = attachment_transforms
+            if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
+                let transform = item_transforms
                     .iter()
                     .find_map(|(owner_guid, owner_point, transform)| {
                         (*owner_guid == guid && *owner_point == point).then_some(*transform)
@@ -518,6 +582,31 @@ impl M2Frame {
                     .ok_or(RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
                         guid,
                         attachment_id: point.id(),
+                    })?;
+                let Some(transform) = transform else {
+                    continue;
+                };
+                placement.transform = transform;
+            }
+            if let M2GpuPlacementOwner::PlayerItemVisual {
+                guid,
+                item_point,
+                effect_point,
+            } = placement.owner
+            {
+                let transform = visual_transforms
+                    .iter()
+                    .find_map(
+                        |(owner_guid, owner_item_point, owner_effect_point, transform)| {
+                            (*owner_guid == guid
+                                && *owner_item_point == item_point
+                                && *owner_effect_point == effect_point)
+                                .then_some(*transform)
+                        },
+                    )
+                    .ok_or(RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
+                        guid,
+                        attachment_id: effect_point,
                     })?;
                 let Some(transform) = transform else {
                     continue;
@@ -535,7 +624,7 @@ impl M2Frame {
             let bone_pose =
                 M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
             if let M2GpuPlacementOwner::PlayerBody { guid } = placement.owner {
-                for (_owner_guid, point) in requested_attachments
+                for (_owner_guid, point) in requested_items
                     .iter()
                     .filter(|(owner_guid, _point)| *owner_guid == guid)
                 {
@@ -551,7 +640,29 @@ impl M2Frame {
                         clock,
                         placement.transform,
                     )?;
-                    attachment_transforms.push((guid, *point, transform));
+                    item_transforms.push((guid, *point, transform));
+                }
+            }
+            if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
+                for (_owner_guid, _owner_item_point, effect_point) in requested_visuals
+                    .iter()
+                    .filter(|(owner_guid, item_point, _)| {
+                        *owner_guid == guid && *item_point == point
+                    })
+                {
+                    let attachment = source.model.attachment(*effect_point).ok_or_else(|| {
+                        RuntimeTerrainFrameError::MissingPlayerM2Attachment {
+                            model: source.model.path().clone(),
+                            attachment_id: *effect_point,
+                        }
+                    })?;
+                    let transform = bone_pose.attachment_transform(
+                        source.model.animations(),
+                        attachment,
+                        clock,
+                        placement.transform,
+                    )?;
+                    visual_transforms.push((guid, point, *effect_point, transform));
                 }
             }
             let bounds = source.model.bounds();

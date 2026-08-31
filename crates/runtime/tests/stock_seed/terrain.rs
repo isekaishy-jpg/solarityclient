@@ -7,13 +7,14 @@ use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
     ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
+    ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog, ParticleColorCatalog,
+    TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
 use solarity_runtime::{
-    RuntimePlayerCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator,
-    RuntimeTerrainPoll,
+    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimeTerrainCoordinator, RuntimeTerrainPoll,
 };
 use solarity_systems::{
     CameraSubjectGeometry, resolve_camera_subject_height, resolve_player_camera_pose,
@@ -60,6 +61,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
+    let item_visuals = ItemVisualCatalog::load(&mut store)?;
     let particle_colors = ParticleColorCatalog::load(&mut store)?;
     let assets = AssetStoreHandle::new(store);
     let mut player = RuntimePlayerPresentation::new(
@@ -69,8 +71,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
             characters,
             races,
             helmet_visibility,
-            item_definitions,
-            item_displays,
+            RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
             particle_colors,
         ),
     );

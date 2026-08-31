@@ -15,8 +15,9 @@ pub use character_component::{
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
     CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterEquipmentItem,
     CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemAttachment,
-    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, CharacterWeaponState,
+    CharacterItemVisualEffect, CharacterItemVisualPlan, CharacterTabardMode,
+    CharacterTextureComposeError, CharacterTexturePlan, CharacterTexturePlanError,
+    CharacterWeaponState,
 };
 pub use m2_animation::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2MaterialPose, M2MaterialPoseError,

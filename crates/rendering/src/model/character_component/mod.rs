@@ -8,6 +8,7 @@ mod attachment;
 mod composer;
 mod equipment;
 mod geoset;
+mod item_visual;
 mod status;
 mod types;
 
@@ -18,6 +19,7 @@ pub use attachment::{
 };
 pub use equipment::CharacterEquipmentItem;
 pub use geoset::{CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode};
+pub use item_visual::{CharacterItemVisualEffect, CharacterItemVisualPlan};
 pub use status::{
     CharacterAttachmentPlanError, CharacterGeosetPlanError, CharacterTextureComposeError,
     CharacterTexturePlanError,

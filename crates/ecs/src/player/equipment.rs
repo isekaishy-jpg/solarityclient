@@ -108,6 +108,18 @@ impl VisibleEquipmentItem {
     pub const fn enchantment_word(self) -> u32 {
         self.enchantment_word
     }
+
+    /// Returns the permanent enchantment identifier stored in the low half.
+    #[must_use]
+    pub const fn permanent_enchantment_id(self) -> u16 {
+        self.enchantment_word as u16
+    }
+
+    /// Returns the temporary enchantment identifier stored in the high half.
+    #[must_use]
+    pub const fn temporary_enchantment_id(self) -> u16 {
+        (self.enchantment_word >> 16) as u16
+    }
 }
 
 /// Snapshot of all public equipment fields for one player entity.

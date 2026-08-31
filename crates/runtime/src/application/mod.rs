@@ -33,7 +33,8 @@ pub use login_coordinator::{
     RuntimeLoginState,
 };
 pub use player_coordinator::{
-    RuntimePlayerCatalogs, RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimePlayerCatalogs, RuntimePlayerError, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
+    RuntimePlayerPresentation,
 };
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;

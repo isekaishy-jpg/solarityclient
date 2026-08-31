@@ -118,6 +118,9 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\HelmetGeosetVisData.dbc");
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\Item.dbc");
         builder = builder.add_file_data(empty_wdbc(25), "DBFilesClient\\ItemDisplayInfo.dbc");
+        builder = builder.add_file_data(empty_wdbc(6), "DBFilesClient\\ItemVisuals.dbc");
+        builder = builder.add_file_data(empty_wdbc(2), "DBFilesClient\\ItemVisualEffects.dbc");
+        builder = builder.add_file_data(empty_wdbc(38), "DBFilesClient\\SpellItemEnchantment.dbc");
         builder = builder.add_file_data(
             bootstrap_texture_blp(),
             "Interface\\Icons\\INV_Misc_QuestionMark.blp",

@@ -73,6 +73,7 @@ pub struct CharacterItemAttachment {
     model: AssetPath,
     texture: Option<AssetPath>,
     item_visual_id: u32,
+    enchantment_word: u32,
     particle_color_id: u32,
 }
 
@@ -105,6 +106,12 @@ impl CharacterItemAttachment {
     #[must_use]
     pub const fn item_visual_id(&self) -> u32 {
         self.item_visual_id
+    }
+
+    /// Returns the packed permanent and temporary enchantment identifiers.
+    #[must_use]
+    pub const fn enchantment_word(&self) -> u32 {
+        self.enchantment_word
     }
 
     /// Returns the display's particle-color identifier.
@@ -237,6 +244,7 @@ fn push_helmet(
         ))?,
         texture: attachment_texture("Item\\ObjectComponents\\Head", texture_name)?,
         item_visual_id: display.item_visual_id(),
+        enchantment_word: item.visible().enchantment_word(),
         particle_color_id: display.particle_color_id(),
     });
     Ok(())
@@ -267,6 +275,7 @@ fn push_shoulders(
             ))?,
             texture: attachment_texture("Item\\ObjectComponents\\Shoulder", textures[channel])?,
             item_visual_id: display.item_visual_id(),
+            enchantment_word: item.visible().enchantment_word(),
             particle_color_id: display.particle_color_id(),
         });
     }
@@ -300,6 +309,7 @@ fn push_held_item(
         model: AssetPath::new(format!("{folder}\\{model_name}"))?,
         texture: attachment_texture(folder, texture_name)?,
         item_visual_id: display.item_visual_id(),
+        enchantment_word: item.visible().enchantment_word(),
         particle_color_id: display.particle_color_id(),
     });
     Ok(())
