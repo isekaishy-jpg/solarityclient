@@ -650,6 +650,7 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
 
     assert_eq!(particle.id(), 0x5041_5254);
     assert_eq!(particle.flags(), 0x9000_8042);
+    assert!(!particle.particles_in_model_space());
     assert_eq!(particle.position(), glam::Vec3::new(1.0, 2.0, 3.0));
     assert_eq!(particle.bone_index(), Some(0));
     assert_eq!(particle.texture_id(), Some(0));

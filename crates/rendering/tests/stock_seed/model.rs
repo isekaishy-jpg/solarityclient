@@ -708,6 +708,20 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let endpoint = Vec3::from_array(mesh.vertices()[6].position())
         .midpoint(Vec3::from_array(mesh.vertices()[7].position()));
     assert_eq!(endpoint, particle.position() - particle.velocity() * 1.5);
+    let translated = M2ParticleMeshPlan::prepare_transformed(
+        emitter,
+        pose,
+        &[particle],
+        camera,
+        Mat4::from_translation(Vec3::new(100.0, 200.0, 300.0)),
+        1.0,
+    )?;
+    let translated_endpoint = Vec3::from_array(translated.vertices()[6].position())
+        .midpoint(Vec3::from_array(translated.vertices()[7].position()));
+    assert_eq!(
+        translated_endpoint,
+        endpoint + Vec3::new(100.0, 200.0, 300.0)
+    );
     Ok(())
 }
 

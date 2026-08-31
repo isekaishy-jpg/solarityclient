@@ -105,6 +105,12 @@ impl M2ParticleEmitter {
         self.flags
     }
 
+    /// Reports whether live particles remain in the animated emitter space.
+    #[must_use]
+    pub const fn particles_in_model_space(&self) -> bool {
+        self.flags & 0x0000_0200 != 0
+    }
+
     /// Returns the emitter position relative to its owning bone.
     #[must_use]
     pub const fn position(&self) -> Vec3 {

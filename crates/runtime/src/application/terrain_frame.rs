@@ -6,12 +6,13 @@ use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
-    M2MeshPlanError, M2RibbonMeshPlanError, M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError,
-    TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform,
-    TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError,
-    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
-    WorldModelTextureFiltering, WorldScreenWindow,
+    M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError, M2RibbonMeshPlanError,
+    M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount,
+    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
+    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
+    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
+    WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -59,6 +60,12 @@ pub enum RuntimeTerrainFrameError {
     /// One visible M2 material could not sample its authored animation tracks.
     #[error(transparent)]
     M2MaterialPose(#[from] M2MaterialPoseError),
+    /// One placed emitter could not advance its recovered ordinary path.
+    #[error(transparent)]
+    M2ParticleSimulation(#[from] M2ParticleSimulationError),
+    /// Live ordinary particles could not enter the dynamic PNC0T0 mesh.
+    #[error(transparent)]
+    M2ParticleMesh(#[from] M2ParticleMeshPlanError),
     /// One authored ribbon could not enter bounded placement-local state.
     #[error(transparent)]
     M2RibbonTrail(#[from] M2RibbonTrailError),
@@ -230,6 +237,64 @@ pub enum RuntimeTerrainFrameError {
         ribbon_index: usize,
         /// Missing zero-based bone transform.
         bone_index: u32,
+    },
+    /// Placement-local particle state no longer parallels the shared model.
+    #[error(
+        "M2 model {model} retains {simulation_count} particle simulations for {emitter_count} emitters"
+    )]
+    M2ParticleSimulationCount {
+        /// Model whose immutable emitter table became inconsistent.
+        model: AssetPath,
+        /// Number of mutable simulations owned by the placement.
+        simulation_count: usize,
+        /// Number of shared decoded particle declarations.
+        emitter_count: usize,
+    },
+    /// Shared particle GPU resources no longer parallel the decoded table.
+    #[error(
+        "M2 model {model} retains {resource_count} particle resources for {emitter_count} emitters"
+    )]
+    M2ParticleResourceCount {
+        /// Model whose resource generation became inconsistent.
+        model: AssetPath,
+        /// Number of renderer resource pairs.
+        resource_count: usize,
+        /// Number of shared decoded particle declarations.
+        emitter_count: usize,
+    },
+    /// Ordinary particle rendering requires one authored texture declaration.
+    #[error(
+        "M2 model {model} particle {particle_index} exposes {texture_count} textures to the ordinary path"
+    )]
+    M2ParticleTextureCount {
+        /// Model containing the emitter.
+        model: AssetPath,
+        /// Zero-based particle declaration slot.
+        particle_index: usize,
+        /// Number of populated packed texture slots.
+        texture_count: usize,
+    },
+    /// A validated particle unexpectedly references an absent bone transform.
+    #[error("M2 model {model} particle {particle_index} references absent bone {bone_index}")]
+    M2ParticleBoneIndex {
+        /// Model containing the emitter.
+        model: AssetPath,
+        /// Zero-based particle declaration slot.
+        particle_index: usize,
+        /// Missing zero-based bone transform.
+        bone_index: u32,
+    },
+    /// The ordinary simulation does not substitute another generator shape.
+    #[error(
+        "M2 model {model} particle {particle_index} uses unsupported emitter type {emitter_type}"
+    )]
+    M2ParticleEmitterType {
+        /// Model containing the emitter.
+        model: AssetPath,
+        /// Zero-based particle declaration slot.
+        particle_index: usize,
+        /// Authored generator selector.
+        emitter_type: u8,
     },
 }
 
@@ -423,9 +488,9 @@ impl TerrainFrame {
             &self.visible_draws,
             world_model_draws,
             m2.draws,
-            &[],
-            &[],
-            &[],
+            m2.particle_vertices,
+            m2.particle_indices,
+            m2.particle_draws,
             m2.ribbon_vertices,
             m2.ribbon_draws,
         )?)

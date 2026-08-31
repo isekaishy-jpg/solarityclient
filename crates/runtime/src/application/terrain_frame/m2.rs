@@ -3,15 +3,17 @@
 use std::sync::Arc;
 
 use glam::Mat4;
-use solarity_asset::DecodedM2Model;
+use solarity_asset::{DecodedM2Model, M2ParticleEmitter};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
+    M2MeshPlan, M2ParticleMeshPlan, M2ParticlePipelineHandle, M2ParticlePose,
+    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2PipelineHandle,
+    M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
+    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2TextureSet,
+    M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum,
+    compare_m2_transparent, m2_section_distance_key,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -32,12 +34,16 @@ const STOCK_HIGH_CAPABILITY_PROFILE: usize = 0;
 /// Runtime opacity boundary stored at build-12340 address `0x00A45528`.
 const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 
+/// Initial `particleDensity` CVar registered by the stock UI environment.
+const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
+
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
     mesh: M2MeshHandle,
     draws: Vec<M2GpuDraw>,
+    particles: Vec<M2GpuParticle>,
     ribbons: Vec<Vec<M2GpuRibbonPass>>,
 }
 
@@ -45,6 +51,12 @@ struct M2GpuSource {
 struct M2GpuDraw {
     pipeline: M2PipelineHandle,
     runtime_fade_pipeline: Option<M2PipelineHandle>,
+    texture_set: M2TextureSetHandle,
+}
+
+/// Shared renderer objects for one ordinary particle declaration.
+struct M2GpuParticle {
+    pipeline: M2ParticlePipelineHandle,
     texture_set: M2TextureSetHandle,
 }
 
@@ -69,6 +81,7 @@ struct M2GpuPlacement {
     flags: u16,
     color: [u8; 4],
     playback: Option<M2Playback>,
+    particles: Vec<M2ParticleSimulation>,
     ribbons: Vec<M2RibbonTrail>,
 }
 
@@ -169,6 +182,9 @@ pub(super) struct M2Frame {
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     transparent_draws: Vec<M2TransparentDraw>,
+    particle_vertices: Vec<M2ParticleRenderVertex>,
+    particle_indices: Vec<u32>,
+    particle_draws: Vec<M2ParticlePreparedDraw>,
     ribbon_vertices: Vec<M2RibbonRenderVertex>,
     ribbon_draws: Vec<M2RibbonPreparedDraw>,
     last_effect_time_ms: Option<f32>,
@@ -178,6 +194,9 @@ pub(super) struct M2Frame {
 pub(super) struct M2VisibleFrame<'frame> {
     pub(super) bone_transforms: &'frame [Mat4],
     pub(super) draws: &'frame [M2PreparedDraw],
+    pub(super) particle_vertices: &'frame [M2ParticleRenderVertex],
+    pub(super) particle_indices: &'frame [u32],
+    pub(super) particle_draws: &'frame [M2ParticlePreparedDraw],
     pub(super) ribbon_vertices: &'frame [M2RibbonRenderVertex],
     pub(super) ribbon_draws: &'frame [M2RibbonPreparedDraw],
 }
@@ -202,26 +221,40 @@ impl M2Frame {
                     source_count: sources.len(),
                 });
             }
+            let (playback, particles, ribbons) = match sources[placement.source_index()].as_ref() {
+                Some(source) => {
+                    let playback = M2Playback::new(&source.model, random)?;
+                    let particles = source
+                        .model
+                        .animations()
+                        .particles()
+                        .iter()
+                        .map(|_emitter| {
+                            let first = u32::from(random.next_u15());
+                            let second = u32::from(random.next_u15());
+                            M2ParticleSimulation::new(first << 16 | second)
+                        })
+                        .collect();
+                    let ribbons = source
+                        .model
+                        .animations()
+                        .ribbons()
+                        .iter()
+                        .map(M2RibbonTrail::new)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    (playback, particles, ribbons)
+                }
+                None => (None, Vec::new(), Vec::new()),
+            };
             placements.push(M2GpuPlacement {
                 source_index: placement.source_index(),
                 transform: placement.transform(),
                 owner: placement.owner(),
                 flags: placement.flags(),
                 color: placement.color(),
-                playback: match sources[placement.source_index()].as_ref() {
-                    Some(source) => M2Playback::new(&source.model, random)?,
-                    None => None,
-                },
-                ribbons: match sources[placement.source_index()].as_ref() {
-                    Some(source) => source
-                        .model
-                        .animations()
-                        .ribbons()
-                        .iter()
-                        .map(M2RibbonTrail::new)
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                },
+                playback,
+                particles,
+                ribbons,
             });
         }
         Ok(Self {
@@ -231,6 +264,9 @@ impl M2Frame {
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
+            particle_vertices: Vec::new(),
+            particle_indices: Vec::new(),
+            particle_draws: Vec::new(),
             ribbon_vertices: Vec::new(),
             ribbon_draws: Vec::new(),
             last_effect_time_ms: None,
@@ -295,6 +331,9 @@ impl M2Frame {
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_draws.clear();
+        self.particle_vertices.clear();
+        self.particle_indices.clear();
+        self.particle_draws.clear();
         self.ribbon_vertices.clear();
         self.ribbon_draws.clear();
         let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
@@ -330,6 +369,102 @@ impl M2Frame {
             let model_view = camera.view() * placement.transform;
             let bone_pose =
                 M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            if placement.particles.len() != source.model.animations().particles().len() {
+                return Err(RuntimeTerrainFrameError::M2ParticleSimulationCount {
+                    model: source.model.path().clone(),
+                    simulation_count: placement.particles.len(),
+                    emitter_count: source.model.animations().particles().len(),
+                });
+            }
+            if source.particles.len() != source.model.animations().particles().len() {
+                return Err(RuntimeTerrainFrameError::M2ParticleResourceCount {
+                    model: source.model.path().clone(),
+                    resource_count: source.particles.len(),
+                    emitter_count: source.model.animations().particles().len(),
+                });
+            }
+            for (particle_index, ((emitter, simulation), resources)) in source
+                .model
+                .animations()
+                .particles()
+                .iter()
+                .zip(&mut placement.particles)
+                .zip(&source.particles)
+                .enumerate()
+            {
+                let pose = M2ParticlePose::sample(source.model.animations(), emitter, clock)?;
+                let emitter_transform = particle_emitter_transform(
+                    &source.model,
+                    placement.transform,
+                    &bone_pose,
+                    particle_index,
+                    emitter,
+                )?;
+                match emitter.emitter_type() {
+                    1 => simulation.advance_planar(
+                        emitter,
+                        pose,
+                        effect_delta_seconds,
+                        emitter_transform,
+                        STOCK_DEFAULT_PARTICLE_DENSITY,
+                    )?,
+                    2 => simulation.advance_sphere(
+                        emitter,
+                        pose,
+                        effect_delta_seconds,
+                        emitter_transform,
+                        STOCK_DEFAULT_PARTICLE_DENSITY,
+                    )?,
+                    emitter_type => {
+                        return Err(RuntimeTerrainFrameError::M2ParticleEmitterType {
+                            model: source.model.path().clone(),
+                            particle_index,
+                            emitter_type,
+                        });
+                    }
+                };
+                if simulation.particles().is_empty() {
+                    continue;
+                }
+                let particle_to_world = if emitter.particles_in_model_space() {
+                    emitter_transform
+                } else {
+                    Mat4::IDENTITY
+                };
+                let mesh = M2ParticleMeshPlan::prepare_transformed(
+                    emitter,
+                    pose,
+                    simulation.particles(),
+                    camera,
+                    particle_to_world,
+                    placement_color(placement.color).w,
+                )?;
+                let first_vertex =
+                    u32::try_from(self.particle_vertices.len()).map_err(|_source| {
+                        solarity_rendering::VulkanError::M2ParticleDrawVertexRange
+                    })?;
+                let first_index = u32::try_from(self.particle_indices.len())
+                    .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                self.particle_draws.push(renderer.prepare_m2_particle_draw(
+                    resources.pipeline,
+                    resources.texture_set,
+                    emitter.blending_type(),
+                    emitter.flags(),
+                    first_vertex,
+                    first_index,
+                    &mesh,
+                )?);
+                self.particle_vertices.extend_from_slice(mesh.vertices());
+                self.particle_indices.extend_from_slice(mesh.indices());
+                tracing::trace!(
+                    model = %source.model.path(),
+                    particle_index,
+                    live_count = simulation.particles().len(),
+                    vertex_count = mesh.vertices().len(),
+                    index_count = mesh.indices().len(),
+                    "placement-local particles entered unified world frame"
+                );
+            }
             advance_ribbons(
                 &source.model,
                 placement,
@@ -443,10 +578,36 @@ impl M2Frame {
         Ok(M2VisibleFrame {
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
+            particle_vertices: &self.particle_vertices,
+            particle_indices: &self.particle_indices,
+            particle_draws: &self.particle_draws,
             ribbon_vertices: &self.ribbon_vertices,
             ribbon_draws: &self.ribbon_draws,
         })
     }
+}
+
+/// Resolves one emitter's current bone-relative local-to-world matrix.
+fn particle_emitter_transform(
+    model: &DecodedM2Model,
+    placement_transform: Mat4,
+    bone_pose: &M2BonePose,
+    particle_index: usize,
+    emitter: &M2ParticleEmitter,
+) -> Result<Mat4, RuntimeTerrainFrameError> {
+    let bone = match emitter.bone_index() {
+        Some(bone_index) => bone_pose
+            .transforms()
+            .get(usize::from(bone_index))
+            .copied()
+            .ok_or_else(|| RuntimeTerrainFrameError::M2ParticleBoneIndex {
+                model: model.path().clone(),
+                particle_index,
+                bone_index: u32::from(bone_index),
+            })?,
+        None => Mat4::IDENTITY,
+    };
+    Ok(placement_transform * bone * Mat4::from_translation(emitter.position()))
 }
 
 /// Advances every shared declaration through its placement-owned edge history.
@@ -608,6 +769,25 @@ fn prepare_source(
             }
         }
     }
+    for (particle_index, emitter) in model.animations().particles().iter().enumerate() {
+        let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
+        let texture = source
+            .textures()
+            .get(usize::from(texture_index))
+            .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+                model: model.path().clone(),
+                texture_index,
+            })?;
+        if let ResidentM2Texture::Replaceable(kind) = texture {
+            tracing::debug!(
+                path = %model.path(),
+                particle_index,
+                ?kind,
+                "static world M2 omitted until its particle replacement texture is supplied"
+            );
+            return Ok(None);
+        }
+    }
 
     let mut upload_indices = Vec::new();
     let mut uploads = Vec::new();
@@ -680,6 +860,31 @@ fn prepare_source(
             },
         )
         .collect();
+    let mut particle_pipelines = Vec::with_capacity(model.animations().particles().len());
+    let mut particle_texture_requests = Vec::with_capacity(model.animations().particles().len());
+    for (particle_index, emitter) in model.animations().particles().iter().enumerate() {
+        let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
+        let texture_slot = usize::from(texture_index);
+        let texture = texture_handles[texture_slot].ok_or_else(|| {
+            RuntimeTerrainFrameError::M2TextureIndex {
+                model: model.path().clone(),
+                texture_index,
+            }
+        })?;
+        let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
+        particle_pipelines
+            .push(renderer.prepare_m2_particle_pipeline(emitter.blending_type(), emitter.flags())?);
+        particle_texture_requests.push(M2TextureSet::One(M2SampledTexture::new(texture, sampler)));
+    }
+    let particle_texture_sets = renderer.prepare_m2_texture_sets(&particle_texture_requests)?;
+    let particles = particle_pipelines
+        .into_iter()
+        .zip(particle_texture_sets)
+        .map(|(pipeline, texture_set)| M2GpuParticle {
+            pipeline,
+            texture_set,
+        })
+        .collect();
     let mut ribbons = Vec::with_capacity(model.animations().ribbons().len());
     for emitter in model.animations().ribbons() {
         let mut pass_pipelines = Vec::with_capacity(emitter.material_indices().len());
@@ -721,6 +926,33 @@ fn prepare_source(
         plan,
         mesh,
         draws,
+        particles,
         ribbons,
     }))
+}
+
+/// Selects the single BLP slot consumed by the ordinary particle shader.
+fn ordinary_particle_texture_index(
+    model: &DecodedM2Model,
+    particle_index: usize,
+    emitter: &M2ParticleEmitter,
+) -> Result<u16, RuntimeTerrainFrameError> {
+    let mut selected = None;
+    let mut texture_count = 0;
+    for texture_index in emitter.texture_indices().into_iter().flatten() {
+        selected = Some(texture_index);
+        texture_count += 1;
+    }
+    if texture_count != 1 {
+        return Err(RuntimeTerrainFrameError::M2ParticleTextureCount {
+            model: model.path().clone(),
+            particle_index,
+            texture_count,
+        });
+    }
+    selected.ok_or_else(|| RuntimeTerrainFrameError::M2ParticleTextureCount {
+        model: model.path().clone(),
+        particle_index,
+        texture_count,
+    })
 }

@@ -112,9 +112,53 @@ impl M2ParticleMeshPlan {
         camera: WorldCameraFrame,
         alpha_multiplier: f32,
     ) -> Result<Self, M2ParticleMeshPlanError> {
+        Self::prepare_transformed(
+            emitter,
+            pose,
+            particles,
+            camera,
+            glam::Mat4::IDENTITY,
+            alpha_multiplier,
+        )
+    }
+
+    /// Builds ordinary geometry while resolving simulation space to world.
+    ///
+    /// World-space simulations pass identity. Flag-`0x200` simulations pass
+    /// the current placement/bone/emitter matrix so particles follow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare`], plus an invalid transform.
+    pub fn prepare_transformed(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        alpha_multiplier: f32,
+    ) -> Result<Self, M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
         }
+        let determinant = particle_to_world.determinant();
+        if !particle_to_world.is_finite()
+            || !determinant.is_finite()
+            || determinant.abs() <= f32::EPSILON
+        {
+            return Err(M2ParticleMeshPlanError::Transform);
+        }
+        let inverse_particle_transform = particle_to_world.inverse();
+        let billboard_right = particle_to_world.transform_vector3(
+            inverse_particle_transform
+                .transform_vector3(camera.right())
+                .normalize(),
+        );
+        let billboard_up = particle_to_world.transform_vector3(
+            inverse_particle_transform
+                .transform_vector3(camera.up())
+                .normalize(),
+        );
         let (emit_head, emit_tail) = match emitter.head_or_tail() {
             0 => (true, false),
             1 => (false, true),
@@ -171,6 +215,8 @@ impl M2ParticleMeshPlan {
         let cell_size = Vec2::new(1.0 / columns as f32, rows.recip());
         let normal = -camera.forward();
         for particle in particles {
+            let position = particle_to_world.transform_point3(particle.position());
+            let velocity = particle_to_world.transform_vector3(particle.velocity());
             let appearance = M2ParticleLifetimePose::sample(
                 emitter,
                 particle.normalized_age(pose.lifespan(), emitter.lifespan_variation()),
@@ -181,8 +227,13 @@ impl M2ParticleMeshPlan {
             if emit_head {
                 let rotation = M2ParticleRotationPose::sample(emitter, particle.random_word())
                     .angle_radians(particle.age_seconds());
-                let positions =
-                    billboard_positions(particle.position(), appearance.scale(), rotation, camera);
+                let positions = billboard_positions(
+                    position,
+                    appearance.scale(),
+                    rotation,
+                    billboard_right,
+                    billboard_up,
+                );
                 push_quad(
                     &mut vertices,
                     &mut indices,
@@ -199,25 +250,31 @@ impl M2ParticleMeshPlan {
                 if emitter.flags() & 0x0002_0000 != 0 && particle.age_seconds() < span {
                     span = particle.age_seconds();
                 }
-                let tail_vector = -particle.velocity() * span;
+                let tail_vector = -velocity * span;
                 let projected = Vec2::new(
                     tail_vector.dot(camera.right()),
                     tail_vector.dot(camera.up()),
                 );
                 let positions = if projected.length_squared() > TAIL_PROJECTION_THRESHOLD_SQUARED {
                     let reciprocal_length = projected.length_recip();
-                    let side = -camera.right()
+                    let side = -billboard_right
                         * (appearance.scale().y * projected.y * reciprocal_length)
-                        + camera.up() * (appearance.scale().x * projected.x * reciprocal_length);
-                    let endpoint = particle.position() + tail_vector;
+                        + billboard_up * (appearance.scale().x * projected.x * reciprocal_length);
+                    let endpoint = position + tail_vector;
                     [
-                        particle.position() + side,
-                        particle.position() - side,
+                        position + side,
+                        position - side,
                         endpoint + side,
                         endpoint - side,
                     ]
                 } else {
-                    billboard_positions(particle.position(), appearance.scale(), 0.0, camera)
+                    billboard_positions(
+                        position,
+                        appearance.scale(),
+                        0.0,
+                        billboard_right,
+                        billboard_up,
+                    )
                 };
                 push_quad(
                     &mut vertices,
@@ -262,7 +319,8 @@ fn billboard_positions(
     center: Vec3,
     scale: Vec2,
     rotation: f32,
-    camera: WorldCameraFrame,
+    right: Vec3,
+    up: Vec3,
 ) -> [Vec3; 4] {
     let (sine, cosine) = rotation.sin_cos();
     CORNERS.map(|corner| {
@@ -271,7 +329,7 @@ fn billboard_positions(
             scaled.x * cosine - scaled.y * sine,
             scaled.x * sine + scaled.y * cosine,
         );
-        center + camera.right() * rotated.x + camera.up() * rotated.y
+        center + right * rotated.x + up * rotated.y
     })
 }
 
@@ -337,6 +395,9 @@ pub enum M2ParticleMeshPlanError {
     /// Placement/model opacity must remain finite before color packing.
     #[error("M2 particle alpha multiplier must be finite")]
     AlphaMultiplier,
+    /// Model-space particles require one finite current emitter transform.
+    #[error("M2 particle transform must be finite")]
+    Transform,
     /// Four vertices per live particle exceed process or GPU index limits.
     #[error("M2 particle vertex count exceeds process limits")]
     VertexCount,

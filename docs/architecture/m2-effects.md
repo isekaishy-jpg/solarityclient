@@ -166,3 +166,14 @@ call order. Model-space particles retain local coordinates; ordinary particles
 receive their emitter matrix. Recovered but not-yet-implemented spline,
 collision, inherited-velocity, and follow paths return typed errors rather than
 falling through to another generator.
+
+Resident M2 generations share one pipeline and one sampled-image descriptor per
+ordinary emitter, while every MDDF or MODD placement owns its simulation and
+random stream. Visible planar and spherical emitters sample the placement's
+current animation clock and bone matrix, append PNC0T0 vertices and `u32`
+indices to the grow-only world-frame ring, and issue indexed draws beside M2
+bodies and ribbons. Flag `0x200` keeps live state in emitter space and applies
+the current animated transform during mesh preparation; all other ordinary
+particles retain the world-space position chosen when they were emitted.
+Multi-texture, geometry, child-emitter, and other specialized paths remain
+typed boundaries and never substitute the one-texture ordinary shader.
