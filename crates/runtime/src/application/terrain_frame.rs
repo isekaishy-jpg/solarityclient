@@ -5,20 +5,23 @@ use std::sync::Arc;
 use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2SceneUniform, TerrainLayerCount,
-    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
-    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
-    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
-    WorldScreenWindow,
+    BlpColorSpace, BlpTextureUploadError, M2LocalLightState, M2MeshPlanError, M2SceneUniform,
+    TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform,
+    TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError,
+    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
+    WorldModelTextureFiltering, WorldScreenWindow,
 };
 use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
+use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 
+mod m2;
 mod world_model;
 
+use m2::M2Frame;
 use world_model::WorldModelFrame;
 
 /// Failure while joining a resident ADT to renderer-local GPU resources.
@@ -42,6 +45,9 @@ pub enum RuntimeTerrainFrameError {
     /// An authored MODF transform could not enter presentation state.
     #[error(transparent)]
     WorldModelPlacement(#[from] WorldModelPlacementError),
+    /// An M2 SKIN profile could not enter the direct-index mesh ABI.
+    #[error(transparent)]
+    M2Mesh(#[from] M2MeshPlanError),
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"
@@ -98,6 +104,14 @@ pub enum RuntimeTerrainFrameError {
         /// Resident ADT Y coordinate.
         tile_y: u8,
     },
+    /// Terrain reported a new tile without its admitted M2 presentation scene.
+    #[error("resident terrain tile [{tile_x}, {tile_y}] has no M2 presentation scene")]
+    MissingM2Scene {
+        /// Resident ADT X coordinate.
+        tile_x: u8,
+        /// Resident ADT Y coordinate.
+        tile_y: u8,
+    },
     /// Terrain residency and the retained GPU generation became inconsistent.
     #[error("current terrain tile [{tile_x}, {tile_y}] has no matching GPU generation")]
     MissingGpuGeneration {
@@ -128,6 +142,16 @@ pub enum RuntimeTerrainFrameError {
         /// Number of retained root-WMO generations.
         source_count: usize,
     },
+    /// One placed MDDF/MODD instance references no resident M2 source slot.
+    #[error(
+        "resident M2 placement references source {source_index}, but only {source_count} sources exist"
+    )]
+    M2SourceIndex {
+        /// Invalid M2 source-table slot.
+        source_index: usize,
+        /// Number of resident M2 generations.
+        source_count: usize,
+    },
 }
 
 /// One immutable resident ADT generation ready for camera selection.
@@ -135,6 +159,7 @@ pub(super) struct TerrainFrame {
     tile: TerrainTileIndex,
     draws: Vec<TerrainPreparedDraw>,
     visible_draws: Vec<TerrainPreparedDraw>,
+    m2: M2Frame,
     world_models: WorldModelFrame,
 }
 
@@ -144,6 +169,7 @@ impl TerrainFrame {
         renderer: &mut VulkanRenderer,
         plan: &TerrainTileMeshPlan,
         sources: &[Arc<BlpTextureSource>],
+        m2_scene: &ResidentM2Scene,
         world_models: &ResidentWorldModelScene,
         world_model_filtering: WorldModelTextureFiltering,
         world_model_base_mip: WorldModelBaseMip,
@@ -225,6 +251,7 @@ impl TerrainFrame {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            m2: M2Frame::prepare(renderer, m2_scene)?,
             world_models: WorldModelFrame::prepare(
                 renderer,
                 world_models,
@@ -318,6 +345,16 @@ impl TerrainFrame {
     /// Returns the number of independently transformed resident WMO owners.
     pub(super) fn world_model_placement_count(&self) -> usize {
         self.world_models.placement_count()
+    }
+
+    /// Returns the number of selected shared M2 GPU generations.
+    pub(super) fn m2_mesh_count(&self) -> usize {
+        self.m2.mesh_count()
+    }
+
+    /// Returns the number of retained MDDF and MODD instances.
+    pub(super) fn m2_placement_count(&self) -> usize {
+        self.m2.placement_count()
     }
 }
 

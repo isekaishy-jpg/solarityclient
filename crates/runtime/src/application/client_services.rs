@@ -459,6 +459,12 @@ impl ClientServices {
                         tile_y: tile.y(),
                     },
                 )?;
+                let m2_scene = self.terrain.resident_m2_scene().ok_or(
+                    RuntimeTerrainFrameError::MissingM2Scene {
+                        tile_x: tile.x(),
+                        tile_y: tile.y(),
+                    },
+                )?;
                 // Registered build-12340 defaults: textureFilteringMode 3 is
                 // anisotropic 4x and BaseMip 0 begins at the authored top mip.
                 // A settings owner will pass live typed values here directly.
@@ -466,6 +472,7 @@ impl ClientServices {
                     &mut self.renderer,
                     plan,
                     sources,
+                    m2_scene,
                     world_models,
                     WorldModelTextureFiltering::Anisotropic4x,
                     WorldModelBaseMip::Zero,
@@ -474,6 +481,8 @@ impl ClientServices {
                     tile_x = tile.x(),
                     tile_y = tile.y(),
                     draw_count = frame.draw_count(),
+                    m2_mesh_count = frame.m2_mesh_count(),
+                    m2_placement_count = frame.m2_placement_count(),
                     world_model_placement_count = frame.world_model_placement_count(),
                     "resident terrain entered renderer resources"
                 );

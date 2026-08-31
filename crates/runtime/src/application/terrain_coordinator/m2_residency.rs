@@ -45,6 +45,33 @@ pub(in crate::application) struct ResidentM2Placement {
     color: [u8; 4],
 }
 
+impl ResidentM2Placement {
+    /// Returns the shared M2 generation used by this independent placement.
+    pub(in crate::application) const fn source_index(&self) -> usize {
+        self.source_index
+    }
+
+    /// Returns the fully composed model-local to world-space transform.
+    pub(in crate::application) const fn transform(&self) -> Mat4 {
+        self.transform
+    }
+
+    /// Returns the stock placement table which authored this instance.
+    pub(in crate::application) const fn owner(&self) -> ResidentM2Owner {
+        self.owner
+    }
+
+    /// Returns the unmodified MDDF or MODD flags.
+    pub(in crate::application) const fn flags(&self) -> u16 {
+        self.flags
+    }
+
+    /// Returns the packed MODD color, or opaque white for an MDDF placement.
+    pub(in crate::application) const fn color(&self) -> [u8; 4] {
+        self.color
+    }
+}
+
 /// Deduplicated M2 generations and all independently transformed owners.
 #[derive(Default)]
 pub(in crate::application) struct ResidentM2Scene {
@@ -53,6 +80,16 @@ pub(in crate::application) struct ResidentM2Scene {
 }
 
 impl ResidentM2Scene {
+    /// Returns every archive-selected model generation in stable slot order.
+    pub(in crate::application) fn sources(&self) -> &[ResidentM2Source] {
+        &self.sources
+    }
+
+    /// Returns all independently transformed MDDF and MODD instances.
+    pub(in crate::application) fn placements(&self) -> &[ResidentM2Placement] {
+        &self.placements
+    }
+
     pub(super) const fn source_count(&self) -> usize {
         self.sources.len()
     }

@@ -307,6 +307,15 @@ impl RuntimeTerrainCoordinator {
             .map(|tile| &tile.world_models)
     }
 
+    /// Returns the resident MDDF/MODD presentation scene for GPU publication.
+    #[must_use]
+    pub(super) fn resident_m2_scene(&self) -> Option<&ResidentM2Scene> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.m2_scene)
+    }
+
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
     ///
     /// # Errors
