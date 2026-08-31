@@ -7,3 +7,5 @@
 mod audio;
 mod cinematic;
 mod voice;
+
+pub use audio::{EncodedSound, SoundCache, SoundVariationSelector};

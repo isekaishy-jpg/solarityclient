@@ -24,6 +24,19 @@ not search archives independently. Replacement sound packs therefore use the
 same mechanism as higher-resolution texture packs: normal MPQ precedence
 selects one payload for one logical path without a pack-specific resource type.
 
+Variation selection treats each positive `Freq` field as the size of its file
+slot's contiguous ticket range. Zero-frequency slots are disabled and are not
+silently made playable. The media selector accepts an already bounded ticket;
+the runtime remains responsible for advancing and scaling the process-wide
+stock CRT random stream in the evidenced call order.
+
+Selected encoded payloads are cached by normalized `AssetPath`. One
+`Arc<EncodedSound>` owns the path, selected archive descriptor, and original
+encoded bytes for all concurrent decoder voices. The cache reads a path only
+once, retains no parallel stock/pack version, and can collect entries after the
+cache becomes their sole owner. No unevidenced byte limit or age-based eviction
+policy is introduced.
+
 The schema is checked against the public build range covering
 3.1.0.9767 through 3.3.5.12340 in the
 [WoWDBDefs SoundEntries definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntries.dbd).

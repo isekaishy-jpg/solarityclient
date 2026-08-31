@@ -18,5 +18,7 @@ mod audio_engine;
 mod audio_spatial;
 #[path = "stock_seed/cinematic.rs"]
 mod cinematic;
+#[path = "stock_seed/support/mod.rs"]
+mod support;
 #[path = "stock_seed/voice.rs"]
 mod voice;

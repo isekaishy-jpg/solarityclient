@@ -11,6 +11,10 @@ mod codec;
 mod dsp;
 mod emitter;
 mod engine;
+mod selection;
 mod spatial;
 
 mod types;
+
+pub use cache::{EncodedSound, SoundCache};
+pub use selection::SoundVariationSelector;

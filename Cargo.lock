@@ -2153,6 +2153,7 @@ dependencies = [
  "solarity-rendering",
  "thiserror",
  "tracing",
+ "wow-mpq",
 ]
 
 [[package]]
