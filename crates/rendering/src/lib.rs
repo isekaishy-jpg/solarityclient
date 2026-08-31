@@ -48,10 +48,11 @@ pub use model::{
     CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
     CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock,
     M2BonePose, M2BonePoseError, M2DrawCall, M2DrawPushConstants, M2LocalLightState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix,
-    M2ShadowState, M2TextureBinding, PlacedWorldModelDrawPlan, WorldModelDrawCall,
-    WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
+    M2MaterialPose, M2MaterialPoseError, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
+    M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding,
+    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
+    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    WorldModelSceneUniform,
 };
 pub use shader::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,

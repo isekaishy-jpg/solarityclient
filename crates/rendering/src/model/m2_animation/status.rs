@@ -32,3 +32,70 @@ pub enum M2BonePoseError {
     #[error("M2 billboard pose requires a finite, invertible model-view transform")]
     InvalidModelView,
 }
+
+/// A model/mesh pair cannot produce one animated material snapshot.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum M2MaterialPoseError {
+    /// Bone and material animation share the same sequence validity rules.
+    #[error(transparent)]
+    Animation(#[from] M2BonePoseError),
+    /// The mesh plan was prepared from another decoded model identity.
+    #[error("M2 material pose model does not match its mesh plan")]
+    ModelMismatch,
+    /// The requested SKIN material batch is absent.
+    #[error("M2 material draw {requested} is unavailable; plan has {available} draws")]
+    DrawIndex {
+        /// Requested zero-based draw slot.
+        requested: usize,
+        /// Number of draws retained by the plan.
+        available: usize,
+    },
+    /// A validated SKIN color selector is unexpectedly absent.
+    #[error("M2 color {requested} is unavailable; model has {available} colors")]
+    ColorIndex {
+        /// Authored color-animation slot.
+        requested: u16,
+        /// Number of decoded color animations.
+        available: usize,
+    },
+    /// A texture-weight combo starts outside the model lookup.
+    #[error("M2 texture-weight lookup {requested} is unavailable; model has {available} entries")]
+    TextureWeightLookup {
+        /// Authored lookup-table slot.
+        requested: usize,
+        /// Number of decoded lookup entries.
+        available: usize,
+    },
+    /// A texture-weight lookup references an absent animation.
+    #[error("M2 texture weight {requested} is unavailable; model has {available} weights")]
+    TextureWeightIndex {
+        /// Authored texture-weight slot.
+        requested: u16,
+        /// Number of decoded texture weights.
+        available: usize,
+    },
+    /// A texture-transform combo starts outside the model lookup.
+    #[error(
+        "M2 texture-transform lookup {requested} is unavailable; model has {available} entries"
+    )]
+    TextureTransformLookup {
+        /// Authored lookup-table slot.
+        requested: usize,
+        /// Number of decoded lookup entries.
+        available: usize,
+    },
+    /// Build 12340 has no material path beyond two texture stages.
+    #[error("M2 material requests unsupported texture-stage count {requested}")]
+    TextureStageCount {
+        /// Authored stage count outside the fixed one/two-stage domain.
+        requested: u16,
+    },
+    /// A texture-transform lookup references an absent animation.
+    #[error("M2 texture transform {requested} is unavailable; model has {available} transforms")]
+    TextureTransformIndex {
+        /// Authored texture-transform slot.
+        requested: u16,
+        /// Number of decoded texture transforms.
+        available: usize,
+    },
+}

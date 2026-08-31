@@ -16,10 +16,10 @@ use solarity_rendering::{
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
     CharacterRangedHand, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponPose,
     CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2LocalLightCount,
-    M2LocalLightState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader,
-    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
-    VulkanBootstrap, VulkanError,
+    M2LocalLightState, M2MaterialPose, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
+    M2PixelShader, M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan,
+    M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet,
+    M2VertexShader, VulkanBootstrap, VulkanError,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -441,6 +441,16 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(plan.vertices()[0].bone_weights(), [255, 0, 0, 0]);
     assert_eq!(plan.vertices()[0].bone_indices(), [2, 0, 0, 0]);
     let draw = plan.draws().first().ok_or("M2 draw is absent")?;
+    let material_pose =
+        M2MaterialPose::sample(&model, &plan, 0, M2AnimationClock::new(0, 500.0, 0.0))?;
+    assert_eq!(material_pose.mesh_color().truncate(), Vec3::splat(1.5));
+    assert!((material_pose.mesh_color().w - 0.5625).abs() < 0.000_1);
+    for transform in material_pose.texture_transforms() {
+        assert_eq!(
+            transform.transform_point3(Vec3::ZERO),
+            Vec3::new(0.25, 0.0, 0.0)
+        );
+    }
     assert_eq!(draw.geoset_id(), 402);
     assert_eq!(draw.first_index(), 0);
     assert_eq!(draw.index_count(), 3);
@@ -1682,7 +1692,139 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     bytes[0x20..0x24].copy_from_slice(&sequence_offset.to_le_bytes());
     bytes[0x2c..0x30].copy_from_slice(&3_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
+    append_render_material_tracks(bytes)?;
     Ok(())
+}
+
+/// Adds the material tracks consumed by all three synthetic SKIN draws.
+fn append_render_material_tracks(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let color_offset = bytes.len();
+    bytes.resize(color_offset + 40, 0);
+    let weight_offset = bytes.len();
+    bytes.resize(weight_offset + 20, 0);
+    let transform_offset = bytes.len();
+    bytes.resize(transform_offset + 60, 0);
+
+    append_render_track(
+        bytes,
+        color_offset,
+        &[0, 1_000],
+        &render_f32_values(&[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]),
+        12,
+    )?;
+    append_render_track(
+        bytes,
+        color_offset + 20,
+        &[0, 1_000],
+        &render_i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_render_track(
+        bytes,
+        weight_offset,
+        &[0, 1_000],
+        &render_i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_render_track(
+        bytes,
+        transform_offset,
+        &[0, 1_000],
+        &render_f32_values(&[0.0, 0.0, 0.0, 0.5, 0.0, 0.0]),
+        12,
+    )?;
+    append_render_track(
+        bytes,
+        transform_offset + 20,
+        &[0, 1_000],
+        &render_i16_values(&[-32_768, -32_768, -32_768, -1, -32_768, -32_768, -32_768, -1]),
+        8,
+    )?;
+    append_render_track(
+        bytes,
+        transform_offset + 40,
+        &[0, 1_000],
+        &render_f32_values(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+        12,
+    )?;
+
+    let weight_lookup_offset = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    let transform_lookup_offset = bytes.len();
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    set_render_header_array(bytes, 0x48, 1, color_offset)?;
+    set_render_header_array(bytes, 0x58, 1, weight_offset)?;
+    set_render_header_array(bytes, 0x60, 1, transform_offset)?;
+    set_render_header_array(bytes, 0x90, 2, weight_lookup_offset)?;
+    set_render_header_array(bytes, 0x98, 2, transform_lookup_offset)?;
+    Ok(())
+}
+
+fn append_render_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u32],
+    values: &[u8],
+    value_stride: usize,
+) -> Result<(), Box<dyn Error>> {
+    if values.len() != timestamps.len() * value_stride {
+        return Err("render fixture track value count differs from timestamps".into());
+    }
+    let timestamp_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let timestamp_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let value_refs = bytes.len();
+    bytes.extend_from_slice(&u32::try_from(timestamps.len())?.to_le_bytes());
+    let value_data_word = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    let timestamp_data = bytes.len();
+    for timestamp in timestamps {
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+    }
+    let value_data = bytes.len();
+    bytes.extend_from_slice(values);
+
+    bytes[timestamp_data_word..timestamp_data_word + 4]
+        .copy_from_slice(&u32::try_from(timestamp_data)?.to_le_bytes());
+    bytes[value_data_word..value_data_word + 4]
+        .copy_from_slice(&u32::try_from(value_data)?.to_le_bytes());
+    bytes[track_offset..track_offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[track_offset + 2..track_offset + 4].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes[track_offset + 4..track_offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 8..track_offset + 12]
+        .copy_from_slice(&u32::try_from(timestamp_refs)?.to_le_bytes());
+    bytes[track_offset + 12..track_offset + 16].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[track_offset + 16..track_offset + 20]
+        .copy_from_slice(&u32::try_from(value_refs)?.to_le_bytes());
+    Ok(())
+}
+
+fn set_render_header_array(
+    bytes: &mut [u8],
+    pair_offset: usize,
+    count: u32,
+    offset: usize,
+) -> Result<(), Box<dyn Error>> {
+    bytes[pair_offset..pair_offset + 4].copy_from_slice(&count.to_le_bytes());
+    bytes[pair_offset + 4..pair_offset + 8].copy_from_slice(&u32::try_from(offset)?.to_le_bytes());
+    Ok(())
+}
+
+fn render_f32_values(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn render_i16_values(values: &[i16]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
 }
 
 /// Serializes one non-identity SKIN lookup and two-stage material batch.
@@ -1716,14 +1858,14 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 shader_id: 0x8001,
                 skin_section_index: 0,
                 geoset_index: 0,
-                color_index: u16::MAX,
+                color_index: 0,
                 material_index: 0,
                 material_layer: 1,
                 texture_count: 2,
                 texture_combo_index: 0,
                 texture_coord_combo_index: 0,
-                texture_weight_combo_index: u16::MAX,
-                texture_transform_combo_index: u16::MAX,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
             },
             SkinBatch {
                 flags: 0,
@@ -1731,14 +1873,14 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 shader_id: 0,
                 skin_section_index: 0,
                 geoset_index: 0,
-                color_index: u16::MAX,
+                color_index: 0,
                 material_index: 0,
                 material_layer: 0,
                 texture_count: 2,
                 texture_combo_index: 0,
                 texture_coord_combo_index: 0,
-                texture_weight_combo_index: u16::MAX,
-                texture_transform_combo_index: u16::MAX,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
             },
             SkinBatch {
                 flags: 0,
@@ -1746,14 +1888,14 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 shader_id: 2,
                 skin_section_index: 0,
                 geoset_index: 0,
-                color_index: u16::MAX,
+                color_index: 0,
                 material_index: 1,
                 material_layer: 0,
                 texture_count: 2,
                 texture_combo_index: 0,
                 texture_coord_combo_index: 0,
-                texture_weight_combo_index: u16::MAX,
-                texture_transform_combo_index: u16::MAX,
+                texture_weight_combo_index: 0,
+                texture_transform_combo_index: 0,
             },
         ],
     };

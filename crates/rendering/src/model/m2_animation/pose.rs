@@ -24,6 +24,48 @@ impl M2AnimationClock {
             global_time_ms,
         }
     }
+
+    /// Returns the selected zero-based sequence before alias resolution.
+    #[must_use]
+    pub const fn sequence(self) -> usize {
+        self.sequence
+    }
+
+    /// Returns elapsed time on the selected sequence clock.
+    #[must_use]
+    pub const fn animation_time_ms(self) -> f32 {
+        self.animation_time_ms
+    }
+
+    /// Returns elapsed time on the process-global animation clock.
+    #[must_use]
+    pub const fn global_time_ms(self) -> f32 {
+        self.global_time_ms
+    }
+
+    /// Validates availability and returns the final non-alias sequence slot.
+    pub(super) fn resolve(self, animations: &M2AnimationSet) -> Result<usize, M2BonePoseError> {
+        if !self.animation_time_ms.is_finite() || !self.global_time_ms.is_finite() {
+            return Err(M2BonePoseError::NonFiniteTime);
+        }
+        if self.sequence >= animations.sequences().len() {
+            return Err(M2BonePoseError::SequenceIndex {
+                requested: self.sequence,
+                available: animations.sequences().len(),
+            });
+        }
+        if animations.is_sequence_available(self.sequence) != Some(true) {
+            return Err(M2BonePoseError::SequenceUnavailable {
+                sequence: self.sequence,
+            });
+        }
+        animations
+            .resolve_sequence_alias(self.sequence)
+            .ok_or(M2BonePoseError::SequenceIndex {
+                requested: self.sequence,
+                available: animations.sequences().len(),
+            })
+    }
 }
 
 /// One complete model-bone matrix palette ready for GPU upload.
@@ -90,26 +132,7 @@ impl M2BonePose {
         clock: M2AnimationClock,
         model_view: Option<BillboardView>,
     ) -> Result<Self, M2BonePoseError> {
-        if !clock.animation_time_ms.is_finite() || !clock.global_time_ms.is_finite() {
-            return Err(M2BonePoseError::NonFiniteTime);
-        }
-        if clock.sequence >= animations.sequences().len() {
-            return Err(M2BonePoseError::SequenceIndex {
-                requested: clock.sequence,
-                available: animations.sequences().len(),
-            });
-        }
-        if animations.is_sequence_available(clock.sequence) != Some(true) {
-            return Err(M2BonePoseError::SequenceUnavailable {
-                sequence: clock.sequence,
-            });
-        }
-        let sequence = animations.resolve_sequence_alias(clock.sequence).ok_or(
-            M2BonePoseError::SequenceIndex {
-                requested: clock.sequence,
-                available: animations.sequences().len(),
-            },
-        )?;
+        let sequence = clock.resolve(animations)?;
         if model_view.is_none()
             && let Some((bone, _)) = animations
                 .bones()

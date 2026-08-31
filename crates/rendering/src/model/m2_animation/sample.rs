@@ -116,6 +116,53 @@ pub(super) fn sample_vec3(
     )
 }
 
+/// Evaluates one scalar material track with the shared cubic basis.
+pub(super) fn sample_scalar(
+    animations: &M2AnimationSet,
+    track: &M2Track<f32>,
+    sequence: usize,
+    animation_time_ms: f32,
+    global_time_ms: f32,
+    default: f32,
+) -> f32 {
+    let Some(location) = locate(
+        animations,
+        track,
+        sequence,
+        animation_time_ms,
+        global_time_ms,
+    ) else {
+        return default;
+    };
+    let Some((lower, upper, amount)) =
+        interval(location.channel, track.interpolation(), location.time_ms)
+    else {
+        return default;
+    };
+    let stride = values_per_key(track.interpolation());
+    let Some(&first) = location.channel.values().get(lower * stride) else {
+        return default;
+    };
+    let Some(&second) = location.channel.values().get(upper * stride) else {
+        return default;
+    };
+    match track.interpolation() {
+        M2Interpolation::Step => first,
+        M2Interpolation::Linear => first + (second - first) * amount,
+        M2Interpolation::Bezier | M2Interpolation::Hermite => {
+            let values = location.channel.values();
+            cubic(
+                track.interpolation(),
+                first,
+                values[lower * 3 + 2],
+                values[upper * 3 + 1],
+                second,
+                amount,
+            )
+        }
+    }
+}
+
 /// Applies the selected vector interpolation using WotLK's value/tangent order.
 fn interpolate_vec3(
     channel: &M2TrackChannel<Vec3>,
