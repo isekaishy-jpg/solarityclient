@@ -2,9 +2,7 @@
 
 use crate::model::M2AnimationSet;
 use crate::model::lookups::M2LookupTables;
-use crate::model::m2_shared::{
-    canonical_model_path, model_decode, parse_model, parse_skin, skin_path,
-};
+use crate::model::m2_shared::{canonical_model_path, model_decode, parse_model, skin_path};
 use crate::model::model_blob::ModelBlob;
 use crate::{
     ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Attachment, M2Material, M2ModelBounds,
@@ -98,11 +96,10 @@ impl DecodedM2Model {
             let profile_path = skin_path(&path, profile)?;
             let profile_read = store.read(&profile_path)?;
             let profile_source = profile_read.source().clone();
-            let skin = parse_skin(&profile_path, profile_read.bytes())?;
-            skins.push(M2SkinProfile::from_skin(
+            skins.push(M2SkinProfile::decode(
                 profile_path,
                 profile_source,
-                skin,
+                profile_read.bytes(),
                 model_vertex_count,
             )?);
         }

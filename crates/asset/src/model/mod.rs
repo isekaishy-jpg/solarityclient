@@ -10,6 +10,7 @@ mod m2_cache;
 mod m2_model;
 mod m2_shared;
 mod model_blob;
+mod skin_profile;
 
 pub use animation::{
     M2AnimationSet, M2Attachment, M2Bone, M2Camera, M2ColorAnimation, M2Event, M2EventTrack,
@@ -20,7 +21,5 @@ pub use animation::{
 pub use collision::M2CollisionMesh;
 pub use m2_model::DecodedM2Model;
 pub(crate) use m2_shared::canonical_model_path;
-pub use model_blob::{
-    M2Batch, M2BlendMode, M2Material, M2ModelBounds, M2SkinProfile, M2Submesh, M2Texture,
-    M2TextureKind, M2Vertex,
-};
+pub use model_blob::{M2BlendMode, M2Material, M2ModelBounds, M2Texture, M2TextureKind, M2Vertex};
+pub use skin_profile::{M2Batch, M2SkinProfile, M2Submesh};

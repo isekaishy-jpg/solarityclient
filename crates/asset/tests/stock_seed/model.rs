@@ -1218,6 +1218,39 @@ fn skin_triangle_reference_outside_vertex_lookup_is_rejected() -> Result<(), Box
     Ok(())
 }
 
+/// Invalid authored bounds are rejected before they reach culling or GPU work.
+#[test]
+fn skin_submesh_nonfinite_bounds_are_rejected() -> Result<(), Box<dyn Error>> {
+    let model = m2_bytes("BadBounds", 1)?;
+    let mut skin = skin_bytes(32, &[0, 1, 2])?;
+    let submesh_offset = u32::from_le_bytes(skin[32..36].try_into()?) as usize;
+    skin[submesh_offset + 44..submesh_offset + 48].copy_from_slice(&f32::NAN.to_le_bytes());
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\BadBounds.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\BadBounds00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model_path = AssetPath::new("Creature/Solarity/BadBounds.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &model_path),
+        Err(AssetError::ModelDecode { path, message })
+            if path.as_str() == "CREATURE\\SOLARITY\\BADBOUNDS00.SKIN"
+                && message.contains("submesh 0 has invalid bounds")
+    ));
+    Ok(())
+}
+
 /// The SKIN level word supplies high triangle-start bits for large profiles.
 #[test]
 fn extended_triangle_start_loads_large_hd_profile() -> Result<(), Box<dyn Error>> {

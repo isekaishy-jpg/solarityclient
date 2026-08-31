@@ -4,7 +4,6 @@ use std::io::Cursor;
 
 use wow_m2::header::M2Header;
 use wow_m2::model::M2Model;
-use wow_m2::skin::OldSkin;
 
 use crate::{AssetError, AssetPath};
 
@@ -13,15 +12,6 @@ const BUILD_12340_M2_VERSION: u32 = 264;
 
 /// Bytes occupied by a build-12340 M2 vertex.
 const M2_VERTEX_SIZE: usize = 48;
-
-/// Bytes preceding the five arrays in an external build-12340 SKIN header.
-const OLD_SKIN_HEADER_SIZE: usize = 48;
-
-/// Dependency parse plus a stock field that `wow-m2` currently discards.
-pub(super) struct ParsedSkin {
-    pub(super) skin: OldSkin,
-    pub(super) center_bone_indices: Vec<u16>,
-}
 
 /// Applies build 12340's model-cache filename conversion before archive lookup.
 ///
@@ -134,22 +124,6 @@ fn validate_model_texture_arrays(path: &AssetPath, bytes: &[u8]) -> Result<(), A
     Ok(())
 }
 
-/// Parses WotLK's old external SKIN layout without heuristic format detection.
-pub(super) fn parse_skin(path: &AssetPath, bytes: &[u8]) -> Result<ParsedSkin, AssetError> {
-    validate_skin_arrays(path, bytes)?;
-    let center_bone_indices = read_center_bone_indices(path, bytes)?;
-    let skin = OldSkin::parse(&mut Cursor::new(bytes)).map_err(|source| {
-        model_decode(
-            path,
-            format!("invalid build-12340 external SKIN data: {source}"),
-        )
-    })?;
-    Ok(ParsedSkin {
-        skin,
-        center_bone_indices,
-    })
-}
-
 /// Derives the stock `Model00.skin` through `ModelNN.skin` companion name.
 pub(super) fn skin_path(model_path: &AssetPath, profile: u32) -> Result<AssetPath, AssetError> {
     let Some(stem) = model_path.as_str().strip_suffix(".M2") else {
@@ -260,85 +234,6 @@ fn validate_model_name(path: &AssetPath, bytes: &[u8], model: &M2Model) -> Resul
     Ok(())
 }
 
-/// Preflights every old-SKIN array before the dependency allocates from counts.
-fn validate_skin_arrays(path: &AssetPath, bytes: &[u8]) -> Result<(), AssetError> {
-    if bytes.len() < OLD_SKIN_HEADER_SIZE {
-        return Err(model_decode(
-            path,
-            "external SKIN header is truncated".to_owned(),
-        ));
-    }
-    if &bytes[..4] != b"SKIN" {
-        return Err(model_decode(
-            path,
-            "expected build-12340 SKIN magic".to_owned(),
-        ));
-    }
-
-    // WotLK stores five count/offset pairs after the magic. Their concrete
-    // element widths prevent impossible counts from triggering large allocations.
-    for (pair_offset, element_size, label) in [
-        (4, 2, "vertex lookup"),
-        (12, 2, "triangle lookup"),
-        (20, 4, "bone indices"),
-        (28, 48, "submeshes"),
-        (36, 24, "batches"),
-    ] {
-        validate_array(path, bytes, pair_offset, element_size, label)?;
-    }
-    Ok(())
-}
-
-/// Recovers the actual word that `wow-m2` currently treats as padding.
-fn read_center_bone_indices(path: &AssetPath, bytes: &[u8]) -> Result<Vec<u16>, AssetError> {
-    const SUBMESH_PAIR_OFFSET: usize = 28;
-    const SUBMESH_SIZE: usize = 48;
-    const CENTER_BONE_INDEX_OFFSET: usize = 18;
-
-    let count = read_u32(path, bytes, SUBMESH_PAIR_OFFSET, "submeshes")? as usize;
-    let offset = read_u32(path, bytes, SUBMESH_PAIR_OFFSET + 4, "submeshes")? as usize;
-    let mut center_bone_indices = Vec::with_capacity(count);
-    for index in 0..count {
-        let record_offset = index
-            .checked_mul(SUBMESH_SIZE)
-            .and_then(|relative| offset.checked_add(relative))
-            .and_then(|start| start.checked_add(CENTER_BONE_INDEX_OFFSET))
-            .ok_or_else(|| model_decode(path, "submesh byte range overflows".to_owned()))?;
-        center_bone_indices.push(read_u16(
-            path,
-            bytes,
-            record_offset,
-            "submesh center bone index",
-        )?);
-    }
-    Ok(center_bone_indices)
-}
-
-/// Checks a little-endian count/offset pair against the selected archive entry.
-fn validate_array(
-    path: &AssetPath,
-    bytes: &[u8],
-    pair_offset: usize,
-    element_size: usize,
-    label: &str,
-) -> Result<(), AssetError> {
-    let count = read_u32(path, bytes, pair_offset, label)? as usize;
-    let offset = read_u32(path, bytes, pair_offset + 4, label)? as usize;
-    let byte_count = count
-        .checked_mul(element_size)
-        .ok_or_else(|| model_decode(path, format!("{label} byte range overflows")))?;
-    let end = offset
-        .checked_add(byte_count)
-        .ok_or_else(|| model_decode(path, format!("{label} byte range overflows")))?;
-    if end > bytes.len() {
-        return Err(model_decode(
-            path,
-            format!("{label} array exceeds the SKIN file"),
-        ));
-    }
-    Ok(())
-}
-
 /// Reads one required old-SKIN header word without an unchecked slice conversion.
 fn read_u32(path: &AssetPath, bytes: &[u8], offset: usize, label: &str) -> Result<u32, AssetError> {
     let word = bytes
@@ -346,16 +241,6 @@ fn read_u32(path: &AssetPath, bytes: &[u8], offset: usize, label: &str) -> Resul
         .ok_or_else(|| model_decode(path, format!("{label} header is truncated")))?;
     Ok(u32::from_le_bytes(word.try_into().map_err(|_| {
         model_decode(path, format!("{label} header is truncated"))
-    })?))
-}
-
-/// Reads one required old-SKIN record word.
-fn read_u16(path: &AssetPath, bytes: &[u8], offset: usize, label: &str) -> Result<u16, AssetError> {
-    let word = bytes
-        .get(offset..offset + 2)
-        .ok_or_else(|| model_decode(path, format!("{label} is truncated")))?;
-    Ok(u16::from_le_bytes(word.try_into().map_err(|_| {
-        model_decode(path, format!("{label} is truncated"))
     })?))
 }
 
