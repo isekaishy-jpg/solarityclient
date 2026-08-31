@@ -296,11 +296,20 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             [M2LocalLightState::disabled(); 4],
         ),
     );
-    let frame =
-        renderer.present_world_frame(world_scene, &[], &[draw], &world_model_prepared, &[])?;
+    let frame = renderer.present_world_frame(
+        world_scene,
+        &[],
+        &[draw],
+        &world_model_prepared,
+        &[],
+        &[],
+        &[],
+    )?;
     assert_eq!(frame.terrain_draw_count(), 1);
     assert_eq!(frame.world_model_draw_count(), 2);
     assert_eq!(frame.m2_draw_count(), 0);
+    assert_eq!(frame.ribbon_draw_count(), 0);
+    assert_eq!(frame.ribbon_vertex_count(), 0);
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.
     let empty_frame = renderer.present_terrain(scene, &[])?;

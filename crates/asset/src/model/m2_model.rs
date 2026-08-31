@@ -328,6 +328,16 @@ fn validate_material_animation_references(
         }
     }
     for (ribbon_index, ribbon) in animations.ribbons().iter().enumerate() {
+        if ribbon.texture_indices().len() != ribbon.material_indices().len() {
+            return Err(model_decode(
+                path,
+                format!(
+                    "ribbon {ribbon_index} has {} textures for {} material passes",
+                    ribbon.texture_indices().len(),
+                    ribbon.material_indices().len()
+                ),
+            ));
+        }
         for texture_index in ribbon.texture_indices() {
             if usize::from(*texture_index) >= blob.textures.len() {
                 return Err(model_decode(

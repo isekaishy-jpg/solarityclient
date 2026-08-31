@@ -9,9 +9,12 @@ mod types;
 use ash::{Device, vk};
 use glam::Mat4;
 
+use crate::M2RibbonRenderVertex;
 use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
+use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
+use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
@@ -51,6 +54,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) m2_pipelines: &'a M2PipelineRegistry,
     pub(in crate::device) m2_meshes: &'a M2MeshRegistry,
     pub(in crate::device) m2_texture_sets: &'a M2TextureSetRegistry,
+    pub(in crate::device) m2_ribbon_pipelines: &'a M2RibbonPipelineRegistry,
 }
 
 #[derive(Default)]
@@ -69,9 +73,27 @@ impl WorldFrameRenderer {
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        ribbon_vertices: &[M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        if terrain_draws.is_empty() && world_model_draws.is_empty() && m2_draws.is_empty() {
+        if terrain_draws.is_empty()
+            && world_model_draws.is_empty()
+            && m2_draws.is_empty()
+            && ribbon_draws.is_empty()
+        {
             return Err(VulkanError::EmptyWorldFrame);
+        }
+        if ribbon_draws.iter().any(|draw| {
+            usize::try_from(draw.first_vertex())
+                .ok()
+                .and_then(|first| {
+                    usize::try_from(draw.vertex_count())
+                        .ok()
+                        .and_then(|count| first.checked_add(count))
+                })
+                .is_none_or(|end| end > ribbon_vertices.len())
+        }) {
+            return Err(VulkanError::M2RibbonDrawVertexRange);
         }
         if m2_draws.iter().any(|draw| {
             context
@@ -101,6 +123,7 @@ impl WorldFrameRenderer {
             world_model_draw_capacity: world_model_draws.len(),
             m2_draw_capacity: m2_draws.len(),
             bone_capacity: bone_transforms.len(),
+            ribbon_vertex_capacity: ribbon_vertices.len(),
             uniform_alignment: context.uniform_alignment,
             storage_alignment: context.storage_alignment,
             extent: context.extent,
@@ -116,6 +139,7 @@ impl WorldFrameRenderer {
                 bone_transforms,
                 world_model_draws,
                 m2_draws,
+                ribbon_vertices,
             )?;
             // SAFETY: Swapchain and acquire semaphore live through submission.
             unsafe {
@@ -160,15 +184,20 @@ impl WorldFrameRenderer {
             m2_pipelines: context.m2_pipelines,
             m2_meshes: context.m2_meshes,
             m2_texture_sets: context.m2_texture_sets,
+            m2_ribbon_pipelines: context.m2_ribbon_pipelines,
             terrain_draws,
             world_model_draws,
             m2_draws,
+            ribbon_draws,
+            ribbon_vertex_buffer: slot.ribbon_vertex_buffer(),
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
         Ok(WorldFrameReport::new(
             terrain_draws.len(),
             world_model_draws.len(),
             m2_draws.len(),
+            ribbon_draws.len(),
+            ribbon_vertices.len(),
             bone_transforms.len(),
         ))
     }

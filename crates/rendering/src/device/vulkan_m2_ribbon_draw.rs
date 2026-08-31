@@ -1,0 +1,73 @@
+//! Validated dynamic ribbon draw packets for unified world recording.
+
+use solarity_asset::M2Material;
+
+use crate::device::VulkanError;
+use crate::device::vulkan_m2_ribbon_pipeline::{M2RibbonPipelineHandle, M2RibbonPipelineRegistry};
+use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
+use crate::{M2MaterialState, M2RibbonMeshPlan};
+
+/// Renderer-local resources and vertex range for one ribbon strip.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct M2RibbonPreparedDraw {
+    pipeline: M2RibbonPipelineHandle,
+    texture_set: M2TextureSetHandle,
+    first_vertex: u32,
+    vertex_count: u32,
+}
+
+impl M2RibbonPreparedDraw {
+    pub(in crate::device) const fn pipeline(self) -> M2RibbonPipelineHandle {
+        self.pipeline
+    }
+
+    pub(in crate::device) const fn texture_set(self) -> M2TextureSetHandle {
+        self.texture_set
+    }
+
+    /// Returns the first vertex in the frame's concatenated dynamic stream.
+    #[must_use]
+    pub const fn first_vertex(self) -> u32 {
+        self.first_vertex
+    }
+
+    /// Returns the exact even-sized triangle-strip vertex count.
+    #[must_use]
+    pub const fn vertex_count(self) -> u32 {
+        self.vertex_count
+    }
+}
+
+pub(in crate::device) fn prepare_draw(
+    pipelines: &M2RibbonPipelineRegistry,
+    texture_sets: &M2TextureSetRegistry,
+    pipeline: M2RibbonPipelineHandle,
+    texture_set: M2TextureSetHandle,
+    material: M2Material,
+    first_vertex: u32,
+    mesh: &M2RibbonMeshPlan,
+) -> Result<M2RibbonPreparedDraw, VulkanError> {
+    let pipeline_info = pipelines
+        .info(pipeline)
+        .ok_or(VulkanError::UnknownM2RibbonPipelineHandle)?;
+    if pipeline_info.material() != M2MaterialState::from_material(material) {
+        return Err(VulkanError::M2RibbonDrawPipelineMismatch);
+    }
+    let texture_info = texture_sets
+        .info(texture_set)
+        .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
+    if texture_info.stage_count() != 1 {
+        return Err(VulkanError::M2RibbonDrawTextureSetMismatch);
+    }
+    let vertex_count = u32::try_from(mesh.vertices().len())
+        .map_err(|_source| VulkanError::M2RibbonDrawVertexRange)?;
+    first_vertex
+        .checked_add(vertex_count)
+        .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
+    Ok(M2RibbonPreparedDraw {
+        pipeline,
+        texture_set,
+        first_vertex,
+        vertex_count,
+    })
+}

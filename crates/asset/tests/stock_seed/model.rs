@@ -588,6 +588,38 @@ fn m2_ribbon_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// Stock indexes ribbon material and texture pass arrays in lockstep.
+#[test]
+fn m2_ribbon_pass_arrays_must_have_equal_lengths() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_ribbon_m2_bytes()?;
+    let ribbon_offset = m2_array_offset(&model, 0x120)?;
+    model[ribbon_offset + 28..ribbon_offset + 32].copy_from_slice(&0_u32.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadRibbonPasses.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadRibbonPasses00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadRibbonPasses.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path && message.contains("1 textures for 0 material passes")
+    ));
+    Ok(())
+}
+
 /// Version-264 particles retain the entire 476-byte record and both track domains.
 #[test]
 fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn Error>> {

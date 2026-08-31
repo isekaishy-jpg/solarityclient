@@ -10,7 +10,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
-    M2MaterialUniform, M2SceneUniform, TerrainSceneUniform, WorldFrameScene,
+    M2MaterialUniform, M2RibbonRenderVertex, M2SceneUniform, TerrainSceneUniform, WorldFrameScene,
     WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
@@ -26,6 +26,7 @@ pub(super) struct FrameCreateContext<'a> {
     pub(super) world_model_draw_capacity: usize,
     pub(super) m2_draw_capacity: usize,
     pub(super) bone_capacity: usize,
+    pub(super) ribbon_vertex_capacity: usize,
     pub(super) uniform_alignment: vk::DeviceSize,
     pub(super) storage_alignment: vk::DeviceSize,
     pub(super) extent: (u32, u32),
@@ -43,6 +44,7 @@ struct FrameBufferLayout {
     bone_bytes: vk::DeviceSize,
     m2_material_offset: vk::DeviceSize,
     m2_material_stride: vk::DeviceSize,
+    ribbon_vertex_offset: vk::DeviceSize,
     total_bytes: vk::DeviceSize,
 }
 
@@ -91,8 +93,15 @@ impl FrameBufferLayout {
         let m2_material_bytes = (context.m2_draw_capacity.max(1) as u64)
             .checked_mul(m2_material_stride)
             .ok_or(VulkanError::WorldFrameCapacity)?;
-        let total_bytes = m2_material_offset
+        let m2_end = m2_material_offset
             .checked_add(m2_material_bytes)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        let ribbon_vertex_offset = align_up(m2_end, 4)?;
+        let ribbon_vertex_bytes = (context.ribbon_vertex_capacity.max(1) as u64)
+            .checked_mul(M2RibbonRenderVertex::BYTE_SIZE as u64)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        let total_bytes = ribbon_vertex_offset
+            .checked_add(ribbon_vertex_bytes)
             .ok_or(VulkanError::WorldFrameCapacity)?;
         Ok(Self {
             terrain_scene_offset,
@@ -104,6 +113,7 @@ impl FrameBufferLayout {
             bone_bytes,
             m2_material_offset,
             m2_material_stride,
+            ribbon_vertex_offset,
             total_bytes,
         })
     }
@@ -177,6 +187,10 @@ impl WorldFrameSlot {
         self.layout.m2_material_stride
     }
 
+    pub(super) const fn ribbon_vertex_buffer(&self) -> (vk::Buffer, vk::DeviceSize) {
+        (self.buffer, self.layout.ribbon_vertex_offset)
+    }
+
     pub(super) fn wait_and_reset(&self, device: &Device) -> Result<(), VulkanError> {
         // SAFETY: This slot owns both objects and prior use is fence-protected.
         unsafe {
@@ -216,6 +230,7 @@ impl WorldFrameSlot {
         bone_transforms: &[Mat4],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        ribbon_vertices: &[M2RibbonRenderVertex],
     ) -> Result<(), VulkanError> {
         let allocation = self.buffer_allocation.as_mut().ok_or_else(|| {
             VulkanError::operation("access world frame buffer", "allocation is unavailable")
@@ -283,6 +298,18 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             }
+            for (index, vertex) in ribbon_vertices.iter().copied().enumerate() {
+                copy_bytes(
+                    destination,
+                    indexed_offset(
+                        self.layout.ribbon_vertex_offset,
+                        M2RibbonRenderVertex::BYTE_SIZE as u64,
+                        index,
+                    )?,
+                    &vertex.to_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
             allocator
                 .flush_allocation(allocation, 0, vk::WHOLE_SIZE)
                 .map_err(|source| VulkanError::operation("flush world frame buffer", source))
@@ -295,7 +322,11 @@ impl WorldFrameSlot {
     fn create_buffer(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
         let info = vk::BufferCreateInfo::default()
             .size(self.layout.total_bytes)
-            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER)
+            .usage(
+                vk::BufferUsageFlags::UNIFORM_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::VERTEX_BUFFER,
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_info = vk_mem::AllocationCreateInfo {
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
@@ -534,6 +565,7 @@ pub(super) struct WorldFrameResources {
     world_model_draw_capacity: usize,
     m2_draw_capacity: usize,
     bone_capacity: usize,
+    ribbon_vertex_capacity: usize,
     extent: (u32, u32),
 }
 
@@ -544,6 +576,7 @@ impl WorldFrameResources {
             && self.world_model_draw_capacity >= context.world_model_draw_capacity
             && self.m2_draw_capacity >= context.m2_draw_capacity
             && self.bone_capacity >= context.bone_capacity
+            && self.ribbon_vertex_capacity >= context.ribbon_vertex_capacity
             && self.extent == context.extent
         {
             return Ok(());
@@ -559,11 +592,15 @@ impl WorldFrameResources {
             .max(context.world_model_draw_capacity);
         let m2_draw_capacity = self.m2_draw_capacity.max(context.m2_draw_capacity);
         let bone_capacity = self.bone_capacity.max(context.bone_capacity);
+        let ribbon_vertex_capacity = self
+            .ribbon_vertex_capacity
+            .max(context.ribbon_vertex_capacity);
         self.destroy(context.device, context.allocator);
         let expanded = FrameCreateContext {
             world_model_draw_capacity,
             m2_draw_capacity,
             bone_capacity,
+            ribbon_vertex_capacity,
             ..context
         };
         let layout = FrameBufferLayout::new(&expanded)?;
@@ -610,6 +647,7 @@ impl WorldFrameResources {
         self.world_model_draw_capacity = world_model_draw_capacity;
         self.m2_draw_capacity = m2_draw_capacity;
         self.bone_capacity = bone_capacity;
+        self.ribbon_vertex_capacity = ribbon_vertex_capacity;
         self.extent = expanded.extent;
         self.next_slot = 0;
         Ok(())
@@ -651,6 +689,7 @@ impl WorldFrameResources {
         self.world_model_draw_capacity = 0;
         self.m2_draw_capacity = 0;
         self.bone_capacity = 0;
+        self.ribbon_vertex_capacity = 0;
         self.extent = (0, 0);
     }
 }

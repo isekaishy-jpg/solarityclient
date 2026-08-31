@@ -3,12 +3,18 @@
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
-use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Texture};
+use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture};
 
 use crate::device::vulkan_frame::{FrameContext, present_blp};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
 use crate::device::vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo, M2PipelineRegistry};
+use crate::device::vulkan_m2_ribbon_draw::{
+    M2RibbonPreparedDraw, prepare_draw as prepare_ribbon_draw,
+};
+use crate::device::vulkan_m2_ribbon_pipeline::{
+    M2RibbonPipelineHandle, M2RibbonPipelineInfo, M2RibbonPipelineRegistry,
+};
 use crate::device::vulkan_m2_texture_set::{
     M2TextureSet, M2TextureSetHandle, M2TextureSetInfo, M2TextureSetRegistry,
 };
@@ -72,8 +78,8 @@ use crate::model::M2SceneUniform;
 use crate::model::{M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
 use crate::{
-    TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend, UiShaderSource,
-    WorldModelSurfacePass,
+    M2RibbonMeshPlan, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend,
+    UiShaderSource, WorldModelSurfacePass,
 };
 use glam::{Mat4, Vec3};
 
@@ -148,6 +154,7 @@ pub struct VulkanRenderer {
     device: Device,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
+    m2_ribbon_pipelines: M2RibbonPipelineRegistry,
     m2_frames: M2FrameRenderer,
     m2_meshes: M2MeshRegistry,
     world_model_meshes: WorldModelMeshRegistry,
@@ -206,6 +213,7 @@ impl VulkanRenderer {
             device,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
+            m2_ribbon_pipelines: M2RibbonPipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
             m2_meshes: M2MeshRegistry::default(),
             world_model_meshes: WorldModelMeshRegistry::default(),
@@ -846,6 +854,62 @@ impl VulkanRenderer {
         self.m2_pipelines.info(handle)
     }
 
+    /// Creates or retrieves the stock PCT0 ribbon pipeline for one material.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for descriptor ABI creation, pinned shader
+    /// compilation, handle exhaustion, or graphics-pipeline creation failure.
+    pub fn prepare_m2_ribbon_pipeline(
+        &mut self,
+        material: M2Material,
+    ) -> Result<M2RibbonPipelineHandle, VulkanError> {
+        let scene_set = self.m2_pipelines.frame_set_layouts(&self.device)?[0];
+        let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
+        self.m2_ribbon_pipelines.prepare(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            scene_set,
+            texture_set,
+            crate::M2MaterialState::from_material(material),
+        )
+    }
+
+    /// Returns immutable diagnostics for one live ribbon pipeline.
+    #[must_use]
+    pub fn m2_ribbon_pipeline_info(
+        &self,
+        handle: M2RibbonPipelineHandle,
+    ) -> Option<M2RibbonPipelineInfo> {
+        self.m2_ribbon_pipelines.info(handle)
+    }
+
+    /// Joins one dynamic ribbon strip to compatible renderer-local resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for foreign handles, a material or texture-set
+    /// mismatch, or a strip range outside Vulkan's 32-bit vertex domain.
+    pub fn prepare_m2_ribbon_draw(
+        &self,
+        pipeline: M2RibbonPipelineHandle,
+        texture_set: M2TextureSetHandle,
+        material: M2Material,
+        first_vertex: u32,
+        mesh: &M2RibbonMeshPlan,
+    ) -> Result<M2RibbonPreparedDraw, VulkanError> {
+        prepare_ribbon_draw(
+            &self.m2_ribbon_pipelines,
+            &self.m2_texture_sets,
+            pipeline,
+            texture_set,
+            material,
+            first_vertex,
+            mesh,
+        )
+    }
+
     /// Creates or retrieves one exact ordinary/unified WMO surface pipeline.
     ///
     /// # Errors
@@ -988,6 +1052,7 @@ impl VulkanRenderer {
     ///
     /// Returns [`VulkanError`] for empty input, insufficient M2 bones, missing
     /// shadow resources, frame growth, recording, submission, or presentation.
+    #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame(
         &mut self,
         scene: WorldFrameScene,
@@ -995,6 +1060,8 @@ impl VulkanRenderer {
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
@@ -1034,6 +1101,7 @@ impl VulkanRenderer {
                 m2_pipelines: &self.m2_pipelines,
                 m2_meshes: &self.m2_meshes,
                 m2_texture_sets: &self.m2_texture_sets,
+                m2_ribbon_pipelines: &self.m2_ribbon_pipelines,
             },
             descriptor_layouts,
             scene,
@@ -1041,6 +1109,8 @@ impl VulkanRenderer {
             terrain_draws,
             world_model_draws,
             m2_draws,
+            ribbon_vertices,
+            ribbon_draws,
         )?;
         self.is_idle = false;
         Ok(report)
@@ -1301,6 +1371,7 @@ impl Drop for VulkanRenderer {
         self.ui_pipelines.destroy(&self.device);
         self.terrain_pipelines.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);
+        self.m2_ribbon_pipelines.destroy(&self.device);
         self.m2_pipelines.destroy(&self.device);
         // SAFETY: Every handle was created by this device/loader and this owner
         // destroys each exactly once after attempting to idle the device.

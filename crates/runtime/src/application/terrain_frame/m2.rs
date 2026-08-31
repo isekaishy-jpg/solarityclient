@@ -7,7 +7,8 @@ use solarity_asset::DecodedM2Model;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, M2AnimationClock, M2BonePose, M2DrawCall,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonPose,
+    M2MeshPlan, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
     M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
     M2ShadowPermutation, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
     WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
@@ -37,6 +38,7 @@ struct M2GpuSource {
     plan: Arc<M2MeshPlan>,
     mesh: M2MeshHandle,
     draws: Vec<M2GpuDraw>,
+    ribbons: Vec<Vec<M2GpuRibbonPass>>,
 }
 
 /// Fixed renderer objects paired with one exact SKIN material batch.
@@ -44,6 +46,13 @@ struct M2GpuDraw {
     pipeline: M2PipelineHandle,
     runtime_fade_pipeline: Option<M2PipelineHandle>,
     texture_set: M2TextureSetHandle,
+}
+
+/// One stock ribbon pass pairing parallel material and texture entries.
+struct M2GpuRibbonPass {
+    pipeline: M2RibbonPipelineHandle,
+    texture_set: M2TextureSetHandle,
+    material: solarity_asset::M2Material,
 }
 
 /// One pass-one mesh packet retained until the shared comparator runs.
@@ -160,7 +169,17 @@ pub(super) struct M2Frame {
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     transparent_draws: Vec<M2TransparentDraw>,
+    ribbon_vertices: Vec<M2RibbonRenderVertex>,
+    ribbon_draws: Vec<M2RibbonPreparedDraw>,
     last_effect_time_ms: Option<f32>,
+}
+
+/// Borrowed dynamic streams assembled for one unified world submission.
+pub(super) struct M2VisibleFrame<'frame> {
+    pub(super) bone_transforms: &'frame [Mat4],
+    pub(super) draws: &'frame [M2PreparedDraw],
+    pub(super) ribbon_vertices: &'frame [M2RibbonRenderVertex],
+    pub(super) ribbon_draws: &'frame [M2RibbonPreparedDraw],
 }
 
 impl M2Frame {
@@ -212,6 +231,8 @@ impl M2Frame {
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
+            ribbon_vertices: Vec::new(),
+            ribbon_draws: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -270,10 +291,12 @@ impl M2Frame {
         animation_time_ms: f32,
         global_time_ms: f32,
         random: &mut CrtRand,
-    ) -> Result<(&[Mat4], &[M2PreparedDraw]), RuntimeTerrainFrameError> {
+    ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_draws.clear();
+        self.ribbon_vertices.clear();
+        self.ribbon_draws.clear();
         let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
@@ -376,12 +399,53 @@ impl M2Frame {
                     self.visible_draws.push(prepared);
                 }
             }
+            for (ribbon_index, ((emitter, trail), passes)) in source
+                .model
+                .animations()
+                .ribbons()
+                .iter()
+                .zip(&placement.ribbons)
+                .zip(&source.ribbons)
+                .enumerate()
+            {
+                if passes.is_empty() {
+                    continue;
+                }
+                let mesh = M2RibbonMeshPlan::prepare(emitter, trail)?;
+                if mesh.vertices().len() < 4 {
+                    continue;
+                }
+                let first_vertex = u32::try_from(self.ribbon_vertices.len())
+                    .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
+                for pass in passes {
+                    self.ribbon_draws.push(renderer.prepare_m2_ribbon_draw(
+                        pass.pipeline,
+                        pass.texture_set,
+                        pass.material,
+                        first_vertex,
+                        &mesh,
+                    )?);
+                }
+                self.ribbon_vertices.extend_from_slice(mesh.vertices());
+                tracing::trace!(
+                    model = %source.model.path(),
+                    ribbon_index,
+                    vertex_count = mesh.vertices().len(),
+                    pass_count = passes.len(),
+                    "placement-local ribbon entered unified world frame"
+                );
+            }
         }
         self.transparent_draws
             .sort_unstable_by(|left, right| compare_m2_transparent(&left.key, &right.key));
         self.visible_draws
             .extend(self.transparent_draws.iter().map(|queued| queued.draw));
-        Ok((&self.bone_transforms, &self.visible_draws))
+        Ok(M2VisibleFrame {
+            bone_transforms: &self.bone_transforms,
+            draws: &self.visible_draws,
+            ribbon_vertices: &self.ribbon_vertices,
+            ribbon_draws: &self.ribbon_draws,
+        })
     }
 }
 
@@ -525,6 +589,25 @@ fn prepare_source(
             }
         }
     }
+    for emitter in model.animations().ribbons() {
+        for texture_index in emitter.texture_indices() {
+            let texture = source
+                .textures()
+                .get(usize::from(*texture_index))
+                .ok_or_else(|| RuntimeTerrainFrameError::M2TextureIndex {
+                    model: model.path().clone(),
+                    texture_index: *texture_index,
+                })?;
+            if let ResidentM2Texture::Replaceable(kind) = texture {
+                tracing::debug!(
+                    path = %model.path(),
+                    ?kind,
+                    "static world M2 omitted until its ribbon replacement texture is supplied"
+                );
+                return Ok(None);
+            }
+        }
+    }
 
     let mut upload_indices = Vec::new();
     let mut uploads = Vec::new();
@@ -597,10 +680,47 @@ fn prepare_source(
             },
         )
         .collect();
+    let mut ribbons = Vec::with_capacity(model.animations().ribbons().len());
+    for emitter in model.animations().ribbons() {
+        let mut pass_pipelines = Vec::with_capacity(emitter.material_indices().len());
+        let mut pass_textures = Vec::with_capacity(emitter.texture_indices().len());
+        for (material_index, texture_index) in emitter
+            .material_indices()
+            .iter()
+            .copied()
+            .zip(emitter.texture_indices().iter().copied())
+        {
+            let material = model.materials()[usize::from(material_index)];
+            let pipeline = renderer.prepare_m2_ribbon_pipeline(material)?;
+            let texture_slot = usize::from(texture_index);
+            let texture = texture_handles[texture_slot].ok_or_else(|| {
+                RuntimeTerrainFrameError::M2TextureIndex {
+                    model: model.path().clone(),
+                    texture_index,
+                }
+            })?;
+            let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
+            pass_pipelines.push((pipeline, material));
+            pass_textures.push(M2TextureSet::One(M2SampledTexture::new(texture, sampler)));
+        }
+        let texture_sets = renderer.prepare_m2_texture_sets(&pass_textures)?;
+        ribbons.push(
+            pass_pipelines
+                .into_iter()
+                .zip(texture_sets)
+                .map(|((pipeline, material), texture_set)| M2GpuRibbonPass {
+                    pipeline,
+                    texture_set,
+                    material,
+                })
+                .collect(),
+        );
+    }
     Ok(Some(M2GpuSource {
         model: Arc::clone(model),
         plan,
         mesh,
         draws,
+        ribbons,
     }))
 }

@@ -16,11 +16,12 @@ use solarity_rendering::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
     CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
-    M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialUniform,
-    M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPose, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2TextureAddressMode, M2TextureSet, M2VertexShader, VulkanBootstrap, VulkanError,
+    M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2PixelShader, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail,
+    M2SampledTexture, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldFrameScene, WorldModelSceneUniform,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -419,6 +420,11 @@ fn m2_ribbon_pose_samples_placement_effect_values() -> Result<(), Box<dyn Error>
         .ribbons()
         .first()
         .ok_or("ribbon emitter is absent")?;
+    let ribbon_material = model.materials()[usize::from(emitter.material_indices()[0])];
+    let ribbon_compiler = M2RibbonSpirvCompiler::new()?;
+    let ribbon_spirv = ribbon_compiler.compile(M2MaterialState::from_material(ribbon_material))?;
+    assert_spirv_1_6(ribbon_spirv.vertex_words());
+    assert_spirv_1_6(ribbon_spirv.fragment_words());
 
     let pose = M2RibbonPose::sample(
         model.animations(),
@@ -817,6 +823,48 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
         texture_sets[..2]
     );
+    let emitter = model
+        .animations()
+        .ribbons()
+        .first()
+        .ok_or("ribbon emitter is absent")?;
+    let ribbon_material = model.materials()[usize::from(emitter.material_indices()[0])];
+    let ribbon_pipeline = renderer.prepare_m2_ribbon_pipeline(ribbon_material)?;
+    assert_eq!(
+        renderer.prepare_m2_ribbon_pipeline(ribbon_material)?,
+        ribbon_pipeline
+    );
+    assert_eq!(
+        renderer
+            .m2_ribbon_pipeline_info(ribbon_pipeline)
+            .ok_or("ribbon pipeline did not resolve")?
+            .material(),
+        M2MaterialState::from_material(ribbon_material)
+    );
+    let ribbon_pose = M2RibbonPose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut ribbon_trail = M2RibbonTrail::new(emitter)?;
+    ribbon_trail.advance(
+        0.05,
+        M2RibbonControlPoint::new(Vec3::ZERO, Vec3::Y, Vec3::X),
+        ribbon_pose,
+    )?;
+    let ribbon_mesh = M2RibbonMeshPlan::prepare(emitter, &ribbon_trail)?;
+    let ribbon_draw = renderer.prepare_m2_ribbon_draw(
+        ribbon_pipeline,
+        texture_sets[1],
+        ribbon_material,
+        0,
+        &ribbon_mesh,
+    )?;
+    assert_eq!(ribbon_draw.first_vertex(), 0);
+    assert_eq!(
+        ribbon_draw.vertex_count() as usize,
+        ribbon_mesh.vertices().len()
+    );
     let prepared_draw = renderer.prepare_m2_draw(
         handle,
         pipeline,
@@ -871,6 +919,32 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             prepared_draw.required_bone_transforms()
         );
     }
+    let world_scene = WorldFrameScene::new(
+        TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::Z),
+        WorldModelSceneUniform::new(
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::Z,
+            Vec4::ZERO,
+        ),
+        scene_uniform,
+    );
+    let ribbon_frame = renderer.present_world_frame(
+        world_scene,
+        &[],
+        &[],
+        &[],
+        &[],
+        ribbon_mesh.vertices(),
+        &[ribbon_draw],
+    )?;
+    assert_eq!(ribbon_frame.ribbon_draw_count(), 1);
+    assert_eq!(
+        ribbon_frame.ribbon_vertex_count(),
+        ribbon_mesh.vertices().len()
+    );
     let shadow_pipeline = renderer.prepare_m2_pipeline(fallback, unlit_permutation)?;
     let shadow_draw = renderer.prepare_m2_draw(
         handle,

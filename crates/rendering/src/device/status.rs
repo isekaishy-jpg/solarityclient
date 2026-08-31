@@ -251,6 +251,30 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit pipeline handle.
     #[error("M2 pipeline registry exhausted its 32-bit handle space")]
     M2PipelineCapacity,
+    /// A stock ribbon shader pair could not compile to the pinned target.
+    #[error("M2 ribbon shader preparation failed: {message}")]
+    M2RibbonShader {
+        /// Stable shader compiler diagnostic.
+        message: String,
+    },
+    /// The renderer cannot assign another stable ribbon pipeline handle.
+    #[error("M2 ribbon pipeline registry exhausted its 32-bit handle space")]
+    M2RibbonPipelineCapacity,
+    /// The borrowed M2 scene or texture descriptor layout changed in place.
+    #[error("M2 ribbon descriptor layouts changed without renderer recreation")]
+    M2RibbonDescriptorLayoutChanged,
+    /// A ribbon draw references a pipeline owned by another renderer.
+    #[error("M2 ribbon draw references an unknown pipeline handle")]
+    UnknownM2RibbonPipelineHandle,
+    /// The ribbon pipeline material differs from the emitter's root material.
+    #[error("M2 ribbon draw pipeline does not match its root material")]
+    M2RibbonDrawPipelineMismatch,
+    /// A ribbon draw requires exactly one sampled model texture.
+    #[error("M2 ribbon draw texture set does not contain exactly one stage")]
+    M2RibbonDrawTextureSetMismatch,
+    /// A dynamic strip cannot enter Vulkan's 32-bit vertex range.
+    #[error("M2 ribbon draw vertex range exceeds addressable capacity")]
+    M2RibbonDrawVertexRange,
     /// The stock UI shader pair could not compile to the pinned target.
     #[error("UI shader preparation failed: {message}")]
     UiShader {

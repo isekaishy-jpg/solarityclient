@@ -92,7 +92,15 @@ expiry, quadratic gravity integration, and the two-handle interpolation used
 when a frame crosses an edge boundary. Dynamic mesh preparation emits stock's
 24-byte position/color/texture-coordinate vertex layout, including packed BGRA
 color and age-progressed coordinates within the selected flipbook cell. Vulkan
-strip upload and submission are the remaining ribbon presentation boundary.
+frame slots grow one host-visible PCT0 stream to their observed high-water
+mark, upload visible placement histories, and submit triangle strips in the
+same dynamic-rendering scope and depth attachment as terrain, WMO, and M2
+bodies. The scene descriptor is shared with M2 presentation; each parallel
+material/texture entry becomes one stock-ordered strip pass.
+
+The executable indexes the material-state and texture-pointer arrays in
+lockstep while drawing. Admission therefore requires equal array lengths
+instead of dropping extra entries or substituting pass zero.
 
 ## Particles
 

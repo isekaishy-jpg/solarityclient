@@ -6,12 +6,12 @@ use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
-    M2MeshPlanError, M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount,
-    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
-    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
-    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
-    WorldScreenWindow,
+    M2MeshPlanError, M2RibbonMeshPlanError, M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError,
+    TerrainLayerCount, TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform,
+    TerrainTextureSet, TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError,
+    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
+    WorldModelTextureFiltering, WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -62,6 +62,9 @@ pub enum RuntimeTerrainFrameError {
     /// One authored ribbon could not enter bounded placement-local state.
     #[error(transparent)]
     M2RibbonTrail(#[from] M2RibbonTrailError),
+    /// One live ribbon history could not enter the stock PCT0 strip ABI.
+    #[error(transparent)]
+    M2RibbonMesh(#[from] M2RibbonMeshPlanError),
     /// A runtime-alpha mesh lacked the pipeline prepared for stock promotion.
     #[error("M2 model {model} draw {draw_index} has no runtime-alpha fade pipeline")]
     M2RuntimeFadePipeline {
@@ -405,7 +408,7 @@ impl TerrainFrame {
             light.fog_color(),
         )?;
         let local_animation_time_ms = self.m2.animation_time_ms();
-        let (m2_bones, m2_draws) = self.m2.prepare_visible_draws(
+        let m2 = self.m2.prepare_visible_draws(
             renderer,
             frustum,
             camera,
@@ -416,10 +419,12 @@ impl TerrainFrame {
         )?;
         Ok(renderer.present_world_frame(
             scene,
-            m2_bones,
+            m2.bone_transforms,
             &self.visible_draws,
             world_model_draws,
-            m2_draws,
+            m2.draws,
+            m2.ribbon_vertices,
+            m2.ribbon_draws,
         )?)
     }
 

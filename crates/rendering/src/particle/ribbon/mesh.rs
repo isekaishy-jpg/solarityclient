@@ -35,14 +35,20 @@ impl M2RibbonRenderVertex {
         self.texture_coordinates
     }
 
-    fn append_bytes(self, bytes: &mut Vec<u8>) {
+    pub(crate) fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+        let mut bytes = [0_u8; Self::BYTE_SIZE];
+        let mut offset = 0;
         for component in self.position {
-            bytes.extend_from_slice(&component.to_le_bytes());
+            bytes[offset..offset + 4].copy_from_slice(&component.to_le_bytes());
+            offset += 4;
         }
-        bytes.extend_from_slice(&self.color_bgra);
+        bytes[offset..offset + 4].copy_from_slice(&self.color_bgra);
+        offset += 4;
         for component in self.texture_coordinates {
-            bytes.extend_from_slice(&component.to_le_bytes());
+            bytes[offset..offset + 4].copy_from_slice(&component.to_le_bytes());
+            offset += 4;
         }
+        bytes
     }
 }
 
@@ -123,7 +129,7 @@ impl M2RibbonMeshPlan {
     pub fn vertex_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.vertices.len() * M2RibbonRenderVertex::BYTE_SIZE);
         for vertex in &self.vertices {
-            vertex.append_bytes(&mut bytes);
+            bytes.extend_from_slice(&vertex.to_bytes());
         }
         bytes
     }
