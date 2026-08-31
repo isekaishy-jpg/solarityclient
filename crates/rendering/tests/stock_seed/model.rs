@@ -18,8 +18,8 @@ use solarity_rendering::{
     CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
     M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleSimulation, M2PixelShader,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
+    M2ParticleLifetimePoseError, M2ParticlePose, M2ParticleRandom, M2ParticleSimulation,
+    M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
     M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError,
@@ -538,7 +538,8 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     )?;
     assert!(!disabled.enabled());
 
-    let lifetime = M2ParticleLifetimePose::sample(emitter, 0.5)?;
+    let random_word = 0x1234;
+    let lifetime = M2ParticleLifetimePose::sample(emitter, 0.5, random_word)?;
     assert!(
         (lifetime.color() - Vec4::new(0.5, 0.0, 0.5, 0.75))
             .abs()
@@ -546,17 +547,64 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
             < 0.0001
     );
     assert!(
-        (lifetime.scale() - glam::Vec2::new(2.0, 3.0))
-            .abs()
-            .max_element()
+        {
+            let mut random = M2ParticleRandom::new(u32::from(random_word));
+            let expected = glam::Vec2::new(
+                2.0 * (1.0 + random.next_signed() * 0.5),
+                3.0 * (1.0 + random.next_signed() * 0.25),
+            );
+            lifetime.scale() - expected
+        }
+        .abs()
+        .max_element()
             < 0.0001
     );
     assert_eq!(lifetime.head_texture_cell(), 2);
     assert_eq!(lifetime.tail_texture_cell(), 4);
     assert_eq!(
-        M2ParticleLifetimePose::sample(emitter, f32::NAN),
+        M2ParticleLifetimePose::sample(emitter, f32::NAN, random_word),
         Err(M2ParticleLifetimePoseError::NonFiniteAge)
     );
+    Ok(())
+}
+
+/// An absent head ramp uses stock's multiply-high random atlas selection.
+#[test]
+fn m2_particle_pose_selects_random_head_cell_in_stock_order() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0010_0000_u32.to_le_bytes());
+    bytes[particle_offset + 0x13c..particle_offset + 0x140].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[particle_offset + 0x144..particle_offset + 0x148].copy_from_slice(&0_u32.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\RandomParticleCell.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\RandomParticleCell00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\RandomParticleCell.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let random_word = 0x1234;
+    let pose = M2ParticleLifetimePose::sample(emitter, 0.5, random_word)?;
+    let mut random = M2ParticleRandom::new(u32::from(random_word));
+    let expected_cell = ((u64::from(random.next_u32()) * 8) >> 32) as u32;
+    let expected_scale = glam::Vec2::new(2.0, 3.0) * (1.0 + random.next_signed() * 0.5);
+
+    assert_eq!(pose.head_texture_cell(), expected_cell);
+    assert!((pose.scale() - expected_scale).abs().max_element() < 0.0001);
     Ok(())
 }
 
@@ -2172,6 +2220,7 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     let particle_offset = bytes.len();
     bytes.resize(particle_offset + 476, 0);
     bytes[particle_offset..particle_offset + 4].copy_from_slice(&0x5041_5254_u32.to_le_bytes());
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0080_0000_u32.to_le_bytes());
     bytes[particle_offset + 20..particle_offset + 22].copy_from_slice(&0_u16.to_le_bytes());
     bytes[particle_offset + 22..particle_offset + 24].copy_from_slice(&0_u16.to_le_bytes());
     bytes[particle_offset + 40] = 2;
@@ -2208,6 +2257,8 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
         &render_f32_values(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         12,
     )?;
+    bytes[particle_offset + 0x134..particle_offset + 0x13c]
+        .copy_from_slice(&render_f32_values(&[0.5, 0.25]));
     append_render_lifetime_track(
         bytes,
         particle_offset + 0x114,

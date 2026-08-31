@@ -131,9 +131,11 @@ payloads do not create another record type or resource identity.
 Rendering now samples the eleven emitter-time tracks through the selected M2
 and global clocks, while each particle's five lifetime ramps use the stock
 signed fixed-16 normalized domain `0x0000..=0x7FFF`. Continuous color, alpha,
-and scale ramps interpolate; integer head/tail flipbook cells remain held.
-Admission rejects out-of-domain or unordered lifetime timestamps instead of
-making the interval search order-dependent.
+and scale ramps interpolate; integer head/tail flipbook cells remain held. A
+particle-local stream reseeded from its stored 16-bit word applies shared or
+independent scale variation and multiply-high random head-cell selection in
+the executable's call order. Admission rejects out-of-domain or unordered
+lifetime timestamps instead of making the interval search order-dependent.
 
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
