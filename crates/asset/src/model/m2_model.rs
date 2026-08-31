@@ -143,24 +143,24 @@ impl DecodedM2Model {
     /// The lookup is authoritative. Missing slots and `0xFFFF` entries return
     /// `None`; this boundary does not search the attachment array as a fallback.
     #[must_use]
-    pub fn attachment(&self, id: u32) -> Option<M2Attachment> {
+    pub fn attachment(&self, id: u32) -> Option<&M2Attachment> {
         let slot = usize::try_from(id).ok()?;
-        let index = *self.blob.attachment_lookup.get(slot)?;
+        let index = *self.animations.attachment_lookup().get(slot)?;
         (index != u16::MAX)
-            .then(|| self.blob.attachments.get(usize::from(index)).copied())
+            .then(|| self.animations.attachments().get(usize::from(index)))
             .flatten()
     }
 
     /// Returns every authored attachment record in file order.
     #[must_use]
     pub fn attachments(&self) -> &[M2Attachment] {
-        &self.blob.attachments
+        self.animations.attachments()
     }
 
     /// Returns the raw attachment-to-record lookup table.
     #[must_use]
     pub fn attachment_lookup(&self) -> &[u16] {
-        &self.blob.attachment_lookup
+        self.animations.attachment_lookup()
     }
 
     /// Reports whether stock substitutes shader combiners from the trailing table.

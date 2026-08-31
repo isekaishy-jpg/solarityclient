@@ -177,38 +177,6 @@ impl M2ModelBounds {
     }
 }
 
-/// One authored M2 attachment before animation or model transforms.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct M2Attachment {
-    id: u32,
-    bone_index: i32,
-    position: Vec3,
-}
-
-impl M2Attachment {
-    /// Returns the stock attachment identifier.
-    #[must_use]
-    pub const fn id(self) -> u32 {
-        self.id
-    }
-
-    /// Returns the model bone that owns this attachment.
-    #[must_use]
-    pub const fn bone_index(self) -> i32 {
-        self.bone_index
-    }
-
-    /// Returns the stable authored model-space position.
-    ///
-    /// This deliberately excludes the current bone pose. Build 12340 reads
-    /// the authored Breath attachment position for player-camera height so
-    /// the orbit pivot does not bob with the walk animation.
-    #[must_use]
-    pub const fn position(self) -> Vec3 {
-        self.position
-    }
-}
-
 impl M2Vertex {
     /// Returns the untransformed stock-coordinate position.
     #[must_use]
@@ -409,8 +377,6 @@ pub(super) struct ModelBlob {
     pub(super) flags: u32,
     pub(super) bounds: M2ModelBounds,
     pub(super) collision: Option<M2CollisionMesh>,
-    pub(super) attachments: Vec<M2Attachment>,
-    pub(super) attachment_lookup: Vec<u16>,
     pub(super) vertices: Vec<M2Vertex>,
     pub(super) textures: Vec<M2Texture>,
     pub(super) materials: Vec<M2Material>,
@@ -437,20 +403,6 @@ impl ModelBlob {
         };
         let collision = decode_collision_mesh(path, &model)?;
         let texture_combiner_combos = decode_texture_combiner_combos(path, bytes, &model)?;
-        validate_attachment_lookup(path, &model)?;
-        let attachments = model
-            .attachments
-            .iter()
-            .map(|attachment| M2Attachment {
-                id: attachment.id,
-                bone_index: attachment.bone_index,
-                position: Vec3::new(
-                    attachment.position.x,
-                    attachment.position.y,
-                    attachment.position.z,
-                ),
-            })
-            .collect();
         let mut vertices = Vec::with_capacity(model.vertices.len());
         for vertex in model.vertices {
             let texture_coordinates2 = vertex.tex_coords2.ok_or_else(|| {
@@ -488,8 +440,6 @@ impl ModelBlob {
             flags,
             bounds,
             collision,
-            attachments,
-            attachment_lookup: model.raw_data.attachment_lookup_table,
             vertices,
             textures,
             materials,
@@ -574,24 +524,6 @@ fn decode_collision_mesh(
         vertices,
         indices,
     }))
-}
-
-/// Rejects a lookup entry that cannot name an authored attachment record.
-fn validate_attachment_lookup(path: &AssetPath, model: &M2Model) -> Result<(), AssetError> {
-    if let Some((slot, index)) = model
-        .raw_data
-        .attachment_lookup_table
-        .iter()
-        .copied()
-        .enumerate()
-        .find(|(_slot, index)| *index != u16::MAX && usize::from(*index) >= model.attachments.len())
-    {
-        return Err(model_decode(
-            path,
-            format!("attachment lookup slot {slot} references missing attachment {index}"),
-        ));
-    }
-    Ok(())
 }
 
 /// Reads WotLK's optional trailing `u16` combiner table exactly as `M2Data` stores it.

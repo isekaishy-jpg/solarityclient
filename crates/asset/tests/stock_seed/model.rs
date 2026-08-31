@@ -7,7 +7,6 @@ use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
     M2BlendMode, M2Interpolation, M2ModelCache, M2SequenceStorage, M2TextureKind,
 };
-use wow_m2::chunks::attachment::M2Attachment as RawAttachment;
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
 };
@@ -125,12 +124,48 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
         .attachment(17)
         .ok_or("fixture Breath attachment is absent")?;
     assert_eq!(breath.id(), 17);
-    assert_eq!(breath.bone_index(), -1);
+    assert_eq!(breath.bone_index(), 0);
+    assert_eq!(breath.unknown(), 0x1234);
     assert_eq!(breath.position(), glam::Vec3::new(0.25, 0.5, 1.75));
-    assert_eq!(model.attachments(), &[breath]);
+    assert!(breath.enabled().channels().is_empty());
+    assert_eq!(model.attachments().len(), 1);
+    assert_eq!(model.attachments().first(), Some(breath));
     assert_eq!(model.attachment_lookup().len(), 18);
     assert!(model.attachment(16).is_none());
     assert!(model.attachment(18).is_none());
+    Ok(())
+}
+
+/// Attachment lookup holes stay absent and non-hole missing records are rejected.
+#[test]
+fn m2_attachment_lookup_rejects_a_missing_attachment() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("BadAttachment", 1)?;
+    let lookup_offset = m2_array_offset(&model, 0xf8)?;
+    model[lookup_offset + 34..lookup_offset + 36].copy_from_slice(&1_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadAttachment.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadAttachment00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadAttachment.m2")?;
+
+    assert!(matches!(
+        DecodedM2Model::load(&mut store, &path),
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == path
+                && message.contains("attachment lookup 17 references missing attachment 1")
+    ));
     Ok(())
 }
 
@@ -186,6 +221,12 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
         channel.values(),
         &[glam::Vec3::ZERO, glam::Vec3::new(4.0, 5.0, 6.0)]
     );
+    let breath = model
+        .attachment(17)
+        .ok_or("fixture Breath attachment is absent")?;
+    assert_eq!(breath.enabled().interpolation(), M2Interpolation::Linear);
+    assert_eq!(breath.enabled().channels()[0].timestamps_ms(), &[0, 1_000]);
+    assert_eq!(breath.enabled().channels()[0].values(), &[1, 0]);
     Ok(())
 }
 
@@ -1132,15 +1173,6 @@ fn m2_bytes_inner(
         model.header.bounding_box_min = [-1.0, -2.0, -3.0];
         model.header.bounding_box_max = [4.0, 5.0, 6.0];
         model.header.bounding_sphere_radius = 7.25;
-        let mut breath = RawAttachment::new(17, -1);
-        breath.position = C3Vector {
-            x: 0.25,
-            y: 0.5,
-            z: 1.75,
-        };
-        model.attachments = vec![breath];
-        model.raw_data.attachment_lookup_table = vec![u16::MAX; 18];
-        model.raw_data.attachment_lookup_table[17] = 0;
         model.header.collision_box_min = [0.0, 0.0, -0.1];
         model.header.collision_box_max = [2.0, 2.0, 0.1];
         model.header.collision_sphere_radius = 2.0_f32.sqrt();
@@ -1230,7 +1262,43 @@ fn m2_bytes_inner(
             bytes.extend_from_slice(&combiner.to_le_bytes());
         }
     }
+    if include_camera_metadata {
+        append_build_12340_attachment_metadata(&mut bytes)?;
+    }
     Ok(bytes)
+}
+
+/// Appends one exact stock bone, 40-byte attachment, and semantic lookup.
+fn append_build_12340_attachment_metadata(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let bone_offset = bytes.len();
+    let mut bone = [0_u8; 88];
+    bone[0..4].copy_from_slice(&(-1_i32).to_le_bytes());
+    bone[8..10].copy_from_slice(&(-1_i16).to_le_bytes());
+    bone[18..20].copy_from_slice(&(-1_i16).to_le_bytes());
+    bone[38..40].copy_from_slice(&(-1_i16).to_le_bytes());
+    bone[58..60].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes.extend_from_slice(&bone);
+    set_header_array(bytes, 0x2c, 1, bone_offset)?;
+
+    let attachment_offset = bytes.len();
+    let mut attachment = [0_u8; 40];
+    attachment[0..4].copy_from_slice(&17_u32.to_le_bytes());
+    attachment[4..6].copy_from_slice(&0_u16.to_le_bytes());
+    attachment[6..8].copy_from_slice(&0x1234_u16.to_le_bytes());
+    attachment[8..12].copy_from_slice(&0.25_f32.to_le_bytes());
+    attachment[12..16].copy_from_slice(&0.5_f32.to_le_bytes());
+    attachment[16..20].copy_from_slice(&1.75_f32.to_le_bytes());
+    attachment[22..24].copy_from_slice(&(-1_i16).to_le_bytes());
+    bytes.extend_from_slice(&attachment);
+    set_header_array(bytes, 0xf0, 1, attachment_offset)?;
+
+    let lookup_offset = bytes.len();
+    for slot in 0..18 {
+        let value = if slot == 17 { 0 } else { u16::MAX };
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    set_header_array(bytes, 0xf8, 18, lookup_offset)?;
+    Ok(())
 }
 
 /// Adds one internal sequence and one linear bone track to the base fixture.
@@ -1295,6 +1363,8 @@ fn animated_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     bytes[0x28..0x2c].copy_from_slice(&animation_lookup.to_le_bytes());
     bytes[0x2c..0x30].copy_from_slice(&1_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bone_offset.to_le_bytes());
+    let attachment_offset = m2_array_offset(&bytes, 0xf0)?;
+    append_linear_track(&mut bytes, attachment_offset + 20, &[0, 1_000], &[1, 0], 1)?;
     Ok(bytes)
 }
 

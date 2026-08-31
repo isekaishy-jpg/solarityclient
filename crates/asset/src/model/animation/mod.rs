@@ -5,6 +5,7 @@ use glam::{Quat, Vec3};
 use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
+mod attachment;
 mod camera;
 mod event;
 mod light;
@@ -12,6 +13,7 @@ mod material;
 mod particle;
 mod ribbon;
 
+pub use attachment::M2Attachment;
 pub use camera::M2Camera;
 pub use event::{M2Event, M2EventTrack};
 pub use light::{M2Light, M2LightKind};
@@ -281,6 +283,8 @@ pub struct M2AnimationSet {
     animation_lookup: Vec<u16>,
     sequence_available: Vec<bool>,
     bones: Vec<M2Bone>,
+    attachments: Vec<M2Attachment>,
+    attachment_lookup: Vec<u16>,
     colors: Vec<M2ColorAnimation>,
     texture_weights: Vec<M2TextureWeight>,
     texture_transforms: Vec<M2TextureTransform>,
@@ -337,6 +341,14 @@ impl M2AnimationSet {
             }
         }
         let bones = decode_bones(model_path, model_bytes, &globals, &sequences, &payloads)?;
+        let (attachments, attachment_lookup) = attachment::decode_attachments(
+            model_path,
+            model_bytes,
+            &globals,
+            &sequences,
+            &payloads,
+            bones.len(),
+        )?;
         let colors = decode_colors(model_path, model_bytes, &globals, &sequences, &payloads)?;
         let texture_weights =
             decode_texture_weights(model_path, model_bytes, &globals, &sequences, &payloads)?;
@@ -382,6 +394,8 @@ impl M2AnimationSet {
             animation_lookup,
             sequence_available: available,
             bones,
+            attachments,
+            attachment_lookup,
             colors,
             texture_weights,
             texture_transforms,
@@ -586,6 +600,18 @@ impl M2AnimationSet {
     #[must_use]
     pub fn bones(&self) -> &[M2Bone] {
         &self.bones
+    }
+
+    /// Returns authored model attachments in exact M2 table order.
+    #[must_use]
+    pub fn attachments(&self) -> &[M2Attachment] {
+        &self.attachments
+    }
+
+    /// Returns semantic attachment slots, retaining absent `0xFFFF` entries.
+    #[must_use]
+    pub fn attachment_lookup(&self) -> &[u16] {
+        &self.attachment_lookup
     }
 
     /// Returns animated mesh colors in exact M2 table order.

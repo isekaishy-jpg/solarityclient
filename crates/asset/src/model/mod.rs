@@ -10,13 +10,14 @@ mod m2_shared;
 mod model_blob;
 
 pub use animation::{
-    M2AnimationSet, M2Bone, M2Camera, M2ColorAnimation, M2Event, M2EventTrack, M2Interpolation,
-    M2Light, M2LightKind, M2ParticleEmitter, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence,
-    M2SequenceStorage, M2TextureTransform, M2TextureWeight, M2Track, M2TrackChannel,
+    M2AnimationSet, M2Attachment, M2Bone, M2Camera, M2ColorAnimation, M2Event, M2EventTrack,
+    M2Interpolation, M2Light, M2LightKind, M2ParticleEmitter, M2ParticleLifetimeTrack,
+    M2RibbonEmitter, M2Sequence, M2SequenceStorage, M2TextureTransform, M2TextureWeight, M2Track,
+    M2TrackChannel,
 };
 pub use m2_model::DecodedM2Model;
 pub(crate) use m2_shared::canonical_model_path;
 pub use model_blob::{
-    M2Attachment, M2Batch, M2BlendMode, M2CollisionMesh, M2Material, M2ModelBounds, M2SkinProfile,
-    M2Submesh, M2Texture, M2TextureKind, M2Vertex,
+    M2Batch, M2BlendMode, M2CollisionMesh, M2Material, M2ModelBounds, M2SkinProfile, M2Submesh,
+    M2Texture, M2TextureKind, M2Vertex,
 };

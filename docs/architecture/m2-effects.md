@@ -11,9 +11,22 @@ restored immediately afterward. Solarity's owned decoders then read the exact
 records directly from the original bytes. This in-place parser view avoids
 cloning an HD-sized M2 solely to bypass incompatible dependency structures.
 
-The same isolation covers build-12340 events, lights, cameras, and the camera
-lookup. `wow-m2 0.7` exposes later record shapes for those arrays; none may be
-used as an implicit conversion or fallback.
+The same isolation covers build-12340 attachments, their lookup, events,
+lights, cameras, and the camera lookup. `wow-m2 0.7` exposes later record shapes
+for those arrays; none may be used as an implicit conversion or fallback.
+
+## Model attachments
+
+One build-12340 attachment is exactly 40 bytes, not the dependency's 48-byte
+record. It retains the identifier, `u16` bone index, otherwise-unknown `u16`
+word, bone-relative position, and byte-valued animated enable track. Bone and
+lookup references are validated during admission, while `0xFFFF` lookup holes
+remain absent rather than triggering an attachment-array search.
+
+The Breath attachment's authored position remains directly available for
+stock player-camera height behavior. Placement animation can separately sample
+the enable track and bone pose; neither operation mutates the shared decoded
+M2, including when a larger same-path HD replacement wins MPQ precedence.
 
 ## Model lights
 
