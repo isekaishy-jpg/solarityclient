@@ -36,6 +36,7 @@ fn wav_admission_preserves_format_and_mode_identity() -> Result<(), Box<dyn Erro
     let second_streaming = decoder.load(&encoded, SoundDecodeMode::Streaming)?;
     assert_ne!(second_streaming, streaming);
     assert_eq!(decoder.len(), 3);
+    assert_eq!(decoder.cached_sample_bytes(), wav.len());
 
     let info = decoder
         .info(predecoded)
@@ -45,10 +46,15 @@ fn wav_admission_preserves_format_and_mode_identity() -> Result<(), Box<dyn Erro
     assert_eq!(info.sample_rate_hz(), 8_000);
     assert_eq!(info.channel_count(), 1);
     assert_eq!(info.duration_frames(), Some(4));
-    assert!(decoder.release_streaming(streaming));
-    assert!(decoder.release_streaming(second_streaming));
-    assert!(!decoder.release_streaming(predecoded));
+    assert!(decoder.release(streaming));
+    assert!(decoder.release(second_streaming));
     assert_eq!(decoder.len(), 1);
+    assert!(decoder.release(predecoded));
+    assert_eq!(decoder.trim_predecoded_cache(0), 0);
+    assert!(decoder.release(predecoded));
+    assert_eq!(decoder.trim_predecoded_cache(0), 1);
+    assert!(decoder.is_empty());
+    assert_eq!(decoder.cached_sample_bytes(), 0);
     Ok(())
 }
 

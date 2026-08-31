@@ -6,6 +6,9 @@ use crate::audio::codec::SoundDecodeMode;
 
 const SOUND_ENTRY_LOOP_FLAG: u32 = 0x0000_0200;
 const MAXIMUM_CACHEABLE_SIZE_CEILING_BYTES: u32 = 2 * 1024 * 1024;
+const MINIMUM_SAMPLE_CACHE_SIZE_BYTES: u32 = 4 * 1024 * 1024;
+const LARGE_SAMPLE_CACHE_BOUNDARY_BYTES: u32 = 100 * 1024 * 1024;
+const LARGE_SAMPLE_CACHE_SIZE_BYTES: u32 = 128 * 1024 * 1024;
 
 /// Playback-loop selection passed through the stock sound-kit request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,19 +37,32 @@ impl SoundLoopMode {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SoundResidencyPolicy {
     maximum_cacheable_size_bytes: u32,
+    maximum_sample_cache_size_bytes: u32,
 }
 
 impl SoundResidencyPolicy {
     /// Applies build 12340's hard two-megabyte ceiling to the live CVar word.
     #[must_use]
-    pub const fn new(configured_maximum_bytes: u32) -> Self {
+    pub const fn new(
+        configured_maximum_cacheable_bytes: u32,
+        configured_sample_cache_bytes: u32,
+    ) -> Self {
         Self {
-            maximum_cacheable_size_bytes: if configured_maximum_bytes
+            maximum_cacheable_size_bytes: if configured_maximum_cacheable_bytes
                 > MAXIMUM_CACHEABLE_SIZE_CEILING_BYTES
             {
                 MAXIMUM_CACHEABLE_SIZE_CEILING_BYTES
             } else {
-                configured_maximum_bytes
+                configured_maximum_cacheable_bytes
+            },
+            maximum_sample_cache_size_bytes: if configured_sample_cache_bytes
+                < MINIMUM_SAMPLE_CACHE_SIZE_BYTES
+            {
+                MINIMUM_SAMPLE_CACHE_SIZE_BYTES
+            } else if configured_sample_cache_bytes > LARGE_SAMPLE_CACHE_BOUNDARY_BYTES {
+                LARGE_SAMPLE_CACHE_SIZE_BYTES
+            } else {
+                configured_sample_cache_bytes
             },
         }
     }
@@ -55,6 +71,12 @@ impl SoundResidencyPolicy {
     #[must_use]
     pub const fn maximum_cacheable_size_bytes(self) -> u32 {
         self.maximum_cacheable_size_bytes
+    }
+
+    /// Returns the effective total predecoded-sample budget.
+    #[must_use]
+    pub const fn maximum_sample_cache_size_bytes(self) -> u32 {
+        self.maximum_sample_cache_size_bytes
     }
 
     /// Selects FMOD-style sample versus stream admission for one payload.

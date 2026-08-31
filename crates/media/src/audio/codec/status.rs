@@ -26,6 +26,12 @@ pub enum SoundDecodeError {
         /// Unmodified dependency channel count.
         channel_count: i32,
     },
+    /// The predecoded sample index named a resource that was not retained.
+    #[error("decoded sound registry lost retained sample {path}")]
+    MissingRetainedSample {
+        /// Exact normalized sample identity.
+        path: AssetPath,
+    },
     /// More resources were admitted than the stable handle can address.
     #[error("decoded sound registry capacity exceeded")]
     Capacity,

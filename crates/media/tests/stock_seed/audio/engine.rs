@@ -29,7 +29,7 @@ fn stock_sound_gain_rejects_values_outside_cvar_range() {
 /// SoundEngine.cpp selects cache residency from extension, size, and CVar clamp.
 #[test]
 fn stock_sound_residency_uses_exact_cacheable_size_policy() -> Result<(), Box<dyn Error>> {
-    let one_megabyte = SoundResidencyPolicy::new(1_048_576);
+    let one_megabyte = SoundResidencyPolicy::new(1_048_576, 16_777_216);
     let wav = AssetPath::new("Sound/Test.wav")?;
     let mp3 = AssetPath::new("Sound/Test.mp3")?;
 
@@ -46,8 +46,16 @@ fn stock_sound_residency_uses_exact_cacheable_size_policy() -> Result<(), Box<dy
         SoundDecodeMode::Streaming
     );
     assert_eq!(
-        SoundResidencyPolicy::new(u32::MAX).maximum_cacheable_size_bytes(),
+        SoundResidencyPolicy::new(u32::MAX, 0).maximum_cacheable_size_bytes(),
         2_097_152
+    );
+    assert_eq!(
+        SoundResidencyPolicy::new(0, 0).maximum_sample_cache_size_bytes(),
+        4_194_304
+    );
+    assert_eq!(
+        SoundResidencyPolicy::new(0, 104_857_601).maximum_sample_cache_size_bytes(),
+        134_217_728
     );
     Ok(())
 }
@@ -401,6 +409,6 @@ fn settings_with_residency(
         SoundCategorySettings::new(sfx_enabled, full),
         SoundCategorySettings::new(true, SoundGain::new(0.4)?),
         SoundCategorySettings::new(true, SoundGain::new(0.6)?),
-        SoundResidencyPolicy::new(maximum_cacheable_size_bytes),
+        SoundResidencyPolicy::new(maximum_cacheable_size_bytes, 16_777_216),
     ))
 }

@@ -271,7 +271,7 @@ fn settings() -> Result<SoundEngineSettings, Box<dyn Error>> {
         SoundCategorySettings::new(true, full),
         SoundCategorySettings::new(true, full),
         SoundCategorySettings::new(true, full),
-        SoundResidencyPolicy::new(1_048_576),
+        SoundResidencyPolicy::new(1_048_576, 16_777_216),
     ))
 }
 

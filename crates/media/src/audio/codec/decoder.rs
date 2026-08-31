@@ -24,6 +24,8 @@ struct DecodedSoundKey {
 struct DecodedSoundResource {
     audio: Audio,
     info: DecodedSoundInfo,
+    encoded_size_bytes: usize,
+    references: usize,
 }
 
 /// Single-threaded decoded-audio registry independent of an output device.
@@ -38,6 +40,7 @@ pub struct SoundDecoder {
     handles: HashMap<DecodedSoundKey, DecodedSoundHandle>,
     resources: Vec<Option<DecodedSoundResource>>,
     resource_count: usize,
+    cached_sample_bytes: usize,
 }
 
 impl SoundDecoder {
@@ -68,6 +71,7 @@ impl SoundDecoder {
             handles: HashMap::new(),
             resources: Vec::new(),
             resource_count: 0,
+            cached_sample_bytes: 0,
         })
     }
 
@@ -81,6 +85,12 @@ impl SoundDecoder {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.resource_count == 0
+    }
+
+    /// Returns the encoded-byte accounting used by the stock sample budget.
+    #[must_use]
+    pub const fn cached_sample_bytes(&self) -> usize {
+        self.cached_sample_bytes
     }
 
     /// Admits one encoded payload in the caller-selected residency mode.
@@ -104,9 +114,18 @@ impl SoundDecoder {
             mode,
         };
         if mode == SoundDecodeMode::Predecoded
-            && let Some(handle) = self.handles.get(&key)
+            && let Some(handle) = self.handles.get(&key).copied()
         {
-            return Ok(*handle);
+            let Some(resource) = self.resources[handle.slot as usize].as_mut() else {
+                return Err(SoundDecodeError::MissingRetainedSample {
+                    path: key.path.clone(),
+                });
+            };
+            resource.references = resource
+                .references
+                .checked_add(1)
+                .ok_or(SoundDecodeError::Capacity)?;
+            return Ok(handle);
         }
         let slot =
             u32::try_from(self.resources.len()).map_err(|_source| SoundDecodeError::Capacity)?;
@@ -142,20 +161,34 @@ impl SoundDecoder {
             decoder_id: self.decoder_id,
             slot,
         };
-        self.resources
-            .push(Some(DecodedSoundResource { audio, info }));
+        let encoded_size_bytes = encoded.bytes().len();
+        let next_cached_sample_bytes = if mode == SoundDecodeMode::Predecoded {
+            self.cached_sample_bytes
+                .checked_add(encoded_size_bytes)
+                .ok_or(SoundDecodeError::Capacity)?
+        } else {
+            self.cached_sample_bytes
+        };
+        self.resources.push(Some(DecodedSoundResource {
+            audio,
+            info,
+            encoded_size_bytes,
+            references: 1,
+        }));
         self.resource_count += 1;
         if mode == SoundDecodeMode::Predecoded {
+            self.cached_sample_bytes = next_cached_sample_bytes;
             self.handles.insert(key, handle);
         }
         Ok(handle)
     }
 
-    /// Releases one noncached stream after its sole backend voice stops.
+    /// Releases one playback reference after its backend track is clear.
     ///
-    /// The caller must first clear the stream from its backend track. Cached
-    /// samples, foreign handles, and already released streams return `false`.
-    pub fn release_streaming(&mut self, handle: DecodedSoundHandle) -> bool {
+    /// A stream resource retires with its sole reference. A predecoded sample
+    /// remains cached with zero references until the stock byte-budget pass
+    /// evicts it. Foreign handles and duplicate releases return `false`.
+    pub fn release(&mut self, handle: DecodedSoundHandle) -> bool {
         if handle.decoder_id != self.decoder_id {
             return false;
         }
@@ -166,12 +199,45 @@ impl SoundDecoder {
         else {
             return false;
         };
-        if resource.info.mode() != SoundDecodeMode::Streaming {
+        if resource.references == 0 {
             return false;
         }
-        self.resources[handle.slot as usize] = None;
-        self.resource_count -= 1;
+        resource.references -= 1;
+        if resource.info.mode() == SoundDecodeMode::Streaming {
+            debug_assert_eq!(resource.references, 0);
+            self.resources[handle.slot as usize] = None;
+            self.resource_count -= 1;
+        }
         true
+    }
+
+    /// Evicts unreferenced predecoded samples until the byte budget is met.
+    ///
+    /// Active samples remain resident even when they alone exceed the budget.
+    pub fn trim_predecoded_cache(&mut self, maximum_bytes: usize) -> usize {
+        let mut removed = 0;
+        for slot in 0..self.resources.len() {
+            if self.cached_sample_bytes <= maximum_bytes {
+                break;
+            }
+            let Some(resource) = self.resources[slot].as_ref() else {
+                continue;
+            };
+            if resource.info.mode() != SoundDecodeMode::Predecoded || resource.references != 0 {
+                continue;
+            }
+            let key = DecodedSoundKey {
+                path: resource.info.path().clone(),
+                mode: SoundDecodeMode::Predecoded,
+            };
+            let encoded_size_bytes = resource.encoded_size_bytes;
+            self.handles.remove(&key);
+            self.resources[slot] = None;
+            self.resource_count -= 1;
+            self.cached_sample_bytes -= encoded_size_bytes;
+            removed += 1;
+        }
+        removed
     }
 
     /// Resolves diagnostics only for handles created by this decoder.

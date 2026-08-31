@@ -57,6 +57,12 @@ pub enum RuntimeSoundError {
         /// Unmodified live text.
         value: String,
     },
+    /// `Sound_MaxCacheSizeInBytes` is not a signed 32-bit integer.
+    #[error("Sound_MaxCacheSizeInBytes has invalid integer value {value:?}")]
+    InvalidMaximumCacheSize {
+        /// Unmodified live text.
+        value: String,
+    },
     /// A valid channel count changed after the fixed backend pool was created.
     #[error(
         "Sound_NumChannels changed from allocated {allocated} to {configured}; restart is required"
@@ -250,6 +256,13 @@ impl SoundPolicy {
             .map_err(|_source| RuntimeSoundError::InvalidMaximumCacheableSize {
                 value: maximum_cacheable_size_text,
             })?;
+        let maximum_cache_size_text = cvar(glue, "Sound_MaxCacheSizeInBytes")?;
+        let configured_maximum_cache_size = maximum_cache_size_text
+            .parse::<i32>()
+            .map(|value| value as u32)
+            .map_err(|_source| RuntimeSoundError::InvalidMaximumCacheSize {
+                value: maximum_cache_size_text,
+            })?;
         Ok(Self {
             voice_capacity,
             settings: SoundEngineSettings::new(
@@ -267,7 +280,10 @@ impl SoundPolicy {
                     boolean(glue, "Sound_EnableAmbience")?,
                     gain(glue, "Sound_AmbienceVolume")?,
                 ),
-                SoundResidencyPolicy::new(configured_maximum_cacheable_size),
+                SoundResidencyPolicy::new(
+                    configured_maximum_cacheable_size,
+                    configured_maximum_cache_size,
+                ),
             ),
         })
     }

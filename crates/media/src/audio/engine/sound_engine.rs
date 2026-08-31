@@ -104,6 +104,12 @@ impl<'output> SoundEngine<'output> {
         self.decoder.len()
     }
 
+    /// Returns encoded-byte accounting for cached predecoded samples.
+    #[must_use]
+    pub const fn decoded_sample_cache_bytes(&self) -> usize {
+        self.decoder.cached_sample_bytes()
+    }
+
     /// Resolves one terrain/advanced identifier to its exact authored rows.
     ///
     /// This performs no attenuation, cone, timing, or ducking interpretation.
@@ -191,7 +197,7 @@ impl<'output> SoundEngine<'output> {
         ) {
             Ok(voice) => voice,
             Err(error) => {
-                self.decoder.release_streaming(sound);
+                self.decoder.release(sound);
                 return Err(error.into());
             }
         };
@@ -223,6 +229,8 @@ impl<'output> SoundEngine<'output> {
             let gain = applied_gain(settings, *voice);
             self.backend.set_gain(voice.handle, gain)?;
         }
+        self.decoder
+            .trim_predecoded_cache(settings.residency().maximum_sample_cache_size_bytes() as usize);
         Ok(())
     }
 
@@ -373,7 +381,7 @@ impl<'output> SoundEngine<'output> {
             .ok_or(SoundEngineError::UnknownVoice)?;
         self.backend.stop(handle)?;
         let voice = self.active_voices.remove(index);
-        self.decoder.release_streaming(voice.sound);
+        self.decoder.release(voice.sound);
         Ok(())
     }
 
@@ -390,7 +398,7 @@ impl<'output> SoundEngine<'output> {
             if self.backend.state(self.active_voices[index].handle)? == SoundVoiceState::Stopped {
                 self.backend.stop(self.active_voices[index].handle)?;
                 let voice = self.active_voices.remove(index);
-                self.decoder.release_streaming(voice.sound);
+                self.decoder.release(voice.sound);
             } else {
                 index += 1;
             }
@@ -409,7 +417,7 @@ impl<'output> SoundEngine<'output> {
             {
                 self.backend.stop(voice.handle)?;
                 let voice = self.active_voices.remove(index);
-                self.decoder.release_streaming(voice.sound);
+                self.decoder.release(voice.sound);
             } else {
                 index += 1;
             }

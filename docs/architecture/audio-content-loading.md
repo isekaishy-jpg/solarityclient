@@ -54,6 +54,13 @@ forms reusable sample identity. Streamed playback creates a distinct decoder
 resource per voice and releases it when that voice clears its backend track;
 the noncacheable stock branch does not reuse a stream object.
 
+The per-frame cache pass at executable `0x0087b010` reads
+`Sound_MaxCacheSizeInBytes`, whose default is 16 MiB. Values below 4 MiB use a
+4 MiB floor; values above 100 MiB select 128 MiB; intermediate values remain
+unchanged. Unreferenced predecoded samples are evicted until encoded-byte
+accounting meets that effective budget. Playing samples remain resident even
+when they alone exceed it.
+
 The pinned safe SDL wrapper copies the original encoded file into its `Audio`
 resource during admission. This is the one adapter-boundary copy: the temporary
 `IOStream` retires immediately, and the encoded cache can collect its source
