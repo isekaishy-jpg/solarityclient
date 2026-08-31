@@ -40,6 +40,7 @@ use crate::application::world_coordinator::{
 };
 use crate::configuration::RuntimeConfiguration;
 use crate::platform::{PlatformEvent, SdlPlatform};
+use crate::random::CrtRand;
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
@@ -57,6 +58,7 @@ pub(crate) struct ClientServices {
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
     m2_global_clock: std::time::Instant,
+    crt_rand: CrtRand,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
@@ -153,6 +155,7 @@ impl ClientServices {
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 m2_global_clock: std::time::Instant::now(),
+                crt_rand: CrtRand::new(),
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
@@ -223,6 +226,7 @@ impl ClientServices {
             environment,
             camera,
             global_animation_time_ms,
+            &mut self.crt_rand,
         )?;
         Ok(())
     }
@@ -485,6 +489,7 @@ impl ClientServices {
                     world_models,
                     WorldModelTextureFiltering::Anisotropic4x,
                     WorldModelBaseMip::Zero,
+                    &mut self.crt_rand,
                 )?;
                 tracing::debug!(
                     tile_x = tile.x(),

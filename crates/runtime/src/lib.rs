@@ -12,10 +12,12 @@ mod input;
 mod legal;
 mod loading;
 mod platform;
+mod random;
 mod security;
 mod telemetry;
 mod time;
 
+pub use random::CrtRand;
 pub use time::RealmClock;
 
 pub use application::{

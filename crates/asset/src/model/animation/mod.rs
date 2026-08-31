@@ -154,10 +154,25 @@ impl M2Sequence {
     pub const fn frequency(self) -> i16 {
         self.frequency
     }
-    /// Returns the inclusive range of additional replay cycles.
+    /// Returns the authored minimum and exclusive-maximum cycle-count inputs.
     #[must_use]
     pub const fn replay_range(self) -> (u32, u32) {
         self.replay_range
+    }
+    /// Scales one CRT `rand` result into stock's total sequence cycle count.
+    ///
+    /// `CM2Model` multiplies the 15-bit roll by `maximum - minimum`, shifts
+    /// right by 15, and adds the minimum. A zero result is promoted to one so
+    /// every admitted sequence plays at least once.
+    #[must_use]
+    pub fn cycle_count(self, random_roll: u16) -> u32 {
+        debug_assert!(random_roll <= 0x7fff);
+        let (minimum, maximum) = self.replay_range;
+        let minimum = minimum as i32;
+        let maximum = maximum as i32;
+        let scaled = i32::from(random_roll).wrapping_mul(maximum.wrapping_sub(minimum)) / 32_768;
+        let cycles = minimum.wrapping_add(scaled);
+        if cycles == 0 { 1 } else { cycles as u32 }
     }
     /// Returns the stock transition duration in milliseconds.
     #[must_use]
@@ -438,18 +453,46 @@ impl M2AnimationSet {
         })
     }
 
+    /// Finds one exact available variation without consuming a weighted roll.
+    #[must_use]
+    pub fn sequence_for_variation(&self, animation_id: u16, variation_index: u16) -> Option<usize> {
+        let first = self.lookup_sequence(animation_id)?;
+        let mut selected = None;
+        self.visit_variations(first, animation_id, |index, sequence| {
+            if selected.is_none()
+                && sequence.variation_index == variation_index
+                && self.sequence_available[index]
+            {
+                selected = Some(index);
+            }
+        })?;
+        selected
+    }
+
+    /// Counts available records in one authored animation variation chain.
+    #[must_use]
+    pub fn available_variation_count(&self, animation_id: u16) -> Option<usize> {
+        let first = self.lookup_sequence(animation_id)?;
+        let mut count = 0;
+        self.visit_variations(first, animation_id, |index, _sequence| {
+            count += usize::from(self.sequence_available[index]);
+        })?;
+        Some(count)
+    }
+
     /// Probes the on-disk quadratic lookup without a compatibility scan.
     fn lookup_sequence(&self, animation_id: u16) -> Option<usize> {
         if self.animation_lookup.is_empty() {
-            return None;
+            // Build 12340 scans the sequence records only when the M2 omits
+            // the lookup table entirely. A present table that misses retains
+            // that miss and never enters this path.
+            return self
+                .sequences
+                .iter()
+                .position(|sequence| sequence.animation_id == animation_id);
         }
-        let mut visited = vec![false; self.animation_lookup.len()];
         let mut bucket = usize::from(animation_id) % self.animation_lookup.len();
-        for stride in 1.. {
-            if visited[bucket] {
-                return None;
-            }
-            visited[bucket] = true;
+        for stride in 1..=self.animation_lookup.len() {
             let index = *self.animation_lookup.get(bucket)?;
             if index == u16::MAX {
                 return None;

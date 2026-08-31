@@ -22,6 +22,8 @@ mod login;
 mod platform;
 #[path = "stock_seed/platform/lcd.rs"]
 mod platform_lcd;
+#[path = "stock_seed/random.rs"]
+mod random;
 #[path = "stock_seed/security.rs"]
 mod security;
 #[path = "stock_seed/support/mod.rs"]

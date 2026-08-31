@@ -169,7 +169,13 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
         &[u16::MAX, u16::MAX, u16::MAX, u16::MAX, u16::MAX, 0]
     );
     assert_eq!(animations.select_sequence(5, Some(0), 0), Some(0));
+    assert_eq!(animations.sequence_for_variation(5, 0), Some(0));
+    assert_eq!(animations.sequence_for_variation(5, 1), None);
     assert_eq!(animations.select_sequence(4, None, 0), None);
+    assert_eq!(animations.available_variation_count(5), Some(1));
+    assert_eq!(sequence.replay_range(), (0, 0));
+    assert_eq!(sequence.cycle_count(0), 1);
+    assert_eq!(sequence.cycle_count(0x7fff), 1);
     let bone = &animations.bones()[0];
     assert_eq!(bone.parent(), None);
     assert_eq!(bone.pivot(), glam::Vec3::new(1.0, 2.0, 3.0));
@@ -183,9 +189,9 @@ fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Selection does not repair a missing stock lookup by scanning every sequence.
+/// Stock scans sequence records only when the lookup table is entirely absent.
 #[test]
-fn m2_animation_selection_requires_authored_lookup() -> Result<(), Box<dyn Error>> {
+fn m2_animation_selection_scans_when_lookup_table_is_absent() -> Result<(), Box<dyn Error>> {
     let mut model = animated_m2_bytes()?;
     model[0x24..0x2c].fill(0);
     let skin = skin_bytes(32, &[0, 1, 2])?;
@@ -208,7 +214,71 @@ fn m2_animation_selection_requires_authored_lookup() -> Result<(), Box<dyn Error
     let model = DecodedM2Model::load(&mut store, &path)?;
 
     assert_eq!(model.animations().sequences()[0].animation_id(), 5);
+    assert_eq!(model.animations().select_sequence(5, None, 0), Some(0));
+    Ok(())
+}
+
+/// A present lookup miss is authoritative and does not enter the absent-table scan.
+#[test]
+fn m2_animation_selection_preserves_present_lookup_miss() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_m2_bytes()?;
+    let lookup_offset = m2_array_offset(&model, 0x24)?;
+    model[lookup_offset + 10..lookup_offset + 12].copy_from_slice(&u16::MAX.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\LookupMiss.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\LookupMiss00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\LookupMiss.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(model.animations().sequences()[0].animation_id(), 5);
     assert_eq!(model.animations().select_sequence(5, None, 0), None);
+    Ok(())
+}
+
+/// Replay fields scale the CRT roll over an exclusive upper bound.
+#[test]
+fn m2_sequence_cycle_count_matches_stock_integer_scaling() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_m2_bytes()?;
+    let sequence_offset = m2_array_offset(&model, 0x1c)?;
+    model[sequence_offset + 20..sequence_offset + 24].copy_from_slice(&2_u32.to_le_bytes());
+    model[sequence_offset + 24..sequence_offset + 28].copy_from_slice(&6_u32.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Replay.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Replay00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Replay.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let sequence = model.animations().sequences()[0];
+
+    assert_eq!(sequence.cycle_count(0), 2);
+    assert_eq!(sequence.cycle_count(8_192), 3);
+    assert_eq!(sequence.cycle_count(16_384), 4);
+    assert_eq!(sequence.cycle_count(0x7fff), 5);
     Ok(())
 }
 

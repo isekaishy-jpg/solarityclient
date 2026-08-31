@@ -17,6 +17,7 @@ use thiserror::Error;
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
+use crate::random::CrtRand;
 
 mod m2;
 mod world_model;
@@ -187,6 +188,14 @@ pub enum RuntimeTerrainFrameError {
         /// Selected sequence-table index.
         sequence: usize,
     },
+    /// A previously admitted M2 animation can no longer select a variation.
+    #[error("M2 {model} cannot select animation ID {animation_id}")]
+    M2AnimationSelection {
+        /// Model whose authored variation chain became unavailable.
+        model: AssetPath,
+        /// AnimationData identifier being advanced.
+        animation_id: u16,
+    },
 }
 
 /// One immutable resident ADT generation ready for camera selection.
@@ -200,6 +209,7 @@ pub(super) struct TerrainFrame {
 
 impl TerrainFrame {
     /// Uploads and validates every resource referenced by one admitted ADT.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
         plan: &TerrainTileMeshPlan,
@@ -208,6 +218,7 @@ impl TerrainFrame {
         world_models: &ResidentWorldModelScene,
         world_model_filtering: WorldModelTextureFiltering,
         world_model_base_mip: WorldModelBaseMip,
+        random: &mut CrtRand,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -286,7 +297,7 @@ impl TerrainFrame {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
-            m2: M2Frame::prepare(renderer, m2_scene)?,
+            m2: M2Frame::prepare(renderer, m2_scene, random)?,
             world_models: WorldModelFrame::prepare(
                 renderer,
                 world_models,
@@ -308,6 +319,7 @@ impl TerrainFrame {
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
         global_animation_time_ms: f32,
+        random: &mut CrtRand,
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -365,6 +377,7 @@ impl TerrainFrame {
             light.fog_color(),
             local_animation_time_ms,
             global_animation_time_ms,
+            random,
         )?;
         Ok(renderer.present_world_frame(
             scene,

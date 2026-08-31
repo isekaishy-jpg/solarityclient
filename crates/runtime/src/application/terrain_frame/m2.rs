@@ -14,6 +14,7 @@ use solarity_rendering::{
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
 };
+use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
 
@@ -31,8 +32,6 @@ struct M2GpuSource {
     plan: Arc<M2MeshPlan>,
     mesh: M2MeshHandle,
     draws: Vec<M2GpuDraw>,
-    sequence: usize,
-    sequence_duration_ms: f32,
 }
 
 /// Fixed renderer objects paired with one exact SKIN material batch.
@@ -48,6 +47,96 @@ struct M2GpuPlacement {
     owner: ResidentM2Owner,
     flags: u16,
     color: [u8; 4],
+    playback: Option<M2Playback>,
+}
+
+/// Per-instance sequence state retained by stock's `CM2Model` owner.
+struct M2Playback {
+    sequence: usize,
+    sequence_duration_ms: f32,
+    cycle_count: u32,
+    cycle_started_ms: f32,
+    has_variations: bool,
+}
+
+impl M2Playback {
+    /// Selects Stand variation zero and consumes its authored cycle-count roll.
+    fn new(
+        model: &DecodedM2Model,
+        random: &mut CrtRand,
+    ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
+        let animations = model.animations();
+        if animations.sequences().is_empty() {
+            return Ok(Some(Self {
+                sequence: 0,
+                sequence_duration_ms: 0.0,
+                cycle_count: 1,
+                cycle_started_ms: 0.0,
+                has_variations: false,
+            }));
+        }
+        let sequence = animations
+            .sequence_for_variation(0, 0)
+            .or_else(|| animations.select_sequence(0, None, u32::from(random.next_u15())));
+        let Some(sequence) = sequence else {
+            tracing::debug!(
+                path = %model.path(),
+                "placed world M2 omitted because animation ID zero is unavailable"
+            );
+            return Ok(None);
+        };
+        let sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
+        let cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
+        let variation_count = animations.available_variation_count(0).ok_or_else(|| {
+            RuntimeTerrainFrameError::M2AnimationSelection {
+                model: model.path().clone(),
+                animation_id: 0,
+            }
+        })?;
+        Ok(Some(Self {
+            sequence,
+            sequence_duration_ms,
+            cycle_count,
+            cycle_started_ms: 0.0,
+            has_variations: variation_count > 1,
+        }))
+    }
+
+    /// Advances one expired stock timer and returns the selected sequence clock.
+    fn clock(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_time_ms: f32,
+        global_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
+        let elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
+        let selected_span_ms = self.sequence_duration_ms * self.cycle_count as f32;
+        if self.has_variations && self.sequence_duration_ms > 0.0 && elapsed_ms >= selected_span_ms
+        {
+            let animation_id = model.animations().sequences()[self.sequence].animation_id();
+            self.sequence = model
+                .animations()
+                .select_sequence(animation_id, None, u32::from(random.next_u15()))
+                .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
+                    model: model.path().clone(),
+                    animation_id,
+                })?;
+            self.sequence_duration_ms = resolved_sequence_duration(model, self.sequence)?;
+            self.cycle_count =
+                model.animations().sequences()[self.sequence].cycle_count(random.next_u15());
+            // Stock builds the replacement bone-sequence timer from the
+            // current client tick, so a stalled presentation does not replay
+            // an unbounded backlog of expired fidget variations.
+            self.cycle_started_ms = animation_time_ms;
+        }
+        Ok(world_animation_clock(
+            self.sequence,
+            self.sequence_duration_ms,
+            animation_time_ms - self.cycle_started_ms,
+            global_time_ms,
+        ))
+    }
 }
 
 /// All resident M2 geometry and transforms owned by one terrain generation.
@@ -64,6 +153,7 @@ impl M2Frame {
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
         scene: &ResidentM2Scene,
+        random: &mut CrtRand,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let mut sources = Vec::with_capacity(scene.sources().len());
         for source in scene.sources() {
@@ -84,6 +174,10 @@ impl M2Frame {
                 owner: placement.owner(),
                 flags: placement.flags(),
                 color: placement.color(),
+                playback: match sources[placement.source_index()].as_ref() {
+                    Some(source) => M2Playback::new(&source.model, random)?,
+                    None => None,
+                },
             });
         }
         Ok(Self {
@@ -148,13 +242,18 @@ impl M2Frame {
         fog_color: glam::Vec3,
         animation_time_ms: f32,
         global_time_ms: f32,
+        random: &mut CrtRand,
     ) -> Result<(&[Mat4], &[M2PreparedDraw]), RuntimeTerrainFrameError> {
         self.bone_transforms.clear();
         self.visible_draws.clear();
-        for placement in &self.placements {
+        for placement in &mut self.placements {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
+            let Some(playback) = placement.playback.as_mut() else {
+                continue;
+            };
+            let clock = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
             let bounds = source.model.bounds();
             let center = placement
                 .transform
@@ -171,12 +270,6 @@ impl M2Frame {
                 continue;
             }
 
-            let clock = world_animation_clock(
-                source.sequence,
-                source.sequence_duration_ms,
-                animation_time_ms,
-                global_time_ms,
-            );
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let model_view = camera.view() * placement.transform;
@@ -218,7 +311,22 @@ impl M2Frame {
     }
 }
 
-/// Advances the stock sequence selected once when the shared model became resident.
+/// Resolves the immutable duration owned by an alias target.
+fn resolved_sequence_duration(
+    model: &DecodedM2Model,
+    sequence: usize,
+) -> Result<f32, RuntimeTerrainFrameError> {
+    let resolved = model
+        .animations()
+        .resolve_sequence_alias(sequence)
+        .ok_or_else(|| RuntimeTerrainFrameError::M2SequenceIndex {
+            model: model.path().clone(),
+            sequence,
+        })?;
+    Ok(model.animations().sequences()[resolved].duration_ms() as f32)
+}
+
+/// Advances the sequence selected for one placed model instance.
 fn world_animation_clock(
     sequence: usize,
     duration_ms: f32,
@@ -257,30 +365,6 @@ fn prepare_source(
             model_count: model.textures().len(),
         });
     }
-    let (sequence, sequence_duration_ms) = if model.animations().sequences().is_empty() {
-        // Models without a sequence catalog retain the bind-pose channel that
-        // build 12340 addresses as sequence zero.
-        (0, 0.0)
-    } else {
-        let Some(sequence) = model.animations().select_sequence(0, Some(0), 0) else {
-            tracing::debug!(
-                path = %model.path(),
-                "static world M2 omitted because animation ID zero is unavailable"
-            );
-            return Ok(None);
-        };
-        let resolved = model
-            .animations()
-            .resolve_sequence_alias(sequence)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2SequenceIndex {
-                model: model.path().clone(),
-                sequence,
-            })?;
-        (
-            sequence,
-            model.animations().sequences()[resolved].duration_ms() as f32,
-        )
-    };
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     for draw in plan.draws() {
         for binding in draw.texture_bindings() {
@@ -346,7 +430,5 @@ fn prepare_source(
         plan,
         mesh,
         draws,
-        sequence,
-        sequence_duration_ms,
     }))
 }
