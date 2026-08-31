@@ -172,6 +172,14 @@ loop state from `SoundEntries.Flags & 0x200`. Request state can explicitly force
 looping or one-shot playback; advanced usage-zero continuous objects force the
 former, while periodic and terminal objects force the latter.
 
+The same path retains the exact `VolumeSliderCategory`/call-site channel index
+instead of collapsing every SFX-labelled entry. Channels zero through five use
+an effectively unlimited channel-layer cap. Channels six through seventeen use
+fixed simultaneous-instance caps of `1, 1, 2, 1, 2, 2, 1, 6, 4, 1, 2, 4`.
+That check runs before variation selection or payload admission. The default
+same-entry concurrency rule comes from `SoundEntries.Flags & 0x20`; explicit
+play options can force or suppress exclusivity.
+
 `AdvancedSoundService` now owns usage-zero continuous, usage-one periodic, and
 usage-two terminal instances; shared variation state; scheduled gain; camera-
 relative position and cone mixing; and the global category-duck list. Completed

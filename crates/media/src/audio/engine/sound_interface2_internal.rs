@@ -5,6 +5,7 @@ use solarity_asset::AssetPath;
 use crate::audio::codec::SoundDecodeMode;
 
 const SOUND_ENTRY_LOOP_FLAG: u32 = 0x0000_0200;
+const SOUND_ENTRY_EXCLUSIVE_FLAG: u32 = 0x0000_0020;
 const MAXIMUM_CACHEABLE_SIZE_CEILING_BYTES: u32 = 2 * 1024 * 1024;
 const MINIMUM_SAMPLE_CACHE_SIZE_BYTES: u32 = 4 * 1024 * 1024;
 const LARGE_SAMPLE_CACHE_BOUNDARY_BYTES: u32 = 100 * 1024 * 1024;
@@ -29,6 +30,29 @@ impl SoundLoopMode {
             Self::Entry => sound_entry_flags & SOUND_ENTRY_LOOP_FLAG != 0,
             Self::Loop => true,
             Self::Once => false,
+        }
+    }
+}
+
+/// Same-entry concurrency selection carried by the stock play options.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SoundConcurrencyMode {
+    /// Use `SoundEntries.dbc::Flags & 0x20`.
+    Entry,
+    /// Reject playback while the same entry is already active.
+    Exclusive,
+    /// Permit another instance even when the base row is exclusive.
+    Concurrent,
+}
+
+impl SoundConcurrencyMode {
+    /// Resolves the request override against one exact base-row flag word.
+    #[must_use]
+    pub const fn is_exclusive(self, sound_entry_flags: u32) -> bool {
+        match self {
+            Self::Entry => sound_entry_flags & SOUND_ENTRY_EXCLUSIVE_FLAG != 0,
+            Self::Exclusive => true,
+            Self::Concurrent => false,
         }
     }
 }

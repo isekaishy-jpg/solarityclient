@@ -14,7 +14,9 @@ use crate::audio::selection::SoundVariationSelector;
 use crate::audio::spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSoundError};
 
 use super::status::SoundEngineError;
-use super::types::{SoundCategory, SoundEngineSettings, SoundPlayRequest, SoundPlayback};
+use super::types::{
+    SoundCategory, SoundChannel, SoundEngineSettings, SoundPlayRequest, SoundPlayback,
+};
 use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 
 /// Policy retained for one voice while live CVar settings can change.
@@ -22,6 +24,8 @@ use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 struct ActiveVoice {
     handle: SoundVoiceHandle,
     sound: crate::audio::codec::DecodedSoundHandle,
+    entry_id: u32,
+    channel: SoundChannel,
     category: SoundCategory,
     source_gain: f32,
     runtime_gain: f32,
@@ -149,13 +153,38 @@ impl<'output> SoundEngine<'output> {
                 .ok_or(SoundEngineError::MissingEntry {
                     entry_id: request.entry_id(),
                 })?;
-        let Some(category_gain) = self.settings.category_gain(request.category()) else {
+        let channel = request.channel();
+        let category = channel.category();
+        let Some(category_gain) = self.settings.category_gain(category) else {
             return Ok(SoundPlayback::Suppressed);
         };
         if !entry.volume().is_finite() || entry.volume() < 0.0 {
             return Err(SoundEngineError::InvalidEntryVolume {
                 entry_id: entry.id(),
                 volume: entry.volume(),
+            });
+        }
+        if let Some(maximum) = channel.maximum_active_voices()
+            && self
+                .active_voices
+                .iter()
+                .filter(|voice| voice.channel == channel)
+                .count()
+                >= maximum
+        {
+            return Err(SoundEngineError::ChannelCapacity {
+                channel: channel.value(),
+                maximum,
+            });
+        }
+        if request.concurrency_mode().is_exclusive(entry.flags())
+            && self
+                .active_voices
+                .iter()
+                .any(|voice| voice.entry_id == entry.id())
+        {
+            return Err(SoundEngineError::ExclusiveEntryActive {
+                entry_id: entry.id(),
             });
         }
         let selector_index = match self
@@ -204,7 +233,9 @@ impl<'output> SoundEngine<'output> {
         self.active_voices.push(ActiveVoice {
             handle: voice,
             sound,
-            category: request.category(),
+            entry_id: entry.id(),
+            channel,
+            category,
             source_gain,
             runtime_gain: 1.0,
             duck_gain: 1.0,

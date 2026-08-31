@@ -101,7 +101,17 @@ fn build_archive<'a>(
 
 /// Creates one exact build-12340 `SoundEntries.dbc` row.
 pub(crate) fn sound_entries_fixture(id: u32, files: [(&str, u32); 3], directory: &str) -> Vec<u8> {
-    sound_entries_fixture_with_advanced(id, files, directory, 0)
+    sound_entries_fixture_with_policy(id, files, directory, 0, 0)
+}
+
+/// Creates one row carrying an explicit `SoundEntries.dbc::Flags` word.
+pub(crate) fn sound_entries_fixture_with_flags(
+    id: u32,
+    files: [(&str, u32); 3],
+    directory: &str,
+    flags: u32,
+) -> Vec<u8> {
+    sound_entries_fixture_with_policy(id, files, directory, 0, flags)
 }
 
 /// Creates one exact build-12340 `SoundEntries.dbc` row with its advanced key.
@@ -110,6 +120,16 @@ pub(crate) fn sound_entries_fixture_with_advanced(
     files: [(&str, u32); 3],
     directory: &str,
     advanced_id: u32,
+) -> Vec<u8> {
+    sound_entries_fixture_with_policy(id, files, directory, advanced_id, 0)
+}
+
+fn sound_entries_fixture_with_policy(
+    id: u32,
+    files: [(&str, u32); 3],
+    directory: &str,
+    advanced_id: u32,
+    flags: u32,
 ) -> Vec<u8> {
     let mut strings = vec![0];
     let name = append_string(&mut strings, "WeightedSound");
@@ -129,7 +149,7 @@ pub(crate) fn sound_entries_fixture_with_advanced(
     fields.extend([
         directory,
         1.0_f32.to_bits(),
-        0,
+        flags,
         4.0_f32.to_bits(),
         40.0_f32.to_bits(),
         0,

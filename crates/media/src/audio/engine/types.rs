@@ -3,8 +3,8 @@
 use crate::audio::backend::SoundVoiceHandle;
 use crate::audio::selection::SoundVariationMode;
 
-use super::status::{SoundCategoryError, SoundGainError};
-use super::{AdvancedSoundInstanceId, SoundLoopMode, SoundResidencyPolicy};
+use super::status::{SoundChannelError, SoundGainError};
+use super::{AdvancedSoundInstanceId, SoundConcurrencyMode, SoundLoopMode, SoundResidencyPolicy};
 
 /// Stock volume-control category selected by the calling subsystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,22 +23,61 @@ pub enum SoundCategory {
     RacialCinematic,
 }
 
-impl SoundCategory {
-    /// Interprets `SoundEntriesAdvanced.dbc::VolumeSliderCategory` exactly.
+/// Exact index into build 12340's eighteen-entry sound-channel table.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SoundChannel(u8);
+
+impl SoundChannel {
+    /// General sound-effects channel.
+    pub const SFX: Self = Self(0);
+    /// Foreground music channel.
+    pub const MUSIC: Self = Self(1);
+    /// World ambience channel.
+    pub const AMBIENCE: Self = Self(2);
+
+    /// Validates a caller or `VolumeSliderCategory` channel word.
     ///
     /// # Errors
     ///
-    /// Returns [`SoundCategoryError`] for words outside the executable's
-    /// eighteen-entry channel table.
-    pub fn from_volume_slider_category(value: u32) -> Result<Self, SoundCategoryError> {
-        match value {
-            0 | 7..=17 => Ok(Self::Sfx),
-            1 | 5 => Ok(Self::Music),
-            2 => Ok(Self::Ambience),
-            3 => Ok(Self::Cinematic),
-            4 => Ok(Self::ScriptSound),
-            6 => Ok(Self::RacialCinematic),
-            value => Err(SoundCategoryError { value }),
+    /// Returns [`SoundChannelError`] outside the executable's channel table.
+    pub const fn new(value: u32) -> Result<Self, SoundChannelError> {
+        if value <= 17 {
+            Ok(Self(value as u8))
+        } else {
+            Err(SoundChannelError { value })
+        }
+    }
+
+    /// Returns the exact numeric channel index.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    /// Returns the CVar volume group attached to this channel.
+    #[must_use]
+    pub const fn category(self) -> SoundCategory {
+        match self.0 {
+            0 | 7..=17 => SoundCategory::Sfx,
+            1 | 5 => SoundCategory::Music,
+            2 => SoundCategory::Ambience,
+            3 => SoundCategory::Cinematic,
+            4 => SoundCategory::ScriptSound,
+            6 => SoundCategory::RacialCinematic,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns the channel-layer simultaneous-instance cap when finite.
+    #[must_use]
+    pub const fn maximum_active_voices(self) -> Option<usize> {
+        match self.0 {
+            0..=5 => None,
+            6 | 7 | 9 | 12 | 15 => Some(1),
+            8 | 10 | 11 | 16 => Some(2),
+            13 => Some(6),
+            14 | 17 => Some(4),
+            _ => unreachable!(),
         }
     }
 }
@@ -171,9 +210,10 @@ impl SoundEngineSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SoundPlayRequest {
     entry_id: u32,
-    category: SoundCategory,
+    channel: SoundChannel,
     variation_mode: SoundVariationMode,
     loop_mode: SoundLoopMode,
+    concurrency_mode: SoundConcurrencyMode,
     advanced_source: Option<AdvancedSoundInstanceId>,
 }
 
@@ -182,15 +222,17 @@ impl SoundPlayRequest {
     #[must_use]
     pub const fn new(
         entry_id: u32,
-        category: SoundCategory,
+        channel: SoundChannel,
         variation_mode: SoundVariationMode,
         loop_mode: SoundLoopMode,
+        concurrency_mode: SoundConcurrencyMode,
     ) -> Self {
         Self {
             entry_id,
-            category,
+            channel,
             variation_mode,
             loop_mode,
+            concurrency_mode,
             advanced_source: None,
         }
     }
@@ -198,16 +240,18 @@ impl SoundPlayRequest {
     /// Captures a service-owned advanced request with duck self-exclusion.
     pub(super) const fn advanced(
         entry_id: u32,
-        category: SoundCategory,
+        channel: SoundChannel,
         variation_mode: SoundVariationMode,
         loop_mode: SoundLoopMode,
+        concurrency_mode: SoundConcurrencyMode,
         advanced_source: AdvancedSoundInstanceId,
     ) -> Self {
         Self {
             entry_id,
-            category,
+            channel,
             variation_mode,
             loop_mode,
+            concurrency_mode,
             advanced_source: Some(advanced_source),
         }
     }
@@ -218,10 +262,10 @@ impl SoundPlayRequest {
         self.entry_id
     }
 
-    /// Returns the caller-owned volume category.
+    /// Returns the caller-owned exact sound channel.
     #[must_use]
-    pub const fn category(self) -> SoundCategory {
-        self.category
+    pub const fn channel(self) -> SoundChannel {
+        self.channel
     }
 
     /// Returns the exact stock selection mode for this call site.
@@ -234,6 +278,12 @@ impl SoundPlayRequest {
     #[must_use]
     pub const fn loop_mode(self) -> SoundLoopMode {
         self.loop_mode
+    }
+
+    /// Returns the base-row/override same-entry concurrency selection.
+    #[must_use]
+    pub const fn concurrency_mode(self) -> SoundConcurrencyMode {
+        self.concurrency_mode
     }
 
     /// Returns the advanced instance excluded from its own duck influence.

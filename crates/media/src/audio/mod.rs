@@ -30,9 +30,9 @@ pub use engine::{
     AdvancedSoundProperties, AdvancedSoundService, AdvancedSoundServiceError,
     AdvancedSoundSpatialError, AdvancedSoundSpatialMix, AdvancedSoundUpdateReport,
     AdvancedSoundUsage, AdvancedSoundUsageError, OwnedSoundEngine, SoundCategory,
-    SoundCategoryError, SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings,
-    SoundGain, SoundGainError, SoundLoopMode, SoundPlayRequest, SoundPlayback,
-    SoundResidencyPolicy,
+    SoundCategorySettings, SoundChannel, SoundChannelError, SoundConcurrencyMode, SoundEngine,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundLoopMode,
+    SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
 };
 pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{

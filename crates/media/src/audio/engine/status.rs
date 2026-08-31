@@ -14,16 +14,16 @@ pub struct SoundGainError {
     pub(super) value: f32,
 }
 
-/// Invalid advanced-sound volume-slider category.
+/// Invalid stock sound channel index.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-#[error("unsupported sound volume-slider category {value}")]
-pub struct SoundCategoryError {
-    /// Unmodified DBC category word.
+#[error("unsupported sound channel {value}")]
+pub struct SoundChannelError {
+    /// Unmodified channel word.
     pub(super) value: u32,
 }
 
-impl SoundCategoryError {
-    /// Returns the unrecognized DBC word.
+impl SoundChannelError {
+    /// Returns the unrecognized channel word.
     #[must_use]
     pub const fn value(self) -> u32 {
         self.value
@@ -52,6 +52,20 @@ pub enum SoundEngineError {
         entry_id: u32,
         /// Unmodified `SoundEntries.dbc` value.
         volume: f32,
+    },
+    /// A stock channel reached its exact simultaneous-instance cap.
+    #[error("sound channel {channel} reached its {maximum}-voice limit")]
+    ChannelCapacity {
+        /// Exact numeric channel index.
+        channel: u8,
+        /// Fixed simultaneous-instance cap.
+        maximum: usize,
+    },
+    /// An entry carrying the exclusive bit is already active.
+    #[error("exclusive sound {entry_id} is already active")]
+    ExclusiveEntryActive {
+        /// Exact `SoundEntries.dbc` identifier.
+        entry_id: u32,
     },
     /// A voice handle is not currently owned by this engine.
     #[error("sound voice is not owned by this engine")]

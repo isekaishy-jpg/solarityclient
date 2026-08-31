@@ -8,7 +8,6 @@ use crate::audio::backend::{SoundVoiceHandle, SoundVoiceState};
 use crate::audio::selection::SoundVariationMode;
 use crate::audio::spatial::SpatialSoundError;
 
-use super::SoundLoopMode;
 use super::sound_engine::SoundEngine;
 use super::sound_interface2_advanced_kit_ducking::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 use super::sound_interface2_advanced_kit_lifecycle::{
@@ -18,8 +17,9 @@ use super::sound_interface2_advanced_kit_properties::AdvancedSoundProperties;
 use super::sound_interface2_advanced_kit_spatial::{
     AdvancedSoundListener, AdvancedSoundSpatialError, AdvancedSoundSpatialMix,
 };
-use super::status::{SoundCategoryError, SoundEngineError};
-use super::types::{SoundCategory, SoundPlayRequest, SoundPlayback};
+use super::status::{SoundChannelError, SoundEngineError};
+use super::types::{SoundChannel, SoundPlayRequest, SoundPlayback};
+use super::{SoundConcurrencyMode, SoundLoopMode};
 
 /// Authored identity and transform needed to create one instance.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,12 +83,10 @@ impl AdvancedSoundService {
         listener: AdvancedSoundListener,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<AdvancedSoundInstanceId, AdvancedSoundServiceError> {
-        let (sound_entry_id, variation_count, properties, category) = {
+        let (sound_entry_id, variation_count, properties, channel) = {
             let resolved = engine.resolve_spatial_sound(request.advanced_entry_id)?;
             let properties = AdvancedSoundProperties::from(resolved.advanced_entry());
-            let category = SoundCategory::from_volume_slider_category(
-                resolved.advanced_entry().volume_slider_category(),
-            )?;
+            let channel = SoundChannel::new(resolved.advanced_entry().volume_slider_category())?;
             // Validate all FMOD-facing values before changing service state.
             AdvancedSoundSpatialMix::evaluate(
                 listener,
@@ -101,7 +99,7 @@ impl AdvancedSoundService {
                 resolved.sound_entry().id(),
                 resolved.sound_entry().assets().len(),
                 properties,
-                category,
+                channel,
             )
         };
         let instance_id = AdvancedSoundInstanceId::new(self.next_instance_id);
@@ -117,7 +115,7 @@ impl AdvancedSoundService {
             sound_entry_id,
             variation_count,
             properties,
-            category,
+            channel,
             emitter_position: request.emitter_position,
             cone_orientation: request.cone_orientation,
             lifecycle,
@@ -419,7 +417,7 @@ pub enum AdvancedSoundServiceError {
     Usage(#[from] AdvancedSoundUsageError),
     /// Advanced volume-slider word is outside the stock channel table.
     #[error(transparent)]
-    Category(#[from] SoundCategoryError),
+    Channel(#[from] SoundChannelError),
     /// Listener, emitter, distance, or cone data is invalid.
     #[error(transparent)]
     Spatial(#[from] AdvancedSoundSpatialError),
@@ -436,7 +434,7 @@ struct AdvancedSoundInstance {
     sound_entry_id: u32,
     variation_count: usize,
     properties: AdvancedSoundProperties,
-    category: SoundCategory,
+    channel: SoundChannel,
     emitter_position: Vec3,
     cone_orientation: Vec3,
     lifecycle: AdvancedSoundLifecycle,
@@ -452,13 +450,14 @@ fn play_instance(
 ) -> Result<bool, AdvancedSoundServiceError> {
     let request = SoundPlayRequest::advanced(
         instance.sound_entry_id,
-        instance.category,
+        instance.channel,
         SoundVariationMode::Random,
         if instance.lifecycle.usage() == AdvancedSoundUsage::Continuous {
             SoundLoopMode::Loop
         } else {
             SoundLoopMode::Once
         },
+        SoundConcurrencyMode::Entry,
         instance.id,
     );
     match engine.play(store, request, next_random_word)? {

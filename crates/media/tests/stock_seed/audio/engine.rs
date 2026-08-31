@@ -6,14 +6,16 @@ use std::num::NonZeroU16;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
-    OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundDecodeMode, SoundEngine,
-    SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode, SoundOutput,
-    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy, SoundVariationMode,
+    OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundChannel, SoundConcurrencyMode,
+    SoundDecodeMode, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode,
+    SoundOutput, SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
+    SoundVariationMode,
 };
 
 use crate::support::{
     Fixture, FixtureFile, advanced_sound_entries_fixture, empty_advanced_sound_entries_fixture,
     pcm_wav, sdl_test_lock, sound_entries_fixture, sound_entries_fixture_with_advanced,
+    sound_entries_fixture_with_flags,
 };
 
 /// Master and category CVar gains retain their evidenced zero-to-one domain.
@@ -106,9 +108,10 @@ fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>>
     )?;
     let request = SoundPlayRequest::new(
         77,
-        SoundCategory::Sfx,
+        SoundChannel::SFX,
         SoundVariationMode::Random,
         SoundLoopMode::Loop,
+        SoundConcurrencyMode::Entry,
     );
 
     let SoundPlayback::Started(voice) = engine.play(&mut store, request, &mut || 0)? else {
@@ -127,9 +130,10 @@ fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>>
 
     let once = SoundPlayRequest::new(
         77,
-        SoundCategory::Sfx,
+        SoundChannel::SFX,
         SoundVariationMode::Random,
         SoundLoopMode::Once,
+        SoundConcurrencyMode::Entry,
     );
     let SoundPlayback::Started(_voice) = engine.play(&mut store, once, &mut || 0)? else {
         return Err("enabled one-shot stream was suppressed".into());
@@ -180,39 +184,153 @@ fn owned_engine_contains_the_track_to_mixer_lifetime() -> Result<(), Box<dyn Err
 #[test]
 fn advanced_volume_slider_categories_use_stock_channel_mapping() {
     assert_eq!(
-        SoundCategory::from_volume_slider_category(0),
+        SoundChannel::new(0).map(SoundChannel::category),
         Ok(SoundCategory::Sfx)
     );
     assert_eq!(
-        SoundCategory::from_volume_slider_category(5),
+        SoundChannel::new(5).map(SoundChannel::category),
         Ok(SoundCategory::Music)
     );
     assert_eq!(
-        SoundCategory::from_volume_slider_category(2),
+        SoundChannel::new(2).map(SoundChannel::category),
         Ok(SoundCategory::Ambience)
     );
     assert_eq!(
-        SoundCategory::from_volume_slider_category(3),
+        SoundChannel::new(3).map(SoundChannel::category),
         Ok(SoundCategory::Cinematic)
     );
     assert_eq!(
-        SoundCategory::from_volume_slider_category(4),
+        SoundChannel::new(4).map(SoundChannel::category),
         Ok(SoundCategory::ScriptSound)
     );
     assert_eq!(
-        SoundCategory::from_volume_slider_category(6),
+        SoundChannel::new(6).map(SoundChannel::category),
         Ok(SoundCategory::RacialCinematic)
     );
     for category in 7..=17 {
         assert_eq!(
-            SoundCategory::from_volume_slider_category(category),
+            SoundChannel::new(category).map(SoundChannel::category),
             Ok(SoundCategory::Sfx)
         );
     }
-    let Err(error) = SoundCategory::from_volume_slider_category(18) else {
+    let Err(error) = SoundChannel::new(18) else {
         panic!("out-of-table category was accepted");
     };
     assert_eq!(error.value(), 18);
+    let maximums = [
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(1),
+        Some(1),
+        Some(2),
+        Some(1),
+        Some(2),
+        Some(2),
+        Some(1),
+        Some(6),
+        Some(4),
+        Some(1),
+        Some(2),
+        Some(4),
+    ];
+    for (channel, maximum) in maximums.into_iter().enumerate() {
+        assert_eq!(
+            SoundChannel::new(channel as u32).map(SoundChannel::maximum_active_voices),
+            Ok(maximum)
+        );
+    }
+}
+
+/// Per-channel caps precede the base-row exclusive admission check.
+#[test]
+fn engine_enforces_stock_channel_caps_and_exclusivity() -> Result<(), Box<dyn Error>> {
+    let samples = [0, 8_000, 0, -8_000].repeat(2_000);
+    let wav = pcm_wav(8_000, &samples)?;
+    let sound_entries = sound_entries_fixture_with_flags(
+        77,
+        [("Tone.wav", 1), ("", 0), ("", 0)],
+        "Sound\\Test",
+        0x20,
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &empty_advanced_sound_entries_fixture(),
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Sound\\Test\\Tone.wav",
+            bytes: &wav,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let _sdl_test = sdl_test_lock();
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let mut engine = SoundEngine::load(
+        &mut store,
+        &output,
+        NonZeroU16::new(2).ok_or("voice capacity is zero")?,
+        settings(true)?,
+    )?;
+    let capped = SoundPlayRequest::new(
+        77,
+        SoundChannel::new(7)?,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+        SoundConcurrencyMode::Concurrent,
+    );
+    let SoundPlayback::Started(capped_voice) = engine.play(&mut store, capped, &mut || 0)? else {
+        return Err("capped sound was suppressed".into());
+    };
+    assert!(matches!(
+        engine.play(&mut store, capped, &mut || 0),
+        Err(SoundEngineError::ChannelCapacity {
+            channel: 7,
+            maximum: 1
+        })
+    ));
+    engine.stop(capped_voice)?;
+
+    let exclusive = SoundPlayRequest::new(
+        77,
+        SoundChannel::SFX,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+        SoundConcurrencyMode::Entry,
+    );
+    let SoundPlayback::Started(first) = engine.play(&mut store, exclusive, &mut || 0)? else {
+        return Err("exclusive sound was suppressed".into());
+    };
+    assert!(matches!(
+        engine.play(&mut store, exclusive, &mut || 0),
+        Err(SoundEngineError::ExclusiveEntryActive { entry_id: 77 })
+    ));
+    let concurrent = SoundPlayRequest::new(
+        77,
+        SoundChannel::SFX,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+        SoundConcurrencyMode::Concurrent,
+    );
+    let SoundPlayback::Started(second) = engine.play(&mut store, concurrent, &mut || 0)? else {
+        return Err("concurrent override was suppressed".into());
+    };
+    engine.stop(first)?;
+    engine.stop(second)?;
+    Ok(())
 }
 
 /// Live category policy mutes and restores a voice without restarting it.
@@ -259,9 +377,10 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     assert_eq!(spatial.sound_entry().id(), 42);
     let request = SoundPlayRequest::new(
         42,
-        SoundCategory::Sfx,
+        SoundChannel::SFX,
         SoundVariationMode::Random,
         SoundLoopMode::Loop,
+        SoundConcurrencyMode::Entry,
     );
     let SoundPlayback::Started(voice) = engine.play(&mut store, request, &mut || 0)? else {
         return Err("enabled sound was suppressed".into());
@@ -348,9 +467,10 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
     let mut engine = SoundEngine::load(&mut store, &output, capacity, settings(false)?)?;
     let missing = SoundPlayRequest::new(
         999,
-        SoundCategory::Sfx,
+        SoundChannel::SFX,
         SoundVariationMode::Random,
         SoundLoopMode::Once,
+        SoundConcurrencyMode::Entry,
     );
     let random_calls = Cell::new(0);
     let mut next_word = || {
@@ -365,9 +485,10 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
 
     let valid = SoundPlayRequest::new(
         77,
-        SoundCategory::Sfx,
+        SoundChannel::SFX,
         SoundVariationMode::Random,
         SoundLoopMode::Loop,
+        SoundConcurrencyMode::Entry,
     );
     assert_eq!(
         engine.play(&mut store, valid, &mut next_word)?,

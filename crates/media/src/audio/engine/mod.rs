@@ -26,9 +26,9 @@ pub use sound_interface2_advanced_kit_service::{
 pub use sound_interface2_advanced_kit_spatial::{
     AdvancedSoundListener, AdvancedSoundSpatialError, AdvancedSoundSpatialMix,
 };
-pub use sound_interface2_internal::{SoundLoopMode, SoundResidencyPolicy};
-pub use status::{SoundCategoryError, SoundEngineError, SoundGainError};
+pub use sound_interface2_internal::{SoundConcurrencyMode, SoundLoopMode, SoundResidencyPolicy};
+pub use status::{SoundChannelError, SoundEngineError, SoundGainError};
 pub use types::{
-    SoundCategory, SoundCategorySettings, SoundEngineSettings, SoundGain, SoundPlayRequest,
-    SoundPlayback,
+    SoundCategory, SoundCategorySettings, SoundChannel, SoundEngineSettings, SoundGain,
+    SoundPlayRequest, SoundPlayback,
 };
