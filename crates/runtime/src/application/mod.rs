@@ -32,7 +32,9 @@ pub use login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
 };
-pub use player_coordinator::{RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation};
+pub use player_coordinator::{
+    RuntimePlayerCatalogs, RuntimePlayerError, RuntimePlayerPoll, RuntimePlayerPresentation,
+};
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;
 pub use terrain_coordinator::{

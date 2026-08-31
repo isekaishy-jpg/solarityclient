@@ -1,7 +1,7 @@
 //! Stock equipment child-model attachment planning for player characters.
 
 use solarity_asset::{AssetPath, CharacterRace, InventoryType};
-use solarity_ecs::PlayerEquipmentSlot;
+use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
 
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
 
@@ -45,48 +45,23 @@ impl CharacterAttachmentPoint {
     }
 }
 
-/// Whether held equipment belongs in the hands or on its sheath attachment.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CharacterWeaponPose {
-    /// Combat-ready hand attachment.
-    Ready,
-    /// Sheath selected by `Item.dbc`.
-    Sheathed,
-}
-
-/// Hand selected for the ranged public equipment slot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CharacterRangedHand {
-    /// Stock's ordinary ranged-item hand in recovered glue behavior.
-    Left,
-    /// Alternate right-hand path selected by the stock call-site flag.
-    Right,
-}
-
 /// Runtime placement inputs that are not stored in item display records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CharacterWeaponState {
-    pose: CharacterWeaponPose,
-    ranged_hand: CharacterRangedHand,
+    sheath_state: UnitSheathState,
 }
 
 impl CharacterWeaponState {
     /// Creates explicit held-item placement state without boolean call-site flags.
     #[must_use]
-    pub const fn new(pose: CharacterWeaponPose, ranged_hand: CharacterRangedHand) -> Self {
-        Self { pose, ranged_hand }
+    pub const fn new(sheath_state: UnitSheathState) -> Self {
+        Self { sheath_state }
     }
 
-    /// Returns whether models are ready or sheathed.
+    /// Returns the authoritative unit weapon state.
     #[must_use]
-    pub const fn pose(self) -> CharacterWeaponPose {
-        self.pose
-    }
-
-    /// Returns the ranged public slot's active hand.
-    #[must_use]
-    pub const fn ranged_hand(self) -> CharacterRangedHand {
-        self.ranged_hand
+    pub const fn sheath_state(self) -> UnitSheathState {
+        self.sheath_state
     }
 }
 
@@ -96,7 +71,7 @@ pub struct CharacterItemAttachment {
     slot: PlayerEquipmentSlot,
     point: CharacterAttachmentPoint,
     model: AssetPath,
-    texture: AssetPath,
+    texture: Option<AssetPath>,
     item_visual_id: u32,
     particle_color_id: u32,
 }
@@ -120,10 +95,10 @@ impl CharacterItemAttachment {
         &self.model
     }
 
-    /// Returns the BLP bound to replacement texture slot two on the child M2.
+    /// Returns the BLP bound to item replacement categories 2 through 4.
     #[must_use]
-    pub const fn texture(&self) -> &AssetPath {
-        &self.texture
+    pub const fn texture(&self) -> Option<&AssetPath> {
+        self.texture.as_ref()
     }
 
     /// Returns the display's attached item-visual identifier.
@@ -260,7 +235,7 @@ fn push_helmet(
             "Item\\ObjectComponents\\Head\\{model_stem}_{}{gender_suffix}.mdx",
             race.client_prefix()
         ))?,
-        texture: AssetPath::new(format!("Item\\ObjectComponents\\Head\\{texture_name}.blp"))?,
+        texture: attachment_texture("Item\\ObjectComponents\\Head", texture_name)?,
         item_visual_id: display.item_visual_id(),
         particle_color_id: display.particle_color_id(),
     });
@@ -290,10 +265,7 @@ fn push_shoulders(
                 "Item\\ObjectComponents\\Shoulder\\{}",
                 models[channel]
             ))?,
-            texture: AssetPath::new(format!(
-                "Item\\ObjectComponents\\Shoulder\\{}.blp",
-                textures[channel]
-            ))?,
+            texture: attachment_texture("Item\\ObjectComponents\\Shoulder", textures[channel])?,
             item_visual_id: display.item_visual_id(),
             particle_color_id: display.particle_color_id(),
         });
@@ -307,14 +279,14 @@ fn push_held_item(
     item: CharacterEquipmentItem<'_>,
     state: CharacterWeaponState,
 ) -> Result<(), CharacterAttachmentPlanError> {
-    let Some(point) = attachment_point(item, state) else {
-        return Ok(());
-    };
     let display = item.display();
     let [model_name, _] = display.model_names();
     if model_name.is_empty() {
         return Ok(());
     }
+    let Some(point) = attachment_point(item, state)? else {
+        return Ok(());
+    };
 
     let [texture_name, _] = display.model_textures();
     let folder = if item.definition().inventory_type() == InventoryType::Shield {
@@ -326,7 +298,7 @@ fn push_held_item(
         slot: item.slot(),
         point,
         model: AssetPath::new(format!("{folder}\\{model_name}"))?,
-        texture: AssetPath::new(format!("{folder}\\{texture_name}.blp"))?,
+        texture: attachment_texture(folder, texture_name)?,
         item_visual_id: display.item_visual_id(),
         particle_color_id: display.particle_color_id(),
     });
@@ -337,25 +309,67 @@ fn push_held_item(
 fn attachment_point(
     item: CharacterEquipmentItem<'_>,
     state: CharacterWeaponState,
-) -> Option<CharacterAttachmentPoint> {
+) -> Result<Option<CharacterAttachmentPoint>, CharacterAttachmentPlanError> {
     let right_hand = match item.slot() {
         PlayerEquipmentSlot::MainHand => true,
         PlayerEquipmentSlot::OffHand => false,
-        PlayerEquipmentSlot::Ranged => state.ranged_hand == CharacterRangedHand::Right,
-        _ => return None,
+        PlayerEquipmentSlot::Ranged => ranged_item_uses_right_hand(item)?,
+        _ => return Ok(None),
     };
 
-    if state.pose == CharacterWeaponPose::Sheathed {
-        return sheath_point(item.definition().sheathe_type(), right_hand);
+    let ready = match state.sheath_state {
+        UnitSheathState::Unarmed => false,
+        UnitSheathState::Melee => matches!(
+            item.slot(),
+            PlayerEquipmentSlot::MainHand | PlayerEquipmentSlot::OffHand
+        ),
+        UnitSheathState::Ranged => item.slot() == PlayerEquipmentSlot::Ranged,
+    };
+    if !ready {
+        return Ok(sheath_point(item.definition().sheathe_type(), right_hand));
     }
     if item.definition().inventory_type() == InventoryType::Shield {
-        return Some(CharacterAttachmentPoint::Shield);
+        return Ok(Some(CharacterAttachmentPoint::Shield));
     }
-    Some(if right_hand {
+    Ok(Some(if right_hand {
         CharacterAttachmentPoint::HandRight
     } else {
         CharacterAttachmentPoint::HandLeft
-    })
+    }))
+}
+
+/// Selects the stock ranged grip from the closed weapon-subclass domain.
+fn ranged_item_uses_right_hand(
+    item: CharacterEquipmentItem<'_>,
+) -> Result<bool, CharacterAttachmentPlanError> {
+    let definition = item.definition();
+    if definition.class_id() != 2 {
+        return Err(CharacterAttachmentPlanError::UnsupportedRangedItem {
+            class_id: definition.class_id(),
+            subclass_id: definition.subclass_id(),
+        });
+    }
+    match definition.subclass_id() {
+        2 => Ok(false),
+        3 | 16 | 18 | 19 => Ok(true),
+        subclass_id => Err(CharacterAttachmentPlanError::UnsupportedRangedItem {
+            class_id: definition.class_id(),
+            subclass_id,
+        }),
+    }
+}
+
+/// Builds one optional replacement path without fabricating an empty filename.
+fn attachment_texture(
+    folder: &str,
+    texture_name: &str,
+) -> Result<Option<AssetPath>, CharacterAttachmentPlanError> {
+    if texture_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(AssetPath::new(format!(
+        "{folder}\\{texture_name}.blp"
+    ))?))
 }
 
 /// Reproduces `GetSheatheLink` without inventing a link for category zero.

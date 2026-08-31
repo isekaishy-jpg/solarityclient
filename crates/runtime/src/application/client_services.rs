@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, LightCatalog,
-    MapCatalog, ParticleColorCatalog,
+    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
+    CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
+    LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -33,7 +33,9 @@ use crate::application::login_coordinator::{
     RuntimeLoginState,
 };
 use crate::application::login_ui::LoginUiFrame;
-use crate::application::player_coordinator::{RuntimePlayerPoll, RuntimePlayerPresentation};
+use crate::application::player_coordinator::{
+    RuntimePlayerCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
+};
 use crate::application::realm_directory::RuntimeRealmMetadata;
 use crate::application::sound_coordinator::RuntimeSoundCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
@@ -91,6 +93,7 @@ impl ClientServices {
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
+        let races = CharacterRaceCatalog::load(&mut assets)?;
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
         let item_definitions = ItemDefinitionCatalog::load(&mut assets)?;
         let item_displays = ItemDisplayCatalog::load(&mut assets)?;
@@ -176,12 +179,15 @@ impl ClientServices {
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
-                    creatures,
-                    characters,
-                    helmet_visibility,
-                    item_definitions,
-                    item_displays,
-                    particle_colors,
+                    RuntimePlayerCatalogs::new(
+                        creatures,
+                        characters,
+                        races,
+                        helmet_visibility,
+                        item_definitions,
+                        item_displays,
+                        particle_colors,
+                    ),
                 ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,

@@ -2,7 +2,7 @@
 
 use solarity_ecs::{
     ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, UnitFlags,
-    UnitIdentity, UnitPresentation, UnitVitals, VisibleEquipmentItem,
+    UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals, VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -27,6 +27,7 @@ const UNIT_FIELD_NATIVE_DISPLAY_ID: u16 = 68;
 const UNIT_FIELD_MOUNT_DISPLAY_ID: u16 = 69;
 const UNIT_FIELD_BYTES_1: u16 = 74;
 const UNIT_DYNAMIC_FLAGS: u16 = 79;
+const UNIT_FIELD_BYTES_2: u16 = 122;
 const PLAYER_FIELD_BYTES: u16 = 153;
 const PLAYER_BYTES_2: u16 = 154;
 const PLAYER_VISIBLE_ITEM_START: u16 = 283;
@@ -46,6 +47,14 @@ pub enum ObjectProjectionError {
     MissingObjectKind {
         /// Referenced server GUID.
         guid: u64,
+    },
+    /// The server supplied a sheath byte outside build 12340's closed range.
+    #[error("unit {guid:#018X} has invalid sheath state {state}")]
+    InvalidSheathState {
+        /// Unit carrying the malformed byte.
+        guid: u64,
+        /// Unrecognized byte zero of `UNIT_FIELD_BYTES_2`.
+        state: u8,
     },
 }
 
@@ -130,6 +139,7 @@ where
     let mut native_display_id = unit_presentation_state.native_display_id();
     let mut mount_display_id = unit_presentation_state.mount_display_id();
     let mut stand_state = unit_presentation_state.stand_state();
+    let mut sheath_state = unit_presentation_state.sheath_state();
 
     let unit_flags = world
         .storage()
@@ -229,6 +239,12 @@ where
                 dynamic_flags = value;
                 flags_changed = true;
             }
+            UNIT_FIELD_BYTES_2 if is_unit(kind) => {
+                let state = value.to_le_bytes()[0];
+                sheath_state = UnitSheathState::try_from(state)
+                    .map_err(|state| ObjectProjectionError::InvalidSheathState { guid, state })?;
+                presentation_changed = true;
+            }
             PLAYER_FIELD_BYTES if kind == ObjectKind::Player => {
                 [skin_id, face_id, hair_style_id, hair_color_id] = value.to_le_bytes();
                 appearance_changed = true;
@@ -285,6 +301,7 @@ where
                     native_display_id,
                     mount_display_id,
                     stand_state,
+                    sheath_state,
                 ),),
             );
         }

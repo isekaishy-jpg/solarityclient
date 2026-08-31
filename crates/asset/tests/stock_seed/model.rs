@@ -14,7 +14,7 @@ use wow_m2::chunks::texture::{M2Texture as RawTexture, M2TextureFlags, M2Texture
 use wow_m2::chunks::vertex::M2Vertex as RawM2Vertex;
 use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
 use wow_m2::header::{M2Header, M2ModelFlags};
-use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
+use wow_m2::skin::{OldSkinHeader, SkinBatch, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
@@ -176,6 +176,45 @@ fn m2_attachment_lookup_rejects_a_missing_attachment() -> Result<(), Box<dyn Err
             if failed == path
                 && message.contains("attachment lookup 17 references missing attachment 1")
     ));
+    Ok(())
+}
+
+/// Item M2s use one optional weight selector for a multi-texture batch.
+#[test]
+fn item_m2_weight_combo_is_one_selector_per_batch() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("IdentityMaterial", 1)?;
+    let weight_lookup = model.len();
+    model.extend_from_slice(&u16::MAX.to_le_bytes());
+    set_header_array(&mut model, 0x90, 1, weight_lookup)?;
+    let skin = skin_with_identity_animation_combos()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Item\\ObjectComponents\\Weapon\\IdentityMaterial.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Item\\ObjectComponents\\Weapon\\IdentityMaterial00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Item\\ObjectComponents\\Weapon\\IdentityMaterial.m2")?;
+    let decoded = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(decoded.texture_weight_lookup(), &[u16::MAX]);
+    assert!(decoded.texture_transform_lookup().is_empty());
+    assert_eq!(
+        decoded.skins()[0].batches()[0].texture_weight_combo_index,
+        0
+    );
+    assert_eq!(
+        decoded.skins()[0].batches()[0].texture_transform_combo_index,
+        1
+    );
     Ok(())
 }
 
@@ -2161,6 +2200,54 @@ fn i16_values(values: &[i16]) -> Vec<u8> {
 /// Reads the offset word of one M2 header array used by fixture mutation.
 fn m2_array_offset(bytes: &[u8], pair_offset: usize) -> Result<usize, Box<dyn Error>> {
     Ok(u32::from_le_bytes(bytes[pair_offset + 4..pair_offset + 8].try_into()?) as usize)
+}
+
+/// Serializes stock's item-model identity combo words with absent lookups.
+fn skin_with_identity_animation_combos() -> Result<Vec<u8>, Box<dyn Error>> {
+    let skin = OldSkin {
+        header: OldSkinHeader {
+            bone_count_max: 32,
+            ..OldSkinHeader::new()
+        },
+        indices: vec![0, 1, 2],
+        triangles: vec![0, 1, 2],
+        bone_indices: vec![0; 12],
+        submeshes: vec![SkinSubmesh {
+            id: 0,
+            level: 0,
+            vertex_start: 0,
+            vertex_count: 3,
+            triangle_start: 0,
+            triangle_count: 3,
+            bone_count: 0,
+            bone_start: 0,
+            bone_influence: 0,
+            center: [0.0; 3],
+            sort_center: [0.0; 3],
+            bounding_radius: 1.0,
+        }],
+        batches: vec![SkinBatch {
+            flags: 0,
+            priority_plane: 0,
+            shader_id: 0,
+            skin_section_index: 0,
+            geoset_index: 0,
+            color_index: u16::MAX,
+            material_index: 0,
+            material_layer: 0,
+            texture_count: 1,
+            texture_combo_index: 0,
+            texture_coord_combo_index: 0,
+            texture_weight_combo_index: 0,
+            texture_transform_combo_index: 0,
+        }],
+    };
+    let mut cursor = Cursor::new(Vec::new());
+    skin.write(&mut cursor)?;
+    let mut bytes = cursor.into_inner();
+    let batch_offset = u32::from_le_bytes(bytes[40..44].try_into()?) as usize;
+    bytes[batch_offset + 8..batch_offset + 10].copy_from_slice(&u16::MAX.to_le_bytes());
+    Ok(bytes)
 }
 
 /// Serializes WotLK's old external SKIN form without using format detection.

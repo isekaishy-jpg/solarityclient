@@ -62,6 +62,12 @@ absent entry. Texture-coordinate selectors remain signed because negative
 values participate in the stock environment-coordinate branch; the format
 boundary does not reinterpret them as ordinary UV-set numbers.
 
+An omitted optional weight or transform lookup makes the corresponding SKIN
+combo word an identity selector even when that word is zero. Item M2s also use
+one texture-weight selector for the whole material batch, not one entry per
+texture stage. Transform combos remain stage-indexed. These stock encodings are
+validated directly rather than padded into synthetic lookup entries.
+
 ## Cycle count and ownership
 
 Sequence timer construction at `0x00826B00` calculates the total number of

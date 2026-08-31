@@ -5,14 +5,15 @@ use std::io::Cursor;
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, ClientDataRoot,
-    CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
+    ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog, CharacterRaceCatalog,
+    ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
 use solarity_runtime::{
-    RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainPoll,
+    RuntimePlayerCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeTerrainCoordinator,
+    RuntimeTerrainPoll,
 };
 use solarity_systems::{
     CameraSubjectGeometry, resolve_camera_subject_height, resolve_player_camera_pose,
@@ -55,6 +56,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let maps = MapCatalog::load(&mut store)?;
     let creatures = CreatureCatalog::load(&mut store)?;
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
+    let races = CharacterRaceCatalog::load(&mut store)?;
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
@@ -62,12 +64,15 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let assets = AssetStoreHandle::new(store);
     let mut player = RuntimePlayerPresentation::new(
         assets.clone(),
-        creatures,
-        characters,
-        helmet_visibility,
-        item_definitions,
-        item_displays,
-        particle_colors,
+        RuntimePlayerCatalogs::new(
+            creatures,
+            characters,
+            races,
+            helmet_visibility,
+            item_definitions,
+            item_displays,
+            particle_colors,
+        ),
     );
     let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
     let player_position = Vec3::new(1_000.0, 5_800.0, 250.0);

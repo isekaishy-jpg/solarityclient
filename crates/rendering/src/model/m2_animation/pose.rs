@@ -1,9 +1,10 @@
 //! Parent-first M2 bone transform composition.
 
 use glam::{Mat3, Mat4, Vec3};
-use solarity_asset::M2AnimationSet;
+use solarity_asset::{M2AnimationSet, M2Attachment};
 
 use super::M2BonePoseError;
+use super::sample::sample_discrete;
 use super::sample::{sample_quaternion, sample_vec3};
 
 /// The local animation and process-global clocks used by every bone track.
@@ -201,6 +202,47 @@ impl M2BonePose {
     #[must_use]
     pub fn transforms(&self) -> &[Mat4] {
         &self.transforms
+    }
+
+    /// Resolves one enabled child-model attachment in world space.
+    ///
+    /// The attachment's enable channel uses the same resolved animation clock
+    /// as its owning body. Its stable local position is appended after the
+    /// animated parent bone, then the complete parent placement is applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2BonePoseError`] when the animation selection is invalid or
+    /// the supplied attachment does not belong to this bone palette.
+    pub fn attachment_transform(
+        &self,
+        animations: &M2AnimationSet,
+        attachment: &M2Attachment,
+        clock: M2AnimationClock,
+        model_transform: Mat4,
+    ) -> Result<Option<Mat4>, M2BonePoseError> {
+        let sequence = clock.resolve(animations)?;
+        let enabled = sample_discrete(
+            animations,
+            attachment.enabled(),
+            sequence,
+            clock.animation_time_ms(),
+            clock.global_time_ms(),
+            1_u8,
+        );
+        if enabled == 0 {
+            return Ok(None);
+        }
+        let bone_index = usize::from(attachment.bone_index());
+        let bone = self.transforms.get(bone_index).copied().ok_or(
+            M2BonePoseError::AttachmentBoneIndex {
+                requested: attachment.bone_index(),
+                available: self.transforms.len(),
+            },
+        )?;
+        Ok(Some(
+            model_transform * bone * Mat4::from_translation(attachment.position()),
+        ))
     }
 }
 

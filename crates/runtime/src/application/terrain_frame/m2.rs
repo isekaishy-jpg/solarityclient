@@ -6,16 +6,17 @@ use glam::Mat4;
 use solarity_asset::{DecodedM2Model, M2ParticleEmitter};
 use solarity_ecs::WorldTransform;
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterGeosetPlan,
-    M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
-    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
-    M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
+    BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
+    CharacterGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount,
+    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan,
+    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticlePipelineHandle, M2ParticlePose,
+    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable,
+    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
+    M2RibbonTrail, M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
+    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
+    m2_section_distance_key,
 };
 
 use crate::application::player_coordinator::{ResidentPlayerFrameInput, ResidentPlayerTexture};
@@ -95,7 +96,12 @@ enum M2GpuPlacementOwner {
     /// An ADT or WMO owner from the resident terrain generation.
     Static(ResidentM2Owner),
     /// The one authoritative character controlled by this client.
-    Player { guid: u64 },
+    PlayerBody { guid: u64 },
+    /// One equipment M2 driven by an animated player attachment point.
+    PlayerAttachment {
+        guid: u64,
+        point: CharacterAttachmentPoint,
+    },
 }
 
 /// One texture slot resolved for this exact source/placement generation.
@@ -326,39 +332,64 @@ impl M2Frame {
             .collect::<Vec<_>>();
         let source = prepare_gpu_source(renderer, input.model(), &resolved, Some(input.geosets()))?;
         let transform = player_placement_transform(input.world_transform(), input.object_scale())?;
-        let playback = M2Playback::new(input.model(), random)?;
-        let particles = input
-            .model()
-            .animations()
-            .particles()
-            .iter()
-            .map(|_emitter| {
-                let first = u32::from(random.next_u15());
-                let second = u32::from(random.next_u15());
-                M2ParticleSimulation::new(first << 16 | second)
-            })
-            .collect();
-        let ribbons = input
-            .model()
-            .animations()
-            .ribbons()
-            .iter()
-            .map(M2RibbonTrail::new)
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut attachment_sources = Vec::with_capacity(input.attachments().len());
+        for attachment in input.attachments() {
+            if input.model().attachment(attachment.point().id()).is_none() {
+                return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
+                    model: input.model().path().clone(),
+                    attachment_id: attachment.point().id(),
+                });
+            }
+            let resolved = attachment
+                .textures()
+                .iter()
+                .map(|texture| match texture {
+                    ResidentPlayerTexture::Authored(source) => {
+                        M2ResolvedTexture::Authored(source.as_ref())
+                    }
+                    ResidentPlayerTexture::BodyAtlas => {
+                        M2ResolvedTexture::CharacterAtlas(input.atlas())
+                    }
+                    ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
+                })
+                .collect::<Vec<_>>();
+            let source = prepare_gpu_source(renderer, attachment.model(), &resolved, None)?;
+            let placement = player_gpu_placement(
+                0,
+                transform,
+                M2GpuPlacementOwner::PlayerAttachment {
+                    guid: input.guid(),
+                    point: attachment.point(),
+                },
+                attachment.model(),
+                attachment.particle_colors().cloned(),
+                random,
+            )?;
+            attachment_sources.push((source, placement));
+        }
+        let body_placement = player_gpu_placement(
+            0,
+            transform,
+            M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
+            input.model(),
+            input.particle_colors().cloned(),
+            random,
+        )?;
         self.remove_player();
         let source_index = self.sources.len();
         self.sources.push(Some(source));
         self.placements.push(M2GpuPlacement {
             source_index,
-            transform,
-            owner: M2GpuPlacementOwner::Player { guid: input.guid() },
-            flags: 0,
-            color: [255; 4],
-            particle_colors: input.particle_colors().cloned(),
-            playback,
-            particles,
-            ribbons,
+            ..body_placement
         });
+        for (source, placement) in attachment_sources {
+            let source_index = self.sources.len();
+            self.sources.push(Some(source));
+            self.placements.push(M2GpuPlacement {
+                source_index,
+                ..placement
+            });
+        }
         Ok(())
     }
 
@@ -372,7 +403,7 @@ impl M2Frame {
             .placements
             .iter_mut()
             .find(|placement| {
-                placement.owner == (M2GpuPlacementOwner::Player { guid: input.guid() })
+                placement.owner == (M2GpuPlacementOwner::PlayerBody { guid: input.guid() })
             })
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
         placement.transform = transform;
@@ -383,7 +414,11 @@ impl M2Frame {
     fn remove_player(&mut self) {
         let mut player_sources = Vec::new();
         self.placements.retain(|placement| {
-            if matches!(placement.owner, M2GpuPlacementOwner::Player { .. }) {
+            if matches!(
+                placement.owner,
+                M2GpuPlacementOwner::PlayerBody { .. }
+                    | M2GpuPlacementOwner::PlayerAttachment { .. }
+            ) {
                 player_sources.push(placement.source_index);
                 false
             } else {
@@ -464,7 +499,31 @@ impl M2Frame {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
         self.last_effect_time_ms = Some(animation_time_ms);
+        let requested_attachments = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                M2GpuPlacementOwner::PlayerAttachment { guid, point } => Some((guid, point)),
+                M2GpuPlacementOwner::Static(_) | M2GpuPlacementOwner::PlayerBody { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let mut attachment_transforms = Vec::with_capacity(requested_attachments.len());
         for placement in &mut self.placements {
+            if let M2GpuPlacementOwner::PlayerAttachment { guid, point } = placement.owner {
+                let transform = attachment_transforms
+                    .iter()
+                    .find_map(|(owner_guid, owner_point, transform)| {
+                        (*owner_guid == guid && *owner_point == point).then_some(*transform)
+                    })
+                    .ok_or(RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
+                        guid,
+                        attachment_id: point.id(),
+                    })?;
+                let Some(transform) = transform else {
+                    continue;
+                };
+                placement.transform = transform;
+            }
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -472,6 +531,29 @@ impl M2Frame {
                 continue;
             };
             let clock = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+            let model_view = camera.view() * placement.transform;
+            let bone_pose =
+                M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            if let M2GpuPlacementOwner::PlayerBody { guid } = placement.owner {
+                for (_owner_guid, point) in requested_attachments
+                    .iter()
+                    .filter(|(owner_guid, _point)| *owner_guid == guid)
+                {
+                    let attachment = source.model.attachment(point.id()).ok_or_else(|| {
+                        RuntimeTerrainFrameError::MissingPlayerM2Attachment {
+                            model: source.model.path().clone(),
+                            attachment_id: point.id(),
+                        }
+                    })?;
+                    let transform = bone_pose.attachment_transform(
+                        source.model.animations(),
+                        attachment,
+                        clock,
+                        placement.transform,
+                    )?;
+                    attachment_transforms.push((guid, *point, transform));
+                }
+            }
             let bounds = source.model.bounds();
             let center = placement
                 .transform
@@ -490,9 +572,6 @@ impl M2Frame {
 
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
-            let model_view = camera.view() * placement.transform;
-            let bone_pose =
-                M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
             if placement.particles.len() != source.model.animations().particles().len() {
                 return Err(RuntimeTerrainFrameError::M2ParticleSimulationCount {
                     model: source.model.path().clone(),
@@ -714,6 +793,45 @@ impl M2Frame {
             ribbon_draws: &self.ribbon_draws,
         })
     }
+}
+
+/// Creates placement-local animation and effect histories for one player M2.
+fn player_gpu_placement(
+    source_index: usize,
+    transform: Mat4,
+    owner: M2GpuPlacementOwner,
+    model: &DecodedM2Model,
+    particle_colors: Option<M2ParticleColorReplacement>,
+    random: &mut CrtRand,
+) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
+    let playback = M2Playback::new(model, random)?;
+    let particles = model
+        .animations()
+        .particles()
+        .iter()
+        .map(|_emitter| {
+            let first = u32::from(random.next_u15());
+            let second = u32::from(random.next_u15());
+            M2ParticleSimulation::new(first << 16 | second)
+        })
+        .collect();
+    let ribbons = model
+        .animations()
+        .ribbons()
+        .iter()
+        .map(M2RibbonTrail::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(M2GpuPlacement {
+        source_index,
+        transform,
+        owner,
+        flags: 0,
+        color: [255; 4],
+        particle_colors,
+        playback,
+        particles,
+        ribbons,
+    })
 }
 
 /// Resolves one emitter's current bone-relative local-to-world matrix.

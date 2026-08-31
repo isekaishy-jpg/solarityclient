@@ -10,16 +10,16 @@ use solarity_asset::{
     DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
     Locale, M2BlendMode, ParticleColorCatalog,
 };
-use solarity_ecs::PlayerEquipmentSlot;
+use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureStorage, CharacterAtlasLayerKind, CharacterAtlasRegion,
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterGeosetContext, CharacterGeosetPlan, CharacterRangedHand, CharacterTabardMode,
-    CharacterTexturePlan, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock, M2BonePose,
-    M2DrawPushConstants, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
-    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode, CharacterTexturePlan,
+    CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2LocalLightCount,
+    M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan,
+    M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
@@ -2045,7 +2045,7 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
         [head, shoulders],
         race,
         1,
-        CharacterWeaponState::new(CharacterWeaponPose::Ready, CharacterRangedHand::Left),
+        CharacterWeaponState::new(UnitSheathState::Unarmed),
     )?;
     let values = plan
         .attachments()
@@ -2054,7 +2054,7 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
             (
                 attachment.point(),
                 attachment.model().as_str(),
-                attachment.texture().as_str(),
+                attachment.texture().map(AssetPath::as_str),
             )
         })
         .collect::<Vec<_>>();
@@ -2064,17 +2064,17 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
             (
                 CharacterAttachmentPoint::Helmet,
                 "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELM_TEST_HUF.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELMTEXTURE.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\HEAD\\HELMTEXTURE.BLP"),
             ),
             (
                 CharacterAttachmentPoint::ShoulderRight,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZERO.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZEROBLUE.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZEROBLUE.BLP"),
             ),
             (
                 CharacterAttachmentPoint::ShoulderLeft,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONE.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONEBLUE.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONEBLUE.BLP"),
             ),
         ]
     );
@@ -2123,11 +2123,11 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
         ),
     ];
 
-    let ready = CharacterAttachmentPlan::held_items(
+    let melee = CharacterAttachmentPlan::held_items(
         equipment,
-        CharacterWeaponState::new(CharacterWeaponPose::Ready, CharacterRangedHand::Left),
+        CharacterWeaponState::new(UnitSheathState::Melee),
     )?;
-    let ready_values = ready
+    let melee_values = melee
         .attachments()
         .iter()
         .map(|attachment| {
@@ -2135,20 +2135,20 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
                 attachment.slot(),
                 attachment.point(),
                 attachment.model().as_str(),
-                attachment.texture().as_str(),
+                attachment.texture().map(AssetPath::as_str),
                 attachment.item_visual_id(),
                 attachment.particle_color_id(),
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        ready_values,
+        melee_values,
         [
             (
                 PlayerEquipmentSlot::MainHand,
                 CharacterAttachmentPoint::HandRight,
                 "ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORD.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORDRED.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORDRED.BLP"),
                 701,
                 801,
             ),
@@ -2156,27 +2156,27 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
                 PlayerEquipmentSlot::OffHand,
                 CharacterAttachmentPoint::Shield,
                 "ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELD.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELDBLUE.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELDBLUE.BLP"),
                 702,
                 802,
             ),
             (
                 PlayerEquipmentSlot::Ranged,
-                CharacterAttachmentPoint::HandLeft,
+                CharacterAttachmentPoint::LargeWeaponRight,
                 "ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOW.MDX",
-                "ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOWGREEN.BLP",
+                Some("ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOWGREEN.BLP"),
                 703,
                 803,
             ),
         ]
     );
 
-    let sheathed = CharacterAttachmentPlan::held_items(
+    let unarmed = CharacterAttachmentPlan::held_items(
         equipment,
-        CharacterWeaponState::new(CharacterWeaponPose::Sheathed, CharacterRangedHand::Left),
+        CharacterWeaponState::new(UnitSheathState::Unarmed),
     )?;
     assert_eq!(
-        sheathed
+        unarmed
             .attachments()
             .iter()
             .map(|attachment| attachment.point())
@@ -2185,6 +2185,23 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
             CharacterAttachmentPoint::SheathMainHand,
             CharacterAttachmentPoint::SheathShield,
             CharacterAttachmentPoint::LargeWeaponRight,
+        ]
+    );
+
+    let ranged = CharacterAttachmentPlan::held_items(
+        equipment,
+        CharacterWeaponState::new(UnitSheathState::Ranged),
+    )?;
+    assert_eq!(
+        ranged
+            .attachments()
+            .iter()
+            .map(|attachment| attachment.point())
+            .collect::<Vec<_>>(),
+        [
+            CharacterAttachmentPoint::SheathMainHand,
+            CharacterAttachmentPoint::SheathShield,
+            CharacterAttachmentPoint::HandLeft,
         ]
     );
     Ok(())

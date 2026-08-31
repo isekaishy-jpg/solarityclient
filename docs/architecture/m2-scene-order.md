@@ -62,7 +62,13 @@ movement updates only the placement matrix. A customization generation replaces
 only the player source; it does not rebuild terrain M2s or duplicate same-path
 HD replacement assets. Visible equipment now drives the body atlas, helmet and
 armor geoset selection, and the body's cape texture slot before that source is
-published into the frame.
+published into the frame. Head, shoulder, shield, melee-weapon, and ranged-item
+M2s are separate player-owned sources in that same frame. Each child samples
+its own animation and effects while its placement follows the body's current
+animated attachment bone. The authoritative `UNIT_FIELD_BYTES_2` sheath byte
+selects unarmed, melee-ready, or ranged-ready links; invalid states and absent
+authored attachment points are errors rather than placement substitutes.
 
-Pass-zero compatible grouping, attached head/shoulder/weapon models, and the
-remaining callback producers still need to enter the final unified scene queue.
+Pass-zero compatible grouping, attached item visuals/enchant effects, composite
+character bounds, and the remaining callback producers still need to enter the
+final unified scene queue.

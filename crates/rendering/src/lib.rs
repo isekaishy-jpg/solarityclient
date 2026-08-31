@@ -48,14 +48,14 @@ pub use model::{
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
     CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterEquipmentItem,
     CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemAttachment,
-    CharacterRangedHand, CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, CharacterWeaponPose, CharacterWeaponState, M2AnimationClock,
-    M2BonePose, M2BonePoseError, M2DrawCall, M2DrawPushConstants, M2LocalLightState,
-    M2MaterialPose, M2MaterialPoseError, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
-    M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding,
-    M2TransparentSortKey, PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange,
-    WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
+    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
+    CharacterTexturePlanError, CharacterWeaponState, M2AnimationClock, M2BonePose, M2BonePoseError,
+    M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialPose, M2MaterialPoseError,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix,
+    M2ShadowState, M2TextureBinding, M2TransparentSortKey, PlacedWorldModelDrawPlan,
+    WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    WorldModelSceneUniform,
 };
 pub use model::{compare_m2_transparent, m2_section_distance_key};
 pub use particle::{

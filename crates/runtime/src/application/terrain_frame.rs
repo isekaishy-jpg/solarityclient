@@ -240,6 +240,22 @@ pub enum RuntimeTerrainFrameError {
         /// Controlled player GUID absent from the M2 frame.
         guid: u64,
     },
+    /// Equipped gear selected an attachment absent from the player body M2.
+    #[error("local player M2 {model} has no attachment point {attachment_id}")]
+    MissingPlayerM2Attachment {
+        /// Player body model lacking the selected semantic attachment.
+        model: AssetPath,
+        /// Exact build-12340 attachment identifier.
+        attachment_id: u32,
+    },
+    /// A child placement was evaluated before its body attachment pose.
+    #[error("local player {guid:#018X} attachment point {attachment_id} has no current pose")]
+    MissingPlayerM2AttachmentPose {
+        /// Controlled player GUID.
+        guid: u64,
+        /// Exact build-12340 attachment identifier.
+        attachment_id: u32,
+    },
     /// Camera presentation exists without the corresponding resident M2 input.
     #[error("local player camera has no resident M2 frame input")]
     MissingPlayerM2FrameInput,

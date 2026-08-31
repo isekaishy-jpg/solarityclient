@@ -25,6 +25,14 @@ pub enum CharacterAttachmentPlanError {
         /// Gender identifier resolved from the character appearance tables.
         gender_id: u32,
     },
+    /// A ranged public slot contains no stock ranged weapon subclass.
+    #[error("item class {class_id} subclass {subclass_id} has no ranged attachment hand")]
+    UnsupportedRangedItem {
+        /// `Item.dbc` class identifier.
+        class_id: u32,
+        /// Class-local weapon subclass identifier.
+        subclass_id: u32,
+    },
     /// A nonempty DBC model or texture name violated archive-path invariants.
     #[error(transparent)]
     Asset(#[from] AssetError),

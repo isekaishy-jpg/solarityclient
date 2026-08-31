@@ -25,12 +25,12 @@ pub use application::{
     ClientApplication, GameplaySession, GameplayUpdateError, RuntimeAuthenticatedLogin,
     RuntimeCameraError, RuntimeCameraSceneError, RuntimeCharacterSelection,
     RuntimeGameplayCoordinator, RuntimeGameplayError, RuntimeLoginCoordinator, RuntimeLoginError,
-    RuntimeLoginPoll, RuntimeLoginState, RuntimePlayerError, RuntimePlayerPoll,
-    RuntimePlayerPresentation, RuntimeSoundError, RuntimeTerrainCoordinator, RuntimeTerrainError,
-    RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator, RuntimeWorldEntry,
-    RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
-    RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState, StartupReport,
-    world_model_environment_emissive,
+    RuntimeLoginPoll, RuntimeLoginState, RuntimePlayerCatalogs, RuntimePlayerError,
+    RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeSoundError, RuntimeTerrainCoordinator,
+    RuntimeTerrainError, RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeWorldCoordinator,
+    RuntimeWorldEntry, RuntimeWorldEnvironment, RuntimeWorldEnvironmentError,
+    RuntimeWorldEnvironmentFrame, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
+    StartupReport, world_model_environment_emissive,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,

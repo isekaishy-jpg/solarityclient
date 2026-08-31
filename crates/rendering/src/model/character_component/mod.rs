@@ -14,7 +14,7 @@ mod types;
 pub use atlas::CharacterTexturePlan;
 pub use attachment::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterItemAttachment,
-    CharacterRangedHand, CharacterWeaponPose, CharacterWeaponState,
+    CharacterWeaponState,
 };
 pub use equipment::CharacterEquipmentItem;
 pub use geoset::{CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode};

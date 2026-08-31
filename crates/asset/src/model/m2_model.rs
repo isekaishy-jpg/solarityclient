@@ -314,7 +314,7 @@ fn validate_material_animation_references(
                 batch_index,
                 "texture-weight",
                 batch.texture_weight_combo_index,
-                batch.texture_count,
+                1,
                 &blob.transparency_lookup,
             )?;
             validate_combo_span(
@@ -410,7 +410,10 @@ fn validate_combo_span(
     count: u16,
     lookup: &[u16],
 ) -> Result<(), AssetError> {
-    if first == u16::MAX {
+    // Stock item M2s commonly retain a zero combo word while omitting the
+    // entire optional lookup table. In that representation the material owns
+    // no animation selector and consumes the identity value.
+    if lookup.is_empty() || first == u16::MAX {
         return Ok(());
     }
     let start = usize::from(first);

@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::movement::WorldTransform;
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
 use crate::player::{LocalPlayer, PlayerIdentity};
+use crate::unit::UnitPresentation;
 use crate::view::PlayerViewState;
 
 use super::{WorldMapId, registry::ObjectRegistry, types::WorldBootstrap};
@@ -91,6 +92,15 @@ impl ActiveWorld {
             .get::<&PlayerViewState>(self.local_player)
             .map(|view| **view)
             .map_err(|_| WorldStateError::MissingLocalPlayerView)
+    }
+
+    /// Returns projected presentation fields after the create update arrives.
+    #[must_use]
+    pub fn local_player_presentation(&self) -> Option<UnitPresentation> {
+        self.storage
+            .get::<&UnitPresentation>(self.local_player)
+            .map(|presentation| **presentation)
+            .ok()
     }
 
     /// Finds a loaded entity by its exact server GUID.

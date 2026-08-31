@@ -80,7 +80,8 @@ impl M2MaterialPose {
                 requested: batch.texture_count,
             });
         }
-        if batch.texture_weight_combo_index != u16::MAX {
+        if !model.texture_weight_lookup().is_empty() && batch.texture_weight_combo_index != u16::MAX
+        {
             let lookup_index = usize::from(batch.texture_weight_combo_index);
             let weight_index = *model.texture_weight_lookup().get(lookup_index).ok_or(
                 M2MaterialPoseError::TextureWeightLookup {
@@ -109,7 +110,9 @@ impl M2MaterialPose {
         }
 
         let mut texture_transforms = [Mat4::IDENTITY; 2];
-        if batch.texture_transform_combo_index != u16::MAX {
+        if !model.texture_transform_lookup().is_empty()
+            && batch.texture_transform_combo_index != u16::MAX
+        {
             for (stage, destination) in texture_transforms
                 .iter_mut()
                 .enumerate()
