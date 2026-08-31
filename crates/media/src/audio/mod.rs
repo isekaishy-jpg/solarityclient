@@ -24,4 +24,8 @@ pub use cache::{EncodedSound, SoundCache};
 pub use codec::{
     DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,
 };
+pub use engine::{
+    SoundCategory, SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings,
+    SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
+};
 pub use selection::SoundVariationSelector;

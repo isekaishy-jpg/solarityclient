@@ -10,6 +10,8 @@ mod voice;
 
 pub use audio::{
     DecodedSoundHandle, DecodedSoundInfo, EncodedSound, SoundBackend, SoundBackendError,
-    SoundCache, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundOutput, SoundOutputInfo,
-    SoundOutputTarget, SoundVariationSelector, SoundVoiceHandle, SoundVoiceState,
+    SoundCache, SoundCategory, SoundCategorySettings, SoundDecodeError, SoundDecodeMode,
+    SoundDecoder, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError,
+    SoundOutput, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundPlayback,
+    SoundVariationSelector, SoundVoiceHandle, SoundVoiceState,
 };

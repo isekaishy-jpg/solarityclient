@@ -64,6 +64,29 @@ gain changes, memory mixing, and state queries remain backend primitives;
 category buses, spatialization, DSP, fades, and voice priority belong to the
 stock-facing sound-engine layers above this adapter.
 
+`SoundEngine` is the first stock-facing orchestration layer. It owns the exact
+`SoundEntries.dbc` catalog, encoded cache, decoder registry, backend track pool,
+and retained voice policy. A request supplies its entry identifier, calling
+category, already bounded variation ticket, decode residency, and loop intent.
+The engine therefore does not infer category from an unevidenced `SoundType`
+mapping, advance another RNG, reinterpret flags, or guess whether a payload is
+music.
+
+The live settings snapshot mirrors `Sound_EnableAllSound`, the SFX/music/
+ambience enables, and their master/category gains. Those CVar gains validate in
+the stock zero-to-one range; the authored entry volume remains a separate
+nonnegative multiplier. Disabling a category suppresses new playback before
+file selection or archive access and changes retained voices to zero gain. A
+later enable restores gain without restarting or replacing the voice.
+
+Missing entries, zero-weight definitions, out-of-range variation tickets,
+invalid authored volume, exact archive failures, decoder failures, and full
+voice pools remain distinct errors. The engine does not search a neighbor,
+clamp a ticket, choose a zero-weight file, try another extension, or steal an
+active voice. Natural-stop and encoded-cache collection are explicit service
+operations so timing and memory policy can be driven by the eventual stock
+main-loop integration rather than a guessed timer.
+
 The schema is checked against the public build range covering
 3.1.0.9767 through 3.3.5.12340 in the
 [WoWDBDefs SoundEntries definition](https://github.com/wowdev/WoWDBDefs/blob/master/definitions/SoundEntries.dbd).

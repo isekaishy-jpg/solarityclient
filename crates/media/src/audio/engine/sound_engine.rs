@@ -1,1 +1,234 @@
-//! Stock implementation responsibility recovered from `SoundEngine.cpp`.
+//! SoundEntries-driven orchestration over media-owned backend resources.
+
+use std::num::NonZeroU16;
+
+use solarity_asset::{AssetStore, SoundEntryCatalog};
+
+use crate::audio::backend::{SoundBackend, SoundOutput, SoundVoiceHandle, SoundVoiceState};
+use crate::audio::cache::SoundCache;
+use crate::audio::codec::SoundDecoder;
+use crate::audio::selection::SoundVariationSelector;
+
+use super::status::SoundEngineError;
+use super::types::{SoundCategory, SoundEngineSettings, SoundPlayRequest, SoundPlayback};
+
+/// Policy retained for one voice while live CVar settings can change.
+#[derive(Clone, Copy, Debug)]
+struct ActiveVoice {
+    handle: SoundVoiceHandle,
+    category: SoundCategory,
+    source_gain: f32,
+}
+
+/// Stock-facing sound selection, admission, and live-volume owner.
+pub struct SoundEngine<'output> {
+    catalog: SoundEntryCatalog,
+    cache: SoundCache,
+    decoder: SoundDecoder,
+    backend: SoundBackend<'output>,
+    settings: SoundEngineSettings,
+    active_voices: Vec<ActiveVoice>,
+}
+
+impl<'output> SoundEngine<'output> {
+    /// Loads the stock sound catalog and allocates the explicit backend pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] for exact DBC/archive failures, decoder
+    /// initialization failure, or backend track-allocation failure.
+    pub fn load(
+        store: &mut AssetStore,
+        output: &'output SoundOutput,
+        voice_capacity: NonZeroU16,
+        settings: SoundEngineSettings,
+    ) -> Result<Self, SoundEngineError> {
+        let catalog = SoundEntryCatalog::load(store)?;
+        let decoder = SoundDecoder::new()?;
+        let backend = SoundBackend::new(output, voice_capacity)?;
+        Ok(Self {
+            catalog,
+            cache: SoundCache::new(),
+            decoder,
+            backend,
+            settings,
+            active_voices: Vec::with_capacity(usize::from(voice_capacity.get())),
+        })
+    }
+
+    /// Returns the currently applied global and category policy.
+    #[must_use]
+    pub const fn settings(&self) -> SoundEngineSettings {
+        self.settings
+    }
+
+    /// Returns the number of voices that have not yet been collected.
+    #[must_use]
+    pub fn active_voice_count(&self) -> usize {
+        self.active_voices.len()
+    }
+
+    /// Returns the number of normalized encoded paths retained by the cache.
+    #[must_use]
+    pub fn cached_sound_count(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Returns the number of path/mode decoder resources admitted so far.
+    #[must_use]
+    pub fn decoded_sound_count(&self) -> usize {
+        self.decoder.len()
+    }
+
+    /// Selects and starts one sound from an already bounded variation ticket.
+    ///
+    /// Disabled global/category policy returns [`SoundPlayback::Suppressed`]
+    /// before selecting a file or reading its payload. No neighboring entry,
+    /// path, codec, or voice is substituted after any failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] for an unknown definition, invalid ticket
+    /// or authored volume, exact asset/decode failure, or backend exhaustion.
+    pub fn play(
+        &mut self,
+        store: &mut AssetStore,
+        request: SoundPlayRequest,
+    ) -> Result<SoundPlayback, SoundEngineError> {
+        self.collect_stopped_voices()?;
+        let entry =
+            self.catalog
+                .entry(request.entry_id())
+                .ok_or(SoundEngineError::MissingEntry {
+                    entry_id: request.entry_id(),
+                })?;
+        let Some(category_gain) = self.settings.category_gain(request.category()) else {
+            return Ok(SoundPlayback::Suppressed);
+        };
+        if entry.volume() < 0.0 {
+            return Err(SoundEngineError::InvalidEntryVolume {
+                entry_id: entry.id(),
+                volume: entry.volume(),
+            });
+        }
+        let selector =
+            SoundVariationSelector::new(entry).ok_or(SoundEngineError::NoPlayableVariation {
+                entry_id: entry.id(),
+            })?;
+        let asset = selector.select(request.variation_ticket()).ok_or(
+            SoundEngineError::VariationTicket {
+                entry_id: entry.id(),
+                ticket: request.variation_ticket(),
+                total_weight: selector.total_weight(),
+            },
+        )?;
+        let encoded = self.cache.load(store, asset.path())?;
+        let sound = self.decoder.load(&encoded, request.decode_mode())?;
+        let source_gain = entry.volume();
+        let voice = self.backend.play(
+            &self.decoder,
+            sound,
+            category_gain * source_gain,
+            request.looping(),
+        )?;
+        self.active_voices.push(ActiveVoice {
+            handle: voice,
+            category: request.category(),
+            source_gain,
+        });
+        Ok(SoundPlayback::Started(voice))
+    }
+
+    /// Applies one validated CVar snapshot to every retained active voice.
+    ///
+    /// Disabled voices remain positioned and advance normally at zero gain, so
+    /// later re-enablement does not invent a playback restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when backend state or gain application
+    /// fails.
+    pub fn set_settings(&mut self, settings: SoundEngineSettings) -> Result<(), SoundEngineError> {
+        self.collect_stopped_voices()?;
+        self.settings = settings;
+        for voice in &self.active_voices {
+            let gain = settings.category_gain(voice.category).unwrap_or(0.0) * voice.source_gain;
+            self.backend.set_gain(voice.handle, gain)?;
+        }
+        Ok(())
+    }
+
+    /// Returns one engine-owned voice's current backend state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError::UnknownVoice`] when this engine does not own
+    /// the handle, or a backend error when state inspection fails.
+    pub fn voice_state(
+        &self,
+        handle: SoundVoiceHandle,
+    ) -> Result<SoundVoiceState, SoundEngineError> {
+        if !self
+            .active_voices
+            .iter()
+            .any(|voice| voice.handle == handle)
+        {
+            return Err(SoundEngineError::UnknownVoice);
+        }
+        Ok(self.backend.state(handle)?)
+    }
+
+    /// Stops and retires one engine-owned voice immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError::UnknownVoice`] when this engine does not own
+    /// the handle, or a backend error when stop fails.
+    pub fn stop(&mut self, handle: SoundVoiceHandle) -> Result<(), SoundEngineError> {
+        let index = self
+            .active_voices
+            .iter()
+            .position(|voice| voice.handle == handle)
+            .ok_or(SoundEngineError::UnknownVoice)?;
+        self.backend.stop(handle)?;
+        self.active_voices.remove(index);
+        Ok(())
+    }
+
+    /// Removes naturally stopped voices without changing playing or paused ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] if the backend cannot inspect an owned
+    /// voice.
+    pub fn collect_stopped_voices(&mut self) -> Result<usize, SoundEngineError> {
+        let before = self.active_voices.len();
+        let mut index = 0;
+        while index < self.active_voices.len() {
+            if self.backend.state(self.active_voices[index].handle)? == SoundVoiceState::Stopped {
+                self.active_voices.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        Ok(before - self.active_voices.len())
+    }
+
+    /// Releases encoded payloads no longer held outside the cache.
+    ///
+    /// Decoder resources remain independently owned by SDL after their one
+    /// adapter-boundary copy.
+    pub fn collect_unused_encoded(&mut self) -> usize {
+        self.cache.collect_unused()
+    }
+
+    /// Pulls mixed bytes from an explicit memory output for validation/tools.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] if this engine uses a device output or SDL
+    /// reports memory-generation failure.
+    pub fn generate(&self, buffer: &mut [u8]) -> Result<usize, SoundEngineError> {
+        Ok(self.backend.generate(buffer)?)
+    }
+}
