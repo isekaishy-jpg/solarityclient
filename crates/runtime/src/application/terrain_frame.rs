@@ -58,6 +58,14 @@ pub enum RuntimeTerrainFrameError {
     /// One visible M2 material could not sample its authored animation tracks.
     #[error(transparent)]
     M2MaterialPose(#[from] M2MaterialPoseError),
+    /// A runtime-alpha mesh lacked the pipeline prepared for stock promotion.
+    #[error("M2 model {model} draw {draw_index} has no runtime-alpha fade pipeline")]
+    M2RuntimeFadePipeline {
+        /// Model whose animated material entered the transparent pass.
+        model: AssetPath,
+        /// Zero-based draw within the selected SKIN profile.
+        draw_index: usize,
+    },
     /// The retained MTEX sources no longer match the immutable mesh plan.
     #[error(
         "terrain MTEX source count {source_count} does not match mesh texture count {plan_count}"

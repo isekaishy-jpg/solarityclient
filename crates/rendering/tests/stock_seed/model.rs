@@ -456,7 +456,8 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(draw.index_count(), 3);
     assert_eq!(draw.batch().shader_id, 0x8001);
     assert_eq!(draw.batch().priority_plane, -2);
-    assert_eq!(draw.material().blend_mode(), M2BlendMode::Alpha);
+    assert!(draw.transparent_sort_unit());
+    assert_eq!(draw.material().blend_mode(), M2BlendMode::AlphaKey);
     assert_eq!(
         draw.texture_bindings()
             .iter()
@@ -481,13 +482,24 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     );
     assert!(!specialized.used_stock_fallback());
     let state = specialized.material();
-    assert!(state.blend_enabled());
+    assert!(!state.blend_enabled());
     assert!(!state.cull_enabled());
     assert!(!state.depth_test_enabled());
     assert!(!state.depth_write_enabled());
     assert!(!state.is_unlit());
     assert!(state.is_unfogged());
-    assert!((state.alpha_reference(0.5) - (1.0 / 255.0)).abs() < f32::EPSILON);
+    assert!((state.alpha_reference(0.5) - (112.0 / 255.0)).abs() < f32::EPSILON);
+    let faded = specialized.with_runtime_alpha_fade().material();
+    assert!(faded.blend_enabled());
+    assert_eq!(
+        faded.source_blend(),
+        solarity_rendering::M2BlendFactor::SourceAlpha
+    );
+    assert_eq!(
+        faded.destination_blend(),
+        solarity_rendering::M2BlendFactor::OneMinusSourceAlpha
+    );
+    assert!(!faded.depth_write_enabled());
 
     let simple = M2ShaderPlan::resolve(&model, &plan.draws()[1])?;
     assert_eq!(simple.requested_shader_id(), 0);
@@ -651,6 +663,13 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(pipeline_info.texture_count(), 2);
     assert_eq!(pipeline_info.permutation(), lit_permutation);
+    let fade_pipeline =
+        renderer.prepare_m2_pipeline(specialized.with_runtime_alpha_fade(), lit_permutation)?;
+    let fade_pipeline_info = renderer
+        .m2_pipeline_info(fade_pipeline)
+        .ok_or("runtime-alpha M2 pipeline handle did not resolve")?;
+    assert!(fade_pipeline_info.material().blend_enabled());
+    assert!(!fade_pipeline_info.material().depth_write_enabled());
     let texture_handle = renderer.upload_blp_texture(&texture_source, BlpColorSpace::Srgb)?;
     assert_eq!(
         renderer.upload_blp_texture(&texture_source, BlpColorSpace::Srgb)?,
@@ -714,6 +733,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         texture_sets[0],
         &plan,
         0,
+        false,
         material_uniform,
         64,
         0x20,
@@ -726,6 +746,32 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(prepared_draw.material(), material_uniform);
     assert_eq!(prepared_draw.push_constants(), push_constants);
     assert_eq!(prepared_draw.required_bone_transforms(), 67);
+    let faded_draw = renderer.prepare_m2_draw(
+        handle,
+        fade_pipeline,
+        texture_sets[0],
+        &plan,
+        0,
+        true,
+        material_uniform,
+        64,
+        0x20,
+    )?;
+    assert_eq!(faded_draw.pipeline(), fade_pipeline);
+    assert!(matches!(
+        renderer.prepare_m2_draw(
+            handle,
+            fade_pipeline,
+            texture_sets[0],
+            &plan,
+            0,
+            false,
+            material_uniform,
+            64,
+            0x20,
+        ),
+        Err(VulkanError::M2DrawPipelineMismatch)
+    ));
     let bone_transforms = vec![Mat4::IDENTITY; prepared_draw.required_bone_transforms()];
     for _ in 0..=renderer.report().swapchain_image_count() {
         let frame = renderer.present_m2(scene_uniform, &bone_transforms, &[prepared_draw])?;
@@ -742,6 +788,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         texture_sets[0],
         &plan,
         2,
+        false,
         material_uniform,
         0,
         0,
@@ -1588,6 +1635,13 @@ fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Er
             blend_mode: RawBlendMode::ALPHA,
         },
         RawMaterial {
+            flags: M2RenderFlags::UNFOGGED
+                | M2RenderFlags::NO_BACKFACE_CULLING
+                | M2RenderFlags::NO_ZBUFFER
+                | M2RenderFlags::AFFECTED_BY_PROJECTION,
+            blend_mode: RawBlendMode::ALPHA_KEY,
+        },
+        RawMaterial {
             flags: M2RenderFlags::empty(),
             blend_mode: RawBlendMode::MOD,
         },
@@ -1859,7 +1913,7 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 skin_section_index: 0,
                 geoset_index: 0,
                 color_index: 0,
-                material_index: 0,
+                material_index: 1,
                 material_layer: 1,
                 texture_count: 2,
                 texture_combo_index: 0,
@@ -1889,7 +1943,7 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
                 skin_section_index: 0,
                 geoset_index: 0,
                 color_index: 0,
-                material_index: 1,
+                material_index: 2,
                 material_layer: 0,
                 texture_count: 2,
                 texture_combo_index: 0,

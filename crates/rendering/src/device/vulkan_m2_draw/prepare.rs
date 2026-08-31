@@ -20,6 +20,7 @@ pub(in crate::device) fn prepare_draw(
     texture_set: M2TextureSetHandle,
     plan: &M2MeshPlan,
     draw_index: usize,
+    runtime_alpha_fade: bool,
     material: M2MaterialUniform,
     bone_transform_offset: u32,
     flags: u32,
@@ -50,7 +51,10 @@ pub(in crate::device) fn prepare_draw(
     let pipeline_info = pipelines
         .info(pipeline)
         .ok_or(VulkanError::UnknownM2PipelineHandle)?;
-    let expected_material = M2MaterialState::from_material(draw.material());
+    let mut expected_material = M2MaterialState::from_material(draw.material());
+    if runtime_alpha_fade {
+        expected_material = expected_material.with_runtime_alpha_fade();
+    }
     if pipeline_info.texture_count() != draw.batch().texture_count
         || pipeline_info.material() != expected_material
     {

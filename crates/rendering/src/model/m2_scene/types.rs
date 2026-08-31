@@ -126,6 +126,7 @@ pub struct M2DrawCall {
     index_count: u32,
     batch: M2Batch,
     material: M2Material,
+    transparent_sort_unit: bool,
     texture_bindings: Vec<M2TextureBinding>,
 }
 
@@ -137,6 +138,7 @@ impl M2DrawCall {
         index_count: u32,
         batch: M2Batch,
         material: M2Material,
+        transparent_sort_unit: bool,
         texture_bindings: Vec<M2TextureBinding>,
     ) -> Self {
         Self {
@@ -145,6 +147,7 @@ impl M2DrawCall {
             index_count,
             batch,
             material,
+            transparent_sort_unit,
             texture_bindings,
         }
     }
@@ -195,6 +198,31 @@ impl M2DrawCall {
     #[must_use]
     pub const fn material(&self) -> M2Material {
         self.material
+    }
+
+    /// Returns the model bone that animates this section's sorting sphere.
+    #[must_use]
+    pub const fn center_bone_index(&self) -> u16 {
+        self.submesh.center_bone_index
+    }
+
+    /// Returns the authored center of this section's sorting sphere.
+    #[must_use]
+    pub const fn sort_center(&self) -> glam::Vec3 {
+        self.submesh.sort_center
+    }
+
+    /// Returns the authored radius of this section's sorting sphere.
+    #[must_use]
+    pub const fn sort_radius(&self) -> f32 {
+        self.submesh.bounding_radius
+    }
+
+    /// Reports whether the base layer routes this whole material unit through
+    /// stock's transparent scene pass.
+    #[must_use]
+    pub const fn transparent_sort_unit(&self) -> bool {
+        self.transparent_sort_unit
     }
 
     /// Returns texture declarations and coordinate sets in material-stage order.

@@ -85,6 +85,16 @@ impl M2ShaderPlan {
         })
     }
 
+    /// Applies the scene queue's runtime-alpha pipeline override.
+    ///
+    /// Shader names and the authored alpha-test permutation remain unchanged;
+    /// stock changes only framebuffer blending and depth writes for this copy.
+    #[must_use]
+    pub const fn with_runtime_alpha_fade(mut self) -> Self {
+        self.material = self.material.with_runtime_alpha_fade();
+        self
+    }
+
     /// Returns the untouched on-disk batch shader word.
     #[must_use]
     pub const fn requested_shader_id(self) -> u16 {

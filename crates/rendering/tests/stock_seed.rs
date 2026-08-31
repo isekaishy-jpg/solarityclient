@@ -18,6 +18,8 @@ mod math;
 mod minimap;
 #[path = "stock_seed/model.rs"]
 mod model;
+#[path = "stock_seed/model_order.rs"]
+mod model_order;
 #[path = "stock_seed/particle.rs"]
 mod particle;
 #[path = "stock_seed/scene.rs"]

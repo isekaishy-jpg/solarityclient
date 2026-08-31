@@ -5,10 +5,11 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_rendering::{
-    BlpColorSpace, M2AnimationClock, M2BonePose, M2LocalLightCount, M2MaterialPose,
+    BlpColorSpace, M2AnimationClock, M2BonePose, M2DrawCall, M2LocalLightCount, M2MaterialPose,
     M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2PipelineHandle, M2PreparedDraw,
     M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2TextureSet, M2TextureSetHandle, VulkanRenderer, WorldCameraFrame, WorldFrustum,
+    M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
+    WorldFrustum, compare_m2_transparent, m2_section_distance_key,
 };
 
 use crate::application::terrain_coordinator::m2_residency::{
@@ -26,6 +27,9 @@ use super::RuntimeTerrainFrameError;
 /// hardware capability gate, so this renderer selects the authored `00.skin`.
 const STOCK_HIGH_CAPABILITY_PROFILE: usize = 0;
 
+/// Runtime opacity boundary stored at build-12340 address `0x00A45528`.
+const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
+
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
@@ -37,7 +41,14 @@ struct M2GpuSource {
 /// Fixed renderer objects paired with one exact SKIN material batch.
 struct M2GpuDraw {
     pipeline: M2PipelineHandle,
+    runtime_fade_pipeline: Option<M2PipelineHandle>,
     texture_set: M2TextureSetHandle,
+}
+
+/// One pass-one mesh packet retained until the shared comparator runs.
+struct M2TransparentDraw {
+    key: M2TransparentSortKey,
+    draw: M2PreparedDraw,
 }
 
 /// Exact per-instance state required by later animation and material assembly.
@@ -146,6 +157,7 @@ pub(super) struct M2Frame {
     animation_started_at: std::time::Instant,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
+    transparent_draws: Vec<M2TransparentDraw>,
 }
 
 impl M2Frame {
@@ -186,6 +198,7 @@ impl M2Frame {
             animation_started_at: std::time::Instant::now(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
+            transparent_draws: Vec::new(),
         })
     }
 
@@ -246,6 +259,7 @@ impl M2Frame {
     ) -> Result<(&[Mat4], &[M2PreparedDraw]), RuntimeTerrainFrameError> {
         self.bone_transforms.clear();
         self.visible_draws.clear();
+        self.transparent_draws.clear();
         for placement in &mut self.placements {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
@@ -278,10 +292,14 @@ impl M2Frame {
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
             let instance_color = placement_color(placement.color);
+            let instance_identity = std::ptr::from_ref(&*placement).addr();
             for (draw_index, resources) in source.draws.iter().enumerate() {
                 let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
                 let draw = &source.plan.draws()[draw_index];
                 let material_state = M2MaterialState::from_material(draw.material());
+                let element_alpha = pose.mesh_color().w * instance_color.w;
+                let runtime_alpha_fade =
+                    element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD && !material_state.blend_enabled();
                 let material = M2MaterialUniform::new(
                     placement.transform,
                     pose.texture_transforms(),
@@ -295,20 +313,72 @@ impl M2Frame {
                         0.0,
                     ),
                 );
-                self.visible_draws.push(renderer.prepare_m2_draw(
+                let pipeline = if runtime_alpha_fade {
+                    resources.runtime_fade_pipeline.ok_or(
+                        RuntimeTerrainFrameError::M2RuntimeFadePipeline {
+                            model: source.model.path().clone(),
+                            draw_index,
+                        },
+                    )?
+                } else {
+                    resources.pipeline
+                };
+                let prepared = renderer.prepare_m2_draw(
                     source.mesh,
-                    resources.pipeline,
+                    pipeline,
                     resources.texture_set,
                     &source.plan,
                     draw_index,
+                    runtime_alpha_fade,
                     material,
                     bone_offset,
                     0,
-                )?);
+                )?;
+                if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD {
+                    let distance = section_distance_key(draw, &bone_pose, model_view)?;
+                    self.transparent_draws.push(M2TransparentDraw {
+                        key: M2TransparentSortKey::new(
+                            distance,
+                            false,
+                            draw.batch().priority_plane,
+                            distance,
+                            instance_identity,
+                            draw.batch().material_layer,
+                        ),
+                        draw: prepared,
+                    });
+                } else {
+                    self.visible_draws.push(prepared);
+                }
             }
         }
+        self.transparent_draws
+            .sort_unstable_by(|left, right| compare_m2_transparent(&left.key, &right.key));
+        self.visible_draws
+            .extend(self.transparent_draws.iter().map(|queued| queued.draw));
         Ok((&self.bone_transforms, &self.visible_draws))
     }
+}
+
+/// Computes stock's animated section-center key, including SKIN radius flags.
+fn section_distance_key(
+    draw: &M2DrawCall,
+    bone_pose: &M2BonePose,
+    model_view: Mat4,
+) -> Result<f32, RuntimeTerrainFrameError> {
+    let bone_index = usize::from(draw.center_bone_index());
+    let bone_transform = match bone_pose.transforms().get(bone_index).copied() {
+        Some(transform) => transform,
+        None if bone_index == 0 && bone_pose.transforms().is_empty() => Mat4::IDENTITY,
+        None => return Err(solarity_rendering::VulkanError::M2BoneTransformRange.into()),
+    };
+    let view_transform = model_view * bone_transform;
+    Ok(m2_section_distance_key(
+        draw.sort_center(),
+        draw.sort_radius(),
+        draw.batch().flags,
+        view_transform,
+    ))
 }
 
 /// Resolves the immutable duration owned by an alias target.
@@ -397,7 +467,14 @@ fn prepare_source(
             M2ShadowPermutation::Disabled,
             M2ShadowFiltering::Direct,
         );
-        pipelines.push(renderer.prepare_m2_pipeline(shader, permutation)?);
+        let pipeline = renderer.prepare_m2_pipeline(shader, permutation)?;
+        let material = M2MaterialState::from_material(draw.material());
+        let runtime_fade_pipeline = if material.blend_enabled() {
+            None
+        } else {
+            Some(renderer.prepare_m2_pipeline(shader.with_runtime_alpha_fade(), permutation)?)
+        };
+        pipelines.push((pipeline, runtime_fade_pipeline));
 
         let mut stages = Vec::with_capacity(draw.texture_bindings().len());
         for binding in draw.texture_bindings() {
@@ -420,10 +497,13 @@ fn prepare_source(
     let draws = pipelines
         .into_iter()
         .zip(texture_sets)
-        .map(|(pipeline, texture_set)| M2GpuDraw {
-            pipeline,
-            texture_set,
-        })
+        .map(
+            |((pipeline, runtime_fade_pipeline), texture_set)| M2GpuDraw {
+                pipeline,
+                runtime_fade_pipeline,
+                texture_set,
+            },
+        )
         .collect();
     Ok(Some(M2GpuSource {
         model: Arc::clone(model),

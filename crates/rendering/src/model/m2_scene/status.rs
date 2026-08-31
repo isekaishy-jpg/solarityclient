@@ -60,6 +60,20 @@ pub enum M2MeshPlanError {
         /// Referenced model material index.
         material_index: u16,
     },
+    /// A material layer could not resolve its unit's base material.
+    #[error(
+        "M2 skin {path} batch {batch_index} material {material_index} layer {material_layer} has no base material"
+    )]
+    MissingBaseMaterial {
+        /// External SKIN path containing the batch.
+        path: AssetPath,
+        /// Zero-based material batch index.
+        batch_index: usize,
+        /// Layer material selected by the batch.
+        material_index: u16,
+        /// Offset from the layer material back to the unit base.
+        material_layer: u16,
+    },
     /// A batch texture stage exceeded the model texture lookup.
     #[error(
         "M2 skin {path} batch {batch_index} texture stage {stage} has no texture combo {combo_index}"

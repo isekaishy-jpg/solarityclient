@@ -72,6 +72,17 @@ impl M2MaterialState {
         }
     }
 
+    /// Returns stock's pipeline override for a normally opaque material whose
+    /// runtime element alpha has fallen below `0.99999`.
+    #[must_use]
+    pub const fn with_runtime_alpha_fade(mut self) -> Self {
+        self.blend_enabled = true;
+        self.source_blend = M2BlendFactor::SourceAlpha;
+        self.destination_blend = M2BlendFactor::OneMinusSourceAlpha;
+        self.depth_write_enabled = false;
+        self
+    }
+
     /// Returns the authored blend classification.
     #[must_use]
     pub const fn blend_mode(self) -> M2BlendMode {

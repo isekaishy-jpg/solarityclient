@@ -1,6 +1,6 @@
 //! Shared CPU mesh preparation from one explicit external SKIN profile.
 
-use solarity_asset::{AssetPath, DecodedM2Model, M2Batch, M2SkinProfile};
+use solarity_asset::{AssetPath, DecodedM2Model, M2Batch, M2BlendMode, M2SkinProfile};
 
 use crate::model::character_component::CharacterGeosetPlan;
 
@@ -212,6 +212,24 @@ fn resolve_draws(
                 batch_index,
                 material_index: batch.material_index,
             })?;
+        let base_material_index = batch
+            .material_index
+            .checked_sub(batch.material_layer)
+            .ok_or_else(|| M2MeshPlanError::MissingBaseMaterial {
+                path: profile.path().clone(),
+                batch_index,
+                material_index: batch.material_index,
+                material_layer: batch.material_layer,
+            })?;
+        let base_material = model
+            .materials()
+            .get(usize::from(base_material_index))
+            .ok_or_else(|| M2MeshPlanError::MissingBaseMaterial {
+                path: profile.path().clone(),
+                batch_index,
+                material_index: batch.material_index,
+                material_layer: batch.material_layer,
+            })?;
         let texture_bindings = resolve_texture_bindings(model, profile, batch_index, batch)?;
         let first_index = u32::from(submesh.triangle_start) + (u32::from(submesh.level) << 16);
         draws.push(M2DrawCall::new(
@@ -220,6 +238,10 @@ fn resolve_draws(
             u32::from(submesh.triangle_count),
             batch,
             material,
+            !matches!(
+                base_material.blend_mode(),
+                M2BlendMode::Opaque | M2BlendMode::AlphaKey
+            ),
             texture_bindings,
         ));
     }
