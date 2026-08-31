@@ -2,11 +2,64 @@
 
 use std::error::Error;
 
-use solarity_asset::WorldModelShader;
+use solarity_asset::{M2BlendMode, WorldModelShader};
 use solarity_rendering::{
-    TerrainLayerCount, TerrainSpirvCompiler, UiShaderSource, UiSpirvCompiler,
-    WorldModelSpirvCompiler, WorldModelSpirvKey,
+    M2BlendFactor, M2MaterialState, M2ParticleSpirvCompiler, TerrainLayerCount,
+    TerrainSpirvCompiler, UiShaderSource, UiSpirvCompiler, WorldModelSpirvCompiler,
+    WorldModelSpirvKey,
 };
+
+/// Particle blend bytes and low flags synthesize stock's root material state.
+#[test]
+fn particle_material_uses_executable_mapping() {
+    let mappings = [
+        (0, M2BlendMode::Opaque),
+        (1, M2BlendMode::AlphaKey),
+        (2, M2BlendMode::Alpha),
+        (3, M2BlendMode::Add),
+        (4, M2BlendMode::Mod),
+        (5, M2BlendMode::Mod2x),
+        (10, M2BlendMode::NoAlphaAdd),
+        (u8::MAX, M2BlendMode::Opaque),
+    ];
+    for (selector, expected) in mappings {
+        assert_eq!(
+            M2MaterialState::from_particle(selector, 0).blend_mode(),
+            expected
+        );
+    }
+
+    let material = M2MaterialState::from_particle(3, 0x7);
+    assert!(material.blend_enabled());
+    assert_eq!(material.source_blend(), M2BlendFactor::SourceAlpha);
+    assert_eq!(material.destination_blend(), M2BlendFactor::One);
+    assert!(!material.cull_enabled());
+    assert!(material.depth_test_enabled());
+    assert!(material.depth_write_enabled());
+    assert!(!material.is_unlit());
+    assert!(!material.is_unfogged());
+
+    let material = M2MaterialState::from_particle(4, 0);
+    assert!(material.is_unlit());
+    assert!(material.is_unfogged());
+    assert!(!material.depth_write_enabled());
+}
+
+/// Every stock particle blend mapping compiles for the pinned SPIR-V target.
+#[test]
+fn particle_shader_variants_compile_for_pinned_target() -> Result<(), Box<dyn Error>> {
+    let compiler = M2ParticleSpirvCompiler::new()?;
+    for selector in [0, 1, 2, 3, 4, 5, 10] {
+        let material = M2MaterialState::from_particle(selector, 0);
+        let program = compiler.compile(material)?;
+        assert_eq!(program.material(), material);
+        assert_eq!(program.vertex_words()[0], SPIRV_MAGIC);
+        assert_eq!(program.vertex_words()[1], SPIRV_VERSION_1_6);
+        assert_eq!(program.fragment_words()[0], SPIRV_MAGIC);
+        assert_eq!(program.fragment_words()[1], SPIRV_VERSION_1_6);
+    }
+    Ok(())
+}
 
 const SPIRV_MAGIC: u32 = 0x0723_0203;
 const SPIRV_VERSION_1_6: u32 = 0x0001_0600;

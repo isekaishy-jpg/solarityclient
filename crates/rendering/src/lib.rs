@@ -65,7 +65,8 @@ pub use particle::{
     M2RibbonTrail, M2RibbonTrailError,
 };
 pub use shader::{
-    M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2RibbonSpirvCompiler,
+    M2BlendFactor, M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler,
+    M2ParticleSpirvError, M2ParticleSpirvProgram, M2PixelShader, M2RibbonSpirvCompiler,
     M2RibbonSpirvError, M2RibbonSpirvProgram, M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError,
     M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2SpirvError, M2SpirvKey,
     M2SpirvProgram, M2VertexShader, TerrainLayerCount, TerrainLayerCountError,

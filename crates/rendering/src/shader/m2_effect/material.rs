@@ -38,24 +38,7 @@ impl M2MaterialState {
     #[must_use]
     pub const fn from_material(material: M2Material) -> Self {
         let blend_mode = material.blend_mode();
-        let (blend_enabled, source_blend, destination_blend) = match blend_mode {
-            M2BlendMode::Opaque | M2BlendMode::AlphaKey => {
-                (false, M2BlendFactor::One, M2BlendFactor::Zero)
-            }
-            M2BlendMode::Alpha => (
-                true,
-                M2BlendFactor::SourceAlpha,
-                M2BlendFactor::OneMinusSourceAlpha,
-            ),
-            M2BlendMode::NoAlphaAdd => (true, M2BlendFactor::One, M2BlendFactor::One),
-            M2BlendMode::Add => (true, M2BlendFactor::SourceAlpha, M2BlendFactor::One),
-            M2BlendMode::Mod => (true, M2BlendFactor::DestinationColor, M2BlendFactor::Zero),
-            M2BlendMode::Mod2x => (
-                true,
-                M2BlendFactor::DestinationColor,
-                M2BlendFactor::SourceColor,
-            ),
-        };
+        let (blend_enabled, source_blend, destination_blend) = blend_state(blend_mode);
         let flags = material.flags();
         Self {
             blend_mode,
@@ -69,6 +52,38 @@ impl M2MaterialState {
             is_unlit: flags & 0x1 != 0
                 || matches!(blend_mode, M2BlendMode::Mod | M2BlendMode::Mod2x),
             is_unfogged: flags & 0x2 != 0,
+        }
+    }
+
+    /// Synthesizes the material that build 12340 assigns to one particle.
+    ///
+    /// The particle byte is not a direct `M2BLEND`: executable `0x0081CA20`
+    /// maps selectors `0..=5` and `10`, with its default branch selecting
+    /// opaque. Executable `0x008214E0` then creates a two-sided material and
+    /// derives lighting, fog, and depth-write state from the low three flags.
+    #[must_use]
+    pub const fn from_particle(blending_type: u8, particle_flags: u32) -> Self {
+        let blend_mode = match blending_type {
+            1 => M2BlendMode::AlphaKey,
+            2 => M2BlendMode::Alpha,
+            3 => M2BlendMode::Add,
+            4 => M2BlendMode::Mod,
+            5 => M2BlendMode::Mod2x,
+            10 => M2BlendMode::NoAlphaAdd,
+            _ => M2BlendMode::Opaque,
+        };
+        let (blend_enabled, source_blend, destination_blend) = blend_state(blend_mode);
+        Self {
+            blend_mode,
+            blend_enabled,
+            source_blend,
+            destination_blend,
+            cull_enabled: false,
+            depth_test_enabled: true,
+            depth_write_enabled: particle_flags & 0x4 != 0,
+            is_unlit: particle_flags & 0x1 == 0
+                || matches!(blend_mode, M2BlendMode::Mod | M2BlendMode::Mod2x),
+            is_unfogged: particle_flags & 0x2 == 0,
         }
     }
 
@@ -149,5 +164,27 @@ impl M2MaterialState {
             | M2BlendMode::Mod
             | M2BlendMode::Mod2x => 1.0 / 255.0,
         }
+    }
+}
+
+/// Returns the immutable GX blend tuple shared by model and particle passes.
+const fn blend_state(blend_mode: M2BlendMode) -> (bool, M2BlendFactor, M2BlendFactor) {
+    match blend_mode {
+        M2BlendMode::Opaque | M2BlendMode::AlphaKey => {
+            (false, M2BlendFactor::One, M2BlendFactor::Zero)
+        }
+        M2BlendMode::Alpha => (
+            true,
+            M2BlendFactor::SourceAlpha,
+            M2BlendFactor::OneMinusSourceAlpha,
+        ),
+        M2BlendMode::NoAlphaAdd => (true, M2BlendFactor::One, M2BlendFactor::One),
+        M2BlendMode::Add => (true, M2BlendFactor::SourceAlpha, M2BlendFactor::One),
+        M2BlendMode::Mod => (true, M2BlendFactor::DestinationColor, M2BlendFactor::Zero),
+        M2BlendMode::Mod2x => (
+            true,
+            M2BlendFactor::DestinationColor,
+            M2BlendFactor::SourceColor,
+        ),
     }
 }

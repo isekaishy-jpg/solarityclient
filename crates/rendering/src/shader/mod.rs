@@ -6,6 +6,7 @@
 
 mod m2_effect;
 mod m2_spirv;
+mod particle_spirv;
 mod ribbon_spirv;
 mod shader_effect_manager;
 mod terrain_spirv;
@@ -18,6 +19,7 @@ pub use m2_effect::{
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
 };
 pub use m2_spirv::{M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram};
+pub use particle_spirv::{M2ParticleSpirvCompiler, M2ParticleSpirvError, M2ParticleSpirvProgram};
 pub use ribbon_spirv::{M2RibbonSpirvCompiler, M2RibbonSpirvError, M2RibbonSpirvProgram};
 pub use terrain_spirv::{
     TerrainLayerCount, TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError,

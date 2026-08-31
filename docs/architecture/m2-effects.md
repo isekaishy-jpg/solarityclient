@@ -147,6 +147,13 @@ age, and reproduce the executable's short-projection fallback billboard.
 Twinkle, geometry particles, and specialized orientation flags remain separate
 typed paths instead of being flattened into ordinary quads.
 
+Particle render state is synthesized through the executable's dedicated blend
+mapper rather than treating the authored byte as a root-material blend id.
+Selectors `0`, `1`, `2`, `3`, `4`, `5`, and `10` map to opaque, alpha-key,
+alpha, additive, modulate, modulate-2x, and no-alpha-add respectively; the
+stock default branch is opaque. Every particle is two-sided and depth-tested.
+Low emitter flags independently enable lighting, fog, and depth writes.
+
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
 pool grows, but never shrinks, to the executable's nearest-even estimate of
