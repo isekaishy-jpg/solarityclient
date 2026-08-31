@@ -25,11 +25,13 @@ pub use codec::{
     DecodedSoundHandle, DecodedSoundInfo, SoundDecodeError, SoundDecodeMode, SoundDecoder,
 };
 pub use engine::{
-    AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
-    AdvancedSoundListener, AdvancedSoundProperties, AdvancedSoundSpatialError,
-    AdvancedSoundSpatialMix, AdvancedSoundUsage, AdvancedSoundUsageError, SoundCategory,
-    SoundCategoryError, SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings,
-    SoundGain, SoundGainError, SoundPlayRequest, SoundPlayback,
+    AdvancedSoundCreateRequest, AdvancedSoundDirective, AdvancedSoundDucking,
+    AdvancedSoundInstanceId, AdvancedSoundLifecycle, AdvancedSoundListener,
+    AdvancedSoundProperties, AdvancedSoundService, AdvancedSoundServiceError,
+    AdvancedSoundSpatialError, AdvancedSoundSpatialMix, AdvancedSoundUpdateReport,
+    AdvancedSoundUsage, AdvancedSoundUsageError, SoundCategory, SoundCategoryError,
+    SoundCategorySettings, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain,
+    SoundGainError, SoundPlayRequest, SoundPlayback,
 };
 pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{

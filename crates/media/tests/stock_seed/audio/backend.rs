@@ -94,6 +94,24 @@ fn backend_positions_voice_in_the_listener_frame() -> Result<(), Box<dyn Error>>
     let (left, right) = stereo_energy(&mixed);
     assert!(left < right);
 
+    backend.set_spatial_mix(
+        voice,
+        Some(SoundSpatialPosition::new([1.0, 0.0, 0.0])?),
+        0.0,
+    )?;
+    let mut centered = [0_u8; 4_096];
+    backend.generate(&mut centered)?;
+    let (left, right) = stereo_energy(&centered);
+    assert_eq!(left, right);
+    assert!(matches!(
+        backend.set_spatial_mix(
+            voice,
+            Some(SoundSpatialPosition::new([1.0, 0.0, 0.0])?),
+            1.1,
+        ),
+        Err(SoundBackendError::InvalidSpatialPanLevel { .. })
+    ));
+
     backend.set_spatial_position(voice, None)?;
     backend.stop(voice)?;
     Ok(())

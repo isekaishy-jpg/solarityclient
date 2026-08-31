@@ -234,14 +234,14 @@ fn engine_suppression_and_failures_have_no_fallback() -> Result<(), Box<dyn Erro
     let SoundPlayback::Started(voice) = engine.play(&mut store, valid, &mut next_word)? else {
         return Err("enabled sound was suppressed".into());
     };
-    assert_eq!(random_calls.get(), 1);
+    assert_eq!(random_calls.get(), 0);
     assert!(matches!(
         engine.play(&mut store, valid, &mut next_word),
         Err(SoundEngineError::Backend(
             solarity_media::SoundBackendError::VoiceCapacity
         ))
     ));
-    assert_eq!(random_calls.get(), 2);
+    assert_eq!(random_calls.get(), 0);
     engine.stop(voice)?;
     Ok(())
 }

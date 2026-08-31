@@ -42,6 +42,12 @@ pub enum SoundBackendError {
         /// Unmodified right, up, and back coordinates.
         position: [f32; 3],
     },
+    /// A stock 2D-to-3D blend was outside FMOD's domain.
+    #[error("sound voice spatial pan level must be finite and in 0..=1, got {level}")]
+    InvalidSpatialPanLevel {
+        /// Unmodified caller-provided level.
+        level: f32,
+    },
     /// A slot has been reused more times than its stable handle can encode.
     #[error("sound voice generation capacity is exhausted")]
     GenerationCapacity,

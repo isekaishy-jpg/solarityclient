@@ -4,6 +4,8 @@
 mod audio;
 #[path = "stock_seed/audio/advanced_lifecycle.rs"]
 mod audio_advanced_lifecycle;
+#[path = "stock_seed/audio/advanced_service.rs"]
+mod audio_advanced_service;
 #[path = "stock_seed/audio/advanced_spatial.rs"]
 mod audio_advanced_spatial;
 #[path = "stock_seed/audio/backend.rs"]

@@ -15,6 +15,7 @@ use crate::audio::spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSo
 
 use super::status::SoundEngineError;
 use super::types::{SoundCategory, SoundEngineSettings, SoundPlayRequest, SoundPlayback};
+use super::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 
 /// Policy retained for one voice while live CVar settings can change.
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +24,8 @@ struct ActiveVoice {
     category: SoundCategory,
     source_gain: f32,
     runtime_gain: f32,
+    duck_gain: f32,
+    duck_source: Option<AdvancedSoundInstanceId>,
 }
 
 /// Stock-facing sound selection, admission, and live-volume owner.
@@ -173,6 +176,8 @@ impl<'output> SoundEngine<'output> {
             category: request.category(),
             source_gain,
             runtime_gain: 1.0,
+            duck_gain: 1.0,
+            duck_source: request.advanced_source(),
         });
         Ok(SoundPlayback::Started(voice))
     }
@@ -254,6 +259,54 @@ impl<'output> SoundEngine<'output> {
         Ok(())
     }
 
+    /// Applies an advanced voice's listener position and stock pan level.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError::UnknownVoice`] when this engine does not own
+    /// the handle, or a backend error for invalid pan policy or SDL failure.
+    pub(super) fn set_voice_spatial_mix(
+        &self,
+        handle: SoundVoiceHandle,
+        position: Option<SoundSpatialPosition>,
+        pan_level: f32,
+    ) -> Result<(), SoundEngineError> {
+        if !self
+            .active_voices
+            .iter()
+            .any(|voice| voice.handle == handle)
+        {
+            return Err(SoundEngineError::UnknownVoice);
+        }
+        self.backend.set_spatial_mix(handle, position, pan_level)?;
+        Ok(())
+    }
+
+    /// Applies the process-wide advanced influence list to every live voice.
+    ///
+    /// Advanced voices exclude their own attached influence. Ordinary voices
+    /// have no exclusion and receive the minimum gain for their category.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when stopped-voice collection or a backend
+    /// gain update fails.
+    pub(super) fn apply_advanced_ducking(
+        &mut self,
+        ducking: &AdvancedSoundDucking,
+    ) -> Result<(), SoundEngineError> {
+        self.collect_stopped_voices()?;
+        for voice in &mut self.active_voices {
+            let duck_gain = ducking.category_gain(voice.category, voice.duck_source);
+            let mut updated = *voice;
+            updated.duck_gain = duck_gain;
+            self.backend
+                .set_gain(voice.handle, applied_gain(self.settings, updated))?;
+            voice.duck_gain = duck_gain;
+        }
+        Ok(())
+    }
+
     /// Returns one engine-owned voice's current backend state.
     ///
     /// # Errors
@@ -331,5 +384,8 @@ impl<'output> SoundEngine<'output> {
 
 /// Composes independent source, live CVar, and runtime policy exactly once.
 fn applied_gain(settings: SoundEngineSettings, voice: ActiveVoice) -> f32 {
-    settings.category_gain(voice.category).unwrap_or(0.0) * voice.source_gain * voice.runtime_gain
+    settings.category_gain(voice.category).unwrap_or(0.0)
+        * voice.source_gain
+        * voice.runtime_gain
+        * voice.duck_gain
 }

@@ -59,6 +59,10 @@ impl SoundVariationSelector {
         mode: SoundVariationMode,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Option<&SoundAsset> {
+        if self.assets.len() == 1 {
+            self.last_index = Some(0);
+            return self.assets.first();
+        }
         let total_weight = self.prepare_weight(mode)?;
         let mut ticket = match mode {
             SoundVariationMode::Sequential => 0,

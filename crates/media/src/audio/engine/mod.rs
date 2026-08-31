@@ -5,6 +5,7 @@ mod sound_interface2;
 mod sound_interface2_advanced_kit_ducking;
 mod sound_interface2_advanced_kit_lifecycle;
 mod sound_interface2_advanced_kit_properties;
+mod sound_interface2_advanced_kit_service;
 mod sound_interface2_advanced_kit_spatial;
 mod sound_interface2_internal;
 mod status;
@@ -16,6 +17,10 @@ pub use sound_interface2_advanced_kit_lifecycle::{
     AdvancedSoundDirective, AdvancedSoundLifecycle, AdvancedSoundUsage, AdvancedSoundUsageError,
 };
 pub use sound_interface2_advanced_kit_properties::AdvancedSoundProperties;
+pub use sound_interface2_advanced_kit_service::{
+    AdvancedSoundCreateRequest, AdvancedSoundService, AdvancedSoundServiceError,
+    AdvancedSoundUpdateReport,
+};
 pub use sound_interface2_advanced_kit_spatial::{
     AdvancedSoundListener, AdvancedSoundSpatialError, AdvancedSoundSpatialMix,
 };

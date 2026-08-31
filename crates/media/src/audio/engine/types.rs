@@ -4,6 +4,7 @@ use crate::audio::backend::SoundVoiceHandle;
 use crate::audio::codec::SoundDecodeMode;
 use crate::audio::selection::SoundVariationMode;
 
+use super::AdvancedSoundInstanceId;
 use super::status::{SoundCategoryError, SoundGainError};
 
 /// Stock volume-control category selected by the calling subsystem.
@@ -166,6 +167,7 @@ pub struct SoundPlayRequest {
     variation_mode: SoundVariationMode,
     decode_mode: SoundDecodeMode,
     looping: bool,
+    advanced_source: Option<AdvancedSoundInstanceId>,
 }
 
 impl SoundPlayRequest {
@@ -184,6 +186,26 @@ impl SoundPlayRequest {
             variation_mode,
             decode_mode,
             looping,
+            advanced_source: None,
+        }
+    }
+
+    /// Captures a service-owned advanced request with duck self-exclusion.
+    pub(super) const fn advanced(
+        entry_id: u32,
+        category: SoundCategory,
+        variation_mode: SoundVariationMode,
+        decode_mode: SoundDecodeMode,
+        looping: bool,
+        advanced_source: AdvancedSoundInstanceId,
+    ) -> Self {
+        Self {
+            entry_id,
+            category,
+            variation_mode,
+            decode_mode,
+            looping,
+            advanced_source: Some(advanced_source),
         }
     }
 
@@ -215,6 +237,11 @@ impl SoundPlayRequest {
     #[must_use]
     pub const fn looping(self) -> bool {
         self.looping
+    }
+
+    /// Returns the advanced instance excluded from its own duck influence.
+    pub(super) const fn advanced_source(self) -> Option<AdvancedSoundInstanceId> {
+        self.advanced_source
     }
 }
 

@@ -3,7 +3,7 @@
 use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sdl3::mixer::{Mixer, Point3D, Track};
+use sdl3::mixer::{Mixer, Point3D, StereoGains, Track};
 use sdl3::sys::audio::{SDL_AUDIO_S16LE, SDL_AudioSpec};
 
 use crate::audio::codec::{DecodedSoundHandle, SoundDecoder};
@@ -289,13 +289,52 @@ impl<'output> SoundBackend<'output> {
         voice: SoundVoiceHandle,
         position: Option<SoundSpatialPosition>,
     ) -> Result<(), SoundBackendError> {
+        self.set_spatial_mix(voice, position, 1.0)
+    }
+
+    /// Applies stock's 2D-to-3D pan blend at the SDL adapter boundary.
+    ///
+    /// Stereo output uses the same constant-power directional gains as SDL's
+    /// 3D panner and linearly blends its matrix with centered 2D gains. Other
+    /// output layouts retain SDL's native spatializer until a layout-specific
+    /// matrix boundary is introduced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`] for an invalid level, stale handle, or SDL
+    /// failure.
+    pub fn set_spatial_mix(
+        &self,
+        voice: SoundVoiceHandle,
+        position: Option<SoundSpatialPosition>,
+        pan_level: f32,
+    ) -> Result<(), SoundBackendError> {
+        if !pan_level.is_finite() || !(0.0..=1.0).contains(&pan_level) {
+            return Err(SoundBackendError::InvalidSpatialPanLevel { level: pan_level });
+        }
         let track = &self.voice(voice)?.track;
         match position {
             Some(position) => {
                 let [x, y, z] = position.coordinates();
-                track
-                    .set_3d_position(Point3D { x, y, z })
-                    .map_err(|source| SoundBackendError::adapter("position sound voice", source))
+                if self.output.info.channel_count() == 2 && pan_level < 1.0 {
+                    let [spatial_left, spatial_right] = stereo_direction_gains(x, z);
+                    const CENTER_GAIN: f32 = core::f32::consts::FRAC_1_SQRT_2;
+                    let center_level = 1.0 - pan_level;
+                    track
+                        .set_stereo(Some(StereoGains {
+                            left: CENTER_GAIN * center_level + spatial_left * pan_level,
+                            right: CENTER_GAIN * center_level + spatial_right * pan_level,
+                        }))
+                        .map_err(|source| {
+                            SoundBackendError::adapter("blend sound voice position", source)
+                        })
+                } else {
+                    track
+                        .set_3d_position(Point3D { x, y, z })
+                        .map_err(|source| {
+                            SoundBackendError::adapter("position sound voice", source)
+                        })
+                }
             }
             None => track
                 .set_stereo(None)
@@ -344,6 +383,31 @@ impl<'output> SoundBackend<'output> {
             return Err(SoundBackendError::UnknownVoice);
         }
         Ok(slot)
+    }
+}
+
+/// Reproduces SDL's stereo constant-power quadrant panner at unit distance.
+fn stereo_direction_gains(right: f32, back: f32) -> [f32; 2] {
+    const QUARTER_PI: f32 = core::f32::consts::FRAC_PI_4;
+    const THREE_QUARTER_PI: f32 = 3.0 * QUARTER_PI;
+    const CENTER_GAIN: f32 = core::f32::consts::FRAC_1_SQRT_2;
+
+    let radians = right.atan2(-back);
+    if (-QUARTER_PI..=QUARTER_PI).contains(&radians) {
+        let (sine, cosine) = radians.sin_cos();
+        [CENTER_GAIN * (cosine - sine), CENTER_GAIN * (cosine + sine)]
+    } else if (QUARTER_PI..=THREE_QUARTER_PI).contains(&radians) {
+        [0.0, 1.0]
+    } else if (-THREE_QUARTER_PI..=-QUARTER_PI).contains(&radians) {
+        [1.0, 0.0]
+    } else {
+        let rear_angle = if radians < 0.0 {
+            -(radians + core::f32::consts::PI)
+        } else {
+            -(radians - core::f32::consts::PI)
+        };
+        let (sine, cosine) = rear_angle.sin_cos();
+        [CENTER_GAIN * (cosine - sine), CENTER_GAIN * (cosine + sine)]
     }
 }
 

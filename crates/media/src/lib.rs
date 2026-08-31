@@ -9,14 +9,16 @@ mod cinematic;
 mod voice;
 
 pub use audio::{
-    AdvancedSoundDirective, AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundLifecycle,
-    AdvancedSoundListener, AdvancedSoundProperties, AdvancedSoundSpatialError,
-    AdvancedSoundSpatialMix, AdvancedSoundUsage, AdvancedSoundUsageError, DecodedSoundHandle,
-    DecodedSoundInfo, EncodedSound, LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound,
-    ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundCache, SoundCategory,
-    SoundCategoryError, SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder,
-    SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundOutput,
-    SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundSpatialPosition,
-    SoundVariationMode, SoundVariationSelector, SoundVoiceHandle, SoundVoiceState,
-    SpatialSoundCatalog, SpatialSoundError,
+    AdvancedSoundCreateRequest, AdvancedSoundDirective, AdvancedSoundDucking,
+    AdvancedSoundInstanceId, AdvancedSoundLifecycle, AdvancedSoundListener,
+    AdvancedSoundProperties, AdvancedSoundService, AdvancedSoundServiceError,
+    AdvancedSoundSpatialError, AdvancedSoundSpatialMix, AdvancedSoundUpdateReport,
+    AdvancedSoundUsage, AdvancedSoundUsageError, DecodedSoundHandle, DecodedSoundInfo,
+    EncodedSound, LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound, ResolvedSpatialSound,
+    SoundBackend, SoundBackendError, SoundCache, SoundCategory, SoundCategoryError,
+    SoundCategorySettings, SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine,
+    SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundOutput, SoundOutputInfo,
+    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundSpatialPosition, SoundVariationMode,
+    SoundVariationSelector, SoundVoiceHandle, SoundVoiceState, SpatialSoundCatalog,
+    SpatialSoundError,
 };
