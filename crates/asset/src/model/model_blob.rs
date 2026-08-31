@@ -1,13 +1,18 @@
 //! Owned CPU-side model data independent of the selected M2 decoder.
 
 use glam::{Vec2, Vec3};
-use wow_m2::chunks::texture::M2TextureType as DependencyTextureType;
-use wow_m2::model::M2Model;
 
 use crate::model::collision::{M2CollisionMesh, decode_collision_mesh};
 use crate::model::lookups::M2LookupTables;
-use crate::model::m2_shared::model_decode;
+use crate::model::m2_shared::{model_decode, validate_model_prefix};
 use crate::{AssetError, AssetPath};
+
+const HEADER_SIZE: usize = 0x130;
+const EXTENDED_HEADER_SIZE: usize = 0x138;
+const VERTEX_SIZE: usize = 48;
+const TEXTURE_SIZE: usize = 16;
+const MATERIAL_SIZE: usize = 4;
+const USE_TEXTURE_COMBINERS: u32 = 0x8;
 
 /// Stock semantic source for one M2 texture slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -182,6 +187,87 @@ impl M2Vertex {
     }
 }
 
+/// Fixed build-12340 header fields needed by the unanimated model body.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ModelBodyHeader {
+    name: ArrayRef,
+    flags: u32,
+    vertices: ArrayRef,
+    skin_profile_count: u32,
+    textures: ArrayRef,
+    materials: ArrayRef,
+    bounds: M2ModelBounds,
+    collision_bounds: M2ModelBounds,
+    texture_combiner_combos: Option<ArrayRef>,
+}
+
+impl ModelBodyHeader {
+    /// Reads exact version-264 offsets and preflights body arrays before allocation.
+    pub(super) fn decode(path: &AssetPath, bytes: &[u8]) -> Result<Self, AssetError> {
+        validate_model_prefix(path, bytes)?;
+        if bytes.len() < HEADER_SIZE {
+            return Err(model_decode(
+                path,
+                "build-12340 M2 header is truncated".to_owned(),
+            ));
+        }
+
+        let name = array_ref(path, bytes, 0x08, "model name")?;
+        let flags = read_u32(path, bytes, 0x10, "global flags")?;
+        let vertices = array_ref(path, bytes, 0x3c, "vertices")?;
+        let textures = array_ref(path, bytes, 0x50, "textures")?;
+        let materials = array_ref(path, bytes, 0x70, "materials")?;
+        let texture_combiner_combos = if flags & USE_TEXTURE_COMBINERS != 0 {
+            if bytes.len() < EXTENDED_HEADER_SIZE {
+                return Err(model_decode(
+                    path,
+                    "texture-combiner flag requires the extended M2 header".to_owned(),
+                ));
+            }
+            Some(array_ref(path, bytes, 0x130, "texture-combiner table")?)
+        } else {
+            None
+        };
+
+        validate_array(path, bytes, name, 1, "model name")?;
+        validate_array(path, bytes, vertices, VERTEX_SIZE, "vertices")?;
+        validate_array(path, bytes, textures, TEXTURE_SIZE, "textures")?;
+        validate_array(path, bytes, materials, MATERIAL_SIZE, "materials")?;
+        if let Some(array) = texture_combiner_combos {
+            validate_array(path, bytes, array, 2, "texture-combiner table")?;
+        }
+        for index in 0..textures.count {
+            let record = record_offset(path, textures, index, TEXTURE_SIZE, "texture")?;
+            let filename = array_ref(path, bytes, record + 8, "texture filename")?;
+            validate_array(path, bytes, filename, 1, "texture filename")?;
+        }
+
+        Ok(Self {
+            name,
+            flags,
+            vertices,
+            skin_profile_count: read_u32(path, bytes, 0x44, "skin-profile count")?,
+            textures,
+            materials,
+            bounds: read_bounds(path, bytes, 0xa0, "model bounds")?,
+            collision_bounds: read_bounds(path, bytes, 0xbc, "collision bounds")?,
+            texture_combiner_combos,
+        })
+    }
+
+    pub(super) const fn skin_profile_count(self) -> u32 {
+        self.skin_profile_count
+    }
+
+    pub(super) const fn vertex_count(self) -> usize {
+        self.vertices.count
+    }
+
+    pub(super) const fn texture_count(self) -> usize {
+        self.textures.count
+    }
+}
+
 /// Decoder-independent storage consumed by later animation and render stages.
 #[derive(Debug)]
 pub(super) struct ModelBlob {
@@ -202,210 +288,325 @@ pub(super) struct ModelBlob {
 }
 
 impl ModelBlob {
-    /// Converts every exposed vertex field without supplying absent values.
-    pub(super) fn from_model(
+    /// Decodes the exact unanimated body once, directly into retained storage.
+    pub(super) fn decode(
         path: &AssetPath,
         bytes: &[u8],
-        model: M2Model,
+        header: ModelBodyHeader,
         lookups: M2LookupTables,
     ) -> Result<Self, AssetError> {
-        let flags = model.header.flags.bits();
-        let bounds = M2ModelBounds {
-            minimum: Vec3::from_array(model.header.bounding_box_min),
-            maximum: Vec3::from_array(model.header.bounding_box_max),
-            sphere_radius: model.header.bounding_sphere_radius,
-        };
-        let collision = decode_collision_mesh(
-            path,
-            bytes,
-            M2ModelBounds {
-                minimum: Vec3::from_array(model.header.collision_box_min),
-                maximum: Vec3::from_array(model.header.collision_box_max),
-                sphere_radius: model.header.collision_sphere_radius,
-            },
-        )?;
-        let texture_combiner_combos = decode_texture_combiner_combos(path, bytes, &model)?;
-        let mut vertices = Vec::with_capacity(model.vertices.len());
-        for vertex in model.vertices {
-            let texture_coordinates2 = vertex.tex_coords2.ok_or_else(|| {
-                model_decode(
-                    path,
-                    "build-12340 vertex has no second texture coordinates".to_owned(),
-                )
-            })?;
-            vertices.push(M2Vertex {
-                position: Vec3::new(vertex.position.x, vertex.position.y, vertex.position.z),
-                bone_weights: vertex.bone_weights,
-                bone_indices: vertex.bone_indices,
-                normal: Vec3::new(vertex.normal.x, vertex.normal.y, vertex.normal.z),
-                texture_coordinates: [
-                    Vec2::new(vertex.tex_coords.x, vertex.tex_coords.y),
-                    Vec2::new(texture_coordinates2.x, texture_coordinates2.y),
-                ],
-            });
-        }
-
-        let textures = model
-            .textures
-            .iter()
-            .enumerate()
-            .map(|(index, texture)| convert_texture(path, bytes, index, texture))
-            .collect::<Result<Vec<_>, _>>()?;
-        let materials = model
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(index, material)| convert_material(path, index, material))
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            name: model.name,
-            flags,
-            bounds,
-            collision,
-            vertices,
-            textures,
-            materials,
+            name: decode_model_name(path, bytes, header.name)?,
+            flags: header.flags,
+            bounds: header.bounds,
+            collision: decode_collision_mesh(path, bytes, header.collision_bounds)?,
+            vertices: decode_vertices(path, bytes, header.vertices)?,
+            textures: decode_textures(path, bytes, header.textures)?,
+            materials: decode_materials(path, bytes, header.materials)?,
             replaceable_texture_lookup: lookups.replaceable_textures,
             bone_lookup: lookups.bones,
             texture_lookup: lookups.textures,
             texture_coordinate_lookup: lookups.texture_coordinates,
             transparency_lookup: lookups.texture_weights,
             texture_animation_lookup: lookups.texture_transforms,
-            texture_combiner_combos,
+            texture_combiner_combos: decode_u16_array(
+                path,
+                bytes,
+                header.texture_combiner_combos,
+                "texture-combiner table",
+            )?,
         })
     }
 }
 
-/// Reads WotLK's optional trailing `u16` combiner table exactly as `M2Data` stores it.
-fn decode_texture_combiner_combos(
+fn decode_vertices(
     path: &AssetPath,
     bytes: &[u8],
-    model: &M2Model,
+    vertices: ArrayRef,
+) -> Result<Vec<M2Vertex>, AssetError> {
+    let mut decoded = Vec::with_capacity(vertices.count);
+    for index in 0..vertices.count {
+        let offset = record_offset(path, vertices, index, VERTEX_SIZE, "vertex")?;
+        decoded.push(M2Vertex {
+            position: read_vec3(path, bytes, offset, "vertex position")?,
+            bone_weights: read_bytes(path, bytes, offset + 12, "vertex bone weights")?,
+            bone_indices: read_bytes(path, bytes, offset + 16, "vertex bone indices")?,
+            normal: read_vec3(path, bytes, offset + 20, "vertex normal")?,
+            texture_coordinates: [
+                read_vec2(path, bytes, offset + 32, "vertex texture coordinates")?,
+                read_vec2(path, bytes, offset + 40, "vertex texture coordinates")?,
+            ],
+        });
+    }
+    Ok(decoded)
+}
+
+fn decode_textures(
+    path: &AssetPath,
+    bytes: &[u8],
+    textures: ArrayRef,
+) -> Result<Vec<M2Texture>, AssetError> {
+    let mut decoded = Vec::with_capacity(textures.count);
+    for index in 0..textures.count {
+        let offset = record_offset(path, textures, index, TEXTURE_SIZE, "texture")?;
+        let kind = match read_u32(path, bytes, offset, "texture replacement type")? {
+            0 => M2TextureKind::Hardcoded,
+            1 => M2TextureKind::Body,
+            2 => M2TextureKind::Item,
+            3 => M2TextureKind::WeaponArmorBasic,
+            4 => M2TextureKind::WeaponBlade,
+            5 => M2TextureKind::WeaponHandle,
+            6 => M2TextureKind::Environment,
+            7 => M2TextureKind::Hair,
+            8 => M2TextureKind::SkinExtra,
+            9 => M2TextureKind::UiSkin,
+            10 => M2TextureKind::TaurenMane,
+            11 => M2TextureKind::Monster1,
+            12 => M2TextureKind::Monster2,
+            13 => M2TextureKind::Monster3,
+            14 => M2TextureKind::ItemIcon,
+            value => {
+                return Err(model_decode(
+                    path,
+                    format!("texture {index} has unsupported replacement type {value}"),
+                ));
+            }
+        };
+        let filename_ref = array_ref(path, bytes, offset + 8, "texture filename")?;
+        let filename = decode_c_string(path, bytes, filename_ref, "texture filename")?
+            .map(AssetPath::new)
+            .transpose()
+            .map_err(|source| {
+                model_decode(path, format!("texture {index} name is invalid: {source}"))
+            })?;
+        decoded.push(M2Texture {
+            kind,
+            flags: read_u32(path, bytes, offset + 4, "texture flags")?,
+            filename,
+        });
+    }
+    Ok(decoded)
+}
+
+fn decode_materials(
+    path: &AssetPath,
+    bytes: &[u8],
+    materials: ArrayRef,
+) -> Result<Vec<M2Material>, AssetError> {
+    let mut decoded = Vec::with_capacity(materials.count);
+    for index in 0..materials.count {
+        let offset = record_offset(path, materials, index, MATERIAL_SIZE, "material")?;
+        let blend_mode = match read_u16(path, bytes, offset + 2, "material blend mode")? {
+            0 => M2BlendMode::Opaque,
+            1 => M2BlendMode::AlphaKey,
+            2 => M2BlendMode::Alpha,
+            3 => M2BlendMode::NoAlphaAdd,
+            4 => M2BlendMode::Add,
+            5 => M2BlendMode::Mod,
+            6 => M2BlendMode::Mod2x,
+            value => {
+                return Err(model_decode(
+                    path,
+                    format!("material {index} has unsupported blend mode {value}"),
+                ));
+            }
+        };
+        decoded.push(M2Material {
+            flags: read_u16(path, bytes, offset, "material flags")?,
+            blend_mode,
+        });
+    }
+    Ok(decoded)
+}
+
+fn decode_u16_array(
+    path: &AssetPath,
+    bytes: &[u8],
+    array: Option<ArrayRef>,
+    field: &str,
 ) -> Result<Vec<u16>, AssetError> {
-    let Some(array) = model.header.texture_combiner_combos else {
+    let Some(array) = array else {
         return Ok(Vec::new());
     };
-    let count = array.count as usize;
-    let offset = array.offset as usize;
-    let byte_count = count.checked_mul(size_of::<u16>()).ok_or_else(|| {
-        model_decode(
-            path,
-            "texture-combiner table byte count overflows".to_owned(),
-        )
-    })?;
-    let end = offset.checked_add(byte_count).ok_or_else(|| {
-        model_decode(
-            path,
-            "texture-combiner table byte range overflows".to_owned(),
-        )
-    })?;
-    let raw = bytes.get(offset..end).ok_or_else(|| {
-        model_decode(
-            path,
-            "texture-combiner table exceeds the M2 file".to_owned(),
-        )
-    })?;
-    Ok(raw
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|value| u16::from_le_bytes([value[0], value[1]]))
-        .collect())
+    (0..array.count)
+        .map(|index| read_u16(path, bytes, array.offset + index * 2, field))
+        .collect()
 }
 
-/// Converts one texture declaration and validates its nested archive path.
-fn convert_texture(
+fn decode_c_string(
     path: &AssetPath,
     bytes: &[u8],
-    index: usize,
-    texture: &wow_m2::chunks::texture::M2Texture,
-) -> Result<M2Texture, AssetError> {
-    let kind = match texture.texture_type {
-        DependencyTextureType::Hardcoded => M2TextureKind::Hardcoded,
-        DependencyTextureType::Body => M2TextureKind::Body,
-        DependencyTextureType::Item => M2TextureKind::Item,
-        DependencyTextureType::WeaponArmorBasic => M2TextureKind::WeaponArmorBasic,
-        DependencyTextureType::WeaponBlade => M2TextureKind::WeaponBlade,
-        DependencyTextureType::WeaponHandle => M2TextureKind::WeaponHandle,
-        DependencyTextureType::Environment => M2TextureKind::Environment,
-        DependencyTextureType::Hair => M2TextureKind::Hair,
-        DependencyTextureType::SkinExtra => M2TextureKind::SkinExtra,
-        DependencyTextureType::UiSkin => M2TextureKind::UiSkin,
-        DependencyTextureType::TaurenMane => M2TextureKind::TaurenMane,
-        DependencyTextureType::Monster1 => M2TextureKind::Monster1,
-        DependencyTextureType::Monster2 => M2TextureKind::Monster2,
-        DependencyTextureType::Monster3 => M2TextureKind::Monster3,
-        DependencyTextureType::ItemIcon => M2TextureKind::ItemIcon,
-        DependencyTextureType::Unknown => {
-            return Err(model_decode(
-                path,
-                format!("texture {index} has an unsupported replacement type"),
-            ));
-        }
-    };
-    let filename = decode_texture_filename(path, bytes, index, texture)?;
-    Ok(M2Texture {
-        kind,
-        flags: texture.flags.bits(),
-        filename,
-    })
-}
-
-/// Reads a complete NUL-terminated ASCII path rather than the dependency's lossy string.
-fn decode_texture_filename(
-    path: &AssetPath,
-    bytes: &[u8],
-    index: usize,
-    texture: &wow_m2::chunks::texture::M2Texture,
-) -> Result<Option<AssetPath>, AssetError> {
-    let count = texture.filename.array.count as usize;
-    if count == 0 {
+    array: ArrayRef,
+    field: &str,
+) -> Result<Option<String>, AssetError> {
+    if array.count == 0 {
         return Ok(None);
     }
-    let offset = texture.filename.array.offset as usize;
-    let end = offset
-        .checked_add(count)
-        .ok_or_else(|| model_decode(path, "texture-name byte range overflows".to_owned()))?;
+    let end = array
+        .offset
+        .checked_add(array.count)
+        .ok_or_else(|| model_decode(path, format!("{field} byte range overflows")))?;
     let raw = bytes
-        .get(offset..end)
-        .ok_or_else(|| model_decode(path, format!("texture {index} name exceeds the M2 file")))?;
+        .get(array.offset..end)
+        .ok_or_else(|| model_decode(path, format!("{field} exceeds the M2 file")))?;
     if raw.last() != Some(&0) || raw[..raw.len() - 1].contains(&0) {
         return Err(model_decode(
             path,
-            format!("texture {index} name is not one complete C string"),
+            format!("{field} is not one complete C string"),
         ));
     }
-    let name = std::str::from_utf8(&raw[..raw.len() - 1]).map_err(|source| {
-        model_decode(path, format!("texture {index} name is not UTF-8: {source}"))
-    })?;
-    AssetPath::new(name)
-        .map(Some)
-        .map_err(|source| model_decode(path, format!("texture {index} name is invalid: {source}")))
+    let value = std::str::from_utf8(&raw[..raw.len() - 1])
+        .map_err(|source| model_decode(path, format!("{field} is not UTF-8: {source}")))?;
+    Ok(Some(value.to_owned()))
 }
 
-/// Narrows the dependency bitfield to build 12340's seven blend values.
-fn convert_material(
+/// Reads the padded model-name field using its first terminator.
+fn decode_model_name(
     path: &AssetPath,
-    index: usize,
-    material: &wow_m2::chunks::material::M2Material,
-) -> Result<M2Material, AssetError> {
-    let blend_mode = match material.blend_mode.bits() {
-        0 => M2BlendMode::Opaque,
-        1 => M2BlendMode::AlphaKey,
-        2 => M2BlendMode::Alpha,
-        3 => M2BlendMode::NoAlphaAdd,
-        4 => M2BlendMode::Add,
-        5 => M2BlendMode::Mod,
-        6 => M2BlendMode::Mod2x,
-        value => {
-            return Err(model_decode(
-                path,
-                format!("material {index} has unsupported blend mode {value}"),
-            ));
-        }
-    };
-    Ok(M2Material {
-        flags: material.flags.bits(),
-        blend_mode,
+    bytes: &[u8],
+    array: ArrayRef,
+) -> Result<Option<String>, AssetError> {
+    if array.count == 0 {
+        return Ok(None);
+    }
+    let end = array
+        .offset
+        .checked_add(array.count)
+        .ok_or_else(|| model_decode(path, "model-name byte range overflows".to_owned()))?;
+    let raw = bytes
+        .get(array.offset..end)
+        .ok_or_else(|| model_decode(path, "model name exceeds the M2 file".to_owned()))?;
+    if raw.last() != Some(&0) {
+        return Err(model_decode(
+            path,
+            "model name is not NUL-terminated".to_owned(),
+        ));
+    }
+    let terminator = raw
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(raw.len());
+    let value = std::str::from_utf8(&raw[..terminator])
+        .map_err(|source| model_decode(path, format!("model name is not UTF-8: {source}")))?;
+    Ok(Some(value.to_owned()))
+}
+
+fn read_bounds(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<M2ModelBounds, AssetError> {
+    Ok(M2ModelBounds {
+        minimum: read_vec3(path, bytes, offset, field)?,
+        maximum: read_vec3(path, bytes, offset + 12, field)?,
+        sphere_radius: read_f32(path, bytes, offset + 24, field)?,
     })
+}
+
+fn read_vec3(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<Vec3, AssetError> {
+    Ok(Vec3::new(
+        read_f32(path, bytes, offset, field)?,
+        read_f32(path, bytes, offset + 4, field)?,
+        read_f32(path, bytes, offset + 8, field)?,
+    ))
+}
+
+fn read_vec2(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<Vec2, AssetError> {
+    Ok(Vec2::new(
+        read_f32(path, bytes, offset, field)?,
+        read_f32(path, bytes, offset + 4, field)?,
+    ))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ArrayRef {
+    count: usize,
+    offset: usize,
+}
+
+fn array_ref(
+    path: &AssetPath,
+    bytes: &[u8],
+    pair_offset: usize,
+    field: &str,
+) -> Result<ArrayRef, AssetError> {
+    Ok(ArrayRef {
+        count: read_u32(path, bytes, pair_offset, field)? as usize,
+        offset: read_u32(path, bytes, pair_offset + 4, field)? as usize,
+    })
+}
+
+fn validate_array(
+    path: &AssetPath,
+    bytes: &[u8],
+    array: ArrayRef,
+    stride: usize,
+    field: &str,
+) -> Result<(), AssetError> {
+    let byte_count = array
+        .count
+        .checked_mul(stride)
+        .ok_or_else(|| model_decode(path, format!("{field} byte range overflows")))?;
+    let end = array
+        .offset
+        .checked_add(byte_count)
+        .ok_or_else(|| model_decode(path, format!("{field} byte range overflows")))?;
+    if end > bytes.len() {
+        return Err(model_decode(
+            path,
+            format!("{field} array exceeds the M2 file"),
+        ));
+    }
+    Ok(())
+}
+
+fn record_offset(
+    path: &AssetPath,
+    array: ArrayRef,
+    index: usize,
+    stride: usize,
+    field: &str,
+) -> Result<usize, AssetError> {
+    index
+        .checked_mul(stride)
+        .and_then(|relative| array.offset.checked_add(relative))
+        .ok_or_else(|| model_decode(path, format!("{field} byte range overflows")))
+}
+
+fn read_u32(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<u32, AssetError> {
+    Ok(u32::from_le_bytes(read_bytes(path, bytes, offset, field)?))
+}
+
+fn read_u16(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<u16, AssetError> {
+    Ok(u16::from_le_bytes(read_bytes(path, bytes, offset, field)?))
+}
+
+fn read_f32(path: &AssetPath, bytes: &[u8], offset: usize, field: &str) -> Result<f32, AssetError> {
+    Ok(f32::from_le_bytes(read_bytes(path, bytes, offset, field)?))
+}
+
+fn read_bytes<const N: usize>(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<[u8; N], AssetError> {
+    let end = offset
+        .checked_add(N)
+        .ok_or_else(|| model_decode(path, format!("{field} byte range overflows")))?;
+    bytes
+        .get(offset..end)
+        .and_then(|value| value.try_into().ok())
+        .ok_or_else(|| model_decode(path, format!("{field} is truncated")))
 }

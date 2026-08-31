@@ -2,8 +2,8 @@
 
 use crate::model::M2AnimationSet;
 use crate::model::lookups::M2LookupTables;
-use crate::model::m2_shared::{canonical_model_path, model_decode, parse_model, skin_path};
-use crate::model::model_blob::ModelBlob;
+use crate::model::m2_shared::{canonical_model_path, model_decode, skin_path};
+use crate::model::model_blob::{ModelBlob, ModelBodyHeader};
 use crate::{
     ArchiveDescriptor, AssetError, AssetPath, AssetStore, M2Attachment, M2Material, M2ModelBounds,
     M2SkinProfile, M2Texture, M2Vertex,
@@ -61,14 +61,9 @@ impl DecodedM2Model {
         let path = canonical_model_path(path)?;
         let read = store.read(&path)?;
         let source = read.source().clone();
-        let mut model_bytes = read.into_bytes();
-        let model = parse_model(&path, &mut model_bytes)?;
-        let profile_count = model.header.num_skin_profiles.ok_or_else(|| {
-            model_decode(
-                &path,
-                "M2 header has no external skin-profile count".to_owned(),
-            )
-        })?;
+        let model_bytes = read.into_bytes();
+        let header = ModelBodyHeader::decode(&path, &model_bytes)?;
+        let profile_count = header.skin_profile_count();
         if profile_count == 0 {
             return Err(model_decode(
                 &path,
@@ -76,17 +71,17 @@ impl DecodedM2Model {
             ));
         }
 
-        let model_vertex_count = model.vertices.len();
+        let model_vertex_count = header.vertex_count();
         let animations = M2AnimationSet::load(store, &path, &model_bytes)?;
         let lookups = M2LookupTables::decode(
             &path,
             &model_bytes,
             animations.bones().len(),
-            model.textures.len(),
+            header.texture_count(),
             animations.texture_weights().len(),
             animations.texture_transforms().len(),
         )?;
-        let blob = ModelBlob::from_model(&path, &model_bytes, model, lookups)?;
+        let blob = ModelBlob::decode(&path, &model_bytes, header, lookups)?;
         let loaded_profile_count = match profile_load {
             SkinProfileLoad::All => profile_count,
             SkinProfileLoad::Primary => 1,

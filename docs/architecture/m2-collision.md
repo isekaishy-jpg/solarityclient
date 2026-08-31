@@ -9,10 +9,10 @@ present together. Indices must form complete triangles and reference existing
 positions; the face-normal count must equal the triangle count. Authored finite
 normals are preserved without normalization or geometric reconstruction.
 
-The dependency parser sees these pairs hidden in the temporary in-place header
-view, avoiding redundant raw byte buffers for larger same-path HD models. The
-decoded collision mesh remains shared by asset identity, while each MDDF or
-MODD placement owns only its transform and broad-phase bounds.
+The owned body decoder reads these pairs once and does not retain a redundant
+raw collision buffer for larger same-path HD models. The decoded collision mesh
+remains shared by asset identity, while each MDDF or MODD placement owns only
+its transform and broad-phase bounds.
 
 The current camera trace is intentionally two-sided and does not consult the
 authored normal for culling. A later behavior change requires build-12340

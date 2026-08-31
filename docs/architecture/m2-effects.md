@@ -2,23 +2,20 @@
 
 Version-264 M2 bodies store ribbons and particles in top-level arrays at header
 offsets `0x120` and `0x128`. Their exact build-12340 record sizes are 176 and
-476 bytes. They are not interchangeable with the later layouts exposed by the
-current `wow-m2` dependency.
+476 bytes. They are not interchangeable with later client layouts.
 
-The dependency parser therefore receives a temporary model-header view with
-texture-animation, ribbon, and particle arrays hidden. The original header is
-restored immediately afterward. Solarity's owned decoders then read the exact
-records directly from the original bytes. This in-place parser view avoids
-cloning an HD-sized M2 solely to bypass incompatible dependency structures.
+Solarity's owned decoders read the exact records directly from the archive
+bytes and allocate only the retained representation. Larger same-path HD
+models are not cloned into a second parser representation.
 
 The same isolation covers build-12340 attachments, their lookup, events,
-lights, cameras, and the camera lookup. `wow-m2 0.7` exposes later record shapes
-for those arrays; none may be used as an implicit conversion or fallback.
+lights, cameras, and the camera lookup. Later record shapes may not be used as
+an implicit conversion or fallback.
 
 ## Model attachments
 
-One build-12340 attachment is exactly 40 bytes, not the dependency's 48-byte
-record. It retains the identifier, `u16` bone index, otherwise-unknown `u16`
+One build-12340 attachment is exactly 40 bytes. It retains the identifier,
+`u16` bone index, otherwise-unknown `u16`
 word, bone-relative position, and byte-valued animated enable track. Bone and
 lookup references are validated during admission, while `0xFFFF` lookup holes
 remain absent rather than triggering an attachment-array search.
@@ -43,8 +40,8 @@ HD patch supplies a larger file at the same virtual path.
 
 ## Model cameras
 
-One build-12340 model camera is exactly 100 bytes, not the dependency's later
-108-byte structure. It retains the signed camera-role selector, field of view,
+One build-12340 model camera is exactly 100 bytes. It retains the signed
+camera-role selector, field of view,
 near/far clip planes, animated position and target offsets with their base
 vectors, and animated roll. It has no trailing later-version ID or flag word.
 
@@ -55,8 +52,8 @@ tracks into placement-local state rather than mutate the decoded M2.
 
 ## Model events
 
-One build-12340 event is 36 bytes, not the dependency's 44-byte range-based
-record. It stores a four-byte identifier, family-specific data word, 32-bit bone
+One build-12340 event is 36 bytes. It stores a four-byte identifier,
+family-specific data word, 32-bit bone
 reference, bone-relative position, and a 12-byte timestamp-only nested track.
 Both `0xFFFF` and `0xFFFF_FFFF` are retained as stock absent-bone sentinels.
 

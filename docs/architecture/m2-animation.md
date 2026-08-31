@@ -44,7 +44,7 @@ then consumes the next roll for its cycle count.
 The semantic key-bone table at header offset `0x34` contains signed 16-bit bone
 indices. Exactly `-1` denotes an absent role; all other negative values and
 nonnegative indices beyond the skeleton are invalid. Solarity decodes this
-table directly because `wow-m2 0.7` exposes it as unsigned.
+table directly and never widens it through an unsigned intermediate.
 
 Runtime consumers resolve a semantic role through the authored table only.
 They do not scan the bone array's `key_bone_id` fields to repair an absent or
@@ -53,9 +53,8 @@ malformed lookup.
 ## Owned header lookups
 
 The fixed-width lookup tables at `0x68` and `0x78` through `0x98` are decoded
-directly rather than retained from `wow-m2`. This prevents the dependency's
-malformed-header repair from silently converting stock data to an empty table
-and avoids duplicate lookup allocations for larger HD replacements.
+directly. Malformed headers cannot be repaired into empty tables, and larger HD
+replacements do not incur duplicate lookup allocations.
 
 Bone and texture lookups require an existing record. Replaceable-texture,
 texture-weight, and texture-transform lookups preserve only `0xFFFF` as an
@@ -81,8 +80,6 @@ M2/SKIN data, textures, mesh buffers, pipelines, and descriptor sets remain
 shared by asset identity. This keeps independent doodad variation behavior
 without duplicating large HD replacement assets or GPU resources.
 
-The dependency parser receives sequence, lookup, and bone header pairs hidden
-in the same temporary in-place view used for incompatible records. The owned
-decoder is the sole allocation for these arrays; the original header bytes are
-restored immediately, so an HD-sized model is neither cloned nor decoded into
-a redundant animation graph.
+The asset crate is the sole production decoder and allocation owner for these
+arrays. An HD-sized model is neither cloned nor decoded into a redundant
+animation graph.
