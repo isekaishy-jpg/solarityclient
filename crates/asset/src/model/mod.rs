@@ -10,8 +10,9 @@ mod m2_shared;
 mod model_blob;
 
 pub use animation::{
-    M2AnimationSet, M2Bone, M2ColorAnimation, M2Interpolation, M2RibbonEmitter, M2Sequence,
-    M2SequenceStorage, M2TextureTransform, M2TextureWeight, M2Track, M2TrackChannel,
+    M2AnimationSet, M2Bone, M2ColorAnimation, M2Interpolation, M2ParticleEmitter,
+    M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence, M2SequenceStorage, M2TextureTransform,
+    M2TextureWeight, M2Track, M2TrackChannel,
 };
 pub use m2_model::DecodedM2Model;
 pub(crate) use m2_shared::canonical_model_path;

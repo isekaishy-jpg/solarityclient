@@ -33,7 +33,26 @@ resources remain shared—including larger same-path HD replacements.
 
 ## Particles
 
-The incompatible dependency particle array is hidden for the same reason, but
-the exact 476-byte particle decoder is the next boundary. Simulation and scene
-queue work must wait for that owned representation; the generic placeholder
-module is not permission to infer fields from a later M2 version.
+The asset boundary owns the complete 476-byte WotLK particle record:
+
+- identifier, flags, bone-relative position, optional bone, packed texture
+  field, geometry-model path, and recursive child-emitter path;
+- blend, emitter, particle, head/tail, priority, flipbook, and
+  `ParticleColor.dbc` selectors;
+- eleven ordinary emitter-time tracks with full internal/external/alias/global
+  sequence resolution;
+- five header-less lifetime ramps for color, fixed16 alpha, two-axis scale, and
+  head/tail flipbook cells;
+- variation, tail, twinkle, drag, spin, tumble, wind, follow, spline, and
+  animated enable parameters.
+
+Under flag `0x10000000`, the 16-bit texture field contains three five-bit model
+texture indices. Otherwise it is one ordinary index. Admission expands and
+validates the applicable representation instead of assuming every emitter has
+one texture.
+
+Decoded emitters and their arrays are owned independently of the M2 source
+buffer. Particle simulation must own mutable instances per model placement;
+the decoded declarations, BLP sources, and GPU resources remain shared. HD
+patches follow the same MPQ precedence and virtual asset paths, so larger
+payloads do not create another record type or resource identity.

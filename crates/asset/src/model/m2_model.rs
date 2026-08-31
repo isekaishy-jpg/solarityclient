@@ -355,6 +355,16 @@ fn validate_material_animation_references(
             ));
         }
     }
+    for (particle_index, particle) in animations.particles().iter().enumerate() {
+        for texture_index in particle.texture_indices().into_iter().flatten() {
+            if usize::from(texture_index) >= blob.textures.len() {
+                return Err(model_decode(
+                    path,
+                    format!("particle {particle_index} references missing texture {texture_index}"),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

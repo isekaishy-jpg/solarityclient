@@ -6,9 +6,11 @@ use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath, AssetStore};
 
 mod material;
+mod particle;
 mod ribbon;
 
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
+pub use particle::{M2ParticleEmitter, M2ParticleLifetimeTrack};
 pub use ribbon::M2RibbonEmitter;
 
 /// Stock interpolation operation authored by one M2 track.
@@ -277,6 +279,7 @@ pub struct M2AnimationSet {
     texture_weights: Vec<M2TextureWeight>,
     texture_transforms: Vec<M2TextureTransform>,
     ribbons: Vec<M2RibbonEmitter>,
+    particles: Vec<M2ParticleEmitter>,
 }
 
 impl M2AnimationSet {
@@ -337,6 +340,14 @@ impl M2AnimationSet {
             &payloads,
             bones.len(),
         )?;
+        let particles = particle::decode_particles(
+            model_path,
+            model_bytes,
+            &globals,
+            &sequences,
+            &payloads,
+            bones.len(),
+        )?;
         Ok(Self {
             global_sequence_durations_ms: globals,
             sequences,
@@ -347,6 +358,7 @@ impl M2AnimationSet {
             texture_weights,
             texture_transforms,
             ribbons,
+            particles,
         })
     }
 
@@ -566,6 +578,12 @@ impl M2AnimationSet {
     #[must_use]
     pub fn ribbons(&self) -> &[M2RibbonEmitter] {
         &self.ribbons
+    }
+
+    /// Returns authored particle emitters in exact M2 table order.
+    #[must_use]
+    pub fn particles(&self) -> &[M2ParticleEmitter] {
+        &self.particles
     }
 
     /// Returns the number of model bones without exposing dependency storage.

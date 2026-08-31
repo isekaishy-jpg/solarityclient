@@ -435,6 +435,177 @@ fn m2_ribbon_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// Version-264 particles retain the entire 476-byte record and both track domains.
+#[test]
+fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn Error>> {
+    let model = animated_particle_m2_bytes()?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Particle.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\Particle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Particle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let particle = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle is absent")?;
+
+    assert_eq!(particle.id(), 0x5041_5254);
+    assert_eq!(particle.flags(), 0x9000_8042);
+    assert_eq!(particle.position(), glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(particle.bone_index(), Some(0));
+    assert_eq!(particle.texture_id(), Some(0));
+    assert!(particle.uses_multiple_textures());
+    assert_eq!(particle.texture_indices(), [Some(0), Some(0), Some(0)]);
+    assert_eq!(
+        particle.geometry_model_path().map(AssetPath::as_str),
+        Some("SPELLS\\PARTICLEGEOMETRY.M2")
+    );
+    assert_eq!(
+        particle.child_emitter_model_path().map(AssetPath::as_str),
+        Some("SPELLS\\CHILDEMITTER.M2")
+    );
+    assert_eq!((particle.blending_type(), particle.emitter_type()), (2, 3));
+    assert_eq!(particle.particle_color_index(), 12);
+    assert_eq!((particle.particle_type(), particle.head_or_tail()), (1, 2));
+    assert_eq!(particle.priority_plane(), -4);
+    assert_eq!(
+        (particle.texture_rows(), particle.texture_columns()),
+        (4, 8)
+    );
+
+    assert_eq!(
+        particle.emission_speed().channels()[0].values(),
+        &[2.0, 4.0]
+    );
+    assert_eq!(
+        particle.speed_variation().channels()[0].values(),
+        &[0.1, 0.2]
+    );
+    assert_eq!(
+        particle.vertical_range().channels()[0].values(),
+        &[0.3, 0.4]
+    );
+    assert_eq!(
+        particle.horizontal_range().channels()[0].values(),
+        &[0.5, 0.6]
+    );
+    assert_eq!(particle.gravity().channels()[0].values(), &[9.0, 8.0]);
+    assert_eq!(particle.lifespan().channels()[0].values(), &[1.0, 2.0]);
+    assert_eq!(particle.lifespan_variation(), 0.25);
+    assert_eq!(
+        particle.emission_rate().channels()[0].values(),
+        &[10.0, 20.0]
+    );
+    assert_eq!(particle.emission_rate_variation(), 0.5);
+    assert_eq!(
+        particle.emission_area_width().channels()[0].values(),
+        &[3.0, 4.0]
+    );
+    assert_eq!(
+        particle.emission_area_length().channels()[0].values(),
+        &[5.0, 6.0]
+    );
+    assert_eq!(particle.z_source().channels()[0].values(), &[7.0, 8.0]);
+
+    assert_eq!(particle.color().timestamps(), &[0, u16::MAX]);
+    assert_eq!(
+        particle.color().values(),
+        &[
+            glam::Vec3::new(1.0, 0.5, 0.25),
+            glam::Vec3::new(0.0, 1.0, 0.5)
+        ]
+    );
+    assert_eq!(particle.alpha().values(), &[1.0, 16_384.0 / 32_767.0]);
+    assert_eq!(
+        particle.scale().values(),
+        &[glam::Vec2::new(1.0, 2.0), glam::Vec2::new(3.0, 4.0)]
+    );
+    assert_eq!(particle.scale_variation(), glam::Vec2::new(0.25, 0.5));
+    assert_eq!(particle.head_uv_animation().values(), &[1, 2]);
+    assert_eq!(particle.tail_uv_animation().values(), &[3, 4]);
+
+    assert_eq!(particle.tail_length(), 1.5);
+    assert_eq!(particle.twinkle_speed(), 2.5);
+    assert_eq!(particle.twinkle_percent(), 0.75);
+    assert_eq!(particle.twinkle_scale(), glam::Vec2::new(0.5, 1.5));
+    assert_eq!(particle.inherit_velocity_scale(), 0.6);
+    assert_eq!(particle.drag(), 0.7);
+    assert_eq!(particle.base_spin(), 0.8);
+    assert_eq!(particle.base_spin_variation(), 0.9);
+    assert_eq!(particle.spin_speed(), 1.1);
+    assert_eq!(particle.spin_speed_variation(), 1.2);
+    assert_eq!(
+        particle.tumble(),
+        (
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            glam::Vec3::new(4.0, 5.0, 6.0)
+        )
+    );
+    assert_eq!(particle.wind_vector(), glam::Vec3::new(7.0, 8.0, 9.0));
+    assert_eq!(particle.wind_time(), 1.3);
+    assert_eq!(particle.follow_speed(), (1.4, 1.6));
+    assert_eq!(particle.follow_scale(), (1.5, 1.7));
+    assert_eq!(
+        particle.spline_points(),
+        &[
+            glam::Vec3::new(1.0, 3.0, 5.0),
+            glam::Vec3::new(2.0, 4.0, 6.0)
+        ]
+    );
+    assert_eq!(particle.enabled().channels()[0].values(), &[1, 0]);
+    Ok(())
+}
+
+/// Packed multi-texture slots are each validated against the model texture table.
+#[test]
+fn m2_particle_multi_texture_references_do_not_receive_a_fallback() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_particle_m2_bytes()?;
+    let particle_offset = m2_array_offset(&model, 0x128)?;
+    model[particle_offset + 0x16..particle_offset + 0x18].copy_from_slice(&2_u16.to_le_bytes());
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticle.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\BadParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\BadParticle.m2")?;
+
+    let result = DecodedM2Model::load(&mut store, &path);
+    assert!(
+        matches!(
+        &result,
+        Err(AssetError::ModelDecode { path: failed, message })
+            if failed == &path && message.contains("particle 0 references missing texture 2")
+        ),
+        "unexpected particle validation result: {result:?}"
+    );
+    Ok(())
+}
+
 /// Stock keeps the model usable while disabling a missing external sequence.
 #[test]
 fn missing_external_m2_animation_disables_only_its_sequence() -> Result<(), Box<dyn Error>> {
@@ -1000,6 +1171,141 @@ fn animated_ribbon_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 
+/// Adds one complete 476-byte WotLK particle record to the internal sequence fixture.
+fn animated_particle_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = animated_m2_bytes()?;
+    let particle_offset = bytes.len();
+    bytes.resize(particle_offset + 476, 0);
+    bytes[particle_offset..particle_offset + 4].copy_from_slice(&0x5041_5254_u32.to_le_bytes());
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x9000_8042_u32.to_le_bytes());
+    bytes[particle_offset + 8..particle_offset + 20].copy_from_slice(&f32_values(&[1.0, 2.0, 3.0]));
+    bytes[particle_offset + 0x14..particle_offset + 0x16].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[particle_offset + 0x16..particle_offset + 0x18].copy_from_slice(&0_u16.to_le_bytes());
+
+    let geometry_path = bytes.len();
+    bytes.extend_from_slice(b"Spells\\ParticleGeometry.m2\0");
+    let geometry_path_length = u32::try_from(bytes.len() - geometry_path)?;
+    set_header_array(
+        &mut bytes,
+        particle_offset + 0x18,
+        geometry_path_length,
+        geometry_path,
+    )?;
+    let child_path = bytes.len();
+    bytes.extend_from_slice(b"Spells\\ChildEmitter.m2\0");
+    let child_path_length = u32::try_from(bytes.len() - child_path)?;
+    set_header_array(
+        &mut bytes,
+        particle_offset + 0x20,
+        child_path_length,
+        child_path,
+    )?;
+
+    bytes[particle_offset + 0x28] = 2;
+    bytes[particle_offset + 0x29] = 3;
+    bytes[particle_offset + 0x2a..particle_offset + 0x2c].copy_from_slice(&12_u16.to_le_bytes());
+    bytes[particle_offset + 0x2c] = 1;
+    bytes[particle_offset + 0x2d] = 2;
+    bytes[particle_offset + 0x2e..particle_offset + 0x30].copy_from_slice(&(-4_i16).to_le_bytes());
+    bytes[particle_offset + 0x30..particle_offset + 0x32].copy_from_slice(&4_u16.to_le_bytes());
+    bytes[particle_offset + 0x32..particle_offset + 0x34].copy_from_slice(&8_u16.to_le_bytes());
+
+    for (track_offset, values) in [
+        (0x034, [2.0, 4.0]),
+        (0x048, [0.1, 0.2]),
+        (0x05c, [0.3, 0.4]),
+        (0x070, [0.5, 0.6]),
+        (0x084, [9.0, 8.0]),
+        (0x098, [1.0, 2.0]),
+        (0x0b0, [10.0, 20.0]),
+        (0x0c8, [3.0, 4.0]),
+        (0x0dc, [5.0, 6.0]),
+        (0x0f0, [7.0, 8.0]),
+    ] {
+        append_linear_track(
+            &mut bytes,
+            particle_offset + track_offset,
+            &[0, 1_000],
+            &f32_values(&values),
+            4,
+        )?;
+    }
+    bytes[particle_offset + 0x0ac..particle_offset + 0x0b0]
+        .copy_from_slice(&0.25_f32.to_le_bytes());
+    bytes[particle_offset + 0x0c4..particle_offset + 0x0c8].copy_from_slice(&0.5_f32.to_le_bytes());
+
+    append_lifetime_track(
+        &mut bytes,
+        particle_offset + 0x104,
+        &[0, u16::MAX],
+        &f32_values(&[1.0, 0.5, 0.25, 0.0, 1.0, 0.5]),
+        12,
+    )?;
+    append_lifetime_track(
+        &mut bytes,
+        particle_offset + 0x114,
+        &[0, u16::MAX],
+        &i16_values(&[32_767, 16_384]),
+        2,
+    )?;
+    append_lifetime_track(
+        &mut bytes,
+        particle_offset + 0x124,
+        &[0, u16::MAX],
+        &f32_values(&[1.0, 2.0, 3.0, 4.0]),
+        8,
+    )?;
+    bytes[particle_offset + 0x134..particle_offset + 0x13c]
+        .copy_from_slice(&f32_values(&[0.25, 0.5]));
+    append_lifetime_track(
+        &mut bytes,
+        particle_offset + 0x13c,
+        &[0, u16::MAX],
+        &[1, 0, 2, 0],
+        2,
+    )?;
+    append_lifetime_track(
+        &mut bytes,
+        particle_offset + 0x14c,
+        &[0, u16::MAX],
+        &[3, 0, 4, 0],
+        2,
+    )?;
+
+    for (relative, value) in [
+        (0x15c, 1.5_f32),
+        (0x160, 2.5),
+        (0x164, 0.75),
+        (0x170, 0.6),
+        (0x174, 0.7),
+        (0x178, 0.8),
+        (0x17c, 0.9),
+        (0x180, 1.1),
+        (0x184, 1.2),
+        (0x1ac, 1.3),
+        (0x1b0, 1.4),
+        (0x1b4, 1.5),
+        (0x1b8, 1.6),
+        (0x1bc, 1.7),
+    ] {
+        bytes[particle_offset + relative..particle_offset + relative + 4]
+            .copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[particle_offset + 0x168..particle_offset + 0x170]
+        .copy_from_slice(&f32_values(&[0.5, 1.5]));
+    bytes[particle_offset + 0x188..particle_offset + 0x1a0]
+        .copy_from_slice(&f32_values(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    bytes[particle_offset + 0x1a0..particle_offset + 0x1ac]
+        .copy_from_slice(&f32_values(&[7.0, 8.0, 9.0]));
+
+    let spline_points = bytes.len();
+    bytes.extend_from_slice(&f32_values(&[1.0, 3.0, 5.0, 2.0, 4.0, 6.0]));
+    set_header_array(&mut bytes, particle_offset + 0x1c0, 2, spline_points)?;
+    append_linear_track(&mut bytes, particle_offset + 0x1c8, &[0, 1_000], &[1, 0], 1)?;
+    set_header_array(&mut bytes, 0x128, 1, particle_offset)?;
+    Ok(bytes)
+}
+
 /// Appends one sequence channel and patches its 20-byte nested track header.
 fn append_linear_track(
     bytes: &mut Vec<u8>,
@@ -1038,6 +1344,38 @@ fn append_linear_track(
     bytes[track_offset + 12..track_offset + 16].copy_from_slice(&1_u32.to_le_bytes());
     bytes[track_offset + 16..track_offset + 20]
         .copy_from_slice(&u32::try_from(value_refs)?.to_le_bytes());
+    Ok(())
+}
+
+/// Appends one header-less WotLK particle lifetime ramp.
+fn append_lifetime_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    timestamps: &[u16],
+    values: &[u8],
+    value_stride: usize,
+) -> Result<(), Box<dyn Error>> {
+    if values.len() != timestamps.len() * value_stride {
+        return Err("fixture lifetime-track value count differs from timestamps".into());
+    }
+    let timestamp_data = bytes.len();
+    for timestamp in timestamps {
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+    }
+    let value_data = bytes.len();
+    bytes.extend_from_slice(values);
+    set_header_array(
+        bytes,
+        track_offset,
+        u32::try_from(timestamps.len())?,
+        timestamp_data,
+    )?;
+    set_header_array(
+        bytes,
+        track_offset + 8,
+        u32::try_from(timestamps.len())?,
+        value_data,
+    )?;
     Ok(())
 }
 
