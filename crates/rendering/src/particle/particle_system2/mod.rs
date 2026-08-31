@@ -6,6 +6,8 @@
 
 mod lifetime;
 mod pose;
+mod random;
 
 pub use lifetime::{M2ParticleLifetimePose, M2ParticleLifetimePoseError};
 pub use pose::M2ParticlePose;
+pub use random::M2ParticleRandom;
