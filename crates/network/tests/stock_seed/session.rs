@@ -483,6 +483,23 @@ fn assert_create_player_update(
     );
     assert_eq!(movement.orientation(), Some(0.0));
     assert_eq!(movement.movement_flags(), Some(0));
+    assert_eq!(
+        movement
+            .speeds()
+            .ok_or("living speeds were absent")?
+            .values(),
+        [
+            1.0,
+            70.0,
+            4.5,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            f32::from_bits(0x4049_0FD0),
+            0.0,
+        ]
+    );
     assert_eq!(fields.len(), 6);
     assert!(fields.iter().any(|field| field.index() == 2));
     assert!(

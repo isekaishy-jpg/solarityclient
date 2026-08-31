@@ -3,7 +3,7 @@
 use shipyard::{EntityId, World};
 use thiserror::Error;
 
-use crate::movement::WorldTransform;
+use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
 use crate::player::{LocalPlayer, PlayerIdentity};
 use crate::unit::UnitPresentation;
@@ -109,6 +109,16 @@ impl ActiveWorld {
         self.objects.find(guid)
     }
 
+    /// Returns the latest complete living movement state for a loaded GUID.
+    #[must_use]
+    pub fn movement_state(&self, guid: u64) -> Option<WorldMovementState> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&WorldMovementState>(entity)
+            .map(|movement| **movement)
+            .ok()
+    }
+
     /// Returns immutable access to component storage for system dispatch.
     #[must_use]
     pub const fn storage(&self) -> &World {
@@ -189,6 +199,21 @@ impl ActiveWorld {
     ) -> Result<(), WorldStateError> {
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (transform,));
+        Ok(())
+    }
+
+    /// Replaces the complete authoritative living movement state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError`] when the server references an unknown GUID.
+    pub fn update_movement(
+        &mut self,
+        guid: u64,
+        movement: WorldMovementState,
+    ) -> Result<(), WorldStateError> {
+        let entity = self.require_entity(guid)?;
+        self.storage.add_component(entity, (movement,));
         Ok(())
     }
 

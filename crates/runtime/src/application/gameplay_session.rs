@@ -2,7 +2,8 @@
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldStateError, WorldTransform,
+    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldMovementSpeeds, WorldMovementState,
+    WorldStateError, WorldTransform,
 };
 use solarity_network::{
     InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
@@ -118,6 +119,9 @@ pub(crate) fn apply_object_updates(
                 if let Some(transform) = movement_transform(*movement) {
                     world.update_transform(*guid, transform)?;
                 }
+                if let Some(movement) = movement_state(*movement) {
+                    world.update_movement(*guid, movement)?;
+                }
             }
             WorldObjectUpdate::Create {
                 guid,
@@ -132,6 +136,9 @@ pub(crate) fn apply_object_updates(
                     movement_transform(*movement),
                     fields.iter().map(|field| (field.index(), field.value())),
                 )?;
+                if let Some(movement) = movement_state(*movement) {
+                    world.update_movement(*guid, movement)?;
+                }
                 project_object_fields(
                     world,
                     *guid,
@@ -147,6 +154,13 @@ pub(crate) fn apply_object_updates(
         }
     }
     Ok(())
+}
+
+fn movement_state(movement: ObjectMovementUpdate) -> Option<WorldMovementState> {
+    Some(WorldMovementState::new(
+        movement.movement_flags()?,
+        WorldMovementSpeeds::new(movement.speeds()?.values()),
+    ))
 }
 
 fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> {

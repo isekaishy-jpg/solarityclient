@@ -23,8 +23,8 @@ pub use character_directory::{
 };
 pub use liveness::WorldLivenessPacketError;
 pub use object_update::{
-    ObjectFieldUpdate, ObjectMovementUpdate, ObjectUpdateError, WorldObjectKind, WorldObjectUpdate,
-    WorldObjectUpdateBatch,
+    ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectUpdateError,
+    WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
 };
 pub use server_packet::WorldServerPacket;
 pub use world_entry::{

@@ -30,9 +30,10 @@ pub use protocol::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation,
     CharacterLoginRejection, CharacterLoginRejectionReason, CharacterPet, CharacterRace,
-    ObjectFieldUpdate, ObjectMovementUpdate, ObjectUpdateError, WorldEntryPacketError,
-    WorldLivenessPacketError, WorldLocation, WorldObjectKind, WorldObjectUpdate,
-    WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError, WorldTimeSpeed,
+    ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectUpdateError,
+    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldObjectKind,
+    WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
+    WorldTimeSpeed,
 };
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};

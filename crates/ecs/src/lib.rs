@@ -18,7 +18,7 @@ mod vehicle;
 mod view;
 mod world;
 
-pub use movement::WorldTransform;
+pub use movement::{WorldMovementSpeeds, WorldMovementState, WorldTransform};
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 pub use player::{
     LocalPlayer, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerAppearance, PlayerEquipment,

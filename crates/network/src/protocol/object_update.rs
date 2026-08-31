@@ -80,6 +80,7 @@ impl ObjectFieldUpdate {
 pub struct ObjectMovementUpdate {
     update_flags: u16,
     movement_flags: Option<u64>,
+    speeds: Option<ObjectMovementSpeeds>,
     position: Option<[f32; 3]>,
     orientation: Option<f32>,
 }
@@ -95,6 +96,12 @@ impl ObjectMovementUpdate {
     #[must_use]
     pub const fn movement_flags(self) -> Option<u64> {
         self.movement_flags
+    }
+
+    /// Returns all nine ordered speed values supplied by a living block.
+    #[must_use]
+    pub const fn speeds(self) -> Option<ObjectMovementSpeeds> {
+        self.speeds
     }
 
     /// Returns the world position when this block supplies one.
@@ -113,6 +120,21 @@ impl ObjectMovementUpdate {
     #[must_use]
     pub const fn is_self(self) -> bool {
         self.update_flags & UPDATE_FLAG_SELF != 0
+    }
+}
+
+/// The complete speed vector appended to a living object update.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObjectMovementSpeeds {
+    values: [f32; 9],
+}
+
+impl ObjectMovementSpeeds {
+    /// Returns walk, run, run-back, swim, swim-back, flight, flight-back,
+    /// turn-rate, and pitch-rate values in exact wire order.
+    #[must_use]
+    pub const fn values(self) -> [f32; 9] {
+        self.values
     }
 }
 
@@ -422,6 +444,7 @@ impl<'a> UpdateCursor<'a> {
             return Err(self.error("movement update contains unknown flags"));
         }
         let mut movement_flags = None;
+        let mut speeds = None;
         let mut position = None;
         let mut orientation = None;
         if update_flags & UPDATE_FLAG_LIVING != 0 {
@@ -448,7 +471,19 @@ impl<'a> UpdateCursor<'a> {
             if flags & MOVEMENT_SPLINE_ELEVATION != 0 {
                 self.skip(4, "spline elevation is truncated")?;
             }
-            self.skip(36, "movement speeds are truncated")?;
+            speeds = Some(ObjectMovementSpeeds {
+                values: [
+                    self.read_f32("walk speed is truncated")?,
+                    self.read_f32("run speed is truncated")?,
+                    self.read_f32("run-back speed is truncated")?,
+                    self.read_f32("swim speed is truncated")?,
+                    self.read_f32("swim-back speed is truncated")?,
+                    self.read_f32("flight speed is truncated")?,
+                    self.read_f32("flight-back speed is truncated")?,
+                    self.read_f32("turn rate is truncated")?,
+                    self.read_f32("pitch rate is truncated")?,
+                ],
+            });
             if flags & MOVEMENT_SPLINE_ENABLED != 0 {
                 self.read_spline()?;
             }
@@ -483,6 +518,7 @@ impl<'a> UpdateCursor<'a> {
         Ok(ObjectMovementUpdate {
             update_flags,
             movement_flags,
+            speeds,
             position,
             orientation,
         })
