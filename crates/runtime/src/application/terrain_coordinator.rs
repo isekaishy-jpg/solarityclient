@@ -3,7 +3,7 @@
 use solarity_asset::{
     AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     DecodedTerrainTile, M2ModelCache, MapCatalog, TerrainDoodadPlacement, TerrainMap,
-    TerrainTileIndex, WmoModelCache,
+    TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
@@ -11,19 +11,20 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    M2CollisionError, M2CollisionScene, PlacedM2Collision, PlayerCameraObstructionError,
-    PlayerCameraPose, PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit,
-    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
-    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
-    WorldModelLiquidSample, WorldModelLiquidScene, resolve_player_camera_obstruction,
-    resolve_player_camera_water_collision,
+    M2CollisionError, M2CollisionScene, PlayerCameraObstructionError, PlayerCameraPose,
+    PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
+    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
+    WorldModelCollisionScene, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
+    resolve_player_camera_obstruction, resolve_player_camera_water_collision,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub(in crate::application) mod m2_residency;
 pub(in crate::application) mod world_model_residency;
 
+use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
 use world_model_residency::{ResidentWorldModelScene, prepare_world_models};
 
 /// Failure while synchronizing authored terrain with authoritative world state.
@@ -53,6 +54,12 @@ pub enum RuntimeTerrainError {
     /// A referenced M2 could not enter strict placed collision geometry.
     #[error(transparent)]
     M2Collision(#[from] M2CollisionError),
+    /// A MODF selector references no authored WMO doodad set.
+    #[error(transparent)]
+    WorldModelDoodadSet(#[from] WorldModelDoodadSetError),
+    /// An admitted MDDF/MODD transform cannot produce an invertible matrix.
+    #[error("placed M2 transform is invalid")]
+    InvalidM2Placement,
     /// One authored placement identity disagrees with another MODF record.
     #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
     ConflictingWorldModelPlacement {
@@ -384,6 +391,24 @@ impl RuntimeTerrainCoordinator {
             .map_or(0, |tile| tile.m2_collision.instance_count())
     }
 
+    /// Returns all resident MDDF and nested MODD presentation instances.
+    #[must_use]
+    pub fn resident_m2_count(&self) -> usize {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map_or(0, |tile| tile.m2_scene.placement_count())
+    }
+
+    /// Returns distinct M2/SKIN generations shared by all placed instances.
+    #[must_use]
+    pub fn resident_m2_source_count(&self) -> usize {
+        self.active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map_or(0, |tile| tile.m2_scene.source_count())
+    }
+
     /// Traces dedicated collision triangles in resident placed M2s.
     ///
     /// # Errors
@@ -530,6 +555,7 @@ struct ResidentTerrainTile {
     mesh: TerrainTileMeshPlan,
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
+    m2_scene: ResidentM2Scene,
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
     world_model_liquid: WorldModelLiquidScene,
@@ -554,15 +580,24 @@ impl ResidentTerrainTile {
         let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
-        let m2_collision = prepare_doodads(&decoded, model_cache, store)?;
-        let (world_models, world_model_collision, world_model_liquid) =
-            prepare_world_models(&decoded, world_model_cache, texture_cache, store)?;
+        let mut m2_builder = ResidentM2SceneBuilder::new();
+        prepare_doodads(&decoded, &mut m2_builder, model_cache, store)?;
+        let (world_models, world_model_collision, world_model_liquid) = prepare_world_models(
+            &decoded,
+            world_model_cache,
+            model_cache,
+            texture_cache,
+            &mut m2_builder,
+            store,
+        )?;
+        let (m2_scene, m2_collision) = m2_builder.finish();
         Ok(Self {
             decoded,
             textures,
             mesh,
             collision,
             liquid,
+            m2_scene,
             m2_collision,
             world_model_collision,
             world_model_liquid,
@@ -577,9 +612,10 @@ impl ResidentTerrainTile {
 
 fn prepare_doodads(
     tile: &DecodedTerrainTile,
+    builder: &mut ResidentM2SceneBuilder,
     cache: &mut M2ModelCache,
     store: &mut AssetStore,
-) -> Result<M2CollisionScene, RuntimeTerrainError> {
+) -> Result<(), RuntimeTerrainError> {
     let mut referenced = vec![false; tile.doodads().len()];
     for reference in tile
         .chunks()
@@ -590,7 +626,6 @@ fn prepare_doodads(
         referenced[*reference as usize] = true;
     }
 
-    let mut scene = M2CollisionScene::new();
     let mut placements = HashMap::<u32, usize>::new();
     for (index, placement) in tile.doodads().iter().enumerate() {
         if !referenced[index] {
@@ -604,15 +639,9 @@ fn prepare_doodads(
             }
             continue;
         }
-        let model = cache.load(store, placement.path())?;
-        scene.add(PlacedM2Collision::prepare(
-            model,
-            glam::Vec3::from_array(placement.position()),
-            glam::Vec3::from_array(placement.rotation()),
-            placement.scale(),
-        )?);
+        builder.add_terrain_doodad(placement, cache, store)?;
     }
-    Ok(scene)
+    Ok(())
 }
 
 fn same_doodad_placement(left: &TerrainDoodadPlacement, right: &TerrainDoodadPlacement) -> bool {

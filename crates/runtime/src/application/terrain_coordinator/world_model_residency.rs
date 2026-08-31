@@ -6,7 +6,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use solarity_asset::{
     AssetPath, AssetStore, BlpTextureCache, BlpTextureSource, DecodedTerrainTile,
-    DecodedWorldModel, TerrainWorldModelPlacement, WmoModelCache, WorldModelShader,
+    DecodedWorldModel, M2ModelCache, TerrainWorldModelPlacement, WmoModelCache, WorldModelShader,
 };
 use solarity_systems::{
     PlacedWorldModelCollision, PlacedWorldModelLiquid, WorldModelCollisionScene,
@@ -14,6 +14,7 @@ use solarity_systems::{
 };
 
 use super::RuntimeTerrainError;
+use super::m2_residency::ResidentM2SceneBuilder;
 
 /// One required MapObj stage after ordinary archive resolution.
 #[derive(Clone)]
@@ -107,7 +108,9 @@ impl ResidentWorldModelScene {
 pub(super) fn prepare_world_models(
     tile: &DecodedTerrainTile,
     model_cache: &mut WmoModelCache,
+    m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
+    m2_builder: &mut ResidentM2SceneBuilder,
     store: &mut AssetStore,
 ) -> Result<
     (
@@ -178,6 +181,15 @@ pub(super) fn prepare_world_models(
             position,
             rotation_degrees,
         });
+        for doodad_index in source
+            .model()
+            .active_doodad_indices(placement.doodad_set())?
+        {
+            // The active-index resolver and root admission jointly prove that
+            // this table lookup is in range.
+            let doodad = &source.model().doodads()[doodad_index];
+            m2_builder.add_world_model_doodad(placement, doodad_index, doodad, m2_cache, store)?;
+        }
     }
     Ok((result, collision, liquids))
 }

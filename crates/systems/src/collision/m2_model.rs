@@ -49,6 +49,26 @@ impl PlacedM2Collision {
     ) -> Result<Self, M2CollisionError> {
         let transform = placement_transform(position, rotation_degrees, scale)
             .map_err(|_| M2CollisionError::InvalidPlacement)?;
+        Self::prepare_transform(model, transform)
+    }
+
+    /// Creates a placement from an already composed local-to-world matrix.
+    ///
+    /// This entry point admits WMO-owned MODD instances, whose root-local
+    /// quaternion must be composed with the owning MODF transform before the
+    /// shared M2 collision mesh can be queried.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2CollisionError::InvalidPlacement`] when the matrix is
+    /// non-finite, singular, or otherwise cannot produce finite bounds.
+    pub fn prepare_transform(
+        model: Arc<DecodedM2Model>,
+        transform: Mat4,
+    ) -> Result<Self, M2CollisionError> {
+        if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
+            return Err(M2CollisionError::InvalidPlacement);
+        }
         let inverse_transform = transform.inverse();
         if !inverse_transform.is_finite() {
             return Err(M2CollisionError::InvalidPlacement);

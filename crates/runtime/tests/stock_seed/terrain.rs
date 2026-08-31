@@ -229,7 +229,9 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     terrain.synchronize(Some(&world))?;
     assert_eq!(terrain.resident_world_model_count(), 1);
     assert_eq!(terrain.resident_world_model_source_count(), 1);
-    assert_eq!(terrain.resident_m2_collision_count(), 1);
+    assert_eq!(terrain.resident_m2_count(), 2);
+    assert_eq!(terrain.resident_m2_source_count(), 1);
+    assert_eq!(terrain.resident_m2_collision_count(), 2);
     let m2_hit = terrain
         .trace_m2_camera(
             Vec3::new(-0.25, -0.25, 1.0),
@@ -264,6 +266,8 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);
     assert_eq!(terrain.resident_world_model_source_count(), 0);
+    assert_eq!(terrain.resident_m2_count(), 0);
+    assert_eq!(terrain.resident_m2_source_count(), 0);
     assert_eq!(terrain.resident_m2_collision_count(), 0);
     Ok(())
 }
@@ -523,6 +527,9 @@ fn root_wmo_fixture() -> Vec<u8> {
     push_wmo_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     let mut header = vec![0_u8; 64];
     set_u32(&mut header, 4, 1);
+    set_u32(&mut header, 16, 1);
+    set_u32(&mut header, 20, 1);
+    set_u32(&mut header, 24, 1);
     set_u32(&mut header, 32, 42);
     set_vec3(&mut header, 36, [-5.0, -5.0, -1.0]);
     set_vec3(&mut header, 48, [5.0, 5.0, 3.0]);
@@ -535,6 +542,20 @@ fn root_wmo_fixture() -> Vec<u8> {
     }
     group.extend_from_slice(&(-1_i32).to_le_bytes());
     push_wmo_chunk(&mut bytes, *b"IGOM", &group);
+    push_wmo_chunk(&mut bytes, *b"NDOM", b"World\\Fixture\\Collision.mdx\0");
+    let mut doodad = Vec::new();
+    doodad.extend_from_slice(&0_u32.to_le_bytes());
+    for value in [10.0_f32, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0] {
+        doodad.extend_from_slice(&value.to_le_bytes());
+    }
+    doodad.extend_from_slice(&1.0_f32.to_le_bytes());
+    doodad.extend_from_slice(&[u8::MAX; 4]);
+    push_wmo_chunk(&mut bytes, *b"DDOM", &doodad);
+    let mut set = [0_u8; 32];
+    let name = b"Set_$DefaultGlobal";
+    set[..name.len()].copy_from_slice(name);
+    set_u32(&mut set, 24, 1);
+    push_wmo_chunk(&mut bytes, *b"SDOM", &set);
     bytes
 }
 
