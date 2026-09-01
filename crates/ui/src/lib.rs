@@ -62,7 +62,8 @@ pub use widget::{
     UiTextureStatePlan,
 };
 pub use world::{
-    UiPlayerProgressionState, UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiWorldState,
+    UiZonePvpType, UiZoneState,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

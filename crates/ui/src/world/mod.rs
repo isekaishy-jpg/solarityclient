@@ -4,5 +4,6 @@ mod game_ui;
 mod state;
 
 pub use state::{
-    UiPlayerProgressionState, UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiWorldState,
+    UiZonePvpType, UiZoneState,
 };

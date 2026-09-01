@@ -4,11 +4,11 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan,
-    UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerProgressionState, UiPlayerState,
-    UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan,
-    UiTextureStatePlan,
+    FontCatalog, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan,
+    UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
+    UiPlayerProgressionState, UiPlayerState, UiRegionStatePlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime,
+    UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -774,6 +774,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_MONEY = GetMoney()
     INITIAL_XP = UnitXP("player")
     INITIAL_XP_MAX = UnitXPMax("player")
+    INITIAL_FACTION, INITIAL_FACTION_NAME = UnitFactionGroup("player")
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -795,6 +796,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let action_bar = environment.action_bar_state();
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
+    world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
         &frames,
@@ -814,6 +816,24 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         bundle.lua().globals().get::<f64>("INITIAL_XP_MAX")?,
         1_000_000.0
+    );
+    assert_eq!(
+        bundle.lua().globals().get::<String>("INITIAL_FACTION")?,
+        "Horde"
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .globals()
+            .get::<String>("INITIAL_FACTION_NAME")?,
+        "Horde"
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return select('#', UnitFactionGroup('target'))")
+            .eval::<u8>()?,
+        0
     );
     assert_eq!(
         bundle

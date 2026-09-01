@@ -10,10 +10,11 @@ use solarity_asset::{
 };
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiBindingAssignments,
-    UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiPlayerProgressionState, UiPlayerState, UiRegionStatePlan, UiResourceContent,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiZoneState,
+    UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan, UiLayoutPlan, UiManifestKind,
+    UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState,
+    UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile, UiTexturePlan, UiTextureStatePlan,
+    UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -57,6 +58,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 world.set_player_progression(UiPlayerProgressionState::new(
                     player_xp,
                     next_level_xp,
+                ));
+                // This offline executor uses one explicit, internally
+                // consistent player identity fixture. Runtime composition
+                // publishes faction from the selected character's race row.
+                world.set_player_faction(UiPlayerFactionState::new(
+                    UiFactionGroup::Alliance,
+                    "Alliance",
                 ));
                 // Empty labels and no PvP classification are an explicit
                 // pre-map update, matching the temporal state before the

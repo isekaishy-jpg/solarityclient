@@ -90,6 +90,7 @@ fn register_frame_globals(
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
+    let unit_faction = world.clone();
     let zone_text = world.clone();
     let sub_zone_text = world.clone();
     let zone_pvp = world.clone();
@@ -132,6 +133,21 @@ fn register_frame_globals(
                 mlua::Error::runtime("UnitXPMax requires authoritative local-player progression")
             })?;
             Ok(f64::from(progression.next_level_experience()))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitFactionGroup",
+        lua.create_function(move |lua, unit: String| {
+            if unit != "player" {
+                return Ok(MultiValue::new());
+            }
+            let faction = unit_faction.player_faction().ok_or_else(|| {
+                mlua::Error::runtime("UnitFactionGroup requires authoritative player faction")
+            })?;
+            let mut values = MultiValue::new();
+            values.push_back(Value::String(lua.create_string(faction.group().as_str())?));
+            values.push_back(Value::String(lua.create_string(faction.name())?));
+            Ok(values)
         })?,
     )?;
     globals.raw_set(

@@ -53,6 +53,56 @@ impl UiPlayerProgressionState {
     }
 }
 
+/// Stable faction token returned by `UnitFactionGroup`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiFactionGroup {
+    /// Alliance player races.
+    Alliance,
+    /// Horde player races.
+    Horde,
+}
+
+impl UiFactionGroup {
+    /// Returns the nonlocalized token used by stock FrameXML branches.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Alliance => "Alliance",
+            Self::Horde => "Horde",
+        }
+    }
+}
+
+/// Local-player faction identity after race-catalog composition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiPlayerFactionState {
+    group: UiFactionGroup,
+    name: String,
+}
+
+impl UiPlayerFactionState {
+    /// Creates a faction projection with its selected-locale display name.
+    #[must_use]
+    pub fn new(group: UiFactionGroup, name: impl Into<String>) -> Self {
+        Self {
+            group,
+            name: name.into(),
+        }
+    }
+
+    /// Returns the stable Alliance/Horde identity.
+    #[must_use]
+    pub const fn group(&self) -> UiFactionGroup {
+        self.group
+    }
+
+    /// Returns the selected-locale faction display name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 /// Territory classification returned by build-12340's `GetZonePVPInfo`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiZonePvpType {
@@ -160,6 +210,7 @@ pub struct UiWorldState {
 struct UiWorldStateInner {
     player: Cell<Option<UiPlayerState>>,
     player_progression: Cell<Option<UiPlayerProgressionState>>,
+    player_faction: RefCell<Option<UiPlayerFactionState>>,
     zone: RefCell<Option<UiZoneState>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
@@ -182,6 +233,11 @@ impl UiWorldState {
         self.inner.player_progression.set(Some(progression));
     }
 
+    /// Publishes faction identity composed from the local player's race row.
+    pub fn set_player_faction(&self, faction: UiPlayerFactionState) {
+        *self.inner.player_faction.borrow_mut() = Some(faction);
+    }
+
     /// Publishes the latest complete map-area projection.
     pub fn set_zone(&self, zone: UiZoneState) {
         *self.inner.zone.borrow_mut() = Some(zone);
@@ -191,6 +247,7 @@ impl UiWorldState {
     pub fn leave_world(&self) {
         self.inner.player.set(None);
         self.inner.player_progression.set(None);
+        *self.inner.player_faction.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
@@ -206,6 +263,12 @@ impl UiWorldState {
     #[must_use]
     pub fn player_progression(&self) -> Option<UiPlayerProgressionState> {
         self.inner.player_progression.get()
+    }
+
+    /// Returns the local player's composed faction identity when available.
+    #[must_use]
+    pub fn player_faction(&self) -> Option<UiPlayerFactionState> {
+        self.inner.player_faction.borrow().clone()
     }
 
     /// Returns the current zone projection when map-area state is authoritative.
