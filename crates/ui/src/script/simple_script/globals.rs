@@ -87,6 +87,7 @@ fn register_frame_globals(
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
     crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
+    crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
@@ -96,6 +97,7 @@ fn register_frame_globals(
     let zone_pvp = world.clone();
     let cursor_state = world.clone();
     let trade_state = world.clone();
+    let area_resurrection = world.clone();
     globals.raw_set(
         "GetMoney",
         lua.create_function(move |_, ()| {
@@ -153,6 +155,10 @@ fn register_frame_globals(
     globals.raw_set(
         "GetPlayerTradeMoney",
         lua.create_function(move |_, ()| Ok(f64::from(trade_state.player_trade_money_copper())))?,
+    )?;
+    globals.raw_set(
+        "CanHearthAndResurrectFromArea",
+        lua.create_function(move |_, ()| Ok(area_resurrection.area_resurrection_available()))?,
     )?;
     globals.raw_set(
         "GetZoneText",

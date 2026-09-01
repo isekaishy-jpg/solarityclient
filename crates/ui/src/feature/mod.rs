@@ -1,6 +1,7 @@
 //! Stock feature-frame ownership above the reusable FrameXML widget layer.
 
 mod action_bar;
+mod battlefield;
 mod battlenet;
 mod chat;
 mod commentator;
@@ -26,4 +27,9 @@ mod trainer;
 
 pub(crate) use action_bar::register_globals as register_action_bar_globals;
 pub use action_bar::{UiActionBarPageError, UiActionBarState};
+pub(crate) use battlefield::register_globals as register_battlefield_globals;
+pub use battlefield::{
+    MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,
+    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
+};
 pub(crate) use battlenet::UiBattleNetState;

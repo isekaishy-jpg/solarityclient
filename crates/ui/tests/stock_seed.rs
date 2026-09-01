@@ -15,6 +15,8 @@ mod binding_assignments;
 mod event;
 #[path = "stock_seed/feature/action_bar.rs"]
 mod feature_action_bar;
+#[path = "stock_seed/feature/battlefield.rs"]
+mod feature_battlefield;
 #[path = "stock_seed/feature/battlenet.rs"]
 mod feature_battlenet;
 #[path = "stock_seed/feature/chat.rs"]

@@ -210,6 +210,15 @@ validation fixtures, not production defaults. This mode is intentionally
 strict and is the incremental compatibility audit for global and widget
 bindings.
 
+The Frame environment also owns the two build-12340 battleground queue slots
+and single world-PvP battlefield-manager slot. Before any corresponding world
+session packet, these slots are authoritatively inactive and return `none`;
+they are not synthesized from map state. Active slots retain the localized map
+name, instance or battle ID, level bracket, arena team size, rated flag, and
+invitation expiration used by `GetBattlefieldStatus` and
+`GetWorldPVPQueueStatus`. Area hearth-and-resurrection availability is a
+separate world-state fact and resets when the active world ends.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265

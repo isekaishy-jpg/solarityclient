@@ -214,6 +214,7 @@ struct UiWorldStateInner {
     zone: RefCell<Option<UiZoneState>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
+    area_resurrection_available: Cell<bool>,
 }
 
 impl UiWorldState {
@@ -251,6 +252,7 @@ impl UiWorldState {
         *self.inner.zone.borrow_mut() = None;
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
+        self.inner.area_resurrection_available.set(false);
     }
 
     /// Returns the current player projection when one is authoritative.
@@ -275,6 +277,17 @@ impl UiWorldState {
     #[must_use]
     pub fn zone(&self) -> Option<UiZoneState> {
         self.inner.zone.borrow().clone()
+    }
+
+    /// Publishes whether the current outdoor battlefield permits area exit.
+    pub fn set_area_resurrection_available(&self, available: bool) {
+        self.inner.area_resurrection_available.set(available);
+    }
+
+    /// Reports whether FrameXML may offer hearth-and-resurrect area exit.
+    #[must_use]
+    pub fn area_resurrection_available(&self) -> bool {
+        self.inner.area_resurrection_available.get()
     }
 
     /// Replaces copper currently attached to the stock money cursor.

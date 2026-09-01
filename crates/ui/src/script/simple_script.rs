@@ -300,6 +300,7 @@ pub struct UiScriptEnvironment {
     current_screen: Rc<RefCell<String>>,
     world: crate::UiWorldState,
     action_bar: crate::UiActionBarState,
+    battlefield: crate::UiBattlefieldQueueState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -335,6 +336,7 @@ impl UiScriptEnvironment {
             current_screen: Rc::new(RefCell::new(String::new())),
             world: crate::UiWorldState::new(),
             action_bar: crate::UiActionBarState::new(),
+            battlefield: crate::UiBattlefieldQueueState::new(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -442,6 +444,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn action_bar_state(&self) -> crate::UiActionBarState {
         self.action_bar.clone()
+    }
+
+    /// Returns the shared battlefield queue projection consumed by FrameXML.
+    #[must_use]
+    pub fn battlefield_state(&self) -> crate::UiBattlefieldQueueState {
+        self.battlefield.clone()
     }
 }
 

@@ -31,6 +31,10 @@ pub use binding::{
     UiModifiedClickChord, UiModifiedClickDefinition,
 };
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
+pub use feature::{
+    MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,
+    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
+};
 pub use feature::{UiActionBarPageError, UiActionBarState};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
