@@ -12,6 +12,7 @@ pub const UI_ACTION_SLOT_COUNT: usize = 144;
 #[derive(Clone, Debug)]
 pub struct UiActionBarState {
     page: Rc<Cell<u8>>,
+    bonus_bar_offset: Rc<Cell<u8>>,
     slots: Rc<RefCell<Option<Box<[u32; UI_ACTION_SLOT_COUNT]>>>>,
 }
 
@@ -20,6 +21,7 @@ impl Default for UiActionBarState {
         Self {
             // Build 12340 initializes the primary action bar to page one.
             page: Rc::new(Cell::new(1)),
+            bonus_bar_offset: Rc::new(Cell::new(0)),
             slots: Rc::new(RefCell::new(None)),
         }
     }
@@ -49,6 +51,17 @@ impl UiActionBarState {
         }
         self.page.set(page);
         Ok(())
+    }
+
+    /// Replaces the controlled-unit bonus action-bar page offset.
+    pub fn set_bonus_bar_offset(&self, offset: u8) {
+        self.bonus_bar_offset.set(offset);
+    }
+
+    /// Returns the controlled-unit bonus action-bar page offset.
+    #[must_use]
+    pub fn bonus_bar_offset(&self) -> u8 {
+        self.bonus_bar_offset.get()
     }
 
     /// Publishes one complete packed server slot image.

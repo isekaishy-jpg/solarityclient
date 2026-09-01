@@ -51,6 +51,8 @@ mod feature_party;
 mod feature_portrait;
 #[path = "stock_seed/feature/quest.rs"]
 mod feature_quest;
+#[path = "stock_seed/feature/runtime_boundary.rs"]
+mod feature_runtime_boundary;
 #[path = "stock_seed/feature/spell_book.rs"]
 mod feature_spell_book;
 #[path = "stock_seed/feature/taxi_map.rs"]

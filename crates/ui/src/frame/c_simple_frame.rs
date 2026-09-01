@@ -30,6 +30,8 @@ pub enum UiObjectKind {
     MessageFrame,
     /// Minimap presentation frame.
     Minimap,
+    /// Quest objective polygon and hit-test frame used by the world map.
+    QuestPoiFrame,
     /// 3D model frame.
     Model,
     /// Glue model frame with the stock FFX presentation path.
@@ -65,6 +67,7 @@ impl UiObjectKind {
             ("GameTooltip", Self::GameTooltip),
             ("MessageFrame", Self::MessageFrame),
             ("Minimap", Self::Minimap),
+            ("QuestPOIFrame", Self::QuestPoiFrame),
             ("Model", Self::Model),
             ("ModelFFX", Self::ModelFfx),
             ("MovieFrame", Self::MovieFrame),

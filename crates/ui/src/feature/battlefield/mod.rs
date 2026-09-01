@@ -2,11 +2,11 @@
 
 mod state;
 
-use mlua::{Lua, Table};
+use mlua::{Lua, MultiValue, Table, Value};
 
 pub use state::{
     MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,
-    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
+    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiBattlegroundType, UiWorldPvpQueueSlot,
 };
 
 /// Registers the seven-value build-12340 battlefield status query.
@@ -16,6 +16,8 @@ pub(crate) fn register_globals(
     state: UiBattlefieldQueueState,
 ) -> mlua::Result<()> {
     let battlefield = state.clone();
+    let battleground_count = state.clone();
+    let battleground_info = state.clone();
     globals.raw_set(
         "GetBattlefieldStatus",
         lua.create_function(move |_, index: usize| {
@@ -49,6 +51,25 @@ pub(crate) fn register_globals(
                 slot.queue_id(),
                 slot.expiration_milliseconds(),
             ))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetNumBattlegroundTypes",
+        lua.create_function(move |_, ()| Ok(battleground_count.battleground_type_count()))?,
+    )?;
+    globals.raw_set(
+        "GetBattlegroundInfo",
+        lua.create_function(move |lua, index: usize| {
+            let Some(battleground) = battleground_info.battleground_type(index) else {
+                return Ok(MultiValue::new());
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(battleground.name)?),
+                Value::Boolean(battleground.can_enter),
+                Value::Boolean(battleground.holiday),
+                Value::Boolean(battleground.random),
+                Value::Integer(i64::from(battleground.battleground_id)),
+            ]))
         })?,
     )
 }

@@ -40,6 +40,7 @@ impl UiLootMethod {
 pub struct UiGroupRosterState {
     party_members: Rc<Cell<u8>>,
     raid_members: Rc<Cell<u8>>,
+    arena_opponents: Rc<Cell<u8>>,
     party_leader: Rc<Cell<bool>>,
     raid_leader: Rc<Cell<bool>>,
     raid_officer: Rc<Cell<bool>>,
@@ -65,6 +66,11 @@ impl UiGroupRosterState {
     /// Replaces the number of raid members including the local player.
     pub fn set_raid_members(&self, members: u8) {
         self.raid_members.set(members);
+    }
+
+    /// Replaces the number of arena opponents currently published to unit IDs.
+    pub fn set_arena_opponents(&self, opponents: u8) {
+        self.arena_opponents.set(opponents);
     }
 
     /// Replaces local-player party leadership.
@@ -94,6 +100,12 @@ impl UiGroupRosterState {
     #[must_use]
     pub fn raid_members(&self) -> u8 {
         self.raid_members.get()
+    }
+
+    /// Returns the number of arena opponent unit IDs currently available.
+    #[must_use]
+    pub fn arena_opponents(&self) -> u8 {
+        self.arena_opponents.get()
     }
 
     /// Reports local-player party leadership.
@@ -160,6 +172,11 @@ pub(crate) fn register_globals(
             let state = state.clone();
             move |_, ()| Ok(state.raid_members())
         })?,
+    )?;
+    let arena_opponents = state.clone();
+    globals.raw_set(
+        "GetNumArenaOpponents",
+        lua.create_function(move |_, ()| Ok(arena_opponents.arena_opponents()))?,
     )?;
     let party_leader = state.clone();
     globals.raw_set(

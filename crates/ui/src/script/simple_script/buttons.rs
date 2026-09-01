@@ -7,20 +7,22 @@ use std::rc::Rc;
 use mlua::{LightUserData, Lua, Table, Value, Variadic};
 use solarity_asset::AssetStoreHandle;
 
+use crate::UiScriptHandler;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
     DynamicArenaState, button_text_key, checked_key, click_action_key, create_dynamic_region,
-    disabled_font_key, disabled_texture_key, drag_button_key, font_object_key, font_set_key,
-    highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key,
-    normal_font_key, normal_texture_key, pushed_texture_key, resolve_font_object, text_key,
-    texture_file_key, texture_solid_color_key, type_key,
+    disabled_font_key, disabled_texture_key, drag_button_key, enabled_key, font_object_key,
+    font_set_key, highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool,
+    lua_text, name_key, normal_font_key, normal_texture_key, object_script_function,
+    pushed_texture_key, resolve_font_object, text_key, texture_file_key, texture_solid_color_key,
+    type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
 #[derive(Clone)]
 pub(super) struct ButtonTextMeasurement {
-    assets: AssetStoreHandle,
+    assets: Option<AssetStoreHandle>,
     fonts: Rc<HashMap<String, FontDefinition>>,
     system: Rc<RefCell<FontSystem>>,
     pixels_per_ui_unit: f64,
@@ -28,7 +30,7 @@ pub(super) struct ButtonTextMeasurement {
 
 impl ButtonTextMeasurement {
     pub(super) fn new(
-        assets: AssetStoreHandle,
+        assets: Option<AssetStoreHandle>,
         fonts: Rc<HashMap<String, FontDefinition>>,
         logical_height: u32,
     ) -> Result<Self, crate::FontError> {
@@ -76,7 +78,12 @@ impl ButtonTextMeasurement {
             .and_then(|shadow| shadow.offset())
             .map_or(0.0, |offset| f64::from(offset.0).max(0.0));
         let mut widest = 0.0_f64;
-        let mut assets = self.assets.borrow_mut();
+        let Some(assets) = &self.assets else {
+            return Err(mlua::Error::runtime(
+                "Button:GetTextWidth requires a mounted stock asset store",
+            ));
+        };
+        let mut assets = assets.borrow_mut();
         let mut system = self.system.borrow_mut();
         for line in text.lines() {
             let width = system
@@ -86,6 +93,33 @@ impl ButtonTextMeasurement {
             widest = widest.max(width as f64 / 64.0 / self.pixels_per_ui_unit + glyph_spacing);
         }
         Ok((widest + shadow).max(self.one_pixel()))
+    }
+
+    fn height(&self, button: &Table) -> mlua::Result<f64> {
+        let Some(text) = button.raw_get::<Option<String>>(text_key())? else {
+            return Ok(0.0);
+        };
+        if text.is_empty() {
+            return Ok(0.0);
+        }
+        let Some(font) = button.raw_get::<Option<Table>>(normal_font_key())? else {
+            return Ok(self.one_pixel());
+        };
+        let name = font.raw_get::<String>(name_key())?;
+        let Some(definition) = self.fonts.get(&name) else {
+            return Err(mlua::Error::runtime(format!(
+                "Button:GetTextHeight font object {name} has no stock definition"
+            )));
+        };
+        let Some(line_height) = definition.height() else {
+            return Ok(self.one_pixel());
+        };
+        let lines = text.lines().count().max(1) as f64;
+        let shadow = definition
+            .shadow()
+            .and_then(|shadow| shadow.offset())
+            .map_or(0.0, |offset| f64::from(offset.1).max(0.0));
+        Ok((f64::from(line_height) * lines + shadow).max(self.one_pixel()))
     }
 
     fn one_pixel(&self) -> f64 {
@@ -99,6 +133,7 @@ pub(super) fn register_button_methods(
     measurement: Option<ButtonTextMeasurement>,
     dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<()> {
+    let width_measurement = measurement.clone();
     register_font_pair(
         lua,
         methods,
@@ -218,16 +253,82 @@ pub(super) fn register_button_methods(
         })?,
     )?;
     methods.raw_set(
+        "Click",
+        lua.create_function(
+            |lua, (button, mouse_button, down): (Table, Option<String>, Option<bool>)| {
+                if !button.raw_get::<bool>(enabled_key())? {
+                    return Ok(());
+                }
+                let mouse_button = mouse_button.unwrap_or_else(|| "LeftButton".to_owned());
+                let down = down.unwrap_or(false);
+                for handler in [
+                    UiScriptHandler::PreClick,
+                    UiScriptHandler::Click,
+                    UiScriptHandler::PostClick,
+                ] {
+                    if let Some(function) = object_script_function(lua, &button, handler)? {
+                        call_click_handler(lua, &function, button.clone(), &mouse_button, down)?;
+                    }
+                }
+                Ok(())
+            },
+        )?,
+    )?;
+    methods.raw_set(
         "GetTextWidth",
         lua.create_function(move |_, button: Table| {
-            let Some(measurement) = &measurement else {
+            let Some(measurement) = &width_measurement else {
                 return Err(mlua::Error::runtime(
                     "Button:GetTextWidth requires a mounted stock asset store",
                 ));
             };
             measurement.width(&button)
         })?,
+    )?;
+    methods.raw_set(
+        "GetTextHeight",
+        lua.create_function(move |_, button: Table| {
+            let Some(measurement) = &measurement else {
+                return Err(mlua::Error::runtime(
+                    "Button:GetTextHeight requires a mounted stock asset store",
+                ));
+            };
+            measurement.height(&button)
+        })?,
     )
+}
+
+fn call_click_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    button: Table,
+    mouse_button: &str,
+    down: bool,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    let previous_arg1 = globals.raw_get::<Value>("arg1")?;
+    let previous_arg2 = globals.raw_get::<Value>("arg2")?;
+    globals.raw_set("this", button.clone())?;
+    globals.raw_set("arg1", mouse_button)?;
+    globals.raw_set("arg2", down)?;
+    let result = function.call::<()>((button, mouse_button, down));
+    let restore_this = globals.raw_set("this", previous_this);
+    let restore_arg1 = globals.raw_set("arg1", previous_arg1);
+    let restore_arg2 = globals.raw_set("arg2", previous_arg2);
+    match result {
+        Ok(()) => {
+            restore_this?;
+            restore_arg1?;
+            restore_arg2
+        }
+        Err(error) => {
+            let _ = restore_this;
+            let _ = restore_arg1;
+            let _ = restore_arg2;
+            Err(error)
+        }
+    }
 }
 
 /// Registers frame-wide drag initiation buttons.

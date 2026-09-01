@@ -128,16 +128,27 @@ fn register_frame_globals(
     crate::feature::register_channel_globals(lua, globals, environment.channel_state())?;
     crate::feature::register_companion_globals(lua, globals, environment.companion_state())?;
     crate::feature::register_loot_globals(lua, globals, environment.loot_state())?;
+    crate::feature::register_mail_globals(lua, globals, environment.mail_compose_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_paper_doll_globals(lua, globals, environment.assets())?;
+    crate::feature::register_pet_action_globals(lua, globals, environment.pet_action_state())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
     crate::feature::register_group_roster_globals(lua, globals, environment.group_roster_state())?;
     crate::feature::register_guild_globals(lua, globals, environment.guild_state())?;
     crate::feature::register_quest_log_globals(lua, globals, environment.quest_log_state())?;
+    crate::feature::register_rune_globals(lua, globals, environment.rune_state())?;
     crate::feature::register_skill_globals(lua, globals, environment.skill_line_state())?;
     crate::feature::register_social_globals(lua, globals, environment.social_query_state())?;
     crate::feature::register_spell_book_globals(lua, globals, environment.spell_book_state())?;
+    crate::feature::register_stance_globals(lua, globals, environment.stance_state())?;
+    crate::feature::register_tabard_globals(lua, globals, environment.tabard_state())?;
     crate::feature::register_voice_chat_globals(lua, globals, environment.voice_chat_state())?;
+    crate::feature::register_world_map_globals(lua, globals, environment.world_map_state())?;
+    crate::feature::register_world_state_ui_globals(
+        lua,
+        globals,
+        environment.world_state_ui_state(),
+    )?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();

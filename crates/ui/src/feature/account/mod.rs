@@ -58,8 +58,16 @@ pub(crate) fn register_globals(
     globals: &Table,
     state: UiAccountState,
 ) -> mlua::Result<()> {
+    let world_expansion = state.clone();
     globals.raw_set(
         "GetAccountExpansionLevel",
         lua.create_function(move |_, ()| Ok(state.expansion().level()))?,
+    )?;
+    // The native call reads the active character's expansion byte. World
+    // authentication publishes the same validated entitlement into this
+    // boundary before FrameXML runs.
+    globals.raw_set(
+        "GetExpansionLevel",
+        lua.create_function(move |_, ()| Ok(world_expansion.expansion().level()))?,
     )
 }

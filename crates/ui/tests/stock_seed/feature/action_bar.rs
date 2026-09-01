@@ -6,6 +6,9 @@ use solarity_ui::{UiActionBarPageError, UiActionBarState, UiActionBarStateError}
 #[test]
 fn primary_page_preserves_the_closed_stock_range() {
     let state = UiActionBarState::new();
+    assert_eq!(state.bonus_bar_offset(), 0);
+    state.set_bonus_bar_offset(5);
+    assert_eq!(state.bonus_bar_offset(), 5);
     assert_eq!(state.page(), 1);
     assert_eq!(state.set_page(6), Ok(()));
     assert_eq!(state.page(), 6);

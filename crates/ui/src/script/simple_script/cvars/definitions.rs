@@ -165,6 +165,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("secureAbilityToggle", "1", 0.0, 1.0),
     ranged("showClassColorInNameplate", "0", 0.0, 1.0),
     ranged("showClock", "1", 0.0, 1.0),
+    // Registered by the native world-map subsystem with the stock false
+    // scalar at 0x009e14a0 in build 12340.
+    ranged("showBattlefieldMinimap", "0", 0.0, 1.0),
     ranged("showItemLevel", "0", 0.0, 1.0),
     ranged("showLootSpam", "1", 0.0, 1.0),
     ranged("showRaidRange", "0", 0.0, 1.0),

@@ -90,6 +90,10 @@ pub struct UiRuntimeTemplateNode {
     font_object_name: Option<String>,
     justify_h: String,
     justify_v: String,
+    button_text_reference: Option<String>,
+    normal_font: Option<String>,
+    disabled_font: Option<String>,
+    highlight_font: Option<String>,
     texture_coords: [f64; 8],
     texture_colors: [[f64; 4]; 4],
     texture_file: Option<String>,
@@ -244,6 +248,7 @@ impl UiRuntimeTemplatePlan {
                     .collect::<Result<Vec<_>, _>>()?;
                 let (font_assigned, font_object_name, justify_h, justify_v) =
                     initial_font(object, fonts);
+                let button = initial_button(object);
                 let texture = initial_texture(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
                 plan.nodes.push(UiRuntimeTemplateNode {
@@ -267,6 +272,10 @@ impl UiRuntimeTemplatePlan {
                     font_object_name,
                     justify_h,
                     justify_v,
+                    button_text_reference: button.text_reference,
+                    normal_font: button.normal_font,
+                    disabled_font: button.disabled_font,
+                    highlight_font: button.highlight_font,
                     texture_coords: texture.coords,
                     texture_colors: texture.colors,
                     texture_file: texture.file,
@@ -433,6 +442,13 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("justify_h", node.justify_h.as_str())?;
                 record.raw_set("justify_v", node.justify_v.as_str())?;
                 record.raw_set(
+                    "button_text_reference",
+                    node.button_text_reference.as_deref(),
+                )?;
+                record.raw_set("normal_font", node.normal_font.as_deref())?;
+                record.raw_set("disabled_font", node.disabled_font.as_deref())?;
+                record.raw_set("highlight_font", node.highlight_font.as_deref())?;
+                record.raw_set(
                     "texture_coords",
                     lua.create_sequence_from(node.texture_coords)?,
                 )?;
@@ -519,6 +535,47 @@ fn initial_font(
         }
     }
     (assigned, object_name, justify_h, justify_v)
+}
+
+#[derive(Default)]
+struct InitialButton {
+    text_reference: Option<String>,
+    normal_font: Option<String>,
+    disabled_font: Option<String>,
+    highlight_font: Option<String>,
+}
+
+fn initial_button(node: &crate::UiObjectNode<'_>) -> InitialButton {
+    if !matches!(
+        node.kind(),
+        UiObjectKind::Button | UiObjectKind::CheckButton
+    ) {
+        return InitialButton::default();
+    }
+    let mut initial = InitialButton::default();
+    for layer in node.layers() {
+        if let Some(reference) = attribute(layer.element(), "text") {
+            initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
+        }
+        for content in layer.element().content() {
+            let crate::XmlContent::Element(index) = content else {
+                continue;
+            };
+            let Some(child) = layer.document().element(*index) else {
+                continue;
+            };
+            let target = match child.name() {
+                "NormalFont" => &mut initial.normal_font,
+                "DisabledFont" => &mut initial.disabled_font,
+                "HighlightFont" => &mut initial.highlight_font,
+                _ => continue,
+            };
+            if let Some(style) = attribute(child, "style") {
+                *target = (!style.is_empty()).then(|| style.to_owned());
+            }
+        }
+    }
+    initial
 }
 
 fn apply_justification(
@@ -622,6 +679,7 @@ fn object_kind_name(kind: UiObjectKind) -> &'static str {
         UiObjectKind::GameTooltip => "GameTooltip",
         UiObjectKind::MessageFrame => "MessageFrame",
         UiObjectKind::Minimap => "Minimap",
+        UiObjectKind::QuestPoiFrame => "QuestPOIFrame",
         UiObjectKind::Model => "Model",
         UiObjectKind::ModelFfx => "ModelFFX",
         UiObjectKind::MovieFrame => "MovieFrame",

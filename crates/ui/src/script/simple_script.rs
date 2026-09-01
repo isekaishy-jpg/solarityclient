@@ -144,8 +144,9 @@ static FRAME_DONT_SAVE_POSITION_TOKEN: u8 = 104;
 static PORTRAIT_UNIT_TOKEN: u8 = 105;
 static HIT_RECT_INSETS_TOKEN: u8 = 106;
 static MOUSE_WHEEL_ENABLED_TOKEN: u8 = 107;
+static TOOLTIP_PADDING_TOKEN: u8 = 108;
 
-const OBJECT_KINDS: [UiObjectKind; 20] = [
+const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
     UiObjectKind::Button,
     UiObjectKind::CheckButton,
@@ -156,6 +157,7 @@ const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::GameTooltip,
     UiObjectKind::MessageFrame,
     UiObjectKind::Minimap,
+    UiObjectKind::QuestPoiFrame,
     UiObjectKind::Model,
     UiObjectKind::ModelFfx,
     UiObjectKind::MovieFrame,
@@ -353,15 +355,22 @@ pub struct UiScriptEnvironment {
     channels: crate::UiChannelState,
     companions: crate::UiCompanionState,
     loot: crate::UiLootState,
+    mail: crate::UiMailComposeState,
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
     group_roster: crate::UiGroupRosterState,
     guild: crate::UiGuildState,
     quest_log: crate::UiQuestLogState,
+    runes: crate::UiRuneState,
+    pet_actions: crate::UiPetActionState,
     skill_lines: crate::UiSkillLineState,
     social_queries: crate::UiSocialQueryState,
     spell_book: crate::UiSpellBookState,
+    stances: crate::UiStanceState,
+    tabard: crate::UiTabardState,
     voice_chat: crate::UiVoiceChatState,
+    world_map: crate::UiWorldMapState,
+    world_state_ui: crate::UiWorldStateUiState,
     addons: crate::UiAddonLoadState,
     saved_variables: crate::UiSavedVariableState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
@@ -407,15 +416,22 @@ impl UiScriptEnvironment {
             channels: crate::UiChannelState::new(),
             companions: crate::UiCompanionState::new(),
             loot: crate::UiLootState::new(),
+            mail: crate::UiMailComposeState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
             group_roster: crate::UiGroupRosterState::new(),
             guild: crate::UiGuildState::new(),
             quest_log: crate::UiQuestLogState::new(),
+            runes: crate::UiRuneState::new(),
+            pet_actions: crate::UiPetActionState::new(),
             skill_lines: crate::UiSkillLineState::new(),
             social_queries: crate::UiSocialQueryState::new(),
             spell_book: crate::UiSpellBookState::new(),
+            stances: crate::UiStanceState::new(),
+            tabard: crate::UiTabardState::new(),
             voice_chat: crate::UiVoiceChatState::new(),
+            world_map: crate::UiWorldMapState::new(),
+            world_state_ui: crate::UiWorldStateUiState::new(),
             addons: crate::UiAddonLoadState::default(),
             saved_variables: crate::UiSavedVariableState::new(),
             bindings: None,
@@ -592,6 +608,12 @@ impl UiScriptEnvironment {
         self.loot.clone()
     }
 
+    /// Returns the shared outgoing-mail compose quote.
+    #[must_use]
+    pub fn mail_compose_state(&self) -> crate::UiMailComposeState {
+        self.mail.clone()
+    }
+
     /// Returns the shared player-capability tracking projection.
     #[must_use]
     pub fn minimap_tracking_state(&self) -> crate::UiMinimapTrackingState {
@@ -622,6 +644,18 @@ impl UiScriptEnvironment {
         self.quest_log.clone()
     }
 
+    /// Returns the shared six-slot death-knight rune projection.
+    #[must_use]
+    pub fn rune_state(&self) -> crate::UiRuneState {
+        self.runes.clone()
+    }
+
+    /// Returns the shared controlled-unit pet action bar.
+    #[must_use]
+    pub fn pet_action_state(&self) -> crate::UiPetActionState {
+        self.pet_actions.clone()
+    }
+
     /// Returns the shared player skill-line sequence and selection.
     #[must_use]
     pub fn skill_line_state(&self) -> crate::UiSkillLineState {
@@ -640,10 +674,34 @@ impl UiScriptEnvironment {
         self.spell_book.clone()
     }
 
+    /// Returns the shared controlled-unit shapeshift and possession state.
+    #[must_use]
+    pub fn stance_state(&self) -> crate::UiStanceState {
+        self.stances.clone()
+    }
+
+    /// Returns the shared guild-tabard vendor session state.
+    #[must_use]
+    pub fn tabard_state(&self) -> crate::UiTabardState {
+        self.tabard.clone()
+    }
+
     /// Returns the shared voice-service availability projection.
     #[must_use]
     pub fn voice_chat_state(&self) -> crate::UiVoiceChatState {
         self.voice_chat.clone()
+    }
+
+    /// Returns the shared world-map native helper state.
+    #[must_use]
+    pub fn world_map_state(&self) -> crate::UiWorldMapState {
+        self.world_map.clone()
+    }
+
+    /// Returns the ordered world-PvP and battleground status indicators.
+    #[must_use]
+    pub fn world_state_ui_state(&self) -> crate::UiWorldStateUiState {
+        self.world_state_ui.clone()
     }
 }
 
@@ -689,22 +747,19 @@ impl UiScriptRuntime {
                 .map(|definition| (definition.name().to_owned(), definition))
                 .collect::<HashMap<_, _>>(),
         );
-        let button_measurement = environment
-            .assets()
-            .map(|assets| {
-                buttons::ButtonTextMeasurement::new(
-                    assets,
-                    font_definitions.clone(),
-                    environment.logical_extent().1,
-                )
-            })
-            .transpose()
+        let button_measurement = Some(
+            buttons::ButtonTextMeasurement::new(
+                environment.assets(),
+                font_definitions.clone(),
+                environment.logical_extent().1,
+            )
             .map_err(|error| {
                 execution_error(
                     "button text measurement",
                     mlua::Error::runtime(error.to_string()),
                 )
-            })?;
+            })?,
+        );
         let object_metatables = OBJECT_KINDS
             .into_iter()
             .map(|kind| {
@@ -1479,6 +1534,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(tooltip_anchor_key(), "ANCHOR_NONE"))
                 .and_then(|()| table.raw_set(tooltip_offset_x_key(), 0.0))
                 .and_then(|()| table.raw_set(tooltip_offset_y_key(), 0.0))
+                .and_then(|()| table.raw_set(tooltip_padding_key(), 0.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::Minimap {
@@ -2000,6 +2056,31 @@ fn create_dynamic_object(
         object.raw_set(highlight_locked_key(), false)?;
         object.raw_set(click_action_key(), 0_u64)?;
         object.raw_set(drag_button_key(), 0_u8)?;
+        set_initial_font(
+            lua,
+            &object,
+            normal_font_key(),
+            record.raw_get::<Option<String>>("normal_font")?.as_deref(),
+        )?;
+        set_initial_font(
+            lua,
+            &object,
+            disabled_font_key(),
+            record
+                .raw_get::<Option<String>>("disabled_font")?
+                .as_deref(),
+        )?;
+        set_initial_font(
+            lua,
+            &object,
+            highlight_font_key(),
+            record
+                .raw_get::<Option<String>>("highlight_font")?
+                .as_deref(),
+        )?;
+        if let Some(reference) = record.raw_get::<Option<String>>("button_text_reference")? {
+            object.raw_set(text_key(), stock_text(lua, &reference)?)?;
+        }
     }
     if kind == "CheckButton" {
         object.raw_set(checked_key(), false)?;
@@ -2034,6 +2115,7 @@ fn create_dynamic_object(
         object.raw_set(tooltip_anchor_key(), "ANCHOR_NONE")?;
         object.raw_set(tooltip_offset_x_key(), 0.0)?;
         object.raw_set(tooltip_offset_y_key(), 0.0)?;
+        object.raw_set(tooltip_padding_key(), 0.0)?;
     }
     if matches!(kind, "Model" | "ModelFFX") {
         object.raw_set(model_camera_key(), 0)?;
@@ -2521,6 +2603,9 @@ fn create_object_metatable(
     }
     if kind == UiObjectKind::Minimap {
         crate::feature::register_minimap_methods(lua, &methods)?;
+    }
+    if kind == UiObjectKind::QuestPoiFrame {
+        crate::feature::register_quest_poi_methods(lua, &methods)?;
     }
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
@@ -5430,6 +5515,7 @@ fn object_type_name(kind: UiObjectKind) -> &'static str {
         UiObjectKind::GameTooltip => "GameTooltip",
         UiObjectKind::MessageFrame => "MessageFrame",
         UiObjectKind::Minimap => "Minimap",
+        UiObjectKind::QuestPoiFrame => "QuestPOIFrame",
         UiObjectKind::Model => "Model",
         UiObjectKind::ModelFfx => "ModelFFX",
         UiObjectKind::MovieFrame => "MovieFrame",
@@ -5515,16 +5601,17 @@ const fn object_kind_index(kind: UiObjectKind) -> usize {
         UiObjectKind::GameTooltip => 7,
         UiObjectKind::MessageFrame => 8,
         UiObjectKind::Minimap => 9,
-        UiObjectKind::Model => 10,
-        UiObjectKind::ModelFfx => 11,
-        UiObjectKind::MovieFrame => 12,
-        UiObjectKind::ScrollFrame => 13,
-        UiObjectKind::ScrollingMessageFrame => 14,
-        UiObjectKind::SimpleHtml => 15,
-        UiObjectKind::Slider => 16,
-        UiObjectKind::StatusBar => 17,
-        UiObjectKind::Texture => 18,
-        UiObjectKind::WorldFrame => 19,
+        UiObjectKind::QuestPoiFrame => 10,
+        UiObjectKind::Model => 11,
+        UiObjectKind::ModelFfx => 12,
+        UiObjectKind::MovieFrame => 13,
+        UiObjectKind::ScrollFrame => 14,
+        UiObjectKind::ScrollingMessageFrame => 15,
+        UiObjectKind::SimpleHtml => 16,
+        UiObjectKind::Slider => 17,
+        UiObjectKind::StatusBar => 18,
+        UiObjectKind::Texture => 19,
+        UiObjectKind::WorldFrame => 20,
     }
 }
 
@@ -5918,6 +6005,10 @@ pub(super) fn tooltip_offset_x_key() -> LightUserData {
 
 pub(super) fn tooltip_offset_y_key() -> LightUserData {
     hidden_key(&TOOLTIP_OFFSET_Y_TOKEN)
+}
+
+pub(super) fn tooltip_padding_key() -> LightUserData {
+    hidden_key(&TOOLTIP_PADDING_TOKEN)
 }
 
 fn font_face_key() -> LightUserData {

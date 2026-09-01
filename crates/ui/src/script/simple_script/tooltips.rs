@@ -4,12 +4,18 @@ use mlua::{Lua, Table, Value};
 
 use super::{
     OBJECT_REGISTRY, index_key, shown_key, tooltip_anchor_key, tooltip_offset_x_key,
-    tooltip_offset_y_key, tooltip_owner_key,
+    tooltip_offset_y_key, tooltip_owner_key, tooltip_padding_key,
 };
 
 /// Registers the ownership relationship that stock tooltips keep separately
 /// from their structural frame parent.
 pub(super) fn register_game_tooltip_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetPadding",
+        lua.create_function(|_, (tooltip, padding): (Table, f64)| {
+            tooltip.raw_set(tooltip_padding_key(), padding)
+        })?,
+    )?;
     methods.raw_set(
         "SetOwner",
         lua.create_function(

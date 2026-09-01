@@ -11,6 +11,36 @@ pub const MAX_BATTLEFIELD_QUEUES: usize = 2;
 /// World-PvP queue slots authored by build-12340 FrameXML.
 pub const MAX_WORLD_PVP_QUEUES: usize = 1;
 
+/// One client-catalog battleground option in display order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiBattlegroundType {
+    pub(super) name: String,
+    pub(super) can_enter: bool,
+    pub(super) holiday: bool,
+    pub(super) random: bool,
+    pub(super) battleground_id: u32,
+}
+
+impl UiBattlegroundType {
+    /// Creates one battleground selection row.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        can_enter: bool,
+        holiday: bool,
+        random: bool,
+        battleground_id: u32,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            can_enter,
+            holiday,
+            random,
+            battleground_id,
+        }
+    }
+}
+
 /// Script-visible lifecycle of one battlefield queue slot.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum UiBattlefieldQueueStatus {
@@ -143,6 +173,7 @@ impl UiBattlefieldSlot {
 pub struct UiBattlefieldQueueState {
     slots: Rc<RefCell<[UiBattlefieldSlot; MAX_BATTLEFIELD_QUEUES]>>,
     world_pvp: Rc<RefCell<UiWorldPvpQueueSlot>>,
+    battleground_types: Rc<RefCell<Vec<UiBattlegroundType>>>,
 }
 
 impl UiBattlefieldQueueState {
@@ -201,6 +232,23 @@ impl UiBattlefieldQueueState {
     /// Replaces the sole world-PvP queue slot from battlefield-manager state.
     pub fn set_world_pvp_slot(&self, slot: UiWorldPvpQueueSlot) {
         *self.world_pvp.borrow_mut() = slot;
+    }
+
+    /// Replaces the level-filtered battleground selection catalog.
+    pub fn replace_battleground_types(&self, battleground_types: Vec<UiBattlegroundType>) {
+        *self.battleground_types.borrow_mut() = battleground_types;
+    }
+
+    pub(super) fn battleground_type(&self, index: usize) -> Option<UiBattlegroundType> {
+        index
+            .checked_sub(1)
+            .and_then(|index| self.battleground_types.borrow().get(index).cloned())
+    }
+
+    /// Returns the number of level-filtered battleground selection rows.
+    #[must_use]
+    pub fn battleground_type_count(&self) -> usize {
+        self.battleground_types.borrow().len()
     }
 }
 
