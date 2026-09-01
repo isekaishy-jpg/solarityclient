@@ -8,6 +8,7 @@ mod feature;
 mod font;
 mod frame;
 mod glue;
+mod input;
 mod notification;
 mod region;
 mod render;
@@ -50,6 +51,7 @@ pub use frame::{
     UiObjectTree,
 };
 pub use glue::{GlueError, GlueManager, GlueObject, GlueStartupReport};
+pub use input::{UiModifierKeyState, UiModifierKeys};
 pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
     UiNodeLayout, UiPoint, UiRegionAnchor, UiRegionGeometry, UiRegionGeometryPlan, UiRegionState,

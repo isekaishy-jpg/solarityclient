@@ -71,6 +71,8 @@ mod frame;
 mod glue;
 #[path = "stock_seed/glue/character.rs"]
 mod glue_character;
+#[path = "stock_seed/input.rs"]
+mod input;
 #[path = "stock_seed/notification.rs"]
 mod notification;
 #[path = "stock_seed/region.rs"]

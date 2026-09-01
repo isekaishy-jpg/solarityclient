@@ -298,6 +298,7 @@ pub struct UiScriptEnvironment {
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
+    modifiers: crate::UiModifierKeyState,
     world: crate::UiWorldState,
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
@@ -336,6 +337,7 @@ impl UiScriptEnvironment {
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
+            modifiers: crate::UiModifierKeyState::new(),
             world: crate::UiWorldState::new(),
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
@@ -442,6 +444,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn world_state(&self) -> crate::UiWorldState {
         self.world.clone()
+    }
+
+    /// Returns the shared physical modifier image consumed by FrameXML.
+    #[must_use]
+    pub fn modifier_key_state(&self) -> crate::UiModifierKeyState {
+        self.modifiers.clone()
     }
 
     /// Returns the shared client-owned primary action-bar state.

@@ -90,6 +90,7 @@ fn register_frame_globals(
     crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
+    register_modifier_globals(lua, globals, environment.modifier_key_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
@@ -244,6 +245,57 @@ fn register_frame_globals(
                     mlua::Error::runtime("GetGameTime requires authoritative realm time")
                 })
         })?,
+    )
+}
+
+fn register_modifier_globals(
+    lua: &Lua,
+    globals: &Table,
+    state: crate::UiModifierKeyState,
+) -> mlua::Result<()> {
+    let left_shift = state.clone();
+    let right_shift = state.clone();
+    let shift = state.clone();
+    let left_control = state.clone();
+    let right_control = state.clone();
+    let control = state.clone();
+    let left_alt = state.clone();
+    let right_alt = state.clone();
+    globals.raw_set(
+        "IsLeftShiftKeyDown",
+        lua.create_function(move |_, ()| Ok(left_shift.keys().left_shift()))?,
+    )?;
+    globals.raw_set(
+        "IsRightShiftKeyDown",
+        lua.create_function(move |_, ()| Ok(right_shift.keys().right_shift()))?,
+    )?;
+    globals.raw_set(
+        "IsShiftKeyDown",
+        lua.create_function(move |_, ()| Ok(shift.keys().shift()))?,
+    )?;
+    globals.raw_set(
+        "IsLeftControlKeyDown",
+        lua.create_function(move |_, ()| Ok(left_control.keys().left_control()))?,
+    )?;
+    globals.raw_set(
+        "IsRightControlKeyDown",
+        lua.create_function(move |_, ()| Ok(right_control.keys().right_control()))?,
+    )?;
+    globals.raw_set(
+        "IsControlKeyDown",
+        lua.create_function(move |_, ()| Ok(control.keys().control()))?,
+    )?;
+    globals.raw_set(
+        "IsLeftAltKeyDown",
+        lua.create_function(move |_, ()| Ok(left_alt.keys().left_alt()))?,
+    )?;
+    globals.raw_set(
+        "IsRightAltKeyDown",
+        lua.create_function(move |_, ()| Ok(right_alt.keys().right_alt()))?,
+    )?;
+    globals.raw_set(
+        "IsAltKeyDown",
+        lua.create_function(move |_, ()| Ok(state.keys().alt()))?,
     )
 }
 

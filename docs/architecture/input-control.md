@@ -38,6 +38,12 @@ The held-key hash table reserves a small process-lifetime capacity and is
 cleared without being reallocated. Mouse buttons use a fixed mask corresponding
 to FrameXML `BUTTON1` through `BUTTON5`; unknown buttons are not substituted.
 
+FrameXML reads one side-specific projection of the retained modifier mask.
+`IsShiftKeyDown`, `IsControlKeyDown`, and `IsAltKeyDown` combine their left and
+right physical keys; the six side-specific native queries read those exact
+bits. The all-released initial image is authoritative before the first input
+event, and focus loss publishes that same cleared image.
+
 ## Binding transitions
 
 Keyboard chords use physical SDL scancodes internally but expose no SDL type.

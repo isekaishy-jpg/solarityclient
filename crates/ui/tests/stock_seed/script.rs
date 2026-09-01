@@ -5,10 +5,11 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
-    UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
-    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
+    UiFramePlan, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog, UiObjectTree,
+    UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime,
+    UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -794,6 +795,9 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_FACTION, INITIAL_FACTION_NAME = UnitFactionGroup("player")
     INITIAL_WEEKDAY, INITIAL_MONTH, INITIAL_MONTH_DAY, INITIAL_YEAR = CalendarGetDate()
     INITIAL_REALM_HOUR, INITIAL_REALM_MINUTE = GetGameTime()
+    INITIAL_SHIFT = IsShiftKeyDown()
+    INITIAL_CONTROL = IsControlKeyDown()
+    INITIAL_ALT = IsAltKeyDown()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -813,11 +817,13 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
     let action_bar = environment.action_bar_state();
+    let modifiers = environment.modifier_key_state();
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
     world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     world.set_realm_time(UiRealmTime::new(21, 37)?);
+    modifiers.set(UiModifierKeys::new(true, false, false, true, false, false));
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
@@ -867,6 +873,9 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         ),
         (21, 37)
     );
+    assert!(bundle.lua().globals().get::<bool>("INITIAL_SHIFT")?);
+    assert!(bundle.lua().globals().get::<bool>("INITIAL_CONTROL")?);
+    assert!(!bundle.lua().globals().get::<bool>("INITIAL_ALT")?);
     assert_eq!(
         bundle
             .lua()
@@ -895,9 +904,19 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_player_trade_money_copper(567);
     world.set_realm_date(UiRealmDate::new(7, 1, 1, 2000)?);
     world.set_realm_time(UiRealmTime::new(3, 5)?);
+    modifiers.set(UiModifierKeys::new(false, true, true, false, false, true));
     assert_eq!(
         bundle.lua().load("return GetMoney()").eval::<f64>()?,
         f64::from(u32::MAX)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load(
+                "return IsLeftShiftKeyDown(), IsRightShiftKeyDown(), IsShiftKeyDown(), IsLeftControlKeyDown(), IsRightControlKeyDown(), IsControlKeyDown(), IsLeftAltKeyDown(), IsRightAltKeyDown(), IsAltKeyDown()",
+            )
+            .eval::<(bool, bool, bool, bool, bool, bool, bool, bool, bool)>()?,
+        (false, true, true, true, false, true, false, true, true)
     );
     assert_eq!(
         bundle
