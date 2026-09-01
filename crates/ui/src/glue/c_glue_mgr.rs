@@ -12,11 +12,11 @@ use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiAnimationPlan, UiBundle, UiEventArgument, UiEventDispatch, UiEventError,
     UiEventPayload, UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiGlyphAtlasPlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiPointerButton, UiPointerDispatch, UiPresentationPlan, UiRealmDirectory,
-    UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScrollFramePlan,
-    UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
+    UiGlueNetworkStatus, UiGlyphAtlasPlan, UiKeyboardModifiers, UiLayoutPlan, UiManifestKind,
+    UiObjectCatalog, UiObjectKind, UiObjectTree, UiPointerButton, UiPointerDispatch,
+    UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiScrollFramePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -477,17 +477,102 @@ impl GlueManager {
         if pressed {
             self.pointer_capture = Some((object_index, button));
         }
-        let click_activated = (!pressed && hit == Some(object_index) || pressed)
-            && self.pointer.activates(object_index, button, pressed);
-        self.runtime.dispatch_button_pointer(
-            &self.bundle,
-            object_index,
-            button.script_name(),
-            pressed,
-            click_activated,
-        )?;
+        let kind = self
+            .pointer
+            .kind(object_index)
+            .ok_or_else(|| crate::UiScriptError::Plan {
+                message: format!("pointer target {object_index} lost its live frame state"),
+            })?;
+        let click_activated = match kind {
+            UiObjectKind::Button | UiObjectKind::CheckButton => {
+                let activate = (!pressed && hit == Some(object_index) || pressed)
+                    && self.pointer.activates(object_index, button, pressed);
+                self.runtime.dispatch_button_pointer(
+                    &self.bundle,
+                    object_index,
+                    button.script_name(),
+                    pressed,
+                    activate,
+                )?;
+                activate
+            }
+            UiObjectKind::EditBox => {
+                if pressed {
+                    self.runtime.focus_edit_box(&self.bundle, object_index)?;
+                }
+                self.runtime.dispatch_frame_pointer(
+                    &self.bundle,
+                    object_index,
+                    button.script_name(),
+                    pressed,
+                )?;
+                false
+            }
+            _ => false,
+        };
         self.refresh_live_state()?;
         Ok(UiPointerDispatch::new(Some(object_index), click_activated))
+    }
+
+    /// Returns the live object index of the focused visible EditBox.
+    #[must_use]
+    pub fn focused_edit_box(&self) -> Option<usize> {
+        self.pointer.focused_edit_box(&self.geometry)
+    }
+
+    /// Delivers committed platform text to the focused stock EditBox.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when authored `OnTextChanged` or `OnChar` Lua
+    /// fails, or when the resulting live UI state cannot be resolved.
+    pub fn text_input(&mut self, text: &str) -> Result<Option<usize>, UiEventError> {
+        let Some(object_index) = self.focused_edit_box() else {
+            return Ok(None);
+        };
+        self.runtime
+            .dispatch_edit_text(&self.bundle, object_index, text)?;
+        self.refresh_live_state()?;
+        Ok(Some(object_index))
+    }
+
+    /// Delivers one uncommitted input-method composition to the focused EditBox.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when authored `OnCharComposition` Lua fails.
+    pub fn text_composition(&mut self, text: &str) -> Result<Option<usize>, UiEventError> {
+        let Some(object_index) = self.focused_edit_box() else {
+            return Ok(None);
+        };
+        self.runtime
+            .dispatch_edit_composition(&self.bundle, object_index, text)?;
+        self.refresh_live_state()?;
+        Ok(Some(object_index))
+    }
+
+    /// Delivers one stock key transition to the focused EditBox or top frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when an authored keyboard or EditBox callback
+    /// fails, or when the resulting live UI state cannot be resolved.
+    pub fn keyboard_key(
+        &mut self,
+        key: &str,
+        pressed: bool,
+        modifiers: UiKeyboardModifiers,
+    ) -> Result<Option<usize>, UiEventError> {
+        let target = self
+            .focused_edit_box()
+            .or_else(|| self.pointer.keyboard_target(&self.geometry));
+        let Some(object_index) = target else {
+            return Ok(None);
+        };
+        self.runtime
+            .dispatch_keyboard_key(&self.bundle, object_index, key, pressed, modifiers)?;
+        self.refresh_live_state()?;
+        Ok(Some(object_index))
     }
 
     /// Routes one normalized wheel delta to the frontmost ScrollFrame.

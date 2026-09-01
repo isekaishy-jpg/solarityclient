@@ -63,8 +63,8 @@ pub use frame::{
     UiObjectTree,
 };
 pub use glue::{
-    GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport, UiPointerButton,
-    UiPointerDispatch,
+    GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport, UiKeyboardModifiers,
+    UiPointerButton, UiPointerDispatch,
 };
 pub use input::{UiModifierKeyState, UiModifierKeys};
 pub use region::{

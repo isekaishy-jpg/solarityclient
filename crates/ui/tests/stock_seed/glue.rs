@@ -149,6 +149,9 @@ fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
   TOS_WAS_ACCEPTED = TOSAccepted()
   SCAN_WAS_FINISHED = IsScanDLLFinished()
   SYSTEM_WAS_SUPPORTED = IsSystemSupported()
+  TOKEN_WAS_USED = GetUsesToken()
+  SetUsesToken(true)
+  TOKEN_IS_USED = GetUsesToken()
   AcceptEULA()
 </OnLoad></Scripts></Frame></Ui>"#,
         },
@@ -169,6 +172,8 @@ fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
     assert!(globals.get::<bool>("TOS_WAS_ACCEPTED")?);
     assert!(globals.get::<bool>("SCAN_WAS_FINISHED")?);
     assert!(globals.get::<bool>("SYSTEM_WAS_SUPPORTED")?);
+    assert!(!globals.get::<bool>("TOKEN_WAS_USED")?);
+    assert!(globals.get::<bool>("TOKEN_IS_USED")?);
     assert_eq!(manager.cvar_value("readEULA").as_deref(), Some("1"));
     assert_eq!(
         manager.take_changed_cvars(),

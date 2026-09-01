@@ -36,6 +36,44 @@ pub enum UiPointerButton {
     Button5,
 }
 
+/// Modifier state attached to one native Glue keyboard transition.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UiKeyboardModifiers {
+    shift: bool,
+    control: bool,
+    alt: bool,
+}
+
+impl UiKeyboardModifiers {
+    /// Creates the modifier image captured with one platform key event.
+    #[must_use]
+    pub const fn new(shift: bool, control: bool, alt: bool) -> Self {
+        Self {
+            shift,
+            control,
+            alt,
+        }
+    }
+
+    /// Returns whether either Shift key was active.
+    #[must_use]
+    pub const fn shift(self) -> bool {
+        self.shift
+    }
+
+    /// Returns whether either Control key was active.
+    #[must_use]
+    pub const fn control(self) -> bool {
+        self.control
+    }
+
+    /// Returns whether either Alt key was active.
+    #[must_use]
+    pub const fn alt(self) -> bool {
+        self.alt
+    }
+}
+
 impl UiPointerButton {
     pub(super) const fn script_name(self) -> &'static str {
         match self {

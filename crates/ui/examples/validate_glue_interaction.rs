@@ -5,7 +5,9 @@ use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
-use solarity_ui::{GlueInitialScreen, GlueManager, UiPointerButton};
+use solarity_ui::{
+    GlueInitialScreen, GlueManager, UiGlueNetworkAction, UiKeyboardModifiers, UiPointerButton,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os();
@@ -61,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("readContest".to_owned(), "1".to_owned()),
     ];
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(data_root)?, locale)?;
-    let later = GlueManager::start_shared_with_initial_screen_and_cvars(
+    let mut later = GlueManager::start_shared_with_initial_screen_and_cvars(
         AssetStoreHandle::new(AssetStore::mount(catalog)?),
         (1280, 720),
         false,
@@ -78,9 +80,52 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    validate_login_input(&mut later)?;
     println!(
-        "validated first-run EULA/TOS interaction and later-run login bypass: changes={changes:?}"
+        "validated first-run agreements, later-run bypass, and authored login input: changes={changes:?}"
     );
+    Ok(())
+}
+
+fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    let account_index = object_index(manager, "AccountLoginAccountEdit")?;
+    let password_index = object_index(manager, "AccountLoginPasswordEdit")?;
+    if manager.focused_edit_box() != Some(account_index) {
+        return Err(
+            invalid_data("stock login did not focus the account EditBox".to_owned()).into(),
+        );
+    }
+    manager.text_input("VALIDATION_ACCOUNT")?;
+    if manager.keyboard_key("TAB", true, UiKeyboardModifiers::default())? != Some(account_index)
+        || manager.focused_edit_box() != Some(password_index)
+    {
+        return Err(
+            invalid_data("stock login Tab did not focus the password EditBox".to_owned()).into(),
+        );
+    }
+    manager.text_input("validation-secret")?;
+    manager.keyboard_key("ENTER", true, UiKeyboardModifiers::default())?;
+    let Some(UiGlueNetworkAction::Login(request)) = manager.take_network_action() else {
+        return Err(
+            invalid_data("stock login Enter did not emit a login request".to_owned()).into(),
+        );
+    };
+    if request.account_name() != "VALIDATION_ACCOUNT"
+        || request.password_bytes() != b"validation-secret"
+    {
+        return Err(invalid_data(
+            "stock login request did not retain entered credentials".to_owned(),
+        )
+        .into());
+    }
+    let globals = manager.bundle().lua().globals();
+    let password = globals.get::<mlua::Table>("AccountLoginPasswordEdit")?;
+    let get_text = password.get::<mlua::Function>("GetText")?;
+    if !get_text.call::<String>(password)?.is_empty() {
+        return Err(
+            invalid_data("stock login did not clear submitted password text".to_owned()).into(),
+        );
+    }
     Ok(())
 }
 

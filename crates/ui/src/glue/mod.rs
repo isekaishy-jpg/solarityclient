@@ -17,5 +17,6 @@ mod types;
 pub use c_glue_mgr::GlueManager;
 pub use status::GlueError;
 pub use types::{
-    GlueInitialScreen, GlueObject, GlueStartupReport, UiPointerButton, UiPointerDispatch,
+    GlueInitialScreen, GlueObject, GlueStartupReport, UiKeyboardModifiers, UiPointerButton,
+    UiPointerDispatch,
 };

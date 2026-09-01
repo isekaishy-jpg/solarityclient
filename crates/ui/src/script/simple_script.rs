@@ -18,10 +18,10 @@ use crate::script::UiGlueNetworkBridge;
 use crate::{
     FontCatalog, FontDefinition, FontOutline, FontShadow, HorizontalJustification, UiAnchorTarget,
     UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
-    UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
-    UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
-    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTextureFile,
-    UiTextureStatePlan, VerticalJustification, XmlContent,
+    UiFrameStrata, UiKeyboardModifiers, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind,
+    UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent,
+    UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
+    UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
 };
 
 use crate::animation::{
@@ -1440,6 +1440,168 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error(&label, error))
     }
 
+    /// Gives native focus to one live EditBox and dispatches focus callbacks.
+    pub(crate) fn focus_edit_box(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("EditBox object {object_index}:focus");
+        let object = self.runtime_object(bundle.lua(), object_index, &label)?;
+        if object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?
+            != "EditBox"
+        {
+            return Err(UiScriptError::Plan {
+                message: format!("focus target {object_index} is not an EditBox"),
+            });
+        }
+        set_edit_box_focus(bundle.lua(), &object, true)
+            .map_err(|error| execution_error(&label, error))
+    }
+
+    /// Delivers committed UTF-8 text to the currently focused EditBox.
+    pub(crate) fn dispatch_edit_text(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        text: &str,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("EditBox object {object_index}:text-input");
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        if object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?
+            != "EditBox"
+            || !object
+                .raw_get::<bool>(edit_focused_key())
+                .map_err(|error| execution_error(&label, error))?
+        {
+            return Err(UiScriptError::Plan {
+                message: format!("text-input target {object_index} is not the focused EditBox"),
+            });
+        }
+        let numeric = object
+            .raw_get::<bool>(edit_numeric_key())
+            .map_err(|error| execution_error(&label, error))?;
+        for character in text.chars() {
+            if character.is_control() || numeric && !character.is_ascii_digit() {
+                continue;
+            }
+            let character = character.to_string();
+            insert_edit_box_text(lua, &object, &character, true)
+                .map_err(|error| execution_error(&label, error))?;
+            if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Char)
+                .map_err(|error| execution_error(&label, error))?
+            {
+                call_string_object_handler(lua, &function, object.clone(), &character)
+                    .map_err(|error| execution_error(&label, error))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Delivers an in-progress input-method composition without committing it.
+    pub(crate) fn dispatch_edit_composition(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        text: &str,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("EditBox object {object_index}:composition");
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        let Some(function) = object_script_function(lua, &object, UiScriptHandler::CharComposition)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_string_object_handler(lua, &function, object, text)
+            .map_err(|error| execution_error(&label, error))
+    }
+
+    /// Delivers one key transition to a focused EditBox or keyboard frame.
+    pub(crate) fn dispatch_keyboard_key(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        key: &str,
+        pressed: bool,
+        modifiers: UiKeyboardModifiers,
+    ) -> Result<(), UiScriptError> {
+        let phase = if pressed { "down" } else { "up" };
+        let label = format!("UI object {object_index}:key-{phase}");
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        let handler = if pressed {
+            UiScriptHandler::KeyDown
+        } else {
+            UiScriptHandler::KeyUp
+        };
+        if let Some(function) = object_script_function(lua, &object, handler)
+            .map_err(|error| execution_error(&label, error))?
+        {
+            call_string_object_handler(lua, &function, object.clone(), key)
+                .map_err(|error| execution_error(&label, error))?;
+        }
+        let is_edit_box = object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?
+            == "EditBox";
+        if pressed && is_edit_box {
+            dispatch_edit_box_key(lua, &object, key, modifiers)
+                .map_err(|error| execution_error(&label, error))?;
+        }
+        Ok(())
+    }
+
+    /// Delivers pointer handlers for non-button mouse-enabled frames.
+    pub(crate) fn dispatch_frame_pointer(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        mouse_button: &str,
+        pressed: bool,
+    ) -> Result<(), UiScriptError> {
+        let phase = if pressed { "down" } else { "up" };
+        let label = format!("UI object {object_index}:pointer-{phase}");
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        let handler = if pressed {
+            UiScriptHandler::MouseDown
+        } else {
+            UiScriptHandler::MouseUp
+        };
+        let Some(function) = object_script_function(lua, &object, handler)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_legacy_string_handler(lua, &function, object, mouse_button)
+            .map_err(|error| execution_error(&label, error))
+    }
+
+    fn runtime_object(
+        &self,
+        lua: &Lua,
+        object_index: usize,
+        label: &str,
+    ) -> Result<Table, UiScriptError> {
+        if object_index >= self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!("UI object {object_index} is outside the live object arena"),
+            });
+        }
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error(label, error))?;
+        objects
+            .raw_get(object_index + 1)
+            .map_err(|error| execution_error(label, error))
+    }
+
     fn execute_batch(
         &mut self,
         lua: &Lua,
@@ -2343,7 +2505,7 @@ fn create_dynamic_object(
         object.raw_set(keyboard_enabled_key(), false)?;
         object.raw_set(
             mouse_enabled_key(),
-            matches!(kind, "Button" | "CheckButton"),
+            matches!(kind, "Button" | "CheckButton" | "EditBox"),
         )?;
         object.raw_set(mouse_wheel_enabled_key(), kind == "ScrollFrame")?;
         object.raw_set(
@@ -4266,7 +4428,7 @@ fn register_edit_box_focus_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
     )?;
     methods.raw_set(
         "ClearFocus",
-        lua.create_function(|_, object: Table| object.raw_set(edit_focused_key(), false))?,
+        lua.create_function(|lua, object: Table| set_edit_box_focus(lua, &object, false))?,
     )?;
     methods.raw_set(
         "HasFocus",
@@ -4414,28 +4576,7 @@ fn register_edit_box_cursor_methods(lua: &Lua, methods: &Table) -> mlua::Result<
                 .coerce_string(value)?
                 .ok_or_else(|| edit_box_usage(&object, "Insert", "\"text\""))?
                 .to_string_lossy();
-            let text = object.raw_get::<String>(text_key())?;
-            let start = object.raw_get::<u32>(edit_selection_start_key())? as usize;
-            let end = object.raw_get::<u32>(edit_selection_end_key())? as usize;
-            let cursor = object.raw_get::<u32>(edit_cursor_key())? as usize;
-            let (start, end) = if start != end {
-                (
-                    clamp_utf8_boundary(&text, start.min(end)),
-                    clamp_utf8_boundary(&text, start.max(end)),
-                )
-            } else {
-                let cursor = clamp_utf8_boundary(&text, cursor);
-                (cursor, cursor)
-            };
-            let mut replacement = String::with_capacity(text.len() + inserted.len());
-            replacement.push_str(&text[..start]);
-            replacement.push_str(&inserted);
-            replacement.push_str(&text[end..]);
-            set_edit_box_text(lua, &object, replacement, false)?;
-            let cursor = (start + inserted.len()) as u32;
-            object.raw_set(edit_cursor_key(), cursor)?;
-            object.raw_set(edit_selection_start_key(), cursor)?;
-            object.raw_set(edit_selection_end_key(), cursor)
+            insert_edit_box_text(lua, &object, &inserted, false)
         })?,
     )
 }
@@ -4472,6 +4613,17 @@ fn set_edit_box_text(
     text: String,
     user_input: bool,
 ) -> mlua::Result<()> {
+    set_edit_box_text_at_cursor(lua, object, text, usize::MAX, user_input)
+}
+
+/// Applies limits and publishes cursor/selection before `OnTextChanged` runs.
+fn set_edit_box_text_at_cursor(
+    lua: &Lua,
+    object: &Table,
+    text: String,
+    cursor: usize,
+    user_input: bool,
+) -> mlua::Result<()> {
     let byte_limit = object.raw_get::<u32>(edit_max_bytes_key())? as usize;
     let letter_limit = object.raw_get::<u32>(edit_max_letters_key())? as usize;
     let mut text = text;
@@ -4485,7 +4637,7 @@ fn set_edit_box_text(
         }
         text.truncate(boundary);
     }
-    let cursor = text.len() as u32;
+    let cursor = clamp_utf8_boundary(&text, cursor) as u32;
     object.raw_set(text_key(), text)?;
     object.raw_set(edit_cursor_key(), cursor)?;
     object.raw_set(edit_selection_start_key(), cursor)?;
@@ -4494,6 +4646,180 @@ fn set_edit_box_text(
         call_boolean_object_handler(lua, &function, object.clone(), user_input)?;
     }
     Ok(())
+}
+
+/// Inserts one native text-input fragment at the live selection or cursor.
+fn insert_edit_box_text(
+    lua: &Lua,
+    object: &Table,
+    inserted: &str,
+    user_input: bool,
+) -> mlua::Result<()> {
+    let text = object.raw_get::<String>(text_key())?;
+    let (start, end) = edit_box_replacement_range(object, &text)?;
+    let mut replacement = String::with_capacity(text.len() + inserted.len());
+    replacement.push_str(&text[..start]);
+    replacement.push_str(inserted);
+    replacement.push_str(&text[end..]);
+    set_edit_box_text_at_cursor(
+        lua,
+        object,
+        replacement,
+        start.saturating_add(inserted.len()),
+        user_input,
+    )
+}
+
+/// Handles the editing and specialized callback vocabulary owned by EditBox.
+fn dispatch_edit_box_key(
+    lua: &Lua,
+    object: &Table,
+    key: &str,
+    modifiers: UiKeyboardModifiers,
+) -> mlua::Result<()> {
+    if modifiers.control() && key.eq_ignore_ascii_case("A") {
+        let length = object.raw_get::<String>(text_key())?.len() as u32;
+        object.raw_set(edit_selection_start_key(), 0_u32)?;
+        object.raw_set(edit_selection_end_key(), length)?;
+        object.raw_set(edit_cursor_key(), length)?;
+        return Ok(());
+    }
+    match key {
+        "BACKSPACE" => delete_edit_box_text(lua, object, true)?,
+        "DELETE" => delete_edit_box_text(lua, object, false)?,
+        "LEFT" => move_edit_box_cursor(object, EditCursorMove::Left, modifiers.shift())?,
+        "RIGHT" => move_edit_box_cursor(object, EditCursorMove::Right, modifiers.shift())?,
+        "HOME" => move_edit_box_cursor(object, EditCursorMove::Home, modifiers.shift())?,
+        "END" => move_edit_box_cursor(object, EditCursorMove::End, modifiers.shift())?,
+        "ENTER" | "NUMPADENTER" => {
+            call_optional_object_handler(lua, object, UiScriptHandler::EnterPressed)?;
+        }
+        "ESCAPE" => {
+            call_optional_object_handler(lua, object, UiScriptHandler::EscapePressed)?;
+        }
+        "SPACE" => {
+            call_optional_object_handler(lua, object, UiScriptHandler::SpacePressed)?;
+        }
+        "TAB" => {
+            call_optional_object_handler(lua, object, UiScriptHandler::TabPressed)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn call_optional_object_handler(
+    lua: &Lua,
+    object: &Table,
+    handler: UiScriptHandler,
+) -> mlua::Result<()> {
+    let Some(function) = object_script_function(lua, object, handler)? else {
+        return Ok(());
+    };
+    call_object_handler(lua, &function, object.clone())
+}
+
+/// Deletes the selected range or one adjacent UTF-8 scalar.
+fn delete_edit_box_text(lua: &Lua, object: &Table, backward: bool) -> mlua::Result<()> {
+    let text = object.raw_get::<String>(text_key())?;
+    let (mut start, mut end) = edit_box_replacement_range(object, &text)?;
+    if start == end {
+        if backward {
+            start = previous_utf8_boundary(&text, start);
+        } else {
+            end = next_utf8_boundary(&text, end);
+        }
+    }
+    if start == end {
+        return Ok(());
+    }
+    let mut replacement = String::with_capacity(text.len() - (end - start));
+    replacement.push_str(&text[..start]);
+    replacement.push_str(&text[end..]);
+    set_edit_box_text_at_cursor(lua, object, replacement, start, true)
+}
+
+fn edit_box_replacement_range(object: &Table, text: &str) -> mlua::Result<(usize, usize)> {
+    let start = object.raw_get::<u32>(edit_selection_start_key())? as usize;
+    let end = object.raw_get::<u32>(edit_selection_end_key())? as usize;
+    if start != end {
+        Ok((
+            clamp_utf8_boundary(text, start.min(end)),
+            clamp_utf8_boundary(text, start.max(end)),
+        ))
+    } else {
+        let cursor = object.raw_get::<u32>(edit_cursor_key())? as usize;
+        let cursor = clamp_utf8_boundary(text, cursor);
+        Ok((cursor, cursor))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EditCursorMove {
+    Left,
+    Right,
+    Home,
+    End,
+}
+
+fn move_edit_box_cursor(
+    object: &Table,
+    movement: EditCursorMove,
+    extend_selection: bool,
+) -> mlua::Result<()> {
+    let text = object.raw_get::<String>(text_key())?;
+    let cursor = clamp_utf8_boundary(&text, object.raw_get::<u32>(edit_cursor_key())? as usize);
+    let start = clamp_utf8_boundary(
+        &text,
+        object.raw_get::<u32>(edit_selection_start_key())? as usize,
+    );
+    let end = clamp_utf8_boundary(
+        &text,
+        object.raw_get::<u32>(edit_selection_end_key())? as usize,
+    );
+    let target = if !extend_selection && start != end {
+        match movement {
+            EditCursorMove::Left | EditCursorMove::Home => start.min(end),
+            EditCursorMove::Right | EditCursorMove::End => start.max(end),
+        }
+    } else {
+        match movement {
+            EditCursorMove::Left => previous_utf8_boundary(&text, cursor),
+            EditCursorMove::Right => next_utf8_boundary(&text, cursor),
+            EditCursorMove::Home => 0,
+            EditCursorMove::End => text.len(),
+        }
+    };
+    object.raw_set(edit_cursor_key(), target as u32)?;
+    if extend_selection {
+        let anchor = if start == end {
+            cursor
+        } else if cursor == start {
+            end
+        } else {
+            start
+        };
+        object.raw_set(edit_selection_start_key(), anchor as u32)?;
+        object.raw_set(edit_selection_end_key(), target as u32)
+    } else {
+        object.raw_set(edit_selection_start_key(), target as u32)?;
+        object.raw_set(edit_selection_end_key(), target as u32)
+    }
+}
+
+fn previous_utf8_boundary(text: &str, cursor: usize) -> usize {
+    text[..clamp_utf8_boundary(text, cursor)]
+        .char_indices()
+        .next_back()
+        .map_or(0, |(index, _)| index)
+}
+
+fn next_utf8_boundary(text: &str, cursor: usize) -> usize {
+    let cursor = clamp_utf8_boundary(text, cursor);
+    text[cursor..]
+        .chars()
+        .next()
+        .map_or(cursor, |character| cursor + character.len_utf8())
 }
 
 fn clamp_utf8_boundary(text: &str, requested: usize) -> usize {
@@ -4505,16 +4831,35 @@ fn clamp_utf8_boundary(text: &str, requested: usize) -> usize {
 }
 
 fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<()> {
-    if focused {
-        let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-        for pair in objects.pairs::<usize, Table>() {
-            let (_, candidate) = pair?;
-            if candidate.raw_get::<Option<String>>(type_key())?.as_deref() == Some("EditBox") {
-                candidate.raw_set(edit_focused_key(), false)?;
-            }
+    let object_index = object.raw_get::<usize>(index_key())?;
+    let was_focused = object.raw_get::<bool>(edit_focused_key())?;
+    if !focused {
+        if was_focused {
+            object.raw_set(edit_focused_key(), false)?;
+            call_optional_object_handler(lua, object, UiScriptHandler::EditFocusLost)?;
+        }
+        return Ok(());
+    }
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut losing_focus = Vec::new();
+    for pair in objects.pairs::<usize, Table>() {
+        let (_, candidate) = pair?;
+        if candidate.raw_get::<Option<String>>(type_key())?.as_deref() == Some("EditBox")
+            && candidate.raw_get::<bool>(edit_focused_key())?
+            && candidate.raw_get::<usize>(index_key())? != object_index
+        {
+            losing_focus.push(candidate);
         }
     }
-    object.raw_set(edit_focused_key(), focused)
+    for candidate in losing_focus {
+        candidate.raw_set(edit_focused_key(), false)?;
+        call_optional_object_handler(lua, &candidate, UiScriptHandler::EditFocusLost)?;
+    }
+    if !was_focused {
+        object.raw_set(edit_focused_key(), true)?;
+        call_optional_object_handler(lua, object, UiScriptHandler::EditFocusGained)?;
+    }
+    Ok(())
 }
 
 fn call_boolean_object_handler(
@@ -6245,7 +6590,7 @@ fn scroll_child_key() -> LightUserData {
     hidden_key(&SCROLL_CHILD_TOKEN)
 }
 
-fn edit_focused_key() -> LightUserData {
+pub(super) fn edit_focused_key() -> LightUserData {
     hidden_key(&EDIT_FOCUSED_TOKEN)
 }
 
@@ -6469,7 +6814,7 @@ pub(super) fn model_scale_key() -> LightUserData {
     hidden_key(&MODEL_SCALE_TOKEN)
 }
 
-fn keyboard_enabled_key() -> LightUserData {
+pub(super) fn keyboard_enabled_key() -> LightUserData {
     hidden_key(&KEYBOARD_ENABLED_TOKEN)
 }
 

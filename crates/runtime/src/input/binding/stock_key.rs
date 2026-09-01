@@ -175,6 +175,7 @@ pub(crate) fn keyboard_name(scan_code: ScanCode) -> Option<&'static str> {
         SdlScanCode::KpMultiply => "NUMPADMULTIPLY",
         SdlScanCode::KpMinus => "NUMPADMINUS",
         SdlScanCode::KpPlus => "NUMPADPLUS",
+        SdlScanCode::KpEnter => "NUMPADENTER",
         SdlScanCode::Kp0 => "NUMPAD0",
         SdlScanCode::Kp1 => "NUMPAD1",
         SdlScanCode::Kp2 => "NUMPAD2",

@@ -21,11 +21,13 @@ impl UiPointerPlan {
                     kind: object.kind,
                     strata: object.frame_strata?,
                     level: object.frame_level?,
+                    keyboard_enabled: object.keyboard_enabled?,
                     mouse_enabled: object.mouse_enabled?,
                     mouse_wheel_enabled: object.mouse_wheel_enabled?,
                     enabled: object.enabled.unwrap_or(true),
                     hit_rect_insets: object.hit_rect_insets?,
                     click_action: object.click_action.unwrap_or(0),
+                    edit_focused: object.edit_focused.unwrap_or(false),
                 })
             })
             .collect();
@@ -46,7 +48,7 @@ impl UiPointerPlan {
                 let region = geometry.region(index)?;
                 if !matches!(
                     target.kind,
-                    UiObjectKind::Button | UiObjectKind::CheckButton
+                    UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::EditBox
                 ) || !target.mouse_enabled
                     || !target.enabled
                     || !region.effectively_shown()
@@ -69,6 +71,43 @@ impl UiPointerPlan {
             })
             .max()
             .map(|(_, _, index)| index)
+    }
+
+    /// Returns the focused, visible EditBox selected by native focus state.
+    pub(super) fn focused_edit_box(&self, geometry: &UiRegionGeometryPlan) -> Option<usize> {
+        self.targets.iter().enumerate().find_map(|(index, target)| {
+            let target = target.as_ref()?;
+            let region = geometry.region(index)?;
+            (target.kind == UiObjectKind::EditBox
+                && target.edit_focused
+                && region.effectively_shown())
+            .then_some(index)
+        })
+    }
+
+    /// Returns the frontmost visible frame accepting unconsumed keyboard input.
+    pub(super) fn keyboard_target(&self, geometry: &UiRegionGeometryPlan) -> Option<usize> {
+        self.targets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, target)| {
+                let target = target.as_ref()?;
+                let region = geometry.region(index)?;
+                (target.keyboard_enabled
+                    && region.effectively_shown()
+                    && region.effective_alpha() > 0.0)
+                    .then_some((target.strata, target.level, index))
+            })
+            .max()
+            .map(|(_, _, index)| index)
+    }
+
+    /// Returns the concrete object family at one retained interaction slot.
+    pub(super) fn kind(&self, object_index: usize) -> Option<UiObjectKind> {
+        self.targets
+            .get(object_index)
+            .and_then(Option::as_ref)
+            .map(|target| target.kind)
     }
 
     /// Returns the frontmost wheel-enabled ScrollFrame under one UI point.
@@ -120,9 +159,11 @@ struct UiPointerTarget {
     kind: UiObjectKind,
     strata: UiFrameStrata,
     level: i32,
+    keyboard_enabled: bool,
     mouse_enabled: bool,
     mouse_wheel_enabled: bool,
     enabled: bool,
     hit_rect_insets: [f64; 4],
     click_action: u64,
+    edit_focused: bool,
 }

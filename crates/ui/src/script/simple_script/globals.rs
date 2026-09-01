@@ -1295,6 +1295,21 @@ fn register_glue_globals(
         "GetCurrentScreen",
         lua.create_function(move |_, ()| Ok(current_screen.borrow().clone()))?,
     )?;
+    // Build 12340 stores this authenticator preference outside the named CVar
+    // registry; the executable contains no corresponding CVar identifier.
+    let uses_token = std::rc::Rc::new(std::cell::Cell::new(false));
+    let query_uses_token = uses_token.clone();
+    globals.raw_set(
+        "GetUsesToken",
+        lua.create_function(move |_, ()| Ok(query_uses_token.get()))?,
+    )?;
+    globals.raw_set(
+        "SetUsesToken",
+        lua.create_function(move |_, value: bool| {
+            uses_token.set(value);
+            Ok(())
+        })?,
+    )?;
     let cvars = environment.cvars();
     globals.raw_set(
         "GetSavedAccountName",

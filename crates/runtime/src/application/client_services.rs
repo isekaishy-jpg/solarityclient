@@ -22,7 +22,8 @@ use solarity_rendering::{
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
     AddonCatalog, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
-    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiPointerButton,
+    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers,
+    UiPointerButton,
 };
 
 use crate::application::ApplicationError;
@@ -173,6 +174,7 @@ impl ClientServices {
             frame.present(&mut renderer)?;
             Some(frame)
         };
+        platform.set_text_input_active(glue.focused_edit_box().is_some());
         platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
@@ -280,10 +282,7 @@ impl ClientServices {
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
         match event {
-            PlatformEvent::Key(key_event)
-                if key_event.state == ButtonState::Released
-                    && key_event.window_id == self.platform.window_id() =>
-            {
+            PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
                 let Some(scan_code) = key_event.scan_code else {
                     return Ok(());
                 };
@@ -291,14 +290,44 @@ impl ClientServices {
                     return Ok(());
                 };
                 let movie = self.glue.media_intent().movie().cloned();
-                let Some(movie) = movie else {
-                    return Ok(());
-                };
-                self.glue.movie_key_up(movie.object_index(), key)?;
-                if let Some(object_index) = self.glue.take_movie_stop_completion() {
-                    self.glue.movie_finished(object_index)?;
+                if let Some(movie) = movie {
+                    if key_event.state == ButtonState::Released {
+                        self.glue.movie_key_up(movie.object_index(), key)?;
+                        if let Some(object_index) = self.glue.take_movie_stop_completion() {
+                            self.glue.movie_finished(object_index)?;
+                        }
+                        self.login_ui = None;
+                    }
+                } else {
+                    let modifiers = UiKeyboardModifiers::new(
+                        key_event.modifiers.has_shift(),
+                        key_event.modifiers.has_control(),
+                        key_event.modifiers.has_alt(),
+                    );
+                    if self
+                        .glue
+                        .keyboard_key(key, key_event.state == ButtonState::Pressed, modifiers)?
+                        .is_some()
+                    {
+                        self.login_ui = None;
+                    }
                 }
-                self.login_ui = None;
+            }
+            PlatformEvent::TextInput(input)
+                if input.window_id == self.platform.window_id()
+                    && self.glue.media_intent().movie().is_none() =>
+            {
+                if self.glue.text_input(&input.text)?.is_some() {
+                    self.login_ui = None;
+                }
+            }
+            PlatformEvent::TextEditing(composition)
+                if composition.window_id == self.platform.window_id()
+                    && self.glue.media_intent().movie().is_none() =>
+            {
+                if self.glue.text_composition(&composition.text)?.is_some() {
+                    self.login_ui = None;
+                }
             }
             PlatformEvent::MouseButton(pointer)
                 if pointer.window_id == self.platform.window_id()
@@ -350,11 +379,13 @@ impl ClientServices {
             }
             _ => {}
         }
+        self.sync_platform_text_input();
         Ok(())
     }
 
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.sync_platform_text_input();
         self.persist_glue_cvars()?;
         let movie = self.glue.media_intent().movie().cloned();
         match self
@@ -865,6 +896,11 @@ impl ClientServices {
         let changed = self.glue.take_changed_cvars();
         self.startup_profile.persist_cvars(&changed)?;
         Ok(())
+    }
+
+    fn sync_platform_text_input(&mut self) {
+        self.platform
+            .set_text_input_active(self.glue.focused_edit_box().is_some());
     }
 }
 

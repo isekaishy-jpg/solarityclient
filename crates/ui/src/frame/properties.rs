@@ -224,7 +224,10 @@ impl UiFrameState {
             resizable: false,
             clamped_to_screen: false,
             keyboard_enabled: false,
-            mouse_enabled: matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton),
+            mouse_enabled: matches!(
+                kind,
+                UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::EditBox
+            ),
             protected: false,
             position_persistence_disabled: false,
         }

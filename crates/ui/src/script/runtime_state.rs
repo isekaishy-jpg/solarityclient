@@ -4,14 +4,15 @@ use mlua::{Lua, Table};
 
 use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, button_pressed_key, checked_key, click_action_key,
-    desaturated_key, draw_layer_key, draw_sub_level_key, enabled_key, frame_level_key,
-    frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
-    horizontal_scroll_range_key, horizontal_tiling_key, index_key, model_camera_key,
-    model_file_key, model_scale_key, model_sequence_key, model_sequence_time_key,
-    model_sequence_time_sequence_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
-    non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key, tex_coord_key,
-    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
+    desaturated_key, draw_layer_key, draw_sub_level_key, edit_focused_key, enabled_key,
+    frame_level_key, frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key,
+    horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key, index_key,
+    keyboard_enabled_key, model_camera_key, model_file_key, model_scale_key, model_sequence_key,
+    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
+    mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
+    scale_key, shown_key, tex_coord_key, texture_blend_mode_key, texture_color_key,
+    texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
+    vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectKind, UiObjectRole, UiPoint, UiScriptError,
@@ -45,6 +46,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) model: Option<UiRuntimeModel>,
     pub(crate) frame_level: Option<i32>,
     pub(crate) frame_strata: Option<UiFrameStrata>,
+    pub(crate) keyboard_enabled: Option<bool>,
     pub(crate) mouse_enabled: Option<bool>,
     pub(crate) mouse_wheel_enabled: Option<bool>,
     pub(crate) hit_rect_insets: Option<[f64; 4]>,
@@ -55,6 +57,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) checked: Option<bool>,
     pub(crate) highlighted: Option<bool>,
     pub(crate) pushed: Option<bool>,
+    pub(crate) edit_focused: Option<bool>,
 }
 
 /// Post-Lua model source and animation-selection properties.
@@ -190,6 +193,12 @@ pub(super) fn snapshot_runtime_objects(
             frame_strata: is_frame
                 .then(|| snapshot_frame_strata(lua_index, &table))
                 .transpose()?,
+            keyboard_enabled: is_frame
+                .then(|| table.raw_get(keyboard_enabled_key()))
+                .transpose()
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} keyboard input"), error)
+                })?,
             mouse_enabled: is_frame
                 .then(|| table.raw_get(mouse_enabled_key()))
                 .transpose()
@@ -270,6 +279,10 @@ pub(super) fn snapshot_runtime_objects(
                 .then(|| table.raw_get::<bool>(button_pressed_key()))
                 .transpose()
                 .map_err(|error| snapshot_error(format!("object {lua_index} pushed"), error))?,
+            edit_focused: (kind == UiObjectKind::EditBox)
+                .then(|| table.raw_get::<bool>(edit_focused_key()))
+                .transpose()
+                .map_err(|error| snapshot_error(format!("object {lua_index} focus"), error))?,
         });
     }
 

@@ -18,7 +18,8 @@ pub(crate) struct SdlPlatform {
     event_pump: EventPump,
     window: Window,
     total_physical_memory_bytes: u64,
-    _video: VideoSubsystem,
+    text_input_active: bool,
+    video: VideoSubsystem,
     _sdl: Sdl,
 }
 
@@ -68,7 +69,8 @@ impl SdlPlatform {
             event_pump,
             window,
             total_physical_memory_bytes,
-            _video: video,
+            text_input_active: false,
+            video,
             _sdl: sdl,
         })
     }
@@ -139,5 +141,19 @@ impl SdlPlatform {
         Err(PlatformError::ShowWindow {
             message: sdl3::get_error().to_string(),
         })
+    }
+
+    /// Starts or stops SDL text/IME delivery for the primary window.
+    pub(crate) fn set_text_input_active(&mut self, active: bool) {
+        if self.text_input_active == active {
+            return;
+        }
+        let text_input = self.video.text_input();
+        if active {
+            text_input.start(&self.window);
+        } else {
+            text_input.stop(&self.window);
+        }
+        self.text_input_active = active;
     }
 }
