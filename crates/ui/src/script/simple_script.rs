@@ -5867,15 +5867,15 @@ pub(super) fn checked_key() -> LightUserData {
     hidden_key(&CHECKED_TOKEN)
 }
 
-fn model_camera_key() -> LightUserData {
+pub(super) fn model_camera_key() -> LightUserData {
     hidden_key(&MODEL_CAMERA_TOKEN)
 }
 
-fn model_sequence_key() -> LightUserData {
+pub(super) fn model_sequence_key() -> LightUserData {
     hidden_key(&MODEL_SEQUENCE_TOKEN)
 }
 
-fn model_file_key() -> LightUserData {
+pub(super) fn model_file_key() -> LightUserData {
     hidden_key(&MODEL_FILE_TOKEN)
 }
 
@@ -5891,11 +5891,11 @@ fn spacing_key() -> LightUserData {
     hidden_key(&SPACING_TOKEN)
 }
 
-fn model_sequence_time_sequence_key() -> LightUserData {
+pub(super) fn model_sequence_time_sequence_key() -> LightUserData {
     hidden_key(&MODEL_SEQUENCE_TIME_SEQUENCE_TOKEN)
 }
 
-fn model_sequence_time_key() -> LightUserData {
+pub(super) fn model_sequence_time_key() -> LightUserData {
     hidden_key(&MODEL_SEQUENCE_TIME_TOKEN)
 }
 
@@ -5903,7 +5903,7 @@ pub(super) fn frame_level_key() -> LightUserData {
     hidden_key(&FRAME_LEVEL_TOKEN)
 }
 
-fn model_scale_key() -> LightUserData {
+pub(super) fn model_scale_key() -> LightUserData {
     hidden_key(&MODEL_SCALE_TOKEN)
 }
 

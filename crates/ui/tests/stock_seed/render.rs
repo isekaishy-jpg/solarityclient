@@ -154,3 +154,59 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+/// Visible ModelFFX state crosses the retained Lua-to-render boundary exactly.
+#[test]
+fn glue_presentation_retains_stock_model_ffx_state() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"ModelPresentation.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\ModelPresentation.xml",
+            bytes: br#"<Ui>
+<ModelFFX name="AccountLogin" frameStrata="BACKGROUND" frameLevel="2" alpha="0.75">
+  <Size x="800" y="600"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>
+    self:SetModel("Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2")
+    self:SetCamera(1)
+    self:SetSequence(7)
+    self:SetSequenceTime(7, 1250)
+    self:SetModelScale(1.5)
+  </OnLoad></Scripts>
+</ModelFFX>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2",
+            bytes: b"fixture model marker",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1600, 900), false)?;
+
+    let models = manager.presentation().models();
+    assert_eq!(models.len(), 1);
+    let model = &models[0];
+    assert_eq!(
+        manager.objects()[model.object_index()].name(),
+        Some("AccountLogin")
+    );
+    assert_eq!(
+        model.path().as_str(),
+        "INTERFACE\\GLUES\\MODELS\\UI_MAINMENU_NORTHREND\\UI_MAINMENU_NORTHREND.M2"
+    );
+    assert_eq!(model.camera(), 1);
+    assert_eq!(model.sequence(), 7);
+    assert_eq!(model.sequence_time_sequence(), 7);
+    assert_eq!(model.sequence_time_ms(), 1250);
+    assert_eq!(model.model_scale(), 1.5);
+    assert!((model.bounds().width() - 800.0).abs() < 0.000_01);
+    assert!((model.bounds().height() - 600.0).abs() < 0.000_01);
+    assert_eq!(model.alpha(), 0.75);
+    assert_eq!(model.strata(), UiFrameStrata::Background);
+    assert_eq!(model.frame_level(), 2);
+    Ok(())
+}

@@ -5,10 +5,11 @@ use mlua::{Lua, Table};
 use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, checked_key, click_action_key, desaturated_key,
     draw_layer_key, draw_sub_level_key, enabled_key, frame_level_key, frame_strata_key, height_key,
-    highlight_locked_key, horizontal_tiling_key, index_key, name_key, non_blocking_key, parent_key,
-    parse_point, role_key, scale_key, shown_key, tex_coord_key, texture_blend_mode_key,
-    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_tiling_key,
-    width_key,
+    highlight_locked_key, horizontal_tiling_key, index_key, model_camera_key, model_file_key,
+    model_scale_key, model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key,
+    name_key, non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key,
+    tex_coord_key, texture_blend_mode_key, texture_color_key, texture_file_key,
+    texture_solid_color_key, type_key, vertical_tiling_key, width_key,
 };
 use crate::{
     UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectKind, UiObjectRole, UiPoint, UiScriptError,
@@ -39,12 +40,24 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) first_anchor: usize,
     pub(crate) anchor_count: usize,
     pub(crate) texture: Option<UiRuntimeTexture>,
+    pub(crate) model: Option<UiRuntimeModel>,
     pub(crate) frame_level: Option<i32>,
     pub(crate) frame_strata: Option<UiFrameStrata>,
     pub(crate) enabled: Option<bool>,
     pub(crate) checked: Option<bool>,
     pub(crate) highlighted: Option<bool>,
     pub(crate) pushed: Option<bool>,
+}
+
+/// Post-Lua model source and animation-selection properties.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct UiRuntimeModel {
+    pub(crate) file: Option<AssetPath>,
+    pub(crate) camera: i32,
+    pub(crate) sequence: u32,
+    pub(crate) sequence_time_sequence: u32,
+    pub(crate) sequence_time_ms: i32,
+    pub(crate) scale: f64,
 }
 
 /// Post-Lua texture source and presentation properties.
@@ -132,6 +145,9 @@ pub(super) fn snapshot_runtime_objects(
         let texture = (kind == UiObjectKind::Texture)
             .then(|| snapshot_texture(lua_index, &table))
             .transpose()?;
+        let model = matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
+            .then(|| snapshot_model(lua_index, &table))
+            .transpose()?;
         objects.push(UiRuntimeObject {
             name: table
                 .raw_get(name_key())
@@ -149,6 +165,7 @@ pub(super) fn snapshot_runtime_objects(
             first_anchor,
             anchor_count: anchors.len() - first_anchor,
             texture,
+            model,
             frame_level: (!matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString))
                 .then(|| {
                     table.raw_get(frame_level_key()).map_err(|error| {
@@ -186,6 +203,44 @@ pub(super) fn snapshot_runtime_objects(
     }
 
     Ok(UiRuntimeObjectPlan { objects, anchors })
+}
+
+fn snapshot_model(lua_index: usize, table: &Table) -> Result<UiRuntimeModel, UiScriptError> {
+    let file = table
+        .raw_get::<Option<String>>(model_file_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} model file"), error))?
+        .map(|value| AssetPath::new(&value))
+        .transpose()
+        .map_err(|error| UiScriptError::Plan {
+            message: format!("live UI model {lua_index} has invalid file: {error}"),
+        })?;
+    let scale = finite_region_number(table, model_scale_key(), lua_index, "model scale")?;
+    if scale <= 0.0 {
+        return Err(UiScriptError::Plan {
+            message: format!("live UI model {lua_index} has nonpositive model scale"),
+        });
+    }
+    Ok(UiRuntimeModel {
+        file,
+        camera: table
+            .raw_get(model_camera_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} model camera"), error))?,
+        sequence: table
+            .raw_get(model_sequence_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} model sequence"), error))?,
+        sequence_time_sequence: table.raw_get(model_sequence_time_sequence_key()).map_err(
+            |error| {
+                snapshot_error(
+                    format!("object {lua_index} model sequence-time sequence"),
+                    error,
+                )
+            },
+        )?,
+        sequence_time_ms: table.raw_get(model_sequence_time_key()).map_err(|error| {
+            snapshot_error(format!("object {lua_index} model sequence time"), error)
+        })?,
+        scale,
+    })
 }
 
 fn snapshot_texture(lua_index: usize, table: &Table) -> Result<UiRuntimeTexture, UiScriptError> {

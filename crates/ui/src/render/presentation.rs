@@ -73,6 +73,90 @@ pub struct UiTexturePresentation {
     desaturated: bool,
 }
 
+/// One visible model frame after startup Lua selected its M2 and camera state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiModelPresentation {
+    object_index: usize,
+    path: AssetPath,
+    camera: i32,
+    sequence: u32,
+    sequence_time_sequence: u32,
+    sequence_time_ms: i32,
+    model_scale: f32,
+    bounds: UiScreenRect,
+    alpha: f32,
+    strata: UiFrameStrata,
+    frame_level: i32,
+}
+
+impl UiModelPresentation {
+    /// Returns the live object-arena index used for subsequent state updates.
+    #[must_use]
+    pub const fn object_index(&self) -> usize {
+        self.object_index
+    }
+
+    /// Returns the exact archive-backed M2 selected through `SetModel`.
+    #[must_use]
+    pub const fn path(&self) -> &AssetPath {
+        &self.path
+    }
+
+    /// Returns the signed model-camera slot selected through `SetCamera`.
+    #[must_use]
+    pub const fn camera(&self) -> i32 {
+        self.camera
+    }
+
+    /// Returns the base animation selected through `SetSequence`.
+    #[must_use]
+    pub const fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    /// Returns the sequence targeted by the most recent `SetSequenceTime`.
+    #[must_use]
+    pub const fn sequence_time_sequence(&self) -> u32 {
+        self.sequence_time_sequence
+    }
+
+    /// Returns the authored signed time from the most recent `SetSequenceTime`.
+    #[must_use]
+    pub const fn sequence_time_ms(&self) -> i32 {
+        self.sequence_time_ms
+    }
+
+    /// Returns the model-local scale selected independently of region scale.
+    #[must_use]
+    pub const fn model_scale(&self) -> f32 {
+        self.model_scale
+    }
+
+    /// Returns the visible screen rectangle occupied by the model viewport.
+    #[must_use]
+    pub const fn bounds(&self) -> UiScreenRect {
+        self.bounds
+    }
+
+    /// Returns effective frame alpha after parent composition.
+    #[must_use]
+    pub const fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    /// Returns the owning model frame's presentation stratum.
+    #[must_use]
+    pub const fn strata(&self) -> UiFrameStrata {
+        self.strata
+    }
+
+    /// Returns the owning model frame's presentation level.
+    #[must_use]
+    pub const fn frame_level(&self) -> i32 {
+        self.frame_level
+    }
+}
+
 impl UiTexturePresentation {
     /// Returns the live object-arena index used for subsequent updates.
     #[must_use]
@@ -161,12 +245,37 @@ impl UiPresentationPacket {
 pub struct UiPresentationPlan {
     packets: Vec<UiPresentationPacket>,
     members: Vec<UiTexturePresentation>,
+    models: Vec<UiModelPresentation>,
 }
 
 impl UiPresentationPlan {
     pub(crate) fn resolve(live: &UiRuntimeObjectPlan, geometry: &UiRegionGeometryPlan) -> Self {
         let mut keyed = Vec::new();
+        let mut models = Vec::new();
         for (object_index, object) in live.objects().iter().enumerate() {
+            if let (Some(model), Some(region), Some(strata), Some(frame_level)) = (
+                &object.model,
+                geometry.region(object_index),
+                object.frame_strata,
+                object.frame_level,
+            ) && region.effectively_shown()
+                && region.effective_alpha() > 0.0
+                && let Some(path) = &model.file
+            {
+                models.push(UiModelPresentation {
+                    object_index,
+                    path: path.clone(),
+                    camera: model.camera,
+                    sequence: model.sequence,
+                    sequence_time_sequence: model.sequence_time_sequence,
+                    sequence_time_ms: model.sequence_time_ms,
+                    model_scale: model.scale as f32,
+                    bounds: region.presentation_bounds(),
+                    alpha: region.effective_alpha() as f32,
+                    strata,
+                    frame_level,
+                });
+            }
             let Some(texture) = &object.texture else {
                 continue;
             };
@@ -243,7 +352,12 @@ impl UiPresentationPlan {
             }
             members.push(member);
         }
-        Self { packets, members }
+        models.sort_by_key(|model| (model.strata, model.frame_level, model.object_index));
+        Self {
+            packets,
+            members,
+            models,
+        }
     }
 
     /// Returns packets in exact back-to-front presentation order.
@@ -269,6 +383,12 @@ impl UiPresentationPlan {
     #[must_use]
     pub fn members_in_draw_order(&self) -> &[UiTexturePresentation] {
         &self.members
+    }
+
+    /// Returns visible model viewports in stable back-to-front frame order.
+    #[must_use]
+    pub fn models(&self) -> &[UiModelPresentation] {
+        &self.models
     }
 }
 
