@@ -9,7 +9,8 @@ use solarity_ui::{
     UiObjectTree, UiPlayerFactionState, UiPlayerIdentityState, UiPlayerLanguage,
     UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
     UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiSpellBookTab, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -70,6 +71,17 @@ assert(OwnerScrollerChild:GetParent() == nil)
 OwnerScroller:SetScrollChild("OwnerReplacement")
 assert(OwnerScroller:GetScrollChild() == OwnerReplacement)
 assert(OwnerReplacement:GetParent() == OwnerScroller)
+OwnerScroller:SetWidth(100)
+OwnerScroller:SetHeight(80)
+OwnerReplacement:SetWidth(125)
+OwnerReplacement:SetHeight(140)
+OwnerScroller:SetHorizontalScroll(30)
+OwnerScroller:SetVerticalScroll(90)
+assert(select('#', OwnerScroller:UpdateScrollChildRect()) == 0)
+assert(OwnerScroller:GetHorizontalScrollRange() == 25)
+assert(OwnerScroller:GetVerticalScrollRange() == 60)
+assert(OwnerScroller:GetHorizontalScroll() == 25)
+assert(OwnerScroller:GetVerticalScroll() == 60)
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, Owner))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, OwnerTexture))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, {}))
@@ -495,6 +507,9 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(GetCVarDefault("cameraSmoothStyle") == "4")
   assert(GetCVar("conversationMode") == "popout")
   assert(GetCVar("chatStyle") == "im")
+  assert(GetCVar("playerStatLeftDropdown") == "")
+  assert(GetCVar("playerStatRightDropdown") == "")
+  assert(GetCVarBool("ShowAllSpellRanks"))
   assert(GetCVarMin("rotateMinimap") == 0 and GetCVarMax("rotateMinimap") == 1)
   assert(GetTerrainMip() == 1)
   SetTerrainMip(0)
@@ -942,6 +957,10 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_IN_INSTANCE, INITIAL_INSTANCE_TYPE = IsInInstance()
     INITIAL_PARTY_MEMBERS = GetNumPartyMembers()
     INITIAL_RAID_MEMBERS = GetNumRaidMembers()
+    INITIAL_SPELL_TABS = GetNumSpellTabs()
+    INITIAL_SPELL_TAB_VALUES = select('#', GetSpellTabInfo(2))
+    INITIAL_PET_SPELL_VALUES = select('#', HasPetSpells())
+    INITIAL_PET_SPELL_COUNT, INITIAL_PET_NAME_TOKEN = HasPetSpells()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -961,6 +980,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
     let action_bar = environment.action_bar_state();
+    let spell_book = environment.spell_book_state();
     let modifiers = environment.modifier_key_state();
     action_bar.set_slots([0; 144]);
     world.enter_player(UiPlayerState::new(12_345_678));
@@ -971,6 +991,12 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     world.set_realm_time(UiRealmTime::new(21, 37)?);
     world.set_friend_counts(UiFriendCounts::new(3, 2).ok_or("invalid friend counts")?);
+    spell_book.set_tabs(vec![UiSpellBookTab::new(
+        "General",
+        "Interface\\Icons\\Spell_Holy_MagicalSentry",
+        0,
+        2,
+    )]);
     modifiers.set(UiModifierKeys::new(true, false, false, true, false, false));
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
@@ -1019,6 +1045,61 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             bundle.lua().globals().get::<u8>("INITIAL_RAID_MEMBERS")?,
         ),
         (0, 0)
+    );
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_SPELL_TABS")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_SPELL_TAB_VALUES")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_PET_SPELL_VALUES")?,
+        ),
+        (1, 0, 2)
+    );
+    assert!(matches!(
+        bundle
+            .lua()
+            .globals()
+            .get::<mlua::Value>("INITIAL_PET_SPELL_COUNT")?,
+        mlua::Value::Nil
+    ));
+    assert!(matches!(
+        bundle
+            .lua()
+            .globals()
+            .get::<mlua::Value>("INITIAL_PET_NAME_TOKEN")?,
+        mlua::Value::Nil
+    ));
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return select('#', GetSpellTabInfo(1))")
+            .eval::<u8>()?,
+        6
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("local name, texture, offset, count = GetSpellTabInfo(1); return name, texture, offset, count")
+            .eval::<(String, String, u32, u32)>()?,
+        (
+            "General".to_owned(),
+            "Interface\\Icons\\Spell_Holy_MagicalSentry".to_owned(),
+            0,
+            2,
+        )
+    );
+    spell_book.set_pet_spells(4, "PET");
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return HasPetSpells()")
+            .eval::<(u32, String)>()?,
+        (4, "PET".to_owned())
     );
     assert_eq!(
         bundle.lua().globals().get::<f64>("INITIAL_MONEY")?,

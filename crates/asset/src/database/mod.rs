@@ -17,6 +17,7 @@ mod item;
 mod light;
 mod localized;
 mod map;
+mod paper_doll;
 mod particle_color;
 mod player_class;
 mod race;
@@ -49,6 +50,7 @@ pub use light::{
     WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use map::{MapCatalog, MapDefinition, MapKind};
+pub use paper_doll::{PaperDollItemFrameCatalog, PaperDollItemFrameDefinition};
 pub use particle_color::{ParticleColorCatalog, ParticleColorDefinition};
 pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};
 pub use race::{CharacterRace, CharacterRaceCatalog};

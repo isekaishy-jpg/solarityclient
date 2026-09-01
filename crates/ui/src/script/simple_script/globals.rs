@@ -94,8 +94,10 @@ fn register_frame_globals(
     crate::feature::register_chat_type_globals(lua, globals)?;
     crate::feature::register_chat_window_globals(lua, globals, environment.chat_window_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
+    crate::feature::register_paper_doll_globals(lua, globals, environment.assets())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
     crate::feature::register_group_roster_globals(lua, globals, environment.group_roster_state())?;
+    crate::feature::register_spell_book_globals(lua, globals, environment.spell_book_state())?;
     crate::feature::register_voice_chat_globals(lua, globals, environment.voice_chat_state())?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
     let world = environment.world_state();

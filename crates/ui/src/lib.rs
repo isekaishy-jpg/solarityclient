@@ -37,8 +37,8 @@ pub use feature::{
     UiBattlefieldQueueState, UiBattlefieldQueueStatus, UiBattlefieldSlot, UiChatWindow,
     UiChatWindowState, UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole,
     UiGroupFinderRoleCheck, UiGroupFinderServerInfo, UiGroupFinderState, UiGroupRosterState,
-    UiLootMethod, UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType,
-    UiVoiceChatState, UiWorldPvpQueueSlot,
+    UiLootMethod, UiMinimapTrackingState, UiSpellBookState, UiSpellBookTab, UiTrackingCategory,
+    UiTrackingError, UiTrackingType, UiVoiceChatState, UiWorldPvpQueueSlot,
 };
 pub use feature::{
     UI_ACTION_SLOT_COUNT, UiActionBarPageError, UiActionBarState, UiActionBarStateError,

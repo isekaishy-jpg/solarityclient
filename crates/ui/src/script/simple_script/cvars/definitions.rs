@@ -156,6 +156,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("petSpellDamage", "1", 0.0, 1.0),
     ranged("petStatusText", "0", 0.0, 1.0),
     ranged("playerStatusText", "0", 0.0, 1.0),
+    // Empty means FrameXML has not persisted a paper-doll stat category yet.
+    value("playerStatLeftDropdown", ""),
+    value("playerStatRightDropdown", ""),
     ranged("profanityFilter", "1", 0.0, 1.0),
     ranged("rotateMinimap", "0", 0.0, 1.0),
     ranged("screenEdgeFlash", "1", 0.0, 1.0),
@@ -174,6 +177,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("showToastOnline", "1", 0.0, 1.0),
     ranged("showToastWindow", "1", 0.0, 1.0),
     ranged("showVKeyCastbar", "1", 0.0, 1.0),
+    ranged("ShowAllSpellRanks", "1", 0.0, 1.0),
     ranged("spamFilter", "1", 0.0, 1.0),
     ranged("statusTextPercentage", "0", 0.0, 1.0),
     ranged("stopAutoAttackOnTargetChange", "0", 0.0, 1.0),

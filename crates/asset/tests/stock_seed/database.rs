@@ -9,8 +9,8 @@ use solarity_asset::{
     CharacterClassCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
     CreatureCatalog, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
     ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, Locale, M2TextureKind, MapCatalog,
-    MapKind, ParticleColorCatalog, SoundEntryCatalog, WdbcTable, WorldLightQuery,
-    WorldLightSampleError, exterior_light_direction,
+    MapKind, PaperDollItemFrameCatalog, ParticleColorCatalog, SoundEntryCatalog, WdbcTable,
+    WorldLightQuery, WorldLightSampleError, exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -68,6 +68,53 @@ fn truncated_wdbc_is_rejected() -> Result<(), Box<dyn Error>> {
         WdbcTable::load(&mut store, &path),
         Err(AssetError::DatabaseDecode { path: failed, .. }) if failed == path
     ));
+    Ok(())
+}
+
+/// Paper-doll inventory metadata retains DBC-authored names, icons, and slots.
+#[test]
+fn paper_doll_item_frame_catalog_decodes_exact_stock_layout() -> Result<(), Box<dyn Error>> {
+    let mut strings = vec![0];
+    let head_name = append_string(&mut strings, "HeadSlot");
+    let head_icon = append_string(&mut strings, "Interface\\PaperDoll\\UI-PaperDoll-Slot-Head");
+    let ranged_name = append_string(&mut strings, "RangedSlot");
+    let ranged_icon = append_string(
+        &mut strings,
+        "Interface\\PaperDoll\\UI-PaperDoll-Slot-Ranged",
+    );
+    let table = create_wdbc(
+        2,
+        3,
+        &[head_name, head_icon, 1, ranged_name, ranged_icon, 18],
+        &strings,
+    );
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\PaperDollItemFrame.dbc",
+        bytes: &table,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = PaperDollItemFrameCatalog::load(&mut store)?;
+    assert_eq!(catalog.definitions().len(), 2);
+    let head = catalog
+        .definition("HEADSLOT")
+        .ok_or("head slot is absent")?;
+    assert_eq!(head.item_button_name(), "HeadSlot");
+    assert_eq!(
+        head.slot_icon(),
+        "Interface\\PaperDoll\\UI-PaperDoll-Slot-Head"
+    );
+    assert_eq!(head.slot_number(), 1);
+    assert_eq!(
+        catalog
+            .definition("rangedslot")
+            .ok_or("ranged slot is absent")?
+            .slot_number(),
+        18
+    );
+    assert!(catalog.definition("MissingSlot").is_none());
     Ok(())
 }
 

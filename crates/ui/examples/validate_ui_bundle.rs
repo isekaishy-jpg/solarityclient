@@ -15,7 +15,7 @@ use solarity_ui::{
     UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
     UiPlayerVitalsState, UiRealmDate, UiRealmTime, UiRegionStatePlan, UiResourceContent,
     UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiUnitPowerType, UiZoneState,
+    UiSpellBookTab, UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiUnitPowerType, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -92,6 +92,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // This explicit empty image represents a character whose
                 // authoritative 144-slot server packet contains no actions.
                 environment.action_bar_state().set_slots([0; 144]);
+                // FrameXML is only entered with a character spell book. This
+                // explicit zero-spell General tab keeps the offline fixture
+                // temporally valid without inventing learned Warrior spells.
+                environment
+                    .spell_book_state()
+                    .set_tabs(vec![UiSpellBookTab::new(
+                        "General",
+                        "Interface\\Icons\\INV_Misc_QuestionMark",
+                        0,
+                        0,
+                    )]);
             }
             Some(environment)
         }

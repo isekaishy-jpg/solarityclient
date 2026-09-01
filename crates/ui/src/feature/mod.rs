@@ -49,7 +49,10 @@ pub use minimap::{UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, U
 pub(crate) use minimap::{
     initialize_state as initialize_minimap_state, register_methods as register_minimap_methods,
 };
+pub(crate) use paper_doll::register_globals as register_paper_doll_globals;
 pub(crate) use party::register_globals as register_group_roster_globals;
 pub use party::{UiGroupRosterState, UiLootMethod};
+pub(crate) use spell_book::register_globals as register_spell_book_globals;
+pub use spell_book::{UiSpellBookState, UiSpellBookTab};
 pub use voice_chat::UiVoiceChatState;
 pub(crate) use voice_chat::register_globals as register_voice_chat_globals;

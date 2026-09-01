@@ -31,12 +31,12 @@ pub use database::{
     HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition, ItemDefinitionCatalog,
     ItemDisplayCatalog, ItemDisplayInfo, ItemVisual, ItemVisualCatalog, ItemVisualEffect,
     LightCatalog, LightDefinition, LightParameter, LightSkybox, LiquidTypeCatalog,
-    LiquidTypeDefinition, MapCatalog, MapDefinition, MapKind, ParticleColorCatalog,
-    ParticleColorDefinition, RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration,
-    RealmConfigurationCatalog, SkyboxBlend, SoundAsset, SoundEmitterCatalog,
-    SoundEmitterDefinition, SoundEntry, SoundEntryCatalog, SpellItemEnchantment, WdbcHeader,
-    WdbcTable, WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    exterior_light_direction,
+    LiquidTypeDefinition, MapCatalog, MapDefinition, MapKind, PaperDollItemFrameCatalog,
+    PaperDollItemFrameDefinition, ParticleColorCatalog, ParticleColorDefinition,
+    RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,
+    SkyboxBlend, SoundAsset, SoundEmitterCatalog, SoundEmitterDefinition, SoundEntry,
+    SoundEntryCatalog, SpellItemEnchantment, WdbcHeader, WdbcTable, WorldLightCondition,
+    WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle};
 pub use model::{

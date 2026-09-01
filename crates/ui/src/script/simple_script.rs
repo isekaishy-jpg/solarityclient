@@ -351,6 +351,7 @@ pub struct UiScriptEnvironment {
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
     group_roster: crate::UiGroupRosterState,
+    spell_book: crate::UiSpellBookState,
     voice_chat: crate::UiVoiceChatState,
     addons: crate::UiAddonLoadState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
@@ -395,6 +396,7 @@ impl UiScriptEnvironment {
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
             group_roster: crate::UiGroupRosterState::new(),
+            spell_book: crate::UiSpellBookState::new(),
             voice_chat: crate::UiVoiceChatState::new(),
             addons: crate::UiAddonLoadState::default(),
             bindings: None,
@@ -557,6 +559,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn group_roster_state(&self) -> crate::UiGroupRosterState {
         self.group_roster.clone()
+    }
+
+    /// Returns the shared ordered player spell-book projection.
+    #[must_use]
+    pub fn spell_book_state(&self) -> crate::UiSpellBookState {
+        self.spell_book.clone()
     }
 
     /// Returns the shared voice-service availability projection.
@@ -3948,7 +3956,45 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
             object.raw_set(vertical_scroll_key(), value)
         })?,
     )?;
+    methods.raw_set(
+        "UpdateScrollChildRect",
+        lua.create_function(|_, object: Table| update_scroll_child_rect(&object))?,
+    )?;
     Ok(())
+}
+
+/// Recomputes the scrollable extent after script-authored child dimensions change.
+///
+/// The native method marks `CSimpleScrollFrame` dirty and its layout pass
+/// publishes these ranges. The retained runtime resolves the same observable
+/// state eagerly because FrameXML construction runs without an intervening
+/// native frame tick.
+fn update_scroll_child_rect(object: &Table) -> mlua::Result<()> {
+    let frame_width = object.raw_get::<f64>(width_key())?;
+    let frame_height = object.raw_get::<f64>(height_key())?;
+    let (child_width, child_height) = object
+        .raw_get::<Option<Table>>(scroll_child_key())?
+        .map(|child| {
+            Ok::<(f64, f64), mlua::Error>((
+                child.raw_get::<f64>(width_key())?,
+                child.raw_get::<f64>(height_key())?,
+            ))
+        })
+        .transpose()?
+        .unwrap_or((0.0, 0.0));
+    let horizontal_range = (child_width - frame_width).max(0.0);
+    let vertical_range = (child_height - frame_height).max(0.0);
+    object.raw_set(horizontal_scroll_range_key(), horizontal_range)?;
+    object.raw_set(vertical_scroll_range_key(), vertical_range)?;
+
+    let horizontal_scroll = object
+        .raw_get::<f64>(horizontal_scroll_key())?
+        .clamp(0.0, horizontal_range);
+    let vertical_scroll = object
+        .raw_get::<f64>(vertical_scroll_key())?
+        .clamp(0.0, vertical_range);
+    object.raw_set(horizontal_scroll_key(), horizontal_scroll)?;
+    object.raw_set(vertical_scroll_key(), vertical_scroll)
 }
 
 /// Applies the stock scroll-child ownership contract recovered from
