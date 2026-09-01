@@ -15,6 +15,7 @@ fn stock_build_12340_locale_table_is_complete() -> Result<(), Box<dyn Error>> {
     for locale in locales {
         assert_eq!(locale.parse::<Locale>()?.as_str(), locale);
     }
+    assert_eq!(Locale::ALL.map(Locale::as_str), locales);
     assert!(matches!(
         "itIT".parse::<Locale>(),
         Err(AssetError::UnsupportedLocale { .. })

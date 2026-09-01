@@ -39,6 +39,7 @@ impl AssetRead {
 pub struct AssetStore {
     pub(super) data_root: crate::archive::ClientDataRoot,
     locale: Locale,
+    existing_locales: Vec<Locale>,
     archives: Vec<MountedArchive>,
 }
 
@@ -52,6 +53,7 @@ impl AssetStore {
     pub fn mount(catalog: ArchiveCatalog) -> Result<Self, AssetError> {
         let data_root = catalog.data_root().clone();
         let locale = catalog.locale();
+        let existing_locales = catalog.existing_locales().to_vec();
         let descriptors = catalog.into_descriptors();
         let mut archives = Vec::with_capacity(descriptors.len());
         for descriptor in descriptors {
@@ -60,6 +62,7 @@ impl AssetStore {
         Ok(Self {
             data_root,
             locale,
+            existing_locales,
             archives,
         })
     }
@@ -68,6 +71,12 @@ impl AssetStore {
     #[must_use]
     pub const fn locale(&self) -> Locale {
         self.locale
+    }
+
+    /// Returns every language pack found beside the mounted locale.
+    #[must_use]
+    pub fn existing_locales(&self) -> &[Locale] {
+        &self.existing_locales
     }
 
     /// Returns mounted archive metadata in resolution order.

@@ -83,6 +83,22 @@ pub enum Locale {
 }
 
 impl Locale {
+    /// Build-12340's locale probe order.
+    pub const ALL: [Self; 12] = [
+        Self::DeDe,
+        Self::EnGb,
+        Self::EnUs,
+        Self::EsEs,
+        Self::FrFr,
+        Self::KoKr,
+        Self::ZhCn,
+        Self::ZhTw,
+        Self::EnCn,
+        Self::EnTw,
+        Self::EsMx,
+        Self::RuRu,
+    ];
+
     /// Returns the four-byte directory and archive-name token used by stock.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

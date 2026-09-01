@@ -47,6 +47,7 @@ fn catalog_preserves_exact_stock_priority_order() -> Result<(), Box<dyn Error>> 
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
+    assert_eq!(catalog.existing_locales(), &[Locale::EnUs]);
     let actual = catalog
         .descriptors()
         .iter()

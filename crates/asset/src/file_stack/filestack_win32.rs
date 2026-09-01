@@ -50,6 +50,7 @@ const CONSOLIDATED_ARCHIVES: [(&str, u16, ArchiveKind); 10] = [
 pub struct ArchiveCatalog {
     data_root: ClientDataRoot,
     locale: Locale,
+    existing_locales: Vec<Locale>,
     descriptors: Vec<ArchiveDescriptor>,
 }
 
@@ -68,6 +69,7 @@ impl ArchiveCatalog {
     /// archive directory cannot be enumerated, or the computed patch band would
     /// overflow its priority representation.
     pub fn discover(data_root: ClientDataRoot, locale: Locale) -> Result<Self, AssetError> {
+        let existing_locales = discover_existing_locales(&data_root)?;
         let mut descriptors = discover_consolidated_archives(&data_root, locale)?;
         descriptors.extend(discover_patches(&data_root, locale)?);
 
@@ -78,6 +80,7 @@ impl ArchiveCatalog {
         Ok(Self {
             data_root,
             locale,
+            existing_locales,
             descriptors,
         })
     }
@@ -94,6 +97,12 @@ impl ArchiveCatalog {
         self.locale
     }
 
+    /// Returns installed language packs in the executable's probe order.
+    #[must_use]
+    pub fn existing_locales(&self) -> &[Locale] {
+        &self.existing_locales
+    }
+
     /// Returns archives in highest-precedence-first resolution order.
     #[must_use]
     pub fn descriptors(&self) -> &[ArchiveDescriptor] {
@@ -104,6 +113,22 @@ impl ArchiveCatalog {
     pub(crate) fn into_descriptors(self) -> Vec<ArchiveDescriptor> {
         self.descriptors
     }
+}
+
+/// Probes the locale archive that identifies each installed language pack.
+fn discover_existing_locales(data_root: &ClientDataRoot) -> Result<Vec<Locale>, AssetError> {
+    let mut locales = Vec::new();
+    for locale in Locale::ALL {
+        let relative = PathBuf::from(format!(
+            "{}\\locale-{}.MPQ",
+            locale.as_str(),
+            locale.as_str()
+        ));
+        if find_relative_file(data_root.as_path(), &relative)?.is_some() {
+            locales.push(locale);
+        }
+    }
+    Ok(locales)
 }
 
 /// Resolves each mandatory consolidated archive using Win32-style case folding.
