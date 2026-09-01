@@ -306,6 +306,7 @@ pub struct UiScriptEnvironment {
     world: crate::UiWorldState,
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
+    chat_windows: crate::UiChatWindowState,
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
@@ -345,6 +346,7 @@ impl UiScriptEnvironment {
             world: crate::UiWorldState::new(),
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
+            chat_windows: crate::UiChatWindowState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
             bindings: None,
@@ -466,6 +468,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn battlefield_state(&self) -> crate::UiBattlefieldQueueState {
         self.battlefield.clone()
+    }
+
+    /// Returns the shared client-owned persistent chat-window image.
+    #[must_use]
+    pub fn chat_window_state(&self) -> crate::UiChatWindowState {
+        self.chat_windows.clone()
     }
 
     /// Returns the shared player-capability tracking projection.

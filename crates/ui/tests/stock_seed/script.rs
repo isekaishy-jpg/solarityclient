@@ -965,6 +965,41 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .eval::<(bool, String)>()?;
     assert!(!accepted);
     assert!(message.contains("Usage: GetChatTypeIndex(type)"));
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return select('#', GetChatWindowInfo(0)), select('#', GetChatWindowInfo(11))")
+            .eval::<(u32, u32)>()?,
+        (0, 0)
+    );
+    let (name, size, red, green, blue, alpha, shown, locked, docked, uninteractable) =
+        bundle.lua().load("return GetChatWindowInfo(1)").eval::<(
+            String,
+            u32,
+            f64,
+            f64,
+            f64,
+            f64,
+            Option<u32>,
+            Option<u32>,
+            Option<u32>,
+            Option<u32>,
+        )>()?;
+    assert_eq!(name, "");
+    assert_eq!(size, 0);
+    assert_eq!((red, green, blue), (0.0, 0.0, 0.0));
+    assert_eq!(alpha, 40.0 / 255.0);
+    assert_eq!(
+        (shown, locked, docked, uninteractable),
+        (Some(1), Some(1), Some(1), None)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return select(7, GetChatWindowInfo('2')), select(9, GetChatWindowInfo(2)), select(7, GetChatWindowInfo(3))")
+            .eval::<(u32, u32, Option<u32>)>()?,
+        (1, 2, None)
+    );
 
     let mut occupied_slots = [0_u32; 144];
     occupied_slots[0] = 0x8000_1234;

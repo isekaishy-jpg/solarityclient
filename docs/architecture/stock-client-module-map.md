@@ -160,3 +160,10 @@ checks all 326 production plus 166 external test files.
   fixed build-12340 records occupy `009fa558..009fb7bf` at a `0x4c` stride,
   from `SYSTEM` through `BN_INLINE_TOAST_CONVERSATION`; dynamic records begin
   at index 63 when the native dynamic table is populated.
+- The `GetChatWindowInfo` registration at `00ac7b78` points to native function
+  `004fbd90`. It accepts one-based indexes `1..=10`, returns no values outside
+  that range, and returns ten values in the order name, font size, RGBA, shown,
+  locked, dock position, and uninteractable. Native initializer `0050edd0`
+  calls `00501800` for all ten records: names and font sizes start empty/zero,
+  color is black with byte alpha 40, every window is locked, and windows one
+  and two are shown at dock positions one and two before chat-cache hydration.

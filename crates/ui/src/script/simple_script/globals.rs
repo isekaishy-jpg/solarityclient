@@ -88,7 +88,8 @@ fn register_frame_globals(
 ) -> mlua::Result<()> {
     crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
     crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
-    crate::feature::register_chat_globals(lua, globals)?;
+    crate::feature::register_chat_type_globals(lua, globals)?;
+    crate::feature::register_chat_window_globals(lua, globals, environment.chat_window_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
