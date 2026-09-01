@@ -33,3 +33,6 @@ pub use battlefield::{
     UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
 };
 pub(crate) use battlenet::UiBattleNetState;
+pub(crate) use minimap::{
+    initialize_state as initialize_minimap_state, register_methods as register_minimap_methods,
+};

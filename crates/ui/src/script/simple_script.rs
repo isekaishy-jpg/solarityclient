@@ -1197,6 +1197,10 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(tooltip_offset_y_key(), 0.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
+        if object.kind() == UiObjectKind::Minimap {
+            crate::feature::initialize_minimap_state(&table)
+                .map_err(|error| execution_error("object registration", error))?;
+        }
         if matches!(object.kind(), UiObjectKind::Model | UiObjectKind::ModelFfx) {
             table
                 .raw_set(model_camera_key(), 0)
@@ -2128,6 +2132,9 @@ fn create_object_metatable(
     }
     if kind == UiObjectKind::GameTooltip {
         tooltips::register_game_tooltip_methods(lua, &methods)?;
+    }
+    if kind == UiObjectKind::Minimap {
+        crate::feature::register_minimap_methods(lua, &methods)?;
     }
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
