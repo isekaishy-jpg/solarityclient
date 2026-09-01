@@ -103,3 +103,14 @@ expect_used = "deny"
 todo = "deny"
 unimplemented = "deny"
 unwrap_used = "deny"
+
+# Persistent user-testing builds retain useful symbols while avoiding the
+# debug renderer's severe asset and animation overhead. The installer copies
+# this artifact outside `target`, so `cargo clean` cannot remove the test bin.
+[profile.test-client]
+inherits = "release"
+opt-level = 2
+debug = 1
+strip = false
+incremental = true
+lto = "thin"
