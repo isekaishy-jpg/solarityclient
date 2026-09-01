@@ -158,7 +158,11 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         let time = time_packet
             .world_time_speed()?
             .ok_or("world-time packet did not decode")?;
-        assert_eq!(time.packed_time(), (21 << 6) | 37);
+        assert_eq!(time.packed_time(), packed_realm_time());
+        assert_eq!(time.year(), 2009);
+        assert_eq!(time.month_index(), 11);
+        assert_eq!(time.month_day(), 8);
+        assert_eq!(time.weekday_index(), 2);
         assert_eq!(time.hour(), 21);
         assert_eq!(time.minute(), 37);
         assert_eq!(time.game_time_speed(), 1.0 / 60.0);
@@ -450,10 +454,14 @@ fn world_location_payload() -> Vec<u8> {
 
 fn world_time_speed_payload() -> Vec<u8> {
     let mut payload = Vec::with_capacity(12);
-    payload.extend_from_slice(&((21_u32 << 6) | 37).to_le_bytes());
+    payload.extend_from_slice(&packed_realm_time().to_le_bytes());
     payload.extend_from_slice(&(1.0_f32 / 60.0).to_le_bytes());
     payload.extend_from_slice(&0x1122_3344_u32.to_le_bytes());
     payload
+}
+
+const fn packed_realm_time() -> u32 {
+    (9 << 24) | (11 << 20) | (7 << 14) | (2 << 11) | (21 << 6) | 37
 }
 
 fn assert_create_player_update(

@@ -12,9 +12,9 @@ use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiAnimationPlan, UiBindingAssignments,
     UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan, UiLayoutPlan, UiManifestKind,
     UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState,
-    UiRealmTime, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile, UiTexturePlan,
-    UiTextureStatePlan, UiZoneState,
+    UiRealmDate, UiRealmTime, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile,
+    UiTexturePlan, UiTextureStatePlan, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -72,6 +72,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 world.set_zone(UiZoneState::new("", "", "", "", None, false, None));
                 // The offline path supplies an explicit server-time fixture;
                 // UI code never substitutes the host wall clock for realm time.
+                // Tuesday, December 8, 2009 is internally consistent with the
+                // stock 3.3 calendar era and uses Lua's one-based weekday.
+                world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
                 world.set_realm_time(UiRealmTime::new(12, 0)?);
             }
             Some(environment)

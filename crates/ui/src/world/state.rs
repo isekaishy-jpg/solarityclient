@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use super::realm_time::UiRealmTime;
+use super::{realm_date::UiRealmDate, realm_time::UiRealmTime};
 
 /// Player facts exposed synchronously through the stock FrameXML API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -232,6 +232,7 @@ struct UiWorldStateInner {
     player_progression: Cell<Option<UiPlayerProgressionState>>,
     player_faction: RefCell<Option<UiPlayerFactionState>>,
     zone: RefCell<Option<UiZoneState>>,
+    realm_date: Cell<Option<UiRealmDate>>,
     realm_time: Cell<Option<UiRealmTime>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
@@ -270,12 +271,18 @@ impl UiWorldState {
         self.inner.realm_time.set(Some(time));
     }
 
+    /// Publishes the current server-anchored Gregorian calendar date.
+    pub fn set_realm_date(&self, date: UiRealmDate) {
+        self.inner.realm_date.set(Some(date));
+    }
+
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         self.inner.player.set(None);
         self.inner.player_progression.set(None);
         *self.inner.player_faction.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
+        self.inner.realm_date.set(None);
         self.inner.realm_time.set(None);
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
@@ -310,6 +317,12 @@ impl UiWorldState {
     #[must_use]
     pub fn realm_time(&self) -> Option<UiRealmTime> {
         self.inner.realm_time.get()
+    }
+
+    /// Returns the realm date only after the world session has supplied it.
+    #[must_use]
+    pub fn realm_date(&self) -> Option<UiRealmDate> {
+        self.inner.realm_date.get()
     }
 
     /// Publishes whether the current outdoor battlefield permits area exit.

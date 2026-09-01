@@ -248,8 +248,10 @@ invented numeric or string fallback.
 
 Realm time remains a server-owned world fact. Runtime advances
 `SMSG_LOGIN_SETTIMESPEED` through its monotonic `RealmClock` and must publish a
-validated hour and minute to `UiWorldState`; `GetGameTime` reads that snapshot.
-The UI layer never substitutes local wall time when realm time is absent.
+validated date, hour, and minute to `UiWorldState`. `CalendarGetDate` exposes
+the packet's Gregorian calendar as stock's one-based weekday and month, while
+`GetGameTime` reads the clock snapshot. The UI layer never substitutes local
+wall time when either realm value is absent.
 
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global

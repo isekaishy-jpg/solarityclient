@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use solarity_network::{AddonManifestError, WorldAddon, WorldAddonManifest};
+use solarity_network::{AddonManifestError, WorldAddon, WorldAddonManifest, WorldTimeSpeed};
 
 /// Add-on identity records remain ordered and reject names that break stock CStrings.
 #[test]
@@ -32,4 +32,37 @@ fn addon_manifest_validates_names_and_preserves_order() -> Result<(), Box<dyn Er
         Err(AddonManifestError::TooManyAddons { .. })
     ));
     Ok(())
+}
+
+/// Packed realm time exposes every build-12340 calendar field without host-time input.
+#[test]
+fn world_time_preserves_stock_packed_calendar() -> Result<(), Box<dyn Error>> {
+    // Tuesday, December 8, 2009 at 21:37. The wire uses zero-based month,
+    // month-day, and Sunday-first weekday fields.
+    let packed = (9 << 24) | (11 << 20) | (7 << 14) | (2 << 11) | (21 << 6) | 37;
+    let time = WorldTimeSpeed::new(packed, 1.0 / 60.0, 0)?;
+
+    assert_eq!(time.year(), 2009);
+    assert_eq!(time.month_index(), 11);
+    assert_eq!(time.month_day(), 8);
+    assert_eq!(time.weekday_index(), 2);
+    assert_eq!(time.hour(), 21);
+    assert_eq!(time.minute(), 37);
+    Ok(())
+}
+
+/// Impossible packed calendar fields fail at the authoritative packet boundary.
+#[test]
+fn world_time_rejects_invalid_packed_calendar() {
+    let invalid_month = 12 << 20;
+    let invalid_weekday = 7 << 11;
+    let february_thirtieth = (1 << 20) | (29 << 14);
+    let non_leap_february_twenty_ninth = (1 << 24) | (1 << 20) | (28 << 14);
+    let leap_february_twenty_ninth = (1 << 20) | (28 << 14);
+
+    assert!(WorldTimeSpeed::new(invalid_month, 0.0, 0).is_err());
+    assert!(WorldTimeSpeed::new(invalid_weekday, 0.0, 0).is_err());
+    assert!(WorldTimeSpeed::new(february_thirtieth, 0.0, 0).is_err());
+    assert!(WorldTimeSpeed::new(non_leap_february_twenty_ninth, 0.0, 0).is_err());
+    assert!(WorldTimeSpeed::new(leap_february_twenty_ninth, 0.0, 0).is_ok());
 }

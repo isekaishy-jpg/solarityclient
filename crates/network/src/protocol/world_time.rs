@@ -33,7 +33,8 @@ impl WorldTimeSpeed {
     ///
     /// # Errors
     ///
-    /// Returns [`WorldTimePacketError`] for an invalid hour, minute, or rate.
+    /// Returns [`WorldTimePacketError`] for an invalid packed calendar, clock,
+    /// or rate.
     pub fn new(
         packed_time: u32,
         game_time_speed: f32,
@@ -48,6 +49,24 @@ impl WorldTimeSpeed {
             return Err(WorldTimePacketError::new(
                 0,
                 "login world time contains an invalid clock",
+            ));
+        }
+        if value.month_index() >= 12 {
+            return Err(WorldTimePacketError::new(
+                0,
+                "login world time contains an invalid month",
+            ));
+        }
+        if value.weekday_index() >= 7 {
+            return Err(WorldTimePacketError::new(
+                0,
+                "login world time contains an invalid weekday",
+            ));
+        }
+        if value.month_day() > days_in_month(value.year(), value.month_index()) {
+            return Err(WorldTimePacketError::new(
+                0,
+                "login world time contains an invalid month day",
             ));
         }
         if !value.game_time_speed.is_finite() || value.game_time_speed < 0.0 {
@@ -77,6 +96,30 @@ impl WorldTimeSpeed {
         (self.packed_time & 0x3F) as u8
     }
 
+    /// Returns the full Gregorian year represented by the five-bit wire field.
+    #[must_use]
+    pub const fn year(self) -> u16 {
+        2_000 + ((self.packed_time >> 24) & 0x1F) as u16
+    }
+
+    /// Returns the exact zero-based month field carried on the wire.
+    #[must_use]
+    pub const fn month_index(self) -> u8 {
+        ((self.packed_time >> 20) & 0x0F) as u8
+    }
+
+    /// Returns the decoded one-based day within the month.
+    #[must_use]
+    pub const fn month_day(self) -> u8 {
+        (((self.packed_time >> 14) & 0x3F) as u8) + 1
+    }
+
+    /// Returns the exact zero-based Sunday-through-Saturday wire field.
+    #[must_use]
+    pub const fn weekday_index(self) -> u8 {
+        ((self.packed_time >> 11) & 0x07) as u8
+    }
+
     /// Returns the number of game minutes advanced per real second.
     #[must_use]
     pub const fn game_time_speed(self) -> f32 {
@@ -88,6 +131,20 @@ impl WorldTimeSpeed {
     pub const fn holiday_offset(self) -> u32 {
         self.holiday_offset
     }
+}
+
+const fn days_in_month(year: u16, month_index: u8) -> u8 {
+    match month_index {
+        0 | 2 | 4 | 6 | 7 | 9 | 11 => 31,
+        3 | 5 | 8 | 10 => 30,
+        1 if is_leap_year(year) => 29,
+        1 => 28,
+        _ => 0,
+    }
+}
+
+const fn is_leap_year(year: u16) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
 /// A malformed `SMSG_LOGIN_SETTIMESPEED` body.

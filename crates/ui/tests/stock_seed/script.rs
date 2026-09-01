@@ -6,9 +6,9 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
     UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
-    UiPlayerProgressionState, UiPlayerState, UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
+    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -792,6 +792,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_XP = UnitXP("player")
     INITIAL_XP_MAX = UnitXPMax("player")
     INITIAL_FACTION, INITIAL_FACTION_NAME = UnitFactionGroup("player")
+    INITIAL_WEEKDAY, INITIAL_MONTH, INITIAL_MONTH_DAY, INITIAL_YEAR = CalendarGetDate()
     INITIAL_REALM_HOUR, INITIAL_REALM_MINUTE = GetGameTime()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
@@ -815,6 +816,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
+    world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     world.set_realm_time(UiRealmTime::new(21, 37)?);
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
@@ -851,6 +853,15 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(
         (
+            bundle.lua().globals().get::<u8>("INITIAL_WEEKDAY")?,
+            bundle.lua().globals().get::<u8>("INITIAL_MONTH")?,
+            bundle.lua().globals().get::<u8>("INITIAL_MONTH_DAY")?,
+            bundle.lua().globals().get::<u16>("INITIAL_YEAR")?
+        ),
+        (3, 12, 8, 2009)
+    );
+    assert_eq!(
+        (
             bundle.lua().globals().get::<u8>("INITIAL_REALM_HOUR")?,
             bundle.lua().globals().get::<u8>("INITIAL_REALM_MINUTE")?
         ),
@@ -882,10 +893,18 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);
+    world.set_realm_date(UiRealmDate::new(7, 1, 1, 2000)?);
     world.set_realm_time(UiRealmTime::new(3, 5)?);
     assert_eq!(
         bundle.lua().load("return GetMoney()").eval::<f64>()?,
         f64::from(u32::MAX)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return CalendarGetDate()")
+            .eval::<(u8, u8, u8, u16)>()?,
+        (7, 1, 1, 2000)
     );
     assert_eq!(
         bundle
@@ -928,6 +947,12 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .eval::<(bool, String)>()?;
     assert!(!available);
     assert!(message.contains("authoritative realm time"));
+    let (available, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(CalendarGetDate); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!available);
+    assert!(message.contains("authoritative realm date"));
     Ok(())
 }
 

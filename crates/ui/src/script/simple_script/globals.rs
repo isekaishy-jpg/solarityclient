@@ -99,6 +99,7 @@ fn register_frame_globals(
     let sub_zone_text = world.clone();
     let minimap_zone_text = world.clone();
     let zone_pvp = world.clone();
+    let realm_date = world.clone();
     let realm_time = world.clone();
     let cursor_state = world.clone();
     let trade_state = world.clone();
@@ -220,6 +221,17 @@ fn register_frame_globals(
                 zone.is_sub_zone_pvp().then_some(1_u32),
                 zone.faction_name().map(str::to_owned),
             ))
+        })?,
+    )?;
+    globals.raw_set(
+        "CalendarGetDate",
+        lua.create_function(move |_, ()| {
+            realm_date
+                .realm_date()
+                .map(|date| (date.weekday(), date.month(), date.month_day(), date.year()))
+                .ok_or_else(|| {
+                    mlua::Error::runtime("CalendarGetDate requires authoritative realm date")
+                })
         })?,
     )?;
     globals.raw_set(
