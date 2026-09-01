@@ -38,7 +38,7 @@ pub use database::{
     SoundEntryCatalog, SpellItemEnchantment, WdbcHeader, WdbcTable, WorldLightCondition,
     WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
-pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle};
+pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{
     DecodedM2Model, M2AnimationSet, M2Attachment, M2Batch, M2BlendMode, M2Bone, M2Camera,
     M2CollisionMesh, M2ColorAnimation, M2Event, M2EventTrack, M2Interpolation, M2Light,

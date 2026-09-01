@@ -257,6 +257,7 @@ pub struct UiScriptRuntime {
     font_strings: Vec<InitialFont>,
     buttons: Vec<InitialButton>,
     textures: Vec<InitialTexture>,
+    simple_html: crate::UiSimpleHtmlPlan,
     frame_ids: Vec<Option<i32>>,
     frame_levels: Vec<Option<i32>>,
     frame_strata: Vec<Option<&'static str>>,
@@ -890,7 +891,7 @@ impl UiScriptRuntime {
             };
             *slot = Some(definition.clone());
         }
-        let region_dimensions = (0..plan.regions.state_count())
+        let mut region_dimensions = (0..plan.regions.state_count())
             .map(|index| {
                 let state = plan
                     .regions
@@ -901,6 +902,27 @@ impl UiScriptRuntime {
                 Ok((f64::from(state.width()), f64::from(state.height())))
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
+        let simple_html = if let Some(assets) = environment.assets() {
+            crate::UiSimpleHtmlPlan::resolve(
+                plan.tree,
+                plan.regions,
+                plan.fonts,
+                &mut assets.borrow_mut(),
+                environment.logical_extent().1,
+            )?
+        } else if crate::UiSimpleHtmlPlan::requires_asset_store(plan.tree) {
+            return Err(UiScriptError::Plan {
+                message: "locale-backed SimpleHTML requires the mounted client asset store"
+                    .to_owned(),
+            });
+        } else {
+            crate::UiSimpleHtmlPlan::empty(plan.tree.nodes().len())
+        };
+        for (index, dimensions) in region_dimensions.iter_mut().enumerate() {
+            if let Some(html) = simple_html.node(index) {
+                dimensions.1 = dimensions.1.max(f64::from(html.content_height()));
+            }
+        }
         let region_shown = (0..plan.regions.state_count())
             .map(|index| {
                 plan.regions
@@ -1021,6 +1043,7 @@ impl UiScriptRuntime {
             font_strings,
             buttons,
             textures,
+            simple_html,
             frame_ids,
             frame_levels,
             frame_strata,
@@ -1134,6 +1157,12 @@ impl UiScriptRuntime {
     #[must_use]
     pub fn registered_object_count(&self) -> usize {
         self.registered_objects.get()
+    }
+
+    /// Returns locale-loaded and measured static `SimpleHTML` state.
+    #[must_use]
+    pub const fn simple_html(&self) -> &crate::UiSimpleHtmlPlan {
+        &self.simple_html
     }
 
     /// Copies the authoritative post-script region state out of Lua.
@@ -1832,6 +1861,10 @@ impl UiScriptRuntime {
             owner
                 .raw_set(key, table.clone())
                 .map_err(|error| execution_error("object registration", error))?;
+            if object.role() == UiObjectRole::ScrollChild {
+                update_scroll_child_rect(&owner)
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
             if object.role() == UiObjectRole::ButtonText
                 && let Some(font) = owner
                     .raw_get::<Option<Table>>(normal_font_key())

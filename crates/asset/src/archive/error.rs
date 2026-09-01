@@ -89,6 +89,28 @@ pub enum AssetError {
         /// Filesystem context.
         message: String,
     },
+    /// GlueXML requested a locale-loose document outside its stock file set.
+    #[error("unsupported localized client document {name}")]
+    UnsupportedLocalizedDocument {
+        /// Unmodified XML file attribute.
+        name: String,
+    },
+    /// The selected locale's loose document directory could not be inspected.
+    #[error("failed to resolve localized client document path {path}: {message}")]
+    LocalizedDocumentLookup {
+        /// Concrete locale-relative path being inspected.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
+    /// A selected locale-loose document could not be read.
+    #[error("failed to read localized client document {path}: {message}")]
+    LocalizedDocumentRead {
+        /// Concrete locale-relative file selected by the document stack.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
     /// An archive was present but could not be opened.
     #[error("failed to open client archive {path}: {message}")]
     ArchiveOpen {

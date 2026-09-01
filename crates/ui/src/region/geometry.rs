@@ -259,7 +259,16 @@ impl GeometryResolver<'_> {
             .map(|parent| self.resolve(parent))
             .transpose()?;
         let fallback_left = parent.map_or(0.0, |region| region.public.logical_bounds.left);
-        let fallback_bottom = parent.map_or(0.0, |region| region.public.logical_bounds.bottom);
+        // A stock ScrollChild without authored points begins at the scroll
+        // frame's top-left. Its content height then extends downward and feeds
+        // the native vertical range rather than moving the first line upward.
+        let fallback_bottom = parent.map_or(0.0, |region| {
+            if role == UiObjectRole::ScrollChild {
+                region.public.logical_bounds.top - authored.1.max(0.0)
+            } else {
+                region.public.logical_bounds.bottom
+            }
+        });
         let horizontal = solve_axis(
             authored.0,
             if x_constraints.is_empty() {

@@ -79,6 +79,22 @@ impl XmlDocument {
     /// Returns [`UiLoadError::Xml`] for malformed XML or an invalid document
     /// shape. Schema and template validation belong to later UI construction.
     pub fn parse(path: &AssetPath, source: &str) -> Result<Self, UiLoadError> {
+        Self::parse_with_whitespace(path, source, false)
+    }
+
+    /// Parses inline-text markup without discarding whitespace-only runs.
+    pub(crate) fn parse_preserving_text_whitespace(
+        path: &AssetPath,
+        source: &str,
+    ) -> Result<Self, UiLoadError> {
+        Self::parse_with_whitespace(path, source, true)
+    }
+
+    fn parse_with_whitespace(
+        path: &AssetPath,
+        source: &str,
+        preserve_text_whitespace: bool,
+    ) -> Result<Self, UiLoadError> {
         let mut reader = Reader::from_str(source);
         let mut elements = Vec::new();
         let mut stack = Vec::new();
@@ -106,7 +122,7 @@ impl XmlDocument {
                 }
                 Event::Text(text) => {
                     let value = text.xml10_content().into_owned();
-                    if !value.trim().is_empty() {
+                    if preserve_text_whitespace || !value.trim().is_empty() {
                         push_text(path, &stack, &mut elements, value)?;
                     }
                 }

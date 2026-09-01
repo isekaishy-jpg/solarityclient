@@ -6,6 +6,9 @@ use thiserror::Error;
 /// A failure while converting XML callbacks into Lua 5.1 functions.
 #[derive(Debug, Error)]
 pub enum UiScriptError {
+    /// Static `SimpleHTML` locale loading or font layout failed.
+    #[error(transparent)]
+    SimpleHtml(#[from] crate::UiSimpleHtmlError),
     /// A handler is not part of the selected stock widget's callback table.
     #[error("unsupported UI script handler {handler} on {object} in {path}")]
     Handler {

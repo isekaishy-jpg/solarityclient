@@ -262,6 +262,12 @@ impl GlueManager {
         &self.render_plan
     }
 
+    /// Returns the locale-loaded legal and help document layout.
+    #[must_use]
+    pub const fn simple_html(&self) -> &crate::UiSimpleHtmlPlan {
+        self.runtime.simple_html()
+    }
+
     /// Resolves every presentation-blocking BLP through the retained MPQ stack.
     ///
     /// # Errors

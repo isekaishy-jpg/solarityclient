@@ -6,6 +6,7 @@ use std::path::Path;
 
 use solarity_asset::{
     ArchiveCatalog, ArchiveKind, AssetError, AssetPath, AssetStore, ClientDataRoot, Locale,
+    LocalizedDocument,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -252,6 +253,37 @@ fn cinematic_lookup_rejects_other_loose_namespaces() -> Result<(), Box<dyn Error
         Err(AssetError::InvalidAssetPath { .. })
     ));
     Ok(())
+}
+
+/// Built-in Glue documents resolve only from the selected locale root with
+/// Win32 filename case folding.
+#[test]
+fn localized_glue_document_resolves_selected_locale_file() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write_loose_file("Data/enUS/EULA.HTML", b"<html>selected</html>")?;
+    fixture.write_loose_file("Data/frFR/eula.html", b"<html>other locale</html>")?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert_eq!(
+        store.read_localized_document(LocalizedDocument::Eula)?,
+        Some(b"<html>selected</html>".to_vec())
+    );
+    assert_eq!(
+        store.read_localized_document(LocalizedDocument::Termination)?,
+        None
+    );
+    Ok(())
+}
+
+/// The localized-document API admits only names authored by stock GlueXML.
+#[test]
+fn localized_glue_document_name_has_no_general_loose_fallback() {
+    assert!(matches!(
+        "../Config.wtf".parse::<LocalizedDocument>(),
+        Err(AssetError::UnsupportedLocalizedDocument { name }) if name == "../Config.wtf"
+    ));
+    assert!("EULA.HTML".parse::<LocalizedDocument>().is_ok());
 }
 
 /// A missing required file identifies the expected consolidated archive.

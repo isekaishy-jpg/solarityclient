@@ -82,7 +82,9 @@ pub use script::{
     UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
-    UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
+    UiBlendMode, UiGradientOrientation, UiSimpleHtmlAlignment, UiSimpleHtmlBlock,
+    UiSimpleHtmlDocument, UiSimpleHtmlError, UiSimpleHtmlFontSlot, UiSimpleHtmlLine,
+    UiSimpleHtmlNode, UiSimpleHtmlPlan, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
     UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
     UiTextureStatePlan,
 };
