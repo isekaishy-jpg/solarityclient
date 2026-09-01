@@ -45,4 +45,14 @@ impl UiBattleNetState {
     pub(crate) fn max_conversation_players(&self) -> Option<u8> {
         self.connected().then_some(MAX_CONVERSATION_PLAYERS)
     }
+
+    /// Returns total and online Battle.net friend counts.
+    ///
+    /// Build 12340 always pushes both numeric results, including two zeroes
+    /// when the platform service is unavailable or disconnected.
+    pub(crate) fn friend_counts(&self) -> (u32, u32) {
+        // The retained state has no platform roster until a service is
+        // attached, so both authoritative counts are empty.
+        (0, 0)
+    }
 }

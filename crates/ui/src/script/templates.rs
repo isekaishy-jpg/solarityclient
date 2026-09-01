@@ -100,6 +100,10 @@ pub struct UiRuntimeTemplateNode {
     draw_layer: &'static str,
     draw_sub_level: i16,
     clamped_to_screen: bool,
+    movable: bool,
+    resizable: bool,
+    top_level: bool,
+    dont_save_position: bool,
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
@@ -275,6 +279,18 @@ impl UiRuntimeTemplatePlan {
                     clamped_to_screen: frame_states
                         .state(local_index)
                         .is_some_and(crate::UiFrameState::clamped_to_screen),
+                    movable: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::movable),
+                    resizable: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::resizable),
+                    top_level: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::top_level),
+                    dont_save_position: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::position_persistence_disabled),
                     script_targets,
                 });
             }
@@ -432,6 +448,10 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("draw_layer", node.draw_layer)?;
                 record.raw_set("draw_sub_level", node.draw_sub_level)?;
                 record.raw_set("clamped_to_screen", node.clamped_to_screen)?;
+                record.raw_set("movable", node.movable)?;
+                record.raw_set("resizable", node.resizable)?;
+                record.raw_set("top_level", node.top_level)?;
+                record.raw_set("dont_save_position", node.dont_save_position)?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {
                     match target {

@@ -5,11 +5,11 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
-    UiFramePlan, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog, UiObjectTree,
-    UiPlayerFactionState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerState, UiRealmDate,
-    UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
-    UiTexturePlan, UiTextureStatePlan,
+    UiFramePlan, UiFriendCounts, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog,
+    UiObjectTree, UiPlayerFactionState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerState,
+    UiRealmDate, UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
+    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -42,10 +42,10 @@ fn script_runtime_retains_frame_widget_state() -> Result<(), Box<dyn Error>> {
         FixtureFile {
             path: "Interface\\GlueXML\\ScrollFrames.xml",
             bytes: br#"<Ui>
-<ScrollFrame name="ScrollTemplate" virtual="true"><ScrollChild>
+<ScrollFrame name="ScrollTemplate" virtual="true" movable="true"><ScrollChild>
   <Frame name="$parentChild"/>
 </ScrollChild></ScrollFrame>
-<Frame name="Owner"><Frames>
+<Frame name="Owner" movable="true" resizable="true" toplevel="true" dontSavePosition="true"><Frames>
   <ScrollFrame name="$parentScroller"><ScrollChild>
     <Frame name="$parentChild"/>
   </ScrollChild></ScrollFrame>
@@ -55,6 +55,7 @@ fn script_runtime_retains_frame_widget_state() -> Result<(), Box<dyn Error>> {
     EDIT_CHANGES = (EDIT_CHANGES or 0) + 1
     EDIT_USER_INPUT = userInput
   </OnTextChanged></Scripts></EditBox>
+  <Frame name="$parentCase"><Layers><Layer><Fontstring name="$parentCount"/></Layer></Layers></Frame>
 </Frames></Frame>
 </Ui>"#,
         },
@@ -62,6 +63,7 @@ fn script_runtime_retains_frame_widget_state() -> Result<(), Box<dyn Error>> {
             path: "Interface\\GlueXML\\Check.lua",
             bytes: br#"assert(OwnerScroller:GetScrollChild() == OwnerScrollerChild)
 assert(OwnerScrollerChild:GetParent() == OwnerScroller)
+assert(OwnerCaseCount:GetObjectType() == "FontString")
 OwnerScroller:SetScrollChild(nil)
 assert(OwnerScroller:GetScrollChild() == nil)
 assert(OwnerScrollerChild:GetParent() == nil)
@@ -76,6 +78,12 @@ Owner:SetClampRectInsets(-35, 35, 38, -50)
 local left, right, top, bottom = Owner:GetClampRectInsets()
 assert(Owner:IsClampedToScreen() == 1)
 assert(left == -35 and right == 35 and top == 38 and bottom == -50)
+assert(Owner:IsMovable() == 1 and Owner:IsResizable() == 1 and Owner:IsToplevel() == 1)
+assert(Owner:GetDontSavePosition() == 1 and Owner:IsUserPlaced() == nil)
+Owner:SetMovable("false")
+Owner:SetResizable(false)
+Owner:SetUserPlaced(true)
+assert(Owner:IsMovable() == nil and Owner:IsResizable() == nil and Owner:IsUserPlaced() == 1)
 local utf8Text = string.char(104, 195, 169)
 OwnerEdit:SetText(utf8Text)
 assert(OwnerEdit:GetText() == utf8Text)
@@ -99,7 +107,8 @@ local red, green, blue, alpha = OwnerEdit:GetTextColor()
 assert(red == 0.1 and green == 0.2 and blue == 0.3 and alpha == 0.4)
 local dynamic = CreateFrame("ScrollFrame", "DynamicScroller", Owner, "ScrollTemplate")
 assert(dynamic:GetScrollChild() == DynamicScrollerChild)
-assert(DynamicScrollerChild:GetParent() == dynamic)"#,
+assert(DynamicScrollerChild:GetParent() == dynamic)
+assert(dynamic:IsMovable() == 1)"#,
         },
     ])?;
     let mut store = mount(&fixture)?;
@@ -132,7 +141,7 @@ assert(DynamicScrollerChild:GetParent() == dynamic)"#,
 
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
-    assert_eq!(runtime.registered_object_count(), 8);
+    assert_eq!(runtime.registered_object_count(), 10);
     Ok(())
 }
 
@@ -648,6 +657,8 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(GetModifiedClick("SELFCAST") == "ALT")
   assert(not BNFeaturesEnabled() and not BNConnected() and not BNFeaturesEnabledAndConnected())
   assert(BNGetMaxPlayersInConversation() == nil)
+  local totalFriends, onlineFriends = BNGetNumFriends()
+  assert(totalFriends == 0 and onlineFriends == 0)
   local firstTime = GetTime()
   local secondTime = GetTime()
   assert(firstTime &gt;= 0 and secondTime &gt;= firstTime)
@@ -657,6 +668,9 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   FontLabel:SetTextColor(0.25, 0.5, 0.75, 0.8)
   local tr, tg, tb, ta = FontLabel:GetTextColor()
   assert(tr == 0.25 and tg == 0.5 and tb == 0.75 and ta == 0.8)
+  FontLabel:SetShadowOffset(1, -1)
+  local shadowX, shadowY = FontLabel:GetShadowOffset()
+  assert(shadowX == 1 and shadowY == -1)
   assert(FontLabel:GetFontObject() == GlueFontTest)
   local face, height, flags = FontLabel:GetFont()
   assert(face == "FONTS\\FRIZQT__.TTF" and height == 12 and flags == "")
@@ -914,6 +928,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_SHIFT = IsShiftKeyDown()
     INITIAL_CONTROL = IsControlKeyDown()
     INITIAL_ALT = IsAltKeyDown()
+    INITIAL_FRIENDS, INITIAL_FRIENDS_ONLINE = GetNumFriends()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -941,6 +956,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_player_default_language(UiPlayerLanguage::new(1, "Orcish"));
     world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     world.set_realm_time(UiRealmTime::new(21, 37)?);
+    world.set_friend_counts(UiFriendCounts::new(3, 2).ok_or("invalid friend counts")?);
     modifiers.set(UiModifierKeys::new(true, false, false, true, false, false));
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
@@ -994,6 +1010,16 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             bundle.lua().globals().get::<u8>("INITIAL_REALM_MINUTE")?
         ),
         (21, 37)
+    );
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u32>("INITIAL_FRIENDS")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u32>("INITIAL_FRIENDS_ONLINE")?
+        ),
+        (3, 2)
     );
     assert!(bundle.lua().globals().get::<bool>("INITIAL_SHIFT")?);
     assert!(bundle.lua().globals().get::<bool>("INITIAL_CONTROL")?);
@@ -1115,6 +1141,34 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .load("return select(7, GetChatWindowInfo('2')), select(9, GetChatWindowInfo(2)), select(7, GetChatWindowInfo(3))")
             .eval::<(u32, u32, Option<u32>)>()?,
         (1, 2, None)
+    );
+    bundle
+        .lua()
+        .load(
+            "SetChatWindowName(2, 'Combat'); SetChatWindowSize(2, 14); SetChatWindowColor(2, 0.1, 0.2, 0.3); SetChatWindowAlpha(2, 0.5); SetChatWindowLocked(2, false); SetChatWindowDocked(2, 4); SetChatWindowShown(2, false); SetChatWindowUninteractable(2, true)",
+        )
+        .exec()?;
+    let (name, size, red, green, blue, alpha, shown, locked, docked, uninteractable) =
+        bundle.lua().load("return GetChatWindowInfo(2)").eval::<(
+            String,
+            u32,
+            f64,
+            f64,
+            f64,
+            f64,
+            Option<u32>,
+            Option<u32>,
+            Option<u32>,
+            Option<u32>,
+        )>()?;
+    assert_eq!((name.as_str(), size), ("Combat", 14));
+    assert_eq!(
+        (red, green, blue, alpha),
+        (26.0 / 255.0, 51.0 / 255.0, 77.0 / 255.0, 128.0 / 255.0)
+    );
+    assert_eq!(
+        (shown, locked, docked, uninteractable),
+        (None, None, Some(4), Some(1))
     );
 
     let mut occupied_slots = [0_u32; 144];

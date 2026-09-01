@@ -54,29 +54,30 @@ pub enum UiObjectKind {
 
 impl UiObjectKind {
     pub(crate) fn from_element_name(name: &str) -> Option<Self> {
-        match name {
-            "Frame" => Some(Self::Frame),
-            "Button" => Some(Self::Button),
-            "CheckButton" => Some(Self::CheckButton),
-            "ColorSelect" => Some(Self::ColorSelect),
-            "Cooldown" => Some(Self::Cooldown),
-            "EditBox" => Some(Self::EditBox),
-            "FontString" => Some(Self::FontString),
-            "GameTooltip" => Some(Self::GameTooltip),
-            "MessageFrame" => Some(Self::MessageFrame),
-            "Minimap" => Some(Self::Minimap),
-            "Model" => Some(Self::Model),
-            "ModelFFX" => Some(Self::ModelFfx),
-            "MovieFrame" => Some(Self::MovieFrame),
-            "ScrollFrame" => Some(Self::ScrollFrame),
-            "ScrollingMessageFrame" => Some(Self::ScrollingMessageFrame),
-            "SimpleHTML" => Some(Self::SimpleHtml),
-            "Slider" => Some(Self::Slider),
-            "StatusBar" => Some(Self::StatusBar),
-            "Texture" => Some(Self::Texture),
-            "WorldFrame" => Some(Self::WorldFrame),
-            _ => None,
-        }
+        [
+            ("Frame", Self::Frame),
+            ("Button", Self::Button),
+            ("CheckButton", Self::CheckButton),
+            ("ColorSelect", Self::ColorSelect),
+            ("Cooldown", Self::Cooldown),
+            ("EditBox", Self::EditBox),
+            ("FontString", Self::FontString),
+            ("GameTooltip", Self::GameTooltip),
+            ("MessageFrame", Self::MessageFrame),
+            ("Minimap", Self::Minimap),
+            ("Model", Self::Model),
+            ("ModelFFX", Self::ModelFfx),
+            ("MovieFrame", Self::MovieFrame),
+            ("ScrollFrame", Self::ScrollFrame),
+            ("ScrollingMessageFrame", Self::ScrollingMessageFrame),
+            ("SimpleHTML", Self::SimpleHtml),
+            ("Slider", Self::Slider),
+            ("StatusBar", Self::StatusBar),
+            ("Texture", Self::Texture),
+            ("WorldFrame", Self::WorldFrame),
+        ]
+        .into_iter()
+        .find_map(|(stock_name, kind)| name.eq_ignore_ascii_case(stock_name).then_some(kind))
     }
 }
 

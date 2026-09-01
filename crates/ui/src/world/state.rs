@@ -32,6 +32,39 @@ pub struct UiPlayerProgressionState {
     next_level_experience: u32,
 }
 
+/// Realm friend-list totals synchronously consumed by the social UI.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UiFriendCounts {
+    total: u32,
+    online: u32,
+}
+
+impl UiFriendCounts {
+    /// Creates one server-projected friend-list count pair.
+    ///
+    /// Returns `None` when the online count exceeds the total count.
+    #[must_use]
+    pub const fn new(total: u32, online: u32) -> Option<Self> {
+        if online <= total {
+            Some(Self { total, online })
+        } else {
+            None
+        }
+    }
+
+    /// Returns all realm friends present in the client list.
+    #[must_use]
+    pub const fn total(self) -> u32 {
+        self.total
+    }
+
+    /// Returns the connected subset of the realm friend list.
+    #[must_use]
+    pub const fn online(self) -> u32 {
+        self.online
+    }
+}
+
 impl UiPlayerProgressionState {
     /// Creates a projection of the adjacent build-12340 player XP words.
     #[must_use]
@@ -238,6 +271,7 @@ struct UiWorldStateInner {
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
+    friend_counts: Cell<UiFriendCounts>,
 }
 
 impl UiWorldState {
@@ -265,6 +299,11 @@ impl UiWorldState {
     /// Publishes the active player's localized default chat language.
     pub fn set_player_default_language(&self, language: UiPlayerLanguage) {
         *self.inner.player_default_language.borrow_mut() = Some(language);
+    }
+
+    /// Publishes the current realm friend-list totals.
+    pub fn set_friend_counts(&self, counts: UiFriendCounts) {
+        self.inner.friend_counts.set(counts);
     }
 
     /// Publishes the latest complete map-area projection.
@@ -319,6 +358,12 @@ impl UiWorldState {
     pub fn player_default_language(&self) -> Option<UiPlayerLanguage> {
         self.player()
             .and_then(|_| self.inner.player_default_language.borrow().clone())
+    }
+
+    /// Returns realm friend-list totals, including the stock empty initial state.
+    #[must_use]
+    pub fn friend_counts(&self) -> UiFriendCounts {
+        self.inner.friend_counts.get()
     }
 
     /// Returns the current zone projection when map-area state is authoritative.

@@ -552,7 +552,7 @@ impl<'bundle> UiObjectTree<'bundle> {
                     role_override.unwrap_or(role),
                 )?;
             } else {
-                let descendant_layer = if child.name() == "Layer" {
+                let descendant_layer = if child.name().eq_ignore_ascii_case("Layer") {
                     UiElementLayer {
                         draw_layer: Some(parse_draw_layer(layer.source_path, child)?),
                         ..layer
@@ -563,7 +563,7 @@ impl<'bundle> UiObjectTree<'bundle> {
                 // ScrollChild is a structural XML wrapper, not a runtime
                 // object. Its sole nested frame occupies a semantic slot on
                 // the owning ScrollFrame and is installed by the script layer.
-                let descendant_role = if child.name() == "ScrollChild" {
+                let descendant_role = if child.name().eq_ignore_ascii_case("ScrollChild") {
                     Some(UiObjectRole::ScrollChild)
                 } else {
                     role_override
@@ -651,19 +651,42 @@ fn parse_draw_layer(path: &AssetPath, element: &XmlElement) -> Result<UiDrawLaye
 }
 
 fn classify_child(name: &str) -> Option<(UiObjectKind, UiObjectRole)> {
-    let alias = match name {
-        "ButtonText" => Some((UiObjectKind::FontString, UiObjectRole::ButtonText)),
-        "NormalTexture" => Some((UiObjectKind::Texture, UiObjectRole::NormalTexture)),
-        "PushedTexture" => Some((UiObjectKind::Texture, UiObjectRole::PushedTexture)),
-        "DisabledTexture" => Some((UiObjectKind::Texture, UiObjectRole::DisabledTexture)),
-        "HighlightTexture" => Some((UiObjectKind::Texture, UiObjectRole::HighlightTexture)),
-        "CheckedTexture" => Some((UiObjectKind::Texture, UiObjectRole::CheckedTexture)),
-        "DisabledCheckedTexture" => {
-            Some((UiObjectKind::Texture, UiObjectRole::DisabledCheckedTexture))
-        }
-        "ThumbTexture" => Some((UiObjectKind::Texture, UiObjectRole::ThumbTexture)),
-        _ => None,
-    };
+    let alias = [
+        (
+            "ButtonText",
+            (UiObjectKind::FontString, UiObjectRole::ButtonText),
+        ),
+        (
+            "NormalTexture",
+            (UiObjectKind::Texture, UiObjectRole::NormalTexture),
+        ),
+        (
+            "PushedTexture",
+            (UiObjectKind::Texture, UiObjectRole::PushedTexture),
+        ),
+        (
+            "DisabledTexture",
+            (UiObjectKind::Texture, UiObjectRole::DisabledTexture),
+        ),
+        (
+            "HighlightTexture",
+            (UiObjectKind::Texture, UiObjectRole::HighlightTexture),
+        ),
+        (
+            "CheckedTexture",
+            (UiObjectKind::Texture, UiObjectRole::CheckedTexture),
+        ),
+        (
+            "DisabledCheckedTexture",
+            (UiObjectKind::Texture, UiObjectRole::DisabledCheckedTexture),
+        ),
+        (
+            "ThumbTexture",
+            (UiObjectKind::Texture, UiObjectRole::ThumbTexture),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(stock_name, value)| name.eq_ignore_ascii_case(stock_name).then_some(value));
     alias.or_else(|| UiObjectKind::from_element_name(name).map(|kind| (kind, UiObjectRole::Object)))
 }
 

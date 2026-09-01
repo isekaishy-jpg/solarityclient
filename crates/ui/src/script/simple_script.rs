@@ -16,7 +16,7 @@ use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle, Locale};
 use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canonical_glue_event};
 use crate::script::UiGlueNetworkBridge;
 use crate::{
-    FontCatalog, FontDefinition, FontOutline, HorizontalJustification, UiAnchorTarget,
+    FontCatalog, FontDefinition, FontOutline, FontShadow, HorizontalJustification, UiAnchorTarget,
     UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
     UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
     UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
@@ -134,6 +134,13 @@ static EDIT_AUTO_FOCUS_TOKEN: u8 = 94;
 static EDIT_TEXT_INSETS_TOKEN: u8 = 95;
 static FRAME_CLAMPED_TOKEN: u8 = 96;
 static FRAME_CLAMP_INSETS_TOKEN: u8 = 97;
+static FONT_SHADOW_OFFSET_TOKEN: u8 = 98;
+static FONT_SHADOW_COLOR_TOKEN: u8 = 99;
+static FRAME_MOVABLE_TOKEN: u8 = 100;
+static FRAME_RESIZABLE_TOKEN: u8 = 101;
+static FRAME_TOP_LEVEL_TOKEN: u8 = 102;
+static FRAME_USER_PLACED_TOKEN: u8 = 103;
+static FRAME_DONT_SAVE_POSITION_TOKEN: u8 = 104;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -250,6 +257,10 @@ pub struct UiScriptRuntime {
     frame_keyboard_enabled: Vec<Option<bool>>,
     frame_mouse_enabled: Vec<Option<bool>>,
     frame_clamped_to_screen: Vec<Option<bool>>,
+    frame_movable: Vec<Option<bool>>,
+    frame_resizable: Vec<Option<bool>>,
+    frame_top_level: Vec<Option<bool>>,
+    frame_dont_save_position: Vec<Option<bool>>,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
@@ -709,6 +720,22 @@ impl UiScriptRuntime {
                     .map(|state| state.clamped_to_screen())
             })
             .collect();
+        let frame_movable = (0..plan.regions.state_count())
+            .map(|index| plan.frames.state(index).map(|state| state.movable()))
+            .collect();
+        let frame_resizable = (0..plan.regions.state_count())
+            .map(|index| plan.frames.state(index).map(|state| state.resizable()))
+            .collect();
+        let frame_top_level = (0..plan.regions.state_count())
+            .map(|index| plan.frames.state(index).map(|state| state.top_level()))
+            .collect();
+        let frame_dont_save_position = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.frames
+                    .state(index)
+                    .map(|state| state.position_persistence_disabled())
+            })
+            .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
         let textures = tree_textures(plan.tree, plan.texture_states)?;
@@ -735,6 +762,10 @@ impl UiScriptRuntime {
             frame_keyboard_enabled,
             frame_mouse_enabled,
             frame_clamped_to_screen,
+            frame_movable,
+            frame_resizable,
+            frame_top_level,
+            frame_dont_save_position,
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
@@ -1067,6 +1098,26 @@ impl UiScriptRuntime {
         } else {
             None
         };
+        let movable =
+            resolved_frame_flag(&self.frame_movable, node_index, object.kind(), "movable")?;
+        let resizable = resolved_frame_flag(
+            &self.frame_resizable,
+            node_index,
+            object.kind(),
+            "resizable",
+        )?;
+        let top_level = resolved_frame_flag(
+            &self.frame_top_level,
+            node_index,
+            object.kind(),
+            "top-level",
+        )?;
+        let dont_save_position = resolved_frame_flag(
+            &self.frame_dont_save_position,
+            node_index,
+            object.kind(),
+            "position-persistence",
+        )?;
         let frame_strata = if is_frame_object(object.kind()) {
             Some(
                 self.frame_strata
@@ -1183,6 +1234,11 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
                 .and_then(|()| table.raw_set(frame_clamped_key(), clamped_to_screen))
+                .and_then(|()| table.raw_set(frame_movable_key(), movable))
+                .and_then(|()| table.raw_set(frame_resizable_key(), resizable))
+                .and_then(|()| table.raw_set(frame_top_level_key(), top_level))
+                .and_then(|()| table.raw_set(frame_user_placed_key(), false))
+                .and_then(|()| table.raw_set(frame_dont_save_position_key(), dont_save_position))
                 .and_then(|()| {
                     table.raw_set(
                         frame_clamp_insets_key(),
@@ -1331,6 +1387,18 @@ impl UiScriptRuntime {
                         lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
                     )
                 })
+                .and_then(|()| {
+                    table.raw_set(
+                        font_shadow_offset_key(),
+                        lua.create_sequence_from([0.0_f64, 0.0])?,
+                    )
+                })
+                .and_then(|()| {
+                    table.raw_set(
+                        font_shadow_color_key(),
+                        lua.create_sequence_from([0.0_f64, 0.0, 0.0, 1.0])?,
+                    )
+                })
                 .map_err(|error| execution_error("object registration", error))?;
             if let Some(name) = &font.object_name {
                 let global: Table = lua.globals().raw_get(name.as_str()).map_err(|error| {
@@ -1345,9 +1413,17 @@ impl UiScriptRuntime {
                 let color: Table = global
                     .raw_get(text_color_key())
                     .map_err(|error| execution_error("object registration", error))?;
+                let shadow_offset: Table = global
+                    .raw_get(font_shadow_offset_key())
+                    .map_err(|error| execution_error("object registration", error))?;
+                let shadow_color: Table = global
+                    .raw_get(font_shadow_color_key())
+                    .map_err(|error| execution_error("object registration", error))?;
                 table
                     .raw_set(font_object_key(), global)
                     .and_then(|()| table.raw_set(text_color_key(), color))
+                    .and_then(|()| table.raw_set(font_shadow_offset_key(), shadow_offset))
+                    .and_then(|()| table.raw_set(font_shadow_color_key(), shadow_color))
                     .map_err(|error| execution_error("object registration", error))?;
             }
         }
@@ -1758,6 +1834,14 @@ fn create_dynamic_object(
             frame_clamped_key(),
             record.raw_get::<bool>("clamped_to_screen")?,
         )?;
+        object.raw_set(frame_movable_key(), record.raw_get::<bool>("movable")?)?;
+        object.raw_set(frame_resizable_key(), record.raw_get::<bool>("resizable")?)?;
+        object.raw_set(frame_top_level_key(), record.raw_get::<bool>("top_level")?)?;
+        object.raw_set(frame_user_placed_key(), false)?;
+        object.raw_set(
+            frame_dont_save_position_key(),
+            record.raw_get::<bool>("dont_save_position")?,
+        )?;
         object.raw_set(
             frame_clamp_insets_key(),
             lua.create_sequence_from([0.0_f64; 4])?,
@@ -1832,11 +1916,23 @@ fn create_dynamic_object(
             text_color_key(),
             lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
         )?;
+        object.raw_set(
+            font_shadow_offset_key(),
+            lua.create_sequence_from([0.0_f64, 0.0])?,
+        )?;
+        object.raw_set(
+            font_shadow_color_key(),
+            lua.create_sequence_from([0.0_f64, 0.0, 0.0, 1.0])?,
+        )?;
         if let Some(name) = record.raw_get::<Option<String>>("font_object_name")? {
             let font: Table = lua.globals().raw_get(name.as_str())?;
             let color: Table = font.raw_get(text_color_key())?;
+            let shadow_offset: Table = font.raw_get(font_shadow_offset_key())?;
+            let shadow_color: Table = font.raw_get(font_shadow_color_key())?;
             object.raw_set(font_object_key(), font)?;
             object.raw_set(text_color_key(), color)?;
+            object.raw_set(font_shadow_offset_key(), shadow_offset)?;
+            object.raw_set(font_shadow_color_key(), shadow_color)?;
         }
     }
     if kind == "Texture" {
@@ -2109,6 +2205,22 @@ fn register_font(
             f64::from(color.alpha().unwrap_or(1.0)),
         ]
     });
+    let shadow_offset = definition
+        .shadow()
+        .and_then(FontShadow::offset)
+        .map_or([0.0, 0.0], |(x, y)| [f64::from(x), f64::from(y)]);
+    let shadow_color =
+        definition
+            .shadow()
+            .and_then(FontShadow::color)
+            .map_or([0.0, 0.0, 0.0, 1.0], |color| {
+                [
+                    f64::from(color.red()),
+                    f64::from(color.green()),
+                    f64::from(color.blue()),
+                    f64::from(color.alpha().unwrap_or(1.0)),
+                ]
+            });
     table
         .raw_set(name_key(), definition.name())
         .and_then(|()| table.raw_set(type_key(), "Font"))
@@ -2122,6 +2234,18 @@ fn register_font(
         .and_then(|()| table.raw_set(font_flags_key(), font_flags(definition)))
         .and_then(|()| table.raw_set(spacing_key(), definition.spacing().map_or(0.0, f64::from)))
         .and_then(|()| table.raw_set(text_color_key(), lua.create_sequence_from(color)?))
+        .and_then(|()| {
+            table.raw_set(
+                font_shadow_offset_key(),
+                lua.create_sequence_from(shadow_offset)?,
+            )
+        })
+        .and_then(|()| {
+            table.raw_set(
+                font_shadow_color_key(),
+                lua.create_sequence_from(shadow_color)?,
+            )
+        })
         .map_err(|error| execution_error("font registration", error))?;
     let metatable: Table = lua
         .registry_value(metatable_key)
@@ -2161,6 +2285,7 @@ fn create_font_metatable(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
     register_font_spacing_methods(lua, &methods)?;
+    register_font_shadow_methods(lua, &methods)?;
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
     Ok(metatable)
@@ -2521,8 +2646,12 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
                 mlua::Error::runtime("Usage: FontString:SetFontObject(fontObject)")
             })?;
             let color: Table = font.raw_get(text_color_key())?;
+            let shadow_offset: Table = font.raw_get(font_shadow_offset_key())?;
+            let shadow_color: Table = font.raw_get(font_shadow_color_key())?;
             font_string.raw_set(font_object_key(), font)?;
             font_string.raw_set(text_color_key(), color)?;
+            font_string.raw_set(font_shadow_offset_key(), shadow_offset)?;
+            font_string.raw_set(font_shadow_color_key(), shadow_color)?;
             font_string.raw_set(font_set_key(), true)
         })?,
     )?;
@@ -2592,7 +2721,8 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
         })?,
     )?;
     register_font_string_justification_methods(lua, methods)?;
-    register_font_spacing_methods(lua, methods)
+    register_font_spacing_methods(lua, methods)?;
+    register_font_shadow_methods(lua, methods)
 }
 
 fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -2608,6 +2738,45 @@ fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     methods.raw_set(
         "GetSpacing",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(spacing_key()))?,
+    )
+}
+
+fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetShadowOffset",
+        lua.create_function(|lua, (object, x, y): (Table, f64, f64)| {
+            object.raw_set(font_shadow_offset_key(), lua.create_sequence_from([x, y])?)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetShadowOffset",
+        lua.create_function(|_, object: Table| {
+            let offset: Table = object.raw_get(font_shadow_offset_key())?;
+            Ok((offset.raw_get::<f64>(1)?, offset.raw_get::<f64>(2)?))
+        })?,
+    )?;
+    methods.raw_set(
+        "SetShadowColor",
+        lua.create_function(
+            |lua, (object, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
+                object.raw_set(
+                    font_shadow_color_key(),
+                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetShadowColor",
+        lua.create_function(|_, object: Table| {
+            let color: Table = object.raw_get(font_shadow_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
+        })?,
     )
 }
 
@@ -3081,6 +3250,31 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 .then_some(Value::Number(1.0)))
         })?,
     )?;
+    for (setter, getter, key) in [
+        ("SetMovable", "IsMovable", frame_movable_key()),
+        ("SetResizable", "IsResizable", frame_resizable_key()),
+        ("SetToplevel", "IsToplevel", frame_top_level_key()),
+        ("SetUserPlaced", "IsUserPlaced", frame_user_placed_key()),
+        (
+            "SetDontSavePosition",
+            "GetDontSavePosition",
+            frame_dont_save_position_key(),
+        ),
+    ] {
+        methods.raw_set(
+            setter,
+            lua.create_function(move |_, (object, arguments): (Table, Variadic<Value>)| {
+                let enabled = arguments.first().is_none_or(|value| lua_bool(value, true));
+                object.raw_set(key, enabled)
+            })?,
+        )?;
+        methods.raw_set(
+            getter,
+            lua.create_function(move |_, object: Table| {
+                stock_optional_true(object.raw_get::<bool>(key)?)
+            })?,
+        )?;
+    }
     methods.raw_set(
         "SetClampedToScreen",
         lua.create_function(|_, (object, enabled): (Table, Option<bool>)| {
@@ -3245,8 +3439,12 @@ fn register_edit_box_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()
             let font = resolve_font_object(lua, value)
                 .ok_or_else(|| mlua::Error::runtime("Usage: EditBox:SetFontObject(fontObject)"))?;
             let color: Table = font.raw_get(text_color_key())?;
+            let shadow_offset: Table = font.raw_get(font_shadow_offset_key())?;
+            let shadow_color: Table = font.raw_get(font_shadow_color_key())?;
             edit_box.raw_set(font_object_key(), font)?;
             edit_box.raw_set(text_color_key(), color)?;
+            edit_box.raw_set(font_shadow_offset_key(), shadow_offset)?;
+            edit_box.raw_set(font_shadow_color_key(), shadow_color)?;
             edit_box.raw_set(font_set_key(), true)
         })?,
     )?;
@@ -3293,7 +3491,8 @@ fn register_edit_box_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()
         })?,
     )?;
     register_font_string_justification_methods(lua, methods)?;
-    register_font_spacing_methods(lua, methods)
+    register_font_spacing_methods(lua, methods)?;
+    register_font_shadow_methods(lua, methods)
 }
 
 fn register_edit_box_limit_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -4764,6 +4963,25 @@ fn is_frame_object(kind: UiObjectKind) -> bool {
     !matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString)
 }
 
+fn resolved_frame_flag(
+    values: &[Option<bool>],
+    node_index: usize,
+    kind: UiObjectKind,
+    label: &str,
+) -> Result<Option<bool>, UiScriptError> {
+    if !is_frame_object(kind) {
+        return Ok(None);
+    }
+    values
+        .get(node_index)
+        .copied()
+        .flatten()
+        .map(Some)
+        .ok_or_else(|| UiScriptError::Plan {
+            message: format!("frame object {node_index} has no resolved {label} state"),
+        })
+}
+
 fn is_enabled_control(kind: UiObjectKind) -> bool {
     matches!(
         kind,
@@ -4938,6 +5156,34 @@ fn frame_clamped_key() -> LightUserData {
 
 fn frame_clamp_insets_key() -> LightUserData {
     hidden_key(&FRAME_CLAMP_INSETS_TOKEN)
+}
+
+fn font_shadow_offset_key() -> LightUserData {
+    hidden_key(&FONT_SHADOW_OFFSET_TOKEN)
+}
+
+fn font_shadow_color_key() -> LightUserData {
+    hidden_key(&FONT_SHADOW_COLOR_TOKEN)
+}
+
+fn frame_movable_key() -> LightUserData {
+    hidden_key(&FRAME_MOVABLE_TOKEN)
+}
+
+fn frame_resizable_key() -> LightUserData {
+    hidden_key(&FRAME_RESIZABLE_TOKEN)
+}
+
+fn frame_top_level_key() -> LightUserData {
+    hidden_key(&FRAME_TOP_LEVEL_TOKEN)
+}
+
+fn frame_user_placed_key() -> LightUserData {
+    hidden_key(&FRAME_USER_PLACED_TOKEN)
+}
+
+fn frame_dont_save_position_key() -> LightUserData {
+    hidden_key(&FRAME_DONT_SAVE_POSITION_TOKEN)
 }
 
 fn slider_min_key() -> LightUserData {

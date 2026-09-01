@@ -78,9 +78,9 @@ pub use widget::{
     UiTextureStatePlan,
 };
 pub use world::{
-    UiFactionGroup, UiPlayerFactionState, UiPlayerLanguage, UiPlayerProgressionState,
-    UiPlayerState, UiRealmDate, UiRealmDateError, UiRealmTime, UiRealmTimeError, UiWorldState,
-    UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiFriendCounts, UiPlayerFactionState, UiPlayerLanguage,
+    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmDateError, UiRealmTime,
+    UiRealmTimeError, UiWorldState, UiZonePvpType, UiZoneState,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

@@ -108,6 +108,14 @@ fn register_frame_globals(
     let cursor_state = world.clone();
     let trade_state = world.clone();
     let area_resurrection = world.clone();
+    let friend_counts = world.clone();
+    globals.raw_set(
+        "GetNumFriends",
+        lua.create_function(move |_, ()| {
+            let counts = friend_counts.friend_counts();
+            Ok((counts.total(), counts.online()))
+        })?,
+    )?;
     globals.raw_set(
         "GetMoney",
         lua.create_function(move |_, ()| {
@@ -540,6 +548,7 @@ fn register_client_runtime_globals(
     let connected = battlenet.clone();
     let enabled_and_connected = battlenet.clone();
     let conversation_capacity = battlenet.clone();
+    let friend_counts = battlenet.clone();
     globals.raw_set(
         "BNFeaturesEnabled",
         lua.create_function(move |_, ()| Ok(battlenet.features_enabled().then_some(1_u32)))?,
@@ -555,6 +564,10 @@ fn register_client_runtime_globals(
     globals.raw_set(
         "BNGetMaxPlayersInConversation",
         lua.create_function(move |_, ()| Ok(conversation_capacity.max_conversation_players()))?,
+    )?;
+    globals.raw_set(
+        "BNGetNumFriends",
+        lua.create_function(move |_, ()| Ok(friend_counts.friend_counts()))?,
     )?;
     let bindings = environment.binding_assignments();
     let binding_keys = bindings.clone();
