@@ -126,6 +126,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("cameraYawSmoothSpeed", "180"),
     ranged("chatBubblesParty", "1", 0.0, 1.0),
     ranged("chatMouseScroll", "1", 0.0, 1.0),
+    value("chatStyle", "im"),
     ranged("colorblindMode", "0", 0.0, 1.0),
     ranged("combatDamage", "1", 0.0, 1.0),
     ranged("combatHealing", "1", 0.0, 1.0),

@@ -371,6 +371,7 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(GetCVar("rotateMinimap") == "0")
   assert(GetCVarDefault("cameraSmoothStyle") == "4")
   assert(GetCVar("conversationMode") == "popout")
+  assert(GetCVar("chatStyle") == "im")
   assert(GetCVarMin("rotateMinimap") == 0 and GetCVarMax("rotateMinimap") == 1)
   assert(GetTerrainMip() == 1)
   SetTerrainMip(0)

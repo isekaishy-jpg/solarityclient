@@ -167,3 +167,6 @@ checks all 326 production plus 166 external test files.
   calls `00501800` for all ten records: names and font sizes start empty/zero,
   color is black with byte alpha 40, every window is locked, and windows one
   and two are shown at dock positions one and two before chat-cache hydration.
+- Native CVar initialization at `0051e2d8` registers `chatStyle`; its default
+  pointer `00a0189c` contains `im`. The local CVar catalog preserves that value
+  so FrameXML's whole-window chat focus behavior follows the stock default.
