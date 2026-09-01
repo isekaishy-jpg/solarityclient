@@ -10,13 +10,14 @@ use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiGlueNetworkBridge;
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
-    FontCatalog, UiAnimationPlan, UiBundle, UiEventArgument, UiEventDispatch, UiEventError,
-    UiEventPayload, UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiGlyphAtlasPlan, UiKeyboardModifiers, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectKind, UiObjectTree, UiPointerButton, UiPointerDispatch,
-    UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiScrollFramePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
+    FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
+    UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan, UiFrameStatePlan,
+    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiGlyphAtlasPlan,
+    UiKeyboardModifiers, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectKind, UiObjectTree,
+    UiPointerButton, UiPointerDispatch, UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan,
+    UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScrollFramePlan, UiTextureAssetBindings, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -38,6 +39,7 @@ pub struct GlueManager {
     render_plan: UiRenderPlan,
     textures: UiTexturePlan,
     texture_states: UiTextureStatePlan,
+    backdrops: UiBackdropStatePlan,
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
     pointer: UiPointerPlan,
@@ -138,6 +140,8 @@ impl GlueManager {
         let templates = UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?;
         let textures = UiTexturePlan::from_tree(&tree)?;
         let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+        let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
+        let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
         let animations = UiAnimationPlan::from_tree(&tree)?;
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
@@ -178,7 +182,7 @@ impl GlueManager {
             &mut assets.borrow_mut(),
             logical_extent.1,
         )?;
-        let presentation = UiPresentationPlan::resolve(&live, &geometry);
+        let presentation = UiPresentationPlan::resolve(&live, &geometry, &backdrops);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &glyphs,
@@ -216,6 +220,7 @@ impl GlueManager {
             render_plan,
             textures,
             texture_states,
+            backdrops,
             objects,
             child_indices,
             pointer,
@@ -384,6 +389,12 @@ impl GlueManager {
     #[must_use]
     pub const fn texture_states(&self) -> &UiTextureStatePlan {
         &self.texture_states
+    }
+
+    /// Returns declaration-resolved native frame backdrops.
+    #[must_use]
+    pub const fn backdrops(&self) -> &UiBackdropStatePlan {
+        &self.backdrops
     }
 
     /// Returns compiled event and handler functions retained in Lua.
@@ -625,7 +636,7 @@ impl GlueManager {
                 self.glyph_logical_height,
             )?;
         }
-        let presentation = UiPresentationPlan::resolve(&live, &geometry);
+        let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,

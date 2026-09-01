@@ -158,6 +158,7 @@ pub(super) fn register_button_methods(
                 font_string.raw_set(font_object_key(), font)?;
                 font_string.raw_set(font_set_key(), true)?;
             }
+            font_string.raw_set(text_key(), button.raw_get::<Option<String>>(text_key())?)?;
             button.raw_set(button_text_key(), font_string)
         })?,
     )?;
@@ -212,7 +213,7 @@ pub(super) fn register_button_methods(
     methods.raw_set(
         "SetText",
         lua.create_function(|lua, (button, value): (Table, Value)| {
-            button.raw_set(text_key(), lua_text(lua, value)?)
+            set_button_text(&button, lua_text(lua, value)?)
         })?,
     )?;
     methods.raw_set(
@@ -221,7 +222,7 @@ pub(super) fn register_button_methods(
             let library: Table = lua.globals().raw_get("string")?;
             let format: mlua::Function = library.raw_get("format")?;
             let text = format.call::<String>(arguments)?;
-            button.raw_set(text_key(), text)
+            set_button_text(&button, Some(text))
         })?,
     )?;
     methods.raw_set(
@@ -296,6 +297,14 @@ pub(super) fn register_button_methods(
             measurement.height(&button)
         })?,
     )
+}
+
+fn set_button_text(button: &Table, text: Option<String>) -> mlua::Result<()> {
+    button.raw_set(text_key(), text.as_deref())?;
+    if let Some(font_string) = button.raw_get::<Option<Table>>(button_text_key())? {
+        font_string.raw_set(text_key(), text.as_deref())?;
+    }
+    Ok(())
 }
 
 pub(super) fn call_click_handler(

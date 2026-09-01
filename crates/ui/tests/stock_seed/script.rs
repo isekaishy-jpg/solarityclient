@@ -672,7 +672,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
 <Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
 <Texture name="GradientTexture"><Gradient orientation="VERTICAL"><MinColor r="0.1" g="0.2" b="0.3" a="0.4"/><MaxColor r="0.6" g="0.7" b="0.8" a="0.9"/></Gradient></Texture>
 <Frame name="OwnedTemplate" virtual="true"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames></Frame>
-<Button name="FontButton"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames><Scripts><OnLoad>
+<Button name="FontButton" text="PLAYER"><ButtonText name="$parentText"/><NormalFont style="GlueFontTest"/><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames><Scripts><OnLoad>
   assert(self.owned == FontButtonOwned)
   local dynamicOwned = CreateFrame("Frame", "DynamicOwned", self, "OwnedTemplate")
   assert(dynamicOwned.owned == DynamicOwnedOwned)
@@ -755,10 +755,13 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(self:GetHighlightFontObject() == GlueFontTest)
   self:SetText("Player")
   assert(self:GetText() == "Player")
+  assert(self:GetFontString():GetText() == "Player")
   self:SetFormattedText("%s %d", "Player", 2)
   assert(self:GetText() == "Player 2")
+  assert(self:GetFontString():GetText() == "Player 2")
   self:SetText("")
   assert(self:GetText() == nil)
+  assert(self:GetFontString():GetText() == nil)
   self:LockHighlight()
   self:UnlockHighlight()
   self:RegisterForClicks("LeftButtonDown", "LeftButtonUp")

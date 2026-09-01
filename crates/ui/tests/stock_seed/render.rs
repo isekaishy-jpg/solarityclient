@@ -103,6 +103,8 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         Some("HighButtonDisabled")
     );
     assert_eq!(presentation.packets()[2].key().draw_rank(), 21);
+    assert_eq!(disabled.bounds().width(), 80.0);
+    assert_eq!(disabled.bounds().height(), 30.0);
 
     let solid = &presentation.members(3).ok_or("missing solid packet")?[0];
     assert_eq!(
@@ -208,5 +210,96 @@ fn glue_presentation_retains_stock_model_ffx_state() -> Result<(), Box<dyn Error
     assert_eq!(model.alpha(), 0.75);
     assert_eq!(model.strata(), UiFrameStrata::Background);
     assert_eq!(model.frame_level(), 2);
+    Ok(())
+}
+
+/// Native backdrops preserve inherited XML state and the eight-slice edge atlas.
+#[test]
+fn glue_presentation_builds_stock_native_backdrop_quads() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Backdrop.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Backdrop.xml",
+            bytes: br#"<Ui>
+<Frame name="BackdropTemplate" virtual="true">
+  <Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background"
+            edgeFile="Interface\Tooltips\UI-Tooltip-Border"
+            tile="true" alphaMode="BLEND">
+    <TileSize><AbsValue val="16"/></TileSize>
+    <EdgeSize><AbsValue val="16"/></EdgeSize>
+    <BackgroundInsets><AbsInset left="4" right="4" top="4" bottom="4"/></BackgroundInsets>
+    <Color r="0.1" g="0.2" b="0.3" a="0.4"/>
+    <BorderColor r="0.4" g="0.5" b="0.6" a="0.7"/>
+  </Backdrop>
+</Frame>
+<Frame name="Wrapper" hidden="true">
+  <Size x="80" y="48"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Frames>
+    <Frame name="Panel" inherits="BackdropTemplate" setAllPoints="true"
+           frameStrata="MEDIUM" frameLevel="3" alpha="0.5">
+      <Scripts><OnShow>
+        self:SetBackdropColor(0.2, 0.3, 0.4, 0.8)
+        self:SetBackdropBorderColor(0.6, 0.7, 0.8, 0.6)
+      </OnShow></Scripts>
+    </Frame>
+  </Frames>
+  <Scripts><OnLoad>self:Show()</OnLoad></Scripts>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1600, 900), false)?;
+
+    assert_eq!(manager.backdrops().state_count(), 1);
+    let panel_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("Panel"))
+        .ok_or("missing Panel")?;
+    let backdrop = manager
+        .backdrops()
+        .state(panel_index)
+        .ok_or("missing Panel backdrop")?;
+    assert_eq!(backdrop.insets(), [4.0, 4.0, 4.0, 4.0]);
+    assert_eq!(backdrop.tile_size(), 16.0);
+    assert_eq!(backdrop.edge_size(), 16.0);
+
+    let presentation = manager.presentation();
+    assert_eq!(presentation.member_count(), 13);
+    assert_eq!(presentation.packets().len(), 2);
+    assert_eq!(presentation.packets()[0].key().draw_rank(), 0);
+    assert_eq!(presentation.packets()[0].member_count(), 1);
+    assert_eq!(presentation.packets()[1].key().draw_rank(), 10);
+    assert_eq!(presentation.packets()[1].member_count(), 12);
+
+    let background = &presentation
+        .members(0)
+        .ok_or("missing backdrop background")?[0];
+    assert_eq!(background.object_index(), panel_index);
+    assert_eq!(background.bounds().width(), 72.0);
+    assert_eq!(background.bounds().height(), 40.0);
+    assert_eq!(
+        background.tex_coords(),
+        [0.0, 0.0, 0.0, 2.5, 4.5, 0.0, 4.5, 2.5]
+    );
+    assert!(background.horizontal_tiling());
+    assert!(background.vertical_tiling());
+    assert_eq!(background.vertex_colors()[0], [0.2, 0.3, 0.4, 0.4]);
+
+    let border = presentation.members(1).ok_or("missing backdrop border")?;
+    assert_eq!(
+        border[0].tex_coords(),
+        [0.5, 0.0, 0.5, 1.0, 0.625, 0.0, 0.625, 1.0]
+    );
+    assert_eq!(border[0].vertex_colors()[0], [0.6, 0.7, 0.8, 0.3]);
+    assert!(border.iter().all(|quad| quad.object_index() == panel_index));
+    assert!(border.iter().all(|quad| !quad.horizontal_tiling()));
+    assert_eq!(manager.render_plan().mesh().vertices().len(), 52);
+    assert_eq!(manager.render_plan().texture_assets().requests().len(), 2);
     Ok(())
 }

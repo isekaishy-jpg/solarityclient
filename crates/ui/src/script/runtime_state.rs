@@ -3,19 +3,20 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
-    OBJECT_REGISTRY, alpha_key, anchors_key, button_pressed_key, checked_key, click_action_key,
-    desaturated_key, draw_layer_key, draw_sub_level_key, edit_cursor_key, edit_focused_key,
-    edit_multi_line_key, edit_password_key, edit_selection_end_key, edit_selection_start_key,
-    edit_text_insets_key, enabled_key, font_face_key, font_flags_key, font_height_key,
-    font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key, frame_level_key,
-    frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
-    horizontal_scroll_range_key, horizontal_tiling_key, index_key, justify_h_key, justify_v_key,
-    keyboard_enabled_key, model_camera_key, model_file_key, model_scale_key, model_sequence_key,
-    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
-    mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
-    scale_key, shown_key, spacing_key, tex_coord_key, text_color_key, text_key,
-    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
+    OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key, backdrop_color_key,
+    button_pressed_key, checked_key, click_action_key, desaturated_key, draw_layer_key,
+    draw_sub_level_key, edit_cursor_key, edit_focused_key, edit_multi_line_key, edit_password_key,
+    edit_selection_end_key, edit_selection_start_key, edit_text_insets_key, enabled_key,
+    font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
+    font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
+    highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key, horizontal_scroll_range_key,
+    horizontal_tiling_key, index_key, justify_h_key, justify_v_key, keyboard_enabled_key,
+    model_camera_key, model_file_key, model_scale_key, model_sequence_key, model_sequence_time_key,
+    model_sequence_time_sequence_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
+    non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key, spacing_key,
+    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
+    texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
+    vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -49,6 +50,8 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) texture: Option<UiRuntimeTexture>,
     pub(crate) text: Option<UiRuntimeText>,
     pub(crate) model: Option<UiRuntimeModel>,
+    pub(crate) backdrop_color: Option<[f64; 4]>,
+    pub(crate) backdrop_border_color: Option<[f64; 4]>,
     pub(crate) frame_level: Option<i32>,
     pub(crate) frame_strata: Option<UiFrameStrata>,
     pub(crate) keyboard_enabled: Option<bool>,
@@ -216,6 +219,28 @@ pub(super) fn snapshot_runtime_objects(
             texture,
             text,
             model,
+            backdrop_color: is_frame
+                .then(|| {
+                    snapshot_optional_color(
+                        lua_index,
+                        &table,
+                        backdrop_color_key(),
+                        "backdrop color",
+                    )
+                })
+                .transpose()?
+                .flatten(),
+            backdrop_border_color: is_frame
+                .then(|| {
+                    snapshot_optional_color(
+                        lua_index,
+                        &table,
+                        backdrop_border_color_key(),
+                        "backdrop border color",
+                    )
+                })
+                .transpose()?
+                .flatten(),
             frame_level: is_frame
                 .then(|| {
                     table.raw_get(frame_level_key()).map_err(|error| {
@@ -320,6 +345,19 @@ pub(super) fn snapshot_runtime_objects(
     }
 
     Ok(UiRuntimeObjectPlan { objects, anchors })
+}
+
+fn snapshot_optional_color(
+    lua_index: usize,
+    table: &Table,
+    key: mlua::LightUserData,
+    label: &str,
+) -> Result<Option<[f64; 4]>, UiScriptError> {
+    table
+        .raw_get::<Option<Table>>(key)
+        .map_err(|error| snapshot_error(format!("object {lua_index} {label}"), error))?
+        .map(|values| numeric_array::<4>(&values, lua_index, label))
+        .transpose()
 }
 
 fn snapshot_text(

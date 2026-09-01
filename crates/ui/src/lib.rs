@@ -57,8 +57,9 @@ pub use font::{
     VerticalJustification,
 };
 pub use frame::{
-    UiDrawLayer, UiElementLayer, UiFrameError, UiFrameLayer, UiFrameNode, UiFramePlan,
-    UiFrameState, UiFrameStatePlan, UiFrameStrata, UiInheritanceTarget, UiObjectBatch,
+    UiBackdropFile, UiBackdropLayer, UiBackdropNode, UiBackdropPlan, UiBackdropState,
+    UiBackdropStatePlan, UiDrawLayer, UiElementLayer, UiFrameError, UiFrameLayer, UiFrameNode,
+    UiFramePlan, UiFrameState, UiFrameStatePlan, UiFrameStrata, UiInheritanceTarget, UiObjectBatch,
     UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole,
     UiObjectTree,
 };

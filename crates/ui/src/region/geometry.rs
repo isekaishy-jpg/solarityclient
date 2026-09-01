@@ -15,6 +15,15 @@ pub struct UiScreenRect {
 }
 
 impl UiScreenRect {
+    pub(crate) const fn from_edges(left: f64, bottom: f64, right: f64, top: f64) -> Self {
+        Self {
+            left,
+            bottom,
+            right,
+            top,
+        }
+    }
+
     /// Returns the left edge in logical UI units.
     #[must_use]
     pub const fn left(self) -> f64 {
@@ -209,15 +218,35 @@ impl GeometryResolver<'_> {
         let role = object.role;
         let mut anchors = self.live.anchors_for(object).to_vec();
         if anchors.is_empty()
-            && !matches!(role, UiObjectRole::Object | UiObjectRole::ScrollChild)
             && let Some(parent) = parent_index
         {
-            anchors.push(UiRuntimeAnchor {
-                point: UiPoint::Center,
-                target: Some(parent),
-                relative_point: UiPoint::Center,
-                offset: (0.0, 0.0),
-            });
+            if stock_role_texture_fills_owner(role) && authored == (0.0, 0.0) {
+                // Singular button and check-button texture slots are native
+                // widget regions. Stock gives an otherwise geometry-free slot
+                // the owner's complete rectangle; GlueXML relies on this for
+                // every file-only GluePanelButton and checkbox state texture.
+                anchors.extend([
+                    UiRuntimeAnchor {
+                        point: UiPoint::TopLeft,
+                        target: Some(parent),
+                        relative_point: UiPoint::TopLeft,
+                        offset: (0.0, 0.0),
+                    },
+                    UiRuntimeAnchor {
+                        point: UiPoint::BottomRight,
+                        target: Some(parent),
+                        relative_point: UiPoint::BottomRight,
+                        offset: (0.0, 0.0),
+                    },
+                ]);
+            } else if !matches!(role, UiObjectRole::Object | UiObjectRole::ScrollChild) {
+                anchors.push(UiRuntimeAnchor {
+                    point: UiPoint::Center,
+                    target: Some(parent),
+                    relative_point: UiPoint::Center,
+                    offset: (0.0, 0.0),
+                });
+            }
         }
 
         let mut x_constraints = Vec::with_capacity(anchors.len());
@@ -316,6 +345,18 @@ impl GeometryResolver<'_> {
             presentation,
         })
     }
+}
+
+const fn stock_role_texture_fills_owner(role: UiObjectRole) -> bool {
+    matches!(
+        role,
+        UiObjectRole::NormalTexture
+            | UiObjectRole::PushedTexture
+            | UiObjectRole::DisabledTexture
+            | UiObjectRole::HighlightTexture
+            | UiObjectRole::CheckedTexture
+            | UiObjectRole::DisabledCheckedTexture
+    )
 }
 
 #[derive(Clone, Copy)]

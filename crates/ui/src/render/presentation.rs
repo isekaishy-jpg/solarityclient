@@ -4,7 +4,8 @@ use solarity_asset::AssetPath;
 
 use crate::script::{UiRuntimeObject, UiRuntimeObjectPlan};
 use crate::{
-    UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectRole, UiRegionGeometryPlan, UiScreenRect,
+    UiBackdropState, UiBackdropStatePlan, UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectRole,
+    UiRegionGeometryPlan, UiScreenRect,
 };
 
 /// A texture's renderable source after stock `SetTexture` mutation.
@@ -272,10 +273,36 @@ pub struct UiPresentationPlan {
 }
 
 impl UiPresentationPlan {
-    pub(crate) fn resolve(live: &UiRuntimeObjectPlan, geometry: &UiRegionGeometryPlan) -> Self {
+    pub(crate) fn resolve(
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        backdrops: &UiBackdropStatePlan,
+    ) -> Self {
         let mut keyed = Vec::new();
         let mut models = Vec::new();
         for (object_index, object) in live.objects().iter().enumerate() {
+            if let (Some(backdrop), Some(region), Some(strata), Some(frame_level)) = (
+                backdrops.state(object_index),
+                geometry.region(object_index),
+                object.frame_strata,
+                object.frame_level,
+            ) && region.effectively_shown()
+                && region.effective_alpha() > 0.0
+            {
+                append_backdrop(
+                    &mut keyed,
+                    backdrop,
+                    BackdropPresentationContext {
+                        object_index,
+                        object,
+                        bounds: region.presentation_bounds(),
+                        effective_alpha: region.effective_alpha() as f32,
+                        effective_scale: region.effective_scale(),
+                        strata,
+                        frame_level,
+                    },
+                );
+            }
             if let (Some(model), Some(region), Some(strata), Some(frame_level)) = (
                 &object.model,
                 geometry.region(object_index),
@@ -416,6 +443,328 @@ impl UiPresentationPlan {
     }
 }
 
+#[derive(Clone, Copy)]
+struct BackdropPresentationContext<'runtime> {
+    object_index: usize,
+    object: &'runtime UiRuntimeObject,
+    bounds: UiScreenRect,
+    effective_alpha: f32,
+    effective_scale: f64,
+    strata: UiFrameStrata,
+    frame_level: i32,
+}
+
+fn append_backdrop(
+    output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
+    backdrop: &UiBackdropState,
+    context: BackdropPresentationContext<'_>,
+) {
+    let BackdropPresentationContext {
+        object_index,
+        object,
+        bounds,
+        effective_alpha,
+        effective_scale,
+        strata,
+        frame_level,
+    } = context;
+    if let Some(path) = backdrop.background() {
+        let [left, right, top, bottom] = backdrop
+            .insets()
+            .map(|value| f64::from(value) * effective_scale);
+        let background_bounds = UiScreenRect::from_edges(
+            bounds.left() + left,
+            bounds.bottom() + bottom,
+            bounds.right() - right,
+            bounds.top() - top,
+        );
+        if background_bounds.width() > 0.0 && background_bounds.height() > 0.0 {
+            let mut coords = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+            if backdrop.tiled() {
+                let tile_size = f64::from(backdrop.tile_size()) * effective_scale;
+                let u = (background_bounds.width() / tile_size) as f32;
+                let v = (background_bounds.height() / tile_size) as f32;
+                coords = [0.0, 0.0, 0.0, v, u, 0.0, u, v];
+            }
+            push_backdrop_quad(
+                output,
+                object_index,
+                path,
+                backdrop.blend_mode(),
+                background_bounds,
+                coords,
+                runtime_backdrop_color(object.backdrop_color, backdrop.color(), effective_alpha),
+                backdrop.tiled(),
+                backdrop.tiled(),
+                strata,
+                frame_level,
+                UiDrawLayer::Background,
+            );
+        }
+    }
+
+    let Some(path) = backdrop.edge() else {
+        return;
+    };
+    let edge = (f64::from(backdrop.edge_size()) * effective_scale)
+        .min(bounds.width() * 0.5)
+        .min(bounds.height() * 0.5);
+    if edge <= 0.0 {
+        return;
+    }
+    let color = runtime_backdrop_color(
+        object.backdrop_border_color,
+        backdrop.border_color(),
+        effective_alpha,
+    );
+    let corners = [
+        (
+            4,
+            UiScreenRect::from_edges(
+                bounds.left(),
+                bounds.top() - edge,
+                bounds.left() + edge,
+                bounds.top(),
+            ),
+        ),
+        (
+            5,
+            UiScreenRect::from_edges(
+                bounds.right() - edge,
+                bounds.top() - edge,
+                bounds.right(),
+                bounds.top(),
+            ),
+        ),
+        (
+            6,
+            UiScreenRect::from_edges(
+                bounds.left(),
+                bounds.bottom(),
+                bounds.left() + edge,
+                bounds.bottom() + edge,
+            ),
+        ),
+        (
+            7,
+            UiScreenRect::from_edges(
+                bounds.right() - edge,
+                bounds.bottom(),
+                bounds.right(),
+                bounds.bottom() + edge,
+            ),
+        ),
+    ];
+    for (slice, corner_bounds) in corners {
+        push_backdrop_quad(
+            output,
+            object_index,
+            path,
+            backdrop.blend_mode(),
+            corner_bounds,
+            atlas_coords(slice, 1.0),
+            color,
+            false,
+            false,
+            strata,
+            frame_level,
+            UiDrawLayer::Border,
+        );
+    }
+
+    append_vertical_edge(
+        output,
+        object_index,
+        path,
+        backdrop,
+        color,
+        strata,
+        frame_level,
+        0,
+        bounds.left(),
+        bounds.bottom() + edge,
+        bounds.top() - edge,
+        edge,
+    );
+    append_vertical_edge(
+        output,
+        object_index,
+        path,
+        backdrop,
+        color,
+        strata,
+        frame_level,
+        1,
+        bounds.right() - edge,
+        bounds.bottom() + edge,
+        bounds.top() - edge,
+        edge,
+    );
+    append_horizontal_edge(
+        output,
+        object_index,
+        path,
+        backdrop,
+        color,
+        strata,
+        frame_level,
+        2,
+        bounds.left() + edge,
+        bounds.right() - edge,
+        bounds.top() - edge,
+        edge,
+    );
+    append_horizontal_edge(
+        output,
+        object_index,
+        path,
+        backdrop,
+        color,
+        strata,
+        frame_level,
+        3,
+        bounds.left() + edge,
+        bounds.right() - edge,
+        bounds.bottom(),
+        edge,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_vertical_edge(
+    output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
+    object_index: usize,
+    path: &AssetPath,
+    backdrop: &UiBackdropState,
+    color: [[f32; 4]; 4],
+    strata: UiFrameStrata,
+    frame_level: i32,
+    slice: u8,
+    left: f64,
+    bottom: f64,
+    top: f64,
+    edge: f64,
+) {
+    let mut cursor = top;
+    while cursor > bottom {
+        let length = (cursor - bottom).min(edge);
+        let next = cursor - length;
+        push_backdrop_quad(
+            output,
+            object_index,
+            path,
+            backdrop.blend_mode(),
+            UiScreenRect::from_edges(left, next, left + edge, cursor),
+            atlas_coords(slice, (length / edge) as f32),
+            color,
+            false,
+            false,
+            strata,
+            frame_level,
+            UiDrawLayer::Border,
+        );
+        cursor = next;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_horizontal_edge(
+    output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
+    object_index: usize,
+    path: &AssetPath,
+    backdrop: &UiBackdropState,
+    color: [[f32; 4]; 4],
+    strata: UiFrameStrata,
+    frame_level: i32,
+    slice: u8,
+    left: f64,
+    right: f64,
+    bottom: f64,
+    edge: f64,
+) {
+    let mut cursor = left;
+    while cursor < right {
+        let length = (right - cursor).min(edge);
+        let fraction = (length / edge) as f32;
+        let u0 = f32::from(slice) / 8.0;
+        let u1 = f32::from(slice + 1) / 8.0;
+        // Edge slices two and three are authored vertically. Stock rotates
+        // both so the atlas's outside edge faces the frame exterior.
+        let coords = [u0, 1.0, u1, 1.0, u0, 1.0 - fraction, u1, 1.0 - fraction];
+        push_backdrop_quad(
+            output,
+            object_index,
+            path,
+            backdrop.blend_mode(),
+            UiScreenRect::from_edges(cursor, bottom, cursor + length, bottom + edge),
+            coords,
+            color,
+            false,
+            false,
+            strata,
+            frame_level,
+            UiDrawLayer::Border,
+        );
+        cursor += length;
+    }
+}
+
+fn atlas_coords(slice: u8, fraction: f32) -> [f32; 8] {
+    let left = f32::from(slice) / 8.0;
+    let right = f32::from(slice + 1) / 8.0;
+    [left, 0.0, left, fraction, right, 0.0, right, fraction]
+}
+
+fn runtime_backdrop_color(
+    runtime: Option<[f64; 4]>,
+    authored: [f32; 4],
+    effective_alpha: f32,
+) -> [[f32; 4]; 4] {
+    let mut color = runtime.map_or(authored, |color| color.map(|value| value as f32));
+    color[3] *= effective_alpha;
+    [color; 4]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_backdrop_quad(
+    output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
+    object_index: usize,
+    path: &AssetPath,
+    blend_mode: UiBlendMode,
+    bounds: UiScreenRect,
+    tex_coords: [f32; 8],
+    vertex_colors: [[f32; 4]; 4],
+    horizontal_tiling: bool,
+    vertical_tiling: bool,
+    strata: UiFrameStrata,
+    frame_level: i32,
+    draw_layer: UiDrawLayer,
+) {
+    let key = UiPresentationPacketKey {
+        strata,
+        frame_level,
+        frame_sequence: object_index,
+        draw_rank: draw_rank(draw_layer, UiObjectRole::Object),
+        draw_sub_level: 0,
+    };
+    output.push((
+        key,
+        UiTexturePresentation {
+            key,
+            object_index,
+            source: UiTextureSource::Asset(path.clone()),
+            blend_mode,
+            bounds,
+            tex_coords,
+            vertex_colors,
+            horizontal_tiling,
+            vertical_tiling,
+            non_blocking: false,
+            desaturated: false,
+        },
+    ));
+}
+
 fn nearest_owning_frame(live: &UiRuntimeObjectPlan, object: &UiRuntimeObject) -> Option<usize> {
     let mut cursor = object.parent;
     while let Some(index) = cursor {
@@ -455,6 +804,10 @@ const fn draw_rank(layer: UiDrawLayer, role: UiObjectRole) -> i16 {
     };
     match role {
         UiObjectRole::PushedTexture | UiObjectRole::DisabledTexture => base + 1,
+        // Stock button labels sit above every mutually exclusive state skin.
+        // The nested XML order is not a draw-order substitute: ButtonText is
+        // usually constructed before NormalTexture in Glue templates.
+        UiObjectRole::ButtonText => base + 2,
         UiObjectRole::HighlightTexture => 40,
         UiObjectRole::CheckedTexture | UiObjectRole::DisabledCheckedTexture => 41,
         _ => base,

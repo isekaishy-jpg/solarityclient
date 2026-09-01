@@ -2215,6 +2215,9 @@ impl UiScriptRuntime {
                 table
                     .raw_set(font_object_key(), font)
                     .and_then(|()| table.raw_set(font_set_key(), true))
+                    .and_then(|()| {
+                        table.raw_set(text_key(), owner.raw_get::<Option<String>>(text_key())?)
+                    })
                     .map_err(|error| execution_error("object registration", error))?;
             }
         }
@@ -2753,6 +2756,7 @@ fn create_dynamic_object(
         {
             object.raw_set(font_object_key(), font)?;
             object.raw_set(font_set_key(), true)?;
+            object.raw_set(text_key(), parent.raw_get::<Option<String>>(text_key())?)?;
         }
     }
     if let Some(parent) = parent
@@ -5854,11 +5858,7 @@ fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Resul
         "Show",
         lua.create_function(|lua, object: Table| {
             if !object.raw_get::<bool>(shown_key())? {
-                object.raw_set(shown_key(), true)?;
-                if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Show)?
-                {
-                    call_object_handler(lua, &function, object)?;
-                }
+                set_object_shown(lua, &object, true)?;
             }
             Ok(())
         })?,
@@ -5867,11 +5867,7 @@ fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Resul
         "Hide",
         lua.create_function(|lua, object: Table| {
             if object.raw_get::<bool>(shown_key())? {
-                object.raw_set(shown_key(), false)?;
-                if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Hide)?
-                {
-                    call_object_handler(lua, &function, object)?;
-                }
+                set_object_shown(lua, &object, false)?;
             }
             Ok(())
         })?,
@@ -5890,6 +5886,61 @@ fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Resul
             Ok(object_is_visible(lua, object)?.then_some(Value::Number(1.0)))
         })?,
     )
+}
+
+fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> {
+    let root_index = object.raw_get::<usize>(index_key())?;
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut subtree = Vec::new();
+    for index in 1..=objects.raw_len() {
+        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
+            continue;
+        };
+        if object_is_descendant(&objects, &candidate, root_index)? {
+            let visible = object_is_visible(lua, candidate.clone())?;
+            subtree.push((candidate, visible));
+        }
+    }
+
+    object.raw_set(shown_key(), shown)?;
+    for (candidate, was_visible) in subtree {
+        let is_visible = object_is_visible(lua, candidate.clone())?;
+        if was_visible == is_visible || !is_script_frame_table(&candidate)? {
+            continue;
+        }
+        let handler = if is_visible {
+            UiScriptHandler::Show
+        } else {
+            UiScriptHandler::Hide
+        };
+        call_optional_object_handler(lua, &candidate, handler)?;
+    }
+    Ok(())
+}
+
+fn object_is_descendant(
+    objects: &Table,
+    candidate: &Table,
+    root_index: usize,
+) -> mlua::Result<bool> {
+    let mut cursor = Some(candidate.raw_get::<usize>(index_key())?);
+    while let Some(index) = cursor {
+        if index == root_index {
+            return Ok(true);
+        }
+        let Some(object) = objects.raw_get::<Option<Table>>(index)? else {
+            return Ok(false);
+        };
+        cursor = object.raw_get::<Option<usize>>(parent_key())?;
+    }
+    Ok(false)
+}
+
+fn is_script_frame_table(object: &Table) -> mlua::Result<bool> {
+    Ok(!matches!(
+        object.raw_get::<String>(type_key())?.as_str(),
+        "Texture" | "FontString"
+    ))
 }
 
 fn object_is_visible(lua: &Lua, mut object: Table) -> mlua::Result<bool> {
@@ -6690,11 +6741,11 @@ pub(super) fn height_key() -> LightUserData {
     hidden_key(&HEIGHT_TOKEN)
 }
 
-fn backdrop_color_key() -> LightUserData {
+pub(super) fn backdrop_color_key() -> LightUserData {
     hidden_key(&BACKDROP_COLOR_TOKEN)
 }
 
-fn backdrop_border_color_key() -> LightUserData {
+pub(super) fn backdrop_border_color_key() -> LightUserData {
     hidden_key(&BACKDROP_BORDER_COLOR_TOKEN)
 }
 

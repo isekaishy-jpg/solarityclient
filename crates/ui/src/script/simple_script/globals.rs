@@ -1277,6 +1277,21 @@ fn register_glue_globals(
     register_glue_network_globals(lua, globals, environment)?;
     legal_agreement::register_globals(lua, globals, environment.cvars())?;
     scan_dll::register_globals(lua, globals)?;
+    // A fresh build 12340 process has no renderer or sound options waiting
+    // for acknowledgement. AccountLogin's initially shown warning frame asks
+    // this native service from OnShow and immediately hides itself.
+    globals.raw_set(
+        "ShowChangedOptionWarnings",
+        lua.create_function(|_, ()| Ok(false))?,
+    )?;
+    globals.raw_set(
+        "GetChangedOptionWarnings",
+        lua.create_function(|_, ()| Ok(MultiValue::new()))?,
+    )?;
+    globals.raw_set(
+        "AcceptChangedOptionWarnings",
+        lua.create_function(|_, ()| Ok(()))?,
+    )?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
     let current_screen = environment.current_screen();

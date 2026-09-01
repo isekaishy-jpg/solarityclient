@@ -4,12 +4,17 @@
 //! `CSimpleTop.cpp`. Concrete widgets build on this state without exposing the
 //! internal tree across the crate facade.
 
+mod backdrop;
 mod c_simple_frame;
 mod c_simple_frame_script;
 mod c_simple_top;
 mod properties;
 mod status;
 
+pub use backdrop::{
+    UiBackdropFile, UiBackdropLayer, UiBackdropNode, UiBackdropPlan, UiBackdropState,
+    UiBackdropStatePlan,
+};
 pub use c_simple_frame::{UiInheritanceTarget, UiObjectCatalog, UiObjectDefinition, UiObjectKind};
 pub use c_simple_top::{
     UiDrawLayer, UiElementLayer, UiObjectBatch, UiObjectNode, UiObjectRole, UiObjectTree,

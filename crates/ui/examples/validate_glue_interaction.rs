@@ -5,10 +5,12 @@ use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, ClientDataRoot, DecodedM2Model, Locale,
+    ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, BlpTextureCache, ClientDataRoot,
+    DecodedM2Model, Locale,
 };
 use solarity_ui::{
-    GlueInitialScreen, GlueManager, UiGlueNetworkAction, UiKeyboardModifiers, UiPointerButton,
+    GlueInitialScreen, GlueManager, UiGlueNetworkAction, UiKeyboardModifiers, UiObjectRole,
+    UiPointerButton, UiTextureSource,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -107,7 +109,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
-    report_login_presentation(&later);
+    validate_login_presentation(&later)?;
+    let mut texture_cache = BlpTextureCache::new();
+    let texture_bindings = later.load_blocking_render_textures(&mut texture_cache)?;
+    if texture_bindings.pending_count() != 0 {
+        return Err(
+            invalid_data("stock login left non-blocking textures pending".to_owned()).into(),
+        );
+    }
+    report_login_presentation(&later, texture_bindings.resident_count());
     validate_login_input(&mut later)?;
     let atlas_extent = later.glyphs().extent();
     let atlas_bytes = later.glyphs().rgba8().len();
@@ -118,11 +128,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn report_login_presentation(manager: &GlueManager) {
+fn report_login_presentation(manager: &GlueManager, resident_textures: usize) {
     println!(
-        "login presentation: textures={} models={}",
+        "login presentation: quads={} models={} backdrops={} resident_textures={resident_textures}",
         manager.presentation().member_count(),
-        manager.presentation().models().len()
+        manager.presentation().models().len(),
+        manager.backdrops().state_count(),
     );
     for model in manager.presentation().models() {
         println!(
@@ -135,14 +146,115 @@ fn report_login_presentation(manager: &GlueManager) {
             model.bounds()
         );
     }
-    for texture in manager.presentation().members_in_draw_order() {
-        println!(
-            "texture object={:?} source={:?} bounds={:?}",
-            manager.objects()[texture.object_index()].name(),
-            texture.source(),
-            texture.bounds()
+}
+
+fn validate_login_presentation(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
+    let background_path = AssetPath::new("Interface\\Tooltips\\UI-Tooltip-Background.blp")?;
+    let edge_path = AssetPath::new("Interface\\Glues\\Common\\Glue-Tooltip-Border.blp")?;
+    for name in ["AccountLoginAccountEdit", "AccountLoginPasswordEdit"] {
+        let object_index = object_index(manager, name)?;
+        let backdrop = manager
+            .backdrops()
+            .state(object_index)
+            .ok_or_else(|| invalid_data(format!("{name} has no native backdrop state")))?;
+        if backdrop.background() != Some(&background_path)
+            || backdrop.edge() != Some(&edge_path)
+            || backdrop.insets() != [10.0, 5.0, 4.0, 9.0]
+            || backdrop.tile_size() != 16.0
+            || backdrop.edge_size() != 16.0
+        {
+            return Err(invalid_data(format!("{name} backdrop differs from stock XML")).into());
+        }
+        let quads = manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .filter(|quad| quad.object_index() == object_index)
+            .collect::<Vec<_>>();
+        if quads.len() != 29 {
+            return Err(invalid_data(format!(
+                "{name} produced {} backdrop quads instead of 29",
+                quads.len()
+            ))
+            .into());
+        }
+        let background = quads
+            .iter()
+            .find(|quad| quad.source() == &UiTextureSource::Asset(background_path.clone()))
+            .ok_or_else(|| invalid_data(format!("{name} has no backdrop background quad")))?;
+        if (background.bounds().width() - 185.0).abs() > 0.000_01
+            || (background.bounds().height() - 24.0).abs() > 0.000_01
+        {
+            return Err(invalid_data(format!("{name} background insets are incorrect")).into());
+        }
+    }
+
+    let login_button = object_index(manager, "AccountLoginLoginButton")?;
+    let normal_texture = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(login_button) && object.role() == UiObjectRole::NormalTexture
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("login button has no NormalTexture slot".to_owned()))?;
+    let normal_quad = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|quad| quad.object_index() == normal_texture)
+        .ok_or_else(|| invalid_data("login button NormalTexture is not presented".to_owned()))?;
+    if (normal_quad.bounds().width() - 220.0).abs() > 0.000_01
+        || (normal_quad.bounds().height() - 45.0).abs() > 0.000_01
+    {
+        return Err(invalid_data("login button texture does not fill its owner".to_owned()).into());
+    }
+    let button_text = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(login_button) && object.role() == UiObjectRole::ButtonText
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("login button has no ButtonText slot".to_owned()))?;
+    if !manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .iter()
+        .any(|glyph| glyph.object_index() == button_text)
+    {
+        return Err(invalid_data("login button label produced no glyphs".to_owned()).into());
+    }
+    let mesh_objects = manager.render_plan().mesh().object_indices();
+    let normal_draw = mesh_objects
+        .iter()
+        .position(|object| *object == normal_texture)
+        .ok_or_else(|| invalid_data("login button skin has no mesh draw".to_owned()))?;
+    let text_draw = mesh_objects
+        .iter()
+        .position(|object| *object == button_text)
+        .ok_or_else(|| invalid_data("login button label has no mesh draw".to_owned()))?;
+    if text_draw <= normal_draw {
+        return Err(
+            invalid_data("login button label is drawn behind its state skin".to_owned()).into(),
         );
     }
+
+    let changed_options = object_index(manager, "ChangedOptionsDialogBackground")?;
+    if manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .any(|quad| quad.object_index() == changed_options)
+    {
+        return Err(invalid_data(
+            "empty changed-options dialog survived its stock OnShow handler".to_owned(),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
