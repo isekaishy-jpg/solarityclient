@@ -1253,6 +1253,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_top_level_key(), top_level))
                 .and_then(|()| table.raw_set(frame_user_placed_key(), false))
                 .and_then(|()| table.raw_set(frame_dont_save_position_key(), dont_save_position))
+                .and_then(|()| table.raw_set(drag_button_key(), 0_u8))
                 .and_then(|()| {
                     table.raw_set(
                         frame_clamp_insets_key(),
@@ -1856,6 +1857,7 @@ fn create_dynamic_object(
             frame_dont_save_position_key(),
             record.raw_get::<bool>("dont_save_position")?,
         )?;
+        object.raw_set(drag_button_key(), 0_u8)?;
         object.raw_set(
             frame_clamp_insets_key(),
             lua.create_sequence_from([0.0_f64; 4])?,
@@ -2362,6 +2364,7 @@ fn create_object_metatable(
         register_frame_attribute_methods(lua, &methods)?;
         register_frame_script_methods(lua, &methods, kind)?;
         register_frame_region_factory_methods(lua, &methods, dynamic_arena.clone())?;
+        buttons::register_drag_methods(lua, &methods)?;
     }
     if is_enabled_control(kind) {
         register_enabled_methods(lua, &methods, kind)?;

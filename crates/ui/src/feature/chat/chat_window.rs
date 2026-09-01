@@ -18,6 +18,8 @@ pub struct UiChatWindow {
     locked: bool,
     dock_position: Option<u32>,
     uninteractable: bool,
+    saved_position: Option<(&'static str, f32, f32)>,
+    saved_dimensions: (f32, f32),
 }
 
 impl UiChatWindow {
@@ -30,6 +32,8 @@ impl UiChatWindow {
             locked: true,
             dock_position: (index <= 2).then_some(index as u32),
             uninteractable: false,
+            saved_position: None,
+            saved_dimensions: (0.0, 0.0),
         }
     }
 
@@ -73,6 +77,22 @@ impl UiChatWindow {
     #[must_use]
     pub const fn uninteractable(&self) -> bool {
         self.uninteractable
+    }
+
+    /// Returns the saved anchor point and normalized offsets, when present.
+    #[must_use]
+    pub fn saved_position(&self) -> Option<(&'static str, f64, f64)> {
+        self.saved_position
+            .map(|(point, x, y)| (point, f64::from(x), f64::from(y)))
+    }
+
+    /// Returns the saved width and height as stock single-precision values.
+    #[must_use]
+    pub fn saved_dimensions(&self) -> (f64, f64) {
+        (
+            f64::from(self.saved_dimensions.0),
+            f64::from(self.saved_dimensions.1),
+        )
     }
 }
 
@@ -142,8 +162,97 @@ pub(crate) fn register_globals(
             ]))
         })?,
     )?;
+    register_saved_layout_globals(lua, globals, state.clone())?;
     register_mutators(lua, globals, state)?;
     Ok(())
+}
+
+fn register_saved_layout_globals(
+    lua: &Lua,
+    globals: &Table,
+    state: UiChatWindowState,
+) -> mlua::Result<()> {
+    let positions = state.clone();
+    globals.raw_set(
+        "GetChatWindowSavedPosition",
+        lua.create_function(move |lua, value: Value| {
+            let index = chat_window_index_for(value, "GetChatWindowSavedPosition(index)")?;
+            let Some((point, x, y)) = positions
+                .window(index)
+                .and_then(|window| window.saved_position())
+            else {
+                return Ok(MultiValue::new());
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(point)?),
+                Value::Number(x),
+                Value::Number(y),
+            ]))
+        })?,
+    )?;
+    let dimensions = state.clone();
+    globals.raw_set(
+        "GetChatWindowSavedDimensions",
+        lua.create_function(move |_, value: Value| {
+            let index = chat_window_index_for(value, "GetChatWindowSavedDimensions(index)")?;
+            let Some(window) = dimensions.window(index) else {
+                return Ok(MultiValue::new());
+            };
+            let (width, height) = window.saved_dimensions();
+            Ok(MultiValue::from_vec(vec![
+                Value::Number(width),
+                Value::Number(height),
+            ]))
+        })?,
+    )?;
+    let saved_positions = state.clone();
+    globals.raw_set(
+        "SetChatWindowSavedPosition",
+        lua.create_function(
+            move |_, (index, point, x, y): (Value, String, Value, Value)| {
+                let usage =
+                    "SetChatWindowSavedPosition(index, \"point\", xOffsetRatio, yOffsetRatio)";
+                let index = chat_window_index_for(index, usage)?;
+                let point = canonical_region_point(&point)
+                    .ok_or_else(|| mlua::Error::runtime("Unknown Region Point"))?;
+                let x = lua_number(x, usage)? as f32;
+                let y = lua_number(y, usage)? as f32;
+                saved_positions.update(index, |window| {
+                    window.saved_position = Some((point, x, y));
+                });
+                Ok(())
+            },
+        )?,
+    )?;
+    globals.raw_set(
+        "SetChatWindowSavedDimensions",
+        lua.create_function(move |_, (index, width, height): (Value, Value, Value)| {
+            let usage = "SetChatWindowSavedDimensions(index, width, height)";
+            let index = chat_window_index_for(index, usage)?;
+            let width = lua_number(width, usage)? as f32;
+            let height = lua_number(height, usage)? as f32;
+            state.update(index, |window| {
+                window.saved_dimensions = (width, height);
+            });
+            Ok(())
+        })?,
+    )
+}
+
+fn canonical_region_point(point: &str) -> Option<&'static str> {
+    [
+        "TOPLEFT",
+        "TOP",
+        "TOPRIGHT",
+        "LEFT",
+        "CENTER",
+        "RIGHT",
+        "BOTTOMLEFT",
+        "BOTTOM",
+        "BOTTOMRIGHT",
+    ]
+    .into_iter()
+    .find(|candidate| point.eq_ignore_ascii_case(candidate))
 }
 
 fn register_mutators(lua: &Lua, globals: &Table, state: UiChatWindowState) -> mlua::Result<()> {

@@ -451,6 +451,7 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
     assert(Later == nil)
   </OnLoad></Scripts></Button>
 </Frames><Scripts><OnLoad>
+  self:RegisterForDrag("LeftButton", "RightButton")
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
   assert(GetScreenHeight() == 768)
   assert(bit.tobit(4294967295) == -1)
@@ -1177,6 +1178,32 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         (shown, locked, docked, uninteractable),
         (None, None, Some(4), Some(1))
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("local width, height = GetChatWindowSavedDimensions(2); return select('#', GetChatWindowSavedPosition(2)), width, height, select('#', GetChatWindowSavedDimensions(11))")
+            .eval::<(u32, f64, f64, u32)>()?,
+        (0, 0.0, 0.0, 0)
+    );
+    bundle
+        .lua()
+        .load(
+            "SetChatWindowSavedPosition(2, 'bottomleft', 0.25, 0.5); SetChatWindowSavedDimensions(2, 480.5, 160.25)",
+        )
+        .exec()?;
+    assert_eq!(
+        bundle
+            .lua()
+            .load("local point, x, y = GetChatWindowSavedPosition(2); local width, height = GetChatWindowSavedDimensions(2); return point, x, y, width, height")
+            .eval::<(String, f64, f64, f64, f64)>()?,
+        ("BOTTOMLEFT".to_owned(), 0.25, 0.5, 480.5, 160.25)
+    );
+    assert!(
+        !bundle
+            .lua()
+            .load("return pcall(SetChatWindowSavedPosition, 2, 'invalid', 0, 0)")
+            .eval::<bool>()?
     );
 
     let mut occupied_slots = [0_u32; 144];

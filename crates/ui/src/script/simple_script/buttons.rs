@@ -218,19 +218,6 @@ pub(super) fn register_button_methods(
         })?,
     )?;
     methods.raw_set(
-        "RegisterForDrag",
-        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
-            let mut buttons = 0_u8;
-            for value in arguments {
-                let Some(value) = lua.coerce_string(value)? else {
-                    break;
-                };
-                buttons |= drag_button(value.to_string_lossy().as_str());
-            }
-            button.raw_set(drag_button_key(), buttons)
-        })?,
-    )?;
-    methods.raw_set(
         "GetTextWidth",
         lua.create_function(move |_, button: Table| {
             let Some(measurement) = &measurement else {
@@ -239,6 +226,23 @@ pub(super) fn register_button_methods(
                 ));
             };
             measurement.width(&button)
+        })?,
+    )
+}
+
+/// Registers frame-wide drag initiation buttons.
+pub(super) fn register_drag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "RegisterForDrag",
+        lua.create_function(|lua, (frame, arguments): (Table, Variadic<Value>)| {
+            let mut buttons = 0_u8;
+            for value in arguments {
+                let Some(value) = lua.coerce_string(value)? else {
+                    break;
+                };
+                buttons |= drag_button(value.to_string_lossy().as_str());
+            }
+            frame.raw_set(drag_button_key(), buttons)
         })?,
     )
 }
