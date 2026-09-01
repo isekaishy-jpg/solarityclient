@@ -19,7 +19,7 @@ mod xml;
 
 pub use addon::{
     AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
-    STOCK_INTERFACE_VERSION,
+    STOCK_INTERFACE_VERSION, UiAddonLoadState,
 };
 pub use animation::{
     UiAnimation, UiAnimationError, UiAnimationGroup, UiAnimationKind, UiAnimationLooping,

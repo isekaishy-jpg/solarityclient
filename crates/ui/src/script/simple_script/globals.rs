@@ -54,6 +54,7 @@ pub(super) fn register_base_globals(
     register_static_constants(lua, &globals)?;
     register_item_quality_color(lua, &globals)?;
     register_client_runtime_globals(lua, &globals, environment)?;
+    register_addon_globals(lua, &globals, environment.addon_load_state())?;
     match manifest_kind {
         UiManifestKind::Glue => register_glue_globals(lua, &globals, environment)?,
         UiManifestKind::Frame => register_frame_globals(lua, &globals, environment)?,
@@ -265,6 +266,65 @@ fn register_frame_globals(
                 .ok_or_else(|| {
                     mlua::Error::runtime("GetGameTime requires authoritative realm time")
                 })
+        })?,
+    )
+}
+
+/// Registers the exact two-result AddOn progress query used by stock FrameXML.
+fn register_addon_globals(
+    lua: &Lua,
+    globals: &Table,
+    addons: crate::UiAddonLoadState,
+) -> mlua::Result<()> {
+    globals.raw_set(
+        "IsAddOnLoaded",
+        lua.create_function(move |_, identifier: Value| {
+            let status = match identifier {
+                Value::Integer(index) => {
+                    let index = usize::try_from(index).ok();
+                    let Some(index) = index.filter(|index| *index > 0) else {
+                        return Err(mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addons.addon_count()
+                        )));
+                    };
+                    addons.status_by_index(index).ok_or_else(|| {
+                        mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addons.addon_count()
+                        ))
+                    })?
+                }
+                Value::Number(index) => {
+                    let rounded = index.round();
+                    let Some(index) =
+                        (rounded.is_finite() && rounded >= 1.0).then_some(rounded as usize)
+                    else {
+                        return Err(mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addons.addon_count()
+                        )));
+                    };
+                    addons.status_by_index(index).ok_or_else(|| {
+                        mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addons.addon_count()
+                        ))
+                    })?
+                }
+                Value::String(name) => addons
+                    .status_by_name(name.to_str()?.as_ref())
+                    .unwrap_or((false, false)),
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "Usage: IsAddOnLoaded(index or \"name\")",
+                    ));
+                }
+            };
+            Ok((
+                status.0.then_some(Value::Number(1.0)),
+                status.1.then_some(Value::Number(1.0)),
+            ))
         })?,
     )
 }

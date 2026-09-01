@@ -341,6 +341,7 @@ pub struct UiScriptEnvironment {
     chat_windows: crate::UiChatWindowState,
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
+    addons: crate::UiAddonLoadState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -382,6 +383,7 @@ impl UiScriptEnvironment {
             chat_windows: crate::UiChatWindowState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
+            addons: crate::UiAddonLoadState::default(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -437,6 +439,13 @@ impl UiScriptEnvironment {
         self
     }
 
+    /// Attaches the catalog-ordered AddOn loading progress exposed to FrameXML.
+    #[must_use]
+    pub fn with_addon_load_state(mut self, addons: crate::UiAddonLoadState) -> Self {
+        self.addons = addons;
+        self
+    }
+
     /// Attaches a main-thread archive stack already owned by a UI manager.
     #[must_use]
     pub(crate) fn with_shared_asset_store(mut self, store: AssetStoreHandle) -> Self {
@@ -459,6 +468,10 @@ impl UiScriptEnvironment {
 
     fn binding_assignments(&self) -> Option<Rc<RefCell<UiBindingAssignments>>> {
         self.bindings.clone()
+    }
+
+    fn addon_load_state(&self) -> crate::UiAddonLoadState {
+        self.addons.clone()
     }
 
     fn battlenet_state(&self) -> crate::feature::UiBattleNetState {

@@ -3,7 +3,7 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{AddonCatalog, AddonCompatibility, STANDARD_ADDON_CRC};
+use solarity_ui::{AddonCatalog, AddonCompatibility, STANDARD_ADDON_CRC, UiAddonLoadState};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -54,6 +54,15 @@ Source/Example.lua
     assert_eq!(addon.saved_variables(), ["ExampleAccount", "ExampleShared"]);
     assert_eq!(addon.saved_variables_per_character(), ["ExampleCharacter"]);
     assert_eq!(addon.entrypoints(), ["Example.xml", "Source\\Example.lua"]);
+    let load_state = UiAddonLoadState::from_catalog(&catalog);
+    assert_eq!(load_state.status_by_index(1), Some((false, false)));
+    assert_eq!(
+        load_state.status_by_name("blizzard_example"),
+        Some((false, false))
+    );
+    assert!(load_state.set_status("Blizzard_Example", true, true));
+    assert_eq!(load_state.status_by_index(1), Some((true, true)));
+    assert!(!load_state.set_status("Missing", true, true));
     assert_eq!(STANDARD_ADDON_CRC, 0x4C1C_776D);
     Ok(())
 }
