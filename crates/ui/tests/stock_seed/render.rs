@@ -38,6 +38,7 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     Mutated:SetBlendMode("ADD")
     Mutated:SetDrawLayer("OVERLAY", -2)
     Mutated:SetTexCoord(0.25, 0.75, 0, 1)
+    Mutated:SetDesaturated(true)
     Mutated:SetGradientAlpha("VERTICAL", 0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9)
   </OnLoad></Scripts>
 </Frame>
@@ -82,6 +83,7 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     assert_eq!(presentation.packets()[1].key().draw_rank(), 30);
     assert_eq!(presentation.packets()[1].key().draw_sub_level(), -2);
     assert_eq!(mutated.blend_mode(), UiBlendMode::Add);
+    assert!(mutated.desaturated());
     assert_eq!(
         mutated.source(),
         &UiTextureSource::Asset(solarity_asset::AssetPath::new(
@@ -138,6 +140,7 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         UiTextureAddressMode::Clamp
     );
     assert_eq!(mutated_batch.residency(), UiTextureResidency::Blocking);
+    assert!(mutated_batch.desaturated());
     assert!(matches!(mutated_batch.source(), UiRenderSource::Texture(_)));
     let solid_quad = mesh.object_indices().len() - 1;
     let solid_vertex = mesh.vertices()[solid_quad * 4];

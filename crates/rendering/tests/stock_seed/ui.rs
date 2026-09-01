@@ -62,6 +62,7 @@ fn quad(object_index: usize, source: UiRenderSource, bounds: [f32; 4]) -> UiRend
         UiTextureAddressMode::Clamp,
         UiTextureAddressMode::Clamp,
         UiTextureResidency::Blocking,
+        false,
         bounds,
         [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
         [[1.0; 4]; 4],

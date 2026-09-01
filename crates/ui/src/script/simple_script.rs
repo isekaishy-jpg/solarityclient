@@ -108,6 +108,7 @@ static TOOLTIP_ANCHOR_TOKEN: u8 = 72;
 static TOOLTIP_OFFSET_X_TOKEN: u8 = 73;
 static TOOLTIP_OFFSET_Y_TOKEN: u8 = 74;
 static TEXT_COLOR_TOKEN: u8 = 75;
+static DESATURATED_TOKEN: u8 = 76;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -1246,6 +1247,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(horizontal_tiling_key(), texture.horizontal_tiling))
                 .and_then(|()| table.raw_set(vertical_tiling_key(), texture.vertical_tiling))
                 .and_then(|()| table.raw_set(non_blocking_key(), texture.non_blocking))
+                .and_then(|()| table.raw_set(desaturated_key(), false))
                 .and_then(|()| table.raw_set(draw_layer_key(), texture.draw_layer))
                 .and_then(|()| table.raw_set(draw_sub_level_key(), texture.draw_sub_level))
                 .map_err(|error| execution_error("object registration", error))?;
@@ -1711,6 +1713,7 @@ fn create_dynamic_object(
             record.raw_get::<bool>("vertical_tiling")?,
         )?;
         object.raw_set(non_blocking_key(), record.raw_get::<bool>("non_blocking")?)?;
+        object.raw_set(desaturated_key(), false)?;
         object.raw_set(draw_layer_key(), record.raw_get::<String>("draw_layer")?)?;
         object.raw_set(
             draw_sub_level_key(),
@@ -2652,6 +2655,7 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
         ("SetHorizTile", "GetHorizTile", horizontal_tiling_key()),
         ("SetVertTile", "GetVertTile", vertical_tiling_key()),
         ("SetNonBlocking", "GetNonBlocking", non_blocking_key()),
+        ("SetDesaturated", "IsDesaturated", desaturated_key()),
     ] {
         methods.raw_set(
             set_name,
@@ -4234,6 +4238,10 @@ pub(super) fn vertical_tiling_key() -> LightUserData {
 
 pub(super) fn non_blocking_key() -> LightUserData {
     hidden_key(&NON_BLOCKING_TOKEN)
+}
+
+pub(super) fn desaturated_key() -> LightUserData {
+    hidden_key(&DESATURATED_TOKEN)
 }
 
 pub(super) fn draw_layer_key() -> LightUserData {

@@ -47,6 +47,7 @@ pub struct UiRenderQuad {
     horizontal_address: UiTextureAddressMode,
     vertical_address: UiTextureAddressMode,
     residency: UiTextureResidency,
+    desaturated: bool,
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     colors: [[f32; 4]; 4],
@@ -63,6 +64,7 @@ impl UiRenderQuad {
         horizontal_address: UiTextureAddressMode,
         vertical_address: UiTextureAddressMode,
         residency: UiTextureResidency,
+        desaturated: bool,
         bounds: [f32; 4],
         texture_coordinates: [[f32; 2]; 4],
         colors: [[f32; 4]; 4],
@@ -74,6 +76,7 @@ impl UiRenderQuad {
             horizontal_address,
             vertical_address,
             residency,
+            desaturated,
             bounds,
             texture_coordinates,
             colors,
@@ -122,6 +125,10 @@ impl UiRenderQuad {
 
     pub(super) const fn residency(&self) -> UiTextureResidency {
         self.residency
+    }
+
+    pub(super) const fn desaturated(&self) -> bool {
+        self.desaturated
     }
 }
 
@@ -188,6 +195,7 @@ pub struct UiRenderBatch {
     horizontal_address: UiTextureAddressMode,
     vertical_address: UiTextureAddressMode,
     residency: UiTextureResidency,
+    desaturated: bool,
     first_index: u32,
     index_count: u32,
     first_quad: u32,
@@ -202,6 +210,7 @@ impl UiRenderBatch {
             horizontal_address: quad.horizontal_address(),
             vertical_address: quad.vertical_address(),
             residency: quad.residency(),
+            desaturated: quad.desaturated(),
             first_index,
             index_count: 6,
             first_quad,
@@ -215,6 +224,7 @@ impl UiRenderBatch {
             && self.horizontal_address == quad.horizontal_address()
             && self.vertical_address == quad.vertical_address()
             && self.residency == quad.residency()
+            && self.desaturated == quad.desaturated()
     }
 
     pub(super) fn append_quad(&mut self) {
@@ -250,6 +260,12 @@ impl UiRenderBatch {
     #[must_use]
     pub const fn residency(&self) -> UiTextureResidency {
         self.residency
+    }
+
+    /// Returns whether this batch selects the grayscale texture shader path.
+    #[must_use]
+    pub const fn desaturated(&self) -> bool {
+        self.desaturated
     }
 
     /// Returns the first unsigned 32-bit index submitted by this batch.

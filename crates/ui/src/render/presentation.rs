@@ -70,6 +70,7 @@ pub struct UiTexturePresentation {
     horizontal_tiling: bool,
     vertical_tiling: bool,
     non_blocking: bool,
+    desaturated: bool,
 }
 
 impl UiTexturePresentation {
@@ -125,6 +126,12 @@ impl UiTexturePresentation {
     #[must_use]
     pub const fn non_blocking(&self) -> bool {
         self.non_blocking
+    }
+
+    /// Returns whether the texture shader converts sampled RGB to grayscale.
+    #[must_use]
+    pub const fn desaturated(&self) -> bool {
+        self.desaturated
     }
 }
 
@@ -212,6 +219,7 @@ impl UiPresentationPlan {
                     horizontal_tiling: texture.horizontal_tiling,
                     vertical_tiling: texture.vertical_tiling,
                     non_blocking: texture.non_blocking,
+                    desaturated: texture.desaturated,
                 },
             ));
         }

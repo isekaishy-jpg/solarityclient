@@ -3,8 +3,8 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
-    OBJECT_REGISTRY, alpha_key, anchors_key, checked_key, click_action_key, draw_layer_key,
-    draw_sub_level_key, enabled_key, frame_level_key, frame_strata_key, height_key,
+    OBJECT_REGISTRY, alpha_key, anchors_key, checked_key, click_action_key, desaturated_key,
+    draw_layer_key, draw_sub_level_key, enabled_key, frame_level_key, frame_strata_key, height_key,
     highlight_locked_key, horizontal_tiling_key, index_key, name_key, non_blocking_key, parent_key,
     parse_point, role_key, scale_key, shown_key, tex_coord_key, texture_blend_mode_key,
     texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_tiling_key,
@@ -58,6 +58,7 @@ pub(crate) struct UiRuntimeTexture {
     pub(crate) horizontal_tiling: bool,
     pub(crate) vertical_tiling: bool,
     pub(crate) non_blocking: bool,
+    pub(crate) desaturated: bool,
     pub(crate) draw_layer: UiDrawLayer,
     pub(crate) draw_sub_level: i16,
 }
@@ -238,6 +239,9 @@ fn snapshot_texture(lua_index: usize, table: &Table) -> Result<UiRuntimeTexture,
         non_blocking: table
             .raw_get(non_blocking_key())
             .map_err(|error| snapshot_error(format!("object {lua_index} nonblocking"), error))?,
+        desaturated: table
+            .raw_get(desaturated_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} desaturated"), error))?,
         draw_layer: parse_draw_layer(&draw_layer).ok_or_else(|| UiScriptError::Plan {
             message: format!("live UI texture {lua_index} has unknown draw layer {draw_layer}"),
         })?,

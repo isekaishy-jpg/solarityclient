@@ -87,6 +87,7 @@ fn render_quad(texture: &UiTexturePresentation) -> UiRenderQuad {
         } else {
             UiTextureResidency::Blocking
         },
+        texture.desaturated(),
         [
             bounds.left() as f32,
             bounds.bottom() as f32,
