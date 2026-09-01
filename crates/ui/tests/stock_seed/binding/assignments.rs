@@ -37,6 +37,13 @@ fn default_assignments_load_stock_archive_commands() -> Result<(), Box<dyn Error
     ));
     assert_eq!(
         assignments
+            .keys_for_action("MOVEFORWARD")
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>(),
+        ["W", "UP"]
+    );
+    assert_eq!(
+        assignments
             .modified_click("SELFCAST")
             .map(|assignment| assignment.chord().as_str()),
         Some("ALT")

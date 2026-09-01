@@ -99,6 +99,25 @@ impl UiBindingAction {
         }
         Ok(Self::Command(value.to_owned()))
     }
+
+    /// Compares against the exact action spelling accepted by binding APIs.
+    fn matches_serialized(&self, value: &str) -> bool {
+        match self {
+            Self::Command(command) => command == value,
+            Self::Spell(name) => value.strip_prefix("SPELL ") == Some(name.as_str()),
+            Self::Item(name) => value.strip_prefix("ITEM ") == Some(name.as_str()),
+            Self::Macro(name) => value.strip_prefix("MACRO ") == Some(name.as_str()),
+            Self::Click {
+                button,
+                mouse_button,
+            } => value
+                .strip_prefix("CLICK ")
+                .and_then(|value| value.split_once(':'))
+                .is_some_and(|(value_button, value_mouse_button)| {
+                    value_button == button && value_mouse_button == mouse_button
+                }),
+        }
+    }
 }
 
 /// One effective key-to-action assignment.
@@ -261,6 +280,22 @@ impl UiBindingAssignments {
     pub fn binding_for(&self, key: &str) -> Option<&UiBindingAssignment> {
         self.binding_with_id(key)
             .map(|(_identifier, assignment)| assignment)
+    }
+
+    /// Returns keys assigned to an exact serialized action in authored order.
+    ///
+    /// Stock exposes at most the first two through `GetBindingKey`; retaining
+    /// the iterator here keeps that Lua arity policy out of the data model.
+    pub fn keys_for_action<'a>(
+        &'a self,
+        action: &'a str,
+    ) -> impl Iterator<Item = &'a UiBindingKey> + 'a {
+        self.bindings.iter().filter_map(move |assignment| {
+            assignment
+                .action
+                .matches_serialized(action)
+                .then_some(&assignment.key)
+        })
     }
 
     /// Looks up one exact key and returns its compact identity without cloning.

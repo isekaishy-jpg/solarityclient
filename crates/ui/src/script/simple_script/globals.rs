@@ -410,6 +410,21 @@ fn register_client_runtime_globals(
         lua.create_function(move |_, ()| Ok(enabled_and_connected.connected().then_some(1_u32)))?,
     )?;
     let bindings = environment.binding_assignments();
+    let binding_keys = bindings.clone();
+    globals.raw_set(
+        "GetBindingKey",
+        lua.create_function(move |lua, action: String| {
+            let bindings = binding_keys.as_ref().ok_or_else(|| {
+                mlua::Error::runtime("GetBindingKey requires authoritative binding assignments")
+            })?;
+            let bindings = bindings.borrow();
+            let mut values = MultiValue::new();
+            for key in bindings.keys_for_action(&action).take(2) {
+                values.push_back(Value::String(lua.create_string(key.as_str())?));
+            }
+            Ok(values)
+        })?,
+    )?;
     globals.raw_set(
         "GetModifiedClick",
         lua.create_function(move |_, action: String| {
