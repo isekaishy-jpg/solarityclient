@@ -7,7 +7,7 @@ use solarity_rendering::{
 
 use crate::{
     UiBlendMode, UiGlyphAtlasPlan, UiGlyphQuad, UiPresentationPlan, UiRegionGeometryPlan,
-    UiRenderError, UiTextureAssetPlan, UiTexturePresentation, UiTextureSource,
+    UiRenderError, UiScrollFramePlan, UiTextureAssetPlan, UiTexturePresentation, UiTextureSource,
 };
 
 /// Renderer-owned mesh data derived from one complete live presentation pass.
@@ -52,6 +52,7 @@ impl UiRenderPlan {
         presentation: &UiPresentationPlan,
         glyphs: &UiGlyphAtlasPlan,
         geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
         logical_extent: (f64, f64),
     ) -> Result<Self, UiRenderError> {
         let mut quads = presentation
@@ -61,7 +62,7 @@ impl UiRenderPlan {
             .collect::<Vec<_>>();
         quads.extend(
             glyphs
-                .quads(geometry)
+                .quads_with_scroll(geometry, scroll_frames)
                 .into_iter()
                 .map(|quad| render_glyph_quad(glyphs.identity(), quad)),
         );

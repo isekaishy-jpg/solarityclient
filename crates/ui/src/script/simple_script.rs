@@ -146,6 +146,7 @@ static HIT_RECT_INSETS_TOKEN: u8 = 106;
 static MOUSE_WHEEL_ENABLED_TOKEN: u8 = 107;
 static TOOLTIP_PADDING_TOKEN: u8 = 108;
 static MOVIE_SUBTITLES_TOKEN: u8 = 109;
+static BUTTON_PRESSED_TOKEN: u8 = 110;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -1165,6 +1166,48 @@ impl UiScriptRuntime {
         &self.simple_html
     }
 
+    /// Publishes native layout-pass dimensions used by region query methods.
+    ///
+    /// Opposing anchors can resolve an authored zero width or height into a
+    /// concrete live size. Stock `GetWidth`/`GetHeight` expose that resolved
+    /// unscaled value to Lua, including the scrollbar height used for wheel
+    /// steps.
+    pub(crate) fn publish_resolved_geometry(
+        &mut self,
+        bundle: &UiBundle,
+        geometry: &crate::UiRegionGeometryPlan,
+    ) -> Result<(), UiScriptError> {
+        if geometry.region_count() != self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "resolved geometry has {} objects; runtime registered {}",
+                    geometry.region_count(),
+                    self.registered_object_count()
+                ),
+            });
+        }
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error("publish resolved geometry", error))?;
+        for object_index in 0..geometry.region_count() {
+            let region = geometry
+                .region(object_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("resolved geometry object {object_index} is unavailable"),
+                })?;
+            let object: Table = objects
+                .raw_get(object_index + 1)
+                .map_err(|error| execution_error("publish resolved geometry", error))?;
+            let bounds = region.logical_bounds();
+            object
+                .raw_set(width_key(), bounds.width())
+                .and_then(|()| object.raw_set(height_key(), bounds.height()))
+                .map_err(|error| execution_error("publish resolved geometry", error))?;
+        }
+        Ok(())
+    }
+
     /// Copies the authoritative post-script region state out of Lua.
     ///
     /// # Errors
@@ -1299,6 +1342,101 @@ impl UiScriptRuntime {
             return Ok(());
         };
         call_string_object_handler(lua, &function, object, key)
+            .map_err(|error| execution_error(&label, error))
+    }
+
+    /// Delivers one captured pointer transition and optional registered click.
+    pub(crate) fn dispatch_button_pointer(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        mouse_button: &str,
+        pressed: bool,
+        activate_click: bool,
+    ) -> Result<(), UiScriptError> {
+        let phase = if pressed { "down" } else { "up" };
+        let label = format!("Button object {object_index}:pointer-{phase}");
+        if object_index >= self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "button pointer object {object_index} is outside the live object arena"
+                ),
+            });
+        }
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error(&label, error))?;
+        let object: Table = objects
+            .raw_get(object_index + 1)
+            .map_err(|error| execution_error(&label, error))?;
+        let enabled = object
+            .raw_get::<bool>(enabled_key())
+            .map_err(|error| execution_error(&label, error))?;
+        object
+            .raw_set(button_pressed_key(), pressed && enabled)
+            .map_err(|error| execution_error(&label, error))?;
+
+        let mouse_handler = if pressed {
+            UiScriptHandler::MouseDown
+        } else {
+            UiScriptHandler::MouseUp
+        };
+        if let Some(function) = object_script_function(lua, &object, mouse_handler)
+            .map_err(|error| execution_error(&label, error))?
+        {
+            call_legacy_string_handler(lua, &function, object.clone(), mouse_button)
+                .map_err(|error| execution_error(&label, error))?;
+        }
+        if enabled && activate_click {
+            for handler in [
+                UiScriptHandler::PreClick,
+                UiScriptHandler::Click,
+                UiScriptHandler::PostClick,
+            ] {
+                if let Some(function) = object_script_function(lua, &object, handler)
+                    .map_err(|error| execution_error(&label, error))?
+                {
+                    buttons::call_click_handler(
+                        lua,
+                        &function,
+                        object.clone(),
+                        mouse_button,
+                        pressed,
+                    )
+                    .map_err(|error| execution_error(&label, error))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Delivers one normalized wheel delta to a live ScrollFrame handler.
+    pub(crate) fn dispatch_mouse_wheel(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        delta: f64,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("ScrollFrame object {object_index}:OnMouseWheel");
+        if object_index >= self.registered_object_count() || !delta.is_finite() {
+            return Err(UiScriptError::Plan {
+                message: format!("invalid mouse-wheel delivery for object {object_index}"),
+            });
+        }
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error(&label, error))?;
+        let object: Table = objects
+            .raw_get(object_index + 1)
+            .map_err(|error| execution_error(&label, error))?;
+        let Some(function) = object_script_function(lua, &object, UiScriptHandler::MouseWheel)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_number_object_handler(lua, &function, object, delta)
             .map_err(|error| execution_error(&label, error))
     }
 
@@ -1587,7 +1725,12 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
-                .and_then(|()| table.raw_set(mouse_wheel_enabled_key(), false))
+                .and_then(|()| {
+                    table.raw_set(
+                        mouse_wheel_enabled_key(),
+                        object.kind() == UiObjectKind::ScrollFrame,
+                    )
+                })
                 .and_then(|()| table.raw_set(frame_clamped_key(), clamped_to_screen))
                 .and_then(|()| table.raw_set(frame_movable_key(), movable))
                 .and_then(|()| table.raw_set(frame_resizable_key(), resizable))
@@ -1630,7 +1773,8 @@ impl UiScriptRuntime {
                 })?;
             table
                 .raw_set(highlight_locked_key(), false)
-                .and_then(|()| table.raw_set(click_action_key(), 0_u64))
+                .and_then(|()| table.raw_set(click_action_key(), 0x8000_0000_u64))
+                .and_then(|()| table.raw_set(button_pressed_key(), false))
                 .and_then(|()| table.raw_set(drag_button_key(), 0_u8))
                 .map_err(|error| execution_error("object registration", error))?;
             set_initial_font(
@@ -2197,8 +2341,11 @@ fn create_dynamic_object(
             .unwrap_or_else(|| "MEDIUM".to_owned());
         object.raw_set(frame_strata_key(), strata)?;
         object.raw_set(keyboard_enabled_key(), false)?;
-        object.raw_set(mouse_enabled_key(), false)?;
-        object.raw_set(mouse_wheel_enabled_key(), false)?;
+        object.raw_set(
+            mouse_enabled_key(),
+            matches!(kind, "Button" | "CheckButton"),
+        )?;
+        object.raw_set(mouse_wheel_enabled_key(), kind == "ScrollFrame")?;
         object.raw_set(
             frame_clamped_key(),
             record.raw_get::<bool>("clamped_to_screen")?,
@@ -2237,7 +2384,8 @@ fn create_dynamic_object(
     }
     if matches!(kind, "Button" | "CheckButton") {
         object.raw_set(highlight_locked_key(), false)?;
-        object.raw_set(click_action_key(), 0_u64)?;
+        object.raw_set(click_action_key(), 0x8000_0000_u64)?;
+        object.raw_set(button_pressed_key(), false)?;
         object.raw_set(drag_button_key(), 0_u8)?;
         set_initial_font(
             lua,
@@ -2531,6 +2679,34 @@ fn call_string_object_handler(
         Ok(()) => restore,
         Err(error) => {
             let _ = restore;
+            Err(error)
+        }
+    }
+}
+
+/// Preserves the legacy `this` and `arg1` globals for pointer callbacks.
+fn call_legacy_string_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    value: &str,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    let previous_arg1 = globals.raw_get::<Value>("arg1")?;
+    globals.raw_set("this", object.clone())?;
+    globals.raw_set("arg1", value)?;
+    let result = function.call::<()>((object, value));
+    let restore_this = globals.raw_set("this", previous_this);
+    let restore_arg1 = globals.raw_set("arg1", previous_arg1);
+    match result {
+        Ok(()) => {
+            restore_this?;
+            restore_arg1
+        }
+        Err(error) => {
+            let _ = restore_this;
+            let _ = restore_arg1;
             Err(error)
         }
     }
@@ -4368,6 +4544,34 @@ fn call_boolean_object_handler(
     }
 }
 
+/// Preserves legacy callback globals for one finite numeric argument.
+fn call_number_object_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    value: f64,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    let previous_arg = globals.raw_get::<Value>("arg1")?;
+    globals.raw_set("this", object.clone())?;
+    globals.raw_set("arg1", value)?;
+    let result = function.call::<()>((object, value));
+    let restore_this = globals.raw_set("this", previous_this);
+    let restore_arg = globals.raw_set("arg1", previous_arg);
+    match result {
+        Ok(()) => {
+            restore_this?;
+            restore_arg
+        }
+        Err(error) => {
+            let _ = restore_this;
+            let _ = restore_arg;
+            Err(error)
+        }
+    }
+}
+
 fn stock_optional_true(value: bool) -> mlua::Result<Value> {
     Ok(if value {
         Value::Number(1.0)
@@ -4418,14 +4622,38 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     )?;
     methods.raw_set(
         "SetHorizontalScroll",
-        lua.create_function(|_, (object, value): (Table, f64)| {
-            object.raw_set(horizontal_scroll_key(), value)
+        lua.create_function(|lua, (object, value): (Table, f64)| {
+            let (range, _) = refresh_scroll_ranges(&object)?;
+            let value = value.clamp(0.0, range);
+            let previous = object.raw_get::<f64>(horizontal_scroll_key())?;
+            if value == previous {
+                return Ok(());
+            }
+            object.raw_set(horizontal_scroll_key(), value)?;
+            if let Some(function) =
+                object_script_function(lua, &object, UiScriptHandler::HorizontalScroll)?
+            {
+                call_number_object_handler(lua, &function, object, value)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "SetVerticalScroll",
-        lua.create_function(|_, (object, value): (Table, f64)| {
-            object.raw_set(vertical_scroll_key(), value)
+        lua.create_function(|lua, (object, value): (Table, f64)| {
+            let (_, range) = refresh_scroll_ranges(&object)?;
+            let value = value.clamp(0.0, range);
+            let previous = object.raw_get::<f64>(vertical_scroll_key())?;
+            if value == previous {
+                return Ok(());
+            }
+            object.raw_set(vertical_scroll_key(), value)?;
+            if let Some(function) =
+                object_script_function(lua, &object, UiScriptHandler::VerticalScroll)?
+            {
+                call_number_object_handler(lua, &function, object, value)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4442,6 +4670,20 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
 /// state eagerly because FrameXML construction runs without an intervening
 /// native frame tick.
 fn update_scroll_child_rect(object: &Table) -> mlua::Result<()> {
+    let (horizontal_range, vertical_range) = refresh_scroll_ranges(object)?;
+
+    let horizontal_scroll = object
+        .raw_get::<f64>(horizontal_scroll_key())?
+        .clamp(0.0, horizontal_range);
+    let vertical_scroll = object
+        .raw_get::<f64>(vertical_scroll_key())?
+        .clamp(0.0, vertical_range);
+    object.raw_set(horizontal_scroll_key(), horizontal_scroll)?;
+    object.raw_set(vertical_scroll_key(), vertical_scroll)
+}
+
+/// Publishes the range implied by the scroll frame's current live dimensions.
+fn refresh_scroll_ranges(object: &Table) -> mlua::Result<(f64, f64)> {
     let frame_width = object.raw_get::<f64>(width_key())?;
     let frame_height = object.raw_get::<f64>(height_key())?;
     let (child_width, child_height) = object
@@ -4458,15 +4700,7 @@ fn update_scroll_child_rect(object: &Table) -> mlua::Result<()> {
     let vertical_range = (child_height - frame_height).max(0.0);
     object.raw_set(horizontal_scroll_range_key(), horizontal_range)?;
     object.raw_set(vertical_scroll_range_key(), vertical_range)?;
-
-    let horizontal_scroll = object
-        .raw_get::<f64>(horizontal_scroll_key())?
-        .clamp(0.0, horizontal_range);
-    let vertical_scroll = object
-        .raw_get::<f64>(vertical_scroll_key())?
-        .clamp(0.0, vertical_range);
-    object.raw_set(horizontal_scroll_key(), horizontal_scroll)?;
-    object.raw_set(vertical_scroll_key(), vertical_scroll)
+    Ok((horizontal_range, vertical_range))
 }
 
 /// Applies the stock scroll-child ownership contract recovered from
@@ -4561,10 +4795,21 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
     )?;
     methods.raw_set(
         "SetValue",
-        lua.create_function(|_, (object, value): (Table, f64)| {
+        lua.create_function(|lua, (object, value): (Table, f64)| {
             let minimum = object.raw_get::<f64>(slider_min_key())?;
             let maximum = object.raw_get::<f64>(slider_max_key())?;
-            object.raw_set(slider_value_key(), value.clamp(minimum, maximum))
+            let value = value.clamp(minimum, maximum);
+            let previous = object.raw_get::<f64>(slider_value_key())?;
+            if value == previous {
+                return Ok(());
+            }
+            object.raw_set(slider_value_key(), value)?;
+            if let Some(function) =
+                object_script_function(lua, &object, UiScriptHandler::ValueChanged)?
+            {
+                call_number_object_handler(lua, &function, object, value)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5980,19 +6225,19 @@ pub(super) fn enabled_key() -> LightUserData {
     hidden_key(&ENABLED_TOKEN)
 }
 
-fn horizontal_scroll_key() -> LightUserData {
+pub(super) fn horizontal_scroll_key() -> LightUserData {
     hidden_key(&HORIZONTAL_SCROLL_TOKEN)
 }
 
-fn vertical_scroll_key() -> LightUserData {
+pub(super) fn vertical_scroll_key() -> LightUserData {
     hidden_key(&VERTICAL_SCROLL_TOKEN)
 }
 
-fn horizontal_scroll_range_key() -> LightUserData {
+pub(super) fn horizontal_scroll_range_key() -> LightUserData {
     hidden_key(&HORIZONTAL_SCROLL_RANGE_TOKEN)
 }
 
-fn vertical_scroll_range_key() -> LightUserData {
+pub(super) fn vertical_scroll_range_key() -> LightUserData {
     hidden_key(&VERTICAL_SCROLL_RANGE_TOKEN)
 }
 
@@ -6072,7 +6317,7 @@ fn frame_clamp_insets_key() -> LightUserData {
     hidden_key(&FRAME_CLAMP_INSETS_TOKEN)
 }
 
-fn hit_rect_insets_key() -> LightUserData {
+pub(super) fn hit_rect_insets_key() -> LightUserData {
     hidden_key(&HIT_RECT_INSETS_TOKEN)
 }
 
@@ -6196,6 +6441,10 @@ pub(super) fn click_action_key() -> LightUserData {
     hidden_key(&CLICK_ACTION_TOKEN)
 }
 
+pub(super) fn button_pressed_key() -> LightUserData {
+    hidden_key(&BUTTON_PRESSED_TOKEN)
+}
+
 pub(super) fn drag_button_key() -> LightUserData {
     hidden_key(&DRAG_BUTTON_TOKEN)
 }
@@ -6284,11 +6533,11 @@ fn ignore_depth_key() -> LightUserData {
     hidden_key(&IGNORE_DEPTH_TOKEN)
 }
 
-fn mouse_enabled_key() -> LightUserData {
+pub(super) fn mouse_enabled_key() -> LightUserData {
     hidden_key(&MOUSE_ENABLED_TOKEN)
 }
 
-fn mouse_wheel_enabled_key() -> LightUserData {
+pub(super) fn mouse_wheel_enabled_key() -> LightUserData {
     hidden_key(&MOUSE_WHEEL_ENABLED_TOKEN)
 }
 

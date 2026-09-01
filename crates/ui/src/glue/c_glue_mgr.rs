@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use solarity_asset::{AssetStore, AssetStoreHandle, BlpTextureCache};
 
+use crate::glue::pointer::UiPointerPlan;
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiGlueNetworkBridge;
 use crate::script::UiRuntimeObjectPlan;
@@ -12,9 +13,10 @@ use crate::{
     FontCatalog, UiAnimationPlan, UiBundle, UiEventArgument, UiEventDispatch, UiEventError,
     UiEventPayload, UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction,
     UiGlueNetworkStatus, UiGlyphAtlasPlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan,
-    UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
+    UiObjectTree, UiPointerButton, UiPointerDispatch, UiPresentationPlan, UiRealmDirectory,
+    UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScrollFramePlan,
+    UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -30,6 +32,7 @@ pub struct GlueManager {
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
     geometry: UiRegionGeometryPlan,
+    scroll_frames: UiScrollFramePlan,
     glyphs: UiGlyphAtlasPlan,
     presentation: UiPresentationPlan,
     render_plan: UiRenderPlan,
@@ -37,6 +40,8 @@ pub struct GlueManager {
     texture_states: UiTextureStatePlan,
     objects: Vec<GlueObject>,
     child_indices: Vec<usize>,
+    pointer: UiPointerPlan,
+    pointer_capture: Option<(usize, UiPointerButton)>,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
@@ -162,6 +167,8 @@ impl GlueManager {
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        runtime.publish_resolved_geometry(&bundle, &geometry)?;
+        let scroll_frames = UiScrollFramePlan::from_live(&live);
         let glyphs = UiGlyphAtlasPlan::from_simple_html(
             runtime.simple_html(),
             &geometry,
@@ -170,9 +177,15 @@ impl GlueManager {
             logical_extent.1,
         )?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
-        let render_plan =
-            UiRenderPlan::prepare_with_glyphs(&presentation, &glyphs, &geometry, ui_extent)?;
+        let render_plan = UiRenderPlan::prepare_with_glyphs(
+            &presentation,
+            &glyphs,
+            &geometry,
+            &scroll_frames,
+            ui_extent,
+        )?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
+        let pointer = UiPointerPlan::from_live(&live);
         let report = GlueStartupReport::new(
             bundle.resources().len(),
             bundle.actions().len(),
@@ -195,6 +208,7 @@ impl GlueManager {
             frames,
             regions,
             geometry,
+            scroll_frames,
             glyphs,
             presentation,
             render_plan,
@@ -202,6 +216,8 @@ impl GlueManager {
             texture_states,
             objects,
             child_indices,
+            pointer,
+            pointer_capture: None,
             report,
             environment,
             media_intent,
@@ -258,6 +274,12 @@ impl GlueManager {
     #[must_use]
     pub const fn geometry(&self) -> &UiRegionGeometryPlan {
         &self.geometry
+    }
+
+    /// Returns live ScrollFrame offsets and ranges parallel to Glue objects.
+    #[must_use]
+    pub const fn scroll_frames(&self) -> &UiScrollFramePlan {
+        &self.scroll_frames
     }
 
     /// Returns the immutable archive-font atlas retained across Glue screens.
@@ -423,6 +445,71 @@ impl GlueManager {
         self.refresh_live_state()
     }
 
+    /// Routes one bottom-left-origin logical UI pointer transition.
+    ///
+    /// Press selects the frontmost enabled mouse frame by stratum, level, and
+    /// construction order. Release remains captured by that button, while its
+    /// click callback activates only when the pointer is still over the same
+    /// target and that exact transition was registered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when authored pointer or click Lua fails, or
+    /// when the resulting live geometry/presentation state is invalid.
+    pub fn pointer_button(
+        &mut self,
+        position: (f64, f64),
+        button: UiPointerButton,
+        pressed: bool,
+    ) -> Result<UiPointerDispatch, UiEventError> {
+        let hit = self.pointer.hit_test(&self.geometry, position);
+        let object_index = if pressed {
+            hit
+        } else {
+            self.pointer_capture
+                .take()
+                .filter(|(_, captured_button)| *captured_button == button)
+                .map(|(index, _)| index)
+        };
+        let Some(object_index) = object_index else {
+            return Ok(UiPointerDispatch::new(None, false));
+        };
+        if pressed {
+            self.pointer_capture = Some((object_index, button));
+        }
+        let click_activated = (!pressed && hit == Some(object_index) || pressed)
+            && self.pointer.activates(object_index, button, pressed);
+        self.runtime.dispatch_button_pointer(
+            &self.bundle,
+            object_index,
+            button.script_name(),
+            pressed,
+            click_activated,
+        )?;
+        self.refresh_live_state()?;
+        Ok(UiPointerDispatch::new(Some(object_index), click_activated))
+    }
+
+    /// Routes one normalized wheel delta to the frontmost ScrollFrame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when authored `OnMouseWheel`, slider, or
+    /// `OnVerticalScroll` Lua fails, or leaves invalid live presentation state.
+    pub fn pointer_wheel(
+        &mut self,
+        position: (f64, f64),
+        delta: f64,
+    ) -> Result<Option<usize>, UiEventError> {
+        let Some(object_index) = self.pointer.wheel_hit_test(&self.geometry, position) else {
+            return Ok(None);
+        };
+        self.runtime
+            .dispatch_mouse_wheel(&self.bundle, object_index, delta)?;
+        self.refresh_live_state()?;
+        Ok(Some(object_index))
+    }
+
     /// Takes the native completion generated when authored Lua stops a movie.
     pub fn take_movie_stop_completion(&self) -> Option<usize> {
         self.media_intent.borrow_mut().take_movie_stop_completion()
@@ -431,19 +518,26 @@ impl GlueManager {
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
         let live = self.runtime.snapshot_objects(&self.bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        self.runtime
+            .publish_resolved_geometry(&self.bundle, &geometry)?;
+        let scroll_frames = UiScrollFramePlan::from_live(&live);
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,
             &geometry,
+            &scroll_frames,
             geometry.ui_extent(),
         )?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
+        let pointer = UiPointerPlan::from_live(&live);
         self.geometry = geometry;
+        self.scroll_frames = scroll_frames;
         self.presentation = presentation;
         self.render_plan = render_plan;
         self.objects = objects;
         self.child_indices = child_indices;
+        self.pointer = pointer;
         Ok(())
     }
 }

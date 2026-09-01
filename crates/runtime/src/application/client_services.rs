@@ -22,7 +22,7 @@ use solarity_rendering::{
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
     AddonCatalog, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
-    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiPointerButton,
 };
 
 use crate::application::ApplicationError;
@@ -51,7 +51,7 @@ use crate::application::world_coordinator::{
 };
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
-use crate::platform::{ButtonState, PlatformEvent, SdlPlatform};
+use crate::platform::{ButtonState, MouseButton, MouseWheelDirection, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
 /// Concrete services owned exclusively by the application composition root.
@@ -279,29 +279,77 @@ impl ClientServices {
         &mut self,
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
-        let PlatformEvent::Key(key_event) = event else {
-            return Ok(());
-        };
-        if key_event.state != ButtonState::Released
-            || key_event.window_id != self.platform.window_id()
-        {
-            return Ok(());
+        match event {
+            PlatformEvent::Key(key_event)
+                if key_event.state == ButtonState::Released
+                    && key_event.window_id == self.platform.window_id() =>
+            {
+                let Some(scan_code) = key_event.scan_code else {
+                    return Ok(());
+                };
+                let Some(key) = stock_keyboard_name(scan_code) else {
+                    return Ok(());
+                };
+                let movie = self.glue.media_intent().movie().cloned();
+                let Some(movie) = movie else {
+                    return Ok(());
+                };
+                self.glue.movie_key_up(movie.object_index(), key)?;
+                if let Some(object_index) = self.glue.take_movie_stop_completion() {
+                    self.glue.movie_finished(object_index)?;
+                }
+                self.login_ui = None;
+            }
+            PlatformEvent::MouseButton(pointer)
+                if pointer.window_id == self.platform.window_id()
+                    && self.glue.media_intent().movie().is_none() =>
+            {
+                let Some(button) = glue_pointer_button(pointer.button) else {
+                    return Ok(());
+                };
+                let (window_width, window_height) = self.platform.logical_extent();
+                let (ui_width, ui_height) = self.glue.geometry().ui_extent();
+                let position = (
+                    f64::from(pointer.x) / f64::from(window_width) * ui_width,
+                    ui_height - f64::from(pointer.y) / f64::from(window_height) * ui_height,
+                );
+                let dispatch = self.glue.pointer_button(
+                    position,
+                    button,
+                    pointer.state == ButtonState::Pressed,
+                )?;
+                if dispatch.object_index().is_some() {
+                    self.login_ui = None;
+                }
+            }
+            PlatformEvent::MouseWheel(wheel)
+                if wheel.window_id == self.platform.window_id()
+                    && self.glue.media_intent().movie().is_none() =>
+            {
+                let delta = match wheel.direction {
+                    MouseWheelDirection::Normal => wheel.y,
+                    MouseWheelDirection::Flipped => -wheel.y,
+                    MouseWheelDirection::Unknown => return Ok(()),
+                };
+                let Some(pointer) = self.input.pointer_position() else {
+                    return Ok(());
+                };
+                let (window_width, window_height) = self.platform.logical_extent();
+                let (ui_width, ui_height) = self.glue.geometry().ui_extent();
+                let position = (
+                    f64::from(pointer.x()) / f64::from(window_width) * ui_width,
+                    ui_height - f64::from(pointer.y()) / f64::from(window_height) * ui_height,
+                );
+                if self
+                    .glue
+                    .pointer_wheel(position, f64::from(delta))?
+                    .is_some()
+                {
+                    self.login_ui = None;
+                }
+            }
+            _ => {}
         }
-        let Some(scan_code) = key_event.scan_code else {
-            return Ok(());
-        };
-        let Some(key) = stock_keyboard_name(scan_code) else {
-            return Ok(());
-        };
-        let movie = self.glue.media_intent().movie().cloned();
-        let Some(movie) = movie else {
-            return Ok(());
-        };
-        self.glue.movie_key_up(movie.object_index(), key)?;
-        if let Some(object_index) = self.glue.take_movie_stop_completion() {
-            self.glue.movie_finished(object_index)?;
-        }
-        self.login_ui = None;
         Ok(())
     }
 
@@ -817,6 +865,18 @@ impl ClientServices {
         let changed = self.glue.take_changed_cvars();
         self.startup_profile.persist_cvars(&changed)?;
         Ok(())
+    }
+}
+
+/// Maps SDL's admitted desktop button vocabulary onto Glue script names.
+const fn glue_pointer_button(button: MouseButton) -> Option<UiPointerButton> {
+    match button {
+        MouseButton::Left => Some(UiPointerButton::Left),
+        MouseButton::Middle => Some(UiPointerButton::Middle),
+        MouseButton::Right => Some(UiPointerButton::Right),
+        MouseButton::AuxiliaryOne => Some(UiPointerButton::Button4),
+        MouseButton::AuxiliaryTwo => Some(UiPointerButton::Button5),
+        MouseButton::Unknown => None,
     }
 }
 

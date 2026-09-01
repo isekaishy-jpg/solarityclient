@@ -11,6 +11,7 @@ use super::cvars::UiCVarSetError;
 use super::{portrait_unit_key, texture_file_key, texture_solid_color_key, type_key};
 
 mod legal_agreement;
+mod scan_dll;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 const CHARACTER_SELECT_MODEL_REGISTRY: &str = "solarity.ui.character_select_model";
@@ -1164,6 +1165,9 @@ fn register_client_runtime_globals(
             ))
         })?,
     )?;
+    // The stock login warning specifically tests the client's required SSE
+    // execution baseline. Every supported 64-bit Solarity target satisfies it.
+    globals.raw_set("IsSystemSupported", lua.create_function(|_, ()| Ok(true))?)?;
     let streaming_trial = environment.streaming_trial();
     globals.raw_set(
         "IsStreamingTrial",
@@ -1272,6 +1276,7 @@ fn register_glue_globals(
     register_glue_media_globals(lua, globals, environment)?;
     register_glue_network_globals(lua, globals, environment)?;
     legal_agreement::register_globals(lua, globals, environment.cvars())?;
+    scan_dll::register_globals(lua, globals)?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
     let current_screen = environment.current_screen();

@@ -214,7 +214,7 @@ impl UiFrameState {
         self.position_persistence_disabled
     }
 
-    fn unparented() -> Self {
+    fn unparented(kind: UiObjectKind) -> Self {
         Self {
             strata: UiFrameStrata::Medium,
             level: 0,
@@ -224,13 +224,13 @@ impl UiFrameState {
             resizable: false,
             clamped_to_screen: false,
             keyboard_enabled: false,
-            mouse_enabled: false,
+            mouse_enabled: matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton),
             protected: false,
             position_persistence_disabled: false,
         }
     }
 
-    fn child_of(parent: Self) -> Result<Self, UiFrameError> {
+    fn child_of(parent: Self, kind: UiObjectKind) -> Result<Self, UiFrameError> {
         let level = parent
             .level
             .checked_add(1)
@@ -240,7 +240,7 @@ impl UiFrameState {
         Ok(Self {
             strata: parent.strata,
             level,
-            ..Self::unparented()
+            ..Self::unparented(kind)
         })
     }
 
@@ -419,9 +419,9 @@ impl UiFramePlan {
                             object.name().unwrap_or("<unnamed>")
                         ),
                     })?;
-                UiFrameState::child_of(parent)?
+                UiFrameState::child_of(parent, object.kind())?
             } else {
-                UiFrameState::unparented()
+                UiFrameState::unparented(object.kind())
             };
             let node = self.nodes[index];
             for layer in self.layers_for(node) {

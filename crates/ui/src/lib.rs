@@ -62,7 +62,10 @@ pub use frame::{
     UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole,
     UiObjectTree,
 };
-pub use glue::{GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport};
+pub use glue::{
+    GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport, UiPointerButton,
+    UiPointerDispatch,
+};
 pub use input::{UiModifierKeyState, UiModifierKeys};
 pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
@@ -83,11 +86,11 @@ pub use script::{
     UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
-    UiBlendMode, UiGradientOrientation, UiSimpleHtmlAlignment, UiSimpleHtmlBlock,
-    UiSimpleHtmlDocument, UiSimpleHtmlError, UiSimpleHtmlFontSlot, UiSimpleHtmlLine,
-    UiSimpleHtmlNode, UiSimpleHtmlPlan, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,
-    UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
-    UiTextureStatePlan,
+    UiBlendMode, UiGradientOrientation, UiScrollFramePlan, UiScrollFrameState,
+    UiSimpleHtmlAlignment, UiSimpleHtmlBlock, UiSimpleHtmlDocument, UiSimpleHtmlError,
+    UiSimpleHtmlFontSlot, UiSimpleHtmlLine, UiSimpleHtmlNode, UiSimpleHtmlPlan, UiTexCoords,
+    UiTextureColor, UiTextureError, UiTextureFile, UiTextureGradient, UiTextureLayer,
+    UiTextureNode, UiTexturePlan, UiTextureState, UiTextureStatePlan,
 };
 pub use world::{
     UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,

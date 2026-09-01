@@ -7,7 +7,7 @@ use solarity_asset::{AssetPath, AssetStore};
 
 use crate::{
     FontCatalog, FontError, FontRasterization, FontSystem, RasterizedGlyph, UiRegionGeometryPlan,
-    UiSimpleHtmlAlignment, UiSimpleHtmlPlan,
+    UiScrollFramePlan, UiSimpleHtmlAlignment, UiSimpleHtmlPlan,
 };
 
 const ATLAS_ROW_WIDTH: u32 = 512;
@@ -162,6 +162,24 @@ impl UiGlyphAtlasPlan {
     /// FreeType or rebuild coverage pixels.
     #[must_use]
     pub fn quads(&self, geometry: &UiRegionGeometryPlan) -> Vec<UiGlyphQuad> {
+        self.resolve_quads(geometry, None)
+    }
+
+    /// Resolves visible glyphs after applying live ScrollFrame child offsets.
+    #[must_use]
+    pub fn quads_with_scroll(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+    ) -> Vec<UiGlyphQuad> {
+        self.resolve_quads(geometry, Some(scroll_frames))
+    }
+
+    fn resolve_quads(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: Option<&UiScrollFramePlan>,
+    ) -> Vec<UiGlyphQuad> {
         self.local_quads
             .iter()
             .filter_map(|quad| {
@@ -171,16 +189,20 @@ impl UiGlyphAtlasPlan {
                 }
                 let owner = region.presentation_bounds();
                 let scale = region.effective_scale();
+                let scroll = quad
+                    .clip_object
+                    .and_then(|index| scroll_frames?.state(index))
+                    .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
                 let [left, bottom, right, top] = quad.bounds;
                 let mut color = quad.color;
                 color[3] *= region.effective_alpha() as f32;
                 let resolved = UiGlyphQuad {
                     object_index: quad.object_index,
                     bounds: [
-                        (owner.left() + f64::from(left) * scale) as f32,
-                        (owner.top() + f64::from(bottom) * scale) as f32,
-                        (owner.left() + f64::from(right) * scale) as f32,
-                        (owner.top() + f64::from(top) * scale) as f32,
+                        (owner.left() + (f64::from(left) - scroll.0) * scale) as f32,
+                        (owner.top() + (f64::from(bottom) + scroll.1) * scale) as f32,
+                        (owner.left() + (f64::from(right) - scroll.0) * scale) as f32,
+                        (owner.top() + (f64::from(top) + scroll.1) * scale) as f32,
                     ],
                     texture_coordinates: quad.texture_coordinates,
                     color,

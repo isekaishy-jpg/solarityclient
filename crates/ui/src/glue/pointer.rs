@@ -1,0 +1,128 @@
+//! Stock-ordered pointer targeting for the retained Glue object arena.
+
+use crate::script::UiRuntimeObjectPlan;
+use crate::{UiFrameStrata, UiObjectKind, UiRegionGeometryPlan};
+
+use super::UiPointerButton;
+
+/// Live interaction facts parallel to frame-capable objects.
+pub(super) struct UiPointerPlan {
+    targets: Vec<Option<UiPointerTarget>>,
+}
+
+impl UiPointerPlan {
+    /// Copies only state required by main-thread hit testing and capture.
+    pub(super) fn from_live(live: &UiRuntimeObjectPlan) -> Self {
+        let targets = live
+            .objects()
+            .iter()
+            .map(|object| {
+                Some(UiPointerTarget {
+                    kind: object.kind,
+                    strata: object.frame_strata?,
+                    level: object.frame_level?,
+                    mouse_enabled: object.mouse_enabled?,
+                    mouse_wheel_enabled: object.mouse_wheel_enabled?,
+                    enabled: object.enabled.unwrap_or(true),
+                    hit_rect_insets: object.hit_rect_insets?,
+                    click_action: object.click_action.unwrap_or(0),
+                })
+            })
+            .collect();
+        Self { targets }
+    }
+
+    /// Returns the frontmost enabled mouse target containing one UI point.
+    pub(super) fn hit_test(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        point: (f64, f64),
+    ) -> Option<usize> {
+        self.targets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, target)| {
+                let target = target.as_ref()?;
+                let region = geometry.region(index)?;
+                if !matches!(
+                    target.kind,
+                    UiObjectKind::Button | UiObjectKind::CheckButton
+                ) || !target.mouse_enabled
+                    || !target.enabled
+                    || !region.effectively_shown()
+                    || region.effective_alpha() <= 0.0
+                {
+                    return None;
+                }
+                let bounds = region.presentation_bounds();
+                let scale = region.effective_scale();
+                let [left, right, top, bottom] = target.hit_rect_insets;
+                let hit_left = bounds.left() + left * scale;
+                let hit_right = bounds.right() - right * scale;
+                let hit_top = bounds.top() - top * scale;
+                let hit_bottom = bounds.bottom() + bottom * scale;
+                (hit_left <= point.0
+                    && point.0 <= hit_right
+                    && hit_bottom <= point.1
+                    && point.1 <= hit_top)
+                    .then_some((target.strata, target.level, index))
+            })
+            .max()
+            .map(|(_, _, index)| index)
+    }
+
+    /// Returns the frontmost wheel-enabled ScrollFrame under one UI point.
+    pub(super) fn wheel_hit_test(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        point: (f64, f64),
+    ) -> Option<usize> {
+        self.targets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, target)| {
+                let target = target.as_ref()?;
+                let region = geometry.region(index)?;
+                if target.kind != UiObjectKind::ScrollFrame
+                    || !target.mouse_wheel_enabled
+                    || !region.effectively_shown()
+                    || region.effective_alpha() <= 0.0
+                {
+                    return None;
+                }
+                let bounds = region.presentation_bounds();
+                (bounds.left() <= point.0
+                    && point.0 <= bounds.right()
+                    && bounds.bottom() <= point.1
+                    && point.1 <= bounds.top())
+                .then_some((target.strata, target.level, index))
+            })
+            .max()
+            .map(|(_, _, index)| index)
+    }
+
+    /// Returns whether this target registered the exact pointer transition.
+    pub(super) fn activates(
+        &self,
+        object_index: usize,
+        button: UiPointerButton,
+        pressed: bool,
+    ) -> bool {
+        self.targets
+            .get(object_index)
+            .and_then(Option::as_ref)
+            .is_some_and(|target| target.click_action & button.action_mask(pressed) != 0)
+    }
+}
+
+/// One live button's stock interaction ordering and hit rectangle.
+struct UiPointerTarget {
+    kind: UiObjectKind,
+    strata: UiFrameStrata,
+    level: i32,
+    mouse_enabled: bool,
+    mouse_wheel_enabled: bool,
+    enabled: bool,
+    hit_rect_insets: [f64; 4],
+    click_action: u64,
+}

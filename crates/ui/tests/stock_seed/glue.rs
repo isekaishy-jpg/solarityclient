@@ -5,8 +5,8 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
 use solarity_ui::{
     GlueError, GlueInitialScreen, GlueManager, UiEventArgument, UiEventError, UiEventPayload,
-    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiRealmCategory,
-    UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiPointerButton,
+    UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -147,6 +147,8 @@ fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
   EULA_WAS_ACCEPTED = EULAAccepted()
   EULA_SHOWED_NOTICE = ShowEULANotice()
   TOS_WAS_ACCEPTED = TOSAccepted()
+  SCAN_WAS_FINISHED = IsScanDLLFinished()
+  SYSTEM_WAS_SUPPORTED = IsSystemSupported()
   AcceptEULA()
 </OnLoad></Scripts></Frame></Ui>"#,
         },
@@ -165,12 +167,147 @@ fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
     assert!(!globals.get::<bool>("EULA_WAS_ACCEPTED")?);
     assert!(globals.get::<bool>("EULA_SHOWED_NOTICE")?);
     assert!(globals.get::<bool>("TOS_WAS_ACCEPTED")?);
+    assert!(globals.get::<bool>("SCAN_WAS_FINISHED")?);
+    assert!(globals.get::<bool>("SYSTEM_WAS_SUPPORTED")?);
     assert_eq!(manager.cvar_value("readEULA").as_deref(), Some("1"));
     assert_eq!(
         manager.take_changed_cvars(),
         vec![("readEULA".to_owned(), "1".to_owned())]
     );
     assert!(manager.take_changed_cvars().is_empty());
+    Ok(())
+}
+
+/// Pointer capture selects the frontmost frame and activates the stock default
+/// `LeftButtonUp` action only when release remains over the captured button.
+#[test]
+fn glue_manager_routes_captured_button_clicks() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Pointer.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Pointer.xml",
+            bytes: br#"<Ui>
+<Button name="LowButton" enableMouse="true" frameStrata="LOW" frameLevel="20">
+  <Size x="200" y="80"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnClick>POINTER_LOG = POINTER_LOG .. "low;"</OnClick></Scripts>
+</Button>
+<Button name="HighButton" enableMouse="true" frameStrata="DIALOG" frameLevel="1">
+  <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>
+    POINTER_LOG = ""
+    self:SetHitRectInsets(5, 5, 5, 5)
+  </OnLoad><OnMouseDown>
+    POINTER_LOG = POINTER_LOG .. "down:" .. arg1 .. ";"
+  </OnMouseDown><OnMouseUp>
+    POINTER_LOG = POINTER_LOG .. "up:" .. arg1 .. ";"
+  </OnMouseUp><OnClick>
+    POINTER_LOG = POINTER_LOG .. "click:" .. arg1 .. ";"
+    AcceptEULA()
+  </OnClick></Scripts>
+</Button>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let high_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HighButton"))
+        .ok_or("missing high pointer target")?;
+
+    let down = manager.pointer_button(
+        (1920.0 / 1080.0 * 384.0, 384.0),
+        UiPointerButton::Left,
+        true,
+    )?;
+    assert_eq!(down.object_index(), Some(high_index));
+    assert!(!down.click_activated());
+    let up = manager.pointer_button(
+        (1920.0 / 1080.0 * 384.0, 384.0),
+        UiPointerButton::Left,
+        false,
+    )?;
+    assert_eq!(up.object_index(), Some(high_index));
+    assert!(up.click_activated());
+
+    let globals = manager.bundle().lua().globals();
+    assert_eq!(
+        globals.get::<String>("POINTER_LOG")?,
+        "down:LeftButton;up:LeftButton;click:LeftButton;"
+    );
+    assert_eq!(manager.cvar_value("readEULA").as_deref(), Some("1"));
+    Ok(())
+}
+
+/// ScrollFrame's native wheel admission drives authored `OnMouseWheel` and
+/// clamped `OnVerticalScroll` state without a runtime-invented scroll speed.
+#[test]
+fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Scroll.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Scroll.xml",
+            bytes: br#"<Ui>
+<ScrollFrame name="LegalScroll" frameStrata="DIALOG" frameLevel="3">
+  <Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Frames><Slider name="$parentScrollBar"><Size x="20" y="100"/><Scripts><OnLoad>
+    self:SetMinMaxValues(0, 300)
+  </OnLoad><OnValueChanged>
+    self:GetParent():SetVerticalScroll(value)
+  </OnValueChanged></Scripts></Slider></Frames>
+  <Scripts><OnLoad>SCROLL_OFFSET = 0</OnLoad><OnMouseWheel>
+    LegalScrollScrollBar:SetValue(LegalScrollScrollBar:GetValue() - delta * 50)
+  </OnMouseWheel><OnVerticalScroll>
+    SCROLL_OFFSET = offset
+  </OnVerticalScroll></Scripts>
+  <ScrollChild><Frame name="LegalText"><Size x="200" y="400"/></Frame></ScrollChild>
+</ScrollFrame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let scroll_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("LegalScroll"))
+        .ok_or("missing legal scroll frame")?;
+
+    assert_eq!(
+        manager
+            .scroll_frames()
+            .state(scroll_index)
+            .ok_or("missing initial scroll state")?
+            .range(),
+        (0.0, 300.0)
+    );
+    let target = manager.pointer_wheel((1920.0 / 1080.0 * 384.0, 384.0), -1.0)?;
+    assert_eq!(target, Some(scroll_index));
+    assert_eq!(
+        manager
+            .scroll_frames()
+            .state(scroll_index)
+            .ok_or("missing updated scroll state")?
+            .offset(),
+        (0.0, 50.0)
+    );
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<f64>("SCROLL_OFFSET")?,
+        50.0
+    );
     Ok(())
 }
 

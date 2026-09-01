@@ -298,7 +298,7 @@ pub(super) fn register_button_methods(
     )
 }
 
-fn call_click_handler(
+pub(super) fn call_click_handler(
     lua: &Lua,
     function: &mlua::Function,
     button: Table,

@@ -174,6 +174,8 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
          dontSavePosition="true"/>
   <Button name="Login" inherits="Base" frameStrata="DIALOG" frameLevel="11"
           enableMouse="true"/>
+  <Button name="NativeButton"/>
+  <Button name="DisabledButton" enableMouse="false"/>
 </Ui>"#,
         },
     ])?;
@@ -219,6 +221,24 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
     assert!(state.mouse_enabled());
     assert!(state.protected());
     assert!(state.position_persistence_disabled());
+    let native_button_index = tree
+        .node_index("NativeButton")
+        .ok_or("missing NativeButton")?;
+    assert!(
+        states
+            .state(native_button_index)
+            .ok_or("missing NativeButton frame state")?
+            .mouse_enabled()
+    );
+    let disabled_button_index = tree
+        .node_index("DisabledButton")
+        .ok_or("missing DisabledButton")?;
+    assert!(
+        !states
+            .state(disabled_button_index)
+            .ok_or("missing DisabledButton frame state")?
+            .mouse_enabled()
+    );
     Ok(())
 }
 

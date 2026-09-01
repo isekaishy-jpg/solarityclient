@@ -28,5 +28,6 @@ pub use html::{
     UiSimpleHtmlAlignment, UiSimpleHtmlBlock, UiSimpleHtmlDocument, UiSimpleHtmlError,
     UiSimpleHtmlFontSlot, UiSimpleHtmlLine, UiSimpleHtmlNode, UiSimpleHtmlPlan,
 };
+pub use scroll_frame::{UiScrollFramePlan, UiScrollFrameState};
 
 pub(crate) use texture::canonical_texture_asset;

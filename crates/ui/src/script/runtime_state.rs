@@ -3,13 +3,15 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
-    OBJECT_REGISTRY, alpha_key, anchors_key, checked_key, click_action_key, desaturated_key,
-    draw_layer_key, draw_sub_level_key, enabled_key, frame_level_key, frame_strata_key, height_key,
-    highlight_locked_key, horizontal_tiling_key, index_key, model_camera_key, model_file_key,
-    model_scale_key, model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key,
-    name_key, non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key,
-    tex_coord_key, texture_blend_mode_key, texture_color_key, texture_file_key,
-    texture_solid_color_key, type_key, vertical_tiling_key, width_key,
+    OBJECT_REGISTRY, alpha_key, anchors_key, button_pressed_key, checked_key, click_action_key,
+    desaturated_key, draw_layer_key, draw_sub_level_key, enabled_key, frame_level_key,
+    frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
+    horizontal_scroll_range_key, horizontal_tiling_key, index_key, model_camera_key,
+    model_file_key, model_scale_key, model_sequence_key, model_sequence_time_key,
+    model_sequence_time_sequence_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
+    non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key, tex_coord_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectKind, UiObjectRole, UiPoint, UiScriptError,
@@ -43,7 +45,13 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) model: Option<UiRuntimeModel>,
     pub(crate) frame_level: Option<i32>,
     pub(crate) frame_strata: Option<UiFrameStrata>,
+    pub(crate) mouse_enabled: Option<bool>,
+    pub(crate) mouse_wheel_enabled: Option<bool>,
+    pub(crate) hit_rect_insets: Option<[f64; 4]>,
+    pub(crate) scroll_offset: Option<(f64, f64)>,
+    pub(crate) scroll_range: Option<(f64, f64)>,
     pub(crate) enabled: Option<bool>,
+    pub(crate) click_action: Option<u64>,
     pub(crate) checked: Option<bool>,
     pub(crate) highlighted: Option<bool>,
     pub(crate) pushed: Option<bool>,
@@ -148,6 +156,12 @@ pub(super) fn snapshot_runtime_objects(
         let model = matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
             .then(|| snapshot_model(lua_index, &table))
             .transpose()?;
+        let is_frame = !matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString);
+        let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
+        let click_action = is_button
+            .then(|| table.raw_get::<u64>(click_action_key()))
+            .transpose()
+            .map_err(|error| snapshot_error(format!("object {lua_index} click action"), error))?;
         objects.push(UiRuntimeObject {
             name: table
                 .raw_get(name_key())
@@ -166,15 +180,75 @@ pub(super) fn snapshot_runtime_objects(
             anchor_count: anchors.len() - first_anchor,
             texture,
             model,
-            frame_level: (!matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString))
+            frame_level: is_frame
                 .then(|| {
                     table.raw_get(frame_level_key()).map_err(|error| {
                         snapshot_error(format!("object {lua_index} frame level"), error)
                     })
                 })
                 .transpose()?,
-            frame_strata: (!matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString))
+            frame_strata: is_frame
                 .then(|| snapshot_frame_strata(lua_index, &table))
+                .transpose()?,
+            mouse_enabled: is_frame
+                .then(|| table.raw_get(mouse_enabled_key()))
+                .transpose()
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} mouse input"), error)
+                })?,
+            mouse_wheel_enabled: is_frame
+                .then(|| table.raw_get(mouse_wheel_enabled_key()))
+                .transpose()
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} mouse wheel input"), error)
+                })?,
+            hit_rect_insets: is_frame
+                .then(|| {
+                    table
+                        .raw_get::<Table>(hit_rect_insets_key())
+                        .map_err(|error| {
+                            snapshot_error(format!("object {lua_index} hit rect insets"), error)
+                        })
+                        .and_then(|values| {
+                            numeric_array::<4>(&values, lua_index, "hit rect insets")
+                        })
+                })
+                .transpose()?,
+            scroll_offset: (kind == UiObjectKind::ScrollFrame)
+                .then(|| {
+                    Ok::<(f64, f64), UiScriptError>((
+                        finite_region_number(
+                            &table,
+                            horizontal_scroll_key(),
+                            lua_index,
+                            "horizontal scroll",
+                        )?,
+                        finite_region_number(
+                            &table,
+                            vertical_scroll_key(),
+                            lua_index,
+                            "vertical scroll",
+                        )?,
+                    ))
+                })
+                .transpose()?,
+            scroll_range: (kind == UiObjectKind::ScrollFrame)
+                .then(|| {
+                    Ok::<(f64, f64), UiScriptError>((
+                        finite_region_number(
+                            &table,
+                            horizontal_scroll_range_key(),
+                            lua_index,
+                            "horizontal scroll range",
+                        )?,
+                        finite_region_number(
+                            &table,
+                            vertical_scroll_range_key(),
+                            lua_index,
+                            "vertical scroll range",
+                        )?,
+                    ))
+                })
                 .transpose()?,
             enabled: matches!(
                 kind,
@@ -183,6 +257,7 @@ pub(super) fn snapshot_runtime_objects(
             .then(|| table.raw_get(enabled_key()))
             .transpose()
             .map_err(|error| snapshot_error(format!("object {lua_index} enabled"), error))?,
+            click_action,
             checked: (kind == UiObjectKind::CheckButton)
                 .then(|| table.raw_get(checked_key()))
                 .transpose()
@@ -191,12 +266,8 @@ pub(super) fn snapshot_runtime_objects(
                 .then(|| table.raw_get(highlight_locked_key()))
                 .transpose()
                 .map_err(|error| snapshot_error(format!("object {lua_index} highlight"), error))?,
-            pushed: matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton)
-                .then(|| {
-                    table
-                        .raw_get::<u64>(click_action_key())
-                        .map(|value| value != 0)
-                })
+            pushed: is_button
+                .then(|| table.raw_get::<bool>(button_pressed_key()))
                 .transpose()
                 .map_err(|error| snapshot_error(format!("object {lua_index} pushed"), error))?,
         });

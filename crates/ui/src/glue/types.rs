@@ -21,6 +21,72 @@ impl GlueInitialScreen {
     }
 }
 
+/// Pointer controls admitted by stock desktop Glue widgets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiPointerButton {
+    /// Primary pointer button.
+    Left,
+    /// Wheel or middle pointer button.
+    Middle,
+    /// Secondary pointer button.
+    Right,
+    /// First auxiliary pointer button.
+    Button4,
+    /// Second auxiliary pointer button.
+    Button5,
+}
+
+impl UiPointerButton {
+    pub(super) const fn script_name(self) -> &'static str {
+        match self {
+            Self::Left => "LeftButton",
+            Self::Middle => "MiddleButton",
+            Self::Right => "RightButton",
+            Self::Button4 => "Button4",
+            Self::Button5 => "Button5",
+        }
+    }
+
+    pub(super) const fn action_mask(self, pressed: bool) -> u64 {
+        match (self, pressed) {
+            (Self::Left, true) => 1,
+            (Self::Left, false) => 0x8000_0000,
+            (Self::Middle, true) => 2,
+            (Self::Right, true) => 4,
+            (Self::Middle | Self::Right | Self::Button4 | Self::Button5, false)
+            | (Self::Button4 | Self::Button5, true) => 0,
+        }
+    }
+}
+
+/// Result of routing one pointer transition through Glue capture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiPointerDispatch {
+    object_index: Option<usize>,
+    click_activated: bool,
+}
+
+impl UiPointerDispatch {
+    pub(super) const fn new(object_index: Option<usize>, click_activated: bool) -> Self {
+        Self {
+            object_index,
+            click_activated,
+        }
+    }
+
+    /// Returns the captured button object, when the transition had a target.
+    #[must_use]
+    pub const fn object_index(self) -> Option<usize> {
+        self.object_index
+    }
+
+    /// Returns whether the target's registered click callback was activated.
+    #[must_use]
+    pub const fn click_activated(self) -> bool {
+        self.click_activated
+    }
+}
+
 /// Durable identity and hierarchy for one instantiated GlueXML object.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GlueObject {
