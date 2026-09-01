@@ -38,6 +38,8 @@ pub enum RuntimeWorldPoll {
     /// The selected realm has not completed authentication.
     Pending,
     /// Character-selection state became available at this poll boundary.
+    CharacterScreenReady,
+    /// A fresh authoritative character enumeration became available.
     CharacterDirectoryReady,
     /// The selected character entered its authoritative initial map.
     EnteredWorld,
@@ -57,6 +59,9 @@ pub enum RuntimeWorldError {
     /// Character login was requested without character-selection ownership.
     #[error("no authenticated character directory is available")]
     NoCharacterDirectory,
+    /// Character-screen requests were made without an authenticated world session.
+    #[error("no authenticated character-screen session is available")]
+    NoCharacterScreen,
     /// The selected GUID is absent from the authoritative character directory.
     #[error("character directory does not contain GUID {guid}")]
     UnknownCharacter {
@@ -92,8 +97,31 @@ pub enum RuntimeWorldError {
 /// Main-thread owner of at most one selected world transition.
 pub struct RuntimeWorldCoordinator {
     active: Option<ActiveWorld>,
+    character_screen: Option<RuntimeCharacterScreen>,
     character_selection: Option<RuntimeCharacterSelection>,
     world_entry: Option<RuntimeWorldEntry>,
+}
+
+/// Ordered request set emitted by stock `CharacterSelect_OnShow`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RuntimeCharacterScreenRequests {
+    pub(crate) ready_for_account_data_times: bool,
+    pub(crate) refresh_character_directory: bool,
+    pub(crate) request_realm_split_info: bool,
+}
+
+impl RuntimeCharacterScreenRequests {
+    pub(crate) const fn is_empty(self) -> bool {
+        !self.ready_for_account_data_times
+            && !self.refresh_character_directory
+            && !self.request_realm_split_info
+    }
+}
+
+struct RuntimeCharacterScreen {
+    session: WorldSession<TcpStream>,
+    addon_policy: Option<WorldAddonPolicy>,
+    setup_packets: Vec<WorldServerPacket>,
 }
 
 /// Authenticated character-screen state retained on the main thread.
@@ -162,6 +190,7 @@ impl RuntimeWorldCoordinator {
     pub const fn new() -> Self {
         Self {
             active: None,
+            character_screen: None,
             character_selection: None,
             world_entry: None,
         }
@@ -172,7 +201,7 @@ impl RuntimeWorldCoordinator {
     pub const fn state(&self) -> RuntimeWorldState {
         if self.world_entry.is_some() {
             RuntimeWorldState::InWorld
-        } else if self.character_selection.is_some() {
+        } else if self.character_screen.is_some() || self.character_selection.is_some() {
             RuntimeWorldState::CharacterSelection
         } else if let Some(active) = &self.active {
             active.phase.state()
@@ -198,7 +227,10 @@ impl RuntimeWorldCoordinator {
         if self.active.is_some() {
             return Err(RuntimeWorldError::AlreadyActive);
         }
-        if self.character_selection.is_some() || self.world_entry.is_some() {
+        if self.character_screen.is_some()
+            || self.character_selection.is_some()
+            || self.world_entry.is_some()
+        {
             return Err(RuntimeWorldError::AlreadyAuthenticated);
         }
         let (sender, receiver) = oneshot::channel();
@@ -210,6 +242,47 @@ impl RuntimeWorldCoordinator {
             receiver,
             task,
             phase: ActiveWorldPhase::Connecting,
+        });
+        Ok(())
+    }
+
+    /// Starts the ordered native requests emitted when character selection is shown.
+    ///
+    /// Session ownership moves to one worker so encrypted writes and interleaved
+    /// responses cannot race. A directory refresh waits for `SMSG_CHAR_ENUM`;
+    /// send-only request sets restore the prior screen state immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeWorldError`] when a transition is active or no
+    /// authenticated character-screen session is retained.
+    pub(crate) fn request_character_screen_data(
+        &mut self,
+        runtime: &Handle,
+        requests: RuntimeCharacterScreenRequests,
+    ) -> Result<(), RuntimeWorldError> {
+        if requests.is_empty() {
+            return Ok(());
+        }
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        let state = if let Some(screen) = self.character_screen.take() {
+            RetainedCharacterScreen::AwaitingDirectory(screen)
+        } else if let Some(selection) = self.character_selection.take() {
+            RetainedCharacterScreen::Ready(selection)
+        } else {
+            return Err(RuntimeWorldError::NoCharacterScreen);
+        };
+        let (sender, receiver) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = request_character_screen_data(state, requests).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::RefreshingCharacters,
         });
         Ok(())
     }
@@ -258,6 +331,8 @@ impl RuntimeWorldCoordinator {
                 RuntimeWorldPoll::EnteredWorld
             } else if self.character_selection.is_some() {
                 RuntimeWorldPoll::CharacterDirectoryReady
+            } else if self.character_screen.is_some() {
+                RuntimeWorldPoll::CharacterScreenReady
             } else {
                 RuntimeWorldPoll::Idle
             });
@@ -269,6 +344,10 @@ impl RuntimeWorldCoordinator {
         };
         self.active = None;
         match result {
+            Ok(ActiveWorldResult::CharacterScreen(screen)) => {
+                self.character_screen = Some(screen);
+                Ok(RuntimeWorldPoll::CharacterScreenReady)
+            }
             Ok(ActiveWorldResult::CharacterSelection(selection)) => {
                 self.character_selection = Some(selection);
                 Ok(RuntimeWorldPoll::CharacterDirectoryReady)
@@ -294,15 +373,16 @@ impl RuntimeWorldCoordinator {
             active.task.abort();
         }
         self.character_selection = None;
+        self.character_screen = None;
         self.world_entry = None;
     }
 
     /// Returns the retained encrypted world session.
     #[must_use]
-    pub const fn authenticated(&self) -> Option<&WorldSession<TcpStream>> {
+    pub fn authenticated(&self) -> Option<&WorldSession<TcpStream>> {
         match &self.character_selection {
             Some(selection) => Some(selection.session()),
-            None => None,
+            None => self.character_screen.as_ref().map(|screen| &screen.session),
         }
     }
 
@@ -340,6 +420,7 @@ struct ActiveWorld {
 #[derive(Clone, Copy)]
 enum ActiveWorldPhase {
     Connecting,
+    RefreshingCharacters,
     EnteringWorld,
 }
 
@@ -347,12 +428,14 @@ impl ActiveWorldPhase {
     const fn state(self) -> RuntimeWorldState {
         match self {
             Self::Connecting => RuntimeWorldState::Connecting,
+            Self::RefreshingCharacters => RuntimeWorldState::CharacterSelection,
             Self::EnteringWorld => RuntimeWorldState::EnteringWorld,
         }
     }
 }
 
 enum ActiveWorldResult {
+    CharacterScreen(RuntimeCharacterScreen),
     CharacterSelection(RuntimeCharacterSelection),
     Entered(RuntimeWorldEntry),
     Rejected {
@@ -371,17 +454,70 @@ async fn authenticate_world(
     let (login, _realms) = authenticated.into_parts();
     let identity = login.into_world_identity();
     let mut progress = WorldConnection::authenticate(stream, identity, &realm, addons).await?;
-    let mut session = loop {
+    let session = loop {
         progress = match progress {
             WorldAuthProgress::Authenticated(session) => break session,
             WorldAuthProgress::Queued(queue) => queue.advance().await?,
         };
     };
-    session.request_character_directory().await?;
+    Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
+        session,
+        addon_policy: None,
+        setup_packets: Vec::new(),
+    }))
+}
+
+enum RetainedCharacterScreen {
+    AwaitingDirectory(RuntimeCharacterScreen),
+    Ready(RuntimeCharacterSelection),
+}
+
+async fn request_character_screen_data(
+    state: RetainedCharacterScreen,
+    requests: RuntimeCharacterScreenRequests,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    let (mut session, directory, mut addon_policy, mut setup_packets) = match state {
+        RetainedCharacterScreen::AwaitingDirectory(screen) => (
+            screen.session,
+            None,
+            screen.addon_policy,
+            screen.setup_packets,
+        ),
+        RetainedCharacterScreen::Ready(selection) => (
+            selection.session,
+            Some(selection.directory),
+            selection.addon_policy,
+            selection.setup_packets,
+        ),
+    };
+    if requests.ready_for_account_data_times {
+        session.ready_for_account_data_times().await?;
+    }
+    if requests.refresh_character_directory {
+        session.request_character_directory().await?;
+    }
+    if requests.request_realm_split_info {
+        session.request_realm_split_info().await?;
+    }
+    if !requests.refresh_character_directory {
+        return match directory {
+            Some(directory) => Ok(ActiveWorldResult::CharacterSelection(
+                RuntimeCharacterSelection {
+                    session,
+                    directory,
+                    addon_policy,
+                    setup_packets,
+                },
+            )),
+            None => Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
+                session,
+                addon_policy,
+                setup_packets,
+            })),
+        };
+    }
 
     const MAX_SETUP_PACKETS: usize = 256;
-    let mut addon_policy = None;
-    let mut setup_packets = Vec::new();
     loop {
         let packet = session.receive_packet().await?;
         if let Some(directory) = packet.character_directory()? {

@@ -797,6 +797,71 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Only visible frames receive one elapsed interval per native update, and a
+/// presentation rebuild occurs only when authored state actually changes.
+#[test]
+fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Update.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Update.xml",
+            bytes: br#"<Ui><Frame name="Animated"><Size x="100" y="50"/><Scripts>
+  <OnLoad>UPDATE_CALLS = 0 self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+  <OnEvent>if arg1 == "charselect" then self:Hide() end</OnEvent>
+  <OnUpdate>UPDATE_CALLS = UPDATE_CALLS + 1 self:SetAlpha(self:GetAlpha() - elapsed)</OnUpdate>
+</Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let animated = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("Animated"))
+        .ok_or("Animated fixture frame is absent")?;
+
+    assert!(manager.update(0.25)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(animated)
+            .ok_or("Animated geometry is absent")?
+            .effective_alpha(),
+        0.75,
+    );
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("UPDATE_CALLS")?,
+        1
+    );
+
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+    )?;
+    assert!(!manager.update(0.25)?);
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("UPDATE_CALLS")?,
+        1
+    );
+    assert!(matches!(
+        manager.update(-0.01),
+        Err(UiEventError::Script(_))
+    ));
+    Ok(())
+}
+
 fn assert_close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 0.000_001,

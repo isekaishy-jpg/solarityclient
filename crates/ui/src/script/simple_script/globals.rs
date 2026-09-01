@@ -59,7 +59,12 @@ pub(super) fn register_base_globals(
     register_client_runtime_globals(lua, &globals, environment)?;
     register_sound_globals(lua, &globals, environment)?;
     register_portrait_globals(lua, &globals)?;
-    register_addon_globals(lua, &globals, environment.addon_load_state())?;
+    register_addon_globals(
+        lua,
+        &globals,
+        environment.addon_load_state(),
+        environment.cvars(),
+    )?;
     register_saved_variable_globals(lua, &globals, environment.saved_variable_state())?;
     match manifest_kind {
         UiManifestKind::Glue => register_glue_globals(lua, &globals, environment)?,
@@ -672,7 +677,81 @@ fn register_addon_globals(
     lua: &Lua,
     globals: &Table,
     addons: crate::UiAddonLoadState,
+    cvars: super::cvars::UiCVarRegistry,
 ) -> mlua::Result<()> {
+    let addon_count = addons.clone();
+    globals.raw_set(
+        "GetNumAddOns",
+        lua.create_function(move |_, ()| Ok(addon_count.addon_count()))?,
+    )?;
+    let version_check = cvars.clone();
+    globals.raw_set(
+        "IsAddonVersionCheckEnabled",
+        lua.create_function(move |_, ()| {
+            Ok(version_check
+                .get("checkAddonVersion")
+                .is_some_and(|value| value != "0"))
+        })?,
+    )?;
+    let version_check = cvars.clone();
+    globals.raw_set(
+        "SetAddonVersionCheck",
+        lua.create_function(move |lua, value: Value| {
+            let enabled = match value {
+                Value::Boolean(enabled) => enabled,
+                value => lua.coerce_number(value)?.is_some_and(|value| value != 0.0),
+            };
+            set_cvar(
+                &version_check,
+                "checkAddonVersion",
+                if enabled { "1" } else { "0" }.to_owned(),
+            )
+        })?,
+    )?;
+    let addon_info = addons.clone();
+    let version_check = cvars;
+    globals.raw_set(
+        "GetAddOnInfo",
+        lua.create_function(move |lua, index: usize| {
+            let Some(addon) = addon_info.definition_by_index(index) else {
+                return Ok(MultiValue::from_vec(vec![Value::Nil]));
+            };
+            let check_version = version_check
+                .get("checkAddonVersion")
+                .is_some_and(|value| value != "0");
+            let incompatible = !matches!(addon.compatibility(), crate::AddonCompatibility::Current);
+            let loadable = addon.is_enabled_by_default() && (!check_version || !incompatible);
+            let reason = if !addon.is_enabled_by_default() {
+                Some("DISABLED")
+            } else if incompatible && check_version {
+                Some("INTERFACE_VERSION")
+            } else {
+                None
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(addon.name())?),
+                Value::String(lua.create_string(addon.title())?),
+                match addon.notes() {
+                    Some(notes) => Value::String(lua.create_string(notes)?),
+                    None => Value::Nil,
+                },
+                Value::Nil,
+                Value::Boolean(loadable),
+                match reason {
+                    Some(reason) => Value::String(lua.create_string(reason)?),
+                    None => Value::Nil,
+                },
+                Value::String(
+                    lua.create_string(if addon.is_signed() || addon.is_secure() {
+                        "SECURE"
+                    } else {
+                        "INSECURE"
+                    })?,
+                ),
+                Value::Boolean(false),
+            ]))
+        })?,
+    )?;
     globals.raw_set(
         "IsAddOnLoaded",
         lua.create_function(move |_, identifier: Value| {
@@ -1355,6 +1434,18 @@ fn register_glue_globals(
                 .ok_or_else(|| mlua::Error::runtime("stock accountList CVar is not registered"))
         })?,
     )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetSavedAccountList",
+        lua.create_function(move |lua, value: Value| {
+            let Some(value) = lua.coerce_string(value)? else {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetSavedAccountList(\"accountList\")",
+                ));
+            };
+            set_cvar(&cvars, "accountList", value.to_string_lossy())
+        })?,
+    )?;
     register_model_frame_selector(
         lua,
         globals,
@@ -1365,6 +1456,18 @@ fn register_glue_globals(
         lua,
         globals,
         "SetCharCustomizeFrame",
+        CHARACTER_CUSTOMIZE_MODEL_REGISTRY,
+    )?;
+    register_model_frame_background(
+        lua,
+        globals,
+        "SetCharSelectBackground",
+        CHARACTER_SELECT_MODEL_REGISTRY,
+    )?;
+    register_model_frame_background(
+        lua,
+        globals,
+        "SetCharCustomizeBackground",
         CHARACTER_CUSTOMIZE_MODEL_REGISTRY,
     )
 }
@@ -1435,6 +1538,36 @@ fn register_character_list_globals(
 ) -> mlua::Result<()> {
     let network = environment.network();
     globals.raw_set(
+        "ReadyForAccountDataTimes",
+        lua.create_function(move |_, ()| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::ReadyForAccountDataTimes);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "GetCharacterListUpdate",
+        lua.create_function(move |_, ()| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::RequestCharacterListUpdate);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "RequestRealmSplitInfo",
+        lua.create_function(move |_, ()| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::RequestRealmSplitInfo);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
         "GetNumCharacters",
         lua.create_function(move |_, ()| Ok(network.borrow().characters().characters().len()))?,
     )?;
@@ -1457,17 +1590,17 @@ fn register_character_list_globals(
     let network = environment.network();
     globals.raw_set(
         "GetCharacterInfo",
-        lua.create_function(move |lua, guid: u64| {
+        lua.create_function(move |lua, index: u32| {
             let network = network.borrow();
-            character_info_values(lua, network.characters().by_guid(guid))
+            character_info_values(lua, network.characters().by_index(index))
         })?,
     )?;
     let network = environment.network();
     globals.raw_set(
         "GetSelectBackgroundModel",
-        lua.create_function(move |_, guid: u64| {
+        lua.create_function(move |_, index: u32| {
             let network = network.borrow();
-            Ok(network.characters().by_guid(guid).map(|character| {
+            Ok(network.characters().by_index(index).map(|character| {
                 if character.class_id() == 6 {
                     "DEATHKNIGHT".to_owned()
                 } else {
@@ -1479,9 +1612,9 @@ fn register_character_list_globals(
     let network = environment.network();
     globals.raw_set(
         "SelectCharacter",
-        lua.create_function(move |_, guid: u64| {
+        lua.create_function(move |_, index: u32| {
             let mut network = network.borrow_mut();
-            if network.select_character(guid) {
+            if let Some(guid) = network.select_character_index(index) {
                 network.push(UiGlueNetworkAction::SelectCharacter { guid });
             }
             Ok(())
@@ -1946,6 +2079,29 @@ fn register_model_frame_selector(
                 lua.set_named_registry_value(registry, frame)?;
             }
             Ok(())
+        })?,
+    )
+}
+
+fn register_model_frame_background(
+    lua: &Lua,
+    globals: &Table,
+    function: &'static str,
+    registry: &'static str,
+) -> mlua::Result<()> {
+    globals.raw_set(
+        function,
+        lua.create_function(move |lua, value: Value| {
+            let path = required_string(lua, value, "model path")?;
+            let frame = lua
+                .named_registry_value::<Option<Table>>(registry)?
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!(
+                        "{function} requires the stock model frame registration"
+                    ))
+                })?;
+            let set_model = frame.get::<Function>("SetModel")?;
+            set_model.call::<()>((frame, path))
         })?,
     )
 }

@@ -2,8 +2,11 @@
 
 use std::error::Error;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{AddonCatalog, AddonCompatibility, STANDARD_ADDON_CRC, UiAddonLoadState};
+use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
+use solarity_ui::{
+    AddonCatalog, AddonCompatibility, GlueInitialScreen, GlueManager, STANDARD_ADDON_CRC,
+    UiAddonLoadState,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -11,9 +14,10 @@ use crate::support::{Fixture, FixtureFile};
 /// their declaration order.
 #[test]
 fn catalog_parses_stock_metadata_and_signature_identity() -> Result<(), Box<dyn Error>> {
-    let fixture = Fixture::new(&[FixtureFile {
-        path: "Interface\\AddOns\\Blizzard_Example\\Blizzard_Example.toc",
-        bytes: br#"
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\AddOns\\Blizzard_Example\\Blizzard_Example.toc",
+            bytes: br#"
 ## Interface: 30300
 ## Title: Example
 ## Title-enUS: Localized Example
@@ -27,7 +31,16 @@ fn catalog_parses_stock_metadata_and_signature_identity() -> Result<(), Box<dyn 
 Example.xml
 Source/Example.lua
 "#,
-    }])?;
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Glue.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Glue.xml",
+            bytes: b"<Ui/>",
+        },
+    ])?;
     fixture.write_loose_file(
         "Interface/AddOns/Blizzard_Example/Blizzard_Example.pub",
         b"signature marker",
@@ -64,6 +77,39 @@ Source/Example.lua
     assert_eq!(load_state.status_by_index(1), Some((true, true)));
     assert!(!load_state.set_status("Missing", true, true));
     assert_eq!(STANDARD_ADDON_CRC, 0x4C1C_776D);
+
+    let manager = GlueManager::start_shared_with_profile(
+        AssetStoreHandle::new(assets),
+        (1280, 720),
+        false,
+        GlueInitialScreen::Login,
+        &[],
+        &catalog,
+    )?;
+    let globals = manager.bundle().lua().globals();
+    assert_eq!(
+        globals
+            .get::<mlua::Function>("GetNumAddOns")?
+            .call::<u32>(())?,
+        1
+    );
+    let info = globals
+        .get::<mlua::Function>("GetAddOnInfo")?
+        .call::<mlua::MultiValue>(1_u32)?;
+    assert_eq!(info.len(), 8);
+    assert_eq!(
+        info[0].as_string().map(|value| value.to_string_lossy()),
+        Some("Blizzard_Example".to_owned())
+    );
+    assert_eq!(
+        info[1].as_string().map(|value| value.to_string_lossy()),
+        Some("Localized Example".to_owned())
+    );
+    assert_eq!(info[4].as_boolean(), Some(true));
+    assert_eq!(
+        info[6].as_string().map(|value| value.to_string_lossy()),
+        Some("SECURE".to_owned())
+    );
     Ok(())
 }
 

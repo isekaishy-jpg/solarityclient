@@ -150,6 +150,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("locale", "enUS"),
     ranged("mapQuestDifficulty", "0", 0.0, 1.0),
     ranged("movieSubtitle", "0", 0.0, 1.0),
+    ranged("checkAddonVersion", "1", 0.0, 1.0),
     ranged("nameplateAllowOverlap", "1", 0.0, 1.0),
     ranged("nameplateShowEnemyGuardians", "1", 0.0, 1.0),
     ranged("nameplateShowEnemyPets", "1", 0.0, 1.0),

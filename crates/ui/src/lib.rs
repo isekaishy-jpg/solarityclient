@@ -74,9 +74,10 @@ pub use region::{
     UiRegionStatePlan, UiScreenRect,
 };
 pub use render::{
-    UiModelPresentation, UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan,
-    UiRenderError, UiRenderPlan, UiTextureAssetBindings, UiTextureAssetPlan, UiTextureAssetRequest,
-    UiTexturePresentation, UiTextureSource,
+    UiModelFog, UiModelLight, UiModelLightSets, UiModelPresentation, UiPresentationPacket,
+    UiPresentationPacketKey, UiPresentationPlan, UiRenderError, UiRenderPlan,
+    UiTextureAssetBindings, UiTextureAssetPlan, UiTextureAssetRequest, UiTexturePresentation,
+    UiTextureSource,
 };
 pub use script::{
     UiCharacterDirectory, UiCharacterInfo, UiClientClock, UiDeferredRuntimeTemplate,

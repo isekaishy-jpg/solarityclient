@@ -93,6 +93,12 @@ pub enum UiGlueNetworkAction {
         /// Whether the active Glue screen was the account-login screen.
         from_login_screen: bool,
     },
+    /// Announce that Glue can receive account-data timestamps.
+    ReadyForAccountDataTimes,
+    /// Request a fresh authoritative character enumeration.
+    RequestCharacterListUpdate,
+    /// Request the selected realm's split-status metadata.
+    RequestRealmSplitInfo,
     /// Select one character identity for character-screen presentation.
     SelectCharacter {
         /// World object GUID returned by enumeration.
@@ -219,7 +225,7 @@ impl UiGlueNetworkBridge {
         self.characters = characters;
     }
 
-    pub(crate) fn select_character(&mut self, guid: u64) -> bool {
-        self.characters.select(guid)
+    pub(crate) fn select_character_index(&mut self, one_based_index: u32) -> Option<u64> {
+        self.characters.select_index(one_based_index)
     }
 }

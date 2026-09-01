@@ -11,12 +11,12 @@ use crate::UiScriptHandler;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
-    DynamicArenaState, button_text_key, checked_key, click_action_key, create_dynamic_region,
-    disabled_font_key, disabled_texture_key, drag_button_key, enabled_key, font_object_key,
-    font_set_key, highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool,
-    lua_text, name_key, normal_font_key, normal_texture_key, object_script_function,
-    pushed_texture_key, resolve_font_object, text_key, texture_file_key, texture_solid_color_key,
-    type_key,
+    DynamicArenaState, button_pressed_key, button_state_locked_key, button_text_key, checked_key,
+    click_action_key, create_dynamic_region, disabled_font_key, disabled_texture_key,
+    drag_button_key, enabled_key, font_object_key, font_set_key, highlight_font_key,
+    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key, normal_font_key,
+    normal_texture_key, object_script_function, pushed_texture_key, resolve_font_object, text_key,
+    texture_file_key, texture_solid_color_key, type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
@@ -231,6 +231,37 @@ pub(super) fn register_button_methods(
             let text = button.raw_get::<Option<String>>(text_key())?;
             Ok(text.filter(|text| !text.is_empty()))
         })?,
+    )?;
+    methods.raw_set(
+        "GetButtonState",
+        lua.create_function(|_, button: Table| {
+            Ok(if button.raw_get::<bool>(button_pressed_key())? {
+                "PUSHED"
+            } else {
+                "NORMAL"
+            })
+        })?,
+    )?;
+    methods.raw_set(
+        "SetButtonState",
+        lua.create_function(
+            |_, (button, state, locked): (Table, String, Option<Value>)| {
+                let pushed = match state.as_str() {
+                    "NORMAL" => false,
+                    "PUSHED" => true,
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "Usage: Button:SetButtonState(\"NORMAL\" or \"PUSHED\" [, lock])",
+                        ));
+                    }
+                };
+                button.raw_set(button_pressed_key(), pushed)?;
+                button.raw_set(
+                    button_state_locked_key(),
+                    locked.as_ref().is_some_and(|value| lua_bool(value, false)),
+                )
+            },
+        )?,
     )?;
     methods.raw_set(
         "LockHighlight",

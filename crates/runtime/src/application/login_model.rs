@@ -11,7 +11,7 @@ use solarity_rendering::{
     TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameScene, WorldFrustum,
     WorldModelSceneUniform, WorldScreenWindow, sample_m2_camera_frame,
 };
-use solarity_ui::{GlueManager, UiModelPresentation};
+use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation};
 use thiserror::Error;
 
 use crate::application::login_ui::LoginUiFrame;
@@ -91,8 +91,62 @@ impl GlueModelKey {
 
 struct ActiveGlueModel {
     key: GlueModelKey,
+    environment: GlueModelEnvironment,
     model: Arc<solarity_asset::DecodedM2Model>,
     frame: M2Frame,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GlueModelEnvironment {
+    ambient: Vec3,
+    diffuse: Vec3,
+    light_direction: Vec3,
+    fog_color: Vec3,
+    fog_range: Vec4,
+    local_lights: [M2LocalLightState; 4],
+}
+
+impl GlueModelEnvironment {
+    fn from_presentation(model: &UiModelPresentation) -> Self {
+        let (fog_color, fog_range) =
+            model
+                .fog()
+                .map_or((STOCK_LOGIN_FOG_COLOR, STOCK_LOGIN_FOG_RANGE), |fog| {
+                    let [near, far] = fog.range();
+                    (
+                        Vec3::from_array(fog.color()),
+                        Vec4::new(near, far, 0.0, 1.0),
+                    )
+                });
+        let authored_lights = model.background_lights().live();
+        let has_authored_lights = authored_lights.iter().any(Option::is_some);
+        let local_lights = authored_lights
+            .map(|light| light.map_or_else(M2LocalLightState::disabled, model_light_state));
+        Self {
+            ambient: if has_authored_lights {
+                Vec3::ZERO
+            } else {
+                STOCK_GLUE_AMBIENT
+            },
+            diffuse: if has_authored_lights {
+                Vec3::ZERO
+            } else {
+                STOCK_GLUE_DIFFUSE
+            },
+            light_direction: STOCK_GLUE_LIGHT_DIRECTION,
+            fog_color,
+            fog_range,
+            local_lights,
+        }
+    }
+}
+
+fn model_light_state(light: UiModelLight) -> M2LocalLightState {
+    M2LocalLightState::directional(
+        Vec3::from_array(light.direction()),
+        Vec3::from_array(light.ambient()),
+        Vec3::from_array(light.diffuse()),
+    )
 }
 
 /// Process-long model and texture caches plus the current Glue M2 generation.
@@ -131,8 +185,13 @@ impl RuntimeGlueModelScene {
                 count: visible.len(),
             });
         }
-        let key = GlueModelKey::from_presentation(&visible[0]);
-        if self.active.as_ref().is_some_and(|active| active.key == key) {
+        let presentation = &visible[0];
+        let key = GlueModelKey::from_presentation(presentation);
+        let environment = GlueModelEnvironment::from_presentation(presentation);
+        if let Some(active) = self.active.as_mut()
+            && active.key == key
+        {
+            active.environment = environment;
             return Ok(());
         }
         if key.camera < 0 {
@@ -178,7 +237,12 @@ impl RuntimeGlueModelScene {
             random,
             particle_twinkle,
         )?;
-        self.active = Some(ActiveGlueModel { key, model, frame });
+        self.active = Some(ActiveGlueModel {
+            key,
+            environment,
+            model,
+            frame,
+        });
         Ok(())
     }
 
@@ -214,33 +278,33 @@ impl RuntimeGlueModelScene {
             renderer,
             frustum,
             camera,
-            STOCK_LOGIN_FOG_COLOR,
+            active.environment.fog_color,
             animation_time_ms,
             global_time_ms,
             random,
         )?;
         let terrain = TerrainSceneUniform::new(
             camera.view_projection(),
-            STOCK_GLUE_AMBIENT,
-            STOCK_GLUE_DIFFUSE,
-            STOCK_GLUE_LIGHT_DIRECTION,
+            active.environment.ambient,
+            active.environment.diffuse,
+            active.environment.light_direction,
         );
         let world_model = WorldModelSceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
-            STOCK_GLUE_AMBIENT,
-            STOCK_GLUE_DIFFUSE,
-            STOCK_GLUE_LIGHT_DIRECTION,
-            STOCK_LOGIN_FOG_RANGE,
+            active.environment.ambient,
+            active.environment.diffuse,
+            active.environment.light_direction,
+            active.environment.fog_range,
         );
         let model = M2SceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
-            STOCK_GLUE_AMBIENT,
-            STOCK_GLUE_DIFFUSE,
-            STOCK_GLUE_LIGHT_DIRECTION,
-            STOCK_LOGIN_FOG_RANGE,
-            [M2LocalLightState::disabled(); 4],
+            active.environment.ambient,
+            active.environment.diffuse,
+            active.environment.light_direction,
+            active.environment.fog_range,
+            active.environment.local_lights,
         );
         renderer.present_world_frame_with_ui(
             WorldFrameScene::new(terrain, world_model, model),

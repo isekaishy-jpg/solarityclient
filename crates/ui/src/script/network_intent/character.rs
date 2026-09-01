@@ -167,12 +167,6 @@ impl UiCharacterDirectory {
         self.characters.get(index)
     }
 
-    pub(crate) fn by_guid(&self, guid: u64) -> Option<&UiCharacterInfo> {
-        self.characters
-            .iter()
-            .find(|character| character.guid == guid)
-    }
-
     pub(crate) fn index_of(&self, guid: u64) -> Option<u32> {
         self.characters
             .iter()
@@ -180,11 +174,9 @@ impl UiCharacterDirectory {
             .and_then(|index| u32::try_from(index + 1).ok())
     }
 
-    pub(crate) fn select(&mut self, guid: u64) -> bool {
-        if self.by_guid(guid).is_none() {
-            return false;
-        }
+    pub(crate) fn select_index(&mut self, one_based_index: u32) -> Option<u64> {
+        let guid = self.by_index(one_based_index).map(UiCharacterInfo::guid)?;
         self.selected_guid = Some(guid);
-        true
+        Some(guid)
     }
 }

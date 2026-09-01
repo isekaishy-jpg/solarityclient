@@ -40,7 +40,9 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             WorldAuthProgress::Authenticated(session) => session,
             WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
         };
+        session.ready_for_account_data_times().await?;
         session.request_character_directory().await?;
+        session.request_realm_split_info().await?;
 
         let addon_info = session.receive_packet().await?;
         assert_eq!(addon_info.opcode(), 0x02EF);
@@ -325,7 +327,19 @@ async fn emulate_character_screen(
     let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
     let request =
         ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    assert!(matches!(
+        request,
+        ClientOpcodeMessage::CMSG_READY_FOR_ACCOUNT_DATA_TIMES
+    ));
+    let request =
+        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
     assert!(matches!(request, ClientOpcodeMessage::CMSG_CHAR_ENUM));
+    let request =
+        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    let ClientOpcodeMessage::CMSG_REALM_SPLIT(request) = request else {
+        return Err("fixture expected CMSG_REALM_SPLIT".into());
+    };
+    assert_eq!(request.realm_id, 7);
 
     write_encrypted_raw(&mut stream, &mut crypto, 0x02EF, &addon_policy_payload()).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x01F5, &[0xA7; 32_768]).await?;

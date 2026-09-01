@@ -11,12 +11,15 @@ use super::simple_script::{
     font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
     highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key, horizontal_scroll_range_key,
     horizontal_tiling_key, index_key, justify_h_key, justify_v_key, keyboard_enabled_key,
-    model_camera_key, model_file_key, model_scale_key, model_sequence_key, model_sequence_time_key,
-    model_sequence_time_sequence_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
-    non_blocking_key, parent_key, parse_point, role_key, scale_key, shown_key, spacing_key,
-    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
-    texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key,
+    model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
+    model_character_light_ghost_key, model_character_light_live_key, model_file_key,
+    model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
+    model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
+    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
+    mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
+    scale_key, shown_key, spacing_key, tex_coord_key, text_color_key, text_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -99,6 +102,26 @@ pub(crate) struct UiRuntimeModel {
     pub(crate) sequence_time_sequence: u32,
     pub(crate) sequence_time_ms: i32,
     pub(crate) scale: f64,
+    pub(crate) fog_color: Option<[f64; 3]>,
+    pub(crate) fog_near: f64,
+    pub(crate) fog_far: f64,
+    pub(crate) glow: f64,
+    pub(crate) background_lights: UiRuntimeModelLightSets,
+    pub(crate) character_lights: UiRuntimeModelLightSets,
+    pub(crate) pet_lights: UiRuntimeModelLightSets,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiRuntimeModelLight {
+    pub(crate) direction: [f64; 3],
+    pub(crate) ambient: [f64; 3],
+    pub(crate) diffuse: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiRuntimeModelLightSets {
+    pub(crate) live: [Option<UiRuntimeModelLight>; 4],
+    pub(crate) ghost: [Option<UiRuntimeModelLight>; 4],
 }
 
 /// Post-Lua texture source and presentation properties.
@@ -517,6 +540,20 @@ fn snapshot_model(lua_index: usize, table: &Table) -> Result<UiRuntimeModel, UiS
             message: format!("live UI model {lua_index} has nonpositive model scale"),
         });
     }
+    let fog_color = table
+        .raw_get::<Option<Table>>(model_fog_color_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} model fog color"), error))?
+        .map(|color| numeric_array::<3>(&color, lua_index, "model fog color"))
+        .transpose()?;
+    let fog_near = finite_region_number(table, model_fog_near_key(), lua_index, "model fog near")?;
+    let fog_far = finite_region_number(table, model_fog_far_key(), lua_index, "model fog far")?;
+    if fog_color.is_some() && fog_far < fog_near {
+        return Err(UiScriptError::Plan {
+            message: format!(
+                "live UI model {lua_index} has fog far {fog_far} before near {fog_near}"
+            ),
+        });
+    }
     Ok(UiRuntimeModel {
         file,
         camera: table
@@ -537,7 +574,84 @@ fn snapshot_model(lua_index: usize, table: &Table) -> Result<UiRuntimeModel, UiS
             snapshot_error(format!("object {lua_index} model sequence time"), error)
         })?,
         scale,
+        fog_color,
+        fog_near,
+        fog_far,
+        glow: finite_region_number(table, model_glow_key(), lua_index, "model glow")?,
+        background_lights: snapshot_model_light_sets(
+            table,
+            model_background_light_live_key(),
+            model_background_light_ghost_key(),
+            lua_index,
+            "background",
+        )?,
+        character_lights: snapshot_model_light_sets(
+            table,
+            model_character_light_live_key(),
+            model_character_light_ghost_key(),
+            lua_index,
+            "character",
+        )?,
+        pet_lights: snapshot_model_light_sets(
+            table,
+            model_pet_light_live_key(),
+            model_pet_light_ghost_key(),
+            lua_index,
+            "pet",
+        )?,
     })
+}
+
+fn snapshot_model_light_sets(
+    table: &Table,
+    live_key: mlua::LightUserData,
+    ghost_key: mlua::LightUserData,
+    lua_index: usize,
+    label: &str,
+) -> Result<UiRuntimeModelLightSets, UiScriptError> {
+    Ok(UiRuntimeModelLightSets {
+        live: snapshot_model_lights(table, live_key, lua_index, label, "live")?,
+        ghost: snapshot_model_lights(table, ghost_key, lua_index, label, "ghost")?,
+    })
+}
+
+fn snapshot_model_lights(
+    table: &Table,
+    key: mlua::LightUserData,
+    lua_index: usize,
+    label: &str,
+    state: &str,
+) -> Result<[Option<UiRuntimeModelLight>; 4], UiScriptError> {
+    let Some(lights) = table.raw_get::<Option<Table>>(key).map_err(|error| {
+        snapshot_error(format!("object {lua_index} {label} {state} lights"), error)
+    })?
+    else {
+        return Ok([None; 4]);
+    };
+    let count = lights.raw_len();
+    if count > 4 {
+        return Err(UiScriptError::Plan {
+            message: format!(
+                "live UI model {lua_index} {label} {state} light count {count} exceeds four"
+            ),
+        });
+    }
+    let mut result = [None; 4];
+    for (index, slot) in result.iter_mut().take(count).enumerate() {
+        let light = lights.raw_get::<Table>(index + 1).map_err(|error| {
+            snapshot_error(
+                format!("object {lua_index} {label} {state} light {index}"),
+                error,
+            )
+        })?;
+        let values = numeric_array::<9>(&light, lua_index, "model light")?;
+        *slot = Some(UiRuntimeModelLight {
+            direction: [values[0], values[1], values[2]],
+            ambient: [values[3], values[4], values[5]],
+            diffuse: [values[6], values[7], values[8]],
+        });
+    }
+    Ok(result)
 }
 
 fn snapshot_texture(lua_index: usize, table: &Table) -> Result<UiRuntimeTexture, UiScriptError> {

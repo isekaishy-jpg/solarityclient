@@ -35,6 +35,7 @@ use super::templates::TEMPLATE_REGISTRY;
 
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
+const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -147,6 +148,17 @@ static MOUSE_WHEEL_ENABLED_TOKEN: u8 = 107;
 static TOOLTIP_PADDING_TOKEN: u8 = 108;
 static MOVIE_SUBTITLES_TOKEN: u8 = 109;
 static BUTTON_PRESSED_TOKEN: u8 = 110;
+static MODEL_FOG_COLOR_TOKEN: u8 = 111;
+static MODEL_FOG_NEAR_TOKEN: u8 = 112;
+static MODEL_FOG_FAR_TOKEN: u8 = 113;
+static MODEL_GLOW_TOKEN: u8 = 114;
+static MODEL_BACKGROUND_LIGHT_LIVE_TOKEN: u8 = 115;
+static MODEL_BACKGROUND_LIGHT_GHOST_TOKEN: u8 = 116;
+static MODEL_CHARACTER_LIGHT_LIVE_TOKEN: u8 = 117;
+static MODEL_CHARACTER_LIGHT_GHOST_TOKEN: u8 = 118;
+static MODEL_PET_LIGHT_LIVE_TOKEN: u8 = 119;
+static MODEL_PET_LIGHT_GHOST_TOKEN: u8 = 120;
+static BUTTON_STATE_LOCKED_TOKEN: u8 = 121;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -829,6 +841,8 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
+        lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
+            .map_err(|error| execution_error("registry", error))?;
         let metatables = lua
             .create_table()
             .map_err(|error| execution_error("object metatables", error))?;
@@ -1295,6 +1309,57 @@ impl UiScriptRuntime {
         }
     }
 
+    /// Delivers one rendered-frame elapsed interval to visible `OnUpdate`
+    /// handlers in construction order.
+    pub(crate) fn dispatch_updates(
+        &mut self,
+        bundle: &UiBundle,
+        elapsed_seconds: f64,
+    ) -> Result<(usize, bool), UiScriptError> {
+        if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
+            return Err(UiScriptError::Plan {
+                message: format!("invalid Glue update interval {elapsed_seconds}"),
+            });
+        }
+        let lua = bundle.lua();
+        let generation =
+            live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let object_count = self.registered_object_count();
+        let mut dispatched = 0;
+        for index in 1..=object_count {
+            let object = objects
+                .raw_get::<Table>(index)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?;
+            if !is_script_frame_table(&object)
+                .and_then(|is_frame| {
+                    if is_frame {
+                        object_is_visible(lua, object.clone())
+                    } else {
+                        Ok(false)
+                    }
+                })
+                .map_err(|error| execution_error("Glue OnUpdate", error))?
+            {
+                continue;
+            }
+            let Some(function) = object_script_function(lua, &object, UiScriptHandler::Update)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?
+            else {
+                continue;
+            };
+            call_number_object_handler(lua, &function, object, elapsed_seconds)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?;
+            dispatched += 1;
+        }
+        let changed = live_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?
+            != generation;
+        Ok((dispatched, changed))
+    }
+
     /// Delivers native movie completion to one live `MovieFrame`.
     pub(crate) fn dispatch_movie_finished(
         &mut self,
@@ -1383,9 +1448,14 @@ impl UiScriptRuntime {
         let enabled = object
             .raw_get::<bool>(enabled_key())
             .map_err(|error| execution_error(&label, error))?;
-        object
-            .raw_set(button_pressed_key(), pressed && enabled)
+        let state_locked = object
+            .raw_get::<bool>(button_state_locked_key())
             .map_err(|error| execution_error(&label, error))?;
+        if !state_locked {
+            object
+                .raw_set(button_pressed_key(), pressed && enabled)
+                .map_err(|error| execution_error(&label, error))?;
+        }
 
         let mouse_handler = if pressed {
             UiScriptHandler::MouseDown
@@ -1947,6 +2017,7 @@ impl UiScriptRuntime {
                 .raw_set(highlight_locked_key(), false)
                 .and_then(|()| table.raw_set(click_action_key(), 0x8000_0000_u64))
                 .and_then(|()| table.raw_set(button_pressed_key(), false))
+                .and_then(|()| table.raw_set(button_state_locked_key(), false))
                 .and_then(|()| table.raw_set(drag_button_key(), 0_u8))
                 .map_err(|error| execution_error("object registration", error))?;
             set_initial_font(
@@ -2054,12 +2125,7 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if matches!(object.kind(), UiObjectKind::Model | UiObjectKind::ModelFfx) {
-            table
-                .raw_set(model_camera_key(), 0)
-                .and_then(|()| table.raw_set(model_sequence_key(), 0_u32))
-                .and_then(|()| table.raw_set(model_sequence_time_sequence_key(), 0_u32))
-                .and_then(|()| table.raw_set(model_sequence_time_key(), 0_i32))
-                .and_then(|()| table.raw_set(model_scale_key(), 1.0))
+            initialize_model_runtime_state(lua, &table)
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if matches!(
@@ -2593,6 +2659,7 @@ fn create_dynamic_object(
         object.raw_set(highlight_locked_key(), false)?;
         object.raw_set(click_action_key(), 0x8000_0000_u64)?;
         object.raw_set(button_pressed_key(), false)?;
+        object.raw_set(button_state_locked_key(), false)?;
         object.raw_set(drag_button_key(), 0_u8)?;
         set_initial_font(
             lua,
@@ -2672,11 +2739,7 @@ fn create_dynamic_object(
         object.raw_set(tooltip_padding_key(), 0.0)?;
     }
     if matches!(kind, "Model" | "ModelFFX") {
-        object.raw_set(model_camera_key(), 0)?;
-        object.raw_set(model_sequence_key(), 0_u32)?;
-        object.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
-        object.raw_set(model_sequence_time_key(), 0_i32)?;
-        object.raw_set(model_scale_key(), 1.0)?;
+        initialize_model_runtime_state(lua, &object)?;
     }
     if matches!(kind, "FontString" | "EditBox") {
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
@@ -3897,6 +3960,23 @@ fn set_texture_gradient(
     )
 }
 
+fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
+    model.raw_set(model_camera_key(), 0)?;
+    model.raw_set(model_sequence_key(), 0_u32)?;
+    model.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
+    model.raw_set(model_sequence_time_key(), 0_i32)?;
+    model.raw_set(model_scale_key(), 1.0)?;
+    model.raw_set(model_fog_color_key(), Option::<Table>::None)?;
+    model.raw_set(model_fog_near_key(), 0.0)?;
+    model.raw_set(model_fog_far_key(), 0.0)?;
+    model.raw_set(model_glow_key(), 0.0)?;
+    reset_model_lights(model)?;
+    // Keep `lua` explicit here: every initialized object belongs to this exact
+    // runtime, and model state must never be shared across Lua instances.
+    let _ = lua;
+    Ok(())
+}
+
 fn register_model_methods(
     lua: &Lua,
     methods: &Table,
@@ -3970,6 +4050,178 @@ fn register_model_methods(
                 .coerce_number(value)?
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetModelScale(scale)"))?;
             model.raw_set(model_scale_key(), value)
+        })?,
+    )?;
+    methods.raw_set(
+        "SetFogColor",
+        lua.create_function(
+            |lua, (model, red, green, blue): (Table, Value, Value, Value)| {
+                let color = [
+                    finite_model_number(lua, red, "fog color")?,
+                    finite_model_number(lua, green, "fog color")?,
+                    finite_model_number(lua, blue, "fog color")?,
+                ];
+                model.raw_set(
+                    model_fog_color_key(),
+                    lua.create_sequence_from(color.into_iter().map(|value| value.clamp(0.0, 1.0)))?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "SetFogNear",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            model.raw_set(
+                model_fog_near_key(),
+                finite_model_number(lua, value, "fog near")?,
+            )
+        })?,
+    )?;
+    methods.raw_set(
+        "SetFogFar",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            model.raw_set(
+                model_fog_far_key(),
+                finite_model_number(lua, value, "fog far")?,
+            )
+        })?,
+    )?;
+    methods.raw_set(
+        "ClearFog",
+        lua.create_function(|_, model: Table| {
+            model.raw_set(model_fog_color_key(), Option::<Table>::None)
+        })?,
+    )?;
+    methods.raw_set(
+        "SetGlow",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            model.raw_set(
+                model_glow_key(),
+                finite_model_number(lua, value, "model glow")?,
+            )
+        })?,
+    )?;
+    methods.raw_set(
+        "ResetLights",
+        lua.create_function(|_, model: Table| reset_model_lights(&model))?,
+    )?;
+    register_model_light_method(
+        lua,
+        methods,
+        "AddLight",
+        model_background_light_live_key(),
+        model_background_light_ghost_key(),
+    )?;
+    register_model_light_method(
+        lua,
+        methods,
+        "AddCharacterLight",
+        model_character_light_live_key(),
+        model_character_light_ghost_key(),
+    )?;
+    register_model_light_method(
+        lua,
+        methods,
+        "AddPetLight",
+        model_pet_light_live_key(),
+        model_pet_light_ghost_key(),
+    )
+}
+
+fn finite_model_number(lua: &Lua, value: Value, label: &str) -> mlua::Result<f64> {
+    let value = lua
+        .coerce_number(value)?
+        .ok_or_else(|| mlua::Error::runtime(format!("invalid {label}")))?;
+    if !value.is_finite() {
+        return Err(mlua::Error::runtime(format!("non-finite {label}")));
+    }
+    Ok(value)
+}
+
+fn reset_model_lights(model: &Table) -> mlua::Result<()> {
+    for key in [
+        model_background_light_live_key(),
+        model_background_light_ghost_key(),
+        model_character_light_live_key(),
+        model_character_light_ghost_key(),
+        model_pet_light_live_key(),
+        model_pet_light_ghost_key(),
+    ] {
+        model.raw_set(key, Option::<Table>::None)?;
+    }
+    Ok(())
+}
+
+fn register_model_light_method(
+    lua: &Lua,
+    methods: &Table,
+    function: &'static str,
+    live_key: LightUserData,
+    ghost_key: LightUserData,
+) -> mlua::Result<()> {
+    methods.raw_set(
+        function,
+        lua.create_function(move |lua, (model, arguments): (Table, Variadic<Value>)| {
+            if arguments.len() != 14 {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: ModelFFX:{function}(set, enabled, omni, x, y, z, ambientIntensity, ambientR, ambientG, ambientB, diffuseIntensity, diffuseR, diffuseG, diffuseB)"
+                )));
+            }
+            let [set, enabled, omnidirectional, direction_x, direction_y, direction_z, ambient_intensity, ambient_red, ambient_green, ambient_blue, diffuse_intensity, diffuse_red, diffuse_green, diffuse_blue] =
+                arguments.as_slice()
+            else {
+                unreachable!("light argument count was validated");
+            };
+            let values = [
+                finite_model_number(lua, set.clone(), "model light value")?,
+                finite_model_number(lua, enabled.clone(), "model light value")?,
+                finite_model_number(lua, omnidirectional.clone(), "model light value")?,
+                finite_model_number(lua, direction_x.clone(), "model light value")?,
+                finite_model_number(lua, direction_y.clone(), "model light value")?,
+                finite_model_number(lua, direction_z.clone(), "model light value")?,
+                finite_model_number(lua, ambient_intensity.clone(), "model light value")?,
+                finite_model_number(lua, ambient_red.clone(), "model light value")?,
+                finite_model_number(lua, ambient_green.clone(), "model light value")?,
+                finite_model_number(lua, ambient_blue.clone(), "model light value")?,
+                finite_model_number(lua, diffuse_intensity.clone(), "model light value")?,
+                finite_model_number(lua, diffuse_red.clone(), "model light value")?,
+                finite_model_number(lua, diffuse_green.clone(), "model light value")?,
+                finite_model_number(lua, diffuse_blue.clone(), "model light value")?,
+            ];
+            let key = match values[0] as i32 {
+                0 if values[0] == 0.0 => live_key,
+                1 if values[0] == 1.0 => ghost_key,
+                _ => return Err(mlua::Error::runtime("invalid ModelFFX light set")),
+            };
+            if values[2] != 0.0 {
+                return Err(mlua::Error::runtime(
+                    "build 12340 ModelFFX only supports directional lights",
+                ));
+            }
+            let lights = model.raw_get::<Option<Table>>(key)?.unwrap_or(lua.create_table()?);
+            let count = lights.raw_len();
+            if count >= 4 {
+                return Err(mlua::Error::runtime(
+                    "ModelFFX light set exceeds the stock four-light bound",
+                ));
+            }
+            let enabled = values[1] != 0.0;
+            let enabled_scale = if enabled { 1.0 } else { 0.0 };
+            let ambient_intensity = values[6];
+            let diffuse_intensity = values[10];
+            let light = lua.create_sequence_from([
+                values[3] * enabled_scale,
+                values[4] * enabled_scale,
+                values[5] * enabled_scale,
+                values[7] * ambient_intensity * enabled_scale,
+                values[8] * ambient_intensity * enabled_scale,
+                values[9] * ambient_intensity * enabled_scale,
+                values[11] * diffuse_intensity * enabled_scale,
+                values[12] * diffuse_intensity * enabled_scale,
+                values[13] * diffuse_intensity * enabled_scale,
+            ])?;
+            lights.raw_set(count + 1, light)?;
+            model.raw_set(key, lights)
         })?,
     )
 }
@@ -5423,7 +5675,17 @@ fn register_region_methods(lua: &Lua, methods: &Table, ui_extent: (f64, f64)) ->
     )?;
     methods.raw_set(
         "SetAlpha",
-        lua.create_function(|_, (object, alpha): (Table, f64)| object.raw_set(alpha_key(), alpha))?,
+        lua.create_function(|lua, (object, alpha): (Table, f64)| {
+            if !alpha.is_finite() {
+                return Err(mlua::Error::runtime("non-finite region alpha"));
+            }
+            let alpha = alpha.clamp(0.0, 1.0);
+            if object.raw_get::<f64>(alpha_key())? != alpha {
+                object.raw_set(alpha_key(), alpha)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "GetScale",
@@ -5903,6 +6165,7 @@ fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> 
     }
 
     object.raw_set(shown_key(), shown)?;
+    mark_live_state_changed(lua)?;
     for (candidate, was_visible) in subtree {
         let is_visible = object_is_visible(lua, candidate.clone())?;
         if was_visible == is_visible || !is_script_frame_table(&candidate)? {
@@ -6981,6 +7244,10 @@ pub(super) fn button_pressed_key() -> LightUserData {
     hidden_key(&BUTTON_PRESSED_TOKEN)
 }
 
+pub(super) fn button_state_locked_key() -> LightUserData {
+    hidden_key(&BUTTON_STATE_LOCKED_TOKEN)
+}
+
 pub(super) fn drag_button_key() -> LightUserData {
     hidden_key(&DRAG_BUTTON_TOKEN)
 }
@@ -7003,6 +7270,46 @@ pub(super) fn frame_level_key() -> LightUserData {
 
 pub(super) fn model_scale_key() -> LightUserData {
     hidden_key(&MODEL_SCALE_TOKEN)
+}
+
+pub(super) fn model_fog_color_key() -> LightUserData {
+    hidden_key(&MODEL_FOG_COLOR_TOKEN)
+}
+
+pub(super) fn model_fog_near_key() -> LightUserData {
+    hidden_key(&MODEL_FOG_NEAR_TOKEN)
+}
+
+pub(super) fn model_fog_far_key() -> LightUserData {
+    hidden_key(&MODEL_FOG_FAR_TOKEN)
+}
+
+pub(super) fn model_glow_key() -> LightUserData {
+    hidden_key(&MODEL_GLOW_TOKEN)
+}
+
+pub(super) fn model_background_light_live_key() -> LightUserData {
+    hidden_key(&MODEL_BACKGROUND_LIGHT_LIVE_TOKEN)
+}
+
+pub(super) fn model_background_light_ghost_key() -> LightUserData {
+    hidden_key(&MODEL_BACKGROUND_LIGHT_GHOST_TOKEN)
+}
+
+pub(super) fn model_character_light_live_key() -> LightUserData {
+    hidden_key(&MODEL_CHARACTER_LIGHT_LIVE_TOKEN)
+}
+
+pub(super) fn model_character_light_ghost_key() -> LightUserData {
+    hidden_key(&MODEL_CHARACTER_LIGHT_GHOST_TOKEN)
+}
+
+pub(super) fn model_pet_light_live_key() -> LightUserData {
+    hidden_key(&MODEL_PET_LIGHT_LIVE_TOKEN)
+}
+
+pub(super) fn model_pet_light_ghost_key() -> LightUserData {
+    hidden_key(&MODEL_PET_LIGHT_GHOST_TOKEN)
 }
 
 pub(super) fn keyboard_enabled_key() -> LightUserData {
@@ -7147,6 +7454,15 @@ fn script_handlers_key() -> LightUserData {
 
 fn button_text_key() -> LightUserData {
     hidden_key(&BUTTON_TEXT_TOKEN)
+}
+
+fn live_state_generation(lua: &Lua) -> mlua::Result<u64> {
+    lua.named_registry_value(LIVE_STATE_GENERATION_REGISTRY)
+}
+
+fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
+    let generation = live_state_generation(lua)?;
+    lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))
 }
 
 fn hidden_key(token: &'static u8) -> LightUserData {

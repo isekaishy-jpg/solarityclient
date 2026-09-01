@@ -7,8 +7,8 @@ mod status;
 
 pub use c_simple_render::UiRenderPlan;
 pub use presentation::{
-    UiModelPresentation, UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan,
-    UiTexturePresentation, UiTextureSource,
+    UiModelFog, UiModelLight, UiModelLightSets, UiModelPresentation, UiPresentationPacket,
+    UiPresentationPacketKey, UiPresentationPlan, UiTexturePresentation, UiTextureSource,
 };
 pub use resources::{UiTextureAssetBindings, UiTextureAssetPlan, UiTextureAssetRequest};
 pub use status::UiRenderError;

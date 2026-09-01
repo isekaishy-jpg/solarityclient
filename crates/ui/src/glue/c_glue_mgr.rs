@@ -128,6 +128,30 @@ impl GlueManager {
         initial_screen: super::GlueInitialScreen,
         cvar_values: &[(String, String)],
     ) -> Result<Self, GlueError> {
+        Self::start_shared_with_profile(
+            assets,
+            logical_extent,
+            streaming_trial,
+            initial_screen,
+            cvar_values,
+            &crate::AddonCatalog::default(),
+        )
+    }
+
+    /// Starts Glue with persistent profile values and the discovered AddOn catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlueError`] under the same strict stock-loading rules as
+    /// [`Self::start_shared_with_initial_screen_and_cvars`].
+    pub fn start_shared_with_profile(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+        initial_screen: super::GlueInitialScreen,
+        cvar_values: &[(String, String)],
+        addon_catalog: &crate::AddonCatalog,
+    ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
@@ -146,7 +170,8 @@ impl GlueManager {
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone())
-                .with_cvar_values(cvar_values);
+                .with_cvar_values(cvar_values)
+                .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog));
         let media_intent = environment.media_intent();
         let network = environment.network();
         let ui_extent = environment.ui_extent();
@@ -429,6 +454,25 @@ impl GlueManager {
             .dispatch_glue_event(&self.bundle, event, payload)?;
         self.refresh_live_state()?;
         Ok(UiEventDispatch::new(subscriber_count))
+    }
+
+    /// Advances visible Glue `OnUpdate` handlers by one rendered-frame interval.
+    ///
+    /// Live geometry and renderer packets rebuild only when a handler mutates
+    /// presentation state, so idle Glue frames do not recreate the UI mesh.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when the interval is invalid, a visible update
+    /// handler fails, or its mutations cannot form valid presentation state.
+    pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
+        let (_handler_count, changed) = self
+            .runtime
+            .dispatch_updates(&self.bundle, elapsed_seconds)?;
+        if changed {
+            self.refresh_live_state()?;
+        }
+        Ok(changed)
     }
 
     /// Delivers native decode completion to the owning stock `MovieFrame`.

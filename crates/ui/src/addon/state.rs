@@ -3,11 +3,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::AddonCatalog;
+use super::{AddonCatalog, AddonDefinition};
 
 #[derive(Clone, Debug)]
 struct AddonLoadEntry {
-    name: String,
+    definition: AddonDefinition,
     loaded: bool,
     finished: bool,
 }
@@ -31,7 +31,7 @@ impl UiAddonLoadState {
                     .addons()
                     .iter()
                     .map(|addon| AddonLoadEntry {
-                        name: addon.name().to_owned(),
+                        definition: addon.clone(),
                         loaded: false,
                         finished: false,
                     })
@@ -61,8 +61,17 @@ impl UiAddonLoadState {
         self.entries
             .borrow()
             .iter()
-            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+            .find(|entry| entry.definition.name().eq_ignore_ascii_case(name))
             .map(|entry| (entry.loaded, entry.finished))
+    }
+
+    /// Returns a cloned catalog definition for one script-visible index.
+    #[must_use]
+    pub(crate) fn definition_by_index(&self, index: usize) -> Option<AddonDefinition> {
+        self.entries
+            .borrow()
+            .get(index.checked_sub(1)?)
+            .map(|entry| entry.definition.clone())
     }
 
     /// Updates loader progress for an existing catalog entry.
@@ -72,7 +81,7 @@ impl UiAddonLoadState {
         let mut entries = self.entries.borrow_mut();
         let Some(entry) = entries
             .iter_mut()
-            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+            .find(|entry| entry.definition.name().eq_ignore_ascii_case(name))
         else {
             return false;
         };

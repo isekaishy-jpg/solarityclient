@@ -2,7 +2,9 @@
 
 use solarity_asset::AssetPath;
 
-use crate::script::{UiRuntimeObject, UiRuntimeObjectPlan};
+use crate::script::{
+    UiRuntimeModelLight, UiRuntimeModelLightSets, UiRuntimeObject, UiRuntimeObjectPlan,
+};
 use crate::{
     UiBackdropState, UiBackdropStatePlan, UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectRole,
     UiRegionGeometryPlan, UiScreenRect,
@@ -94,6 +96,77 @@ pub struct UiTexturePresentation {
 }
 
 /// One visible model frame after startup Lua selected its M2 and camera state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiModelFog {
+    color: [f32; 3],
+    near: f32,
+    far: f32,
+}
+
+impl UiModelFog {
+    /// Returns the authored linear fog color.
+    #[must_use]
+    pub const fn color(self) -> [f32; 3] {
+        self.color
+    }
+
+    /// Returns the authored near and far distances.
+    #[must_use]
+    pub const fn range(self) -> [f32; 2] {
+        [self.near, self.far]
+    }
+}
+
+/// One directional light retained from the stock flattened ModelFFX ABI.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiModelLight {
+    direction: [f32; 3],
+    ambient: [f32; 3],
+    diffuse: [f32; 3],
+}
+
+impl UiModelLight {
+    /// Returns the vector from a model vertex toward the directional light.
+    #[must_use]
+    pub const fn direction(self) -> [f32; 3] {
+        self.direction
+    }
+
+    /// Returns ambient RGB after applying the authored intensity.
+    #[must_use]
+    pub const fn ambient(self) -> [f32; 3] {
+        self.ambient
+    }
+
+    /// Returns diffuse RGB after applying the authored intensity.
+    #[must_use]
+    pub const fn diffuse(self) -> [f32; 3] {
+        self.diffuse
+    }
+}
+
+/// Fixed live/ghost light sets matching the stock four-light capacity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiModelLightSets {
+    live: [Option<UiModelLight>; 4],
+    ghost: [Option<UiModelLight>; 4],
+}
+
+impl UiModelLightSets {
+    /// Returns live-character lights in authored insertion order.
+    #[must_use]
+    pub const fn live(self) -> [Option<UiModelLight>; 4] {
+        self.live
+    }
+
+    /// Returns ghost-character lights in authored insertion order.
+    #[must_use]
+    pub const fn ghost(self) -> [Option<UiModelLight>; 4] {
+        self.ghost
+    }
+}
+
+/// One visible model frame after startup Lua selected its M2 and camera state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiModelPresentation {
     object_index: usize,
@@ -103,6 +176,11 @@ pub struct UiModelPresentation {
     sequence_time_sequence: u32,
     sequence_time_ms: i32,
     model_scale: f32,
+    fog: Option<UiModelFog>,
+    glow: f32,
+    background_lights: UiModelLightSets,
+    character_lights: UiModelLightSets,
+    pet_lights: UiModelLightSets,
     bounds: UiScreenRect,
     alpha: f32,
     strata: UiFrameStrata,
@@ -150,6 +228,36 @@ impl UiModelPresentation {
     #[must_use]
     pub const fn model_scale(&self) -> f32 {
         self.model_scale
+    }
+
+    /// Returns the authored fog state, or `None` after `ClearFog`.
+    #[must_use]
+    pub const fn fog(&self) -> Option<UiModelFog> {
+        self.fog
+    }
+
+    /// Returns the authored model glow scalar.
+    #[must_use]
+    pub const fn glow(&self) -> f32 {
+        self.glow
+    }
+
+    /// Returns background-model live and ghost light overrides.
+    #[must_use]
+    pub const fn background_lights(&self) -> UiModelLightSets {
+        self.background_lights
+    }
+
+    /// Returns character-model live and ghost light overrides.
+    #[must_use]
+    pub const fn character_lights(&self) -> UiModelLightSets {
+        self.character_lights
+    }
+
+    /// Returns pet-model live and ghost light overrides.
+    #[must_use]
+    pub const fn pet_lights(&self) -> UiModelLightSets {
+        self.pet_lights
     }
 
     /// Returns the visible screen rectangle occupied by the model viewport.
@@ -320,6 +428,15 @@ impl UiPresentationPlan {
                     sequence_time_sequence: model.sequence_time_sequence,
                     sequence_time_ms: model.sequence_time_ms,
                     model_scale: model.scale as f32,
+                    fog: model.fog_color.map(|color| UiModelFog {
+                        color: color.map(|value| value as f32),
+                        near: model.fog_near as f32,
+                        far: model.fog_far as f32,
+                    }),
+                    glow: model.glow as f32,
+                    background_lights: model_light_sets(model.background_lights),
+                    character_lights: model_light_sets(model.character_lights),
+                    pet_lights: model_light_sets(model.pet_lights),
                     bounds: region.presentation_bounds(),
                     alpha: region.effective_alpha() as f32,
                     strata,
@@ -452,6 +569,21 @@ struct BackdropPresentationContext<'runtime> {
     effective_scale: f64,
     strata: UiFrameStrata,
     frame_level: i32,
+}
+
+fn model_light_sets(source: UiRuntimeModelLightSets) -> UiModelLightSets {
+    UiModelLightSets {
+        live: source.live.map(|light| light.map(model_light)),
+        ghost: source.ghost.map(|light| light.map(model_light)),
+    }
+}
+
+fn model_light(source: UiRuntimeModelLight) -> UiModelLight {
+    UiModelLight {
+        direction: source.direction.map(|value| value as f32),
+        ambient: source.ambient.map(|value| value as f32),
+        diffuse: source.diffuse.map(|value| value as f32),
+    }
 }
 
 fn append_backdrop(

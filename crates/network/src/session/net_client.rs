@@ -4,7 +4,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
-use wow_world_messages::wrath::{CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_TIME_SYNC_RESP};
+use wow_world_messages::wrath::{
+    CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT,
+    CMSG_TIME_SYNC_RESP,
+};
 
 use crate::connection::{
     CharacterLogin, CharacterLoginProgress, InWorldSession, WorldPacketReader, WorldPacketWriter,
@@ -20,6 +23,18 @@ impl<S> WorldSession<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    /// Sends stock's empty account-data readiness notification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn ready_for_account_data_times(&mut self) -> Result<(), WorldSessionError> {
+        self.send_character_screen_message(ClientOpcodeMessage::from(
+            CMSG_READY_FOR_ACCOUNT_DATA_TIMES {},
+        ))
+        .await
+    }
+
     /// Sends `CMSG_CHAR_ENUM` through the authenticated encrypted header stream.
     ///
     /// The corresponding response is obtained with [`Self::receive_packet`],
@@ -30,7 +45,26 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be written.
     pub async fn request_character_directory(&mut self) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::CMSG_CHAR_ENUM
+        self.send_character_screen_message(ClientOpcodeMessage::CMSG_CHAR_ENUM)
+            .await
+    }
+
+    /// Sends `CMSG_REALM_SPLIT` for the realm selected during authentication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn request_realm_split_info(&mut self) -> Result<(), WorldSessionError> {
+        let realm_id = u32::from(self.realm_id());
+        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_REALM_SPLIT { realm_id }))
+            .await
+    }
+
+    async fn send_character_screen_message(
+        &mut self,
+        message: ClientOpcodeMessage,
+    ) -> Result<(), WorldSessionError> {
+        message
             .tokio_write_encrypted_client(&mut self.stream, self.crypto.encrypter())
             .await
             .map_err(|error| WorldSessionError::Io {

@@ -9,8 +9,9 @@ use solarity_asset::{
     DecodedM2Model, Locale,
 };
 use solarity_ui::{
-    GlueInitialScreen, GlueManager, UiGlueNetworkAction, UiKeyboardModifiers, UiObjectRole,
-    UiPointerButton, UiTextureSource,
+    AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterInfo,
+    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers,
+    UiObjectRole, UiPointerButton, UiTextureSource,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -31,6 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(data_root.clone())?, locale)?;
     let mut inspection_store = AssetStore::mount(catalog.clone())?;
+    let addon_catalog = AddonCatalog::discover(&mut inspection_store)?;
     let login_model = DecodedM2Model::load_primary_profile(
         &mut inspection_store,
         &AssetPath::new(
@@ -55,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             camera.target_position_base(),
         );
     }
-    let mut manager = GlueManager::start_shared_with_initial_screen_and_cvars(
+    let mut manager = GlueManager::start_shared_with_profile(
         AssetStoreHandle::new(AssetStore::mount(catalog)?),
         (1280, 720),
         false,
@@ -67,6 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ("readScanning".to_owned(), "1".to_owned()),
             ("readContest".to_owned(), "1".to_owned()),
         ],
+        &addon_catalog,
     )?;
 
     accept_notice(&mut manager, "EULAScrollFrame", "TOSAccept", "readEULA")?;
@@ -92,12 +95,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("readContest".to_owned(), "1".to_owned()),
     ];
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(data_root)?, locale)?;
-    let mut later = GlueManager::start_shared_with_initial_screen_and_cvars(
+    let mut later = GlueManager::start_shared_with_profile(
         AssetStoreHandle::new(AssetStore::mount(catalog)?),
         (1280, 720),
         false,
         GlueInitialScreen::Login,
         &accepted_cvars,
+        &addon_catalog,
     )?;
     if later.current_screen() != "login"
         || !object_is_shown(&later, "AccountLoginUI")?
@@ -106,6 +110,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err(invalid_data(
             "accepted later-run state did not bypass MOV and legal notices".to_owned(),
+        )
+        .into());
+    }
+    later.update(1.5)?;
+    if later.current_screen() != "login" {
+        return Err(invalid_data(
+            "authored login fade-in changed the active Glue screen".to_owned(),
         )
         .into());
     }
@@ -122,8 +133,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let atlas_extent = later.glyphs().extent();
     let atlas_bytes = later.glyphs().rgba8().len();
     let visible_glyphs = visible_glyph_owners(&later).len();
+    validate_character_selection(&mut later)?;
     println!(
-        "validated first-run agreements, later-run bypass, and authored login input: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} visible_glyphs={visible_glyphs}"
+        "validated first-run agreements, later-run bypass, authored login input, and character selection: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} login_visible_glyphs={visible_glyphs}"
     );
     Ok(())
 }
@@ -251,6 +263,146 @@ fn validate_login_presentation(manager: &GlueManager) -> Result<(), Box<dyn Erro
     {
         return Err(invalid_data(
             "empty changed-options dialog survived its stock OnShow handler".to_owned(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    const CHARACTER_GUID: u64 = 0xAABB_CCDD_EEFF_0011;
+    manager.set_network_status(UiGlueNetworkStatus::new(
+        Some("Validation Realm".to_owned()),
+        true,
+    ));
+    manager.set_character_directory(UiCharacterDirectory::new(vec![UiCharacterInfo::new(
+        CHARACTER_GUID,
+        "SolarityTester".to_owned(),
+        "Human".to_owned(),
+        "Human".to_owned(),
+        "Warrior".to_owned(),
+        1,
+        80,
+        Some("Dalaran".to_owned()),
+        2,
+        0,
+        0,
+    )]));
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+    )?;
+    manager.dispatch_event(
+        "CHARACTER_LIST_UPDATE",
+        &UiEventPayload::new([UiEventArgument::Integer(1)])?,
+    )?;
+    let quarter_changed = manager.update(0.25)?;
+    if !quarter_changed || manager.current_screen() != "login" {
+        return Err(invalid_data(
+            format!(
+                "stock login fade did not retain its pending screen at 0.25 seconds: changed={quarter_changed} screen={}",
+                manager.current_screen(),
+            ),
+        )
+        .into());
+    }
+    let login_alpha = manager
+        .geometry()
+        .region(object_index(manager, "AccountLoginUI")?)
+        .ok_or_else(|| invalid_data("AccountLoginUI lost geometry during fade".to_owned()))?
+        .effective_alpha();
+    if (login_alpha - 0.5).abs() > 0.000_01 {
+        return Err(invalid_data(format!(
+            "stock login fade produced alpha {login_alpha} at 0.25 seconds"
+        ))
+        .into());
+    }
+    if !manager.update(0.25)? {
+        return Err(invalid_data(
+            "stock login fade completion did not mutate presentation".to_owned(),
+        )
+        .into());
+    }
+    let screen = manager.current_screen();
+    let selection_shown = object_is_shown(manager, "CharacterSelectUI")?;
+    let login_shown = object_is_shown(manager, "AccountLoginUI")?;
+    if screen != "charselect" || !selection_shown || login_shown {
+        return Err(invalid_data(format!(
+            "stock character-selection event did not replace the login screen: screen={screen} selection_shown={selection_shown} login_shown={login_shown}"
+        ))
+        .into());
+    }
+    let model = manager
+        .presentation()
+        .models()
+        .iter()
+        .find(|model| manager.objects()[model.object_index()].name() == Some("CharacterSelect"))
+        .ok_or_else(|| invalid_data("character selection has no visible ModelFFX".to_owned()))?;
+    if model.path().as_str() != "INTERFACE\\GLUES\\MODELS\\UI_HUMAN\\UI_HUMAN.M2"
+        || model.camera() != 0
+        || model.sequence() != 0
+        || (model.glow() - 0.15).abs() > 0.000_01
+    {
+        return Err(invalid_data(format!(
+            "stock Human character background state is incomplete: {model:?}"
+        ))
+        .into());
+    }
+    let fog = model
+        .fog()
+        .ok_or_else(|| invalid_data("Human character background has no fog".to_owned()))?;
+    if fog.color() != [0.8, 0.65, 0.73] || fog.range() != [0.0, 222.0] {
+        return Err(invalid_data(format!(
+            "Human character background fog differs from stock: {fog:?}"
+        ))
+        .into());
+    }
+    for (label, lights) in [
+        ("background", model.background_lights()),
+        ("character", model.character_lights()),
+        ("pet", model.pet_lights()),
+    ] {
+        if lights.live().iter().flatten().count() != 3 || lights.ghost().iter().any(Option::is_some)
+        {
+            return Err(invalid_data(format!(
+                "Human {label} light set does not retain the three stock live lights"
+            ))
+            .into());
+        }
+    }
+    let Some(UiGlueNetworkAction::SelectCharacter { guid }) = manager.take_network_action() else {
+        return Err(invalid_data(
+            "stock character-selection refresh did not select the first row".to_owned(),
+        )
+        .into());
+    };
+    if guid != CHARACTER_GUID {
+        return Err(invalid_data(format!(
+            "stock character-selection refresh selected GUID {guid:#x}"
+        ))
+        .into());
+    }
+    for expected in [
+        UiGlueNetworkAction::ReadyForAccountDataTimes,
+        UiGlueNetworkAction::RequestCharacterListUpdate,
+        UiGlueNetworkAction::RequestRealmSplitInfo,
+    ] {
+        let Some(actual) = manager.take_network_action() else {
+            return Err(invalid_data(format!(
+                "stock character-selection OnShow omitted {expected:?}"
+            ))
+            .into());
+        };
+        if std::mem::discriminant(&actual) != std::mem::discriminant(&expected) {
+            return Err(invalid_data(format!(
+                "stock character-selection OnShow emitted {actual:?} before {expected:?}"
+            ))
+            .into());
+        }
+    }
+    if manager.take_network_action().is_some() {
+        return Err(invalid_data(
+            "character-selection validation left an unexpected network action".to_owned(),
         )
         .into());
     }

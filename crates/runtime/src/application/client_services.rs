@@ -49,7 +49,8 @@ use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainPoll;
 use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
 use crate::application::world_coordinator::{
-    RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
+    RuntimeCharacterScreenRequests, RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll,
+    RuntimeWorldState,
 };
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
@@ -77,6 +78,7 @@ pub(crate) struct ClientServices {
     player: RuntimePlayerPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
+    glue_update_clock: std::time::Instant,
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
@@ -85,7 +87,8 @@ pub(crate) struct ClientServices {
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
     realm_directory_published: bool,
-    world_session_published: bool,
+    character_screen_published: bool,
+    character_directory_published: bool,
     pending_realm_id: Option<u32>,
     selected_realm: Option<SelectedRealmFacts>,
     login_failures: VecDeque<RuntimeLoginError>,
@@ -157,12 +160,13 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let assets = AssetStoreHandle::new(assets);
-        let glue = GlueManager::start_shared_with_initial_screen_and_cvars(
+        let glue = GlueManager::start_shared_with_profile(
             assets.clone(),
             platform.logical_extent(),
             false,
             initial_screen,
             startup_profile.cvar_values(),
+            &addon_catalog,
         )?;
         glue.set_realm_directory(realm_metadata.empty_directory());
         let sound = RuntimeSoundCoordinator::start(
@@ -249,6 +253,7 @@ impl ClientServices {
                 ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
+                glue_update_clock: std::time::Instant::now(),
                 m2_global_clock: std::time::Instant::now(),
                 crt_rand,
                 particle_twinkle,
@@ -257,7 +262,8 @@ impl ClientServices {
                 character_metadata,
                 addon_manifest,
                 realm_directory_published: false,
-                world_session_published: false,
+                character_screen_published: false,
+                character_directory_published: false,
                 pending_realm_id: None,
                 selected_realm: None,
                 login_failures: VecDeque::new(),
@@ -405,6 +411,14 @@ impl ClientServices {
 
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        let update_time = std::time::Instant::now();
+        let glue_elapsed = update_time
+            .duration_since(self.glue_update_clock)
+            .as_secs_f64();
+        self.glue_update_clock = update_time;
+        if self.glue.update(glue_elapsed)? {
+            self.login_ui = None;
+        }
         self.sync_platform_text_input();
         self.persist_glue_cvars()?;
         let movie = self.glue.media_intent().movie().cloned();
@@ -519,6 +533,7 @@ impl ClientServices {
             return Ok(());
         };
         let handle = network.handle().clone();
+        let mut character_screen_requests = RuntimeCharacterScreenRequests::default();
         while let Some(action) = self.glue.take_network_action() {
             match action {
                 UiGlueNetworkAction::Login(request) => {
@@ -551,7 +566,8 @@ impl ClientServices {
                     self.sound.disconnect()?;
                     self.terrain_frame = None;
                     self.realm_directory_published = false;
-                    self.world_session_published = false;
+                    self.character_screen_published = false;
+                    self.character_directory_published = false;
                     self.pending_realm_id = None;
                     self.selected_realm = None;
                     self.glue
@@ -605,6 +621,15 @@ impl ClientServices {
                         self.glue.set_network_status(UiGlueNetworkStatus::default());
                     }
                 }
+                UiGlueNetworkAction::ReadyForAccountDataTimes => {
+                    character_screen_requests.ready_for_account_data_times = true;
+                }
+                UiGlueNetworkAction::RequestCharacterListUpdate => {
+                    character_screen_requests.refresh_character_directory = true;
+                }
+                UiGlueNetworkAction::RequestRealmSplitInfo => {
+                    character_screen_requests.request_realm_split_info = true;
+                }
                 UiGlueNetworkAction::SelectCharacter { guid } => {
                     let payload = UiEventPayload::new([UiEventArgument::Number(guid as f64)])?;
                     self.glue
@@ -616,6 +641,20 @@ impl ClientServices {
                         Err(error) => self.publish_world_failure(error),
                     }
                 }
+            }
+        }
+        if !character_screen_requests.is_empty() {
+            match self
+                .world
+                .request_character_screen_data(&handle, character_screen_requests)
+            {
+                Ok(()) => {
+                    if character_screen_requests.refresh_character_directory {
+                        self.character_directory_published = false;
+                    }
+                }
+                Err(RuntimeWorldError::AlreadyActive | RuntimeWorldError::NoCharacterScreen) => {}
+                Err(error) => self.publish_world_failure(error),
             }
         }
 
@@ -663,11 +702,23 @@ impl ClientServices {
         }
         match self.world.poll() {
             Ok(RuntimeWorldPoll::Idle | RuntimeWorldPoll::Pending) => {}
-            Ok(RuntimeWorldPoll::CharacterDirectoryReady) if !self.world_session_published => {
-                self.world_session_published = true;
+            Ok(RuntimeWorldPoll::CharacterScreenReady) if !self.character_screen_published => {
+                self.character_screen_published = true;
                 if let Some(selected) = &self.selected_realm {
                     self.glue.set_network_status(selected.status(true, false));
                 }
+                self.glue.set_character_directory(Default::default());
+                self.glue.dispatch_event(
+                    "SET_GLUE_SCREEN",
+                    &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+                )?;
+                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+            }
+            Ok(RuntimeWorldPoll::CharacterScreenReady) => {}
+            Ok(RuntimeWorldPoll::CharacterDirectoryReady)
+                if !self.character_directory_published =>
+            {
+                self.character_directory_published = true;
                 if let Some(selection) = self.world.character_selection() {
                     let characters = self.character_metadata.project(selection.directory())?;
                     let count = i64::try_from(characters.characters().len()).map_err(|source| {
@@ -676,10 +727,6 @@ impl ClientServices {
                         }
                     })?;
                     self.glue.set_character_directory(characters);
-                    self.glue.dispatch_event(
-                        "SET_GLUE_SCREEN",
-                        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
-                    )?;
                     self.glue.dispatch_event(
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
@@ -707,6 +754,7 @@ impl ClientServices {
                         }
                     })?;
                     self.glue.set_character_directory(characters);
+                    self.character_directory_published = true;
                     self.glue.dispatch_event(
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
@@ -962,7 +1010,8 @@ impl ClientServices {
     }
 
     fn publish_world_failure(&mut self, error: RuntimeWorldError) {
-        self.world_session_published = false;
+        self.character_screen_published = false;
+        self.character_directory_published = false;
         if let Some(selected) = &self.selected_realm {
             self.glue.set_network_status(selected.status(false, true));
         } else {
@@ -997,7 +1046,8 @@ impl ClientServices {
         {
             Ok(()) => {
                 self.pending_realm_id = None;
-                self.world_session_published = false;
+                self.character_screen_published = false;
+                self.character_directory_published = false;
                 self.glue.set_network_status(selected.status(false, false));
                 self.selected_realm = Some(selected);
             }

@@ -18,7 +18,22 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
         },
         FixtureFile {
             path: "Interface\\GlueXML\\Character.xml",
-            bytes: br#"<Ui><Frame name="CharacterBridge"/></Ui>"#,
+            bytes: br#"<Ui>
+  <ModelFFX name="CharacterSelect">
+    <Scripts><OnLoad>SetCharSelectModelFrame("CharacterSelect")</OnLoad></Scripts>
+  </ModelFFX>
+  <ModelFFX name="CharacterCreate">
+    <Scripts><OnLoad>SetCharCustomizeFrame("CharacterCreate")</OnLoad></Scripts>
+  </ModelFFX>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\Glues\\Models\\UI_Human\\UI_Human.m2",
+            bytes: b"select model fixture",
+        },
+        FixtureFile {
+            path: "Interface\\Glues\\Models\\UI_Dwarf\\UI_Dwarf.m2",
+            bytes: b"customize model fixture",
         },
     ])?;
     let catalog =
@@ -66,7 +81,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert_eq!(index_from_id.call::<u32>(200_u64)?, 2);
     let info = globals
         .get::<mlua::Function>("GetCharacterInfo")?
-        .call::<mlua::MultiValue>(100_u64)?;
+        .call::<mlua::MultiValue>(1_u32)?;
     assert_eq!(info.len(), 11);
     assert_eq!(
         info[0].as_string().map(|value| value.to_string_lossy()),
@@ -88,11 +103,57 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert_eq!(info[6].as_boolean(), Some(true));
     assert_eq!(info[7].as_boolean(), Some(true));
     let background = globals.get::<mlua::Function>("GetSelectBackgroundModel")?;
-    assert_eq!(background.call::<String>(200_u64)?, "DEATHKNIGHT");
+    assert_eq!(background.call::<String>(2_u32)?, "DEATHKNIGHT");
+    globals
+        .get::<mlua::Function>("SetCharSelectBackground")?
+        .call::<()>("Interface\\Glues\\Models\\UI_Human\\UI_Human.m2")?;
+    globals
+        .get::<mlua::Function>("SetCharCustomizeBackground")?
+        .call::<()>("Interface\\Glues\\Models\\UI_Dwarf\\UI_Dwarf.m2")?;
+    for (frame_name, expected_path) in [
+        (
+            "CharacterSelect",
+            "INTERFACE\\GLUES\\MODELS\\UI_HUMAN\\UI_HUMAN.M2",
+        ),
+        (
+            "CharacterCreate",
+            "INTERFACE\\GLUES\\MODELS\\UI_DWARF\\UI_DWARF.M2",
+        ),
+    ] {
+        let frame = globals.get::<mlua::Table>(frame_name)?;
+        assert_eq!(
+            frame
+                .get::<mlua::Function>("GetModel")?
+                .call::<String>(frame)?,
+            expected_path
+        );
+    }
+
+    globals
+        .get::<mlua::Function>("ReadyForAccountDataTimes")?
+        .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("GetCharacterListUpdate")?
+        .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("RequestRealmSplitInfo")?
+        .call::<()>(())?;
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::ReadyForAccountDataTimes)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::RequestCharacterListUpdate)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::RequestRealmSplitInfo)
+    ));
 
     globals
         .get::<mlua::Function>("SelectCharacter")?
-        .call::<()>(200_u64)?;
+        .call::<()>(2_u32)?;
     globals
         .get::<mlua::Function>("EnterWorld")?
         .call::<()>(())?;
