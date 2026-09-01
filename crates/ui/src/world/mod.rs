@@ -10,6 +10,7 @@ pub use language::UiPlayerLanguage;
 pub use realm_date::{UiRealmDate, UiRealmDateError};
 pub use realm_time::{UiRealmTime, UiRealmTimeError};
 pub use state::{
-    UiFactionGroup, UiFriendCounts, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState,
-    UiWorldState, UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,
+    UiPlayerIdentityState, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
+    UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
 };

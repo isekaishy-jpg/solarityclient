@@ -8,7 +8,7 @@ use crate::{UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
-use super::type_key;
+use super::{portrait_unit_key, texture_file_key, texture_solid_color_key, type_key};
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 const CHARACTER_SELECT_MODEL_REGISTRY: &str = "solarity.ui.character_select_model";
@@ -54,6 +54,8 @@ pub(super) fn register_base_globals(
     register_static_constants(lua, &globals)?;
     register_item_quality_color(lua, &globals)?;
     register_client_runtime_globals(lua, &globals, environment)?;
+    register_sound_globals(lua, &globals, environment)?;
+    register_portrait_globals(lua, &globals)?;
     register_addon_globals(lua, &globals, environment.addon_load_state())?;
     match manifest_kind {
         UiManifestKind::Glue => register_glue_globals(lua, &globals, environment)?,
@@ -93,6 +95,8 @@ fn register_frame_globals(
     crate::feature::register_chat_window_globals(lua, globals, environment.chat_window_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
+    crate::feature::register_group_roster_globals(lua, globals, environment.group_roster_state())?;
+    crate::feature::register_voice_chat_globals(lua, globals, environment.voice_chat_state())?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
@@ -110,6 +114,64 @@ fn register_frame_globals(
     let trade_state = world.clone();
     let area_resurrection = world.clone();
     let friend_counts = world.clone();
+    let threat_warnings = environment.cvars();
+    let resting = world.clone();
+    globals.raw_set(
+        "IsResting",
+        lua.create_function(move |_, ()| Ok(resting.is_resting().then_some(1_u8)))?,
+    )?;
+    globals.raw_set(
+        "PartialPlayTime",
+        lua.create_function(|_, ()| Ok(Option::<u8>::None))?,
+    )?;
+    globals.raw_set(
+        "NoPlayTime",
+        lua.create_function(|_, ()| Ok(Option::<u8>::None))?,
+    )?;
+    globals.raw_set(
+        "IsThreatWarningEnabled",
+        lua.create_function(move |_, _unit: Option<String>| {
+            let enabled = threat_warnings
+                .get("threatWarning")
+                .and_then(|value| value.parse::<u8>().ok())
+                .is_some_and(|value| value != 0);
+            Ok(enabled.then_some(1_u8))
+        })?,
+    )?;
+    let unit_names = world.clone();
+    let instance_state = world.clone();
+    globals.raw_set(
+        "IsInInstance",
+        lua.create_function(move |_, ()| {
+            let instance_type = instance_state.instance_type();
+            Ok((
+                (instance_type != crate::UiInstanceType::None).then_some(Value::Number(1.0)),
+                instance_type.as_str(),
+            ))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitName",
+        lua.create_function(move |lua, unit: Value| {
+            let Value::String(unit) = unit else {
+                return Err(mlua::Error::runtime("Usage: UnitName(\"unit\")"));
+            };
+            let identity = unit
+                .to_str()?
+                .eq_ignore_ascii_case("player")
+                .then(|| unit_names.player_identity())
+                .flatten();
+            let mut values = MultiValue::new();
+            values.push_back(match identity {
+                Some(identity) => Value::String(lua.create_string(identity.name())?),
+                None => Value::Nil,
+            });
+            // Build 12340 returns no realm suffix for the local player.
+            values.push_back(Value::Nil);
+            Ok(values)
+        })?,
+    )?;
+    register_unit_relation_globals(lua, globals, world.clone())?;
     globals.raw_set(
         "GetNumFriends",
         lua.create_function(move |_, ()| {
@@ -268,6 +330,279 @@ fn register_frame_globals(
                 })
         })?,
     )
+}
+
+fn register_unit_relation_globals(
+    lua: &Lua,
+    globals: &Table,
+    world: crate::UiWorldState,
+) -> mlua::Result<()> {
+    let classes = world.clone();
+    globals.raw_set(
+        "UnitClass",
+        lua.create_function(move |lua, unit: String| {
+            let class = unit
+                .eq_ignore_ascii_case("player")
+                .then(|| classes.player_class())
+                .flatten();
+            let mut values = MultiValue::new();
+            if let Some(class) = class {
+                values.push_back(Value::String(lua.create_string(class.name())?));
+                values.push_back(Value::String(lua.create_string(class.token())?));
+                values.push_back(Value::Integer(i64::from(class.id())));
+            } else {
+                values.extend([Value::Nil, Value::Nil, Value::Nil]);
+            }
+            Ok(values)
+        })?,
+    )?;
+    let races = world.clone();
+    globals.raw_set(
+        "UnitRace",
+        lua.create_function(move |lua, unit: String| {
+            let race = unit
+                .eq_ignore_ascii_case("player")
+                .then(|| races.player_race())
+                .flatten();
+            let mut values = MultiValue::new();
+            if let Some(race) = race {
+                values.push_back(Value::String(lua.create_string(race.name())?));
+                values.push_back(Value::String(lua.create_string(race.token())?));
+                values.push_back(Value::Integer(i64::from(race.id())));
+            } else {
+                values.extend([Value::Nil, Value::Nil, Value::Nil]);
+            }
+            Ok(values)
+        })?,
+    )?;
+    let health = world.clone();
+    globals.raw_set(
+        "UnitHealth",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&health, &unit).map_or(0, crate::UiPlayerVitalsState::health))
+        })?,
+    )?;
+    let max_health = world.clone();
+    globals.raw_set(
+        "UnitHealthMax",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&max_health, &unit).map_or(0, crate::UiPlayerVitalsState::max_health))
+        })?,
+    )?;
+    for name in ["UnitMana", "UnitPower"] {
+        let power = world.clone();
+        globals.raw_set(
+            name,
+            lua.create_function(move |_, unit: String| {
+                Ok(unit_vitals(&power, &unit).map_or(0, crate::UiPlayerVitalsState::power))
+            })?,
+        )?;
+    }
+    for name in ["UnitManaMax", "UnitPowerMax"] {
+        let max_power = world.clone();
+        globals.raw_set(
+            name,
+            lua.create_function(move |_, unit: String| {
+                Ok(unit_vitals(&max_power, &unit).map_or(0, crate::UiPlayerVitalsState::max_power))
+            })?,
+        )?;
+    }
+    let power_types = world.clone();
+    globals.raw_set(
+        "UnitPowerType",
+        lua.create_function(move |_, unit: String| {
+            let power_type = unit_vitals(&power_types, &unit)
+                .map(crate::UiPlayerVitalsState::power_type)
+                .unwrap_or(crate::UiUnitPowerType::Mana);
+            Ok((power_type.id(), power_type.as_str()))
+        })?,
+    )?;
+    let connected = world.clone();
+    globals.raw_set(
+        "UnitIsConnected",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&connected, &unit)
+                .is_some_and(crate::UiPlayerVitalsState::connected)
+                .then_some(1_u8))
+        })?,
+    )?;
+    let dead = world.clone();
+    globals.raw_set(
+        "UnitIsDead",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&dead, &unit)
+                .is_some_and(crate::UiPlayerVitalsState::dead)
+                .then_some(1_u8))
+        })?,
+    )?;
+    let ghost = world.clone();
+    globals.raw_set(
+        "UnitIsGhost",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&ghost, &unit)
+                .is_some_and(crate::UiPlayerVitalsState::ghost)
+                .then_some(1_u8))
+        })?,
+    )?;
+    let dead_or_ghost = world.clone();
+    globals.raw_set(
+        "UnitIsDeadOrGhost",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&dead_or_ghost, &unit)
+                .is_some_and(|vitals| vitals.dead() || vitals.ghost())
+                .then_some(1_u8))
+        })?,
+    )?;
+    let threat = world.clone();
+    globals.raw_set(
+        "UnitThreatSituation",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&threat, &unit).and_then(crate::UiPlayerVitalsState::threat_situation))
+        })?,
+    )?;
+    let exists = world.clone();
+    let levels = world.clone();
+    globals.raw_set(
+        "UnitLevel",
+        lua.create_function(move |_, unit: String| {
+            Ok(if unit.eq_ignore_ascii_case("player") {
+                levels
+                    .player_identity()
+                    .map_or(0, |identity| identity.level())
+            } else {
+                0
+            })
+        })?,
+    )?;
+    let dungeon_difficulty = world.clone();
+    globals.raw_set(
+        "GetDungeonDifficulty",
+        lua.create_function(move |_, ()| Ok(dungeon_difficulty.dungeon_difficulty()))?,
+    )?;
+    let raid_difficulty = world.clone();
+    globals.raw_set(
+        "GetRaidDifficulty",
+        lua.create_function(move |_, ()| Ok(raid_difficulty.raid_difficulty()))?,
+    )?;
+    let instance_info = world.clone();
+    globals.raw_set(
+        "GetInstanceInfo",
+        lua.create_function(move |_, ()| {
+            let instance_type = instance_info.instance_type();
+            if instance_type == crate::UiInstanceType::None {
+                return Ok((Option::<String>::None, "none", 0_u8, "", 0_u8, 0_u8, false));
+            }
+            let difficulty = if instance_type == crate::UiInstanceType::Raid {
+                instance_info.raid_difficulty()
+            } else {
+                instance_info.dungeon_difficulty()
+            };
+            Ok((
+                Some(String::new()),
+                instance_type.as_str(),
+                difficulty,
+                "",
+                0,
+                0,
+                false,
+            ))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitExists",
+        lua.create_function(move |_, unit: Value| {
+            let is_player = matches!(unit, Value::String(ref unit) if unit.to_string_lossy().eq_ignore_ascii_case("player"));
+            Ok((is_player && exists.player().is_some()).then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitIsUnit",
+        lua.create_function(|_, (left, right): (String, String)| {
+            Ok(
+                (left.eq_ignore_ascii_case("player") && right.eq_ignore_ascii_case("player"))
+                    .then_some(1_u8),
+            )
+        })?,
+    )?;
+    let cooperative = world.clone();
+    globals.raw_set(
+        "UnitCanCooperate",
+        lua.create_function(move |_, (left, right): (String, String)| {
+            Ok((cooperative.player().is_some()
+                && left.eq_ignore_ascii_case("player")
+                && right.eq_ignore_ascii_case("player"))
+            .then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitCanAttack",
+        lua.create_function(|_, _: (String, Option<String>)| Ok(Option::<u8>::None))?,
+    )?;
+    let players = world.clone();
+    globals.raw_set(
+        "UnitIsPlayer",
+        lua.create_function(move |_, unit: String| {
+            Ok((players.player().is_some() && unit.eq_ignore_ascii_case("player")).then_some(1_u8))
+        })?,
+    )?;
+    let visible = world.clone();
+    globals.raw_set(
+        "UnitIsVisible",
+        lua.create_function(move |_, unit: Value| {
+            let is_player = matches!(unit, Value::String(ref unit) if unit.to_string_lossy().eq_ignore_ascii_case("player"));
+            Ok((is_player && visible.player().is_some()).then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitInBattleground",
+        lua.create_function(move |_, unit: String| {
+            let in_battleground = matches!(
+                world.instance_type(),
+                crate::UiInstanceType::Pvp | crate::UiInstanceType::Arena
+            );
+            Ok((unit.eq_ignore_ascii_case("player") && in_battleground).then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetSummonFriendCooldown",
+        lua.create_function(|_, ()| Ok((0.0_f64, 0.0_f64)))?,
+    )?;
+    for name in ["IsReferAFriendLinked", "CanSummonFriend", "CanGrantLevel"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _arguments: Variadic<Value>| Ok(Option::<u8>::None))?,
+        )?;
+    }
+    for name in ["UnitIsPVP", "UnitIsPVPFreeForAll", "UnitIsPVPFlagged"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _unit: String| Ok(Option::<u8>::None))?,
+        )?;
+    }
+    for name in [
+        "UnitHasVehicleUI",
+        "UnitInVehicle",
+        "CanExitVehicle",
+        "UnitIsPossessed",
+    ] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _arguments: Variadic<Value>| Ok(Option::<u8>::None))?,
+        )?;
+    }
+    for name in ["UnitBuff", "UnitDebuff", "UnitAura"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _arguments: Variadic<Value>| Ok(MultiValue::new()))?,
+        )?;
+    }
+    Ok(())
+}
+
+fn unit_vitals(world: &crate::UiWorldState, unit: &str) -> Option<crate::UiPlayerVitalsState> {
+    unit.eq_ignore_ascii_case("player")
+        .then(|| world.player_vitals())
+        .flatten()
 }
 
 /// Registers the exact two-result AddOn progress query used by stock FrameXML.
@@ -1422,6 +1757,41 @@ fn register_glue_media_globals(
     )?;
     globals.raw_set("StopAllSFX", lua.create_function(|_, ()| Ok(()))?)?;
     Ok(())
+}
+
+fn register_sound_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    for name in ["PlaySound", "PlaySoundFile"] {
+        let state = environment.media_intent();
+        globals.raw_set(
+            name,
+            lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+                let sound = required_string(lua, value, "sound resource")?;
+                state.borrow_mut().sounds.push(sound);
+                Ok(())
+            })?,
+        )?;
+    }
+    Ok(())
+}
+
+fn register_portrait_globals(lua: &Lua, globals: &Table) -> mlua::Result<()> {
+    globals.raw_set(
+        "SetPortraitTexture",
+        lua.create_function(|_, (texture, unit): (Table, String)| {
+            if texture.raw_get::<String>(type_key())? != "Texture" {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetPortraitTexture(texture, \"unit\")",
+                ));
+            }
+            texture.raw_set(texture_file_key(), Option::<String>::None)?;
+            texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+            texture.raw_set(portrait_unit_key(), Some(unit))
+        })?,
+    )
 }
 
 fn required_string(lua: &Lua, value: Value, label: &str) -> mlua::Result<String> {

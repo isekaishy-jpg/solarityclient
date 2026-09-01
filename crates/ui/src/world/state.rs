@@ -11,6 +11,112 @@ pub struct UiPlayerState {
     money_copper: u32,
 }
 
+/// Local-player character identity published by the selected world session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiPlayerIdentityState {
+    name: String,
+    level: u8,
+}
+
+impl UiPlayerIdentityState {
+    /// Creates an identity from the server-validated character name.
+    #[must_use]
+    pub fn new(name: impl Into<String>, level: u8) -> Self {
+        Self {
+            name: name.into(),
+            level,
+        }
+    }
+
+    /// Returns the local character name without a realm suffix.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the server-published character level.
+    #[must_use]
+    pub const fn level(&self) -> u8 {
+        self.level
+    }
+}
+
+/// Localized class identity and stable class token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiPlayerClassState {
+    name: String,
+    token: String,
+    id: u8,
+}
+
+impl UiPlayerClassState {
+    /// Creates a class projection from the character and class catalogs.
+    #[must_use]
+    pub fn new(name: impl Into<String>, token: impl Into<String>, id: u8) -> Self {
+        Self {
+            name: name.into(),
+            token: token.into(),
+            id,
+        }
+    }
+
+    /// Returns the localized class name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the stable uppercase class token.
+    #[must_use]
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Returns the numeric class identifier.
+    #[must_use]
+    pub const fn id(&self) -> u8 {
+        self.id
+    }
+}
+
+/// Localized race identity and stable race token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiPlayerRaceState {
+    name: String,
+    token: String,
+    id: u8,
+}
+
+impl UiPlayerRaceState {
+    /// Creates a race projection from the character and race catalogs.
+    #[must_use]
+    pub fn new(name: impl Into<String>, token: impl Into<String>, id: u8) -> Self {
+        Self {
+            name: name.into(),
+            token: token.into(),
+            id,
+        }
+    }
+
+    /// Returns the localized race name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the stable race file token.
+    #[must_use]
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Returns the numeric race identifier.
+    #[must_use]
+    pub const fn id(&self) -> u8 {
+        self.id
+    }
+}
+
 impl UiPlayerState {
     /// Creates the UI projection from authoritative player currency.
     #[must_use]
@@ -22,6 +128,140 @@ impl UiPlayerState {
     #[must_use]
     pub const fn money_copper(self) -> u32 {
         self.money_copper
+    }
+}
+
+/// Stock unit-power classifications used by status bars.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiUnitPowerType {
+    /// Spellcasting mana.
+    Mana,
+    /// Warrior and bear-form rage.
+    Rage,
+    /// Hunter-pet focus.
+    Focus,
+    /// Rogue and cat-form energy.
+    Energy,
+    /// Legacy hunter-pet happiness.
+    Happiness,
+    /// Death-knight rune slots.
+    Runes,
+    /// Death-knight runic power.
+    RunicPower,
+}
+
+impl UiUnitPowerType {
+    /// Returns the numeric power identifier stored by build 12340.
+    #[must_use]
+    pub const fn id(self) -> u8 {
+        match self {
+            Self::Mana => 0,
+            Self::Rage => 1,
+            Self::Focus => 2,
+            Self::Energy => 3,
+            Self::Happiness => 4,
+            Self::Runes => 5,
+            Self::RunicPower => 6,
+        }
+    }
+
+    /// Returns the stable uppercase FrameXML token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mana => "MANA",
+            Self::Rage => "RAGE",
+            Self::Focus => "FOCUS",
+            Self::Energy => "ENERGY",
+            Self::Happiness => "HAPPINESS",
+            Self::Runes => "RUNES",
+            Self::RunicPower => "RUNIC_POWER",
+        }
+    }
+}
+
+/// Local-player health, power, and lifecycle flags from the active update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiPlayerVitalsState {
+    health: u32,
+    max_health: u32,
+    power: u32,
+    max_power: u32,
+    power_type: UiUnitPowerType,
+    connected: bool,
+    dead: bool,
+    ghost: bool,
+    threat_situation: Option<u8>,
+}
+
+impl UiPlayerVitalsState {
+    /// Creates one complete live unit-bar projection.
+    #[must_use]
+    pub const fn new(
+        health: u32,
+        max_health: u32,
+        power: u32,
+        max_power: u32,
+        power_type: UiUnitPowerType,
+    ) -> Self {
+        Self {
+            health,
+            max_health,
+            power,
+            max_power,
+            power_type,
+            connected: true,
+            dead: false,
+            ghost: false,
+            threat_situation: None,
+        }
+    }
+
+    /// Returns current health.
+    #[must_use]
+    pub const fn health(self) -> u32 {
+        self.health
+    }
+    /// Returns maximum health.
+    #[must_use]
+    pub const fn max_health(self) -> u32 {
+        self.max_health
+    }
+    /// Returns current primary power.
+    #[must_use]
+    pub const fn power(self) -> u32 {
+        self.power
+    }
+    /// Returns maximum primary power.
+    #[must_use]
+    pub const fn max_power(self) -> u32 {
+        self.max_power
+    }
+    /// Returns the primary power classification.
+    #[must_use]
+    pub const fn power_type(self) -> UiUnitPowerType {
+        self.power_type
+    }
+    /// Reports whether the unit has an active connection.
+    #[must_use]
+    pub const fn connected(self) -> bool {
+        self.connected
+    }
+    /// Reports whether the unit is dead.
+    #[must_use]
+    pub const fn dead(self) -> bool {
+        self.dead
+    }
+    /// Reports whether the unit is a released ghost.
+    #[must_use]
+    pub const fn ghost(self) -> bool {
+        self.ghost
+    }
+
+    /// Returns the 0..=3 threat classification when one is active.
+    #[must_use]
+    pub const fn threat_situation(self) -> Option<u8> {
+        self.threat_situation
     }
 }
 
@@ -155,6 +395,36 @@ pub enum UiZonePvpType {
     Combat,
 }
 
+/// Active map instance classification returned by `IsInInstance`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UiInstanceType {
+    /// An outdoor map or no active map.
+    #[default]
+    None,
+    /// A five-player dungeon instance.
+    Party,
+    /// A raid instance.
+    Raid,
+    /// A battleground instance.
+    Pvp,
+    /// An arena instance.
+    Arena,
+}
+
+impl UiInstanceType {
+    /// Returns the exact lowercase FrameXML classification token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Party => "party",
+            Self::Raid => "raid",
+            Self::Pvp => "pvp",
+            Self::Arena => "arena",
+        }
+    }
+}
+
 impl UiZonePvpType {
     /// Returns the exact lowercase token consumed by stock FrameXML.
     #[must_use]
@@ -253,7 +523,7 @@ impl UiZoneState {
 /// `Rc<Cell<_>>` matches the actual ownership: the composition root publishes
 /// state and the same-thread Lua VM reads it. Queries therefore require no
 /// lock, allocation, ECS dependency, or copied value table.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct UiWorldState {
     inner: Rc<UiWorldStateInner>,
 }
@@ -262,16 +532,35 @@ pub struct UiWorldState {
 #[derive(Debug, Default)]
 struct UiWorldStateInner {
     player: Cell<Option<UiPlayerState>>,
+    player_identity: RefCell<Option<UiPlayerIdentityState>>,
+    player_class: RefCell<Option<UiPlayerClassState>>,
+    player_race: RefCell<Option<UiPlayerRaceState>>,
     player_progression: Cell<Option<UiPlayerProgressionState>>,
+    player_vitals: Cell<Option<UiPlayerVitalsState>>,
     player_faction: RefCell<Option<UiPlayerFactionState>>,
     player_default_language: RefCell<Option<UiPlayerLanguage>>,
     zone: RefCell<Option<UiZoneState>>,
+    instance_type: Cell<UiInstanceType>,
+    dungeon_difficulty: Cell<u8>,
+    raid_difficulty: Cell<u8>,
     realm_date: Cell<Option<UiRealmDate>>,
     realm_time: Cell<Option<UiRealmTime>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
+    resting: Cell<bool>,
     friend_counts: Cell<UiFriendCounts>,
+}
+
+impl Default for UiWorldState {
+    fn default() -> Self {
+        let state = Self {
+            inner: Rc::new(UiWorldStateInner::default()),
+        };
+        state.inner.dungeon_difficulty.set(1);
+        state.inner.raid_difficulty.set(1);
+        state
+    }
 }
 
 impl UiWorldState {
@@ -289,6 +578,26 @@ impl UiWorldState {
     /// Publishes the latest local-player experience projection.
     pub fn set_player_progression(&self, progression: UiPlayerProgressionState) {
         self.inner.player_progression.set(Some(progression));
+    }
+
+    /// Publishes the latest complete local-player unit-bar projection.
+    pub fn set_player_vitals(&self, vitals: UiPlayerVitalsState) {
+        self.inner.player_vitals.set(Some(vitals));
+    }
+
+    /// Publishes the selected character identity for stock unit queries.
+    pub fn set_player_identity(&self, identity: UiPlayerIdentityState) {
+        *self.inner.player_identity.borrow_mut() = Some(identity);
+    }
+
+    /// Publishes the selected character's class identity.
+    pub fn set_player_class(&self, class: UiPlayerClassState) {
+        *self.inner.player_class.borrow_mut() = Some(class);
+    }
+
+    /// Publishes the selected character's race identity.
+    pub fn set_player_race(&self, race: UiPlayerRaceState) {
+        *self.inner.player_race.borrow_mut() = Some(race);
     }
 
     /// Publishes faction identity composed from the local player's race row.
@@ -311,6 +620,17 @@ impl UiWorldState {
         *self.inner.zone.borrow_mut() = Some(zone);
     }
 
+    /// Publishes the active map's instance classification.
+    pub fn set_instance_type(&self, instance_type: UiInstanceType) {
+        self.inner.instance_type.set(instance_type);
+    }
+
+    /// Publishes the selected five-player and raid difficulty identifiers.
+    pub fn set_instance_difficulties(&self, dungeon: u8, raid: u8) {
+        self.inner.dungeon_difficulty.set(dungeon);
+        self.inner.raid_difficulty.set(raid);
+    }
+
     /// Publishes the current server-anchored hour and minute.
     pub fn set_realm_time(&self, time: UiRealmTime) {
         self.inner.realm_time.set(Some(time));
@@ -324,15 +644,21 @@ impl UiWorldState {
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         self.inner.player.set(None);
+        *self.inner.player_identity.borrow_mut() = None;
+        *self.inner.player_class.borrow_mut() = None;
+        *self.inner.player_race.borrow_mut() = None;
         self.inner.player_progression.set(None);
+        self.inner.player_vitals.set(None);
         *self.inner.player_faction.borrow_mut() = None;
         *self.inner.player_default_language.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
+        self.inner.instance_type.set(UiInstanceType::None);
         self.inner.realm_date.set(None);
         self.inner.realm_time.set(None);
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
         self.inner.area_resurrection_available.set(false);
+        self.inner.resting.set(false);
     }
 
     /// Returns the current player projection when one is authoritative.
@@ -341,10 +667,37 @@ impl UiWorldState {
         self.inner.player.get()
     }
 
+    /// Returns local-player identity only while a player owns the world.
+    #[must_use]
+    pub fn player_identity(&self) -> Option<UiPlayerIdentityState> {
+        self.player()
+            .and_then(|_| self.inner.player_identity.borrow().clone())
+    }
+
+    /// Returns local-player class identity while a player owns the world.
+    #[must_use]
+    pub fn player_class(&self) -> Option<UiPlayerClassState> {
+        self.player()
+            .and_then(|_| self.inner.player_class.borrow().clone())
+    }
+
+    /// Returns local-player race identity while a player owns the world.
+    #[must_use]
+    pub fn player_race(&self) -> Option<UiPlayerRaceState> {
+        self.player()
+            .and_then(|_| self.inner.player_race.borrow().clone())
+    }
+
     /// Returns local-player experience after both stock fields are projected.
     #[must_use]
     pub fn player_progression(&self) -> Option<UiPlayerProgressionState> {
         self.inner.player_progression.get()
+    }
+
+    /// Returns local-player vitals after the world has published them.
+    #[must_use]
+    pub fn player_vitals(&self) -> Option<UiPlayerVitalsState> {
+        self.player().and_then(|_| self.inner.player_vitals.get())
     }
 
     /// Returns the local player's composed faction identity when available.
@@ -372,6 +725,24 @@ impl UiWorldState {
         self.inner.zone.borrow().clone()
     }
 
+    /// Returns the current map instance classification.
+    #[must_use]
+    pub fn instance_type(&self) -> UiInstanceType {
+        self.inner.instance_type.get()
+    }
+
+    /// Returns the selected five-player difficulty identifier.
+    #[must_use]
+    pub fn dungeon_difficulty(&self) -> u8 {
+        self.inner.dungeon_difficulty.get()
+    }
+
+    /// Returns the selected raid difficulty identifier.
+    #[must_use]
+    pub fn raid_difficulty(&self) -> u8 {
+        self.inner.raid_difficulty.get()
+    }
+
     /// Returns realm time only after the world session has supplied it.
     #[must_use]
     pub fn realm_time(&self) -> Option<UiRealmTime> {
@@ -393,6 +764,17 @@ impl UiWorldState {
     #[must_use]
     pub fn area_resurrection_available(&self) -> bool {
         self.inner.area_resurrection_available.get()
+    }
+
+    /// Publishes whether the player is in a rested area.
+    pub fn set_resting(&self, resting: bool) {
+        self.inner.resting.set(resting);
+    }
+
+    /// Reports whether the player is in a rested area.
+    #[must_use]
+    pub fn is_resting(&self) -> bool {
+        self.inner.resting.get()
     }
 
     /// Replaces copper currently attached to the stock money cursor.

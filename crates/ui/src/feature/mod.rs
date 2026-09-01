@@ -25,6 +25,7 @@ mod tooltip;
 mod trade;
 mod trade_skill;
 mod trainer;
+mod voice_chat;
 
 pub(crate) use action_bar::register_globals as register_action_bar_globals;
 pub use action_bar::{
@@ -48,3 +49,7 @@ pub use minimap::{UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, U
 pub(crate) use minimap::{
     initialize_state as initialize_minimap_state, register_methods as register_minimap_methods,
 };
+pub(crate) use party::register_globals as register_group_roster_globals;
+pub use party::{UiGroupRosterState, UiLootMethod};
+pub use voice_chat::UiVoiceChatState;
+pub(crate) use voice_chat::register_globals as register_voice_chat_globals;

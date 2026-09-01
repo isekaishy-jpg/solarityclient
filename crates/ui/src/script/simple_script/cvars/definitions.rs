@@ -179,6 +179,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("stopAutoAttackOnTargetChange", "0", 0.0, 1.0),
     ranged("targetStatusText", "0", 0.0, 1.0),
     ranged("threatPlaySounds", "1", 0.0, 1.0),
+    ranged("threatShowNumeric", "0", 0.0, 1.0),
+    ranged("threatWarning", "3", 0.0, 3.0),
     value("toastDuration", "4"),
     ranged("UnitNameEnemyGuardianName", "0", 0.0, 1.0),
     ranged("UnitNameEnemyPetName", "1", 0.0, 1.0),

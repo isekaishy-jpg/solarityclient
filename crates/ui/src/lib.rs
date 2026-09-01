@@ -36,8 +36,9 @@ pub use feature::{
     MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UI_CHAT_WINDOW_COUNT, UiBattlefieldQueueError,
     UiBattlefieldQueueState, UiBattlefieldQueueStatus, UiBattlefieldSlot, UiChatWindow,
     UiChatWindowState, UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole,
-    UiGroupFinderRoleCheck, UiGroupFinderServerInfo, UiGroupFinderState, UiMinimapTrackingState,
-    UiTrackingCategory, UiTrackingError, UiTrackingType, UiWorldPvpQueueSlot,
+    UiGroupFinderRoleCheck, UiGroupFinderServerInfo, UiGroupFinderState, UiGroupRosterState,
+    UiLootMethod, UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType,
+    UiVoiceChatState, UiWorldPvpQueueSlot,
 };
 pub use feature::{
     UI_ACTION_SLOT_COUNT, UiActionBarPageError, UiActionBarState, UiActionBarStateError,
@@ -78,9 +79,10 @@ pub use widget::{
     UiTextureStatePlan,
 };
 pub use world::{
-    UiFactionGroup, UiFriendCounts, UiPlayerFactionState, UiPlayerLanguage,
-    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmDateError, UiRealmTime,
-    UiRealmTimeError, UiWorldState, UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,
+    UiPlayerIdentityState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState,
+    UiPlayerState, UiPlayerVitalsState, UiRealmDate, UiRealmDateError, UiRealmTime,
+    UiRealmTimeError, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

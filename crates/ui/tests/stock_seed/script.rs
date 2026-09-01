@@ -6,10 +6,10 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
     UiFramePlan, UiFriendCounts, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog,
-    UiObjectTree, UiPlayerFactionState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerState,
-    UiRealmDate, UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
-    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
+    UiObjectTree, UiPlayerFactionState, UiPlayerIdentityState, UiPlayerLanguage,
+    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -938,6 +938,10 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_CONTROL = IsControlKeyDown()
     INITIAL_ALT = IsAltKeyDown()
     INITIAL_FRIENDS, INITIAL_FRIENDS_ONLINE = GetNumFriends()
+    INITIAL_PLAYER_NAME, INITIAL_PLAYER_REALM = UnitName("player")
+    INITIAL_IN_INSTANCE, INITIAL_INSTANCE_TYPE = IsInInstance()
+    INITIAL_PARTY_MEMBERS = GetNumPartyMembers()
+    INITIAL_RAID_MEMBERS = GetNumRaidMembers()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -960,6 +964,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let modifiers = environment.modifier_key_state();
     action_bar.set_slots([0; 144]);
     world.enter_player(UiPlayerState::new(12_345_678));
+    world.set_player_identity(UiPlayerIdentityState::new("Thrall", 80));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
     world.set_player_default_language(UiPlayerLanguage::new(1, "Orcish"));
@@ -980,6 +985,41 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     runtime.execute_all(&bundle, &tree, &scripts)?;
+    assert_eq!(
+        bundle
+            .lua()
+            .globals()
+            .get::<String>("INITIAL_PLAYER_NAME")?,
+        "Thrall"
+    );
+    assert!(matches!(
+        bundle
+            .lua()
+            .globals()
+            .get::<mlua::Value>("INITIAL_PLAYER_REALM")?,
+        mlua::Value::Nil
+    ));
+    assert!(matches!(
+        bundle
+            .lua()
+            .globals()
+            .get::<mlua::Value>("INITIAL_IN_INSTANCE")?,
+        mlua::Value::Nil
+    ));
+    assert_eq!(
+        bundle
+            .lua()
+            .globals()
+            .get::<String>("INITIAL_INSTANCE_TYPE")?,
+        "none"
+    );
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_PARTY_MEMBERS")?,
+            bundle.lua().globals().get::<u8>("INITIAL_RAID_MEMBERS")?,
+        ),
+        (0, 0)
+    );
     assert_eq!(
         bundle.lua().globals().get::<f64>("INITIAL_MONEY")?,
         12_345_678.0
@@ -1185,6 +1225,13 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .load("local width, height = GetChatWindowSavedDimensions(2); return select('#', GetChatWindowSavedPosition(2)), width, height, select('#', GetChatWindowSavedDimensions(11))")
             .eval::<(u32, f64, f64, u32)>()?,
         (0, 0.0, 0.0, 0)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetNumVoiceSessions(), GetVoiceSessionInfo(1), GetVoiceCurrentSessionID(), VoiceIsDisabledByClient()")
+            .eval::<(u32, Option<String>, Option<u32>, Option<u32>)>()?,
+        (0, None, None, None)
     );
     bundle
         .lua()

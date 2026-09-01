@@ -141,6 +141,8 @@ static FRAME_RESIZABLE_TOKEN: u8 = 101;
 static FRAME_TOP_LEVEL_TOKEN: u8 = 102;
 static FRAME_USER_PLACED_TOKEN: u8 = 103;
 static FRAME_DONT_SAVE_POSITION_TOKEN: u8 = 104;
+static PORTRAIT_UNIT_TOKEN: u8 = 105;
+static HIT_RECT_INSETS_TOKEN: u8 = 106;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -306,6 +308,7 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
 pub struct UiGlueMediaIntent {
     pub(crate) music: Option<String>,
     pub(crate) ambience: Option<String>,
+    pub(crate) sounds: Vec<String>,
 }
 
 impl UiGlueMediaIntent {
@@ -319,6 +322,12 @@ impl UiGlueMediaIntent {
     #[must_use]
     pub fn ambience(&self) -> Option<&str> {
         self.ambience.as_deref()
+    }
+
+    /// Returns queued UI sound kits and explicit sound-file requests in order.
+    #[must_use]
+    pub fn sounds(&self) -> &[String] {
+        &self.sounds
     }
 }
 
@@ -341,6 +350,8 @@ pub struct UiScriptEnvironment {
     chat_windows: crate::UiChatWindowState,
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
+    group_roster: crate::UiGroupRosterState,
+    voice_chat: crate::UiVoiceChatState,
     addons: crate::UiAddonLoadState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
@@ -383,6 +394,8 @@ impl UiScriptEnvironment {
             chat_windows: crate::UiChatWindowState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
+            group_roster: crate::UiGroupRosterState::new(),
+            voice_chat: crate::UiVoiceChatState::new(),
             addons: crate::UiAddonLoadState::default(),
             bindings: None,
             // A process without an attached Battle.net platform service must
@@ -538,6 +551,18 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn group_finder_state(&self) -> crate::UiGroupFinderState {
         self.group_finder.clone()
+    }
+
+    /// Returns the shared party and raid roster count projection.
+    #[must_use]
+    pub fn group_roster_state(&self) -> crate::UiGroupRosterState {
+        self.group_roster.clone()
+    }
+
+    /// Returns the shared voice-service availability projection.
+    #[must_use]
+    pub fn voice_chat_state(&self) -> crate::UiVoiceChatState {
+        self.voice_chat.clone()
     }
 }
 
@@ -1260,6 +1285,12 @@ impl UiScriptRuntime {
                         lua.create_sequence_from([0.0_f64; 4])?,
                     )
                 })
+                .and_then(|()| {
+                    table.raw_set(
+                        hit_rect_insets_key(),
+                        lua.create_sequence_from([0.0_f64; 4])?,
+                    )
+                })
                 .and_then(|()| table.raw_set(frame_depth_key(), 0.0))
                 .and_then(|()| table.raw_set(ignore_depth_key(), false))
                 .and_then(|()| table.raw_set(attributes_key(), lua.create_table()?))
@@ -1462,6 +1493,7 @@ impl UiScriptRuntime {
                     )
                 })
                 .and_then(|()| table.raw_set(texture_file_key(), texture.file.as_deref()))
+                .and_then(|()| table.raw_set(portrait_unit_key(), Option::<String>::None))
                 .and_then(|()| table.raw_set(texture_solid_color_key(), Option::<Table>::None))
                 .and_then(|()| table.raw_set(texture_blend_mode_key(), texture.blend_mode))
                 .and_then(|()| table.raw_set(horizontal_tiling_key(), texture.horizontal_tiling))
@@ -1862,6 +1894,10 @@ fn create_dynamic_object(
             frame_clamp_insets_key(),
             lua.create_sequence_from([0.0_f64; 4])?,
         )?;
+        object.raw_set(
+            hit_rect_insets_key(),
+            lua.create_sequence_from([0.0_f64; 4])?,
+        )?;
         object.raw_set(frame_depth_key(), 0.0)?;
         object.raw_set(ignore_depth_key(), false)?;
         object.raw_set(attributes_key(), lua.create_table()?)?;
@@ -1961,6 +1997,7 @@ fn create_dynamic_object(
             texture_file_key(),
             record.raw_get::<Option<String>>("texture_file")?,
         )?;
+        object.raw_set(portrait_unit_key(), Option::<String>::None)?;
         object.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
         object.raw_set(
             texture_blend_mode_key(),
@@ -2882,6 +2919,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                     return Err(mlua::Error::runtime("SetTexture(): invalid color"));
                 }
                 texture.raw_set(texture_file_key(), Option::<String>::None)?;
+                texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
                 texture.raw_set(texture_solid_color_key(), lua.create_sequence_from(color)?)?;
                 return Ok(());
             }
@@ -2891,6 +2929,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 .unwrap_or_default();
             let file = (!value.is_empty()).then_some(value);
             texture.raw_set(texture_file_key(), file)?;
+            texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
             texture.raw_set(texture_solid_color_key(), Option::<Table>::None)
         })?,
     )?;
@@ -3320,6 +3359,29 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
         "GetClampRectInsets",
         lua.create_function(|_, object: Table| {
             let insets: Table = object.raw_get(frame_clamp_insets_key())?;
+            Ok((
+                insets.raw_get::<f64>(1)?,
+                insets.raw_get::<f64>(2)?,
+                insets.raw_get::<f64>(3)?,
+                insets.raw_get::<f64>(4)?,
+            ))
+        })?,
+    )?;
+    methods.raw_set(
+        "SetHitRectInsets",
+        lua.create_function(
+            |lua, (object, left, right, top, bottom): (Table, f64, f64, f64, f64)| {
+                object.raw_set(
+                    hit_rect_insets_key(),
+                    lua.create_sequence_from([left, right, top, bottom])?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetHitRectInsets",
+        lua.create_function(|_, object: Table| {
+            let insets: Table = object.raw_get(hit_rect_insets_key())?;
             Ok((
                 insets.raw_get::<f64>(1)?,
                 insets.raw_get::<f64>(2)?,
@@ -5472,6 +5534,10 @@ fn frame_clamp_insets_key() -> LightUserData {
     hidden_key(&FRAME_CLAMP_INSETS_TOKEN)
 }
 
+fn hit_rect_insets_key() -> LightUserData {
+    hidden_key(&HIT_RECT_INSETS_TOKEN)
+}
+
 fn font_shadow_offset_key() -> LightUserData {
     hidden_key(&FONT_SHADOW_OFFSET_TOKEN)
 }
@@ -5626,6 +5692,10 @@ pub(super) fn texture_color_key() -> LightUserData {
 
 pub(super) fn texture_file_key() -> LightUserData {
     hidden_key(&TEXTURE_FILE_TOKEN)
+}
+
+pub(super) fn portrait_unit_key() -> LightUserData {
+    hidden_key(&PORTRAIT_UNIT_TOKEN)
 }
 
 pub(super) fn texture_solid_color_key() -> LightUserData {

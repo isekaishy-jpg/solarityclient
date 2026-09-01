@@ -11,10 +11,11 @@ use solarity_asset::{
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiAnimationPlan, UiBindingAssignments,
     UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerLanguage,
-    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
-    UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiZoneState,
+    UiObjectCatalog, UiObjectTree, UiPlayerClassState, UiPlayerFactionState, UiPlayerIdentityState,
+    UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
+    UiPlayerVitalsState, UiRealmDate, UiRealmTime, UiRegionStatePlan, UiResourceContent,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiUnitPowerType, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -55,9 +56,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     parse_player_experience(arguments.next(), "player next-level XP")?;
                 let world = environment.world_state();
                 world.enter_player(UiPlayerState::new(money_copper));
+                world.set_player_identity(UiPlayerIdentityState::new("SolarityTester", 80));
+                world.set_player_class(UiPlayerClassState::new("Warrior", "WARRIOR", 1));
+                world.set_player_race(UiPlayerRaceState::new("Human", "Human", 1));
                 world.set_player_progression(UiPlayerProgressionState::new(
                     player_xp,
                     next_level_xp,
+                ));
+                world.set_player_vitals(UiPlayerVitalsState::new(
+                    100,
+                    100,
+                    100,
+                    100,
+                    UiUnitPowerType::Mana,
                 ));
                 // This offline executor uses one explicit, internally
                 // consistent player identity fixture. Runtime composition
