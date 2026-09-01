@@ -145,14 +145,12 @@ impl SoundEntryCatalog {
                 } else {
                     format!("{directory}\\{file}")
                 };
-                // Shipped build-12340 rows can author a root-relative sound
-                // directory with one leading separator. The client archive
-                // boundary removes that root marker before MPQ lookup; it is
-                // not a search for another path or payload.
-                let archive_path = authored_path
-                    .strip_prefix('\\')
-                    .or_else(|| authored_path.strip_prefix('/'))
-                    .unwrap_or(&authored_path);
+                // Shipped build-12340 rows include root-relative names and one
+                // leaked UNC build-machine name. The client archive boundary
+                // removes every leading root marker before MPQ lookup. The UNC
+                // payload therefore remains an ordinary, unresolvable archive
+                // identity instead of becoming a host-filesystem fallback.
+                let archive_path = authored_path.trim_start_matches(['\\', '/']);
                 let path = AssetPath::new(archive_path).map_err(|source| {
                     database_error(
                         &table,

@@ -154,7 +154,7 @@ impl CharacterAppearanceCatalog {
     /// # Errors
     ///
     /// Returns [`AssetError`] for a missing table, mismatched build layout,
-    /// invalid texture name, or duplicate exact lookup key.
+    /// invalid texture name, or duplicate primary key.
     pub fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
         let section_table = load_table(store, CHAR_SECTIONS_PATH)?;
         let hair_table = load_table(store, HAIR_GEOSETS_PATH)?;
@@ -202,10 +202,14 @@ impl CharacterAppearanceCatalog {
         variation_id: u32,
     ) -> Option<&CharacterHairGeoset> {
         let key = (race_id, gender_id, variation_id);
-        self.hair_geosets
-            .binary_search_by_key(&key, |row| row.key())
-            .ok()
+        // ComponentGetHairGeoset walks the physical DBC rows and retains the
+        // last matching record. Build 12340 authors duplicate visible keys
+        // (including male-troll variation zero), so the compound key is not a
+        // uniqueness constraint.
+        let end = self.hair_geosets.partition_point(|row| row.key() <= key);
+        end.checked_sub(1)
             .map(|index| &self.hair_geosets[index])
+            .filter(|row| row.key() == key)
     }
 
     /// Finds an exact race/gender/facial-hair geometry row.
@@ -273,8 +277,10 @@ fn decode_hair_geosets(table: &WdbcTable) -> Result<Vec<CharacterHairGeoset>, As
             shows_scalp: values[5],
         });
     }
-    records.sort_unstable_by_key(|row| row.key());
-    reject_duplicate_keys(table, &records, |row| row.key())?;
+    // Stable sorting retains physical order inside each visible key. Stock's
+    // linear lookup consequently resolves the last authored matching row.
+    records.sort_by_key(|row| row.key());
+    reject_duplicate_ids(table, &records, |row| row.id())?;
     Ok(records)
 }
 

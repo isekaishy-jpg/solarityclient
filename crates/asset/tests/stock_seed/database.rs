@@ -535,6 +535,51 @@ fn character_appearance_catalog_indexes_stock_customization_keys() -> Result<(),
     Ok(())
 }
 
+/// Build 12340 retains duplicate hair keys and selects the last physical row.
+#[test]
+fn character_hair_geoset_lookup_uses_stock_last_match_semantics() -> Result<(), Box<dyn Error>> {
+    let section_table = create_wdbc(0, 10, &[], b"\0");
+    let hair_table = create_wdbc(
+        3,
+        6,
+        &[
+            90, 8, 0, 0, 4, 0, // Earlier matching row.
+            91, 1, 0, 0, 2, 1, // Intervening key proves sorting is stable.
+            92, 8, 0, 0, 7, 1, // Stock-visible last matching row.
+        ],
+        b"\0",
+    );
+    let facial_table = create_wdbc(0, 8, &[], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &section_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let selected = catalog
+        .hair_geoset(8, 0, 0)
+        .ok_or("duplicate stock hair key was not retained")?;
+    assert_eq!(selected.id(), 92);
+    assert_eq!(selected.geoset_id(), 7);
+    assert_eq!(selected.shows_scalp(), 1);
+    Ok(())
+}
+
 /// Stock component keys produce the complete player texture and geoset plan.
 #[test]
 fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Error>> {
@@ -1273,6 +1318,40 @@ fn sound_entry_catalog_decodes_stock_paths_and_weights() -> Result<(), Box<dyn E
     );
     assert_eq!(entry.assets()[1].frequency(), 75);
     assert!(catalog.entry(12).is_none());
+    Ok(())
+}
+
+/// Blizzard's shipped UNC build path remains an archive identity, not a host path.
+#[test]
+fn sound_entry_catalog_retains_stock_build_machine_path() -> Result<(), Box<dyn Error>> {
+    let table = sound_entries_fixture(
+        8912,
+        "ID_Forge_Zap04",
+        "\\\\guldan\\Drive2\\projects\\WoW\\FinalData\\Patch_3.0.1\\Data\\Sound\\D",
+        "ID_Forge_Zap04",
+        "",
+        1,
+        0,
+    );
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\SoundEntries.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let catalog = SoundEntryCatalog::load(&mut store)?;
+    let entry = catalog
+        .entry(8912)
+        .ok_or("stock sound row was not indexed")?;
+    assert_eq!(entry.assets().len(), 1);
+    assert_eq!(
+        entry.assets()[0].path().as_str(),
+        "GULDAN\\DRIVE2\\PROJECTS\\WOW\\FINALDATA\\PATCH_3.0.1\\DATA\\SOUND\\D\\ID_FORGE_ZAP04"
+    );
     Ok(())
 }
 
