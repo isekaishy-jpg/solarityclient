@@ -593,6 +593,7 @@ impl UiScriptRuntime {
                     lua,
                     bundle.manifest().kind(),
                     kind,
+                    environment.ui_extent(),
                     environment.assets(),
                     button_measurement.clone(),
                     dynamic_arena.clone(),
@@ -2309,6 +2310,7 @@ fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
+    ui_extent: (f64, f64),
     assets: Option<AssetStoreHandle>,
     button_measurement: Option<buttons::ButtonTextMeasurement>,
     dynamic_arena: DynamicArenaState,
@@ -2339,7 +2341,7 @@ fn create_object_metatable(
             objects.raw_get::<Option<Table>>(parent)
         })?,
     )?;
-    register_region_methods(lua, &methods)?;
+    register_region_methods(lua, &methods, ui_extent)?;
     if is_frame_object(kind) {
         register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
@@ -4104,7 +4106,7 @@ fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> m
     Ok(())
 }
 
-fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+fn register_region_methods(lua: &Lua, methods: &Table, ui_extent: (f64, f64)) -> mlua::Result<()> {
     methods.raw_set(
         "SetParent",
         lua.create_function(|lua, (object, requested): (Table, Option<Table>)| {
@@ -4161,6 +4163,7 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
+    register_region_bounds_methods(lua, methods, ui_extent)?;
     methods.raw_set(
         "GetAlpha",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(alpha_key()))?,
@@ -4240,6 +4243,301 @@ fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     register_region_vertex_color_methods(lua, methods)?;
     register_region_visibility_methods(lua, methods)?;
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct LiveRegionBounds {
+    left: f64,
+    bottom: f64,
+    right: f64,
+    top: f64,
+}
+
+/// Region edge queries run during FrameXML construction, before the retained
+/// arena is frozen into the render geometry plan. Resolve the same authored
+/// anchors directly from the live Lua tables so mutations made by an earlier
+/// statement are visible to the next statement.
+fn register_region_bounds_methods(
+    lua: &Lua,
+    methods: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<()> {
+    methods.raw_set(
+        "GetLeft",
+        lua.create_function(move |lua, object: Table| {
+            Ok(resolve_live_region_bounds(lua, object, ui_extent)?.map(|bounds| bounds.left))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetRight",
+        lua.create_function(move |lua, object: Table| {
+            Ok(resolve_live_region_bounds(lua, object, ui_extent)?.map(|bounds| bounds.right))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetTop",
+        lua.create_function(move |lua, object: Table| {
+            Ok(resolve_live_region_bounds(lua, object, ui_extent)?.map(|bounds| bounds.top))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetBottom",
+        lua.create_function(move |lua, object: Table| {
+            Ok(resolve_live_region_bounds(lua, object, ui_extent)?.map(|bounds| bounds.bottom))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetCenter",
+        lua.create_function(move |lua, object: Table| {
+            let bounds = resolve_live_region_bounds(lua, object, ui_extent)?;
+            Ok(match bounds {
+                Some(bounds) => (
+                    Some((bounds.left + bounds.right) * 0.5),
+                    Some((bounds.bottom + bounds.top) * 0.5),
+                ),
+                None => (None, None),
+            })
+        })?,
+    )
+}
+
+fn resolve_live_region_bounds(
+    lua: &Lua,
+    object: Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<Option<LiveRegionBounds>> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut resolved = HashMap::new();
+    let mut visiting = Vec::new();
+    resolve_live_region_bounds_inner(
+        &objects,
+        object,
+        LiveRegionBounds {
+            left: 0.0,
+            bottom: 0.0,
+            right: ui_extent.0,
+            top: ui_extent.1,
+        },
+        &mut resolved,
+        &mut visiting,
+    )
+}
+
+fn resolve_live_region_bounds_inner(
+    objects: &Table,
+    object: Table,
+    screen: LiveRegionBounds,
+    resolved: &mut HashMap<usize, LiveRegionBounds>,
+    visiting: &mut Vec<usize>,
+) -> mlua::Result<Option<LiveRegionBounds>> {
+    let index = object.raw_get::<usize>(index_key())?;
+    if let Some(bounds) = resolved.get(&index).copied() {
+        return Ok(Some(bounds));
+    }
+    if visiting.contains(&index) {
+        return Ok(None);
+    }
+    visiting.push(index);
+
+    let parent_index = object.raw_get::<Option<usize>>(parent_key())?;
+    let mut anchors = Vec::new();
+    let anchor_table: Table = object.raw_get(anchors_key())?;
+    for point_index in 1..=9 {
+        let Some(record) = anchor_table.raw_get::<Option<Table>>(point_index)? else {
+            continue;
+        };
+        let Some(point) = parse_point(record.raw_get::<String>(1)?.as_str()) else {
+            visiting.pop();
+            return Ok(None);
+        };
+        let Some(relative_point) = parse_point(record.raw_get::<String>(3)?.as_str()) else {
+            visiting.pop();
+            return Ok(None);
+        };
+        anchors.push((
+            point,
+            record.raw_get::<Option<usize>>(2)?,
+            relative_point,
+            (record.raw_get::<f64>(4)?, record.raw_get::<f64>(5)?),
+        ));
+    }
+    let role = object.raw_get::<String>(role_key())?;
+    if anchors.is_empty()
+        && role != object_role_name(UiObjectRole::Object)
+        && role != object_role_name(UiObjectRole::ScrollChild)
+        && let Some(parent) = parent_index
+    {
+        anchors.push((UiPoint::Center, Some(parent), UiPoint::Center, (0.0, 0.0)));
+    }
+
+    let mut x_constraints = Vec::with_capacity(anchors.len());
+    let mut y_constraints = Vec::with_capacity(anchors.len());
+    let mut all_x = Vec::with_capacity(anchors.len());
+    let mut all_y = Vec::with_capacity(anchors.len());
+    for (point, target_index, relative_point, offset) in anchors {
+        let target = if let Some(target_index) = target_index {
+            let Some(target) = objects.raw_get::<Option<Table>>(target_index)? else {
+                visiting.pop();
+                return Ok(None);
+            };
+            let Some(bounds) =
+                resolve_live_region_bounds_inner(objects, target, screen, resolved, visiting)?
+            else {
+                visiting.pop();
+                return Ok(None);
+            };
+            bounds
+        } else {
+            screen
+        };
+        let x = (
+            live_point_x_factor(point),
+            live_axis_coordinate(
+                target.left,
+                target.right,
+                live_point_x_factor(relative_point),
+            ) + offset.0,
+        );
+        let y = (
+            live_point_y_factor(point),
+            live_axis_coordinate(
+                target.bottom,
+                target.top,
+                live_point_y_factor(relative_point),
+            ) + offset.1,
+        );
+        all_x.push(x);
+        all_y.push(y);
+        if live_point_constrains_x(point) {
+            x_constraints.push(x);
+        }
+        if live_point_constrains_y(point) {
+            y_constraints.push(y);
+        }
+    }
+
+    let parent = if let Some(parent_index) = parent_index {
+        let Some(parent) = objects.raw_get::<Option<Table>>(parent_index)? else {
+            visiting.pop();
+            return Ok(None);
+        };
+        resolve_live_region_bounds_inner(objects, parent, screen, resolved, visiting)?
+    } else {
+        None
+    };
+    let fallback_left = parent.map_or(0.0, |bounds| bounds.left);
+    let fallback_bottom = parent.map_or(0.0, |bounds| bounds.bottom);
+    let horizontal = solve_live_axis(
+        object.raw_get::<f64>(width_key())?,
+        if x_constraints.is_empty() {
+            &all_x
+        } else {
+            &x_constraints
+        },
+        fallback_left,
+    );
+    let vertical = solve_live_axis(
+        object.raw_get::<f64>(height_key())?,
+        if y_constraints.is_empty() {
+            &all_y
+        } else {
+            &y_constraints
+        },
+        fallback_bottom,
+    );
+    visiting.pop();
+    let (Some(horizontal), Some(vertical)) = (horizontal, vertical) else {
+        return Ok(None);
+    };
+    let bounds = LiveRegionBounds {
+        left: horizontal.0,
+        bottom: vertical.0,
+        right: horizontal.0 + horizontal.1,
+        top: vertical.0 + vertical.1,
+    };
+    resolved.insert(index, bounds);
+    Ok(Some(bounds))
+}
+
+fn solve_live_axis(
+    authored_extent: f64,
+    constraints: &[(f64, f64)],
+    fallback_begin: f64,
+) -> Option<(f64, f64)> {
+    const AXIS_EPSILON: f64 = 0.0001;
+
+    let extent = authored_extent.max(0.0);
+    let Some(first) = constraints.first().copied() else {
+        return Some((fallback_begin, extent));
+    };
+    let mut best_pair = None;
+    let mut best_separation = 0.0;
+    for (left_index, left) in constraints.iter().enumerate() {
+        for right in &constraints[left_index + 1..] {
+            let separation = (right.0 - left.0).abs();
+            if separation > best_separation {
+                best_pair = Some((*left, *right));
+                best_separation = separation;
+            }
+        }
+    }
+    let (begin, extent) = if best_separation > AXIS_EPSILON {
+        let (first, second) = best_pair?;
+        let inferred = (second.1 - first.1) / (second.0 - first.0);
+        let begin = first.1 - first.0 * inferred;
+        if inferred < 0.0 {
+            (begin + inferred, -inferred)
+        } else {
+            (begin, inferred)
+        }
+    } else {
+        (first.1 - first.0 * extent, extent)
+    };
+    (begin.is_finite() && extent.is_finite()).then_some((begin, extent))
+}
+
+const fn live_point_x_factor(point: UiPoint) -> f64 {
+    match point {
+        UiPoint::Top | UiPoint::Center | UiPoint::Bottom => 0.5,
+        UiPoint::TopRight | UiPoint::Right | UiPoint::BottomRight => 1.0,
+        _ => 0.0,
+    }
+}
+
+const fn live_point_y_factor(point: UiPoint) -> f64 {
+    match point {
+        UiPoint::Left | UiPoint::Center | UiPoint::Right => 0.5,
+        UiPoint::TopLeft | UiPoint::Top | UiPoint::TopRight => 1.0,
+        _ => 0.0,
+    }
+}
+
+const fn live_point_constrains_x(point: UiPoint) -> bool {
+    matches!(
+        point,
+        UiPoint::TopLeft
+            | UiPoint::Left
+            | UiPoint::BottomLeft
+            | UiPoint::TopRight
+            | UiPoint::Right
+            | UiPoint::BottomRight
+    )
+}
+
+const fn live_point_constrains_y(point: UiPoint) -> bool {
+    matches!(
+        point,
+        UiPoint::TopLeft
+            | UiPoint::Top
+            | UiPoint::TopRight
+            | UiPoint::BottomLeft
+            | UiPoint::Bottom
+            | UiPoint::BottomRight
+    )
+}
+
+fn live_axis_coordinate(begin: f64, end: f64, factor: f64) -> f64 {
+    begin + (end - begin) * factor
 }
 
 fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
