@@ -23,6 +23,7 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
   <Frames>
     <EditBox name="Account" letters="16">
       <Size x="200" y="40"/><Anchors><Anchor point="CENTER"><Offset x="0" y="40"/></Anchor></Anchors>
+      <TextInsets><AbsInset left="12" right="5" bottom="5"/></TextInsets>
       <Scripts><OnLoad>
         self:SetText("saved")
         self:SetFocus()
@@ -71,6 +72,13 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     assert_eq!(manager.text_input("Alice")?, Some(account_index));
     let account: mlua::Table = globals.get("Account")?;
     let get_account_text: mlua::Function = account.get("GetText")?;
+    let get_max_letters: mlua::Function = account.get("GetMaxLetters")?;
+    let get_text_insets: mlua::Function = account.get("GetTextInsets")?;
+    assert_eq!(get_max_letters.call::<u32>(account.clone())?, 16);
+    assert_eq!(
+        get_text_insets.call::<(f64, f64, f64, f64)>(account.clone())?,
+        (12.0, 5.0, 0.0, 5.0)
+    );
     assert_eq!(get_account_text.call::<String>(account.clone())?, "Alice");
     assert_eq!(manager.text_composition("候補")?, Some(account_index));
 
@@ -86,6 +94,11 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     );
     let password: mlua::Table = globals.get("Password")?;
     let get_password_text: mlua::Function = password.get("GetText")?;
+    let is_password: mlua::Function = password.get("IsPassword")?;
+    assert_eq!(
+        is_password.call::<Option<bool>>(password.clone())?,
+        Some(true)
+    );
     assert_eq!(get_password_text.call::<String>(password.clone())?, "Sécre");
 
     assert_eq!(

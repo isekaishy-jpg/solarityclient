@@ -42,6 +42,7 @@ pub struct GlueManager {
     child_indices: Vec<usize>,
     pointer: UiPointerPlan,
     pointer_capture: Option<(usize, UiPointerButton)>,
+    glyph_logical_height: u32,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
@@ -169,8 +170,9 @@ impl GlueManager {
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
         runtime.publish_resolved_geometry(&bundle, &geometry)?;
         let scroll_frames = UiScrollFramePlan::from_live(&live);
-        let glyphs = UiGlyphAtlasPlan::from_simple_html(
+        let glyphs = UiGlyphAtlasPlan::from_live_ui(
             runtime.simple_html(),
+            &live,
             &geometry,
             &fonts,
             &mut assets.borrow_mut(),
@@ -218,6 +220,7 @@ impl GlueManager {
             child_indices,
             pointer,
             pointer_capture: None,
+            glyph_logical_height: logical_extent.1,
             report,
             environment,
             media_intent,
@@ -606,6 +609,22 @@ impl GlueManager {
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
         let scroll_frames = UiScrollFramePlan::from_live(&live);
+        if self
+            .glyphs
+            .supports_live_text(&live, self.glyph_logical_height)
+        {
+            self.glyphs
+                .refresh_live_text(&live, &geometry, self.glyph_logical_height)?;
+        } else {
+            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                self.runtime.simple_html(),
+                &live,
+                &geometry,
+                &self.fonts,
+                &mut self.assets.borrow_mut(),
+                self.glyph_logical_height,
+            )?;
+        }
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,

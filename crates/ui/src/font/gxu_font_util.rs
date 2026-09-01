@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use freetype::bitmap::PixelMode;
 use freetype::face::{KerningMode, LoadFlag};
-use freetype::{Face, Library};
+use freetype::{Face, Library, RenderMode};
 use solarity_asset::{AssetPath, AssetStore};
 
 use crate::font::{FontError, RasterizedGlyph};
@@ -85,13 +85,29 @@ impl FontSystem {
             });
         }
 
-        let flags = match rasterization {
-            FontRasterization::Antialiased => LoadFlag::RENDER | LoadFlag::TARGET_NORMAL,
-            FontRasterization::Monochrome => {
-                LoadFlag::RENDER | LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO
-            }
+        // GxuFontGlyph in build 12340 loads scalable outlines with 0x208A
+        // (NO_HINTING | NO_BITMAP | PEDANTIC | LINEAR_DESIGN), then renders
+        // the slot separately. The hinted RENDER shortcut changes both stock
+        // advances and coverage.
+        let stock_flags = LoadFlag::NO_HINTING
+            | LoadFlag::NO_BITMAP
+            | LoadFlag::PEDANTIC
+            | LoadFlag::LINEAR_DESIGN;
+        let (flags, render_mode) = match rasterization {
+            FontRasterization::Antialiased => (stock_flags, RenderMode::Normal),
+            FontRasterization::Monochrome => (
+                stock_flags | LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO,
+                RenderMode::Mono,
+            ),
         };
         face.load_char(character as usize, flags)
+            .map_err(|error| FontError::Glyph {
+                path: path.clone(),
+                character,
+                message: error.to_string(),
+            })?;
+        face.glyph()
+            .render_glyph(render_mode)
             .map_err(|error| FontError::Glyph {
                 path: path.clone(),
                 character,
@@ -101,7 +117,7 @@ impl FontSystem {
         glyph_from_slot(path, face)
     }
 
-    /// Measures one line using the same hinted face metrics as glyph loading.
+    /// Measures one line using build-12340's unfitted whole-pixel advances.
     ///
     /// Additional XML spacing and shadow extent remain string-object concerns,
     /// so callers apply those after converting the returned 26.6-pixel value.
@@ -132,11 +148,16 @@ impl FontSystem {
                 message: error.to_string(),
             })?;
 
+        let stock_flags = LoadFlag::NO_HINTING
+            | LoadFlag::NO_BITMAP
+            | LoadFlag::PEDANTIC
+            | LoadFlag::LINEAR_DESIGN;
         let flags = match rasterization {
-            FontRasterization::Antialiased => LoadFlag::TARGET_NORMAL,
-            FontRasterization::Monochrome => LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO,
+            FontRasterization::Antialiased => stock_flags,
+            FontRasterization::Monochrome => {
+                stock_flags | LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO
+            }
         };
-        let mut previous = None;
         let mut width = 0_i64;
         for character in text.chars() {
             let Some(index) = face.get_char_index(character as usize) else {
@@ -146,24 +167,14 @@ impl FontSystem {
                     message: "font face does not contain the requested character".to_owned(),
                 });
             };
-            if let Some(previous) = previous {
-                let kerning = face
-                    .get_kerning(previous, index, KerningMode::KerningDefault)
-                    .map_err(|error| FontError::Glyph {
-                        path: path.clone(),
-                        character,
-                        message: format!("failed to read kerning: {error}"),
-                    })?;
-                width = width.saturating_add(i64::from(kerning.x));
-            }
             face.load_glyph(index, flags)
                 .map_err(|error| FontError::Glyph {
                     path: path.clone(),
                     character,
                     message: error.to_string(),
                 })?;
-            width = width.saturating_add(i64::from(face.glyph().advance().x));
-            previous = Some(index);
+            let advance = i64::from(face.glyph().metrics().horiAdvance) / 64 + 1;
+            width = width.saturating_add(advance.saturating_mul(64));
         }
         Ok(width)
     }
@@ -302,7 +313,9 @@ fn glyph_from_slot(path: &AssetPath, face: &Face) -> Result<RasterizedGlyph, Fon
         height,
         bearing_x: slot.bitmap_left(),
         bearing_y: slot.bitmap_top(),
-        advance_x_26_6: i64::from(slot.advance().x),
+        // Stock truncates the signed 26.6 horizontal metric to whole pixels
+        // and adds one pixel before retaining it for string layout.
+        advance_x_26_6: (i64::from(slot.metrics().horiAdvance) / 64 + 1) * 64,
         coverage,
     })
 }

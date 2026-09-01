@@ -668,7 +668,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
         FixtureFile {
             path: "Interface\\GlueXML\\Button.xml",
             bytes: br#"<Ui>
-<FontString name="FontLabel" inherits="GlueFontTest"/>
+<FontString name="FontLabel" inherits="GlueFontTest" text="STATIC_TEXT"/>
 <Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
 <Texture name="GradientTexture"><Gradient orientation="VERTICAL"><MinColor r="0.1" g="0.2" b="0.3" a="0.4"/><MaxColor r="0.6" g="0.7" b="0.8" a="0.9"/></Gradient></Texture>
 <Frame name="OwnedTemplate" virtual="true"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames></Frame>
@@ -692,6 +692,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   local secondTime = GetTime()
   assert(firstTime &gt;= 0 and secondTime &gt;= firstTime)
   assert(math.floor(firstTime * 1000 + 0.5) == firstTime * 1000)
+  assert(FontLabel:GetText() == "STATIC_TEXT")
   FontLabel:SetText("Label")
   assert(FontLabel:GetText() == "Label")
   FontLabel:SetTextColor(0.25, 0.5, 0.75, 0.8)

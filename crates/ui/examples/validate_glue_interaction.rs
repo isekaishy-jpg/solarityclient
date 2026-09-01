@@ -81,8 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     validate_login_input(&mut later)?;
+    let atlas_extent = later.glyphs().extent();
+    let atlas_bytes = later.glyphs().rgba8().len();
+    let visible_glyphs = visible_glyph_owners(&later).len();
     println!(
-        "validated first-run agreements, later-run bypass, and authored login input: changes={changes:?}"
+        "validated first-run agreements, later-run bypass, and authored login input: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} visible_glyphs={visible_glyphs}"
     );
     Ok(())
 }
@@ -90,12 +93,34 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     let account_index = object_index(manager, "AccountLoginAccountEdit")?;
     let password_index = object_index(manager, "AccountLoginPasswordEdit")?;
+    let label_index = object_index(manager, "AccountLoginAccountEditLabel")?;
+    if !visible_glyph_owners(manager).contains(&label_index) {
+        return Err(
+            invalid_data("stock account label produced no visible glyphs".to_owned()).into(),
+        );
+    }
     if manager.focused_edit_box() != Some(account_index) {
         return Err(
             invalid_data("stock login did not focus the account EditBox".to_owned()).into(),
         );
     }
+    let atlas_identity = manager.glyphs().identity();
     manager.text_input("VALIDATION_ACCOUNT")?;
+    if manager.glyphs().identity() != atlas_identity {
+        return Err(invalid_data(
+            "baseline account input unnecessarily rebuilt the glyph atlas".to_owned(),
+        )
+        .into());
+    }
+    let account_glyphs = visible_glyph_owners(manager)
+        .into_iter()
+        .filter(|owner| *owner == account_index)
+        .count();
+    if account_glyphs != "VALIDATION_ACCOUNT".chars().count() {
+        return Err(
+            invalid_data(format!("account EditBox produced {account_glyphs} glyphs")).into(),
+        );
+    }
     if manager.keyboard_key("TAB", true, UiKeyboardModifiers::default())? != Some(account_index)
         || manager.focused_edit_box() != Some(password_index)
     {
@@ -103,7 +128,18 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
             invalid_data("stock login Tab did not focus the password EditBox".to_owned()).into(),
         );
     }
-    manager.text_input("validation-secret")?;
+    const VALIDATION_PASSWORD: &str = "validation-pass";
+    manager.text_input(VALIDATION_PASSWORD)?;
+    let password_glyphs = visible_glyph_owners(manager)
+        .into_iter()
+        .filter(|owner| *owner == password_index)
+        .count();
+    if password_glyphs != VALIDATION_PASSWORD.chars().count() {
+        return Err(invalid_data(format!(
+            "password EditBox produced {password_glyphs} masked glyphs"
+        ))
+        .into());
+    }
     manager.keyboard_key("ENTER", true, UiKeyboardModifiers::default())?;
     let Some(UiGlueNetworkAction::Login(request)) = manager.take_network_action() else {
         return Err(
@@ -111,7 +147,7 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         );
     };
     if request.account_name() != "VALIDATION_ACCOUNT"
-        || request.password_bytes() != b"validation-secret"
+        || request.password_bytes() != VALIDATION_PASSWORD.as_bytes()
     {
         return Err(invalid_data(
             "stock login request did not retain entered credentials".to_owned(),
@@ -127,6 +163,15 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         );
     }
     Ok(())
+}
+
+fn visible_glyph_owners(manager: &GlueManager) -> Vec<usize> {
+    manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .map(|quad| quad.object_index())
+        .collect()
 }
 
 fn contains_change(changes: &[(String, String)], name: &str, value: &str) -> bool {

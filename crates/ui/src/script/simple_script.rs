@@ -184,9 +184,14 @@ struct InitialAnchor {
 struct InitialFont {
     assigned: bool,
     object_name: Option<String>,
+    text_reference: Option<String>,
     justify_h: String,
     justify_v: String,
     spacing: f64,
+    edit_max_letters: u32,
+    edit_password: bool,
+    edit_multiline: bool,
+    edit_text_insets: [f64; 4],
 }
 
 impl Default for InitialFont {
@@ -194,9 +199,14 @@ impl Default for InitialFont {
         Self {
             assigned: false,
             object_name: None,
+            text_reference: None,
             justify_h: "CENTER".to_owned(),
             justify_v: "MIDDLE".to_owned(),
             spacing: 0.0,
+            edit_max_letters: 0,
+            edit_password: false,
+            edit_multiline: false,
+            edit_text_insets: [0.0; 4],
         }
     }
 }
@@ -1978,6 +1988,23 @@ impl UiScriptRuntime {
         if object.kind() == UiObjectKind::EditBox {
             initialize_edit_box(lua, &table)
                 .map_err(|error| execution_error("object registration", error))?;
+            let edit = self
+                .font_strings
+                .get(node_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("EditBox {node_index} has no initial text state"),
+                })?;
+            table
+                .raw_set(edit_max_letters_key(), edit.edit_max_letters)
+                .and_then(|()| table.raw_set(edit_password_key(), edit.edit_password))
+                .and_then(|()| table.raw_set(edit_multi_line_key(), edit.edit_multiline))
+                .and_then(|()| {
+                    table.raw_set(
+                        edit_text_insets_key(),
+                        lua.create_sequence_from(edit.edit_text_insets)?,
+                    )
+                })
+                .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::ScrollFrame {
             table
@@ -2069,6 +2096,15 @@ impl UiScriptRuntime {
                     )
                 })
                 .map_err(|error| execution_error("object registration", error))?;
+            if object.kind() == UiObjectKind::FontString
+                && let Some(reference) = &font.text_reference
+            {
+                let text = stock_text(lua, reference)
+                    .map_err(|error| execution_error("object registration", error))?;
+                table
+                    .raw_set(text_key(), text)
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
             if let Some(name) = &font.object_name {
                 let global: Table = lua.globals().raw_get(name.as_str()).map_err(|error| {
                     execution_error(
@@ -2343,6 +2379,12 @@ fn create_dynamic_frame(
         record.raw_set("scale", 1.0)?;
         record.raw_set("anchors", lua.create_table()?)?;
         record.raw_set("font_assigned", false)?;
+        record.raw_set("font_text_reference", Option::<String>::None)?;
+        record.raw_set("font_spacing", 0.0_f64)?;
+        record.raw_set("edit_max_letters", 0_u32)?;
+        record.raw_set("edit_password", false)?;
+        record.raw_set("edit_multiline", false)?;
+        record.raw_set("edit_text_insets", lua.create_sequence_from([0.0_f64; 4])?)?;
         record.raw_set("justify_h", "CENTER")?;
         record.raw_set("justify_v", "MIDDLE")?;
         record.raw_set(
@@ -2580,6 +2622,22 @@ fn create_dynamic_object(
     }
     if kind == "EditBox" {
         initialize_edit_box(lua, &object)?;
+        object.raw_set(
+            edit_max_letters_key(),
+            record.raw_get::<u32>("edit_max_letters")?,
+        )?;
+        object.raw_set(
+            edit_password_key(),
+            record.raw_get::<bool>("edit_password")?,
+        )?;
+        object.raw_set(
+            edit_multi_line_key(),
+            record.raw_get::<bool>("edit_multiline")?,
+        )?;
+        object.raw_set(
+            edit_text_insets_key(),
+            record.raw_get::<Table>("edit_text_insets")?,
+        )?;
     }
     if kind == "ScrollFrame" {
         object.raw_set(horizontal_scroll_key(), 0.0)?;
@@ -2621,7 +2679,7 @@ fn create_dynamic_object(
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
-        object.raw_set(spacing_key(), 0.0_f64)?;
+        object.raw_set(spacing_key(), record.raw_get::<f64>("font_spacing")?)?;
         object.raw_set(
             text_color_key(),
             lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
@@ -2634,6 +2692,11 @@ fn create_dynamic_object(
             font_shadow_color_key(),
             lua.create_sequence_from([0.0_f64, 0.0, 0.0, 1.0])?,
         )?;
+        if kind == "FontString"
+            && let Some(reference) = record.raw_get::<Option<String>>("font_text_reference")?
+        {
+            object.raw_set(text_key(), stock_text(lua, &reference)?)?;
+        }
         if let Some(name) = record.raw_get::<Option<String>>("font_object_name")? {
             let font: Table = lua.globals().raw_get(name.as_str())?;
             let color: Table = font.raw_get(text_color_key())?;
@@ -6165,43 +6228,120 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
             }
             let mut initial = InitialFont::default();
             for layer in node.layers() {
-                if let Some(inherits) = xml_attribute(layer.element(), "inherits") {
-                    for name in inherits.split(',').map(str::trim) {
-                        if let Some(definition) = fonts.definition(name) {
-                            initial.assigned = true;
-                            initial.object_name = Some(name.to_owned());
-                            apply_font_justification(&mut initial, definition);
-                        }
-                    }
-                }
-                if let Some(font) = xml_attribute(layer.element(), "font") {
-                    initial.assigned = !font.is_empty();
-                    let definition = fonts.definition(font);
-                    initial.object_name = definition.map(|definition| definition.name().to_owned());
-                    if let Some(definition) = definition {
-                        apply_font_justification(&mut initial, definition);
-                    }
-                }
-                if let Some(value) = xml_attribute(layer.element(), "justifyH")
-                    && stock_justify(value).is_some()
-                {
-                    initial.justify_h = value.to_ascii_uppercase();
-                }
-                if let Some(value) = xml_attribute(layer.element(), "justifyV")
-                    && stock_justify(value).is_some()
-                {
-                    initial.justify_v = value.to_ascii_uppercase();
-                }
-                if let Some(value) = xml_attribute(layer.element(), "spacing")
-                    && let Ok(spacing) = value.parse::<f64>()
-                    && spacing.is_finite()
-                {
-                    initial.spacing = spacing;
+                apply_initial_font_element(&mut initial, fonts, layer.element());
+                if node.kind() == UiObjectKind::EditBox {
+                    apply_initial_edit_box_element(
+                        &mut initial,
+                        fonts,
+                        layer.document(),
+                        layer.element(),
+                    );
                 }
             }
             initial
         })
         .collect()
+}
+
+fn apply_initial_font_element(
+    initial: &mut InitialFont,
+    fonts: &FontCatalog,
+    element: &crate::XmlElement,
+) {
+    if let Some(inherits) = xml_attribute(element, "inherits") {
+        for name in inherits.split(',').map(str::trim) {
+            if let Some(definition) = fonts.definition(name) {
+                initial.assigned = true;
+                initial.object_name = Some(name.to_owned());
+                apply_font_justification(initial, definition);
+            }
+        }
+    }
+    if let Some(font) = xml_attribute(element, "font") {
+        initial.assigned = !font.is_empty();
+        let definition = fonts.definition(font);
+        initial.object_name = definition.map(|definition| definition.name().to_owned());
+        if let Some(definition) = definition {
+            apply_font_justification(initial, definition);
+        }
+    }
+    if let Some(value) = xml_attribute(element, "justifyH")
+        && stock_justify(value).is_some()
+    {
+        initial.justify_h = value.to_ascii_uppercase();
+    }
+    if let Some(value) = xml_attribute(element, "justifyV")
+        && stock_justify(value).is_some()
+    {
+        initial.justify_v = value.to_ascii_uppercase();
+    }
+    if let Some(value) = xml_attribute(element, "spacing")
+        && let Ok(spacing) = value.parse::<f64>()
+        && spacing.is_finite()
+    {
+        initial.spacing = spacing;
+    }
+    if let Some(reference) = xml_attribute(element, "text") {
+        initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
+    }
+}
+
+fn apply_initial_edit_box_element(
+    initial: &mut InitialFont,
+    fonts: &FontCatalog,
+    document: &crate::XmlDocument,
+    element: &crate::XmlElement,
+) {
+    if let Some(value) = xml_attribute(element, "letters").and_then(|value| value.parse().ok()) {
+        initial.edit_max_letters = value;
+    }
+    if let Some(value) = xml_attribute(element, "password").and_then(stock_xml_bool) {
+        initial.edit_password = value;
+    }
+    if let Some(value) = xml_attribute(element, "multiLine").and_then(stock_xml_bool) {
+        initial.edit_multiline = value;
+    }
+    for content in element.content() {
+        let XmlContent::Element(index) = content else {
+            continue;
+        };
+        let Some(child) = document.element(*index) else {
+            continue;
+        };
+        if child.name() == "FontString" {
+            apply_initial_font_element(initial, fonts, child);
+        } else if child.name() == "TextInsets" {
+            for content in child.content() {
+                let XmlContent::Element(index) = content else {
+                    continue;
+                };
+                let Some(inset) = document.element(*index) else {
+                    continue;
+                };
+                if inset.name() != "AbsInset" {
+                    continue;
+                }
+                for (slot, name) in ["left", "right", "top", "bottom"].into_iter().enumerate() {
+                    if let Some(value) =
+                        xml_attribute(inset, name).and_then(|value| value.parse::<f64>().ok())
+                        && value.is_finite()
+                    {
+                        initial.edit_text_insets[slot] = value;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn stock_xml_bool(value: &str) -> Option<bool> {
+    if value == "1" || value.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if value == "0" || value.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn tree_buttons(tree: &UiObjectTree<'_>) -> Vec<InitialButton> {
@@ -6614,15 +6754,15 @@ fn edit_max_bytes_key() -> LightUserData {
     hidden_key(&EDIT_MAX_BYTES_TOKEN)
 }
 
-fn edit_cursor_key() -> LightUserData {
+pub(super) fn edit_cursor_key() -> LightUserData {
     hidden_key(&EDIT_CURSOR_TOKEN)
 }
 
-fn edit_selection_start_key() -> LightUserData {
+pub(super) fn edit_selection_start_key() -> LightUserData {
     hidden_key(&EDIT_SELECTION_START_TOKEN)
 }
 
-fn edit_selection_end_key() -> LightUserData {
+pub(super) fn edit_selection_end_key() -> LightUserData {
     hidden_key(&EDIT_SELECTION_END_TOKEN)
 }
 
@@ -6630,7 +6770,7 @@ fn edit_blink_speed_key() -> LightUserData {
     hidden_key(&EDIT_BLINK_SPEED_TOKEN)
 }
 
-fn edit_password_key() -> LightUserData {
+pub(super) fn edit_password_key() -> LightUserData {
     hidden_key(&EDIT_PASSWORD_TOKEN)
 }
 
@@ -6638,7 +6778,7 @@ fn edit_numeric_key() -> LightUserData {
     hidden_key(&EDIT_NUMERIC_TOKEN)
 }
 
-fn edit_multi_line_key() -> LightUserData {
+pub(super) fn edit_multi_line_key() -> LightUserData {
     hidden_key(&EDIT_MULTI_LINE_TOKEN)
 }
 
@@ -6650,7 +6790,7 @@ fn edit_auto_focus_key() -> LightUserData {
     hidden_key(&EDIT_AUTO_FOCUS_TOKEN)
 }
 
-fn edit_text_insets_key() -> LightUserData {
+pub(super) fn edit_text_insets_key() -> LightUserData {
     hidden_key(&EDIT_TEXT_INSETS_TOKEN)
 }
 
@@ -6666,11 +6806,11 @@ pub(super) fn hit_rect_insets_key() -> LightUserData {
     hidden_key(&HIT_RECT_INSETS_TOKEN)
 }
 
-fn font_shadow_offset_key() -> LightUserData {
+pub(super) fn font_shadow_offset_key() -> LightUserData {
     hidden_key(&FONT_SHADOW_OFFSET_TOKEN)
 }
 
-fn font_shadow_color_key() -> LightUserData {
+pub(super) fn font_shadow_color_key() -> LightUserData {
     hidden_key(&FONT_SHADOW_COLOR_TOKEN)
 }
 
@@ -6738,7 +6878,7 @@ fn highlight_font_key() -> LightUserData {
     hidden_key(&HIGHLIGHT_FONT_TOKEN)
 }
 
-fn text_key() -> LightUserData {
+pub(super) fn text_key() -> LightUserData {
     hidden_key(&TEXT_TOKEN)
 }
 
@@ -6746,11 +6886,11 @@ pub(super) fn highlight_locked_key() -> LightUserData {
     hidden_key(&HIGHLIGHT_LOCKED_TOKEN)
 }
 
-fn font_set_key() -> LightUserData {
+pub(super) fn font_set_key() -> LightUserData {
     hidden_key(&FONT_SET_TOKEN)
 }
 
-fn font_object_key() -> LightUserData {
+pub(super) fn font_object_key() -> LightUserData {
     hidden_key(&FONT_OBJECT_TOKEN)
 }
 
@@ -6758,11 +6898,11 @@ pub(super) fn tex_coord_key() -> LightUserData {
     hidden_key(&TEX_COORD_TOKEN)
 }
 
-fn justify_h_key() -> LightUserData {
+pub(super) fn justify_h_key() -> LightUserData {
     hidden_key(&JUSTIFY_H_TOKEN)
 }
 
-fn justify_v_key() -> LightUserData {
+pub(super) fn justify_v_key() -> LightUserData {
     hidden_key(&JUSTIFY_V_TOKEN)
 }
 
@@ -6794,7 +6934,7 @@ pub(super) fn drag_button_key() -> LightUserData {
     hidden_key(&DRAG_BUTTON_TOKEN)
 }
 
-fn spacing_key() -> LightUserData {
+pub(super) fn spacing_key() -> LightUserData {
     hidden_key(&SPACING_TOKEN)
 }
 
@@ -6898,7 +7038,7 @@ fn status_bar_texture_key() -> LightUserData {
     hidden_key(&STATUS_BAR_TEXTURE_TOKEN)
 }
 
-fn text_color_key() -> LightUserData {
+pub(super) fn text_color_key() -> LightUserData {
     hidden_key(&TEXT_COLOR_TOKEN)
 }
 
@@ -6922,15 +7062,15 @@ pub(super) fn tooltip_padding_key() -> LightUserData {
     hidden_key(&TOOLTIP_PADDING_TOKEN)
 }
 
-fn font_face_key() -> LightUserData {
+pub(super) fn font_face_key() -> LightUserData {
     hidden_key(&FONT_FACE_TOKEN)
 }
 
-fn font_height_key() -> LightUserData {
+pub(super) fn font_height_key() -> LightUserData {
     hidden_key(&FONT_HEIGHT_TOKEN)
 }
 
-fn font_flags_key() -> LightUserData {
+pub(super) fn font_flags_key() -> LightUserData {
     hidden_key(&FONT_FLAGS_TOKEN)
 }
 

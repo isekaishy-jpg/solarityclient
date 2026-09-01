@@ -42,7 +42,7 @@ impl UiRenderPlan {
         })
     }
 
-    /// Flattens live textures followed by clipped `SimpleHTML` glyphs.
+    /// Interleaves live textures and clipped glyphs by the shared stock packet key.
     ///
     /// # Errors
     ///
@@ -55,20 +55,40 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         logical_extent: (f64, f64),
     ) -> Result<Self, UiRenderError> {
-        let mut quads = presentation
+        let mut ordered = presentation
             .members_in_draw_order()
             .iter()
-            .map(render_quad)
+            .enumerate()
+            .map(|(sequence, texture)| {
+                (
+                    Some(texture.key()),
+                    texture.object_index(),
+                    sequence,
+                    render_quad(texture),
+                )
+            })
             .collect::<Vec<_>>();
-        quads.extend(
+        let texture_count = ordered.len();
+        ordered.extend(
             glyphs
                 .quads_with_scroll(geometry, scroll_frames)
                 .into_iter()
-                .map(|quad| render_glyph_quad(glyphs.identity(), quad)),
+                .enumerate()
+                .map(|(sequence, quad)| {
+                    (
+                        quad.packet_key(),
+                        quad.object_index(),
+                        texture_count + sequence,
+                        render_glyph_quad(glyphs.identity(), quad),
+                    )
+                }),
         );
+        ordered.sort_by_key(|(key, object_index, sequence, _)| {
+            (key.is_none(), *key, *object_index, *sequence)
+        });
         let mesh = UiMeshPlan::prepare(
             [logical_extent.0 as f32, logical_extent.1 as f32],
-            quads.into_iter(),
+            ordered.into_iter().map(|(_, _, _, quad)| quad),
         )?;
         let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
         Ok(Self {

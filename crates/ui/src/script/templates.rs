@@ -88,6 +88,12 @@ pub struct UiRuntimeTemplateNode {
     anchors: Vec<UiRuntimeAnchorPrototype>,
     font_assigned: bool,
     font_object_name: Option<String>,
+    font_text_reference: Option<String>,
+    font_spacing: f64,
+    edit_max_letters: u32,
+    edit_password: bool,
+    edit_multiline: bool,
+    edit_text_insets: [f64; 4],
     justify_h: String,
     justify_v: String,
     button_text_reference: Option<String>,
@@ -246,8 +252,7 @@ impl UiRuntimeTemplatePlan {
                         .map(|target| (binding.handler(), target))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let (font_assigned, font_object_name, justify_h, justify_v) =
-                    initial_font(object, fonts);
+                let font = initial_font(object, fonts);
                 let button = initial_button(object);
                 let texture = initial_texture(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
@@ -268,10 +273,16 @@ impl UiRuntimeTemplatePlan {
                     alpha: region.alpha,
                     scale: region.scale,
                     anchors: region.anchors,
-                    font_assigned,
-                    font_object_name,
-                    justify_h,
-                    justify_v,
+                    font_assigned: font.assigned,
+                    font_object_name: font.object_name,
+                    font_text_reference: font.text_reference,
+                    font_spacing: font.spacing,
+                    edit_max_letters: font.edit_max_letters,
+                    edit_password: font.edit_password,
+                    edit_multiline: font.edit_multiline,
+                    edit_text_insets: font.edit_text_insets,
+                    justify_h: font.justify_h,
+                    justify_v: font.justify_v,
                     button_text_reference: button.text_reference,
                     normal_font: button.normal_font,
                     disabled_font: button.disabled_font,
@@ -439,6 +450,15 @@ impl UiRuntimeTemplatePlan {
                 if let Some(name) = &node.font_object_name {
                     record.raw_set("font_object_name", name.as_str())?;
                 }
+                record.raw_set("font_text_reference", node.font_text_reference.as_deref())?;
+                record.raw_set("font_spacing", node.font_spacing)?;
+                record.raw_set("edit_max_letters", node.edit_max_letters)?;
+                record.raw_set("edit_password", node.edit_password)?;
+                record.raw_set("edit_multiline", node.edit_multiline)?;
+                record.raw_set(
+                    "edit_text_insets",
+                    lua.create_sequence_from(node.edit_text_insets)?,
+                )?;
                 record.raw_set("justify_h", node.justify_h.as_str())?;
                 record.raw_set("justify_v", node.justify_v.as_str())?;
                 record.raw_set(
@@ -495,46 +515,147 @@ impl UiRuntimeTemplatePlan {
     }
 }
 
-fn initial_font(
-    node: &crate::UiObjectNode<'_>,
-    fonts: &FontCatalog,
-) -> (bool, Option<String>, String, String) {
+#[derive(Default)]
+struct InitialFont {
+    assigned: bool,
+    object_name: Option<String>,
+    text_reference: Option<String>,
+    spacing: f64,
+    edit_max_letters: u32,
+    edit_password: bool,
+    edit_multiline: bool,
+    edit_text_insets: [f64; 4],
+    justify_h: String,
+    justify_v: String,
+}
+
+fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialFont {
     if !matches!(
         node.kind(),
         UiObjectKind::FontString | UiObjectKind::EditBox
     ) {
-        return (false, None, "CENTER".to_owned(), "MIDDLE".to_owned());
+        return InitialFont {
+            justify_h: "CENTER".to_owned(),
+            justify_v: "MIDDLE".to_owned(),
+            ..InitialFont::default()
+        };
     }
-    let mut assigned = false;
-    let mut object_name = None;
-    let mut justify_h = "CENTER".to_owned();
-    let mut justify_v = "MIDDLE".to_owned();
+    let mut initial = InitialFont {
+        justify_h: "CENTER".to_owned(),
+        justify_v: "MIDDLE".to_owned(),
+        ..InitialFont::default()
+    };
     for layer in node.layers() {
-        if let Some(inherits) = attribute(layer.element(), "inherits") {
-            for name in inherits.split(',').map(str::trim) {
-                if let Some(definition) = fonts.definition(name) {
-                    assigned = true;
-                    object_name = Some(name.to_owned());
-                    apply_justification(definition, &mut justify_h, &mut justify_v);
+        apply_initial_font_element(&mut initial, fonts, layer.element());
+        if node.kind() == UiObjectKind::EditBox {
+            apply_initial_edit_box_element(&mut initial, fonts, layer.document(), layer.element());
+        }
+    }
+    initial
+}
+
+fn apply_initial_font_element(
+    initial: &mut InitialFont,
+    fonts: &FontCatalog,
+    element: &crate::XmlElement,
+) {
+    if let Some(inherits) = attribute(element, "inherits") {
+        for name in inherits.split(',').map(str::trim) {
+            if let Some(definition) = fonts.definition(name) {
+                initial.assigned = true;
+                initial.object_name = Some(name.to_owned());
+                apply_font(definition, initial);
+            }
+        }
+    }
+    if let Some(font) = attribute(element, "font") {
+        initial.assigned = !font.is_empty();
+        let definition = fonts.definition(font);
+        initial.object_name = definition.map(|definition| definition.name().to_owned());
+        if let Some(definition) = definition {
+            apply_font(definition, initial);
+        }
+    }
+    if let Some(value) = attribute(element, "justifyH") {
+        initial.justify_h = value.to_ascii_uppercase();
+    }
+    if let Some(value) = attribute(element, "justifyV") {
+        initial.justify_v = value.to_ascii_uppercase();
+    }
+    if let Some(value) = attribute(element, "spacing")
+        && let Ok(spacing) = value.parse::<f64>()
+        && spacing.is_finite()
+    {
+        initial.spacing = spacing;
+    }
+    if let Some(reference) = attribute(element, "text") {
+        initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
+    }
+}
+
+fn apply_initial_edit_box_element(
+    initial: &mut InitialFont,
+    fonts: &FontCatalog,
+    document: &crate::XmlDocument,
+    element: &crate::XmlElement,
+) {
+    if let Some(value) = attribute(element, "letters").and_then(|value| value.parse().ok()) {
+        initial.edit_max_letters = value;
+    }
+    if let Some(value) = attribute(element, "password").and_then(stock_xml_bool) {
+        initial.edit_password = value;
+    }
+    if let Some(value) = attribute(element, "multiLine").and_then(stock_xml_bool) {
+        initial.edit_multiline = value;
+    }
+    for content in element.content() {
+        let crate::XmlContent::Element(index) = content else {
+            continue;
+        };
+        let Some(child) = document.element(*index) else {
+            continue;
+        };
+        if child.name() == "FontString" {
+            apply_initial_font_element(initial, fonts, child);
+        } else if child.name() == "TextInsets" {
+            for content in child.content() {
+                let crate::XmlContent::Element(index) = content else {
+                    continue;
+                };
+                let Some(inset) = document.element(*index) else {
+                    continue;
+                };
+                if inset.name() != "AbsInset" {
+                    continue;
+                }
+                for (slot, name) in ["left", "right", "top", "bottom"].into_iter().enumerate() {
+                    if let Some(value) =
+                        attribute(inset, name).and_then(|value| value.parse::<f64>().ok())
+                        && value.is_finite()
+                    {
+                        initial.edit_text_insets[slot] = value;
+                    }
                 }
             }
         }
-        if let Some(font) = attribute(layer.element(), "font") {
-            assigned = !font.is_empty();
-            let definition = fonts.definition(font);
-            object_name = definition.map(|definition| definition.name().to_owned());
-            if let Some(definition) = definition {
-                apply_justification(definition, &mut justify_h, &mut justify_v);
-            }
-        }
-        if let Some(value) = attribute(layer.element(), "justifyH") {
-            justify_h = value.to_ascii_uppercase();
-        }
-        if let Some(value) = attribute(layer.element(), "justifyV") {
-            justify_v = value.to_ascii_uppercase();
-        }
     }
-    (assigned, object_name, justify_h, justify_v)
+}
+
+fn stock_xml_bool(value: &str) -> Option<bool> {
+    if value == "1" || value.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if value == "0" || value.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn apply_font(definition: &crate::FontDefinition, initial: &mut InitialFont) {
+    if let Some(spacing) = definition.spacing() {
+        initial.spacing = f64::from(spacing);
+    }
+    apply_justification(definition, &mut initial.justify_h, &mut initial.justify_v);
 }
 
 #[derive(Default)]

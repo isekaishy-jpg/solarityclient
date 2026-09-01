@@ -27,6 +27,24 @@ pub struct UiPresentationPacketKey {
 }
 
 impl UiPresentationPacketKey {
+    pub(crate) fn for_text(live: &UiRuntimeObjectPlan, object_index: usize) -> Option<Self> {
+        let object = live.objects().get(object_index)?;
+        let text = object.text.as_ref()?;
+        let owner_index = object
+            .frame_level
+            .is_some()
+            .then_some(object_index)
+            .or_else(|| nearest_owning_frame(live, object))?;
+        let owner = live.objects().get(owner_index)?;
+        Some(Self {
+            strata: owner.frame_strata?,
+            frame_level: owner.frame_level?,
+            frame_sequence: owner_index,
+            draw_rank: draw_rank(text.draw_layer, object.role),
+            draw_sub_level: text.draw_sub_level,
+        })
+    }
+
     /// Returns the owning frame stratum.
     #[must_use]
     pub const fn strata(self) -> UiFrameStrata {
@@ -61,6 +79,7 @@ impl UiPresentationPacketKey {
 /// One render-ready texture quad retaining its live object identity.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiTexturePresentation {
+    key: UiPresentationPacketKey,
     object_index: usize,
     source: UiTextureSource,
     blend_mode: UiBlendMode,
@@ -158,6 +177,10 @@ impl UiModelPresentation {
 }
 
 impl UiTexturePresentation {
+    pub(crate) const fn key(&self) -> UiPresentationPacketKey {
+        self.key
+    }
+
     /// Returns the live object-arena index used for subsequent updates.
     #[must_use]
     pub const fn object_index(&self) -> usize {
@@ -319,6 +342,7 @@ impl UiPresentationPlan {
             keyed.push((
                 key,
                 UiTexturePresentation {
+                    key,
                     object_index,
                     source,
                     blend_mode: texture.blend_mode,

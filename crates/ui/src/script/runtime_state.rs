@@ -4,18 +4,22 @@ use mlua::{Lua, Table};
 
 use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, button_pressed_key, checked_key, click_action_key,
-    desaturated_key, draw_layer_key, draw_sub_level_key, edit_focused_key, enabled_key,
-    frame_level_key, frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key,
-    horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key, index_key,
+    desaturated_key, draw_layer_key, draw_sub_level_key, edit_cursor_key, edit_focused_key,
+    edit_multi_line_key, edit_password_key, edit_selection_end_key, edit_selection_start_key,
+    edit_text_insets_key, enabled_key, font_face_key, font_flags_key, font_height_key,
+    font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key, frame_level_key,
+    frame_strata_key, height_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
+    horizontal_scroll_range_key, horizontal_tiling_key, index_key, justify_h_key, justify_v_key,
     keyboard_enabled_key, model_camera_key, model_file_key, model_scale_key, model_sequence_key,
     model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
     mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
-    scale_key, shown_key, tex_coord_key, texture_blend_mode_key, texture_color_key,
-    texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key,
+    scale_key, shown_key, spacing_key, tex_coord_key, text_color_key, text_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
-    UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectKind, UiObjectRole, UiPoint, UiScriptError,
+    FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
+    UiObjectKind, UiObjectRole, UiPoint, UiScriptError, VerticalJustification,
 };
 use solarity_asset::AssetPath;
 
@@ -43,6 +47,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) first_anchor: usize,
     pub(crate) anchor_count: usize,
     pub(crate) texture: Option<UiRuntimeTexture>,
+    pub(crate) text: Option<UiRuntimeText>,
     pub(crate) model: Option<UiRuntimeModel>,
     pub(crate) frame_level: Option<i32>,
     pub(crate) frame_strata: Option<UiFrameStrata>,
@@ -58,6 +63,28 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) highlighted: Option<bool>,
     pub(crate) pushed: Option<bool>,
     pub(crate) edit_focused: Option<bool>,
+}
+
+/// Post-Lua text, font, alignment, and EditBox presentation state.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct UiRuntimeText {
+    pub(crate) content: String,
+    pub(crate) face: AssetPath,
+    pub(crate) height: f64,
+    pub(crate) rasterization: FontRasterization,
+    pub(crate) color: [f64; 4],
+    pub(crate) shadow_offset: [f64; 2],
+    pub(crate) shadow_color: [f64; 4],
+    pub(crate) spacing: f64,
+    pub(crate) horizontal: HorizontalJustification,
+    pub(crate) vertical: VerticalJustification,
+    pub(crate) draw_layer: UiDrawLayer,
+    pub(crate) draw_sub_level: i16,
+    pub(crate) password: bool,
+    pub(crate) multiline: bool,
+    pub(crate) text_insets: [f64; 4],
+    pub(crate) cursor: usize,
+    pub(crate) selection: [usize; 2],
 }
 
 /// Post-Lua model source and animation-selection properties.
@@ -156,6 +183,11 @@ pub(super) fn snapshot_runtime_objects(
         let texture = (kind == UiObjectKind::Texture)
             .then(|| snapshot_texture(lua_index, &table))
             .transpose()?;
+        let text = if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
+            snapshot_text(lua_index, kind, &table)?
+        } else {
+            None
+        };
         let model = matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
             .then(|| snapshot_model(lua_index, &table))
             .transpose()?;
@@ -182,6 +214,7 @@ pub(super) fn snapshot_runtime_objects(
             first_anchor,
             anchor_count: anchors.len() - first_anchor,
             texture,
+            text,
             model,
             frame_level: is_frame
                 .then(|| {
@@ -287,6 +320,148 @@ pub(super) fn snapshot_runtime_objects(
     }
 
     Ok(UiRuntimeObjectPlan { objects, anchors })
+}
+
+fn snapshot_text(
+    lua_index: usize,
+    kind: UiObjectKind,
+    table: &Table,
+) -> Result<Option<UiRuntimeText>, UiScriptError> {
+    let font_set = table
+        .raw_get::<bool>(font_set_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} font assignment"), error))?;
+    if !font_set {
+        return Ok(None);
+    }
+    let Some(font) = table
+        .raw_get::<Option<Table>>(font_object_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} font object"), error))?
+    else {
+        return Ok(None);
+    };
+    let Some(face) = font
+        .raw_get::<Option<String>>(font_face_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} font face"), error))?
+    else {
+        return Ok(None);
+    };
+    let face = AssetPath::new(&face).map_err(|error| UiScriptError::Plan {
+        message: format!("live UI text {lua_index} has invalid font face: {error}"),
+    })?;
+    let Some(height) = font
+        .raw_get::<Option<f64>>(font_height_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} font height"), error))?
+    else {
+        return Ok(None);
+    };
+    if !height.is_finite() || height <= 0.0 {
+        return Err(UiScriptError::Plan {
+            message: format!("live UI text {lua_index} has invalid font height {height}"),
+        });
+    }
+    let flags = font
+        .raw_get::<String>(font_flags_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} font flags"), error))?;
+    let content = table
+        .raw_get::<Option<String>>(text_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} text"), error))?
+        .unwrap_or_default();
+    let content_len = content.len();
+    let horizontal = table.raw_get::<String>(justify_h_key()).map_err(|error| {
+        snapshot_error(format!("object {lua_index} horizontal alignment"), error)
+    })?;
+    let vertical = table
+        .raw_get::<String>(justify_v_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} vertical alignment"), error))?;
+    let draw_layer = table
+        .raw_get::<String>(draw_layer_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} text draw layer"), error))?;
+    let color: Table = table
+        .raw_get(text_color_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} text color"), error))?;
+    let shadow_offset: Table = table
+        .raw_get(font_shadow_offset_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} shadow offset"), error))?;
+    let shadow_color: Table = table
+        .raw_get(font_shadow_color_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} shadow color"), error))?;
+    let is_edit_box = kind == UiObjectKind::EditBox;
+    let text_insets = if is_edit_box {
+        let values: Table = table
+            .raw_get(edit_text_insets_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} text insets"), error))?;
+        numeric_array::<4>(&values, lua_index, "text insets")?
+    } else {
+        [0.0; 4]
+    };
+    let cursor = if is_edit_box {
+        table
+            .raw_get::<u32>(edit_cursor_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} cursor"), error))?
+            as usize
+    } else {
+        0
+    };
+    let selection = if is_edit_box {
+        [
+            table
+                .raw_get::<u32>(edit_selection_start_key())
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} selection start"), error)
+                })? as usize,
+            table
+                .raw_get::<u32>(edit_selection_end_key())
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} selection end"), error)
+                })? as usize,
+        ]
+    } else {
+        [0, 0]
+    };
+    Ok(Some(UiRuntimeText {
+        content,
+        face,
+        height,
+        rasterization: if flags
+            .split(',')
+            .any(|flag| flag.trim().eq_ignore_ascii_case("MONOCHROME"))
+        {
+            FontRasterization::Monochrome
+        } else {
+            FontRasterization::Antialiased
+        },
+        color: numeric_array::<4>(&color, lua_index, "text color")?,
+        shadow_offset: numeric_array::<2>(&shadow_offset, lua_index, "shadow offset")?,
+        shadow_color: numeric_array::<4>(&shadow_color, lua_index, "shadow color")?,
+        spacing: finite_region_number(table, spacing_key(), lua_index, "font spacing")?,
+        horizontal: parse_horizontal_justification(&horizontal).ok_or_else(|| {
+            UiScriptError::Plan {
+                message: format!(
+                    "live UI text {lua_index} has unknown horizontal alignment {horizontal}"
+                ),
+            }
+        })?,
+        vertical: parse_vertical_justification(&vertical).ok_or_else(|| UiScriptError::Plan {
+            message: format!("live UI text {lua_index} has unknown vertical alignment {vertical}"),
+        })?,
+        draw_layer: parse_draw_layer(&draw_layer).ok_or_else(|| UiScriptError::Plan {
+            message: format!("live UI text {lua_index} has unknown draw layer {draw_layer}"),
+        })?,
+        draw_sub_level: table
+            .raw_get(draw_sub_level_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} text sublevel"), error))?,
+        password: is_edit_box
+            && table
+                .raw_get::<bool>(edit_password_key())
+                .map_err(|error| snapshot_error(format!("object {lua_index} password"), error))?,
+        multiline: is_edit_box
+            && table
+                .raw_get::<bool>(edit_multi_line_key())
+                .map_err(|error| snapshot_error(format!("object {lua_index} multiline"), error))?,
+        text_insets,
+        cursor: cursor.min(content_len),
+        selection: selection.map(|offset| offset.min(content_len)),
+    }))
 }
 
 fn snapshot_model(lua_index: usize, table: &Table) -> Result<UiRuntimeModel, UiScriptError> {
@@ -429,6 +604,24 @@ fn parse_draw_layer(value: &str) -> Option<UiDrawLayer> {
         "ARTWORK" => Some(UiDrawLayer::Artwork),
         "OVERLAY" => Some(UiDrawLayer::Overlay),
         "HIGHLIGHT" => Some(UiDrawLayer::Highlight),
+        _ => None,
+    }
+}
+
+fn parse_horizontal_justification(value: &str) -> Option<HorizontalJustification> {
+    match value {
+        "LEFT" => Some(HorizontalJustification::Left),
+        "CENTER" => Some(HorizontalJustification::Center),
+        "RIGHT" => Some(HorizontalJustification::Right),
+        _ => None,
+    }
+}
+
+fn parse_vertical_justification(value: &str) -> Option<VerticalJustification> {
+    match value {
+        "TOP" => Some(VerticalJustification::Top),
+        "MIDDLE" => Some(VerticalJustification::Middle),
+        "BOTTOM" => Some(VerticalJustification::Bottom),
         _ => None,
     }
 }
