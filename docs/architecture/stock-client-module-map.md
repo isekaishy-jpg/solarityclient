@@ -176,3 +176,8 @@ checks all 326 production plus 166 external test files.
   returns no values when either fact is absent. UI world state therefore
   retains the explicit language row instead of deriving an English label from
   faction.
+- Common-script registration `00ad2184` maps `GetTime` to `006081f0`. That
+  function reads an unsigned 32-bit client tick and multiplies it by the double
+  at `009e56b0`, exactly `0.001`, yielding seconds at millisecond granularity.
+  The UI environment retains a monotonic epoch and preserves the native
+  low-32-bit millisecond wrap instead of consulting wall-clock time.

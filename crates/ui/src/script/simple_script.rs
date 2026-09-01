@@ -297,6 +297,7 @@ pub struct UiScriptEnvironment {
     logical_extent: (u32, u32),
     ui_extent: (f64, f64),
     streaming_trial: bool,
+    client_clock: crate::UiClientClock,
     cvars: UiCVarRegistry,
     assets: Option<AssetStoreHandle>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
@@ -337,6 +338,7 @@ impl UiScriptEnvironment {
             logical_extent: (logical_width, logical_height),
             ui_extent: (ui_width, ui_height),
             streaming_trial,
+            client_clock: crate::UiClientClock::new(),
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
@@ -374,6 +376,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub const fn streaming_trial(&self) -> bool {
         self.streaming_trial
+    }
+
+    /// Returns the monotonic process-relative client clock.
+    #[must_use]
+    pub const fn client_clock(&self) -> crate::UiClientClock {
+        self.client_clock
     }
 
     /// Returns one registered console variable's current script-visible text.

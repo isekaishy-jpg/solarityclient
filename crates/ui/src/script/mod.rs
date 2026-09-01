@@ -4,6 +4,7 @@
 //! this boundary. `mlua` is configured for stock Lua 5.1.5 semantics; API
 //! permission checks are behavior to reproduce, not bypass.
 
+mod clock;
 mod handlers;
 mod network_intent;
 mod runtime_state;
@@ -11,6 +12,7 @@ mod simple_script;
 mod status;
 mod templates;
 
+pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use network_intent::{
     UiCharacterDirectory, UiCharacterInfo, UiGlueNetworkAction, UiGlueNetworkStatus,

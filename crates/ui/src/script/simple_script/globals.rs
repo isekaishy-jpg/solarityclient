@@ -511,6 +511,11 @@ fn register_client_runtime_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    let client_clock = environment.client_clock();
+    globals.raw_set(
+        "GetTime",
+        lua.create_function(move |_, ()| Ok(client_clock.seconds()))?,
+    )?;
     let locale = environment.locale();
     globals.raw_set(
         "GetLocale",
