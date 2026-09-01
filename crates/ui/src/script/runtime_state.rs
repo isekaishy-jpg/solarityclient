@@ -410,6 +410,7 @@ fn finite_region_number(
 fn parse_role(value: &str) -> Option<UiObjectRole> {
     match value {
         "object" => Some(UiObjectRole::Object),
+        "scroll_child" => Some(UiObjectRole::ScrollChild),
         "button_text" => Some(UiObjectRole::ButtonText),
         "normal_texture" => Some(UiObjectRole::NormalTexture),
         "pushed_texture" => Some(UiObjectRole::PushedTexture),

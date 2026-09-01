@@ -29,6 +29,8 @@ pub enum UiDrawLayer {
 pub enum UiObjectRole {
     /// An ordinary frame, region, or widget declaration.
     Object,
+    /// Frame assigned through a scroll frame's singular `ScrollChild` slot.
+    ScrollChild,
     /// Button label font string.
     ButtonText,
     /// Default button texture.
@@ -514,7 +516,7 @@ impl<'bundle> UiObjectTree<'bundle> {
     ) -> Result<(), UiObjectError> {
         let layers = self.nodes[node_index].layers[first_new_layer..].to_vec();
         for layer in layers {
-            self.scan_descendants(catalog, fonts, node_index, layer, layer.element)?;
+            self.scan_descendants(catalog, fonts, node_index, layer, layer.element, None)?;
         }
         Ok(())
     }
@@ -526,6 +528,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         parent: usize,
         layer: UiElementLayer<'bundle>,
         element: &'bundle XmlElement,
+        role_override: Option<UiObjectRole>,
     ) -> Result<(), UiObjectError> {
         for content in element.content() {
             let XmlContent::Element(index) = content else {
@@ -546,7 +549,7 @@ impl<'bundle> UiObjectTree<'bundle> {
                         draw_layer: layer.draw_layer,
                     },
                     kind,
-                    role,
+                    role_override.unwrap_or(role),
                 )?;
             } else {
                 let descendant_layer = if child.name() == "Layer" {
@@ -557,7 +560,22 @@ impl<'bundle> UiObjectTree<'bundle> {
                 } else {
                     layer
                 };
-                self.scan_descendants(catalog, fonts, parent, descendant_layer, child)?;
+                // ScrollChild is a structural XML wrapper, not a runtime
+                // object. Its sole nested frame occupies a semantic slot on
+                // the owning ScrollFrame and is installed by the script layer.
+                let descendant_role = if child.name() == "ScrollChild" {
+                    Some(UiObjectRole::ScrollChild)
+                } else {
+                    role_override
+                };
+                self.scan_descendants(
+                    catalog,
+                    fonts,
+                    parent,
+                    descendant_layer,
+                    child,
+                    descendant_role,
+                )?;
             }
         }
         Ok(())

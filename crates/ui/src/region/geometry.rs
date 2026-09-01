@@ -209,7 +209,7 @@ impl GeometryResolver<'_> {
         let role = object.role;
         let mut anchors = self.live.anchors_for(object).to_vec();
         if anchors.is_empty()
-            && role != UiObjectRole::Object
+            && !matches!(role, UiObjectRole::Object | UiObjectRole::ScrollChild)
             && let Some(parent) = parent_index
         {
             anchors.push(UiRuntimeAnchor {

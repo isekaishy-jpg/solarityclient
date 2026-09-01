@@ -607,6 +607,7 @@ fn object_kind_name(kind: UiObjectKind) -> &'static str {
 fn object_role_name(role: crate::UiObjectRole) -> &'static str {
     match role {
         crate::UiObjectRole::Object => "object",
+        crate::UiObjectRole::ScrollChild => "scroll_child",
         crate::UiObjectRole::ButtonText => "button_text",
         crate::UiObjectRole::NormalTexture => "normal_texture",
         crate::UiObjectRole::PushedTexture => "pushed_texture",

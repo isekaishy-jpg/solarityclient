@@ -286,7 +286,10 @@ fn nearest_owning_frame(live: &UiRuntimeObjectPlan, object: &UiRuntimeObject) ->
 
 fn widget_role_is_presented(role: UiObjectRole, owner: &UiRuntimeObject) -> bool {
     match role {
-        UiObjectRole::Object | UiObjectRole::ButtonText | UiObjectRole::ThumbTexture => true,
+        UiObjectRole::Object
+        | UiObjectRole::ScrollChild
+        | UiObjectRole::ButtonText
+        | UiObjectRole::ThumbTexture => true,
         UiObjectRole::NormalTexture => owner.enabled != Some(false),
         UiObjectRole::PushedTexture => owner.enabled != Some(false) && owner.pushed == Some(true),
         UiObjectRole::DisabledTexture => owner.enabled == Some(false),

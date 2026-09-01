@@ -115,6 +115,7 @@ static TEXT_COLOR_TOKEN: u8 = 75;
 static DESATURATED_TOKEN: u8 = 76;
 static DRAG_BUTTON_TOKEN: u8 = 77;
 static SPACING_TOKEN: u8 = 78;
+static SCROLL_CHILD_TOKEN: u8 = 79;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -1207,6 +1208,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(vertical_scroll_key(), 0.0))
                 .and_then(|()| table.raw_set(horizontal_scroll_range_key(), 0.0))
                 .and_then(|()| table.raw_set(vertical_scroll_range_key(), 0.0))
+                .and_then(|()| table.raw_set(scroll_child_key(), Option::<Table>::None))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if matches!(
@@ -1355,7 +1357,7 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if let Some(key) = widget_region_key(object.role())
-            && let Some(parent) = object.parent()
+            && let Some(parent) = object.construction_parent()
         {
             let owner: Table = objects
                 .raw_get(parent + 1)
@@ -1724,6 +1726,7 @@ fn create_dynamic_object(
         object.raw_set(vertical_scroll_key(), 0.0)?;
         object.raw_set(horizontal_scroll_range_key(), 0.0)?;
         object.raw_set(vertical_scroll_range_key(), 0.0)?;
+        object.raw_set(scroll_child_key(), Option::<Table>::None)?;
     }
     if matches!(kind, "Slider" | "StatusBar") {
         object.raw_set(slider_min_key(), 0.0)?;
@@ -3062,6 +3065,18 @@ fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {
 
 fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
+        "GetScrollChild",
+        lua.create_function(|_, object: Table| {
+            object.raw_get::<Option<Table>>(scroll_child_key())
+        })?,
+    )?;
+    methods.raw_set(
+        "SetScrollChild",
+        lua.create_function(|lua, (object, requested): (Table, Value)| {
+            set_scroll_child(lua, &object, requested)
+        })?,
+    )?;
+    methods.raw_set(
         "GetHorizontalScroll",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(horizontal_scroll_key()))?,
     )?;
@@ -3092,6 +3107,75 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
         })?,
     )?;
     Ok(())
+}
+
+/// Applies the stock scroll-child ownership contract recovered from
+/// `CSimpleScrollFrame::SetScrollChild` in the 3.3.5a executable.
+fn set_scroll_child(lua: &Lua, object: &Table, requested: Value) -> mlua::Result<()> {
+    let owner_name = object
+        .raw_get::<Option<String>>(name_key())?
+        .unwrap_or_else(|| "<unnamed>".to_owned());
+    let child = match requested {
+        Value::Nil => None,
+        Value::String(name) => {
+            let name = name.to_str()?;
+            lua.globals()
+                .raw_get::<Option<Table>>(name.as_ref())?
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!(
+                        "{owner_name}:SetScrollChild(): Couldn't find frame named '{name}'"
+                    ))
+                })?
+                .into()
+        }
+        Value::Table(child) => Some(child),
+        _ => {
+            return Err(mlua::Error::runtime(format!(
+                "{owner_name}:SetScrollChild(): Couldn't find frame named '<invalid>'"
+            )));
+        }
+    };
+
+    if let Some(child) = child.as_ref() {
+        let child_type = child.raw_get::<Option<String>>(type_key())?;
+        let Some(child_type) = child_type else {
+            return Err(mlua::Error::runtime(format!(
+                "{owner_name}:SetScrollChild(): Couldn't find 'this' in child object"
+            )));
+        };
+        if !is_object_type(&child_type, "Frame") {
+            return Err(mlua::Error::runtime(format!(
+                "{owner_name}:SetScrollChild(): Wrong child object type, expected frame"
+            )));
+        }
+
+        let requested_index = child.raw_get::<usize>(index_key())?;
+        let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+        let mut cursor = Some(object.raw_get::<usize>(index_key())?);
+        while let Some(index) = cursor {
+            if index == requested_index {
+                let child_name = child
+                    .raw_get::<Option<String>>(name_key())?
+                    .unwrap_or_else(|| "<unnamed>".to_owned());
+                return Err(mlua::Error::runtime(format!(
+                    "{owner_name}:SetScrollChild(): Would create a loop adding child {child_name}"
+                )));
+            }
+            let candidate: Table = objects.raw_get(index)?;
+            cursor = candidate.raw_get::<Option<usize>>(parent_key())?;
+        }
+    }
+
+    // Native code detaches the previous scroll child before assigning and
+    // parenting the replacement. This relation is therefore stronger than a
+    // cached getter value and must update the live region hierarchy as well.
+    if let Some(previous) = object.raw_get::<Option<Table>>(scroll_child_key())? {
+        previous.raw_set(parent_key(), Option::<usize>::None)?;
+    }
+    if let Some(child) = child.as_ref() {
+        child.raw_set(parent_key(), object.raw_get::<usize>(index_key())?)?;
+    }
+    object.raw_set(scroll_child_key(), child)
 }
 
 fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -4033,6 +4117,7 @@ fn xml_attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a s
 
 fn widget_region_key(role: UiObjectRole) -> Option<LightUserData> {
     match role {
+        UiObjectRole::ScrollChild => Some(scroll_child_key()),
         UiObjectRole::ButtonText => Some(button_text_key()),
         UiObjectRole::NormalTexture => Some(normal_texture_key()),
         UiObjectRole::PushedTexture => Some(pushed_texture_key()),
@@ -4044,6 +4129,7 @@ fn widget_region_key(role: UiObjectRole) -> Option<LightUserData> {
 
 fn dynamic_widget_region_key(role: &str) -> Option<LightUserData> {
     match role {
+        "scroll_child" => Some(scroll_child_key()),
         "button_text" => Some(button_text_key()),
         "normal_texture" => Some(normal_texture_key()),
         "pushed_texture" => Some(pushed_texture_key()),
@@ -4081,6 +4167,7 @@ fn object_type_name(kind: UiObjectKind) -> &'static str {
 fn object_role_name(role: UiObjectRole) -> &'static str {
     match role {
         UiObjectRole::Object => "object",
+        UiObjectRole::ScrollChild => "scroll_child",
         UiObjectRole::ButtonText => "button_text",
         UiObjectRole::NormalTexture => "normal_texture",
         UiObjectRole::PushedTexture => "pushed_texture",
@@ -4209,6 +4296,10 @@ fn horizontal_scroll_range_key() -> LightUserData {
 
 fn vertical_scroll_range_key() -> LightUserData {
     hidden_key(&VERTICAL_SCROLL_RANGE_TOKEN)
+}
+
+fn scroll_child_key() -> LightUserData {
+    hidden_key(&SCROLL_CHILD_TOKEN)
 }
 
 fn slider_min_key() -> LightUserData {

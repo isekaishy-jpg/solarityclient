@@ -31,6 +31,81 @@ fn script_environment_derives_stock_ui_extent() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// ScrollChild XML establishes the same retained frame ownership as the stock setter.
+#[test]
+fn script_runtime_retains_scroll_frame_child() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"ScrollFrames.xml\nCheck.lua\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\ScrollFrames.xml",
+            bytes: br#"<Ui>
+<ScrollFrame name="ScrollTemplate" virtual="true"><ScrollChild>
+  <Frame name="$parentChild"/>
+</ScrollChild></ScrollFrame>
+<Frame name="Owner"><Frames>
+  <ScrollFrame name="$parentScroller"><ScrollChild>
+    <Frame name="$parentChild"/>
+  </ScrollChild></ScrollFrame>
+  <Texture name="$parentTexture"/>
+  <Frame name="$parentReplacement"/>
+</Frames></Frame>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Check.lua",
+            bytes: br#"assert(OwnerScroller:GetScrollChild() == OwnerScrollerChild)
+assert(OwnerScrollerChild:GetParent() == OwnerScroller)
+OwnerScroller:SetScrollChild(nil)
+assert(OwnerScroller:GetScrollChild() == nil)
+assert(OwnerScrollerChild:GetParent() == nil)
+OwnerScroller:SetScrollChild("OwnerReplacement")
+assert(OwnerScroller:GetScrollChild() == OwnerReplacement)
+assert(OwnerReplacement:GetParent() == OwnerScroller)
+assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, Owner))
+assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, OwnerTexture))
+assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, {}))
+local dynamic = CreateFrame("ScrollFrame", "DynamicScroller", Owner, "ScrollTemplate")
+assert(dynamic:GetScrollChild() == DynamicScrollerChild)
+assert(DynamicScrollerChild:GetParent() == dynamic)"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+    let animations = UiAnimationPlan::from_tree(&tree)?;
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &animations,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
+    let mut runtime = UiScriptRuntime::new(
+        &bundle,
+        &runtime_plan,
+        UiScriptEnvironment::new(1024, 768, false)?,
+    )?;
+
+    runtime.execute_all(&bundle, &tree, &scripts)?;
+
+    assert_eq!(runtime.registered_object_count(), 7);
+    Ok(())
+}
+
 /// Later XML layers replace or clear one callback slot without recompiling templates.
 #[test]
 fn script_plan_applies_stock_handler_replacement() -> Result<(), Box<dyn Error>> {
