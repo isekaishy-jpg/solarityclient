@@ -3,6 +3,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use super::realm_time::UiRealmTime;
+
 /// Player facts exposed synchronously through the stock FrameXML API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiPlayerState {
@@ -230,6 +232,7 @@ struct UiWorldStateInner {
     player_progression: Cell<Option<UiPlayerProgressionState>>,
     player_faction: RefCell<Option<UiPlayerFactionState>>,
     zone: RefCell<Option<UiZoneState>>,
+    realm_time: Cell<Option<UiRealmTime>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
@@ -262,12 +265,18 @@ impl UiWorldState {
         *self.inner.zone.borrow_mut() = Some(zone);
     }
 
+    /// Publishes the current server-anchored hour and minute.
+    pub fn set_realm_time(&self, time: UiRealmTime) {
+        self.inner.realm_time.set(Some(time));
+    }
+
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         self.inner.player.set(None);
         self.inner.player_progression.set(None);
         *self.inner.player_faction.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
+        self.inner.realm_time.set(None);
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
         self.inner.area_resurrection_available.set(false);
@@ -295,6 +304,12 @@ impl UiWorldState {
     #[must_use]
     pub fn zone(&self) -> Option<UiZoneState> {
         self.inner.zone.borrow().clone()
+    }
+
+    /// Returns realm time only after the world session has supplied it.
+    #[must_use]
+    pub fn realm_time(&self) -> Option<UiRealmTime> {
+        self.inner.realm_time.get()
     }
 
     /// Publishes whether the current outdoor battlefield permits area exit.

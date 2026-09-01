@@ -6,7 +6,7 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
     UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
-    UiPlayerProgressionState, UiPlayerState, UiRegionStatePlan, UiRuntimeTemplatePlan,
+    UiPlayerProgressionState, UiPlayerState, UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan,
     UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime,
     UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
@@ -792,6 +792,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_XP = UnitXP("player")
     INITIAL_XP_MAX = UnitXPMax("player")
     INITIAL_FACTION, INITIAL_FACTION_NAME = UnitFactionGroup("player")
+    INITIAL_REALM_HOUR, INITIAL_REALM_MINUTE = GetGameTime()
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -814,6 +815,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
+    world.set_realm_time(UiRealmTime::new(21, 37)?);
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
@@ -848,6 +850,13 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         "Horde"
     );
     assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_REALM_HOUR")?,
+            bundle.lua().globals().get::<u8>("INITIAL_REALM_MINUTE")?
+        ),
+        (21, 37)
+    );
+    assert_eq!(
         bundle
             .lua()
             .load("return select('#', UnitFactionGroup('target'))")
@@ -873,6 +882,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);
+    world.set_realm_time(UiRealmTime::new(3, 5)?);
     assert_eq!(
         bundle.lua().load("return GetMoney()").eval::<f64>()?,
         f64::from(u32::MAX)
@@ -883,6 +893,13 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .load("return GetCursorMoney(), GetPlayerTradeMoney()")
             .eval::<(f64, f64)>()?,
         (234.0, 567.0)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetGameTime()")
+            .eval::<(u8, u8)>()?,
+        (3, 5)
     );
     assert_eq!(
         bundle
@@ -905,6 +922,12 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .eval::<(bool, String)>()?;
     assert!(!available);
     assert!(message.contains("authoritative local-player progression"));
+    let (available, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(GetGameTime); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!available);
+    assert!(message.contains("authoritative realm time"));
     Ok(())
 }
 

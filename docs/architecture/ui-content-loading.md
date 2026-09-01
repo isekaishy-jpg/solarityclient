@@ -246,6 +246,11 @@ manifest executes. Native defaults and numeric boundaries are one catalog, so
 case-insensitive identity. Unknown names remain errors instead of receiving an
 invented numeric or string fallback.
 
+Realm time remains a server-owned world fact. Runtime advances
+`SMSG_LOGIN_SETTIMESPEED` through its monotonic `RealmClock` and must publish a
+validated hour and minute to `UiWorldState`; `GetGameTime` reads that snapshot.
+The UI layer never substitutes local wall time when realm time is absent.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265

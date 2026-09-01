@@ -99,6 +99,7 @@ fn register_frame_globals(
     let sub_zone_text = world.clone();
     let minimap_zone_text = world.clone();
     let zone_pvp = world.clone();
+    let realm_time = world.clone();
     let cursor_state = world.clone();
     let trade_state = world.clone();
     let area_resurrection = world.clone();
@@ -219,6 +220,17 @@ fn register_frame_globals(
                 zone.is_sub_zone_pvp().then_some(1_u32),
                 zone.faction_name().map(str::to_owned),
             ))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetGameTime",
+        lua.create_function(move |_, ()| {
+            realm_time
+                .realm_time()
+                .map(|time| (time.hour(), time.minute()))
+                .ok_or_else(|| {
+                    mlua::Error::runtime("GetGameTime requires authoritative realm time")
+                })
         })?,
     )
 }

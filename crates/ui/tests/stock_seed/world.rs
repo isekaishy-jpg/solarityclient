@@ -1,18 +1,21 @@
 //! External stock-compatibility tests for active-world FrameXML state.
 
+use std::error::Error;
+
 use solarity_ui::{
-    UiFactionGroup, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiWorldState,
-    UiZonePvpType, UiZoneState,
+    UiFactionGroup, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiRealmTime,
+    UiRealmTimeError, UiWorldState, UiZonePvpType, UiZoneState,
 };
 
 /// Player entry, live replacement, and world exit preserve explicit absence.
 #[test]
-fn world_state_retains_only_authoritative_player_facts() {
+fn world_state_retains_only_authoritative_player_facts() -> Result<(), Box<dyn Error>> {
     let world = UiWorldState::new();
     assert_eq!(world.player(), None);
     assert_eq!(world.player_progression(), None);
     assert_eq!(world.player_faction(), None);
     assert_eq!(world.zone(), None);
+    assert_eq!(world.realm_time(), None);
 
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
@@ -49,6 +52,7 @@ fn world_state_retains_only_authoritative_player_facts() {
         true,
         Some("Alliance".to_owned()),
     ));
+    world.set_realm_time(UiRealmTime::new(21, 37)?);
     assert_eq!(world.cursor_money_copper(), 234);
     assert_eq!(world.player_trade_money_copper(), 567);
     let zone = match world.zone() {
@@ -59,6 +63,7 @@ fn world_state_retains_only_authoritative_player_facts() {
     assert_eq!(zone.real_zone_text(), "Elwynn Forest");
     assert_eq!(zone.sub_zone_text(), "Northshire Valley");
     assert_eq!(zone.minimap_zone_text(), "Northshire Valley");
+    assert_eq!(world.realm_time(), Some(UiRealmTime::new(21, 37)?));
     assert_eq!(
         world.zone(),
         Some(UiZoneState::new(
@@ -83,6 +88,25 @@ fn world_state_retains_only_authoritative_player_facts() {
     assert_eq!(world.player_progression(), None);
     assert_eq!(world.player_faction(), None);
     assert_eq!(world.zone(), None);
+    assert_eq!(world.realm_time(), None);
     assert_eq!(world.cursor_money_copper(), 0);
     assert_eq!(world.player_trade_money_copper(), 0);
+    Ok(())
+}
+
+/// Realm time rejects values the native 24-hour clock cannot represent.
+#[test]
+fn realm_time_preserves_stock_hour_and_minute_domains() -> Result<(), Box<dyn Error>> {
+    let time = UiRealmTime::new(23, 59)?;
+    assert_eq!(time.hour(), 23);
+    assert_eq!(time.minute(), 59);
+    assert_eq!(
+        UiRealmTime::new(24, 0),
+        Err(UiRealmTimeError::Hour { hour: 24 })
+    );
+    assert_eq!(
+        UiRealmTime::new(0, 60),
+        Err(UiRealmTimeError::Minute { minute: 60 })
+    );
+    Ok(())
 }

@@ -12,9 +12,9 @@ use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiAnimationPlan, UiBindingAssignments,
     UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan, UiLayoutPlan, UiManifestKind,
     UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState,
-    UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile, UiTexturePlan, UiTextureStatePlan,
-    UiZoneState,
+    UiRealmTime, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile, UiTexturePlan,
+    UiTextureStatePlan, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -70,6 +70,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // pre-map update, matching the temporal state before the
                 // world service publishes its first area transition.
                 world.set_zone(UiZoneState::new("", "", "", "", None, false, None));
+                // The offline path supplies an explicit server-time fixture;
+                // UI code never substitutes the host wall clock for realm time.
+                world.set_realm_time(UiRealmTime::new(12, 0)?);
             }
             Some(environment)
         }
