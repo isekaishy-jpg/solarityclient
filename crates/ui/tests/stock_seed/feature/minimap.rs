@@ -7,6 +7,7 @@ use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind,
     UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment,
     UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
+    UiTrackingCategory, UiTrackingType,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -26,6 +27,8 @@ fn minimap_retains_native_presentation_properties() -> Result<(), Box<dyn Error>
   self:SetPlayerTextureWidth(36)
   self:SetZoom(5)
   self:PingLocation(-.25, .75)
+  TRACKING_COUNT = GetNumTrackingTypes()
+  TRACKING_NAME, TRACKING_TEXTURE, TRACKING_ACTIVE, TRACKING_CATEGORY = GetTrackingInfo(2)
 </OnLoad></Scripts></Minimap></Ui>"#,
         },
     ])?;
@@ -51,11 +54,22 @@ fn minimap_retains_native_presentation_properties() -> Result<(), Box<dyn Error>
         &fonts,
         &texture_states,
     );
-    let mut runtime = UiScriptRuntime::new(
-        &bundle,
-        &runtime_plan,
-        UiScriptEnvironment::new(1024, 768, false)?,
-    )?;
+    let environment = UiScriptEnvironment::new(1024, 768, false)?;
+    let tracking = environment.minimap_tracking_state();
+    tracking.replace_types(vec![
+        UiTrackingType::new(
+            "Find Minerals",
+            "Interface\\Icons\\Spell_Nature_Earthquake",
+            UiTrackingCategory::Spell,
+        )?,
+        UiTrackingType::new(
+            "Repair",
+            "Interface\\Minimap\\Tracking\\Repair",
+            UiTrackingCategory::Area,
+        )?,
+    ]);
+    tracking.select(Some(2))?;
+    let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
     bundle
@@ -65,6 +79,14 @@ fn minimap_retains_native_presentation_properties() -> Result<(), Box<dyn Error>
 assert(Minimap:GetPlayerTextureWidth() == 36)
 assert(Minimap:GetZoomLevels() == 6)
 assert(Minimap:GetZoom() == 5)
+assert(TRACKING_COUNT == 2)
+assert(TRACKING_NAME == "Repair")
+assert(TRACKING_TEXTURE == "Interface\\Minimap\\Tracking\\Repair")
+assert(TRACKING_ACTIVE)
+assert(TRACKING_CATEGORY == "area")
+assert(GetTrackingTexture() == TRACKING_TEXTURE)
+SetTracking(nil)
+assert(GetTrackingTexture() == nil)
 local ok = pcall(Minimap.SetZoom, Minimap, 6)
 assert(not ok)"#,
         )

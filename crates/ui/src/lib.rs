@@ -33,7 +33,8 @@ pub use binding::{
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use feature::{
     MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,
-    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
+    UiBattlefieldQueueStatus, UiBattlefieldSlot, UiMinimapTrackingState, UiTrackingCategory,
+    UiTrackingError, UiTrackingType, UiWorldPvpQueueSlot,
 };
 pub use feature::{UiActionBarPageError, UiActionBarState};
 pub use font::{

@@ -301,6 +301,7 @@ pub struct UiScriptEnvironment {
     world: crate::UiWorldState,
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
+    minimap_tracking: crate::UiMinimapTrackingState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -337,6 +338,7 @@ impl UiScriptEnvironment {
             world: crate::UiWorldState::new(),
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
+            minimap_tracking: crate::UiMinimapTrackingState::new(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -450,6 +452,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn battlefield_state(&self) -> crate::UiBattlefieldQueueState {
         self.battlefield.clone()
+    }
+
+    /// Returns the shared player-capability tracking projection.
+    #[must_use]
+    pub fn minimap_tracking_state(&self) -> crate::UiMinimapTrackingState {
+        self.minimap_tracking.clone()
     }
 }
 

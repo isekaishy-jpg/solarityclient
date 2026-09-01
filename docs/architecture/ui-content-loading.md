@@ -219,6 +219,13 @@ invitation expiration used by `GetBattlefieldStatus` and
 `GetWorldPVPQueueStatus`. Area hearth-and-resurrection availability is a
 separate world-state fact and resets when the active world ends.
 
+Minimap tracking is likewise projected from the local player's actual spell
+and area capabilities. The state is a compact ordered list of label, texture,
+and stock `spell` or `area` category values plus one selected index. Before
+those capabilities arrive the list is empty; `GetNumTrackingTypes` therefore
+returns zero rather than exposing fabricated defaults. `SetTracking(nil)`
+clears the selection represented by the dropdown's authored “None” row.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265
