@@ -24,4 +24,6 @@ mod trade;
 mod trade_skill;
 mod trainer;
 
+pub(crate) use action_bar::register_globals as register_action_bar_globals;
+pub use action_bar::{UiActionBarPageError, UiActionBarState};
 pub(crate) use battlenet::UiBattleNetState;

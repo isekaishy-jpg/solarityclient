@@ -86,6 +86,7 @@ fn register_frame_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();

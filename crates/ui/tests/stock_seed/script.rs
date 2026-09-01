@@ -792,6 +792,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
+    let action_bar = environment.action_bar_state();
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     let runtime_plan = UiScriptRuntimePlan::new(
@@ -814,6 +815,20 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         bundle.lua().globals().get::<f64>("INITIAL_XP_MAX")?,
         1_000_000.0
     );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetActionBarPage()")
+            .eval::<u8>()?,
+        1
+    );
+    bundle.lua().load("ChangeActionBarPage(6)").exec()?;
+    assert_eq!(action_bar.page(), 6);
+    let rejected = bundle
+        .lua()
+        .load("return pcall(ChangeActionBarPage, 7)")
+        .eval::<bool>()?;
+    assert!(!rejected);
 
     world.enter_player(UiPlayerState::new(u32::MAX));
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));

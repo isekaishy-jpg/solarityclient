@@ -27,6 +27,7 @@ pub use binding::{
     UiModifiedClickChord, UiModifiedClickDefinition,
 };
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
+pub use feature::{UiActionBarPageError, UiActionBarState};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,

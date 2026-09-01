@@ -289,6 +289,7 @@ pub struct UiScriptEnvironment {
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
     world: crate::UiWorldState,
+    action_bar: crate::UiActionBarState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -323,6 +324,7 @@ impl UiScriptEnvironment {
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
             world: crate::UiWorldState::new(),
+            action_bar: crate::UiActionBarState::new(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -424,6 +426,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn world_state(&self) -> crate::UiWorldState {
         self.world.clone()
+    }
+
+    /// Returns the shared client-owned primary action-bar state.
+    #[must_use]
+    pub fn action_bar_state(&self) -> crate::UiActionBarState {
+        self.action_bar.clone()
     }
 }
 
