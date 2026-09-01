@@ -36,6 +36,7 @@ pub use battlefield::{
     UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
 };
 pub(crate) use battlenet::UiBattleNetState;
+pub(crate) use chat::register_globals as register_chat_globals;
 pub(crate) use group_finder::register_globals as register_group_finder_globals;
 pub use group_finder::{
     UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole, UiGroupFinderRoleCheck,

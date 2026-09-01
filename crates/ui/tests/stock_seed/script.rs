@@ -943,6 +943,28 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .load("return pcall(ChangeActionBarPage, 7)")
         .eval::<bool>()?;
     assert!(!rejected);
+    assert_eq!(
+        bundle
+            .lua()
+            .load(
+                "return GetChatTypeIndex('SYSTEM'), GetChatTypeIndex('whisper_foreign'), GetChatTypeIndex('RAID_BOSS_EMOTE'), GetChatTypeIndex('TARGETICONS'), GetChatTypeIndex('BN_INLINE_TOAST_CONVERSATION')",
+            )
+            .eval::<(u32, u32, u32, u32, u32)>()?,
+        (1, 9, 42, 53, 62)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetChatTypeIndex('REPLY'), GetChatTypeIndex('CHANNEL1'), GetChatTypeIndex(1)")
+            .eval::<(u32, u32, u32)>()?,
+        (0, 0, 0)
+    );
+    let (accepted, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(GetChatTypeIndex, true); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!accepted);
+    assert!(message.contains("Usage: GetChatTypeIndex(type)"));
 
     let mut occupied_slots = [0_u32; 144];
     occupied_slots[0] = 0x8000_1234;

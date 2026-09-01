@@ -153,3 +153,10 @@ checks all 326 production plus 166 external test files.
   `00a09f58`, exactly `12.0`, while failed service predicates return no Lua
   values. The disabled runtime therefore registers the API but returns `nil`
   instead of inventing a zero-capacity Battle.net service.
+- The `GetChatTypeIndex` registration at `00ac7b70` points to native function
+  `004feee0`. It rejects non-string-compatible Lua values with
+  `Usage: GetChatTypeIndex(type)`, compares names case-insensitively, returns a
+  one-based index, and returns numeric zero when no record matches. Its 62
+  fixed build-12340 records occupy `009fa558..009fb7bf` at a `0x4c` stride,
+  from `SYSTEM` through `BN_INLINE_TOAST_CONVERSATION`; dynamic records begin
+  at index 63 when the native dynamic table is populated.
