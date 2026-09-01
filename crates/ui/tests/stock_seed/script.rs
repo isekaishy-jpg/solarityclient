@@ -607,6 +607,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   self:LockHighlight()
   self:UnlockHighlight()
   self:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
+  self:RegisterForDrag("LeftButton", "RightButton")
   local childLabel = self:CreateFontString("$parentDynamicLabel", "OVERLAY", "GlueFontTest", 3)
   assert(childLabel:GetName() == "FontButtonDynamicLabel")
   assert(childLabel:GetParent() == self and childLabel:GetFontObject() == GlueFontTest)

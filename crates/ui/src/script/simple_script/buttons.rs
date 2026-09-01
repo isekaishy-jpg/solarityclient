@@ -11,10 +11,10 @@ use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
     DynamicArenaState, button_text_key, checked_key, click_action_key, create_dynamic_region,
-    disabled_font_key, disabled_texture_key, font_object_key, font_set_key, highlight_font_key,
-    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key, normal_font_key,
-    normal_texture_key, pushed_texture_key, resolve_font_object, text_key, texture_file_key,
-    texture_solid_color_key, type_key,
+    disabled_font_key, disabled_texture_key, drag_button_key, font_object_key, font_set_key,
+    highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key,
+    normal_font_key, normal_texture_key, pushed_texture_key, resolve_font_object, text_key,
+    texture_file_key, texture_solid_color_key, type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
@@ -218,6 +218,19 @@ pub(super) fn register_button_methods(
         })?,
     )?;
     methods.raw_set(
+        "RegisterForDrag",
+        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
+            let mut buttons = 0_u8;
+            for value in arguments {
+                let Some(value) = lua.coerce_string(value)? else {
+                    break;
+                };
+                buttons |= drag_button(value.to_string_lossy().as_str());
+            }
+            button.raw_set(drag_button_key(), buttons)
+        })?,
+    )?;
+    methods.raw_set(
         "GetTextWidth",
         lua.create_function(move |_, button: Table| {
             let Some(measurement) = &measurement else {
@@ -360,6 +373,23 @@ fn click_action(value: &str) -> u64 {
         2
     } else if value.eq_ignore_ascii_case("RightButtonDown") {
         4
+    } else {
+        0
+    }
+}
+
+/// Reproduces the five pointer-button names accepted by frame drag routing.
+fn drag_button(value: &str) -> u8 {
+    if value.eq_ignore_ascii_case("LeftButton") {
+        1
+    } else if value.eq_ignore_ascii_case("RightButton") {
+        2
+    } else if value.eq_ignore_ascii_case("MiddleButton") {
+        4
+    } else if value.eq_ignore_ascii_case("Button4") {
+        8
+    } else if value.eq_ignore_ascii_case("Button5") {
+        16
     } else {
         0
     }

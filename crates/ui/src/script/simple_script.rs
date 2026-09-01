@@ -113,6 +113,7 @@ static TOOLTIP_OFFSET_X_TOKEN: u8 = 73;
 static TOOLTIP_OFFSET_Y_TOKEN: u8 = 74;
 static TEXT_COLOR_TOKEN: u8 = 75;
 static DESATURATED_TOKEN: u8 = 76;
+static DRAG_BUTTON_TOKEN: u8 = 77;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -1143,6 +1144,7 @@ impl UiScriptRuntime {
             table
                 .raw_set(highlight_locked_key(), false)
                 .and_then(|()| table.raw_set(click_action_key(), 0_u64))
+                .and_then(|()| table.raw_set(drag_button_key(), 0_u8))
                 .map_err(|error| execution_error("object registration", error))?;
             set_initial_font(
                 lua,
@@ -1692,6 +1694,7 @@ fn create_dynamic_object(
     if matches!(kind, "Button" | "CheckButton") {
         object.raw_set(highlight_locked_key(), false)?;
         object.raw_set(click_action_key(), 0_u64)?;
+        object.raw_set(drag_button_key(), 0_u8)?;
     }
     if kind == "CheckButton" {
         object.raw_set(checked_key(), false)?;
@@ -4249,6 +4252,10 @@ fn model_file_key() -> LightUserData {
 
 pub(super) fn click_action_key() -> LightUserData {
     hidden_key(&CLICK_ACTION_TOKEN)
+}
+
+pub(super) fn drag_button_key() -> LightUserData {
+    hidden_key(&DRAG_BUTTON_TOKEN)
 }
 
 fn model_sequence_time_sequence_key() -> LightUserData {
