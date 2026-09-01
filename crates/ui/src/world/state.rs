@@ -139,7 +139,9 @@ impl UiZonePvpType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiZoneState {
     zone_text: String,
+    real_zone_text: String,
     sub_zone_text: String,
+    minimap_zone_text: String,
     pvp_type: Option<UiZonePvpType>,
     sub_zone_pvp: bool,
     faction_name: Option<String>,
@@ -150,14 +152,18 @@ impl UiZoneState {
     #[must_use]
     pub fn new(
         zone_text: impl Into<String>,
+        real_zone_text: impl Into<String>,
         sub_zone_text: impl Into<String>,
+        minimap_zone_text: impl Into<String>,
         pvp_type: Option<UiZonePvpType>,
         sub_zone_pvp: bool,
         faction_name: Option<String>,
     ) -> Self {
         Self {
             zone_text: zone_text.into(),
+            real_zone_text: real_zone_text.into(),
             sub_zone_text: sub_zone_text.into(),
+            minimap_zone_text: minimap_zone_text.into(),
             pvp_type,
             sub_zone_pvp,
             faction_name,
@@ -170,10 +176,22 @@ impl UiZoneState {
         &self.zone_text
     }
 
+    /// Returns the unmodified top-level area label used by queries and PvP UI.
+    #[must_use]
+    pub fn real_zone_text(&self) -> &str {
+        &self.real_zone_text
+    }
+
     /// Returns the current sub-area label.
     #[must_use]
     pub fn sub_zone_text(&self) -> &str {
         &self.sub_zone_text
+    }
+
+    /// Returns the map-area label selected specifically for the minimap.
+    #[must_use]
+    pub fn minimap_zone_text(&self) -> &str {
+        &self.minimap_zone_text
     }
 
     /// Returns the current territory classification when map data supplies it.

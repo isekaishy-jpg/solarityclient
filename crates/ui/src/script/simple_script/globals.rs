@@ -95,7 +95,9 @@ fn register_frame_globals(
     let unit_xp_max = world.clone();
     let unit_faction = world.clone();
     let zone_text = world.clone();
+    let real_zone_text = world.clone();
     let sub_zone_text = world.clone();
+    let minimap_zone_text = world.clone();
     let zone_pvp = world.clone();
     let cursor_state = world.clone();
     let trade_state = world.clone();
@@ -181,6 +183,28 @@ fn register_frame_globals(
                 .map(|zone| zone.sub_zone_text().to_owned())
                 .ok_or_else(|| {
                     mlua::Error::runtime("GetSubZoneText requires authoritative zone state")
+                })
+        })?,
+    )?;
+    globals.raw_set(
+        "GetRealZoneText",
+        lua.create_function(move |_, ()| {
+            real_zone_text
+                .zone()
+                .map(|zone| zone.real_zone_text().to_owned())
+                .ok_or_else(|| {
+                    mlua::Error::runtime("GetRealZoneText requires authoritative zone state")
+                })
+        })?,
+    )?;
+    globals.raw_set(
+        "GetMinimapZoneText",
+        lua.create_function(move |_, ()| {
+            minimap_zone_text
+                .zone()
+                .map(|zone| zone.minimap_zone_text().to_owned())
+                .ok_or_else(|| {
+                    mlua::Error::runtime("GetMinimapZoneText requires authoritative zone state")
                 })
         })?,
     )?;

@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // Empty labels and no PvP classification are an explicit
                 // pre-map update, matching the temporal state before the
                 // world service publishes its first area transition.
-                world.set_zone(UiZoneState::new("", "", None, false, None));
+                world.set_zone(UiZoneState::new("", "", "", "", None, false, None));
             }
             Some(environment)
         }

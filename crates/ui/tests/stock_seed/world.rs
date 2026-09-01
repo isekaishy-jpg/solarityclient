@@ -42,6 +42,8 @@ fn world_state_retains_only_authoritative_player_facts() {
     world.set_player_trade_money_copper(567);
     world.set_zone(UiZoneState::new(
         "Elwynn Forest",
+        "Elwynn Forest",
+        "Northshire Valley",
         "Northshire Valley",
         Some(UiZonePvpType::Friendly),
         true,
@@ -49,10 +51,20 @@ fn world_state_retains_only_authoritative_player_facts() {
     ));
     assert_eq!(world.cursor_money_copper(), 234);
     assert_eq!(world.player_trade_money_copper(), 567);
+    let zone = match world.zone() {
+        Some(zone) => zone,
+        None => panic!("zone was just published"),
+    };
+    assert_eq!(zone.zone_text(), "Elwynn Forest");
+    assert_eq!(zone.real_zone_text(), "Elwynn Forest");
+    assert_eq!(zone.sub_zone_text(), "Northshire Valley");
+    assert_eq!(zone.minimap_zone_text(), "Northshire Valley");
     assert_eq!(
         world.zone(),
         Some(UiZoneState::new(
             "Elwynn Forest",
+            "Elwynn Forest",
+            "Northshire Valley",
             "Northshire Valley",
             Some(UiZonePvpType::Friendly),
             true,

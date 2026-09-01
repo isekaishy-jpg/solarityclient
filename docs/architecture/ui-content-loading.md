@@ -234,6 +234,12 @@ restrictions. The initial session state has no proposal, queue, role check, or
 listing; native queries expose those inactive sentinels until corresponding
 world-session state is published.
 
+Map-area updates publish four distinct labels: current zone, real zone,
+subzone, and the minimap-selected area text. `GetZoneText`,
+`GetRealZoneText`, `GetSubZoneText`, and `GetMinimapZoneText` read those exact
+fields. The UI layer never derives one label from another when map-area data is
+missing or temporally incomplete.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265
