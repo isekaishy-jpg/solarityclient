@@ -15,6 +15,7 @@ use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
 use crate::device::vulkan_ui_texture_set::UiTextureSetRegistry;
 
 use command::{RecordContext, record_draws, submit_and_present};
+pub(in crate::device) use command::{UiOverlayRecordContext, record_loaded_overlay};
 use resource::UiFrameResources;
 
 pub use types::UiFrameReport;

@@ -4,7 +4,9 @@ use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
+use solarity_asset::{
+    ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, ClientDataRoot, DecodedM2Model, Locale,
+};
 use solarity_ui::{
     GlueInitialScreen, GlueManager, UiGlueNetworkAction, UiKeyboardModifiers, UiPointerButton,
 };
@@ -26,6 +28,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(data_root.clone())?, locale)?;
+    let mut inspection_store = AssetStore::mount(catalog.clone())?;
+    let login_model = DecodedM2Model::load_primary_profile(
+        &mut inspection_store,
+        &AssetPath::new(
+            "Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2",
+        )?,
+    )?;
+    println!(
+        "login model: cameras={} sequences={} textures={} particles={} ribbons={}",
+        login_model.animations().cameras().len(),
+        login_model.animations().sequences().len(),
+        login_model.textures().len(),
+        login_model.animations().particles().len(),
+        login_model.animations().ribbons().len()
+    );
+    for (index, camera) in login_model.animations().cameras().iter().enumerate() {
+        println!(
+            "login camera {index}: fov={} near={} far={} position={:?} target={:?}",
+            camera.field_of_view_radians(),
+            camera.near_clip(),
+            camera.far_clip(),
+            camera.position_base(),
+            camera.target_position_base(),
+        );
+    }
     let mut manager = GlueManager::start_shared_with_initial_screen_and_cvars(
         AssetStoreHandle::new(AssetStore::mount(catalog)?),
         (1280, 720),
@@ -80,6 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    report_login_presentation(&later);
     validate_login_input(&mut later)?;
     let atlas_extent = later.glyphs().extent();
     let atlas_bytes = later.glyphs().rgba8().len();
@@ -88,6 +116,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         "validated first-run agreements, later-run bypass, and authored login input: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} visible_glyphs={visible_glyphs}"
     );
     Ok(())
+}
+
+fn report_login_presentation(manager: &GlueManager) {
+    println!(
+        "login presentation: textures={} models={}",
+        manager.presentation().member_count(),
+        manager.presentation().models().len()
+    );
+    for model in manager.presentation().models() {
+        println!(
+            "model object={:?} path={} camera={} sequence={} scale={} bounds={:?}",
+            manager.objects()[model.object_index()].name(),
+            model.path(),
+            model.camera(),
+            model.sequence(),
+            model.model_scale(),
+            model.bounds()
+        );
+    }
+    for texture in manager.presentation().members_in_draw_order() {
+        println!(
+            "texture object={:?} source={:?} bounds={:?}",
+            manager.objects()[texture.object_index()].name(),
+            texture.source(),
+            texture.bounds()
+        );
+    }
 }
 
 fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {

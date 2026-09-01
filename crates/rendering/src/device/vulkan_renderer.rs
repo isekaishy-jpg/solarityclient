@@ -66,7 +66,7 @@ use crate::device::vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
 };
 use crate::device::vulkan_world_frame::{
-    WorldFrameContext, WorldFrameRenderer, WorldFrameReport, WorldFrameScene,
+    WorldFrameContext, WorldFrameRenderer, WorldFrameReport, WorldFrameScene, WorldUiOverlay,
 };
 use crate::device::vulkan_world_model_draw::{
     WorldModelPreparedDraw, prepare_draw as prepare_world_model_draw,
@@ -1248,6 +1248,80 @@ impl VulkanRenderer {
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
+        self.present_world_frame_internal(
+            scene,
+            bone_transforms,
+            terrain_draws,
+            world_model_draws,
+            m2_draws,
+            particle_vertices,
+            particle_indices,
+            particle_draws,
+            ribbon_vertices,
+            ribbon_draws,
+            None,
+        )
+    }
+
+    /// Presents the unified model/effect scene followed by a loaded UI pass.
+    ///
+    /// This is the compositor boundary used by stock Glue `Model` and
+    /// `ModelFFX` frames. The overlay shares the acquired image and submission
+    /// but begins a separate color-only dynamic-rendering scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::present_world_frame`] plus invalid
+    /// UI packet references.
+    #[allow(clippy::too_many_arguments)]
+    pub fn present_world_frame_with_ui(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
+        ui_logical_extent: [f32; 2],
+        ui_draws: &[UiPreparedDraw],
+    ) -> Result<WorldFrameReport, VulkanError> {
+        self.present_world_frame_internal(
+            scene,
+            bone_transforms,
+            terrain_draws,
+            world_model_draws,
+            m2_draws,
+            particle_vertices,
+            particle_indices,
+            particle_draws,
+            ribbon_vertices,
+            ribbon_draws,
+            Some(WorldUiOverlay {
+                logical_extent: ui_logical_extent,
+                draws: ui_draws,
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn present_world_frame_internal(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
+        ui: Option<WorldUiOverlay<'_>>,
+    ) -> Result<WorldFrameReport, VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -1288,6 +1362,9 @@ impl VulkanRenderer {
                 m2_texture_sets: &self.m2_texture_sets,
                 m2_particle_pipelines: &self.m2_particle_pipelines,
                 m2_ribbon_pipelines: &self.m2_ribbon_pipelines,
+                ui_pipelines: &self.ui_pipelines,
+                ui_meshes: &self.ui_meshes,
+                ui_texture_sets: &self.ui_texture_sets,
             },
             descriptor_layouts,
             scene,
@@ -1300,6 +1377,7 @@ impl VulkanRenderer {
             particle_draws,
             ribbon_vertices,
             ribbon_draws,
+            ui,
         )?;
         self.is_idle = false;
         Ok(report)

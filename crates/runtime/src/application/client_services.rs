@@ -37,6 +37,7 @@ use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
 };
+use crate::application::login_model::RuntimeGlueModelScene;
 use crate::application::login_ui::LoginUiFrame;
 use crate::application::player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
@@ -59,11 +60,13 @@ use crate::random::{BlizzardRand, CrtRand};
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<LoginUiFrame>,
+    glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
     sound: RuntimeSoundCoordinator,
     platform: SdlPlatform,
     input: InputControl,
     glue: GlueManager,
+    assets: AssetStoreHandle,
     startup_profile: StartupProfile,
     cpu: CpuExecutor,
     network: Option<Runtime>,
@@ -167,11 +170,33 @@ impl ClientServices {
             &glue,
             SoundOutputTarget::DefaultDevice,
         )?;
+        // M2Initialize consumes these before any ordinary or Glue emitter is
+        // constructed. The resulting table remains process-wide.
+        let mut crt_rand = CrtRand::new();
+        let first = u32::from(crt_rand.next_u15());
+        let second = u32::from(crt_rand.next_u15());
+        let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
+        let mut glue_model = RuntimeGlueModelScene::new();
+        glue_model.synchronize(
+            &mut renderer,
+            &glue,
+            &assets,
+            &mut crt_rand,
+            Arc::clone(&particle_twinkle),
+        )?;
         let login_ui = if glue.media_intent().movie().is_some() {
             None
         } else {
             let frame = LoginUiFrame::prepare(&mut renderer, &glue)?;
-            frame.present(&mut renderer)?;
+            if !glue_model.present(
+                &mut renderer,
+                &frame,
+                platform.pixel_extent(),
+                0.0,
+                &mut crt_rand,
+            )? {
+                frame.present(&mut renderer)?;
+            }
             Some(frame)
         };
         platform.set_text_input_active(glue.focused_edit_box().is_some());
@@ -188,22 +213,17 @@ impl ClientServices {
             })?;
         let login = RuntimeLoginCoordinator::new(configuration.login().clone());
         let world = RuntimeWorldCoordinator::new();
-        // M2Initialize consumes these before constructing any emitter. The
-        // resulting table remains process-wide across terrain generations.
-        let mut crt_rand = CrtRand::new();
-        let first = u32::from(crt_rand.next_u15());
-        let second = u32::from(crt_rand.next_u15());
-        let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
-
         Ok((
             Self {
                 renderer,
                 login_ui,
+                glue_model,
                 cinematic: RuntimeCinematicCoordinator::default(),
                 sound,
                 platform,
                 input,
                 glue,
+                assets: assets.clone(),
                 startup_profile,
                 cpu,
                 network: Some(network),
@@ -467,12 +487,29 @@ impl ClientServices {
         if self.login_ui.is_none() {
             self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
         }
-        self.login_ui
+        let frame = self
+            .login_ui
             .as_ref()
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
-            })?
-            .present(&mut self.renderer)?;
+            })?;
+        self.glue_model.synchronize(
+            &mut self.renderer,
+            &self.glue,
+            &self.assets,
+            &mut self.crt_rand,
+            Arc::clone(&self.particle_twinkle),
+        )?;
+        let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
+        if !self.glue_model.present(
+            &mut self.renderer,
+            frame,
+            self.platform.pixel_extent(),
+            global_time_ms,
+            &mut self.crt_rand,
+        )? {
+            frame.present(&mut self.renderer)?;
+        }
         Ok(())
     }
 

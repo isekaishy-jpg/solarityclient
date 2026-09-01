@@ -14,7 +14,16 @@ use super::{
 use crate::particle::pack_bgra;
 
 /// Recovered branches shared by the ordinary head and tail preparation.
-const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0000_0400 | 0x0100_0000;
+const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0100_0000;
+
+/// Limits a tail's history span to the particle's current age.
+const CLAMP_TAIL_TO_AGE: u32 = 0x0000_0400;
+
+/// Emits the ordinary camera-facing head geometry.
+const HEAD_STYLE: u32 = 0x0002_0000;
+
+/// Emits the velocity-history tail geometry.
+const TAIL_STYLE: u32 = 0x0004_0000;
 
 /// Keeps head offsets in the transformed emitter X/Y basis.
 const FIXED_EMITTER_BASIS_HEAD: u32 = 0x0000_4000;
@@ -282,11 +291,18 @@ impl M2ParticleMeshPlan {
         let emitter_right = particle_to_world.transform_vector3(Vec3::X);
         let emitter_up = particle_to_world.transform_vector3(Vec3::Y);
         let emitter_normal = particle_to_world.transform_vector3(Vec3::Z).normalize();
-        let (emit_head, emit_tail) = match emitter.head_or_tail() {
-            0 => (true, false),
-            1 => (false, true),
-            2 => (true, true),
-            selector => return Err(M2ParticleMeshPlanError::HeadOrTail(selector)),
+        let style_flags = emitter.flags() & (HEAD_STYLE | TAIL_STYLE);
+        let (emit_head, emit_tail) = if style_flags != 0 {
+            (style_flags & HEAD_STYLE != 0, style_flags & TAIL_STYLE != 0)
+        } else {
+            // Build 12340 authors stock styles in the flags. Retain the legacy
+            // byte for custom assets which set neither style flag.
+            match emitter.head_or_tail() {
+                0 => (true, false),
+                1 => (false, true),
+                2 => (true, true),
+                selector => return Err(M2ParticleMeshPlanError::HeadOrTail(selector)),
+            }
         };
         if emitter.texture_rows() == 0 || emitter.texture_columns() == 0 {
             return Err(M2ParticleMeshPlanError::EmptyTextureAtlas);
@@ -408,7 +424,7 @@ impl M2ParticleMeshPlan {
             }
             if emit_tail {
                 let mut span = emitter.tail_length();
-                if emitter.flags() & 0x0002_0000 != 0 && particle.age_seconds() < span {
+                if emitter.flags() & CLAMP_TAIL_TO_AGE != 0 && particle.age_seconds() < span {
                     span = particle.age_seconds();
                 }
                 let tail_vector = -velocity * span;

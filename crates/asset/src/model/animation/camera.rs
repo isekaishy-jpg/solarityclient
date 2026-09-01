@@ -30,7 +30,7 @@ impl M2Camera {
         self.kind
     }
 
-    /// Returns the authored vertical field of view in radians.
+    /// Returns the authored diagonal field of view in radians.
     #[must_use]
     pub const fn field_of_view_radians(&self) -> f32 {
         self.field_of_view_radians

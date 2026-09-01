@@ -24,7 +24,7 @@ use solarity_rendering::{
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
     M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera,
-    WorldFrameScene, WorldModelSceneUniform, triggered_m2_event_indices,
+    WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -37,6 +37,44 @@ use wow_m2::skin::{OldSkinHeader, SkinBatch, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
+
+/// Authored M2 cameras convert diagonal FOV and retain the stock view basis.
+#[test]
+fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Camera", 1)?;
+    append_render_camera(&mut bytes)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Camera.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Camera00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Camera.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let aspect = 16.0 / 9.0;
+    let frame = sample_m2_camera_frame(
+        model.animations(),
+        0,
+        M2AnimationClock::new(0, 500.0, 0.0),
+        aspect,
+    )?;
+
+    assert_eq!(frame.camera().position(), Vec3::new(11.0, 0.0, 2.0));
+    assert_eq!(frame.camera().target(), Vec3::new(-10.0, 0.0, 2.0));
+    assert_eq!(frame.forward(), Vec3::NEG_X);
+    assert_eq!(frame.up(), Vec3::Z);
+    let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
+    assert!((frame.camera().vertical_field_of_view_radians() - expected_fov).abs() < 0.0001);
+    Ok(())
+}
 
 /// Event windows preserve start, loop, long-frame, and global-clock crossings.
 #[test]
@@ -930,6 +968,67 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         translated_endpoint,
         endpoint + Vec3::new(100.0, 200.0, 300.0)
     );
+    Ok(())
+}
+
+/// Tail style selects render geometry without changing planar simulation.
+#[test]
+fn m2_tail_style_particle_reaches_simulation_and_mesh() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0004_0400;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    bytes[particle_offset + 45] = 0;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\TailParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\TailParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\TailParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    let report = simulation.advance_planar(emitter, pose, 0.2, Mat4::IDENTITY, 1.0)?;
+    let mesh = M2ParticleMeshPlan::prepare(
+        emitter,
+        pose,
+        simulation.particles(),
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
+        1.0,
+    )?;
+
+    assert_eq!(report.live(), 4);
+    assert_eq!(mesh.vertices().len(), report.live() * 4);
+    assert_eq!(mesh.indices().len(), report.live() * 6);
+    let (vertex_quads, remainder) = mesh.vertices().as_chunks::<4>();
+    assert!(remainder.is_empty());
+    for (particle, vertices) in simulation.particles().iter().zip(vertex_quads) {
+        let head = Vec3::from_array(vertices[0].position())
+            .midpoint(Vec3::from_array(vertices[1].position()));
+        let tail = Vec3::from_array(vertices[2].position())
+            .midpoint(Vec3::from_array(vertices[3].position()));
+        let expected = -particle.velocity() * particle.age_seconds();
+        assert!(((tail - head) - expected).abs().max_element() < 0.0001);
+    }
     Ok(())
 }
 
@@ -2893,6 +2992,25 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     append_render_material_tracks(bytes)?;
     append_render_ribbon(bytes)?;
     append_render_particle(bytes)?;
+    Ok(())
+}
+
+/// Adds one static camera record matching the stock Glue camera layout.
+fn append_render_camera(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let camera_offset = bytes.len();
+    bytes.resize(camera_offset + 100, 0);
+    bytes[camera_offset + 4..camera_offset + 8]
+        .copy_from_slice(&(2.0 * core::f32::consts::FRAC_PI_3).to_le_bytes());
+    bytes[camera_offset + 8..camera_offset + 12].copy_from_slice(&2_777.0_f32.to_le_bytes());
+    bytes[camera_offset + 12..camera_offset + 16].copy_from_slice(&0.2_f32.to_le_bytes());
+    bytes[camera_offset + 18..camera_offset + 20].copy_from_slice(&u16::MAX.to_le_bytes());
+    bytes[camera_offset + 36..camera_offset + 48]
+        .copy_from_slice(&render_f32_values(&[11.0, 0.0, 2.0]));
+    bytes[camera_offset + 50..camera_offset + 52].copy_from_slice(&u16::MAX.to_le_bytes());
+    bytes[camera_offset + 68..camera_offset + 80]
+        .copy_from_slice(&render_f32_values(&[-10.0, 0.0, 2.0]));
+    bytes[camera_offset + 82..camera_offset + 84].copy_from_slice(&u16::MAX.to_le_bytes());
+    set_render_header_array(bytes, 0x110, 1, camera_offset)?;
     Ok(())
 }
 

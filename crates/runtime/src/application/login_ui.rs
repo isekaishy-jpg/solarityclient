@@ -123,4 +123,14 @@ impl LoginUiFrame {
             .present_ui(self.logical_extent, &self.draws)
             .map_err(ApplicationError::from)
     }
+
+    /// Returns the logical UI canvas used by the overlay shader.
+    pub(super) const fn logical_extent(&self) -> [f32; 2] {
+        self.logical_extent
+    }
+
+    /// Returns renderer-validated UI packets for composite presentation.
+    pub(super) fn draws(&self) -> &[UiPreparedDraw] {
+        &self.draws
+    }
 }

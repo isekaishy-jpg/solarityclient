@@ -143,7 +143,7 @@ fn build_archive(
             br#"<Ui><Frame name="GlueBootstrap" setAllPoints="true"><Layers>
   <Layer level="BACKGROUND"><Texture name="$parentTexture" file="Interface\Icons\INV_Misc_QuestionMark" setAllPoints="true"/></Layer>
 </Layers><Frames>
-  <Model name="$parentModel"/>
+  <Model name="$parentModel" hidden="true"/>
 </Frames><Scripts><OnLoad>
   GlueBootstrapModel:SetModel("Solarity\\RuntimeFixture.txt")
   self.loaded = true

@@ -24,7 +24,7 @@ use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::random::CrtRand;
 
-mod m2;
+pub(in crate::application) mod m2;
 mod world_model;
 
 use m2::M2Frame;
@@ -237,6 +237,12 @@ pub enum RuntimeTerrainFrameError {
     /// Authoritative unit placement data cannot form a finite model matrix.
     #[error("unit M2 transform is invalid")]
     InvalidUnitM2Transform,
+    /// A Glue model widget supplied a non-positive or non-finite local scale.
+    #[error("Glue M2 model scale is invalid")]
+    InvalidGlueM2Scale,
+    /// The retained Glue model generation has no matching model placement.
+    #[error("Glue M2 model placement is unavailable")]
+    MissingGlueM2Placement,
     /// A current player update has no matching placement in the GPU generation.
     #[error("local player {guid:#018X} has no M2 placement in the current frame")]
     MissingPlayerM2Placement {

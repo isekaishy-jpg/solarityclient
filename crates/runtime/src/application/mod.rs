@@ -12,6 +12,7 @@ mod environment_coordinator;
 mod gameplay_coordinator;
 mod gameplay_session;
 mod login_coordinator;
+mod login_model;
 mod login_ui;
 mod player_coordinator;
 mod realm_directory;

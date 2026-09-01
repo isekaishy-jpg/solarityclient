@@ -17,6 +17,7 @@ use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
 use crate::device::vulkan_terrain_texture_set::TerrainTextureSetRegistry;
+use crate::device::vulkan_ui_frame::{UiOverlayRecordContext, record_loaded_overlay};
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
 use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
@@ -55,6 +56,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) particle_vertex_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) particle_index_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ribbon_vertex_buffer: (vk::Buffer, vk::DeviceSize),
+    pub(super) ui: Option<UiOverlayRecordContext<'a>>,
 }
 
 pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
@@ -143,6 +145,9 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     }
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    if let Some(ui) = context.ui {
+        record_loaded_overlay(ui)?;
+    }
     transition_to_present(&context);
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }

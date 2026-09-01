@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use glam::Mat4;
-use solarity_asset::{DecodedM2Model, M2ParticleEmitter};
+use solarity_asset::{BlpTextureSource, DecodedM2Model, M2ParticleEmitter};
 use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
@@ -98,6 +98,8 @@ struct M2GpuPlacement {
 enum M2GpuPlacementOwner {
     /// An ADT or WMO owner from the resident terrain generation.
     Static(ResidentM2Owner),
+    /// A pre-world `Model` or `ModelFFX` widget retained by Glue.
+    GlueModel { object_index: usize },
     /// The one authoritative character controlled by this client.
     PlayerBody { guid: u64 },
     /// Mount-main parent beneath the controlled character.
@@ -377,7 +379,7 @@ impl RuntimeM2Event {
 }
 
 /// All resident M2 geometry and transforms owned by one terrain generation.
-pub(super) struct M2Frame {
+pub(in crate::application) struct M2Frame {
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
@@ -396,14 +398,14 @@ pub(super) struct M2Frame {
 }
 
 /// Borrowed dynamic streams assembled for one unified world submission.
-pub(super) struct M2VisibleFrame<'frame> {
-    pub(super) bone_transforms: &'frame [Mat4],
-    pub(super) draws: &'frame [M2PreparedDraw],
-    pub(super) particle_vertices: &'frame [M2ParticleRenderVertex],
-    pub(super) particle_indices: &'frame [u32],
-    pub(super) particle_draws: &'frame [M2ParticlePreparedDraw],
-    pub(super) ribbon_vertices: &'frame [M2RibbonRenderVertex],
-    pub(super) ribbon_draws: &'frame [M2RibbonPreparedDraw],
+pub(in crate::application) struct M2VisibleFrame<'frame> {
+    pub(in crate::application) bone_transforms: &'frame [Mat4],
+    pub(in crate::application) draws: &'frame [M2PreparedDraw],
+    pub(in crate::application) particle_vertices: &'frame [M2ParticleRenderVertex],
+    pub(in crate::application) particle_indices: &'frame [u32],
+    pub(in crate::application) particle_draws: &'frame [M2ParticlePreparedDraw],
+    pub(in crate::application) ribbon_vertices: &'frame [M2RibbonRenderVertex],
+    pub(in crate::application) ribbon_draws: &'frame [M2RibbonPreparedDraw],
 }
 
 impl M2Frame {
@@ -467,6 +469,72 @@ impl M2Frame {
         Ok(Self {
             sources,
             placements,
+            particle_twinkle,
+            animation_started_at: std::time::Instant::now(),
+            bone_transforms: Vec::new(),
+            visible_draws: Vec::new(),
+            transparent_draws: Vec::new(),
+            particle_vertices: Vec::new(),
+            particle_indices: Vec::new(),
+            particle_draws: Vec::new(),
+            ribbon_vertices: Vec::new(),
+            ribbon_draws: Vec::new(),
+            triggered_events: Vec::new(),
+            mount_camera_sample: None,
+            last_effect_time_ms: None,
+        })
+    }
+
+    /// Publishes one fully authored Glue model without terrain-owner aliases.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application) fn prepare_glue_model(
+        renderer: &mut VulkanRenderer,
+        model: Arc<DecodedM2Model>,
+        textures: &[Arc<BlpTextureSource>],
+        object_index: usize,
+        animation_id: u16,
+        model_scale: f32,
+        random: &mut CrtRand,
+        particle_twinkle: Arc<M2ParticleTwinkleTable>,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
+        if !model_scale.is_finite() || model_scale <= 0.0 {
+            return Err(RuntimeTerrainFrameError::InvalidGlueM2Scale);
+        }
+        let resolved = textures
+            .iter()
+            .map(|texture| M2ResolvedTexture::Authored(texture.as_ref()))
+            .collect::<Vec<_>>();
+        let source = prepare_gpu_source(renderer, &model, &resolved, None)?;
+        let playback = M2Playback::new(&model, animation_id, random)?;
+        let particles = model
+            .animations()
+            .particles()
+            .iter()
+            .map(|_emitter| {
+                let first = u32::from(random.next_u15());
+                let second = u32::from(random.next_u15());
+                M2ParticleSimulation::new(first << 16 | second)
+            })
+            .collect();
+        let ribbons = model
+            .animations()
+            .ribbons()
+            .iter()
+            .map(M2RibbonTrail::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            sources: vec![Some(source)],
+            placements: vec![M2GpuPlacement {
+                source_index: 0,
+                transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
+                owner: M2GpuPlacementOwner::GlueModel { object_index },
+                flags: 0,
+                color: [u8::MAX; 4],
+                particle_colors: None,
+                playback,
+                particles,
+                ribbons,
+            }],
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
             bone_transforms: Vec::new(),
@@ -764,6 +832,7 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => local_guid == Some(guid),
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. } => false,
@@ -818,6 +887,7 @@ impl M2Frame {
                     remote_guids.contains(&guid)
                 }
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. } => false,
@@ -873,13 +943,39 @@ impl M2Frame {
     }
 
     /// Returns elapsed time on this resident generation's local animation clock.
-    pub(super) fn animation_time_ms(&self) -> f32 {
+    pub(in crate::application) fn animation_time_ms(&self) -> f32 {
         self.animation_started_at.elapsed().as_secs_f32() * 1_000.0
+    }
+
+    /// Advances the one Glue placement before its authored camera is sampled.
+    pub(in crate::application) fn advance_glue_animation_clock(
+        &mut self,
+        animation_time_ms: f32,
+        global_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
+        let placement = self
+            .placements
+            .iter_mut()
+            .find(|placement| matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }))
+            .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
+        let source = self
+            .sources
+            .get(placement.source_index)
+            .and_then(Option::as_ref)
+            .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
+        let playback = placement
+            .playback
+            .as_mut()
+            .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
+        Ok(playback
+            .clock(&source.model, animation_time_ms, global_time_ms, random)?
+            .clock)
     }
 
     /// Culls placements and builds their bone/material draw packets in place.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn prepare_visible_draws(
+    pub(in crate::application) fn prepare_visible_draws(
         &mut self,
         renderer: &VulkanRenderer,
         frustum: WorldFrustum,
@@ -909,6 +1005,7 @@ impl M2Frame {
             .filter_map(|placement| match placement.owner {
                 M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
@@ -927,6 +1024,7 @@ impl M2Frame {
                     effect_point,
                 } => Some((guid, item_point, effect_point)),
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
@@ -1453,7 +1551,7 @@ fn append_triggered_events(
 
 const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
     match owner {
-        M2GpuPlacementOwner::Static(_) => None,
+        M2GpuPlacementOwner::Static(_) | M2GpuPlacementOwner::GlueModel { .. } => None,
         M2GpuPlacementOwner::PlayerBody { guid }
         | M2GpuPlacementOwner::PlayerMount { guid }
         | M2GpuPlacementOwner::RemotePlayerBody { guid }

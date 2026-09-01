@@ -22,6 +22,11 @@ use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
 use crate::device::vulkan_terrain_texture_set::TerrainTextureSetRegistry;
+use crate::device::vulkan_ui_draw::UiPreparedDraw;
+use crate::device::vulkan_ui_frame::UiOverlayRecordContext;
+use crate::device::vulkan_ui_mesh::UiMeshRegistry;
+use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
+use crate::device::vulkan_ui_texture_set::UiTextureSetRegistry;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
 use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
@@ -58,6 +63,15 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) m2_texture_sets: &'a M2TextureSetRegistry,
     pub(in crate::device) m2_particle_pipelines: &'a M2ParticlePipelineRegistry,
     pub(in crate::device) m2_ribbon_pipelines: &'a M2RibbonPipelineRegistry,
+    pub(in crate::device) ui_pipelines: &'a UiPipelineRegistry,
+    pub(in crate::device) ui_meshes: &'a UiMeshRegistry,
+    pub(in crate::device) ui_texture_sets: &'a UiTextureSetRegistry,
+}
+
+/// One color-only UI overlay appended after all world/M2 effect draws.
+pub(in crate::device) struct WorldUiOverlay<'a> {
+    pub(in crate::device) logical_extent: [f32; 2],
+    pub(in crate::device) draws: &'a [UiPreparedDraw],
 }
 
 #[derive(Default)]
@@ -81,6 +95,7 @@ impl WorldFrameRenderer {
         particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
+        ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
         if terrain_draws.is_empty()
             && world_model_draws.is_empty()
@@ -230,6 +245,17 @@ impl WorldFrameRenderer {
             particle_vertex_buffer: slot.particle_vertex_buffer(),
             particle_index_buffer: slot.particle_index_buffer(),
             ribbon_vertex_buffer: slot.ribbon_vertex_buffer(),
+            ui: ui.map(|ui| UiOverlayRecordContext {
+                device: context.device,
+                command_buffer: slot.command_buffer(),
+                image_view,
+                extent: context.extent,
+                logical_extent: ui.logical_extent,
+                pipelines: context.ui_pipelines,
+                meshes: context.ui_meshes,
+                texture_sets: context.ui_texture_sets,
+                draws: ui.draws,
+            }),
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
         Ok(WorldFrameReport::new(

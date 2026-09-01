@@ -27,6 +27,20 @@ pub(super) struct RecordContext<'a> {
     pub(super) draws: &'a [UiPreparedDraw],
 }
 
+/// UI state appended after another pass left the swapchain color attachment live.
+#[derive(Clone, Copy)]
+pub(in crate::device) struct UiOverlayRecordContext<'a> {
+    pub(in crate::device) device: &'a Device,
+    pub(in crate::device) command_buffer: vk::CommandBuffer,
+    pub(in crate::device) image_view: vk::ImageView,
+    pub(in crate::device) extent: (u32, u32),
+    pub(in crate::device) logical_extent: [f32; 2],
+    pub(in crate::device) pipelines: &'a UiPipelineRegistry,
+    pub(in crate::device) meshes: &'a UiMeshRegistry,
+    pub(in crate::device) texture_sets: &'a UiTextureSetRegistry,
+    pub(in crate::device) draws: &'a [UiPreparedDraw],
+}
+
 /// Records attachment transitions, shared state, and ordered indexed draws.
 pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError> {
     let begin =
@@ -87,7 +101,15 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
     }
     let logical_extent_bytes = logical_extent_bytes(context.logical_extent);
     for draw in context.draws.iter().copied() {
-        record_draw(&context, draw, &logical_extent_bytes)?;
+        record_draw(
+            context.device,
+            context.command_buffer,
+            context.pipelines,
+            context.meshes,
+            context.texture_sets,
+            draw,
+            &logical_extent_bytes,
+        )?;
     }
     // SAFETY: A matching dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
@@ -97,43 +119,98 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
         .map_err(|source| VulkanError::operation("end UI frame command buffer", source))
 }
 
+/// Appends UI draws without clearing the color produced by a Glue model pass.
+pub(in crate::device) fn record_loaded_overlay(
+    context: UiOverlayRecordContext<'_>,
+) -> Result<(), VulkanError> {
+    if context.draws.is_empty() {
+        return Ok(());
+    }
+    let attachment = vk::RenderingAttachmentInfo::default()
+        .image_view(context.image_view)
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE);
+    let attachments = [attachment];
+    let render_area = vk::Rect2D {
+        offset: vk::Offset2D::default(),
+        extent: vk::Extent2D {
+            width: context.extent.0,
+            height: context.extent.1,
+        },
+    };
+    let rendering = vk::RenderingInfo::default()
+        .render_area(render_area)
+        .layer_count(1)
+        .color_attachments(&attachments);
+    // SAFETY: The preceding model scope ended with color attachment layout
+    // retained; UI pipelines use an independent color-only rendering scope.
+    unsafe {
+        context
+            .device
+            .cmd_begin_rendering(context.command_buffer, &rendering)
+    };
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: context.extent.1 as f32,
+        width: context.extent.0 as f32,
+        height: -(context.extent.1 as f32),
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    // SAFETY: Every UI pipeline declares viewport and scissor dynamic.
+    unsafe {
+        context
+            .device
+            .cmd_set_viewport(context.command_buffer, 0, &[viewport]);
+        context
+            .device
+            .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
+    }
+    let logical_extent_bytes = logical_extent_bytes(context.logical_extent);
+    for draw in context.draws.iter().copied() {
+        record_draw(
+            context.device,
+            context.command_buffer,
+            context.pipelines,
+            context.meshes,
+            context.texture_sets,
+            draw,
+            &logical_extent_bytes,
+        )?;
+    }
+    // SAFETY: A matching color-only dynamic-rendering scope is active.
+    unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    Ok(())
+}
+
 /// Binds one validated packet and records its unsigned-32 indexed range.
 fn record_draw(
-    context: &RecordContext<'_>,
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    pipelines: &UiPipelineRegistry,
+    meshes: &UiMeshRegistry,
+    texture_sets: &UiTextureSetRegistry,
     draw: UiPreparedDraw,
     logical_extent_bytes: &[u8; 8],
 ) -> Result<(), VulkanError> {
-    let (pipeline, layout) = context
-        .pipelines
+    let (pipeline, layout) = pipelines
         .raw(draw.pipeline())
         .ok_or(VulkanError::UnknownUiPipelineHandle)?;
-    let (vertex_buffer, index_buffer) = context
-        .meshes
+    let (vertex_buffer, index_buffer) = meshes
         .buffers(draw.mesh())
         .ok_or(VulkanError::UnknownUiMeshHandle)?;
     // SAFETY: Prepared draws join compatible local handles and exact ranges.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex_buffer], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            index_buffer,
-            0,
-            vk::IndexType::UINT32,
-        );
+        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
+        device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
+        device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT32);
         if let Some(texture_set) = draw.texture_set() {
-            let descriptor = context
-                .texture_sets
+            let descriptor = texture_sets
                 .raw(texture_set)
                 .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
-            context.device.cmd_bind_descriptor_sets(
-                context.command_buffer,
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 layout,
                 0,
@@ -141,15 +218,15 @@ fn record_draw(
                 &[],
             );
         }
-        context.device.cmd_push_constants(
-            context.command_buffer,
+        device.cmd_push_constants(
+            command_buffer,
             layout,
             vk::ShaderStageFlags::VERTEX,
             0,
             logical_extent_bytes,
         );
-        context.device.cmd_draw_indexed(
-            context.command_buffer,
+        device.cmd_draw_indexed(
+            command_buffer,
             draw.index_count(),
             1,
             draw.first_index(),

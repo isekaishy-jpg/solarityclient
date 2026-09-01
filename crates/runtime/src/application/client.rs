@@ -14,6 +14,7 @@ use crate::application::client_services::ClientServices;
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentError;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
+use crate::application::login_model::RuntimeGlueModelError;
 use crate::application::player_coordinator::RuntimePlayerError;
 use crate::application::run::{self, ApplicationRunReport};
 use crate::application::sound_coordinator::RuntimeSoundError;
@@ -67,6 +68,9 @@ pub enum ApplicationError {
     /// A resident ADT could not enter renderer-owned GPU state.
     #[error(transparent)]
     TerrainFrame(#[from] RuntimeTerrainFrameError),
+    /// A pre-world stock model could not enter the Glue compositor.
+    #[error(transparent)]
+    GlueModel(#[from] RuntimeGlueModelError),
     /// The private CPU executor failed to start or drain.
     #[error(transparent)]
     Cpu(#[from] CpuError),
