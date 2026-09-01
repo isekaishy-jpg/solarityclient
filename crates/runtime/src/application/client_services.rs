@@ -50,8 +50,8 @@ use crate::application::world_coordinator::{
     RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
 };
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
-use crate::input::{InputControl, InputFrameMotion};
-use crate::platform::{PlatformEvent, SdlPlatform};
+use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
+use crate::platform::{ButtonState, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
 /// Concrete services owned exclusively by the application composition root.
@@ -63,6 +63,7 @@ pub(crate) struct ClientServices {
     platform: SdlPlatform,
     input: InputControl,
     glue: GlueManager,
+    startup_profile: StartupProfile,
     cpu: CpuExecutor,
     network: Option<Runtime>,
     login: RuntimeLoginCoordinator,
@@ -152,11 +153,12 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let assets = AssetStoreHandle::new(assets);
-        let glue = GlueManager::start_shared_with_initial_screen(
+        let glue = GlueManager::start_shared_with_initial_screen_and_cvars(
             assets.clone(),
             platform.logical_extent(),
             false,
             initial_screen,
+            startup_profile.cvar_values(),
         )?;
         glue.set_realm_directory(realm_metadata.empty_directory());
         let sound = RuntimeSoundCoordinator::start(
@@ -200,6 +202,7 @@ impl ClientServices {
                 platform,
                 input,
                 glue,
+                startup_profile,
                 cpu,
                 network: Some(network),
                 login,
@@ -271,12 +274,44 @@ impl ClientServices {
         self.input.take_frame_motion()
     }
 
+    /// Routes one already-admitted platform event to the active Glue owner.
+    pub(crate) fn service_platform_event(
+        &mut self,
+        event: &PlatformEvent,
+    ) -> Result<(), ApplicationError> {
+        let PlatformEvent::Key(key_event) = event else {
+            return Ok(());
+        };
+        if key_event.state != ButtonState::Released
+            || key_event.window_id != self.platform.window_id()
+        {
+            return Ok(());
+        }
+        let Some(scan_code) = key_event.scan_code else {
+            return Ok(());
+        };
+        let Some(key) = stock_keyboard_name(scan_code) else {
+            return Ok(());
+        };
+        let movie = self.glue.media_intent().movie().cloned();
+        let Some(movie) = movie else {
+            return Ok(());
+        };
+        self.glue.movie_key_up(movie.object_index(), key)?;
+        if let Some(object_index) = self.glue.take_movie_stop_completion() {
+            self.glue.movie_finished(object_index)?;
+        }
+        self.login_ui = None;
+        Ok(())
+    }
+
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.persist_glue_cvars()?;
         let movie = self.glue.media_intent().movie().cloned();
         match self
             .cinematic
-            .synchronize(movie.as_ref(), &mut self.renderer)?
+            .synchronize(movie.as_ref(), &mut self.renderer, &mut self.sound)?
         {
             RuntimeCinematicPoll::Presented => return Ok(()),
             RuntimeCinematicPoll::Finished { object_index } => {
@@ -760,6 +795,7 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
+        self.persist_glue_cvars()?;
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
@@ -775,6 +811,12 @@ impl ClientServices {
         }
         renderer_result?;
         cpu_result
+    }
+
+    fn persist_glue_cvars(&mut self) -> Result<(), ApplicationError> {
+        let changed = self.glue.take_changed_cvars();
+        self.startup_profile.persist_cvars(&changed)?;
+        Ok(())
     }
 }
 

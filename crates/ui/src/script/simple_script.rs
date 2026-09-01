@@ -314,6 +314,7 @@ pub struct UiGlueMediaIntent {
     pub(crate) ambience: Option<String>,
     pub(crate) sounds: Vec<String>,
     movie: Option<UiGlueMovieRequest>,
+    movie_stop_completion: Option<usize>,
     next_movie_generation: u64,
 }
 
@@ -382,6 +383,23 @@ impl UiGlueMediaIntent {
     #[must_use]
     pub const fn movie(&self) -> Option<&UiGlueMovieRequest> {
         self.movie.as_ref()
+    }
+
+    pub(crate) fn retire_movie(&mut self, object_index: usize) {
+        if self
+            .movie
+            .as_ref()
+            .is_some_and(|movie| movie.object_index == object_index)
+        {
+            self.movie = None;
+        }
+        if self.movie_stop_completion == Some(object_index) {
+            self.movie_stop_completion = None;
+        }
+    }
+
+    pub(crate) fn take_movie_stop_completion(&mut self) -> Option<usize> {
+        self.movie_stop_completion.take()
     }
 }
 
@@ -524,6 +542,20 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn cvar_value(&self, name: &str) -> Option<String> {
         self.cvars.get(name)
+    }
+
+    /// Applies Config.wtf values before built-in scripts execute.
+    #[must_use]
+    pub(crate) fn with_cvar_values(self, values: &[(String, String)]) -> Self {
+        for (name, value) in values {
+            self.cvars.load(name, value.clone());
+        }
+        self
+    }
+
+    /// Takes CVars changed by native script calls since the previous poll.
+    pub(crate) fn take_changed_cvars(&self) -> Vec<(String, String)> {
+        self.cvars.take_changed()
     }
 
     /// Attaches the mounted stock archive stack used by synchronous UI loads.
@@ -1208,6 +1240,37 @@ impl UiScriptRuntime {
             return Ok(());
         };
         call_object_handler(lua, &function, object).map_err(|error| execution_error(&label, error))
+    }
+
+    /// Delivers one stock key name to a live `MovieFrame` `OnKeyUp` handler.
+    pub(crate) fn dispatch_movie_key_up(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        key: &str,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("MovieFrame object {object_index}:OnKeyUp");
+        if object_index >= self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "movie key object {object_index} is outside the live object arena"
+                ),
+            });
+        }
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error(&label, error))?;
+        let object: Table = objects
+            .raw_get(object_index + 1)
+            .map_err(|error| execution_error(&label, error))?;
+        let Some(function) = object_script_function(lua, &object, UiScriptHandler::KeyUp)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_string_object_handler(lua, &function, object, key)
+            .map_err(|error| execution_error(&label, error))
     }
 
     fn execute_batch(
@@ -2418,6 +2481,28 @@ fn call_object_handler(lua: &Lua, function: &mlua::Function, object: Table) -> m
     }
 }
 
+/// Installs and restores build 12340's legacy global `this` around a callback
+/// receiving one native string argument.
+fn call_string_object_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    value: &str,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous = globals.raw_get::<Value>("this")?;
+    globals.raw_set("this", object.clone())?;
+    let result = function.call::<()>((object, value));
+    let restore = globals.raw_set("this", previous);
+    match result {
+        Ok(()) => restore,
+        Err(error) => {
+            let _ = restore;
+            Err(error)
+        }
+    }
+}
+
 fn dispatch_subscribers(
     lua: &Lua,
     object_count: usize,
@@ -3523,6 +3608,7 @@ fn register_movie_frame_methods(
                 .is_some_and(|movie| movie.object_index == object_index)
             {
                 intent.movie = None;
+                intent.movie_stop_completion = Some(object_index);
             }
             Ok(())
         })?,

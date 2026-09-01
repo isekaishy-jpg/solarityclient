@@ -4,14 +4,26 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use ffmpeg::format::Pixel;
+use ffmpeg::ChannelLayout;
+use ffmpeg::format::{Pixel, Sample, sample::Type as SampleType};
 use ffmpeg::media::Type;
+use ffmpeg::software::resampling::Context as ResamplingContext;
 use ffmpeg::software::scaling::{context::Context as ScalingContext, flag::Flags};
 use ffmpeg::util::error::EAGAIN;
+use ffmpeg::util::frame::audio::Audio;
 use ffmpeg::util::frame::video::Video;
 use ffmpeg_next as ffmpeg;
 
-use super::{CinematicError, CinematicVideoFrame};
+use super::{CinematicAudioFrame, CinematicError, CinematicVideoFrame};
+
+const CINEMATIC_SAMPLE_RATE_HZ: u32 = 44_100;
+
+struct AudioDecoder {
+    stream_index: usize,
+    decoder: ffmpeg::decoder::Audio,
+    resampler: ResamplingContext,
+    drained: bool,
+}
 
 /// Incremental decoder for one stock locale-loose AVI cinematic.
 pub struct CinematicDecoder {
@@ -21,6 +33,8 @@ pub struct CinematicDecoder {
     video_time_base: ffmpeg::Rational,
     video: ffmpeg::decoder::Video,
     scaler: ScalingContext,
+    audio: Option<AudioDecoder>,
+    audio_frames: Vec<CinematicAudioFrame>,
     eof_sent: bool,
 }
 
@@ -58,6 +72,42 @@ impl CinematicDecoder {
             Flags::BILINEAR,
         )
         .map_err(|source| CinematicError::adapter(&path, "create RGBA scaler", source))?;
+        let audio = input
+            .streams()
+            .best(Type::Audio)
+            .map(|stream| {
+                let stream_index = stream.index();
+                let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+                    .map_err(|source| {
+                        CinematicError::adapter(&path, "read audio parameters", source)
+                    })?;
+                let decoder = context.decoder().audio().map_err(|source| {
+                    CinematicError::adapter(&path, "open audio decoder", source)
+                })?;
+                let source_layout = if decoder.channel_layout().channels() == 0 {
+                    ChannelLayout::default(i32::from(decoder.channels()))
+                } else {
+                    decoder.channel_layout()
+                };
+                let resampler = ResamplingContext::get(
+                    decoder.format(),
+                    source_layout,
+                    decoder.rate(),
+                    Sample::I16(SampleType::Packed),
+                    ChannelLayout::STEREO,
+                    CINEMATIC_SAMPLE_RATE_HZ,
+                )
+                .map_err(|source| {
+                    CinematicError::adapter(&path, "create cinematic audio resampler", source)
+                })?;
+                Ok(AudioDecoder {
+                    stream_index,
+                    decoder,
+                    resampler,
+                    drained: false,
+                })
+            })
+            .transpose()?;
         Ok(Self {
             path,
             input,
@@ -65,8 +115,18 @@ impl CinematicDecoder {
             video_time_base,
             video,
             scaler,
+            audio,
+            audio_frames: Vec::new(),
             eof_sent: false,
         })
+    }
+
+    /// Takes audio blocks decoded while advancing the interleaved AVI stream.
+    ///
+    /// Each block contains interleaved stereo signed-16 samples at 44.1 kHz,
+    /// matching build 12340's requested output format.
+    pub fn take_audio_frames(&mut self) -> Vec<CinematicAudioFrame> {
+        std::mem::take(&mut self.audio_frames)
     }
 
     /// Decodes the next timestamped tightly packed RGBA8 frame.
@@ -94,20 +154,97 @@ impl CinematicDecoder {
             if self.eof_sent {
                 return Ok(None);
             }
-            let packet = self
-                .input
-                .packets()
-                .find(|(stream, _packet)| stream.index() == self.video_stream_index)
-                .map(|(_stream, packet)| packet);
-            if let Some(packet) = packet {
-                self.video.send_packet(&packet).map_err(|source| {
-                    CinematicError::adapter(&self.path, "submit video packet", source)
-                })?;
+            let audio_stream_index = self.audio.as_ref().map(|audio| audio.stream_index);
+            let packet = self.input.packets().find(|(stream, _packet)| {
+                stream.index() == self.video_stream_index
+                    || audio_stream_index == Some(stream.index())
+            });
+            if let Some((stream, packet)) = packet {
+                if stream.index() == self.video_stream_index {
+                    self.video.send_packet(&packet).map_err(|source| {
+                        CinematicError::adapter(&self.path, "submit video packet", source)
+                    })?;
+                } else if let Some(audio) = self.audio.as_mut() {
+                    audio.decoder.send_packet(&packet).map_err(|source| {
+                        CinematicError::adapter(&self.path, "submit audio packet", source)
+                    })?;
+                    self.receive_audio_frames()?;
+                }
             } else {
                 self.video.send_eof().map_err(|source| {
                     CinematicError::adapter(&self.path, "finish video stream", source)
                 })?;
+                if let Some(audio) = self.audio.as_mut() {
+                    audio.decoder.send_eof().map_err(|source| {
+                        CinematicError::adapter(&self.path, "finish audio stream", source)
+                    })?;
+                    self.receive_audio_frames()?;
+                }
                 self.eof_sent = true;
+            }
+        }
+    }
+
+    fn receive_audio_frames(&mut self) -> Result<(), CinematicError> {
+        let Some(audio) = self.audio.as_mut() else {
+            return Ok(());
+        };
+        loop {
+            let mut decoded = Audio::empty();
+            match audio.decoder.receive_frame(&mut decoded) {
+                Ok(()) => {
+                    let mut converted = Audio::empty();
+                    audio
+                        .resampler
+                        .run(&decoded, &mut converted)
+                        .map_err(|source| {
+                            CinematicError::adapter(
+                                &self.path,
+                                "convert cinematic audio frame",
+                                source,
+                            )
+                        })?;
+                    let samples = converted
+                        .plane::<(i16, i16)>(0)
+                        .iter()
+                        .flat_map(|&(left, right)| [left, right])
+                        .collect();
+                    self.audio_frames.push(CinematicAudioFrame::new(samples));
+                }
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
+                Err(ffmpeg::Error::Eof) if !audio.drained => {
+                    audio.drained = true;
+                    let mut converted = Audio::empty();
+                    while audio
+                        .resampler
+                        .flush(&mut converted)
+                        .map_err(|source| {
+                            CinematicError::adapter(
+                                &self.path,
+                                "drain cinematic audio resampler",
+                                source,
+                            )
+                        })?
+                        .is_some()
+                    {
+                        let samples = converted
+                            .plane::<(i16, i16)>(0)
+                            .iter()
+                            .flat_map(|&(left, right)| [left, right])
+                            .collect();
+                        self.audio_frames.push(CinematicAudioFrame::new(samples));
+                        converted = Audio::empty();
+                    }
+                    return Ok(());
+                }
+                Err(ffmpeg::Error::Eof) => return Ok(()),
+                Err(source) => {
+                    return Err(CinematicError::adapter(
+                        &self.path,
+                        "receive decoded audio frame",
+                        source,
+                    ));
+                }
             }
         }
     }

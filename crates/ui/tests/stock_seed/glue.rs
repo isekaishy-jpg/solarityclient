@@ -91,7 +91,9 @@ fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
   self:StopMovie()
   ShowCursor()
   SetCurrentScreen("login")
-</OnMovieFinished></Scripts></MovieFrame>
+</OnMovieFinished><OnKeyUp>
+  if key == "SPACE" or key == "ENTER" then self:StopMovie() end
+</OnKeyUp></Scripts></MovieFrame>
 </Ui>"#,
         },
     ])?;
@@ -120,10 +122,55 @@ fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
     assert_eq!(movie.volume(), 250);
     assert!(movie.subtitles_enabled());
     let object_index = movie.object_index();
+    manager.movie_key_up(object_index, "SPACE")?;
+    assert!(manager.media_intent().movie().is_none());
+    assert_eq!(manager.take_movie_stop_completion(), Some(object_index));
     manager.movie_finished(object_index)?;
     assert_eq!(manager.current_screen(), "login");
     assert!(manager.cursor_visible());
     assert!(manager.media_intent().movie().is_none());
+    Ok(())
+}
+
+/// Fresh legal state shows the stock notice and authored acceptance mutates the
+/// profile-backed CVar instead of bypassing the agreement sequence.
+#[test]
+fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Agreement.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Agreement.xml",
+            bytes: br#"<Ui><Frame name="Agreement"><Scripts><OnLoad>
+  EULA_WAS_ACCEPTED = EULAAccepted()
+  EULA_SHOWED_NOTICE = ShowEULANotice()
+  TOS_WAS_ACCEPTED = TOSAccepted()
+  AcceptEULA()
+</OnLoad></Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start_shared_with_initial_screen_and_cvars(
+        AssetStoreHandle::new(AssetStore::mount(catalog)?),
+        (1920, 1080),
+        false,
+        GlueInitialScreen::Login,
+        &[("readTOS".to_owned(), "1".to_owned())],
+    )?;
+    let globals = manager.bundle().lua().globals();
+
+    assert!(!globals.get::<bool>("EULA_WAS_ACCEPTED")?);
+    assert!(globals.get::<bool>("EULA_SHOWED_NOTICE")?);
+    assert!(globals.get::<bool>("TOS_WAS_ACCEPTED")?);
+    assert_eq!(manager.cvar_value("readEULA").as_deref(), Some("1"));
+    assert_eq!(
+        manager.take_changed_cvars(),
+        vec![("readEULA".to_owned(), "1".to_owned())]
+    );
+    assert!(manager.take_changed_cvars().is_empty());
     Ok(())
 }
 

@@ -78,7 +78,7 @@ impl StockChord {
 }
 
 /// Maps physical locations whose exact build-12340 serialized names are known.
-fn keyboard_name(scan_code: ScanCode) -> Option<&'static str> {
+pub(crate) fn keyboard_name(scan_code: ScanCode) -> Option<&'static str> {
     let scan_code = SdlScanCode::from_i32(scan_code.value())?;
     Some(match scan_code {
         SdlScanCode::A => "A",

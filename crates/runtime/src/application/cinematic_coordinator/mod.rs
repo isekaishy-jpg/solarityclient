@@ -6,6 +6,8 @@ use solarity_media::{CinematicDecoder, CinematicError, CinematicVideoFrame};
 use solarity_rendering::{VulkanError, VulkanRenderer};
 use solarity_ui::UiGlueMovieRequest;
 
+use super::sound_coordinator::{RuntimeSoundCoordinator, RuntimeSoundError};
+
 /// One result from synchronizing the active Glue movie request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RuntimeCinematicPoll {
@@ -28,6 +30,8 @@ struct ActiveCinematic {
     first_presentation_time: Duration,
     last_interval: Duration,
     end_time: Option<Duration>,
+    volume: u32,
+    audio_started: bool,
 }
 
 /// Synchronizes Glue's one active MovieFrame with FFmpeg and Vulkan.
@@ -42,9 +46,12 @@ impl RuntimeCinematicCoordinator {
         &mut self,
         request: Option<&UiGlueMovieRequest>,
         renderer: &mut VulkanRenderer,
+        sound: &mut RuntimeSoundCoordinator,
     ) -> Result<RuntimeCinematicPoll, RuntimeCinematicError> {
         let Some(request) = request else {
-            self.active = None;
+            if self.active.take().is_some() {
+                sound.stop_cinematic_audio()?;
+            }
             return Ok(RuntimeCinematicPoll::Idle);
         };
         let replacement_required = self
@@ -52,14 +59,20 @@ impl RuntimeCinematicCoordinator {
             .as_ref()
             .is_none_or(|active| active.generation != request.generation());
         if replacement_required {
-            self.active = Some(ActiveCinematic::open(request)?);
+            if self.active.take().is_some() {
+                sound.stop_cinematic_audio()?;
+            }
+            let mut active = ActiveCinematic::open(request)?;
+            active.feed_audio(sound)?;
+            self.active = Some(active);
         }
         let active = self.active.as_mut().ok_or(RuntimeCinematicError::State)?;
         let elapsed = active.started_at.elapsed();
-        active.advance(elapsed)?;
+        active.advance(elapsed, sound)?;
         if active.end_time.is_some_and(|end_time| elapsed >= end_time) {
             let object_index = active.object_index;
             self.active = None;
+            sound.stop_cinematic_audio()?;
             return Ok(RuntimeCinematicPoll::Finished { object_index });
         }
         renderer.present_rgba8(
@@ -99,10 +112,16 @@ impl ActiveCinematic {
             first_presentation_time,
             last_interval,
             end_time: None,
+            volume: request.volume(),
+            audio_started: false,
         })
     }
 
-    fn advance(&mut self, elapsed: Duration) -> Result<(), RuntimeCinematicError> {
+    fn advance(
+        &mut self,
+        elapsed: Duration,
+        sound: &mut RuntimeSoundCoordinator,
+    ) -> Result<(), RuntimeCinematicError> {
         while self.pending.as_ref().is_some_and(|frame| {
             frame
                 .presentation_time()
@@ -118,6 +137,7 @@ impl ActiveCinematic {
             }
             self.current = next;
             self.pending = self.decoder.next_video_frame()?;
+            self.feed_audio(sound)?;
             if self.pending.is_none() {
                 self.end_time = Some(
                     self.current
@@ -125,6 +145,21 @@ impl ActiveCinematic {
                         .saturating_sub(self.first_presentation_time)
                         .saturating_add(self.last_interval),
                 );
+            }
+        }
+        Ok(())
+    }
+
+    fn feed_audio(&mut self, sound: &mut RuntimeSoundCoordinator) -> Result<(), RuntimeSoundError> {
+        for frame in self.decoder.take_audio_frames() {
+            if frame.samples().is_empty() {
+                continue;
+            }
+            if self.audio_started {
+                sound.queue_cinematic_audio(frame.samples())?;
+            } else {
+                sound.start_cinematic_audio(frame.samples(), self.volume)?;
+                self.audio_started = true;
             }
         }
         Ok(())
@@ -140,6 +175,9 @@ pub enum RuntimeCinematicError {
     /// Vulkan could not present a decoded movie frame.
     #[error(transparent)]
     Present(#[from] VulkanError),
+    /// SDL could not start, feed, or stop the movie audio track.
+    #[error(transparent)]
+    Sound(#[from] RuntimeSoundError),
     /// Coordinator ownership was internally inconsistent.
     #[error("cinematic coordinator lost its active movie state")]
     State,

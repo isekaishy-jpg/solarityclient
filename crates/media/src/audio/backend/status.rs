@@ -67,6 +67,9 @@ pub enum SoundBackendError {
     /// Memory generation was requested from a device output.
     #[error("sound output is not a memory target")]
     NotMemoryOutput,
+    /// Movie PCM was queued before a cinematic track was started.
+    #[error("no cinematic audio track is active")]
+    MissingCinematicTrack,
 }
 
 impl SoundBackendError {

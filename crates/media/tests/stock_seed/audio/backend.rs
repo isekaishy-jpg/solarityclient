@@ -210,6 +210,29 @@ fn backend_promotes_only_real_default_priority_one_shots() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Movie PCM streams through the existing mixer without whole-file admission.
+#[test]
+fn backend_streams_cinematic_pcm_on_a_dedicated_track() -> Result<(), Box<dyn Error>> {
+    let _sdl_test = sdl_test_lock();
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let capacity = NonZeroU16::new(1).ok_or("voice capacity is zero")?;
+    let mut backend = SoundBackend::new(&output, capacity, capacity)?;
+    let samples = [0_i16, 12_000, 0, -12_000].repeat(22_050);
+
+    backend.start_cinematic_audio(&samples, 1.0)?;
+    let mut mixed = [0_u8; 4_096];
+    let mixed_byte_count = backend.generate(&mut mixed)?;
+    assert!(mixed_byte_count > 0);
+    assert!(mixed.iter().any(|byte| *byte != 0));
+    backend.queue_cinematic_audio(&samples[..4_096])?;
+    backend.stop_cinematic_audio()?;
+    assert!(matches!(
+        backend.queue_cinematic_audio(&samples[..4_096]),
+        Err(SoundBackendError::MissingCinematicTrack)
+    ));
+    Ok(())
+}
+
 /// Totals absolute signed-16 energy for an interleaved stereo output buffer.
 fn stereo_energy(bytes: &[u8]) -> (u64, u64) {
     bytes

@@ -9,6 +9,7 @@ mod input_control;
 mod state;
 mod types;
 
+pub(crate) use binding::keyboard_name as stock_keyboard_name;
 pub use binding::{InputBindingInvocation, InputBindingPhase, InputBindingRouter};
 pub use input_control::InputControl;
 pub use types::{InputFrameMotion, PointerPosition};

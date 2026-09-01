@@ -97,6 +97,28 @@ impl GlueManager {
         streaming_trial: bool,
         initial_screen: super::GlueInitialScreen,
     ) -> Result<Self, GlueError> {
+        Self::start_shared_with_initial_screen_and_cvars(
+            assets,
+            logical_extent,
+            streaming_trial,
+            initial_screen,
+            &[],
+        )
+    }
+
+    /// Starts Glue with profile CVar values loaded before authored Lua runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlueError`] under the same strict stock-loading rules as
+    /// [`Self::start_shared_with_initial_screen`].
+    pub fn start_shared_with_initial_screen_and_cvars(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+        initial_screen: super::GlueInitialScreen,
+        cvar_values: &[(String, String)],
+    ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
@@ -112,7 +134,8 @@ impl GlueManager {
         let animations = UiAnimationPlan::from_tree(&tree)?;
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
-                .with_shared_asset_store(assets.clone());
+                .with_shared_asset_store(assets.clone())
+                .with_cvar_values(cvar_values);
         let media_intent = environment.media_intent();
         let network = environment.network();
         let ui_extent = environment.ui_extent();
@@ -278,6 +301,11 @@ impl GlueManager {
         self.environment.cvar_value(name)
     }
 
+    /// Takes profile-backed CVars changed by built-in Glue Lua.
+    pub fn take_changed_cvars(&self) -> Vec<(String, String)> {
+        self.environment.take_changed_cvars()
+    }
+
     /// Takes the oldest native network action emitted by built-in Glue Lua.
     #[must_use]
     pub fn take_network_action(&self) -> Option<UiGlueNetworkAction> {
@@ -352,9 +380,30 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the object is unavailable, its authored
     /// `OnMovieFinished` handler fails, or the resulting live layout is invalid.
     pub fn movie_finished(&mut self, object_index: usize) -> Result<(), UiEventError> {
+        {
+            let mut media = self.media_intent.borrow_mut();
+            media.retire_movie(object_index);
+        }
         self.runtime
             .dispatch_movie_finished(&self.bundle, object_index)?;
         self.refresh_live_state()
+    }
+
+    /// Delivers a stock-normalized released key to the active MovieFrame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when the object is unavailable, its authored
+    /// `OnKeyUp` handler fails, or the resulting live layout is invalid.
+    pub fn movie_key_up(&mut self, object_index: usize, key: &str) -> Result<(), UiEventError> {
+        self.runtime
+            .dispatch_movie_key_up(&self.bundle, object_index, key)?;
+        self.refresh_live_state()
+    }
+
+    /// Takes the native completion generated when authored Lua stops a movie.
+    pub fn take_movie_stop_completion(&self) -> Option<usize> {
+        self.media_intent.borrow_mut().take_movie_stop_completion()
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {

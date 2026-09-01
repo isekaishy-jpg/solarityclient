@@ -129,6 +129,32 @@ impl RuntimeSoundCoordinator {
         self.engine.voice_capacity()
     }
 
+    /// Starts movie audio with stock's unsigned-byte volume scale.
+    pub(crate) fn start_cinematic_audio(
+        &mut self,
+        samples: &[i16],
+        volume: u32,
+    ) -> Result<(), RuntimeSoundError> {
+        self.engine
+            .start_cinematic_audio(samples, volume as f32 / 255.0)?;
+        Ok(())
+    }
+
+    /// Appends one decoded movie block to the active SDL stream.
+    pub(crate) fn queue_cinematic_audio(
+        &mut self,
+        samples: &[i16],
+    ) -> Result<(), RuntimeSoundError> {
+        self.engine.queue_cinematic_audio(samples)?;
+        Ok(())
+    }
+
+    /// Stops and releases movie audio when playback ends or is replaced.
+    pub(crate) fn stop_cinematic_audio(&mut self) -> Result<(), RuntimeSoundError> {
+        self.engine.stop_cinematic_audio()?;
+        Ok(())
+    }
+
     /// Stages one newly resident ADT's MCSE records in authored chunk order.
     pub(crate) fn stage_terrain_tile(&mut self, tile: &DecodedTerrainTile) {
         if self.resident_tile == Some(tile.index()) {

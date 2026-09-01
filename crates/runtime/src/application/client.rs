@@ -275,6 +275,7 @@ impl ClientApplication {
                 if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
+                self.services.service_platform_event(&event)?;
             }
             self.services.service_login()?;
             self.services.present_frame()?;

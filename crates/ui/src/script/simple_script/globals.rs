@@ -10,6 +10,8 @@ use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
 use super::{portrait_unit_key, texture_file_key, texture_solid_color_key, type_key};
 
+mod legal_agreement;
+
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 const CHARACTER_SELECT_MODEL_REGISTRY: &str = "solarity.ui.character_select_model";
 const CHARACTER_CUSTOMIZE_MODEL_REGISTRY: &str = "solarity.ui.character_customize_model";
@@ -1245,6 +1247,7 @@ fn register_glue_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    crate::feature::register_account_globals(lua, globals, environment.account_state())?;
     let movie_resolution = environment.logical_extent().0;
     globals.raw_set(
         "GetMovieResolution",
@@ -1268,6 +1271,7 @@ fn register_glue_globals(
     )?;
     register_glue_media_globals(lua, globals, environment)?;
     register_glue_network_globals(lua, globals, environment)?;
+    legal_agreement::register_globals(lua, globals, environment.cvars())?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
     // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
     let current_screen = environment.current_screen();

@@ -1,7 +1,7 @@
 //! Case-insensitive CVar storage shared by native and Lua-facing UI paths.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::definitions::{STOCK_INITIAL_DEFINITIONS, UiCVarDefinition};
@@ -9,6 +9,7 @@ use super::definitions::{STOCK_INITIAL_DEFINITIONS, UiCVarDefinition};
 /// Mutable value paired with immutable native metadata.
 #[derive(Clone, Debug, PartialEq)]
 struct UiCVar {
+    name: &'static str,
     value: String,
     default: &'static str,
     minimum: Option<f64>,
@@ -20,6 +21,7 @@ struct UiCVar {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(in crate::script::simple_script) struct UiCVarRegistry {
     entries: Rc<RefCell<HashMap<String, UiCVar>>>,
+    changed: Rc<RefCell<HashSet<String>>>,
 }
 
 impl UiCVarRegistry {
@@ -84,8 +86,34 @@ impl UiCVarRegistry {
         if entry.read_only {
             return Err(UiCVarSetError::ReadOnly);
         }
-        entry.value = value;
+        if entry.value != value {
+            entry.value = value;
+            self.changed.borrow_mut().insert(canonical_name(name));
+        }
         Ok(())
+    }
+
+    /// Applies one profile value without reporting it as a runtime mutation.
+    pub(in crate::script::simple_script) fn load(&self, name: &str, value: String) {
+        if let Some(entry) = self.entries.borrow_mut().get_mut(&canonical_name(name)) {
+            entry.value = value;
+        }
+    }
+
+    /// Takes changed values in stable native-definition order.
+    pub(in crate::script::simple_script) fn take_changed(&self) -> Vec<(String, String)> {
+        let changed = std::mem::take(&mut *self.changed.borrow_mut());
+        STOCK_INITIAL_DEFINITIONS
+            .iter()
+            .filter_map(|definition| {
+                let canonical = canonical_name(definition.name);
+                changed.contains(&canonical).then(|| {
+                    let entries = self.entries.borrow();
+                    let entry = &entries[&canonical];
+                    (entry.name.to_owned(), entry.value.clone())
+                })
+            })
+            .collect()
     }
 
     /// Installs one definition using its canonical case-insensitive identity.
@@ -93,6 +121,7 @@ impl UiCVarRegistry {
         self.entries.borrow_mut().insert(
             canonical_name(definition.name),
             UiCVar {
+                name: definition.name,
                 value: definition.default.to_owned(),
                 default: definition.default,
                 minimum: definition.minimum,

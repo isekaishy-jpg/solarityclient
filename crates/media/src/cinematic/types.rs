@@ -2,6 +2,24 @@
 
 use std::time::Duration;
 
+/// One interleaved stereo signed-16 audio block at stock output rate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CinematicAudioFrame {
+    samples: Vec<i16>,
+}
+
+impl CinematicAudioFrame {
+    pub(super) fn new(samples: Vec<i16>) -> Self {
+        Self { samples }
+    }
+
+    /// Returns interleaved left/right samples at 44.1 kHz.
+    #[must_use]
+    pub fn samples(&self) -> &[i16] {
+        &self.samples
+    }
+}
+
 /// One tightly packed RGBA8 frame at its authored presentation time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CinematicVideoFrame {

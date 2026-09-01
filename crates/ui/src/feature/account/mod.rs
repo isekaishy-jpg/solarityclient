@@ -31,6 +31,7 @@ impl UiAccountExpansion {
 #[derive(Clone, Debug, Default)]
 pub struct UiAccountState {
     expansion: Rc<Cell<UiAccountExpansion>>,
+    trial: Rc<Cell<bool>>,
 }
 
 impl UiAccountState {
@@ -50,6 +51,17 @@ impl UiAccountState {
     pub fn expansion(&self) -> UiAccountExpansion {
         self.expansion.get()
     }
+
+    /// Replaces the authenticated trial-account entitlement flag.
+    pub fn set_trial(&self, trial: bool) {
+        self.trial.set(trial);
+    }
+
+    /// Returns whether the authenticated account is trial-restricted.
+    #[must_use]
+    pub fn is_trial(&self) -> bool {
+        self.trial.get()
+    }
 }
 
 /// Registers account APIs backed by authenticated session state.
@@ -58,10 +70,11 @@ pub(crate) fn register_globals(
     globals: &Table,
     state: UiAccountState,
 ) -> mlua::Result<()> {
+    let account_expansion = state.clone();
     let world_expansion = state.clone();
     globals.raw_set(
         "GetAccountExpansionLevel",
-        lua.create_function(move |_, ()| Ok(state.expansion().level()))?,
+        lua.create_function(move |_, ()| Ok(account_expansion.expansion().level()))?,
     )?;
     // The native call reads the active character's expansion byte. World
     // authentication publishes the same validated entitlement into this
@@ -69,5 +82,9 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetExpansionLevel",
         lua.create_function(move |_, ()| Ok(world_expansion.expansion().level()))?,
+    )?;
+    globals.raw_set(
+        "IsTrialAccount",
+        lua.create_function(move |_, ()| Ok(state.is_trial()))?,
     )
 }

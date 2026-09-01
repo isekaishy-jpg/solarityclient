@@ -1,8 +1,11 @@
 //! SDL3_mixer adapter replacing the stock client's FMOD output boundary.
 
+#![allow(unsafe_code)]
+
 use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::mixer::{Mixer, Point3D, StereoGains, Track};
 use sdl3::sys::audio::{SDL_AUDIO_S16LE, SDL_AudioSpec};
 
@@ -27,6 +30,12 @@ struct VoiceSlot<'output> {
     looping: bool,
     admission_sequence: u64,
     virtualized: bool,
+}
+
+/// One FFmpeg-fed SDL stream whose track is destroyed before its input.
+struct CinematicTrack<'output> {
+    track: Track<'output>,
+    _stream: AudioStreamOwner,
 }
 
 /// Owner of one explicitly selected SDL output mixer.
@@ -124,6 +133,7 @@ pub struct SoundBackend<'output> {
     backend_id: u64,
     output: &'output SoundOutput,
     voices: Vec<VoiceSlot<'output>>,
+    cinematic: Option<CinematicTrack<'output>>,
     software_channel_count: usize,
     next_admission_sequence: u64,
 }
@@ -170,6 +180,7 @@ impl<'output> SoundBackend<'output> {
             backend_id: NEXT_BACKEND_ID.fetch_add(1, Ordering::Relaxed),
             output,
             voices,
+            cinematic: None,
             software_channel_count: usize::from(software_channel_count.get()),
             next_admission_sequence: 0,
         })
@@ -191,6 +202,94 @@ impl<'output> SoundBackend<'output> {
     #[must_use]
     pub const fn software_channel_count(&self) -> usize {
         self.software_channel_count
+    }
+
+    /// Starts the dedicated non-spatial cinematic stream with initial PCM.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`] when SDL cannot create, attach, feed, or
+    /// start the stream, or when gain is negative or non-finite.
+    pub fn start_cinematic_audio(
+        &mut self,
+        samples: &[i16],
+        gain: f32,
+    ) -> Result<(), SoundBackendError> {
+        if !gain.is_finite() || gain < 0.0 {
+            return Err(SoundBackendError::InvalidGain { gain });
+        }
+        self.stop_cinematic_audio()?;
+        let sdl = sdl3::init()
+            .map_err(|source| SoundBackendError::adapter("retain SDL for movie audio", source))?;
+        let audio = sdl.audio().map_err(|source| {
+            SoundBackendError::adapter("retain SDL audio for movie stream", source)
+        })?;
+        let source_spec = AudioSpec::new(Some(44_100), Some(2), Some(AudioFormat::s16_sys()));
+        let output_info = self.output.info();
+        let output_rate = i32::try_from(output_info.sample_rate_hz()).map_err(|source| {
+            SoundBackendError::adapter("convert movie output sample rate", source)
+        })?;
+        let output_spec = AudioSpec::new(
+            Some(output_rate),
+            Some(i32::from(output_info.channel_count())),
+            Some(AudioFormat::s16_sys()),
+        );
+        let mut stream = audio
+            .new_stream(Some(&source_spec), Some(&output_spec))
+            .map_err(|source| SoundBackendError::adapter("create movie audio stream", source))?;
+        stream
+            .put_data_i16(samples)
+            .map_err(|source| SoundBackendError::adapter("queue initial movie audio", source))?;
+        let track = self
+            .output
+            .mixer
+            .create_track()
+            .map_err(|source| SoundBackendError::adapter("create movie audio track", source))?;
+        // SAFETY: `stream` is moved into `CinematicTrack` after attachment and
+        // its field follows `track`, so Rust destroys the track before stream.
+        unsafe { track.set_audio_stream(stream.stream()) }
+            .map_err(|source| SoundBackendError::adapter("attach movie audio stream", source))?;
+        track
+            .set_gain(gain)
+            .and_then(|()| track.play())
+            .map_err(|source| SoundBackendError::adapter("start movie audio track", source))?;
+        self.cinematic = Some(CinematicTrack {
+            track,
+            _stream: stream,
+        });
+        Ok(())
+    }
+
+    /// Appends decoded PCM to the active cinematic stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`] when no movie track exists or SDL rejects
+    /// the queued samples.
+    pub fn queue_cinematic_audio(&mut self, samples: &[i16]) -> Result<(), SoundBackendError> {
+        let cinematic = self
+            .cinematic
+            .as_ref()
+            .ok_or(SoundBackendError::MissingCinematicTrack)?;
+        cinematic
+            ._stream
+            .put_data_i16(samples)
+            .map_err(|source| SoundBackendError::adapter("queue movie audio", source))
+    }
+
+    /// Stops and releases the dedicated cinematic stream when one is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundBackendError`] if SDL cannot stop the live track.
+    pub fn stop_cinematic_audio(&mut self) -> Result<(), SoundBackendError> {
+        let Some(cinematic) = self.cinematic.take() else {
+            return Ok(());
+        };
+        cinematic
+            .track
+            .stop(0)
+            .map_err(|source| SoundBackendError::adapter("stop movie audio track", source))
     }
 
     /// Starts one decoded sound on a stopped or weakest virtual slot.
@@ -609,6 +708,9 @@ fn stereo_direction_gains(right: f32, back: f32) -> [f32; 2] {
 
 impl Drop for SoundBackend<'_> {
     fn drop(&mut self) {
+        if let Some(cinematic) = self.cinematic.take() {
+            let _stop_result = cinematic.track.stop(0);
+        }
         for voice in &self.voices {
             let _stop_result = voice.track.stop(0);
         }

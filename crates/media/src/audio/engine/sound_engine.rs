@@ -96,6 +96,41 @@ impl<'output> SoundEngine<'output> {
         self.backend.output_info()
     }
 
+    /// Starts the dedicated non-spatial cinematic PCM stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when the backend cannot create or start it.
+    pub fn start_cinematic_audio(
+        &mut self,
+        samples: &[i16],
+        gain: f32,
+    ) -> Result<(), SoundEngineError> {
+        self.backend.start_cinematic_audio(samples, gain)?;
+        Ok(())
+    }
+
+    /// Appends decoded samples to the active cinematic stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when no movie stream is active or the
+    /// backend rejects the data.
+    pub fn queue_cinematic_audio(&mut self, samples: &[i16]) -> Result<(), SoundEngineError> {
+        self.backend.queue_cinematic_audio(samples)?;
+        Ok(())
+    }
+
+    /// Stops the dedicated cinematic stream if one is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when the backend cannot stop it.
+    pub fn stop_cinematic_audio(&mut self) -> Result<(), SoundEngineError> {
+        self.backend.stop_cinematic_audio()?;
+        Ok(())
+    }
+
     /// Returns the executable's hard maximum number of virtual voices.
     #[must_use]
     pub fn voice_capacity(&self) -> usize {

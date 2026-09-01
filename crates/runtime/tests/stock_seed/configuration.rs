@@ -60,6 +60,36 @@ fn intro_movie_request_is_consumed_once() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Script-owned agreement changes replace existing declarations and append
+/// absent ones without accumulating duplicate profile files.
+#[test]
+fn startup_profile_persists_changed_cvars() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    std::fs::create_dir_all(fixture.profile_root().join("WTF"))?;
+    std::fs::write(
+        fixture.profile_root().join("WTF/Config.wtf"),
+        "SET readEULA \"-1\"\r\nSET accountName \"tester\"\r\n",
+    )?;
+    let mut profile = StartupProfile::load(fixture.profile_root())?;
+    assert!(
+        profile
+            .cvar_values()
+            .iter()
+            .any(|(name, value)| name == "readEULA" && value == "-1")
+    );
+
+    profile.persist_cvars(&[
+        ("readEULA".to_owned(), "1".to_owned()),
+        ("readTOS".to_owned(), "1".to_owned()),
+    ])?;
+
+    assert_eq!(
+        std::fs::read_to_string(fixture.profile_root().join("WTF/Config.wtf"))?,
+        "SET readEULA \"1\"\r\nSET accountName \"tester\"\r\nSET readTOS \"1\"\r\n"
+    );
+    Ok(())
+}
+
 /// Missing policy is rejected rather than replaced with a machine-dependent default.
 #[test]
 fn missing_required_capacity_has_no_guessed_default() -> Result<(), Box<dyn Error>> {

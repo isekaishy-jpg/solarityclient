@@ -16,12 +16,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         .transpose()?
         .unwrap_or(3);
     let mut decoder = CinematicDecoder::open(&path)?;
+    let mut audio_samples = 0_usize;
     for index in 0..count {
         let frame = decoder
             .next_video_frame()?
             .ok_or("movie ended before the requested validation frame count")?;
+        audio_samples += decoder
+            .take_audio_frames()
+            .iter()
+            .map(|frame| frame.samples().len())
+            .sum::<usize>();
         println!(
-            "frame={index} extent={}x{} pts_ms={} bytes={}",
+            "frame={index} extent={}x{} pts_ms={} bytes={} audio_samples={audio_samples}",
             frame.width(),
             frame.height(),
             frame.presentation_time().as_millis(),

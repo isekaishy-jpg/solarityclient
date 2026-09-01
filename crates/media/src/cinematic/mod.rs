@@ -10,4 +10,4 @@ mod types;
 
 pub use dependency::CinematicDecoder;
 pub use status::CinematicError;
-pub use types::CinematicVideoFrame;
+pub use types::{CinematicAudioFrame, CinematicVideoFrame};
