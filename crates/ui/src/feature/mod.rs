@@ -27,7 +27,9 @@ mod trade_skill;
 mod trainer;
 
 pub(crate) use action_bar::register_globals as register_action_bar_globals;
-pub use action_bar::{UiActionBarPageError, UiActionBarState};
+pub use action_bar::{
+    UI_ACTION_SLOT_COUNT, UiActionBarPageError, UiActionBarState, UiActionBarStateError,
+};
 pub(crate) use battlefield::register_globals as register_battlefield_globals;
 pub use battlefield::{
     MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,

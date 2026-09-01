@@ -253,6 +253,13 @@ the packet's Gregorian calendar as stock's one-based weekday and month, while
 `GetGameTime` reads the clock snapshot. The UI layer never substitutes local
 wall time when either realm value is absent.
 
+Action-slot presence is likewise server-owned. `SMSG_ACTION_BUTTONS` supplies
+one complete 144-word image or the stock one-byte clear state; the UI retains
+absence until that packet arrives. Empty slots expose their native nil, false,
+and zero query values. Occupied slots require resolved spell, item, macro, and
+player-state metadata rather than receiving guessed textures, cooldowns,
+counts, range, or usability.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265

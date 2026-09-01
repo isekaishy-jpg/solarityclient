@@ -39,7 +39,9 @@ pub use feature::{
     UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType,
     UiWorldPvpQueueSlot,
 };
-pub use feature::{UiActionBarPageError, UiActionBarState};
+pub use feature::{
+    UI_ACTION_SLOT_COUNT, UiActionBarPageError, UiActionBarState, UiActionBarStateError,
+};
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
     FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,

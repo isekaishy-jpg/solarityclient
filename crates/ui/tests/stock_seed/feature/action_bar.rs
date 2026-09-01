@@ -1,6 +1,6 @@
 //! External stock-compatibility tests for client-owned action-bar state.
 
-use solarity_ui::{UiActionBarPageError, UiActionBarState};
+use solarity_ui::{UiActionBarPageError, UiActionBarState, UiActionBarStateError};
 
 /// The primary bar starts on page one and accepts only stock's six pages.
 #[test]
@@ -13,4 +13,29 @@ fn primary_page_preserves_the_closed_stock_range() {
     assert_eq!(state.page(), 6);
     assert_eq!(state.set_page(7), Err(UiActionBarPageError { page: 7 }));
     assert_eq!(state.page(), 6);
+}
+
+/// Slot presence is absent before its packet and preserves all 144 packed words.
+#[test]
+fn action_slots_require_a_complete_server_image() {
+    let state = UiActionBarState::new();
+    assert_eq!(
+        state.packed_slot(1),
+        Err(UiActionBarStateError::Unavailable)
+    );
+
+    let mut slots = [0_u32; 144];
+    slots[0] = 0x8000_1234;
+    slots[143] = 0x0000_5678;
+    state.set_slots(slots);
+    assert_eq!(state.packed_slot(0), Ok(0));
+    assert_eq!(state.packed_slot(1), Ok(0x8000_1234));
+    assert_eq!(state.packed_slot(144), Ok(0x0000_5678));
+    assert_eq!(state.packed_slot(145), Ok(0));
+
+    state.clear_slots();
+    assert_eq!(
+        state.packed_slot(1),
+        Err(UiActionBarStateError::Unavailable)
+    );
 }

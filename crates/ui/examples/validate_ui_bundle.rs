@@ -76,6 +76,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // stock 3.3 calendar era and uses Lua's one-based weekday.
                 world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
                 world.set_realm_time(UiRealmTime::new(12, 0)?);
+                // This explicit empty image represents a character whose
+                // authoritative 144-slot server packet contains no actions.
+                environment.action_bar_state().set_slots([0; 144]);
             }
             Some(environment)
         }

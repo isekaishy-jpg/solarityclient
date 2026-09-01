@@ -2,15 +2,16 @@
 
 use super::{
     AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
-    ObjectUpdateError, WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError,
-    WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch, WorldTimePacketError,
-    WorldTimeSpeed,
+    ObjectUpdateError, WorldActionButtonPacketError, WorldActionButtons, WorldAddonManifest,
+    WorldAddonPolicy, WorldEntryPacketError, WorldLivenessPacketError, WorldLocation,
+    WorldObjectUpdateBatch, WorldTimePacketError, WorldTimeSpeed,
 };
 
 const SMSG_CHAR_ENUM: u16 = 0x003B;
 const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
 const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
 const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
+const SMSG_ACTION_BUTTONS: u16 = 0x0129;
 const SMSG_ADDON_INFO: u16 = 0x02EF;
 const SMSG_TIME_SYNC_REQ: u16 = 0x0390;
 const SMSG_PONG: u16 = 0x01DD;
@@ -44,6 +45,7 @@ impl WorldServerPacket {
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
+            SMSG_ACTION_BUTTONS => Some("SMSG_ACTION_BUTTONS"),
             SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
             SMSG_TIME_SYNC_REQ => Some("SMSG_TIME_SYNC_REQ"),
             _ => None,
@@ -126,6 +128,21 @@ impl WorldServerPacket {
             return Ok(None);
         }
         WorldTimeSpeed::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_ACTION_BUTTONS`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldActionButtonPacketError`] unless the packet is an exact
+    /// 144-slot image or the stock one-byte clear representation.
+    pub fn action_buttons(
+        &self,
+    ) -> Result<Option<WorldActionButtons>, WorldActionButtonPacketError> {
+        if self.opcode != SMSG_ACTION_BUTTONS {
+            return Ok(None);
+        }
+        WorldActionButtons::decode(&self.payload).map(Some)
     }
 
     /// Decodes normal or zlib-compressed object updates.

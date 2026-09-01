@@ -818,6 +818,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let world = environment.world_state();
     let action_bar = environment.action_bar_state();
     let modifiers = environment.modifier_key_state();
+    action_bar.set_slots([0; 144]);
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
@@ -890,6 +891,46 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .eval::<u8>()?,
         1
     );
+    assert_eq!(
+        bundle
+            .lua()
+            .load(
+                "return HasAction(1), GetActionTexture(1), IsEquippedAction(1), IsConsumableAction(1), IsStackableAction(1), GetActionText(1), IsCurrentAction(1), IsAutoRepeatAction(1), IsAttackAction(1)",
+            )
+            .eval::<(
+                bool,
+                Option<String>,
+                bool,
+                bool,
+                bool,
+                Option<String>,
+                bool,
+                bool,
+                bool,
+            )>()?,
+        (false, None, false, false, false, None, false, false, false)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return IsUsableAction(1)")
+            .eval::<(bool, bool)>()?,
+        (false, false)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return IsActionInRange(1), GetActionCount(1)")
+            .eval::<(Option<u8>, u32)>()?,
+        (None, 0)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetActionCooldown(1)")
+            .eval::<(f64, f64, u8)>()?,
+        (0.0, 0.0, 0)
+    );
     bundle.lua().load("ChangeActionBarPage(6)").exec()?;
     assert_eq!(action_bar.page(), 6);
     let rejected = bundle
@@ -897,6 +938,17 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .load("return pcall(ChangeActionBarPage, 7)")
         .eval::<bool>()?;
     assert!(!rejected);
+
+    let mut occupied_slots = [0_u32; 144];
+    occupied_slots[0] = 0x8000_1234;
+    action_bar.set_slots(occupied_slots);
+    assert!(bundle.lua().load("return HasAction(1)").eval::<bool>()?);
+    let (available, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(GetActionTexture, 1); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!available);
+    assert!(message.contains("resolved metadata for occupied action slot 1"));
 
     world.enter_player(UiPlayerState::new(u32::MAX));
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
