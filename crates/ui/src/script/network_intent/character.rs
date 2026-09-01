@@ -11,7 +11,7 @@ pub struct UiCharacterInfo {
     guid: u64,
     name: String,
     race_name: String,
-    race_file_string: String,
+    background_model: String,
     class_name: String,
     class_id: u8,
     level: u8,
@@ -29,7 +29,7 @@ impl UiCharacterInfo {
         guid: u64,
         name: String,
         race_name: String,
-        race_file_string: String,
+        background_model: String,
         class_name: String,
         class_id: u8,
         level: u8,
@@ -42,7 +42,7 @@ impl UiCharacterInfo {
             guid,
             name,
             race_name,
-            race_file_string,
+            background_model,
             class_name,
             class_id,
             level,
@@ -71,10 +71,10 @@ impl UiCharacterInfo {
         &self.race_name
     }
 
-    /// Returns the race's model/background filename component.
+    /// Returns stock's class/race-remapped background filename component.
     #[must_use]
-    pub fn race_file_string(&self) -> &str {
-        &self.race_file_string
+    pub fn background_model(&self) -> &str {
+        &self.background_model
     }
 
     /// Returns the selected-locale ChrClasses display name.
@@ -116,19 +116,19 @@ impl UiCharacterInfo {
     /// Reports the paid-character-customization branch.
     #[must_use]
     pub const fn has_paid_customization(&self) -> bool {
-        self.customization_flags == CUSTOMIZE_CHARACTER
+        self.customization_flags & CUSTOMIZE_CHARACTER != 0
     }
 
     /// Reports the paid-race-change branch.
     #[must_use]
     pub const fn has_paid_race_change(&self) -> bool {
-        self.customization_flags == CHANGE_RACE
+        self.customization_flags & CHANGE_RACE != 0
     }
 
     /// Reports the paid-faction-change branch.
     #[must_use]
     pub const fn has_paid_faction_change(&self) -> bool {
-        self.customization_flags == CHANGE_FACTION
+        self.customization_flags & CHANGE_FACTION != 0
     }
 }
 
@@ -137,16 +137,18 @@ impl UiCharacterInfo {
 pub struct UiCharacterDirectory {
     characters: Vec<UiCharacterInfo>,
     selected_guid: Option<u64>,
+    default_background_model: String,
 }
 
 impl UiCharacterDirectory {
     /// Captures server order and initially selects the first returned row.
     #[must_use]
-    pub fn new(characters: Vec<UiCharacterInfo>) -> Self {
+    pub fn new(characters: Vec<UiCharacterInfo>, default_background_model: String) -> Self {
         let selected_guid = characters.first().map(UiCharacterInfo::guid);
         Self {
             characters,
             selected_guid,
+            default_background_model,
         }
     }
 
@@ -160,6 +162,10 @@ impl UiCharacterDirectory {
     #[must_use]
     pub const fn selected_guid(&self) -> Option<u64> {
         self.selected_guid
+    }
+
+    pub(crate) fn default_background_model(&self) -> &str {
+        &self.default_background_model
     }
 
     pub(crate) fn by_index(&self, one_based_index: u32) -> Option<&UiCharacterInfo> {

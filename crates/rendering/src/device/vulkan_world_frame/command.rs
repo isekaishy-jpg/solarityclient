@@ -146,12 +146,44 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     if let Some(ui) = context.ui {
+        transition_to_ui_overlay(&context);
         record_loaded_overlay(ui)?;
     }
     transition_to_present(&context);
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))
+}
+
+/// Makes the completed world color writes available to the blending UI pass.
+///
+/// Dynamic rendering scopes do not create an implicit attachment dependency.
+/// The overlay keeps the same optimal layout, but its blend operations read
+/// the destination color produced by the preceding world/M2 scope.
+fn transition_to_ui_overlay(context: &RecordContext<'_>) {
+    let range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .layer_count(1);
+    let barriers = [vk::ImageMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(
+            vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+        )
+        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .image(context.image)
+        .subresource_range(range)];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: Both rendering scopes use this live swapchain image on the same
+    // graphics queue and the first scope has ended before this dependency.
+    unsafe {
+        context
+            .device
+            .cmd_pipeline_barrier2(context.command_buffer, &dependency)
+    };
 }
 
 fn record_particle(

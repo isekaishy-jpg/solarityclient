@@ -20,8 +20,8 @@ use solarity_rendering::{
 };
 
 use crate::application::player_coordinator::{
-    ResidentCreatureFrameInput, ResidentCreatureTexture, ResidentPlayerFrameInput,
-    ResidentPlayerTexture,
+    ResidentCreationFrameInput, ResidentCreatureFrameInput, ResidentCreatureTexture,
+    ResidentPlayerFrameInput, ResidentPlayerTexture,
 };
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
@@ -48,7 +48,7 @@ const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
-    mesh: M2MeshHandle,
+    mesh: Option<M2MeshHandle>,
     draws: Vec<Option<M2GpuDraw>>,
     particles: Vec<M2GpuParticle>,
     ribbons: Vec<Vec<M2GpuRibbonPass>>,
@@ -83,7 +83,11 @@ struct M2TransparentDraw {
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
     source_index: usize,
+    /// Placement-local transform retained across animated parent resolution.
+    local_transform: Mat4,
     transform: Mat4,
+    /// Stock parent attachment used by Glue character preview models.
+    glue_parent_attachment: Option<u32>,
     owner: M2GpuPlacementOwner,
     flags: u16,
     color: [u8; 4],
@@ -456,7 +460,9 @@ impl M2Frame {
             };
             placements.push(M2GpuPlacement {
                 source_index: placement.source_index(),
+                local_transform: placement.transform(),
                 transform: placement.transform(),
+                glue_parent_attachment: None,
                 owner: M2GpuPlacementOwner::Static(placement.owner()),
                 flags: placement.flags(),
                 color: placement.color(),
@@ -494,6 +500,7 @@ impl M2Frame {
         object_index: usize,
         animation_id: u16,
         model_scale: f32,
+        local_light_count: M2LocalLightCount,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
@@ -504,7 +511,7 @@ impl M2Frame {
             .iter()
             .map(|texture| M2ResolvedTexture::Authored(texture.as_ref()))
             .collect::<Vec<_>>();
-        let source = prepare_gpu_source(renderer, &model, &resolved, None)?;
+        let source = prepare_gpu_source(renderer, &model, &resolved, None, local_light_count)?;
         let playback = M2Playback::new(&model, animation_id, random)?;
         let particles = model
             .animations()
@@ -526,7 +533,9 @@ impl M2Frame {
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
                 source_index: 0,
+                local_transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
                 transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
+                glue_parent_attachment: None,
                 owner: M2GpuPlacementOwner::GlueModel { object_index },
                 flags: 0,
                 color: [u8::MAX; 4],
@@ -549,6 +558,151 @@ impl M2Frame {
             mount_camera_sample: None,
             last_effect_time_ms: None,
         })
+    }
+
+    /// Replaces the character-creation body beneath the retained Glue environment.
+    pub(in crate::application) fn replace_glue_character(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        input: Option<ResidentCreationFrameInput<'_>>,
+        local_light_count: M2LocalLightCount,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(input) = input else {
+            self.remove_player();
+            return Ok(());
+        };
+        if !input.model_scale().is_finite()
+            || input.model_scale() <= 0.0
+            || !input.facing_radians().is_finite()
+        {
+            return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
+        }
+        let resolved = input
+            .textures()
+            .iter()
+            .map(|texture| match texture {
+                ResidentPlayerTexture::Authored(source) => {
+                    M2ResolvedTexture::Authored(source.as_ref())
+                }
+                ResidentPlayerTexture::BodyAtlas => {
+                    M2ResolvedTexture::CharacterAtlas(input.atlas())
+                }
+                ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
+            })
+            .collect::<Vec<_>>();
+        let source = prepare_gpu_source(
+            renderer,
+            input.model(),
+            &resolved,
+            Some(input.geosets()),
+            local_light_count,
+        )?;
+        let transform = Mat4::from_rotation_z(input.facing_radians())
+            * Mat4::from_scale(glam::Vec3::splat(input.model_scale()));
+        let mut placement = unit_gpu_placement(
+            0,
+            transform,
+            M2GpuPlacementOwner::PlayerBody { guid: 0 },
+            input.model(),
+            input.animation().animation_id(),
+            input.particle_colors().cloned(),
+            random,
+        )?;
+        // CCharacterCreation attaches the body to attachment zero of the
+        // active ModelFFX background. The child retains its facing as a local
+        // transform beneath that animated parent attachment.
+        placement.glue_parent_attachment = Some(0);
+        let mut prepared = vec![(source, placement)];
+        for attachment in input.attachments() {
+            if input.model().attachment(attachment.point().id()).is_none() {
+                return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
+                    model: input.model().path().clone(),
+                    attachment_id: attachment.point().id(),
+                });
+            }
+            let resolved = attachment
+                .textures()
+                .iter()
+                .map(|texture| match texture {
+                    ResidentPlayerTexture::Authored(source) => {
+                        M2ResolvedTexture::Authored(source.as_ref())
+                    }
+                    ResidentPlayerTexture::BodyAtlas => {
+                        M2ResolvedTexture::CharacterAtlas(input.atlas())
+                    }
+                    ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
+                })
+                .collect::<Vec<_>>();
+            let source = prepare_gpu_source(
+                renderer,
+                attachment.model(),
+                &resolved,
+                None,
+                local_light_count,
+            )?;
+            let placement = unit_gpu_placement(
+                0,
+                transform,
+                M2GpuPlacementOwner::PlayerItem {
+                    guid: 0,
+                    point: attachment.point(),
+                },
+                attachment.model(),
+                0,
+                attachment.particle_colors().cloned(),
+                random,
+            )?;
+            prepared.push((source, placement));
+            for effect in attachment.visual_effects() {
+                let resolved = effect
+                    .textures()
+                    .iter()
+                    .map(|texture| match texture {
+                        ResidentPlayerTexture::Authored(source) => {
+                            M2ResolvedTexture::Authored(source.as_ref())
+                        }
+                        ResidentPlayerTexture::BodyAtlas => {
+                            M2ResolvedTexture::CharacterAtlas(input.atlas())
+                        }
+                        ResidentPlayerTexture::Unresolved(kind) => {
+                            M2ResolvedTexture::Unresolved(*kind)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let source = prepare_gpu_source(
+                    renderer,
+                    effect.model(),
+                    &resolved,
+                    None,
+                    local_light_count,
+                )?;
+                let placement = unit_gpu_placement(
+                    0,
+                    transform,
+                    M2GpuPlacementOwner::PlayerItemVisual {
+                        guid: 0,
+                        item_point: attachment.point(),
+                        effect_point: effect.point(),
+                    },
+                    effect.model(),
+                    0,
+                    None,
+                    random,
+                )?;
+                prepared.push((source, placement));
+            }
+        }
+        self.remove_player();
+        for (source, placement) in prepared {
+            let source_index = self.sources.len();
+            self.sources.push(Some(source));
+            self.placements.push(M2GpuPlacement {
+                source_index,
+                ..placement
+            });
+        }
+        Ok(())
     }
 
     /// Replaces the one player-owned source and placement transactionally.
@@ -601,7 +755,13 @@ impl M2Frame {
                     }
                 })
                 .collect::<Vec<_>>();
-            let source = prepare_gpu_source(renderer, input.model(), &resolved, None)?;
+            let source = prepare_gpu_source(
+                renderer,
+                input.model(),
+                &resolved,
+                input.geosets(),
+                M2LocalLightCount::Zero,
+            )?;
             let transform =
                 unit_placement_transform(input.world_transform(), input.object_scale())?;
             let placement = unit_gpu_placement(
@@ -678,6 +838,7 @@ impl M2Frame {
                     guid: input.guid(),
                 })?;
             placement.transform = transform;
+            placement.local_transform = transform;
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 return Ok(());
             };
@@ -701,6 +862,7 @@ impl M2Frame {
             })
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
         placement.transform = transform;
+        placement.local_transform = transform;
         let Some(source) = self.sources[placement.source_index].as_ref() else {
             return Ok(());
         };
@@ -735,6 +897,7 @@ impl M2Frame {
                     guid: input.guid(),
                 })?;
             placement.transform = transform;
+            placement.local_transform = transform;
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -774,6 +937,7 @@ impl M2Frame {
                         },
                     )?;
                 placement.transform = transform;
+                placement.local_transform = transform;
                 let Some(source) = self.sources[placement.source_index].as_ref() else {
                     continue;
                 };
@@ -800,6 +964,7 @@ impl M2Frame {
                     guid: input.guid(),
                 })?;
             placement.transform = transform;
+            placement.local_transform = transform;
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -1045,7 +1210,26 @@ impl M2Frame {
         let mut rider_transforms = Vec::with_capacity(mounted_guids.len());
         let mut item_transforms = Vec::with_capacity(requested_items.len());
         let mut visual_transforms = Vec::with_capacity(requested_visuals.len());
+        let glue_attachment_id = self
+            .placements
+            .iter()
+            .find_map(|placement| placement.glue_parent_attachment);
+        let mut glue_attachment_transform = None;
         for placement in &mut self.placements {
+            if let Some(attachment_id) = placement.glue_parent_attachment {
+                if glue_attachment_id != Some(attachment_id) {
+                    return Err(RuntimeTerrainFrameError::MissingGlueM2AttachmentPose {
+                        attachment_id,
+                    });
+                }
+                let parent = glue_attachment_transform.ok_or(
+                    RuntimeTerrainFrameError::MissingGlueM2AttachmentPose { attachment_id },
+                )?;
+                let Some(parent) = parent else {
+                    continue;
+                };
+                placement.transform = parent * placement.local_transform;
+            }
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
                 && mounted_guids.contains(&guid)
@@ -1150,6 +1334,22 @@ impl M2Frame {
                 &bone_pose,
                 event_window,
             )?;
+            if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. })
+                && let Some(attachment_id) = glue_attachment_id
+            {
+                let attachment = source.model.attachment(attachment_id).ok_or_else(|| {
+                    RuntimeTerrainFrameError::MissingGlueM2Attachment {
+                        model: source.model.path().clone(),
+                        attachment_id,
+                    }
+                })?;
+                glue_attachment_transform = Some(bone_pose.attachment_transform(
+                    source.model.animations(),
+                    attachment,
+                    clock,
+                    placement.transform,
+                )?);
+            }
             if let M2GpuPlacementOwner::PlayerMount { guid }
             | M2GpuPlacementOwner::RemotePlayerMount { guid } = placement.owner
             {
@@ -1346,66 +1546,72 @@ impl M2Frame {
                 .extend_from_slice(bone_pose.transforms());
             let instance_color = placement_color(placement.color);
             let instance_identity = std::ptr::from_ref(&*placement).addr();
-            for (draw_index, resources) in source.draws.iter().enumerate() {
-                let Some(resources) = resources else {
-                    continue;
-                };
-                let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
-                let draw = &source.plan.draws()[draw_index];
-                let material_state = M2MaterialState::from_material(draw.material());
-                let element_alpha = pose.mesh_color().w * instance_color.w;
-                let runtime_alpha_fade =
-                    element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD && !material_state.blend_enabled();
-                let material = M2MaterialUniform::new(
-                    placement.transform,
-                    pose.texture_transforms(),
-                    model_view,
-                    pose.mesh_color() * instance_color,
-                    fog_color.extend(1.0),
-                    glam::Vec4::new(
-                        material_state.alpha_reference(instance_color.w),
-                        0.0,
-                        0.0,
-                        0.0,
-                    ),
-                );
-                let pipeline = if runtime_alpha_fade {
-                    resources.runtime_fade_pipeline.ok_or(
-                        RuntimeTerrainFrameError::M2RuntimeFadePipeline {
-                            model: source.model.path().clone(),
-                            draw_index,
-                        },
-                    )?
-                } else {
-                    resources.pipeline
-                };
-                let prepared = renderer.prepare_m2_draw(
-                    source.mesh,
-                    pipeline,
-                    resources.texture_set,
-                    &source.plan,
-                    draw_index,
-                    runtime_alpha_fade,
-                    material,
-                    bone_offset,
-                    0,
-                )?;
-                if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD {
-                    let distance = section_distance_key(draw, &bone_pose, model_view)?;
-                    self.transparent_draws.push(M2TransparentDraw {
-                        key: M2TransparentSortKey::new(
-                            distance,
-                            false,
-                            draw.batch().priority_plane,
-                            distance,
-                            instance_identity,
-                            draw.batch().material_layer,
+            if let Some(mesh) = source.mesh {
+                for (draw_index, resources) in source.draws.iter().enumerate() {
+                    let Some(resources) = resources else {
+                        continue;
+                    };
+                    let pose =
+                        M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
+                    let draw = &source.plan.draws()[draw_index];
+                    let material_state = M2MaterialState::from_material(draw.material());
+                    let element_alpha = pose.mesh_color().w * instance_color.w;
+                    let runtime_alpha_fade = element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
+                        && !material_state.blend_enabled();
+                    let material = M2MaterialUniform::new(
+                        placement.transform,
+                        pose.texture_transforms(),
+                        model_view,
+                        pose.mesh_color() * instance_color,
+                        fog_color.extend(1.0),
+                        glam::Vec4::new(
+                            material_state.alpha_reference(instance_color.w),
+                            0.0,
+                            0.0,
+                            0.0,
                         ),
-                        draw: prepared,
-                    });
-                } else {
-                    self.visible_draws.push(prepared);
+                    );
+                    let pipeline = if runtime_alpha_fade {
+                        resources.runtime_fade_pipeline.ok_or(
+                            RuntimeTerrainFrameError::M2RuntimeFadePipeline {
+                                model: source.model.path().clone(),
+                                draw_index,
+                            },
+                        )?
+                    } else {
+                        resources.pipeline
+                    };
+                    let prepared = renderer.prepare_m2_draw(
+                        mesh,
+                        pipeline,
+                        resources.texture_set,
+                        &source.plan,
+                        draw_index,
+                        runtime_alpha_fade,
+                        material,
+                        bone_offset,
+                        0,
+                    )?;
+                    if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
+                    {
+                        let distance = section_distance_key(draw, &bone_pose, model_view)?;
+                        self.transparent_draws.push(M2TransparentDraw {
+                            key: M2TransparentSortKey::new(
+                                distance,
+                                false,
+                                draw.batch().priority_plane,
+                                distance,
+                                instance_identity,
+                                draw.batch().material_layer,
+                            ),
+                            draw: prepared,
+                        });
+                    } else {
+                        self.visible_draws.push(prepared);
+                    }
                 }
+            } else {
+                debug_assert!(source.draws.iter().all(Option::is_none));
             }
             for (ribbon_index, ((emitter, trail), passes)) in source
                 .model
@@ -1593,7 +1799,13 @@ fn prepare_character_gpu(
                 ResidentCreatureTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
             })
             .collect::<Vec<_>>();
-        let source = prepare_gpu_source(renderer, mount.model(), &resolved, None)?;
+        let source = prepare_gpu_source(
+            renderer,
+            mount.model(),
+            &resolved,
+            None,
+            M2LocalLightCount::Zero,
+        )?;
         let owner = match body_owner {
             M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
             M2GpuPlacementOwner::RemotePlayerBody { guid } => {
@@ -1623,7 +1835,13 @@ fn prepare_character_gpu(
             ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
         })
         .collect::<Vec<_>>();
-    let source = prepare_gpu_source(renderer, input.model(), &resolved, Some(input.geosets()))?;
+    let source = prepare_gpu_source(
+        renderer,
+        input.model(),
+        &resolved,
+        Some(input.geosets()),
+        M2LocalLightCount::Zero,
+    )?;
     let body = unit_gpu_placement(
         0,
         world_transform,
@@ -1654,7 +1872,13 @@ fn prepare_character_gpu(
                 ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
             })
             .collect::<Vec<_>>();
-        let source = prepare_gpu_source(renderer, attachment.model(), &resolved, None)?;
+        let source = prepare_gpu_source(
+            renderer,
+            attachment.model(),
+            &resolved,
+            None,
+            M2LocalLightCount::Zero,
+        )?;
         let placement = unit_gpu_placement(
             0,
             world_transform,
@@ -1682,7 +1906,13 @@ fn prepare_character_gpu(
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
-            let source = prepare_gpu_source(renderer, effect.model(), &resolved, None)?;
+            let source = prepare_gpu_source(
+                renderer,
+                effect.model(),
+                &resolved,
+                None,
+                M2LocalLightCount::Zero,
+            )?;
             let placement = unit_gpu_placement(
                 0,
                 world_transform,
@@ -1731,7 +1961,9 @@ fn unit_gpu_placement(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
         source_index,
+        local_transform: transform,
         transform,
+        glue_parent_attachment: None,
         owner,
         flags: 0,
         color: [255; 4],
@@ -1969,7 +2201,13 @@ fn prepare_source(
             return Ok(None);
         }
     }
-    Ok(Some(prepare_gpu_source(renderer, model, &resolved, None)?))
+    Ok(Some(prepare_gpu_source(
+        renderer,
+        model,
+        &resolved,
+        None,
+        M2LocalLightCount::Zero,
+    )?))
 }
 
 /// Publishes immutable model resources using one owner's resolved texture table.
@@ -1978,6 +2216,7 @@ fn prepare_gpu_source(
     model: &Arc<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<&CharacterGeosetPlan>,
+    local_light_count: M2LocalLightCount,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
@@ -2019,7 +2258,11 @@ fn prepare_gpu_source(
         }
     }
 
-    let mesh = renderer.upload_m2_mesh(&plan)?;
+    let mesh = if plan.has_drawable_geometry() {
+        Some(renderer.upload_m2_mesh(&plan)?)
+    } else {
+        None
+    };
     let mut texture_requests = Vec::with_capacity(plan.draws().len());
     let mut pipelines = Vec::with_capacity(plan.draws().len());
     for (draw_index, draw) in plan.draws().iter().enumerate() {
@@ -2029,7 +2272,7 @@ fn prepare_gpu_source(
         let shader = M2ShaderPlan::resolve(model, draw)?;
         let permutation = M2ShaderPermutation::resolve(
             draw,
-            M2LocalLightCount::Zero,
+            local_light_count,
             M2ShadowPermutation::Disabled,
             M2ShadowFiltering::Direct,
         );

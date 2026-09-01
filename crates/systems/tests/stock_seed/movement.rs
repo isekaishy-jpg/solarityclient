@@ -5,7 +5,8 @@ use std::error::Error;
 use solarity_asset::{AnimationDataCatalog, ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ecs::{UnitAnimationTier, WorldMovementSpeeds, WorldMovementState};
 use solarity_systems::{
-    UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_model_animation,
+    UnitLocomotionAnimation, WorldEntryGroundContact, resolve_unit_locomotion_animation,
+    resolve_unit_model_animation,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -22,6 +23,22 @@ fn animation(flags: u64) -> u16 {
 #[test]
 fn mounted_rider_uses_stock_mount_sequence() {
     assert_eq!(UnitLocomotionAnimation::MOUNT.animation_id(), 91);
+}
+
+/// Initial resident support changes only the movement-owned Z coordinate.
+#[test]
+fn world_entry_ground_contact_preserves_server_planar_transform() -> Result<(), Box<dyn Error>> {
+    let transform =
+        solarity_ecs::WorldTransform::new(glam::Vec3::new(-6_240.0, 331.0, 383.0), 0.75);
+    let grounded =
+        WorldEntryGroundContact::resolve(transform, 382.783_7)?.transform(transform.orientation());
+
+    assert_eq!(
+        grounded.position(),
+        glam::Vec3::new(-6_240.0, 331.0, 382.783_7)
+    );
+    assert_eq!(grounded.orientation(), 0.75);
+    Ok(())
 }
 
 /// The recovered selector preserves stock's common ground locomotion IDs.

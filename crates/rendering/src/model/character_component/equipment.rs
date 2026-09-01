@@ -8,7 +8,7 @@ use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 pub struct CharacterEquipmentItem<'catalog> {
     slot: PlayerEquipmentSlot,
     visible: VisibleEquipmentItem,
-    definition: &'catalog ItemDefinition,
+    definition: Option<&'catalog ItemDefinition>,
     display: &'catalog ItemDisplayInfo,
 }
 
@@ -23,7 +23,7 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
         Self {
             slot,
             visible: VisibleEquipmentItem::new(0, 0),
-            definition,
+            definition: Some(definition),
             display,
         }
     }
@@ -39,7 +39,22 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
         Self {
             slot,
             visible,
-            definition,
+            definition: Some(definition),
+            display,
+        }
+    }
+
+    /// Creates one display-only armor input from `CreatureDisplayInfoExtra`.
+    ///
+    /// NPC equipment stores display identifiers directly and has no Item.dbc
+    /// row. Those eleven slots contain armor only, so weapon categorization is
+    /// neither required nor inferred.
+    #[must_use]
+    pub const fn new_npc(slot: PlayerEquipmentSlot, display: &'catalog ItemDisplayInfo) -> Self {
+        Self {
+            slot,
+            visible: VisibleEquipmentItem::new(0, 0),
+            definition: None,
             display,
         }
     }
@@ -58,7 +73,7 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
 
     /// Returns the item definition used for category and attachment behavior.
     #[must_use]
-    pub const fn definition(self) -> &'catalog ItemDefinition {
+    pub const fn definition(self) -> Option<&'catalog ItemDefinition> {
         self.definition
     }
 

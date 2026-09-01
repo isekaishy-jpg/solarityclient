@@ -6,9 +6,9 @@ use std::io::Cursor;
 use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
-    CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog,
-    ParticleColorCatalog, TerrainTileIndex,
+    CharacterRaceCatalog, CharacterStartOutfitCatalog, ClientDataRoot, CreatureCatalog,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
+    Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
@@ -51,7 +51,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\Map.dbc", &map_table),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
-        ("World\\Maps\\Northrend\\Northrend_30_21.adt", &adt),
+        ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),
         ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
@@ -62,6 +62,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let races = CharacterRaceCatalog::load(&mut store)?;
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let start_outfits = CharacterStartOutfitCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
     let item_visuals = ItemVisualCatalog::load(&mut store)?;
@@ -75,6 +76,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
             characters,
             races,
             helmet_visibility,
+            start_outfits,
             RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
             particle_colors,
         ),
@@ -88,7 +90,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         player_position,
         0.0,
     ));
-    let tile = TerrainTileIndex::new(30, 21).ok_or("fixture tile is invalid")?;
+    let tile = TerrainTileIndex::new(21, 30).ok_or("fixture tile is invalid")?;
 
     // World verification precedes the local player's create-object packet.
     // Presentation waits for those fields instead of inventing a body model.
@@ -131,13 +133,18 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         .ok_or("vertical ray missed fixture terrain")?;
     assert!(collision.fraction() > 0.0 && collision.fraction() < 1.0);
     assert!(collision.normal().z > 0.0);
+    let traced_height = ray_start.lerp(ray_end, collision.fraction()).z;
+    let sampled_height = terrain
+        .controlled_player_terrain_height(ray_start)?
+        .ok_or("point-height query missed fixture terrain")?;
+    assert!((sampled_height - traced_height).abs() < 0.001);
     assert!(
         terrain
             .trace_collision(ray_end, ray_start, 0.0, 1.0)?
             .is_none()
     );
-    let liquid_x = (32.0 - 21.0 - 0.5 / 128.0) * 533.333_3;
-    let liquid_y = (32.0 - 30.0 - 0.5 / 128.0) * 533.333_3;
+    let liquid_x = (32.0 - 30.0 - 0.5 / 128.0) * 533.333_3;
+    let liquid_y = (32.0 - 21.0 - 0.5 / 128.0) * 533.333_3;
     let highest = terrain
         .sample_liquid(liquid_x, liquid_y, None)?
         .ok_or("fixture liquid was not sampled")?;
@@ -208,6 +215,7 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let races = CharacterRaceCatalog::load(&mut store)?;
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let start_outfits = CharacterStartOutfitCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
     let item_visuals = ItemVisualCatalog::load(&mut store)?;
@@ -221,6 +229,7 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
             characters,
             races,
             helmet_visibility,
+            start_outfits,
             RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
             particle_colors,
         ),
@@ -303,6 +312,7 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let races = CharacterRaceCatalog::load(&mut store)?;
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
+    let start_outfits = CharacterStartOutfitCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
     let item_visuals = ItemVisualCatalog::load(&mut store)?;
@@ -316,6 +326,7 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
             characters,
             races,
             helmet_visibility,
+            start_outfits,
             RuntimePlayerItemCatalogs::new(item_definitions, item_displays, item_visuals),
             particle_colors,
         ),
@@ -423,7 +434,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\Map.dbc", &map_table()),
         ("World\\Maps\\Northrend\\Northrend.wdt", &terrain_wdt()?),
-        ("World\\Maps\\Northrend\\Northrend_30_21.adt", &adt),
+        ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),
         ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
         ("World\\Wmo\\Fixture.wmo", &root_wmo),
         ("World\\Wmo\\Fixture_000.wmo", &group_wmo),
@@ -499,7 +510,7 @@ fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     wdt.mwmo = Some(MwmoChunk::new());
     let entry = wdt
         .main
-        .get_mut(30, 21)
+        .get_mut(21, 30)
         .ok_or("fixture WDT tile is invalid")?;
     entry.set_has_adt(true);
     let mut bytes = Vec::new();

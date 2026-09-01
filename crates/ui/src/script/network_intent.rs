@@ -99,6 +99,8 @@ pub enum UiGlueNetworkAction {
     RequestCharacterListUpdate,
     /// Request the selected realm's split-status metadata.
     RequestRealmSplitInfo,
+    /// Submit the current stock character-creation selections.
+    CreateCharacter(crate::UiCharacterCreationRequest),
     /// Select one character identity for character-screen presentation.
     SelectCharacter {
         /// World object GUID returned by enumeration.

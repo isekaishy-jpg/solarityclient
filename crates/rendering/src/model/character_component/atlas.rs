@@ -368,13 +368,15 @@ fn push_head_layers(
             face_slot,
         )?;
     }
-    push_optional_layer(
-        layers,
-        CharacterAtlasLayerKind::FacialHair,
-        region,
-        appearance.facial_hair(),
-        face_slot,
-    )?;
+    if let Some(facial_hair) = appearance.facial_hair() {
+        push_optional_layer(
+            layers,
+            CharacterAtlasLayerKind::FacialHair,
+            region,
+            facial_hair,
+            face_slot,
+        )?;
+    }
     push_optional_layer(
         layers,
         CharacterAtlasLayerKind::Hair,

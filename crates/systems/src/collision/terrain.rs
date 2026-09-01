@@ -41,6 +41,9 @@ pub enum TerrainCollisionError {
     /// A segment endpoint is NaN or infinite.
     #[error("terrain collision segment is not finite")]
     NonFiniteSegment,
+    /// A point-height query contains NaN or infinity.
+    #[error("terrain collision point is not finite")]
+    NonFinitePoint,
     /// Collision radius is negative, NaN, or infinite.
     #[error("terrain collision radius is invalid")]
     InvalidRadius,
@@ -123,6 +126,42 @@ impl TerrainCollisionMesh {
             );
         }
         Ok(nearest)
+    }
+
+    /// Samples the highest authored terrain triangle at one world-space point.
+    ///
+    /// This is the point-height form consumed by movement support queries. It
+    /// uses the same hole-filtered triangle topology as segment collision and
+    /// does not depend on a guessed vertical ray extent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TerrainCollisionError::NonFinitePoint`] for a non-finite
+    /// horizontal coordinate.
+    pub fn height_at(
+        &self,
+        world_x: f32,
+        world_y: f32,
+    ) -> Result<Option<f32>, TerrainCollisionError> {
+        if !world_x.is_finite() || !world_y.is_finite() {
+            return Err(TerrainCollisionError::NonFinitePoint);
+        }
+        let mut height: Option<f32> = None;
+        for chunk in &self.chunks {
+            if world_x < chunk.minimum.x - BOUNDS_TOLERANCE
+                || world_x > chunk.maximum.x + BOUNDS_TOLERANCE
+                || world_y < chunk.minimum.y - BOUNDS_TOLERANCE
+                || world_y > chunk.maximum.y + BOUNDS_TOLERANCE
+            {
+                continue;
+            }
+            if let Some(candidate) = chunk.height_at(world_x, world_y)
+                && height.is_none_or(|current| candidate > current)
+            {
+                height = Some(candidate);
+            }
+        }
+        Ok(height)
     }
 }
 
@@ -244,6 +283,41 @@ impl TerrainCollisionChunk {
             *nearest_fraction = fraction;
             *nearest = Some(TerrainCollisionHit { fraction, normal });
         }
+    }
+
+    fn height_at(&self, world_x: f32, world_y: f32) -> Option<f32> {
+        let mut height: Option<f32> = None;
+        let (triangles, remainder) = self.indices.as_chunks::<3>();
+        debug_assert!(remainder.is_empty());
+        for triangle in triangles {
+            let first = self.vertices[usize::from(triangle[0])];
+            let second = self.vertices[usize::from(triangle[1])];
+            let third = self.vertices[usize::from(triangle[2])];
+            let denominator = (second.y - third.y) * (first.x - third.x)
+                + (third.x - second.x) * (first.y - third.y);
+            if denominator.abs() < 0.000_001 {
+                continue;
+            }
+            let first_weight = ((second.y - third.y) * (world_x - third.x)
+                + (third.x - second.x) * (world_y - third.y))
+                / denominator;
+            let second_weight = ((third.y - first.y) * (world_x - third.x)
+                + (first.x - third.x) * (world_y - third.y))
+                / denominator;
+            let third_weight = 1.0 - first_weight - second_weight;
+            if first_weight < -BARYCENTRIC_TOLERANCE
+                || second_weight < -BARYCENTRIC_TOLERANCE
+                || third_weight < -BARYCENTRIC_TOLERANCE
+            {
+                continue;
+            }
+            let candidate =
+                first.z * first_weight + second.z * second_weight + third.z * third_weight;
+            if height.is_none_or(|current| candidate > current) {
+                height = Some(candidate);
+            }
+        }
+        height
     }
 }
 

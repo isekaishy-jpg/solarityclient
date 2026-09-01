@@ -37,6 +37,16 @@ pub enum AppearanceError {
         /// The unresolved `CreatureDisplayInfoExtra.dbc` identifier.
         extra_id: u32,
     },
+    /// An NPC baked-texture value cannot form an archive-relative path.
+    #[error(
+        "creature display {display_id} extra appearance {extra_id} has an invalid baked texture path"
+    )]
+    InvalidNpcBakedTexture {
+        /// Creature display selecting the extended appearance.
+        display_id: u32,
+        /// Extended appearance containing the invalid string.
+        extra_id: u32,
+    },
     /// The supplied player customization does not name a stock texture section.
     #[error(
         "character race {race_id} gender {gender_id} has no {kind} section at variation {variation_index} color {color_index}"

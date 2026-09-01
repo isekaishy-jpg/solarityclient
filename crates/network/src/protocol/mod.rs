@@ -7,6 +7,7 @@
 mod action_buttons;
 mod addon_manifest;
 mod addon_policy;
+mod character_creation;
 mod character_directory;
 mod liveness;
 mod object_update;
@@ -21,6 +22,7 @@ pub use action_buttons::{
 };
 pub use addon_manifest::{AddonManifestError, WorldAddon, WorldAddonManifest};
 pub use addon_policy::{AddonPolicyError, BannedAddon, WorldAddonPolicy, WorldAddonPolicyEntry};
+pub use character_creation::{CharacterCreation, CharacterCreationError, CharacterCreationResult};
 pub use character_directory::{
     CharacterAppearance, CharacterClass, CharacterDirectory, CharacterDirectoryError,
     CharacterEntry, CharacterEquipment, CharacterGender, CharacterLocation, CharacterPet,

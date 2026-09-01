@@ -11,6 +11,7 @@ glam.workspace = true
 mlua.workspace = true
 quick-xml.workspace = true
 solarity-asset.workspace = true
+solarity-cpu.workspace = true
 solarity-rendering.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

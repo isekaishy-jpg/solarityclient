@@ -1,6 +1,6 @@
 //! Stock equipment child-model attachment planning for player characters.
 
-use solarity_asset::{AssetPath, CharacterRace, InventoryType};
+use solarity_asset::{AssetPath, CharacterRace, InventoryType, ItemDefinition};
 use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
 
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
@@ -298,7 +298,8 @@ fn push_held_item(
     };
 
     let [texture_name, _] = display.model_textures();
-    let folder = if item.definition().inventory_type() == InventoryType::Shield {
+    let definition = required_definition(item)?;
+    let folder = if definition.inventory_type() == InventoryType::Shield {
         "Item\\ObjectComponents\\Shield"
     } else {
         "Item\\ObjectComponents\\Weapon"
@@ -336,9 +337,11 @@ fn attachment_point(
         UnitSheathState::Ranged => item.slot() == PlayerEquipmentSlot::Ranged,
     };
     if !ready {
-        return Ok(sheath_point(item.definition().sheathe_type(), right_hand));
+        let definition = required_definition(item)?;
+        return Ok(sheath_point(definition.sheathe_type(), right_hand));
     }
-    if item.definition().inventory_type() == InventoryType::Shield {
+    let definition = required_definition(item)?;
+    if definition.inventory_type() == InventoryType::Shield {
         return Ok(Some(CharacterAttachmentPoint::Shield));
     }
     Ok(Some(if right_hand {
@@ -352,7 +355,7 @@ fn attachment_point(
 fn ranged_item_uses_right_hand(
     item: CharacterEquipmentItem<'_>,
 ) -> Result<bool, CharacterAttachmentPlanError> {
-    let definition = item.definition();
+    let definition = required_definition(item)?;
     if definition.class_id() != 2 {
         return Err(CharacterAttachmentPlanError::UnsupportedRangedItem {
             class_id: definition.class_id(),
@@ -367,6 +370,14 @@ fn ranged_item_uses_right_hand(
             subclass_id,
         }),
     }
+}
+
+/// Requires Item.dbc metadata only for the three held-equipment paths.
+fn required_definition(
+    item: CharacterEquipmentItem<'_>,
+) -> Result<&ItemDefinition, CharacterAttachmentPlanError> {
+    item.definition()
+        .ok_or(CharacterAttachmentPlanError::MissingItemDefinition { slot: item.slot() })
 }
 
 /// Builds one optional replacement path without fabricating an empty filename.

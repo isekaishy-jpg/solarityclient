@@ -23,6 +23,19 @@ impl M2ModelCache {
         Self::default()
     }
 
+    /// Returns the stock cache key for an M2, MDL, or MDX model path.
+    ///
+    /// DBC tables retain legacy extensions, while decoded models expose the
+    /// canonical `.M2` archive path. Residency owners use this boundary so
+    /// those two representations do not appear to be different models.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError`] when the path has no build-12340 model extension.
+    pub fn canonical_path(path: &AssetPath) -> Result<AssetPath, AssetError> {
+        canonical_model_path(path)
+    }
+
     /// Returns the number of distinct normalized M2 paths retained.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -51,7 +64,7 @@ impl M2ModelCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Arc<DecodedM2Model>, AssetError> {
-        let canonical_path = canonical_model_path(path)?;
+        let canonical_path = Self::canonical_path(path)?;
         if let Some(model) = self.models.get(&canonical_path) {
             return Ok(Arc::clone(model));
         }

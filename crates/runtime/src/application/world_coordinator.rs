@@ -7,10 +7,11 @@ use tokio::sync::oneshot::{self, Receiver, error::TryRecvError};
 use tokio::task::JoinHandle;
 
 use solarity_network::{
-    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginProgress,
-    CharacterLoginRejection, InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError,
-    WorldAddonManifest, WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection,
-    WorldServerPacket, WorldSession, WorldSessionError,
+    AddonPolicyError, CharacterCreation, CharacterCreationError, CharacterCreationResult,
+    CharacterDirectory, CharacterDirectoryError, CharacterLoginProgress, CharacterLoginRejection,
+    InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError, WorldAddonManifest,
+    WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection, WorldServerPacket,
+    WorldSession, WorldSessionError,
 };
 
 use crate::application::RuntimeAuthenticatedLogin;
@@ -41,6 +42,8 @@ pub enum RuntimeWorldPoll {
     CharacterScreenReady,
     /// A fresh authoritative character enumeration became available.
     CharacterDirectoryReady,
+    /// The world returned the terminal result for one creation request.
+    CharacterCreationFinished(CharacterCreationResult),
     /// The selected character entered its authoritative initial map.
     EnteredWorld,
     /// The selected character was rejected and selection state was restored.
@@ -62,6 +65,9 @@ pub enum RuntimeWorldError {
     /// Character-screen requests were made without an authenticated world session.
     #[error("no authenticated character-screen session is available")]
     NoCharacterScreen,
+    /// Character-creation fields or the authoritative response were malformed.
+    #[error(transparent)]
+    CharacterCreation(#[from] CharacterCreationError),
     /// The selected GUID is absent from the authoritative character directory.
     #[error("character directory does not contain GUID {guid}")]
     UnknownCharacter {
@@ -115,6 +121,13 @@ impl RuntimeCharacterScreenRequests {
         !self.ready_for_account_data_times
             && !self.refresh_character_directory
             && !self.request_realm_split_info
+    }
+
+    /// Retains every request in two stock `CharacterSelect_OnShow` emissions.
+    pub(crate) fn merge(&mut self, requests: Self) {
+        self.ready_for_account_data_times |= requests.ready_for_account_data_times;
+        self.refresh_character_directory |= requests.refresh_character_directory;
+        self.request_realm_split_info |= requests.request_realm_split_info;
     }
 }
 
@@ -319,6 +332,37 @@ impl RuntimeWorldCoordinator {
         Ok(())
     }
 
+    /// Starts one character-creation exchange against the retained world session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeWorldError`] when another transition is active or no
+    /// authoritative character-selection state is retained.
+    pub fn create_character(
+        &mut self,
+        runtime: &Handle,
+        request: CharacterCreation,
+    ) -> Result<(), RuntimeWorldError> {
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        let selection = self
+            .character_selection
+            .take()
+            .ok_or(RuntimeWorldError::NoCharacterDirectory)?;
+        let (sender, receiver) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = create_character(selection, request).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::CreatingCharacter,
+        });
+        Ok(())
+    }
+
     /// Polls the selected world transition without blocking the main thread.
     ///
     /// # Errors
@@ -351,6 +395,10 @@ impl RuntimeWorldCoordinator {
             Ok(ActiveWorldResult::CharacterSelection(selection)) => {
                 self.character_selection = Some(selection);
                 Ok(RuntimeWorldPoll::CharacterDirectoryReady)
+            }
+            Ok(ActiveWorldResult::CharacterCreated { selection, result }) => {
+                self.character_selection = Some(selection);
+                Ok(RuntimeWorldPoll::CharacterCreationFinished(result))
             }
             Ok(ActiveWorldResult::Entered(entry)) => {
                 self.world_entry = Some(entry);
@@ -421,6 +469,7 @@ struct ActiveWorld {
 enum ActiveWorldPhase {
     Connecting,
     RefreshingCharacters,
+    CreatingCharacter,
     EnteringWorld,
 }
 
@@ -429,6 +478,7 @@ impl ActiveWorldPhase {
         match self {
             Self::Connecting => RuntimeWorldState::Connecting,
             Self::RefreshingCharacters => RuntimeWorldState::CharacterSelection,
+            Self::CreatingCharacter => RuntimeWorldState::CharacterSelection,
             Self::EnteringWorld => RuntimeWorldState::EnteringWorld,
         }
     }
@@ -437,11 +487,36 @@ impl ActiveWorldPhase {
 enum ActiveWorldResult {
     CharacterScreen(RuntimeCharacterScreen),
     CharacterSelection(RuntimeCharacterSelection),
+    CharacterCreated {
+        selection: RuntimeCharacterSelection,
+        result: CharacterCreationResult,
+    },
     Entered(RuntimeWorldEntry),
     Rejected {
         selection: RuntimeCharacterSelection,
         rejection: CharacterLoginRejection,
     },
+}
+
+async fn create_character(
+    mut selection: RuntimeCharacterSelection,
+    request: CharacterCreation,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    const MAX_SETUP_PACKETS: usize = 256;
+
+    selection.session.create_character(&request).await?;
+    loop {
+        let packet = selection.session.receive_packet().await?;
+        if let Some(result) = packet.character_creation_result()? {
+            return Ok(ActiveWorldResult::CharacterCreated { selection, result });
+        }
+        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+            return Err(RuntimeWorldError::SetupPacketLimit {
+                maximum: MAX_SETUP_PACKETS,
+            });
+        }
+        selection.setup_packets.push(packet);
+    }
 }
 
 async fn authenticate_world(

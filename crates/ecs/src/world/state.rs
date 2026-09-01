@@ -206,11 +206,18 @@ impl ActiveWorld {
         &mut self.storage
     }
 
-    /// Creates a visible object or enriches the pre-seeded local player.
+    /// Creates a visible object or refreshes an already-known stock object.
+    ///
+    /// Stock keeps recently disabled objects available for lazy cleanup and
+    /// treats a repeated create as sparse field data for that same object. The
+    /// local player is the one exception in this representation: world entry
+    /// pre-seeds it before its authoritative create arrives, so that first
+    /// create also supplies its kind and transform.
     ///
     /// # Errors
     ///
-    /// Returns [`WorldStateError`] for a duplicate non-local create update.
+    /// Returns [`WorldStateError`] when an existing object's required field
+    /// storage is missing.
     pub fn create_object<I>(
         &mut self,
         guid: u64,
@@ -221,18 +228,25 @@ impl ActiveWorld {
     where
         I: IntoIterator<Item = (u16, u32)>,
     {
-        let mut object_fields = ObjectFields::default();
-        object_fields.apply(fields);
         if let Some(entity) = self.objects.find(guid) {
-            if entity != self.local_player {
-                return Err(WorldStateError::DuplicateObject { guid });
+            {
+                let mut object_fields = self
+                    .storage
+                    .get::<&mut ObjectFields>(entity)
+                    .map_err(|_| WorldStateError::MissingObjectFields { guid })?;
+                object_fields.apply(fields);
             }
-            self.storage.add_component(entity, (kind, object_fields));
-            if let Some(transform) = transform {
-                self.storage.add_component(entity, (transform,));
+
+            if entity == self.local_player {
+                self.storage.add_component(entity, (kind,));
+                if let Some(transform) = transform {
+                    self.storage.add_component(entity, (transform,));
+                }
             }
             return Ok(entity);
         }
+        let mut object_fields = ObjectFields::default();
+        object_fields.apply(fields);
         let entity = self
             .storage
             .add_entity((ObjectGuid::new(guid), kind, object_fields));
@@ -324,12 +338,6 @@ pub enum WorldStateError {
     #[error("world update references unknown object {guid:#018X}")]
     UnknownObject {
         /// Referenced GUID.
-        guid: u64,
-    },
-    /// A non-local object was created twice without leaving range.
-    #[error("world update creates duplicate object {guid:#018X}")]
-    DuplicateObject {
-        /// Duplicate GUID.
         guid: u64,
     },
     /// The server attempted to remove the controlled player as out of range.

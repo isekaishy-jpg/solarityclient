@@ -187,4 +187,16 @@ impl WdbcTable {
         let bytes = self.record(record)?.get(offset..offset.checked_add(4)?)?;
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
+
+    /// Reads one byte from a packed WDBC record.
+    ///
+    /// A small number of stock tables, notably `CharBaseInfo.dbc`, describe
+    /// logical fields in the header but store them as bytes instead of the
+    /// ordinary four-byte WDBC cells. Typed decoders must opt into this packed
+    /// boundary explicitly after validating the exact record shape.
+    pub(super) fn field_u8(&self, record: u32, field: u32) -> Option<u8> {
+        self.record(record)?
+            .get(usize::try_from(field).ok()?)
+            .copied()
+    }
 }

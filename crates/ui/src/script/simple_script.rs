@@ -436,6 +436,7 @@ pub struct UiScriptEnvironment {
     client_clock: crate::UiClientClock,
     cvars: UiCVarRegistry,
     assets: Option<AssetStoreHandle>,
+    character_creation: Option<crate::UiCharacterCreationState>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
@@ -498,6 +499,7 @@ impl UiScriptEnvironment {
             client_clock: crate::UiClientClock::new(),
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
+            character_creation: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
@@ -617,12 +619,26 @@ impl UiScriptEnvironment {
         self
     }
 
+    /// Attaches the DBC-backed character-creation state used by Glue natives.
+    #[must_use]
+    pub(crate) fn with_character_creation_state(
+        mut self,
+        state: crate::UiCharacterCreationState,
+    ) -> Self {
+        self.character_creation = Some(state);
+        self
+    }
+
     fn cvars(&self) -> UiCVarRegistry {
         self.cvars.clone()
     }
 
     fn assets(&self) -> Option<AssetStoreHandle> {
         self.assets.clone()
+    }
+
+    pub(crate) fn character_creation_state(&self) -> Option<crate::UiCharacterCreationState> {
+        self.character_creation.clone()
     }
 
     fn binding_assignments(&self) -> Option<Rc<RefCell<UiBindingAssignments>>> {
@@ -4380,8 +4396,12 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                     "Frame:SetFrameLevel(): Passed negative frame level: {value}"
                 )));
             }
-            object.raw_set(frame_level_key(), value)
+            set_frame_level(lua, &object, value, true)
         })?,
+    )?;
+    methods.raw_set(
+        "Raise",
+        lua.create_function(|lua, object: Table| raise_frame(lua, &object))?,
     )?;
     methods.raw_set(
         "GetFrameStrata",
@@ -4558,6 +4578,82 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 .then_some(Value::Number(1.0)))
         })?,
     )
+}
+
+/// Raises the stock top-level owner and preserves its descendants' level offsets.
+fn raise_frame(lua: &Lua, object: &Table) -> mlua::Result<()> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut raised = object.clone();
+    loop {
+        if raised.raw_get::<bool>(frame_top_level_key())? {
+            break;
+        }
+        let Some(parent_index) = raised.raw_get::<Option<usize>>(parent_key())? else {
+            return Ok(());
+        };
+        let Some(parent) = objects.raw_get::<Option<Table>>(parent_index)? else {
+            return Ok(());
+        };
+        raised = parent;
+    }
+
+    let strata = raised.raw_get::<String>(frame_strata_key())?;
+    let mut top_level = 0_i32;
+    for index in 1..=objects.raw_len() {
+        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
+            continue;
+        };
+        if candidate
+            .raw_get::<Option<String>>(frame_strata_key())?
+            .is_some_and(|candidate_strata| candidate_strata == strata)
+        {
+            top_level = top_level.max(
+                candidate
+                    .raw_get::<Option<i32>>(frame_level_key())?
+                    .unwrap_or(0)
+                    .saturating_add(1),
+            );
+        }
+    }
+    set_frame_level(lua, &raised, top_level, true)
+}
+
+/// Applies stock's bounded level delta and optionally shifts the whole child tree.
+fn set_frame_level(
+    lua: &Lua,
+    object: &Table,
+    requested_level: i32,
+    shift_children: bool,
+) -> mlua::Result<()> {
+    let old_level = object.raw_get::<i32>(frame_level_key())?;
+    let delta = requested_level.max(0).saturating_sub(old_level).min(128);
+    if delta == 0 {
+        return Ok(());
+    }
+
+    object.raw_set(frame_level_key(), old_level.saturating_add(delta))?;
+    if !shift_children {
+        return Ok(());
+    }
+
+    let root_index = object.raw_get::<usize>(index_key())?;
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    for index in 1..=objects.raw_len() {
+        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
+            continue;
+        };
+        if candidate.raw_get::<usize>(index_key())? == root_index
+            || candidate
+                .raw_get::<Option<i32>>(frame_level_key())?
+                .is_none()
+            || !object_is_descendant(&objects, &candidate, root_index)?
+        {
+            continue;
+        }
+        let level = candidate.raw_get::<i32>(frame_level_key())?;
+        candidate.raw_set(frame_level_key(), level.saturating_add(delta).max(0))?;
+    }
+    Ok(())
 }
 
 fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {

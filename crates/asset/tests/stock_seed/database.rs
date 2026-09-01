@@ -6,11 +6,11 @@ use std::path::Path;
 use solarity_asset::{
     AdvancedSoundEntryCatalog, AnimationDataCatalog, AppearanceError, ArchiveCatalog,
     AreaTableCatalog, AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog,
-    CharacterClassCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
-    CreatureCatalog, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, Locale, M2TextureKind, MapCatalog,
-    MapKind, PaperDollItemFrameCatalog, ParticleColorCatalog, SoundEntryCatalog, WdbcTable,
-    WorldLightQuery, WorldLightSampleError, exterior_light_direction,
+    CharacterBaseCatalog, CharacterClassCatalog, CharacterCustomization, CharacterFactionCatalog,
+    CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
+    InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, LightCatalog,
+    Locale, M2TextureKind, MapCatalog, MapKind, PaperDollItemFrameCatalog, ParticleColorCatalog,
+    SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError, exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -237,7 +237,7 @@ fn animation_data_catalog_rejects_non_stock_layout() -> Result<(), Box<dyn Error
 fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<dyn Error>> {
     let mut display_strings = vec![0];
     let skin_1 = append_string(&mut display_strings, "BearSkinBrown.blp");
-    let skin_2 = append_string(&mut display_strings, "BearSkinBlack.blp");
+    let skin_2 = append_string(&mut display_strings, "BearSkinBlack");
     let portrait = append_string(&mut display_strings, "BearPortrait");
     let display_fields = [
         20_000,
@@ -260,7 +260,7 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     let display_table = create_wdbc(1, 16, &display_fields, &display_strings);
 
     let mut extra_strings = vec![0];
-    let baked_texture = append_string(&mut extra_strings, "Textures\\BakedNpc.blp");
+    let baked_texture = append_string(&mut extra_strings, "ABCDEF0123456789");
     let extra_fields = [
         55,
         4,
@@ -350,7 +350,7 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     assert_eq!(display.model_alpha(), 255);
     assert_eq!(
         display.texture_variations(),
-        ["BearSkinBrown.blp", "BearSkinBlack.blp", ""]
+        ["BearSkinBrown.blp", "BearSkinBlack", ""]
     );
     assert_eq!(display.portrait_texture_name(), "BearPortrait");
     assert_eq!(display.size_class(), 2);
@@ -375,7 +375,7 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
         [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
     );
     assert_eq!(extra.flags(), 0x20);
-    assert_eq!(extra.baked_texture_name(), "Textures\\BakedNpc.blp");
+    assert_eq!(extra.baked_texture_name(), "ABCDEF0123456789");
 
     let model = catalog
         .model(display.model_id())
@@ -409,6 +409,10 @@ fn creature_catalog_decodes_stock_display_and_model_layouts() -> Result<(), Box<
     assert_eq!(appearance.display(), display);
     assert_eq!(appearance.model(), model);
     assert_eq!(appearance.extra(), Some(extra));
+    assert_eq!(
+        appearance.baked_texture().map(AssetPath::as_str),
+        Some("TEXTURES\\BAKEDNPCTEXTURES\\ABCDEF0123456789.BLP")
+    );
     assert_eq!(
         appearance.model_path(),
         model.model_path().ok_or("model path was absent")?
@@ -530,8 +534,14 @@ fn character_appearance_catalog_indexes_stock_customization_keys() -> Result<(),
     let facial = catalog
         .facial_hair_style(4, 1, 6)
         .ok_or("facial-hair row was not indexed")?;
+    assert_eq!(facial.race_id(), 4);
+    assert_eq!(facial.gender_id(), 1);
+    assert_eq!(facial.variation_id(), 6);
     assert_eq!(facial.geosets(), [1, 2, 3, 4, 5]);
     assert_eq!(catalog.facial_hair_style(4, 1, 7), None);
+    // The fixture deliberately has no facial-hair CharSections row. Stock's
+    // selectable feature list comes from CharacterFacialHairStyles instead.
+    assert_eq!(catalog.player_facial_hair_styles(4, 1), vec![6]);
     Ok(())
 }
 
@@ -656,7 +666,12 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
     let section_table = create_wdbc(5, 10, &sections, &strings);
     // Zero is deliberately authored: stock converts it to geoset one.
     let hair_table = create_wdbc(1, 6, &[90, 4, 1, 4, 0, 1], b"\0");
-    let facial_table = create_wdbc(1, 8, &[4, 1, 6, 1, 2, 3, 4, 5], b"\0");
+    let facial_table = create_wdbc(
+        2,
+        8,
+        &[4, 1, 0, 0, 0, 0, 0, 0, 4, 1, 6, 1, 2, 3, 4, 5],
+        b"\0",
+    );
     let fixture = Fixture::new(&[
         FixtureFile {
             archive: "common.MPQ",
@@ -682,7 +697,13 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
 
     assert_eq!(appearance.skin().id(), 10);
     assert_eq!(appearance.face().map(|section| section.id()), Some(11));
-    assert_eq!(appearance.facial_hair().id(), 12);
+    assert_eq!(
+        appearance
+            .facial_hair()
+            .expect("fixture authors a facial-feature texture")
+            .id(),
+        12
+    );
     assert_eq!(appearance.hair().id(), 13);
     assert_eq!(appearance.underwear().map(|section| section.id()), Some(14));
     assert_eq!(appearance.hair_geoset().map(|row| row.id()), Some(90));
@@ -691,6 +712,14 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
     assert_eq!(
         appearance.geosets().facial_hair(),
         Some([101, 203, 302, 1604, 1705])
+    );
+
+    let geometry_only = catalog.resolve_player(4, 1, CharacterCustomization::new(2, 3, 4, 5, 0))?;
+    assert_eq!(geometry_only.facial_hair(), None);
+    assert!(geometry_only.facial_hair_style().is_some());
+    assert_eq!(
+        geometry_only.geosets().facial_hair(),
+        Some([100, 200, 300, 1600, 1700])
     );
     Ok(())
 }
@@ -1005,14 +1034,26 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     let prefix = append_string(&mut strings, "Hu");
     let file_string = append_string(&mut strings, "Human");
     let display_name = append_string(&mut strings, "Human");
+    let female_name = append_string(&mut strings, "Human Woman");
+    let male_name = append_string(&mut strings, "Human Man");
+    let facial_male = append_string(&mut strings, "NORMAL");
+    let facial_female = append_string(&mut strings, "NONE");
+    let hair = append_string(&mut strings, "NORMAL");
     let mut fields = [0_u32; 69];
     fields[0] = 1;
     fields[1] = 0x0080_0001;
+    fields[2] = 1;
     fields[4] = 49;
     fields[5] = 50;
     fields[6] = prefix;
     fields[11] = file_string;
     fields[14] = display_name;
+    fields[31] = female_name;
+    fields[48] = male_name;
+    fields[65] = facial_male;
+    fields[66] = facial_female;
+    fields[67] = hair;
+    fields[68] = 2;
     let table = create_wdbc(1, 69, &fields, &strings);
     let fixture = Fixture::new(&[FixtureFile {
         archive: "common.MPQ",
@@ -1025,11 +1066,19 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     let catalog = CharacterRaceCatalog::load(&mut store)?;
     let race = catalog.race(1).ok_or("character race is absent")?;
     assert_eq!(race.flags(), 0x0080_0001);
+    assert_eq!(race.faction_id(), 1);
     assert_eq!(race.male_display_id(), 49);
     assert_eq!(race.female_display_id(), 50);
     assert_eq!(race.client_prefix(), "Hu");
     assert_eq!(race.client_file_string(), "Human");
     assert_eq!(race.name(), "Human");
+    assert_eq!(race.display_name(0), "Human Man");
+    assert_eq!(race.display_name(1), "Human Woman");
+    assert_eq!(race.facial_hair_customization(0), Some("NORMAL"));
+    assert_eq!(race.facial_hair_customization(1), Some("NONE"));
+    assert_eq!(race.hair_customization(), "NORMAL");
+    assert_eq!(race.required_expansion(), 2);
+    assert_eq!(catalog.races().count(), 1);
     assert_eq!(catalog.race(2), None);
     Ok(())
 }
@@ -1048,6 +1097,7 @@ fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn 
     class_fields[21] = female_class_name;
     class_fields[38] = male_class_name;
     class_fields[55] = class_file;
+    class_fields[59] = 2;
     let classes = create_wdbc(1, 60, &class_fields, &class_strings);
 
     let mut area_strings = vec![0];
@@ -1078,6 +1128,7 @@ fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn 
     assert_eq!(mage.female_name(), "Sorceress");
     assert_eq!(mage.male_name(), "Sorcerer");
     assert_eq!(mage.file_string(), "Mage");
+    assert_eq!(mage.required_expansion(), 2);
     assert_eq!(classes.classes().count(), 1);
     assert_eq!(classes.class(9), None);
     let areas = AreaTableCatalog::load(&mut store)?;
@@ -1085,6 +1136,112 @@ fn character_selection_catalogs_decode_localized_labels() -> Result<(), Box<dyn 
     assert_eq!(area.name(), "Dalaran");
     assert_eq!(area.parent_area_id(), 0);
     assert_eq!(areas.area(4396), None);
+    Ok(())
+}
+
+/// Packed `CharBaseInfo` rows retain physical class order and exact pairs.
+#[test]
+fn character_base_catalog_decodes_two_byte_rows() -> Result<(), Box<dyn Error>> {
+    let table = create_packed_wdbc(3, 2, 2, &[1, 1, 1, 8, 2, 1], b"\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\CharBaseInfo.dbc",
+        bytes: &table,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let catalog = CharacterBaseCatalog::load(&mut store)?;
+    let pairs = catalog
+        .entries()
+        .iter()
+        .map(|entry| (entry.race_id(), entry.class_id()))
+        .collect::<Vec<_>>();
+    assert_eq!(pairs, [(1, 1), (1, 8), (2, 1)]);
+    assert!(catalog.supports(1, 8));
+    assert!(!catalog.supports(2, 8));
+    Ok(())
+}
+
+/// Character faction lookup follows the first physical matching group bit.
+#[test]
+fn character_faction_catalog_projects_template_groups() -> Result<(), Box<dyn Error>> {
+    let templates = create_wdbc(
+        2,
+        14,
+        &[
+            1,
+            0,
+            0,
+            1 << 1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            1 << 2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        b"\0",
+    );
+    let mut group_strings = vec![0];
+    let alliance_internal = append_string(&mut group_strings, "Alliance");
+    let alliance_name = append_string(&mut group_strings, "Alliance");
+    let horde_internal = append_string(&mut group_strings, "Horde");
+    let horde_name = append_string(&mut group_strings, "Horde");
+    let mut group_fields = vec![0_u32; 40];
+    group_fields[0] = 1;
+    group_fields[1] = 1;
+    group_fields[2] = alliance_internal;
+    group_fields[3] = alliance_name;
+    group_fields[20] = 2;
+    group_fields[21] = 2;
+    group_fields[22] = horde_internal;
+    group_fields[23] = horde_name;
+    let groups = create_wdbc(2, 20, &group_fields, &group_strings);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\FactionTemplate.dbc",
+            bytes: &templates,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\FactionGroup.dbc",
+            bytes: &groups,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+
+    let catalog = CharacterFactionCatalog::load(&mut store)?;
+    let alliance = catalog.group_for_template(1).ok_or("Alliance is absent")?;
+    let horde = catalog.group_for_template(2).ok_or("Horde is absent")?;
+    assert_eq!(alliance.internal_name(), "Alliance");
+    assert_eq!(alliance.name(), "Alliance");
+    assert_eq!(horde.internal_name(), "Horde");
+    assert_eq!(catalog.group_for_template(3), None);
     Ok(())
 }
 
@@ -1575,6 +1732,25 @@ fn create_wdbc(
     for field in fields {
         bytes.extend_from_slice(&field.to_le_bytes());
     }
+    bytes.extend_from_slice(string_block);
+    bytes
+}
+
+/// Generates an explicitly packed WDBC layout such as `CharBaseInfo.dbc`.
+fn create_packed_wdbc(
+    record_count: u32,
+    field_count: u32,
+    record_size: u32,
+    records: &[u8],
+    string_block: &[u8],
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(20 + records.len() + string_block.len());
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&record_count.to_le_bytes());
+    bytes.extend_from_slice(&field_count.to_le_bytes());
+    bytes.extend_from_slice(&record_size.to_le_bytes());
+    bytes.extend_from_slice(&(string_block.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(records);
     bytes.extend_from_slice(string_block);
     bytes
 }

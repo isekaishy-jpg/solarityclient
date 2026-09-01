@@ -2,3 +2,6 @@
 /scripts/playerbots-server.ps1
 /target/
 /vcpkg_installed/
+/Errors.log
+/Playerbots.log
+/Server.log

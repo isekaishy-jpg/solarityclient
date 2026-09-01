@@ -14,11 +14,17 @@ const CHARACTER_RACES_FIELD_COUNT: u32 = 69;
 pub struct CharacterRace {
     id: u32,
     flags: u32,
+    faction_id: u32,
     male_display_id: u32,
     female_display_id: u32,
     client_prefix: String,
     client_file_string: String,
     name: String,
+    female_name: String,
+    male_name: String,
+    facial_hair_customization: [String; 2],
+    hair_customization: String,
+    required_expansion: u32,
 }
 
 impl CharacterRace {
@@ -32,6 +38,12 @@ impl CharacterRace {
     #[must_use]
     pub const fn flags(&self) -> u32 {
         self.flags
+    }
+
+    /// Returns the `FactionTemplate.dbc` identifier used to classify the race.
+    #[must_use]
+    pub const fn faction_id(&self) -> u32 {
+        self.faction_id
     }
 
     /// Returns the male player creature-display identifier.
@@ -63,11 +75,59 @@ impl CharacterRace {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// Returns the selected-locale female display name when authored.
+    #[must_use]
+    pub fn female_name(&self) -> &str {
+        &self.female_name
+    }
+
+    /// Returns the selected-locale male display name when authored.
+    #[must_use]
+    pub fn male_name(&self) -> &str {
+        &self.male_name
+    }
+
+    /// Returns the sex-specific facial-feature label token.
+    #[must_use]
+    pub fn facial_hair_customization(&self, gender_id: u8) -> Option<&str> {
+        self.facial_hair_customization
+            .get(usize::from(gender_id))
+            .map(String::as_str)
+    }
+
+    /// Returns the race's hair-style label token.
+    #[must_use]
+    pub fn hair_customization(&self) -> &str {
+        &self.hair_customization
+    }
+
+    /// Returns the minimum account expansion required to select the race.
+    #[must_use]
+    pub const fn required_expansion(&self) -> u32 {
+        self.required_expansion
+    }
+
+    /// Selects the exact stock display-name column for one binary gender.
+    #[must_use]
+    pub fn display_name(&self, gender_id: u8) -> &str {
+        let authored = match gender_id {
+            0 => &self.male_name,
+            1 => &self.female_name,
+            _ => "",
+        };
+        if authored.is_empty() {
+            &self.name
+        } else {
+            authored
+        }
+    }
 }
 
 /// Identifier-indexed `ChrRaces.dbc` records used by character rendering.
 pub struct CharacterRaceCatalog {
     races: Vec<CharacterRace>,
+    physical_order: Vec<usize>,
 }
 
 impl CharacterRaceCatalog {
@@ -88,13 +148,20 @@ impl CharacterRaceCatalog {
             races.push(CharacterRace {
                 id: field(&table, row, 0)?,
                 flags: field(&table, row, 1)?,
+                faction_id: field(&table, row, 2)?,
                 male_display_id: field(&table, row, 4)?,
                 female_display_id: field(&table, row, 5)?,
                 client_prefix: string(&table, row, 6)?,
                 client_file_string: string(&table, row, 11)?,
                 name: localized_string(&table, row, 14, locale)?,
+                female_name: localized_string(&table, row, 31, locale)?,
+                male_name: localized_string(&table, row, 48, locale)?,
+                facial_hair_customization: [string(&table, row, 65)?, string(&table, row, 66)?],
+                hair_customization: string(&table, row, 67)?,
+                required_expansion: field(&table, row, 68)?,
             });
         }
+        let physical_ids = races.iter().map(CharacterRace::id).collect::<Vec<_>>();
         races.sort_unstable_by_key(CharacterRace::id);
         if let Some(duplicate) = races.windows(2).find(|pair| pair[0].id == pair[1].id) {
             return Err(database_error(
@@ -102,7 +169,18 @@ impl CharacterRaceCatalog {
                 format!("duplicate primary key {}", duplicate[0].id),
             ));
         }
-        Ok(Self { races })
+        let physical_order = physical_ids
+            .into_iter()
+            .map(|id| {
+                races
+                    .binary_search_by_key(&id, CharacterRace::id)
+                    .map_err(|_source| database_error(&table, format!("lost race key {id}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            races,
+            physical_order,
+        })
     }
 
     /// Finds one exact race identifier without substituting another row.
@@ -112,6 +190,16 @@ impl CharacterRaceCatalog {
             .binary_search_by_key(&id, CharacterRace::id)
             .ok()
             .map(|index| &self.races[index])
+    }
+
+    /// Iterates records in ascending race identifier order.
+    pub fn races(&self) -> impl ExactSizeIterator<Item = &CharacterRace> {
+        self.races.iter()
+    }
+
+    /// Iterates records in physical DBC order, matching stock creation setup.
+    pub fn physical_races(&self) -> impl ExactSizeIterator<Item = &CharacterRace> {
+        self.physical_order.iter().map(|index| &self.races[*index])
     }
 }
 

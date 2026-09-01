@@ -130,13 +130,19 @@ pub(crate) fn apply_object_updates(
                 fields,
                 ..
             } => {
+                let existing = world.entity_by_guid(*guid);
                 world.create_object(
                     *guid,
                     object_kind(*kind),
                     movement_transform(*movement),
                     fields.iter().map(|field| (field.index(), field.value())),
                 )?;
-                if let Some(movement) = movement_state(*movement) {
+                // Stock skips the create movement block when the GUID already
+                // resolves to a non-local object, retaining its live movement
+                // state while refreshing the sparse field data.
+                if (existing.is_none() || existing == Some(world.local_player()))
+                    && let Some(movement) = movement_state(*movement)
+                {
                     world.update_movement(*guid, movement)?;
                 }
                 project_object_fields(

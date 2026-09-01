@@ -14,6 +14,7 @@ pub struct CreatureModelAppearance<'catalog> {
     model: &'catalog CreatureModelData,
     model_path: &'catalog AssetPath,
     extra: Option<&'catalog CreatureDisplayInfoExtra>,
+    baked_texture: Option<AssetPath>,
     monster_textures: [Option<AssetPath>; 3],
 }
 
@@ -34,6 +35,12 @@ impl CreatureModelAppearance<'_> {
     #[must_use]
     pub const fn extra(&self) -> Option<&CreatureDisplayInfoExtra> {
         self.extra
+    }
+
+    /// Returns the canonical baked atlas for a player-model NPC.
+    #[must_use]
+    pub const fn baked_texture(&self) -> Option<&AssetPath> {
+        self.baked_texture.as_ref()
     }
 
     /// Returns the required normalized M2 path.
@@ -77,7 +84,8 @@ impl CreatureCatalog {
     ///
     /// Stock `ReplaceMonsterSkin` replaces the M2 filename component with each
     /// authored texture variation and binds the results to replacement types
-    /// 11 through 13. It does not append an extension or search another folder.
+    /// 11 through 13. Its subsequent `TextureCreate` call appends `.blp` when
+    /// the DBC value has no extension; it does not search another folder.
     ///
     /// # Errors
     ///
@@ -115,14 +123,45 @@ impl CreatureCatalog {
             )?)
         };
         let monster_textures = monster_texture_paths(model_path, display.texture_variations());
+        let baked_texture = extra
+            .map(|extra| {
+                npc_baked_texture_path(extra.baked_texture_name()).map_err(|_error| {
+                    AppearanceError::InvalidNpcBakedTexture {
+                        display_id,
+                        extra_id: extra.id(),
+                    }
+                })
+            })
+            .transpose()?
+            .flatten();
         Ok(CreatureModelAppearance {
             display,
             model,
             model_path,
             extra,
+            baked_texture,
             monster_textures,
         })
     }
+}
+
+/// Expands the filename-only NPC atlas values used by build 12340.
+fn npc_baked_texture_path(name: &str) -> Result<Option<AssetPath>, crate::AssetError> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let has_directory = name.contains(['\\', '/']);
+    let has_extension = name
+        .rsplit(['\\', '/'])
+        .next()
+        .is_some_and(|component| component.contains('.'));
+    let prefix = if has_directory {
+        ""
+    } else {
+        "Textures\\BakedNpcTextures\\"
+    };
+    let suffix = if has_extension { "" } else { ".blp" };
+    AssetPath::new(format!("{prefix}{name}{suffix}")).map(Some)
 }
 
 /// Replaces only the final model-path component, exactly as stock does.
@@ -138,7 +177,16 @@ fn monster_texture_paths(model_path: &AssetPath, names: [&str; 3]) -> [Option<As
         }
         // Both inputs were validated as archive-relative ASCII paths while
         // decoding their tables, so their stock concatenation remains valid.
-        let path = match AssetPath::new(format!("{prefix}{name}")) {
+        let suffix = if name
+            .rsplit(['\\', '/'])
+            .next()
+            .is_some_and(|part| part.contains('.'))
+        {
+            ""
+        } else {
+            ".blp"
+        };
+        let path = match AssetPath::new(format!("{prefix}{name}{suffix}")) {
             Ok(path) => path,
             Err(_) => unreachable!("two validated archive path fragments formed an invalid path"),
         };

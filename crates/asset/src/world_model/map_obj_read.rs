@@ -773,7 +773,6 @@ fn validate_root(path: &AssetPath, root: &wow_wmo::root_parser::WmoRoot) -> Resu
         || usize::try_from(root.n_portals).ok() != Some(root.portals.len())
         || usize::try_from(root.n_lights).ok() != Some(root.lights.len())
         || usize::try_from(root.n_doodad_names).ok() != Some(root.doodad_names.len())
-        || usize::try_from(root.n_doodad_defs).ok() != Some(root.doodad_defs.len())
         || usize::try_from(root.n_doodad_sets).ok() != Some(root.doodad_sets.len())
     {
         return Err(world_model_message(
@@ -781,6 +780,9 @@ fn validate_root(path: &AssetPath, root: &wow_wmo::root_parser::WmoRoot) -> Resu
             "MOHD counts disagree with decoded root tables",
         ));
     }
+    // Stock roots can retain an exporter-era inflated n_doodad_defs value.
+    // The client sizes the placement table from MODD and MODS selects ranges
+    // within that decoded table, so MOHD is not authoritative for this field.
     if root.num_lod != 0
         || !root.convex_volume_planes.is_empty()
         || !root.uv_transforms.is_empty()

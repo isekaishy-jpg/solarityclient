@@ -23,9 +23,11 @@ impl CharacterTexturePlan {
     ///
     /// # Errors
     ///
-    /// Returns [`CharacterTextureComposeError`] when a source is missing or
-    /// malformed, when its authored mip cannot cover the destination region, or
-    /// when stock's smaller-source scaling path would be required.
+    /// Returns [`CharacterTextureComposeError`] when the required skin source
+    /// is missing, an available source is malformed, its authored mip cannot
+    /// cover the destination region, or stock's smaller-source scaling path
+    /// would be required. Stock omits missing overlay handles after its texture
+    /// cache lookup, so optional overlay files are skipped here as well.
     pub fn compose(
         &self,
         store: &mut AssetStore,
@@ -35,7 +37,12 @@ impl CharacterTexturePlan {
         let mut decoded = HashMap::new();
         let mut atlas = empty_atlas();
 
-        for (layer, source) in self.atlas_layers().iter().zip(&sources) {
+        for (layer, source) in self
+            .atlas_layers()
+            .iter()
+            .zip(&sources)
+            .filter_map(|(layer, source)| source.as_ref().map(|source| (layer, source)))
+        {
             let source_mip = select_source_mip(layer, source)?;
             paste_layer(layer, source, source_mip, &mut decoded, &mut atlas)?;
         }
@@ -48,11 +55,14 @@ fn load_sources(
     layers: &[CharacterAtlasLayer],
     store: &mut AssetStore,
     cache: &mut BlpTextureCache,
-) -> Result<Vec<Arc<BlpTextureSource>>, CharacterTextureComposeError> {
+) -> Result<Vec<Option<Arc<BlpTextureSource>>>, CharacterTextureComposeError> {
     let mut sources = Vec::with_capacity(layers.len());
     for layer in layers {
-        let source = cache.load(store, layer.path())?;
-        sources.push(source);
+        if layer.kind() != CharacterAtlasLayerKind::Skin && !store.contains(layer.path())? {
+            sources.push(None);
+            continue;
+        }
+        sources.push(Some(cache.load(store, layer.path())?));
     }
     Ok(sources)
 }

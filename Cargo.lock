@@ -2239,6 +2239,7 @@ dependencies = [
  "mlua",
  "quick-xml",
  "solarity-asset",
+ "solarity-cpu",
  "solarity-rendering",
  "thiserror",
  "tracing",

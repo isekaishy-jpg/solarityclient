@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use solarity_asset::AssetError;
+
 use crate::{
     FontError, UiAnimationError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError,
     UiRenderError, UiScriptError, UiTextureError,
@@ -10,6 +12,9 @@ use crate::{
 /// A stock built-in login UI could not be constructed or executed.
 #[derive(Debug, Error)]
 pub enum GlueError {
+    /// Character-creation metadata could not be loaded from the client stack.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
     /// Manifest, archive resource, XML, or Lua compilation failed.
     #[error(transparent)]
     Load(#[from] UiLoadError),

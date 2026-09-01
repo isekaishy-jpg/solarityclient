@@ -15,6 +15,10 @@ mod survey_download_glue;
 mod types;
 
 pub use c_glue_mgr::GlueManager;
+pub use character::{
+    UiCharacterCreationError, UiCharacterCreationPreview, UiCharacterCreationRequest,
+    UiCharacterCreationState, UiCharacterExpansion, UiCreationClassRoles,
+};
 pub use status::GlueError;
 pub use types::{
     GlueInitialScreen, GlueObject, GlueStartupReport, UiKeyboardModifiers, UiPointerButton,

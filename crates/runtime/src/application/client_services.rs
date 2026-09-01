@@ -2,28 +2,33 @@
 
 #![allow(unsafe_code)]
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
-    CharacterRaceCatalog, CreatureCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, MapCatalog, ParticleColorCatalog,
+    CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
+    LightCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
-use solarity_network::{RealmEntry, WorldAddon, WorldAddonManifest};
+use solarity_network::{
+    AccountExpansion, CharacterCreation, RealmEntry, WorldAddon, WorldAddonManifest,
+};
 use solarity_rendering::{
     M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera,
     WorldModelBaseMip, WorldModelTextureFiltering,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
-    AddonCatalog, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
-    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers,
-    UiPointerButton,
+    AddonCatalog, GlueError, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
+    UiCharacterExpansion, UiEventArgument, UiEventPayload, UiGlueNetworkAction,
+    UiGlueNetworkStatus, UiKeyboardModifiers, UiPointerButton,
 };
 
 use crate::application::ApplicationError;
@@ -82,13 +87,14 @@ pub(crate) struct ClientServices {
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
-    blizzard_rand: BlizzardRand,
+    blizzard_rand: Rc<RefCell<BlizzardRand>>,
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
     realm_directory_published: bool,
     character_screen_published: bool,
     character_directory_published: bool,
+    pending_character_screen_requests: RuntimeCharacterScreenRequests,
     pending_realm_id: Option<u32>,
     selected_realm: Option<SelectedRealmFacts>,
     login_failures: VecDeque<RuntimeLoginError>,
@@ -118,6 +124,7 @@ impl ClientServices {
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let races = CharacterRaceCatalog::load(&mut assets)?;
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
+        let start_outfits = CharacterStartOutfitCatalog::load(&mut assets)?;
         let item_definitions = ItemDefinitionCatalog::load(&mut assets)?;
         let item_displays = ItemDisplayCatalog::load(&mut assets)?;
         let item_visuals = ItemVisualCatalog::load(&mut assets)?;
@@ -160,13 +167,17 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let assets = AssetStoreHandle::new(assets);
-        let glue = GlueManager::start_shared_with_profile(
+        // The stock process owns one Blizzard RNG stream. Character creation
+        // and sound variation consume it in actual main-thread call order.
+        let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
+        let glue = GlueManager::start_shared_with_profile_and_random(
             assets.clone(),
             platform.logical_extent(),
             false,
             initial_screen,
             startup_profile.cvar_values(),
             &addon_catalog,
+            blizzard_rand.clone(),
         )?;
         glue.set_realm_directory(realm_metadata.empty_directory());
         let sound = RuntimeSoundCoordinator::start(
@@ -187,6 +198,8 @@ impl ClientServices {
             &assets,
             &mut crt_rand,
             Arc::clone(&particle_twinkle),
+            None,
+            false,
         )?;
         let login_ui = if glue.media_intent().movie().is_some() {
             None
@@ -243,6 +256,7 @@ impl ClientServices {
                         characters,
                         races,
                         helmet_visibility,
+                        start_outfits,
                         RuntimePlayerItemCatalogs::new(
                             item_definitions,
                             item_displays,
@@ -257,13 +271,14 @@ impl ClientServices {
                 m2_global_clock: std::time::Instant::now(),
                 crt_rand,
                 particle_twinkle,
-                blizzard_rand: BlizzardRand::new(sdl3::timer::ticks() as u32),
+                blizzard_rand,
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
                 realm_directory_published: false,
                 character_screen_published: false,
                 character_directory_published: false,
+                pending_character_screen_requests: RuntimeCharacterScreenRequests::default(),
                 pending_realm_id: None,
                 selected_realm: None,
                 login_failures: VecDeque::new(),
@@ -456,8 +471,12 @@ impl ClientServices {
         )
         .frame(aspect_ratio)?;
         if let Some(clock) = self.gameplay.realm_clock() {
-            self.sound
-                .update(&self.glue, clock, camera, &mut self.blizzard_rand)?;
+            self.sound.update(
+                &self.glue,
+                clock,
+                camera,
+                &mut self.blizzard_rand.borrow_mut(),
+            )?;
         }
         let Some(plan) = self.terrain.resident_mesh_plan() else {
             return self.present_glue_frame();
@@ -493,7 +512,7 @@ impl ClientServices {
             .apply_mount_camera_sample(mount_camera, camera_time_ms)?;
         let m2_events = frame.drain_m2_events();
         self.sound
-            .play_m2_events(&m2_events, camera, &mut self.blizzard_rand)?;
+            .play_m2_events(&m2_events, camera, &mut self.blizzard_rand.borrow_mut())?;
         Ok(())
     }
 
@@ -507,12 +526,23 @@ impl ClientServices {
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
+        let creation_preview = if self.glue.current_screen() == "charcreate" {
+            self.glue.character_creation_preview()
+        } else {
+            None
+        };
+        let creation_changed = self
+            .player
+            .synchronize_character_creation(creation_preview.as_ref())?;
+        let creation = self.player.creation_frame_input();
         self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,
             &self.assets,
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),
+            creation,
+            creation_changed,
         )?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         if !self.glue_model.present(
@@ -568,6 +598,8 @@ impl ClientServices {
                     self.realm_directory_published = false;
                     self.character_screen_published = false;
                     self.character_directory_published = false;
+                    self.pending_character_screen_requests =
+                        RuntimeCharacterScreenRequests::default();
                     self.pending_realm_id = None;
                     self.selected_realm = None;
                     self.glue
@@ -630,6 +662,34 @@ impl ClientServices {
                 UiGlueNetworkAction::RequestRealmSplitInfo => {
                     character_screen_requests.request_realm_split_info = true;
                 }
+                UiGlueNetworkAction::CreateCharacter(request) => {
+                    let creation = CharacterCreation::new(
+                        request.name().to_owned(),
+                        request.race_id(),
+                        request.class_id(),
+                        request.gender_id(),
+                        request.appearance(),
+                    )
+                    .map_err(RuntimeWorldError::from)
+                    .and_then(|creation| self.world.create_character(&handle, creation));
+                    match creation {
+                        Ok(()) => {
+                            let message = self
+                                .glue
+                                .localized_text("CHAR_CREATE_IN_PROGRESS")
+                                .map_err(GlueError::from)?;
+                            self.glue.dispatch_event(
+                                "OPEN_STATUS_DIALOG",
+                                &UiEventPayload::new([
+                                    UiEventArgument::String("CANCEL".to_owned()),
+                                    UiEventArgument::String(message),
+                                ])?,
+                            )?;
+                        }
+                        Err(RuntimeWorldError::AlreadyActive) => {}
+                        Err(error) => self.publish_world_failure(error),
+                    }
+                }
                 UiGlueNetworkAction::SelectCharacter { guid } => {
                     let payload = UiEventPayload::new([UiEventArgument::Number(guid as f64)])?;
                     self.glue
@@ -644,12 +704,19 @@ impl ClientServices {
             }
         }
         if !character_screen_requests.is_empty() {
+            self.pending_character_screen_requests
+                .merge(character_screen_requests);
+        }
+        if !self.pending_character_screen_requests.is_empty() {
+            let pending_requests = self.pending_character_screen_requests;
             match self
                 .world
-                .request_character_screen_data(&handle, character_screen_requests)
+                .request_character_screen_data(&handle, pending_requests)
             {
                 Ok(()) => {
-                    if character_screen_requests.refresh_character_directory {
+                    self.pending_character_screen_requests =
+                        RuntimeCharacterScreenRequests::default();
+                    if pending_requests.refresh_character_directory {
                         self.character_directory_published = false;
                     }
                 }
@@ -704,6 +771,19 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::Idle | RuntimeWorldPoll::Pending) => {}
             Ok(RuntimeWorldPoll::CharacterScreenReady) if !self.character_screen_published => {
                 self.character_screen_published = true;
+                tracing::info!("authenticated character screen became ready");
+                if let Some(session) = self.world.authenticated() {
+                    let expansion = match session.info().expansion() {
+                        AccountExpansion::Original => UiCharacterExpansion::ORIGINAL,
+                        AccountExpansion::TheBurningCrusade => {
+                            UiCharacterExpansion::THE_BURNING_CRUSADE
+                        }
+                        AccountExpansion::WrathOfTheLichKing => {
+                            UiCharacterExpansion::WRATH_OF_THE_LICH_KING
+                        }
+                    };
+                    self.glue.set_character_creation_expansion(expansion);
+                }
                 if let Some(selected) = &self.selected_realm {
                     self.glue.set_network_status(selected.status(true, false));
                 }
@@ -726,6 +806,7 @@ impl ClientServices {
                             message: source.to_string(),
                         }
                     })?;
+                    tracing::info!(character_count = count, "character directory became ready");
                     self.glue.set_character_directory(characters);
                     self.glue.dispatch_event(
                         "CHARACTER_LIST_UPDATE",
@@ -735,9 +816,36 @@ impl ClientServices {
                 }
             }
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
+            Ok(RuntimeWorldPoll::CharacterCreationFinished(result)) => {
+                if result.is_success() {
+                    self.character_directory_published = false;
+                    self.glue
+                        .dispatch_event("CLOSE_STATUS_DIALOG", &UiEventPayload::empty())?;
+                    self.glue
+                        .dispatch_event("SELECT_LAST_CHARACTER", &UiEventPayload::empty())?;
+                    self.glue.dispatch_event(
+                        "SET_GLUE_SCREEN",
+                        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+                    )?;
+                } else {
+                    let message = self
+                        .glue
+                        .localized_text(result.message_token())
+                        .map_err(GlueError::from)?;
+                    self.glue.dispatch_event(
+                        "OPEN_STATUS_DIALOG",
+                        &UiEventPayload::new([
+                            UiEventArgument::String("OKAY".to_owned()),
+                            UiEventArgument::String(message),
+                        ])?,
+                    )?;
+                }
+                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+            }
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     self.gameplay.begin(&handle, entry)?;
+                    tracing::info!("selected character entered the active world");
                 }
             }
             Ok(RuntimeWorldPoll::CharacterRejected(rejection)) => {
@@ -880,7 +988,7 @@ impl ClientServices {
                     &self.player.resident_creature_frame_inputs(),
                     &self.player.resident_remote_player_frame_inputs(),
                 )?;
-                tracing::debug!(
+                tracing::info!(
                     tile_x = tile.x(),
                     tile_y = tile.y(),
                     draw_count = frame.draw_count(),

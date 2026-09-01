@@ -70,7 +70,9 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
     assert_eq!(frame.camera().position(), Vec3::new(11.0, 0.0, 2.0));
     assert_eq!(frame.camera().target(), Vec3::new(-10.0, 0.0, 2.0));
     assert_eq!(frame.forward(), Vec3::NEG_X);
-    assert_eq!(frame.up(), Vec3::Z);
+    // The authored roll keys are 2*pi and zero. Stock preserves their
+    // equivalent orientation instead of linearly rotating through pi.
+    assert!((frame.up() - Vec3::Z).abs().max_element() < 0.000_01);
     let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
     assert!((frame.camera().vertical_field_of_view_radians() - expected_fov).abs() < 0.0001);
     Ok(())
@@ -240,10 +242,6 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
             bytes: &overlay,
         },
         FixtureFile {
-            path: "Character\\Human\\Male\\HairUpper.blp",
-            bytes: &overlay,
-        },
-        FixtureFile {
             path: "Character\\Human\\Male\\UnderwearLower.blp",
             bytes: &overlay,
         },
@@ -357,6 +355,8 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
     let top = atlas.mip(0).ok_or("top character atlas mip is absent")?;
     // The 512-pixel HD skin selects authored mip one instead of resampling mip
     // zero. Underwear and head overlays likewise select their authored mip one.
+    // HairUpper is deliberately absent: stock retains the planned variation but
+    // skips the overlay when TextureCacheCreateTexture returns no handle.
     assert_eq!(
         rgba8_pixel(top.rgba8(), top.width(), 10, 10),
         [0, 0, 255, 255]
@@ -367,9 +367,9 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
     );
     assert_eq!(
         rgba8_pixel(top.rgba8(), top.width(), 10, 170),
-        [0, 223, 0, 255]
+        [0, 191, 0, 255]
     );
-    assert_eq!(texture_cache.len(), 9);
+    assert_eq!(texture_cache.len(), 8);
 
     let _sdl_test = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
@@ -1943,6 +1943,37 @@ fn m2_bone_pose_applies_stock_view_space_billboard() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// Effect-only M2 profiles remain valid without an ordinary mesh upload.
+#[test]
+fn m2_mesh_plan_identifies_empty_effect_profile() -> Result<(), Box<dyn Error>> {
+    let model_bytes = render_m2_bytes("EffectOnly.blp", 1)?;
+    let skin_bytes = empty_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\EffectOnly.m2",
+            bytes: &model_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\EffectOnly00.skin",
+            bytes: &skin_bytes,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\EffectOnly.m2")?,
+    )?;
+    let plan = M2MeshPlan::prepare(&model, 0)?;
+
+    assert!(plan.vertices().is_empty());
+    assert!(plan.indices().is_empty());
+    assert!(plan.draws().is_empty());
+    assert!(!plan.has_drawable_geometry());
+    Ok(())
+}
+
 /// Confirms shaderc emitted the pinned SPIR-V binary header, not its default.
 fn assert_spirv_1_6(words: &[u32]) {
     assert!(words.len() >= 5);
@@ -3009,7 +3040,13 @@ fn append_render_camera(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     bytes[camera_offset + 50..camera_offset + 52].copy_from_slice(&u16::MAX.to_le_bytes());
     bytes[camera_offset + 68..camera_offset + 80]
         .copy_from_slice(&render_f32_values(&[-10.0, 0.0, 2.0]));
-    bytes[camera_offset + 82..camera_offset + 84].copy_from_slice(&u16::MAX.to_le_bytes());
+    append_render_track(
+        bytes,
+        camera_offset + 80,
+        &[0, 1_000],
+        &render_f32_values(&[core::f32::consts::TAU, 0.0]),
+        4,
+    )?;
     set_render_header_array(bytes, 0x110, 1, camera_offset)?;
     Ok(())
 }
@@ -3455,6 +3492,21 @@ fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let batch_offset = u32::try_from(submesh_offset + 48)?;
     bytes[40..44].copy_from_slice(&batch_offset.to_le_bytes());
     Ok(bytes)
+}
+
+/// Serializes the valid empty SKIN used by stock particle-only models.
+fn empty_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+    let skin = OldSkin {
+        header: OldSkinHeader::new(),
+        indices: Vec::new(),
+        triangles: Vec::new(),
+        bone_indices: Vec::new(),
+        submeshes: Vec::new(),
+        batches: Vec::new(),
+    };
+    let mut cursor = Cursor::new(Vec::new());
+    skin.write(&mut cursor)?;
+    Ok(cursor.into_inner())
 }
 
 /// Reads one M2 header array's physical byte offset for fixture repair.

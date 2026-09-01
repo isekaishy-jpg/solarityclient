@@ -19,6 +19,12 @@ pub enum CharacterGeosetPlanError {
 /// A failure while translating stock item display names into attachment paths.
 #[derive(Debug, Error)]
 pub enum CharacterAttachmentPlanError {
+    /// A held slot was constructed from display-only NPC armor data.
+    #[error("held equipment slot {slot:?} has no Item.dbc definition")]
+    MissingItemDefinition {
+        /// Public slot that requires weapon category and sheath metadata.
+        slot: solarity_ecs::PlayerEquipmentSlot,
+    },
     /// A helmet model cannot select a suffix outside stock's two genders.
     #[error("character gender {gender_id} cannot select a helmet model suffix")]
     UnsupportedHelmetGender {

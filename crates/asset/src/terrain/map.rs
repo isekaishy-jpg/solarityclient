@@ -186,8 +186,11 @@ impl TerrainMap {
     /// Maps stock world X/Y coordinates to the clamped ADT grid.
     #[must_use]
     pub fn tile_at_world_position(world_x: f32, world_y: f32) -> TerrainTileIndex {
-        let tile_x = ((MAP_OFFSET - world_x) / TILE_SIZE).floor() as i32;
-        let tile_y = ((MAP_OFFSET - world_y) / TILE_SIZE).floor() as i32;
+        // ADT filenames use the client terrain grid's horizontal X/Z order,
+        // while server movement uses X/Y. The first filename coordinate is
+        // therefore derived from server Y and the second from server X.
+        let tile_x = ((MAP_OFFSET - world_y) / TILE_SIZE).floor() as i32;
+        let tile_y = ((MAP_OFFSET - world_x) / TILE_SIZE).floor() as i32;
         // The server can briefly report coordinates beyond a map boundary
         // during transfers. Stock clamps these only for tile addressing.
         TerrainTileIndex::clamped(tile_x, tile_y)

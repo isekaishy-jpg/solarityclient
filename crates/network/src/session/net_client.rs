@@ -5,15 +5,15 @@ use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 use wow_world_messages::wrath::{
-    CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT,
-    CMSG_TIME_SYNC_RESP,
+    CMSG_CHAR_CREATE, CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES,
+    CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
 };
 
 use crate::connection::{
     CharacterLogin, CharacterLoginProgress, InWorldSession, WorldPacketReader, WorldPacketWriter,
     WorldSession,
 };
-use crate::protocol::{CharacterEntry, WorldServerPacket};
+use crate::protocol::{CharacterCreation, CharacterEntry, WorldServerPacket};
 
 use super::{WorldSessionError, WorldSessionStage};
 
@@ -47,6 +47,33 @@ where
     pub async fn request_character_directory(&mut self) -> Result<(), WorldSessionError> {
         self.send_character_screen_message(ClientOpcodeMessage::CMSG_CHAR_ENUM)
             .await
+    }
+
+    /// Sends one validated `CMSG_CHAR_CREATE` request.
+    ///
+    /// The authoritative result is obtained with [`Self::receive_packet`] so
+    /// unrelated setup packets remain available to the character-screen owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn create_character(
+        &mut self,
+        request: &CharacterCreation,
+    ) -> Result<(), WorldSessionError> {
+        let [skin_color, face, hair_style, hair_color, facial_hair] = request.appearance();
+        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_CREATE {
+            name: request.name().to_owned(),
+            race: request.race(),
+            class: request.class(),
+            gender: request.gender(),
+            skin_color,
+            face,
+            hair_style,
+            hair_color,
+            facial_hair,
+        }))
+        .await
     }
 
     /// Sends `CMSG_REALM_SPLIT` for the realm selected during authentication.

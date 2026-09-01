@@ -102,11 +102,14 @@ pub(in crate::device) fn prepare_draw(
         }
         _ => return Err(VulkanError::UiDrawTextureMismatch),
     }
+    let base_vertex = i32::try_from(u64::from(batch.first_quad()) * 4)
+        .map_err(|_source| VulkanError::UiDrawIndexRange)?;
     Ok(UiPreparedDraw::new(
         mesh,
         pipeline,
         texture_set,
         batch.first_index(),
         batch.index_count(),
+        base_vertex,
     ))
 }

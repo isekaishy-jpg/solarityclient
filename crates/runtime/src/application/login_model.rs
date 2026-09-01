@@ -7,14 +7,15 @@ use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2ModelCache, M2TextureKind,
 };
 use solarity_rendering::{
-    M2CameraFrameError, M2LocalLightState, M2ParticleTwinkleTable, M2SceneUniform,
-    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameScene, WorldFrustum,
-    WorldModelSceneUniform, WorldScreenWindow, sample_m2_camera_frame,
+    M2CameraFrameError, M2LocalLightCount, M2LocalLightState, M2ParticleTwinkleTable,
+    M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameScene,
+    WorldFrustum, WorldModelSceneUniform, WorldScreenWindow, sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation};
 use thiserror::Error;
 
 use crate::application::login_ui::LoginUiFrame;
+use crate::application::player_coordinator::ResidentCreationFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::M2Frame;
 use crate::random::CrtRand;
@@ -104,6 +105,7 @@ struct GlueModelEnvironment {
     fog_color: Vec3,
     fog_range: Vec4,
     local_lights: [M2LocalLightState; 4],
+    character_local_lights: [M2LocalLightState; 4],
 }
 
 impl GlueModelEnvironment {
@@ -122,6 +124,10 @@ impl GlueModelEnvironment {
         let has_authored_lights = authored_lights.iter().any(Option::is_some);
         let local_lights = authored_lights
             .map(|light| light.map_or_else(M2LocalLightState::disabled, model_light_state));
+        let character_local_lights = model
+            .character_lights()
+            .live()
+            .map(|light| light.map_or_else(M2LocalLightState::disabled, model_light_state));
         Self {
             ambient: if has_authored_lights {
                 Vec3::ZERO
@@ -137,6 +143,7 @@ impl GlueModelEnvironment {
             fog_color,
             fog_range,
             local_lights,
+            character_local_lights,
         }
     }
 }
@@ -167,6 +174,7 @@ impl RuntimeGlueModelScene {
     }
 
     /// Rebuilds GPU state only when Glue changes the selected model generation.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn synchronize(
         &mut self,
         renderer: &mut VulkanRenderer,
@@ -174,6 +182,8 @@ impl RuntimeGlueModelScene {
         assets: &AssetStoreHandle,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
+        creation: Option<ResidentCreationFrameInput<'_>>,
+        creation_changed: bool,
     ) -> Result<(), RuntimeGlueModelError> {
         let visible = glue.presentation().models();
         if visible.is_empty() {
@@ -192,6 +202,14 @@ impl RuntimeGlueModelScene {
             && active.key == key
         {
             active.environment = environment;
+            if creation_changed {
+                active.frame.replace_glue_character(
+                    renderer,
+                    creation,
+                    local_light_count(active.environment.character_local_lights),
+                    random,
+                )?;
+            }
             return Ok(());
         }
         if key.camera < 0 {
@@ -227,15 +245,22 @@ impl RuntimeGlueModelScene {
             texture_sources.push(self.textures.load(&mut store, path)?);
         }
         drop(store);
-        let frame = M2Frame::prepare_glue_model(
+        let mut frame = M2Frame::prepare_glue_model(
             renderer,
             Arc::clone(&model),
             &texture_sources,
             key.object_index,
             animation_id,
             key.model_scale,
+            local_light_count(environment.local_lights),
             random,
             particle_twinkle,
+        )?;
+        frame.replace_glue_character(
+            renderer,
+            creation,
+            local_light_count(environment.character_local_lights),
+            random,
         )?;
         self.active = Some(ActiveGlueModel {
             key,
@@ -321,5 +346,20 @@ impl RuntimeGlueModelScene {
             ui.draws(),
         )?;
         Ok(true)
+    }
+}
+
+fn local_light_count(lights: [M2LocalLightState; 4]) -> M2LocalLightCount {
+    let count = lights
+        .iter()
+        .filter(|light| **light != M2LocalLightState::disabled())
+        .count();
+    match count {
+        0 => M2LocalLightCount::Zero,
+        1 => M2LocalLightCount::One,
+        2 => M2LocalLightCount::Two,
+        3 => M2LocalLightCount::Three,
+        4 => M2LocalLightCount::Four,
+        _ => unreachable!("fixed ModelFFX light array exceeded four slots"),
     }
 }

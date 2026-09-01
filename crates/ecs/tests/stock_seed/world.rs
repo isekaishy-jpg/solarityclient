@@ -137,10 +137,23 @@ fn object_updates_mutate_indexed_entities_in_server_order() -> Result<(), Box<dy
     assert_eq!(fields.get(24), 75);
     assert_eq!(fields.get(80), 12_345);
     drop(fields);
-    assert!(matches!(
-        world.create_object(creature_guid, ObjectKind::Unit, None, []),
-        Err(WorldStateError::DuplicateObject { .. })
-    ));
+    let original_transform = world.object_transform(creature_guid);
+    assert_eq!(
+        world.create_object(
+            creature_guid,
+            ObjectKind::GameObject,
+            Some(WorldTransform::new(Vec3::splat(100.0), 2.0)),
+            [(24, 50), (81, 54_321)],
+        )?,
+        creature
+    );
+    let fields = world.storage().get::<&ObjectFields>(creature)?;
+    assert_eq!(fields.get(24), 50);
+    assert_eq!(fields.get(80), 12_345);
+    assert_eq!(fields.get(81), 54_321);
+    drop(fields);
+    assert_eq!(world.object_kind(creature_guid), Some(ObjectKind::Unit));
+    assert_eq!(world.object_transform(creature_guid), original_transform);
 
     world.remove_object(creature_guid)?;
     assert_eq!(world.entity_by_guid(creature_guid), None);

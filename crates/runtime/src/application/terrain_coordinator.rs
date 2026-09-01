@@ -382,6 +382,29 @@ impl RuntimeTerrainCoordinator {
         collision.trace(start, end, collision_radius, maximum_fraction)
     }
 
+    /// Resolves the resident ADT point height considered at player entry.
+    ///
+    /// This method exposes only the terrain provider. Movement remains
+    /// responsible for combining it with WMO and dynamic-world support.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TerrainCollisionError`] when the position is not finite.
+    pub fn controlled_player_terrain_height(
+        &self,
+        position: glam::Vec3,
+    ) -> Result<Option<f32>, TerrainCollisionError> {
+        let Some(collision) = self
+            .active
+            .as_ref()
+            .and_then(|active| active.tile.as_ref())
+            .map(|tile| &tile.collision)
+        else {
+            return Ok(None);
+        };
+        collision.height_at(position.x, position.y)
+    }
+
     /// Samples the preferred resident MH2O surface at a world-space point.
     ///
     /// # Errors

@@ -10,6 +10,7 @@ pub struct UiPreparedDraw {
     texture_set: Option<UiTextureSetHandle>,
     first_index: u32,
     index_count: u32,
+    base_vertex: i32,
 }
 
 impl UiPreparedDraw {
@@ -20,6 +21,7 @@ impl UiPreparedDraw {
         texture_set: Option<UiTextureSetHandle>,
         first_index: u32,
         index_count: u32,
+        base_vertex: i32,
     ) -> Self {
         Self {
             mesh,
@@ -27,6 +29,7 @@ impl UiPreparedDraw {
             texture_set,
             first_index,
             index_count,
+            base_vertex,
         }
     }
 
@@ -48,7 +51,7 @@ impl UiPreparedDraw {
         self.texture_set
     }
 
-    /// Returns the first unsigned 32-bit index submitted by this batch.
+    /// Returns the batch's first index in the source mesh plan.
     #[must_use]
     pub const fn first_index(self) -> u32 {
         self.first_index
@@ -58,5 +61,11 @@ impl UiPreparedDraw {
     #[must_use]
     pub const fn index_count(self) -> u32 {
         self.index_count
+    }
+
+    /// Returns the first vertex of this batch's canonical quad-index pattern.
+    #[must_use]
+    pub const fn base_vertex(self) -> i32 {
+        self.base_vertex
     }
 }

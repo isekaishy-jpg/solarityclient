@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use solarity_asset::{
     AnimationDataCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
-    BlpTextureSource, CharacterAppearanceCatalog, CharacterRaceCatalog, CreatureCatalog,
-    CreatureModelAppearance, DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog,
+    CharacterStartOutfitCatalog, CreatureCatalog, CreatureModelAppearance, DecodedM2Model,
+    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
+    ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
-    ActiveWorld, PlayerEquipmentSlot, PlayerViewState, VisibleEquipmentItem, WorldStateError,
-    WorldTransform,
+    ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
+    UnitAnimationTier, UnitSheathState, VisibleEquipmentItem, WorldStateError, WorldTransform,
 };
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
@@ -27,7 +28,23 @@ use solarity_systems::{
     resolve_mounted_player_camera_pose, resolve_player_equipment,
     resolve_unit_locomotion_animation, resolve_unit_model, resolve_unit_model_animation,
 };
+use solarity_ui::UiCharacterCreationPreview;
 use thiserror::Error;
+
+/// `CreatureDisplayInfoExtra` item-display columns in stock component order.
+const NPC_EQUIPMENT_SLOTS: [PlayerEquipmentSlot; 11] = [
+    PlayerEquipmentSlot::Head,
+    PlayerEquipmentSlot::Shoulders,
+    PlayerEquipmentSlot::Shirt,
+    PlayerEquipmentSlot::Chest,
+    PlayerEquipmentSlot::Waist,
+    PlayerEquipmentSlot::Legs,
+    PlayerEquipmentSlot::Feet,
+    PlayerEquipmentSlot::Wrists,
+    PlayerEquipmentSlot::Hands,
+    PlayerEquipmentSlot::Tabard,
+    PlayerEquipmentSlot::Back,
+];
 
 /// Failure while resolving the local player's authored presentation model.
 #[derive(Debug, Error)]
@@ -38,6 +55,9 @@ pub enum RuntimePlayerError {
     /// Projected unit state or a required DBC join is incomplete.
     #[error(transparent)]
     Appearance(#[from] UnitModelAppearanceError),
+    /// Character-creation customization has no exact DBC appearance join.
+    #[error(transparent)]
+    CharacterAppearance(#[from] solarity_asset::AppearanceError),
     /// The selected M2 or one of its SKIN companions failed strict loading.
     #[error(transparent)]
     Asset(#[from] AssetError),
@@ -65,6 +85,70 @@ pub enum RuntimePlayerError {
     /// Public visible-item fields could not resolve through client item tables.
     #[error(transparent)]
     Equipment(#[from] PlayerEquipmentAppearanceError),
+    /// The playable creation key has no stock starter-outfit row.
+    #[error(
+        "character creation has no starter outfit for race/class/gender {race_id}/{class_id}/{gender_id}"
+    )]
+    MissingCreationOutfit {
+        /// Protocol race identifier.
+        race_id: u8,
+        /// Protocol class identifier.
+        class_id: u8,
+        /// Playable gender identifier.
+        gender_id: u8,
+    },
+    /// A starter outfit references an item absent from the client item table.
+    #[error("character creation starter outfit references missing item {item_id}")]
+    MissingCreationOutfitItem {
+        /// Absent `Item.dbc` identifier.
+        item_id: u32,
+    },
+    /// A starter outfit item disagrees with its canonical item display.
+    #[error(
+        "character creation item {item_id} stores display {outfit_display_id}, but Item.dbc stores {item_display_id}"
+    )]
+    CreationOutfitDisplayMismatch {
+        /// Starter item identifier.
+        item_id: u32,
+        /// Display identifier retained by `CharStartOutfit.dbc`.
+        outfit_display_id: i32,
+        /// Display identifier retained by `Item.dbc`.
+        item_display_id: u32,
+    },
+    /// A starter outfit item disagrees with its canonical inventory type.
+    #[error(
+        "character creation item {item_id} stores inventory type {outfit_inventory_type}, but Item.dbc stores {item_inventory_type}"
+    )]
+    CreationOutfitInventoryMismatch {
+        /// Starter item identifier.
+        item_id: u32,
+        /// Inventory type retained by `CharStartOutfit.dbc`.
+        outfit_inventory_type: i32,
+        /// Inventory type retained by `Item.dbc`.
+        item_inventory_type: u32,
+    },
+    /// A wearable starter item references an absent display row.
+    #[error("character creation starter item {item_id} references missing display {display_id}")]
+    MissingCreationOutfitDisplay {
+        /// Starter item identifier.
+        item_id: u32,
+        /// Absent `ItemDisplayInfo.dbc` identifier.
+        display_id: u32,
+    },
+    /// A player-model NPC has no stock baked body texture.
+    #[error("creature display {display_id} has no baked character texture")]
+    MissingNpcBakedTexture {
+        /// `CreatureDisplayInfo.dbc` row whose extended appearance is incomplete.
+        display_id: u32,
+    },
+    /// An extended NPC appearance references an absent item display row.
+    #[error("creature display {display_id} references missing NPC item display {item_display_id}")]
+    MissingNpcItemDisplay {
+        /// Creature display selecting the extended appearance.
+        display_id: u32,
+        /// Absent `ItemDisplayInfo.dbc` identifier.
+        item_display_id: u32,
+    },
     /// A hardcoded model texture declaration omitted its required BLP path.
     #[error("player M2 {model} has a hardcoded texture without a filename")]
     MissingHardcodedTexturePath {
@@ -82,6 +166,18 @@ pub enum RuntimePlayerError {
     MissingCharacterRace {
         /// Absent `ChrRaces.dbc` identifier.
         race_id: u32,
+    },
+    /// Glue supplied a gender outside the two playable body-display columns.
+    #[error("character creation gender {gender_id} has no playable body display")]
+    InvalidCreationGender {
+        /// Rejected protocol gender identifier.
+        gender_id: u8,
+    },
+    /// Glue supplied a non-finite character-model facing.
+    #[error("character creation facing {facing_degrees} degrees is invalid")]
+    InvalidCreationFacing {
+        /// Rejected model-facing value.
+        facing_degrees: f64,
     },
     /// DBC fallback traversal found no animation sequence present in the M2.
     #[error(
@@ -139,6 +235,7 @@ pub struct RuntimePlayerCatalogs {
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
+    start_outfits: CharacterStartOutfitCatalog,
     items: RuntimePlayerItemCatalogs,
     particle_colors: ParticleColorCatalog,
 }
@@ -169,12 +266,14 @@ impl RuntimePlayerItemCatalogs {
 impl RuntimePlayerCatalogs {
     /// Groups the exact stock tables consumed by player presentation.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         animations: AnimationDataCatalog,
         creatures: CreatureCatalog,
         characters: CharacterAppearanceCatalog,
         races: CharacterRaceCatalog,
         helmet_visibility: HelmetGeosetVisibilityCatalog,
+        start_outfits: CharacterStartOutfitCatalog,
         items: RuntimePlayerItemCatalogs,
         particle_colors: ParticleColorCatalog,
     ) -> Self {
@@ -184,6 +283,7 @@ impl RuntimePlayerCatalogs {
             characters,
             races,
             helmet_visibility,
+            start_outfits,
             items,
             particle_colors,
         }
@@ -198,6 +298,7 @@ pub struct RuntimePlayerPresentation {
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
+    start_outfits: CharacterStartOutfitCatalog,
     item_definitions: ItemDefinitionCatalog,
     item_displays: ItemDisplayCatalog,
     item_visuals: ItemVisualCatalog,
@@ -207,6 +308,7 @@ pub struct RuntimePlayerPresentation {
     resident: Option<ResidentPlayerModel>,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
+    creation: Option<ResidentCreationModel>,
 }
 
 impl RuntimePlayerPresentation {
@@ -220,6 +322,7 @@ impl RuntimePlayerPresentation {
             characters: catalogs.characters,
             races: catalogs.races,
             helmet_visibility: catalogs.helmet_visibility,
+            start_outfits: catalogs.start_outfits,
             item_definitions: catalogs.items.definitions,
             item_displays: catalogs.items.displays,
             item_visuals: catalogs.items.visuals,
@@ -229,7 +332,143 @@ impl RuntimePlayerPresentation {
             resident: None,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
+            creation: None,
         }
+    }
+
+    /// Synchronizes the unequipped character-creation body from Glue choices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimePlayerError`] when DBC joins, M2 loading, component
+    /// texture composition, or animation selection fails.
+    pub fn synchronize_character_creation(
+        &mut self,
+        preview: Option<&UiCharacterCreationPreview>,
+    ) -> Result<bool, RuntimePlayerError> {
+        let Some(preview) = preview else {
+            return Ok(self.creation.take().is_some());
+        };
+        if self
+            .creation
+            .as_ref()
+            .is_some_and(|resident| resident.key == *preview)
+        {
+            return Ok(false);
+        }
+        if !preview.facing_degrees().is_finite() {
+            return Err(RuntimePlayerError::InvalidCreationFacing {
+                facing_degrees: preview.facing_degrees(),
+            });
+        }
+        let race = self.races.race(u32::from(preview.race_id())).ok_or(
+            RuntimePlayerError::MissingCharacterRace {
+                race_id: u32::from(preview.race_id()),
+            },
+        )?;
+        let display_id = match preview.gender_id() {
+            0 => race.male_display_id(),
+            1 => race.female_display_id(),
+            gender_id => {
+                return Err(RuntimePlayerError::InvalidCreationGender { gender_id });
+            }
+        };
+        let body = self.creatures.resolve_model(display_id)?;
+        let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
+        let customization = solarity_asset::CharacterCustomization::new(
+            skin,
+            face,
+            hair_style,
+            hair_color,
+            facial_hair,
+        );
+        let appearance = self.characters.resolve_player(
+            u32::from(preview.race_id()),
+            u32::from(preview.gender_id()),
+            customization,
+        )?;
+        let equipment_items = resolve_creation_equipment(
+            preview,
+            &self.start_outfits,
+            &self.item_definitions,
+            &self.item_displays,
+        )?;
+        let texture_plan = CharacterTexturePlan::equipped(
+            &appearance,
+            &self.assets.borrow(),
+            equipment_items.iter().copied(),
+        )?;
+        let geosets = CharacterGeosetPlan::equipped(
+            &appearance,
+            CharacterGeosetContext::new(preview.class_id(), CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            equipment_items.iter().copied(),
+        )?;
+        let attachment_plan = CharacterAttachmentPlan::equipped_items(
+            equipment_items.iter().copied(),
+            race,
+            u32::from(preview.gender_id()),
+            CharacterWeaponState::new(UnitSheathState::Unarmed),
+        )?;
+        let authored_scale = body.display().model_scale() * body.model().model_scale();
+        let model_scale = if authored_scale > 0.0 {
+            authored_scale
+        } else {
+            1.0
+        };
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, body.model_path())?;
+        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
+        let extra_skin =
+            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
+        let textures = prepare_model_textures(
+            &model,
+            hair.as_ref(),
+            extra_skin.as_ref(),
+            cape.as_ref(),
+            &mut assets,
+            &mut self.textures,
+        )?;
+        let attachments = load_player_attachments(
+            &attachment_plan,
+            &self.item_visuals,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
+        drop(assets);
+        let animation = resolve_resident_animation(
+            &self.animations,
+            &model,
+            UnitLocomotionAnimation::STAND,
+            UnitAnimationTier::Ground,
+        )?;
+        self.creation = Some(ResidentCreationModel {
+            key: preview.clone(),
+            model,
+            textures,
+            atlas,
+            geosets,
+            animation,
+            model_scale,
+            facing_radians: preview.facing_degrees().to_radians() as f32,
+            attachments,
+            particle_colors: M2ParticleColorReplacement::resolve(
+                &self.particle_colors,
+                body.display().particle_color_id(),
+            ),
+        });
+        Ok(true)
+    }
+
+    /// Returns renderer inputs for the current character-creation body.
+    pub(super) fn creation_frame_input(&self) -> Option<ResidentCreationFrameInput<'_>> {
+        self.creation
+            .as_ref()
+            .map(ResidentCreationFrameInput::from_resident)
     }
 
     /// Synchronizes the local player's exact body M2 and stable camera height.
@@ -264,8 +503,17 @@ impl RuntimePlayerPresentation {
             ) => return Ok(RuntimePlayerPoll::Pending),
             Err(error) => return Err(error.into()),
         };
-        let path = appearance.body().model_path();
+        let path = M2ModelCache::canonical_path(appearance.body().model_path())?;
         let scale = appearance.object_scale();
+        let body_model = appearance.body().model();
+        let body_display = appearance.body().display();
+        let authored_scale = body_display.model_scale() * body_model.model_scale();
+        // CGUnit_C multiplies the authored display/model scale by the live
+        // OBJECT_FIELD_SCALE_X before publishing its collision dimensions.
+        let collision_scale = authored_scale * scale.max(0.001);
+        let collision_extent = body_model
+            .collision_extent()
+            .map(|extent| extent * collision_scale);
         let particle_color_id = appearance.body().display().particle_color_id();
         let mount_key = appearance
             .mount()
@@ -318,7 +566,7 @@ impl RuntimePlayerPresentation {
         )?;
         if self.resident.as_ref().is_some_and(|resident| {
             resident.guid == guid
-                && resident.path() == path
+                && resident.path() == &path
                 && resident.object_scale == scale
                 && resident.particle_color_id == particle_color_id
                 && resident.base_texture_plan == base_texture_plan
@@ -372,7 +620,7 @@ impl RuntimePlayerPresentation {
             resolve_unit_locomotion_animation,
         );
         let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, path)?;
+        let model = self.models.load(&mut assets, &path)?;
         let texture_plan =
             CharacterTexturePlan::equipped(character, &assets, equipment_items.iter().copied())?;
         let geosets = CharacterGeosetPlan::equipped(
@@ -416,7 +664,7 @@ impl RuntimePlayerPresentation {
         drop(assets);
         let base_camera_height = resolve_model_camera_subject_height(&model, scale)?;
         let previous_camera = self.resident.as_ref().and_then(|resident| {
-            (resident.path() == path && resident.object_scale == scale).then_some((
+            (resident.path() == &path && resident.object_scale == scale).then_some((
                 resident.camera_height_state,
                 resident.camera_time_ms,
                 resident.mount_key.clone(),
@@ -452,6 +700,7 @@ impl RuntimePlayerPresentation {
         self.resident = Some(ResidentPlayerModel {
             guid,
             object_scale: scale,
+            collision_extent,
             particle_color_id,
             particle_colors,
             base_texture_plan,
@@ -561,8 +810,50 @@ impl RuntimePlayerPresentation {
                 .resolve_model(desired.key.display_id)
                 .map_err(UnitModelAppearanceError::from)?;
             let model = self.models.load(&mut assets, appearance.model_path())?;
-            let textures =
-                prepare_creature_textures(&model, &appearance, &mut assets, &mut self.textures)?;
+            let (textures, geosets) = if let Some(extra) = appearance.extra() {
+                let character = self.characters.resolve_player(
+                    extra.race_id(),
+                    extra.gender_id(),
+                    CharacterCustomization::from_ids(
+                        extra.skin_id(),
+                        extra.face_id(),
+                        extra.hair_style_id(),
+                        extra.hair_color_id(),
+                        extra.facial_hair_style_id(),
+                    ),
+                )?;
+                let equipment = resolve_npc_equipment(
+                    appearance.display().id(),
+                    extra.npc_item_display_ids(),
+                    &self.item_displays,
+                )?;
+                let texture_plan =
+                    CharacterTexturePlan::equipped(&character, &assets, equipment.iter().copied())?;
+                let textures = prepare_npc_character_textures(
+                    &model,
+                    &appearance,
+                    &texture_plan,
+                    &mut assets,
+                    &mut self.textures,
+                )?;
+                let geosets = CharacterGeosetPlan::equipped(
+                    &character,
+                    CharacterGeosetContext::new(0, CharacterTabardMode::Equipment),
+                    &self.helmet_visibility,
+                    equipment.iter().copied(),
+                )?;
+                (textures, Some(geosets))
+            } else {
+                (
+                    prepare_creature_textures(
+                        &model,
+                        &appearance,
+                        &mut assets,
+                        &mut self.textures,
+                    )?,
+                    None,
+                )
+            };
             let animation = resolve_resident_animation(
                 &self.animations,
                 &model,
@@ -573,6 +864,7 @@ impl RuntimePlayerPresentation {
                 key: desired.key,
                 model,
                 textures,
+                geosets,
                 particle_colors: M2ParticleColorReplacement::resolve(
                     &self.particle_colors,
                     appearance.display().particle_color_id(),
@@ -728,11 +1020,20 @@ impl RuntimePlayerPresentation {
             UnitLocomotionAnimation::STAND,
             resolve_unit_locomotion_animation,
         );
+        let authored_scale =
+            appearance.body().display().model_scale() * appearance.body().model().model_scale();
+        let collision_scale = authored_scale * appearance.object_scale().max(0.001);
+        let collision_extent = appearance
+            .body()
+            .model()
+            .collision_extent()
+            .map(|extent| extent * collision_scale);
         Ok(Some(DesiredRemotePlayerModel {
             guid,
             object_scale: appearance.object_scale(),
+            collision_extent,
             particle_color_id: appearance.body().display().particle_color_id(),
-            path: appearance.body().model_path().clone(),
+            path: M2ModelCache::canonical_path(appearance.body().model_path())?,
             base_texture_plan,
             base_geosets,
             equipment_key,
@@ -836,6 +1137,7 @@ impl RuntimePlayerPresentation {
         Ok(ResidentPlayerModel {
             guid: desired.guid,
             object_scale: desired.object_scale,
+            collision_extent: desired.collision_extent,
             particle_color_id: desired.particle_color_id,
             particle_colors,
             base_texture_plan: desired.base_texture_plan,
@@ -990,6 +1292,14 @@ impl RuntimePlayerPresentation {
             .map(|resident| resident.camera_height)
     }
 
+    /// Returns the selected player's scaled stock collision width and height.
+    #[must_use]
+    pub fn collision_extent(&self) -> Option<[f32; 2]> {
+        self.resident
+            .as_ref()
+            .map(|resident| resident.collision_extent)
+    }
+
     /// Returns the current pre-collision camera orbit for the resident player.
     #[must_use]
     pub fn camera_pose(&self) -> Option<PlayerCameraPose> {
@@ -1051,6 +1361,7 @@ impl RuntimePlayerPresentation {
     /// Releases local-player residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.resident = None;
+        self.creation = None;
         self.creatures_resident.clear();
         self.remote_players.clear();
         self.models.collect_unused();
@@ -1058,9 +1369,88 @@ impl RuntimePlayerPresentation {
     }
 }
 
+struct ResidentCreationModel {
+    key: UiCharacterCreationPreview,
+    model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentPlayerTexture>,
+    atlas: CharacterAtlasTexture,
+    geosets: CharacterGeosetPlan,
+    animation: UnitModelAnimation,
+    model_scale: f32,
+    facing_radians: f32,
+    attachments: Vec<ResidentPlayerAttachment>,
+    particle_colors: Option<M2ParticleColorReplacement>,
+}
+
+/// Borrowed character-creation body passed into the Glue M2 compositor.
+pub(super) struct ResidentCreationFrameInput<'a> {
+    model: &'a Arc<DecodedM2Model>,
+    textures: &'a [ResidentPlayerTexture],
+    atlas: &'a CharacterAtlasTexture,
+    geosets: &'a CharacterGeosetPlan,
+    animation: UnitModelAnimation,
+    model_scale: f32,
+    facing_radians: f32,
+    attachments: &'a [ResidentPlayerAttachment],
+    particle_colors: Option<&'a M2ParticleColorReplacement>,
+}
+
+impl<'a> ResidentCreationFrameInput<'a> {
+    fn from_resident(resident: &'a ResidentCreationModel) -> Self {
+        Self {
+            model: &resident.model,
+            textures: &resident.textures,
+            atlas: &resident.atlas,
+            geosets: &resident.geosets,
+            animation: resident.animation,
+            model_scale: resident.model_scale,
+            facing_radians: resident.facing_radians,
+            attachments: &resident.attachments,
+            particle_colors: resident.particle_colors.as_ref(),
+        }
+    }
+
+    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+        self.model
+    }
+
+    pub(super) const fn textures(&self) -> &[ResidentPlayerTexture] {
+        self.textures
+    }
+
+    pub(super) const fn atlas(&self) -> &CharacterAtlasTexture {
+        self.atlas
+    }
+
+    pub(super) const fn geosets(&self) -> &CharacterGeosetPlan {
+        self.geosets
+    }
+
+    pub(super) const fn animation(&self) -> UnitModelAnimation {
+        self.animation
+    }
+
+    pub(super) const fn model_scale(&self) -> f32 {
+        self.model_scale
+    }
+
+    pub(super) const fn facing_radians(&self) -> f32 {
+        self.facing_radians
+    }
+
+    pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
+        self.particle_colors
+    }
+
+    pub(super) const fn attachments(&self) -> &[ResidentPlayerAttachment] {
+        self.attachments
+    }
+}
+
 struct ResidentPlayerModel {
     guid: u64,
     object_scale: f32,
+    collision_extent: [f32; 2],
     particle_color_id: u32,
     particle_colors: Option<M2ParticleColorReplacement>,
     base_texture_plan: CharacterTexturePlan,
@@ -1089,6 +1479,7 @@ struct ResidentPlayerModel {
 struct DesiredRemotePlayerModel {
     guid: u64,
     object_scale: f32,
+    collision_extent: [f32; 2],
     particle_color_id: u32,
     path: AssetPath,
     base_texture_plan: CharacterTexturePlan,
@@ -1140,6 +1531,7 @@ struct ResidentCreatureModel {
     key: CreatureModelKey,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
+    geosets: Option<CharacterGeosetPlan>,
     particle_colors: Option<M2ParticleColorReplacement>,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
@@ -1342,6 +1734,7 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     guid: u64,
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
+    geosets: Option<&'a CharacterGeosetPlan>,
     world_transform: WorldTransform,
     object_scale: f32,
     animation: UnitModelAnimation,
@@ -1354,6 +1747,7 @@ impl<'a> ResidentCreatureFrameInput<'a> {
             guid: resident.key.guid,
             model: &resident.model,
             textures: &resident.textures,
+            geosets: resident.geosets.as_ref(),
             world_transform: resident.world_transform,
             object_scale: resident.key.object_scale,
             animation: resident.animation,
@@ -1373,6 +1767,10 @@ impl<'a> ResidentCreatureFrameInput<'a> {
         self.textures
     }
 
+    pub(super) const fn geosets(&self) -> Option<&CharacterGeosetPlan> {
+        self.geosets
+    }
+
     pub(super) const fn world_transform(&self) -> WorldTransform {
         self.world_transform
     }
@@ -1387,6 +1785,117 @@ impl<'a> ResidentCreatureFrameInput<'a> {
 
     pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
         self.particle_colors
+    }
+}
+
+/// Resolves stock starter-outfit rows through the same item tables as live gear.
+fn resolve_creation_equipment<'catalog>(
+    preview: &UiCharacterCreationPreview,
+    outfits: &CharacterStartOutfitCatalog,
+    definitions: &'catalog ItemDefinitionCatalog,
+    displays: &'catalog ItemDisplayCatalog,
+) -> Result<Vec<CharacterEquipmentItem<'catalog>>, RuntimePlayerError> {
+    let outfit = outfits
+        .outfit(preview.race_id(), preview.class_id(), preview.gender_id())
+        .ok_or(RuntimePlayerError::MissingCreationOutfit {
+            race_id: preview.race_id(),
+            class_id: preview.class_id(),
+            gender_id: preview.gender_id(),
+        })?;
+    let mut occupied = [false; PLAYER_EQUIPMENT_SLOT_COUNT];
+    let mut equipment = Vec::new();
+    for outfit_item in outfit.items() {
+        let Ok(item_id) = u32::try_from(outfit_item.item_id()) else {
+            continue;
+        };
+        if item_id == 0 {
+            continue;
+        }
+        let definition = definitions
+            .item(item_id)
+            .ok_or(RuntimePlayerError::MissingCreationOutfitItem { item_id })?;
+        if outfit_item.display_info_id() != definition.display_info_id() as i32 {
+            return Err(RuntimePlayerError::CreationOutfitDisplayMismatch {
+                item_id,
+                outfit_display_id: outfit_item.display_info_id(),
+                item_display_id: definition.display_info_id(),
+            });
+        }
+        if outfit_item.inventory_type() != definition.inventory_type() as i32 {
+            return Err(RuntimePlayerError::CreationOutfitInventoryMismatch {
+                item_id,
+                outfit_inventory_type: outfit_item.inventory_type(),
+                item_inventory_type: definition.inventory_type() as u32,
+            });
+        }
+        let Some(slot) = creation_equipment_slot(definition.inventory_type(), &occupied) else {
+            continue;
+        };
+        let display_id = definition.display_info_id();
+        let display = displays.display(display_id).ok_or(
+            RuntimePlayerError::MissingCreationOutfitDisplay {
+                item_id,
+                display_id,
+            },
+        )?;
+        occupied[slot.index()] = true;
+        equipment.push(CharacterEquipmentItem::new_visible(
+            slot,
+            VisibleEquipmentItem::new(item_id, 0),
+            definition,
+            display,
+        ));
+    }
+    Ok(equipment)
+}
+
+/// Maps an inventory type to the first compatible public equipment slot.
+fn creation_equipment_slot(
+    inventory_type: InventoryType,
+    occupied: &[bool; PLAYER_EQUIPMENT_SLOT_COUNT],
+) -> Option<PlayerEquipmentSlot> {
+    let first_available =
+        |slots: &[PlayerEquipmentSlot]| slots.iter().copied().find(|slot| !occupied[slot.index()]);
+    match inventory_type {
+        InventoryType::Head => first_available(&[PlayerEquipmentSlot::Head]),
+        InventoryType::Neck => first_available(&[PlayerEquipmentSlot::Neck]),
+        InventoryType::Shoulders => first_available(&[PlayerEquipmentSlot::Shoulders]),
+        InventoryType::Body => first_available(&[PlayerEquipmentSlot::Shirt]),
+        InventoryType::Chest | InventoryType::Robe => {
+            first_available(&[PlayerEquipmentSlot::Chest])
+        }
+        InventoryType::Waist => first_available(&[PlayerEquipmentSlot::Waist]),
+        InventoryType::Legs => first_available(&[PlayerEquipmentSlot::Legs]),
+        InventoryType::Feet => first_available(&[PlayerEquipmentSlot::Feet]),
+        InventoryType::Wrists => first_available(&[PlayerEquipmentSlot::Wrists]),
+        InventoryType::Hands => first_available(&[PlayerEquipmentSlot::Hands]),
+        InventoryType::Finger => first_available(&[
+            PlayerEquipmentSlot::FingerOne,
+            PlayerEquipmentSlot::FingerTwo,
+        ]),
+        InventoryType::Trinket => first_available(&[
+            PlayerEquipmentSlot::TrinketOne,
+            PlayerEquipmentSlot::TrinketTwo,
+        ]),
+        InventoryType::Weapon => {
+            first_available(&[PlayerEquipmentSlot::MainHand, PlayerEquipmentSlot::OffHand])
+        }
+        InventoryType::Shield | InventoryType::OffHandWeapon | InventoryType::Holdable => {
+            first_available(&[PlayerEquipmentSlot::OffHand])
+        }
+        InventoryType::Ranged
+        | InventoryType::Thrown
+        | InventoryType::RangedRight
+        | InventoryType::Relic => first_available(&[PlayerEquipmentSlot::Ranged]),
+        InventoryType::Cloak => first_available(&[PlayerEquipmentSlot::Back]),
+        InventoryType::TwoHandWeapon | InventoryType::MainHandWeapon => {
+            first_available(&[PlayerEquipmentSlot::MainHand])
+        }
+        InventoryType::Tabard => first_available(&[PlayerEquipmentSlot::Tabard]),
+        InventoryType::NonEquip
+        | InventoryType::Bag
+        | InventoryType::Ammo
+        | InventoryType::Quiver => None,
     }
 }
 
@@ -1448,6 +1957,80 @@ fn prepare_creature_textures(
                     },
                 )
             }
+            kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
+        })
+        .collect()
+}
+
+/// Resolves the eleven display-only armor slots carried by an NPC appearance.
+fn resolve_npc_equipment<'catalog>(
+    creature_display_id: u32,
+    display_ids: [u32; 11],
+    displays: &'catalog ItemDisplayCatalog,
+) -> Result<Vec<CharacterEquipmentItem<'catalog>>, RuntimePlayerError> {
+    NPC_EQUIPMENT_SLOTS
+        .into_iter()
+        .zip(display_ids)
+        .filter(|(_, display_id)| *display_id != 0)
+        .map(|(slot, display_id)| {
+            let display =
+                displays
+                    .display(display_id)
+                    .ok_or(RuntimePlayerError::MissingNpcItemDisplay {
+                        display_id: creature_display_id,
+                        item_display_id: display_id,
+                    })?;
+            Ok(CharacterEquipmentItem::new_npc(slot, display))
+        })
+        .collect()
+}
+
+/// Binds a player-model NPC's baked atlas and remaining special textures.
+fn prepare_npc_character_textures(
+    model: &DecodedM2Model,
+    appearance: &CreatureModelAppearance<'_>,
+    plan: &CharacterTexturePlan,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<Vec<ResidentCreatureTexture>, RuntimePlayerError> {
+    let baked_path =
+        appearance
+            .baked_texture()
+            .ok_or(RuntimePlayerError::MissingNpcBakedTexture {
+                display_id: appearance.display().id(),
+            })?;
+    let baked = textures.load(assets, baked_path)?;
+    let hair = load_optional_texture(plan.hair(), assets, textures)?;
+    let extra_skin = load_optional_texture(plan.extra_skin(), assets, textures)?;
+    let cape = load_optional_texture(plan.cape(), assets, textures)?;
+
+    model
+        .textures()
+        .iter()
+        .map(|texture| match texture.kind() {
+            M2TextureKind::Hardcoded => {
+                let path = texture.filename().ok_or_else(|| {
+                    RuntimePlayerError::MissingHardcodedTexturePath {
+                        model: model.path().clone(),
+                    }
+                })?;
+                Ok(ResidentCreatureTexture::Authored(
+                    textures.load(assets, path)?,
+                ))
+            }
+            M2TextureKind::Body => Ok(ResidentCreatureTexture::Authored(Arc::clone(&baked))),
+            M2TextureKind::Environment => Ok(hair.as_ref().map_or(
+                ResidentCreatureTexture::Unresolved(M2TextureKind::Environment),
+                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
+            )),
+            M2TextureKind::SkinExtra => Ok(extra_skin.as_ref().map_or(
+                ResidentCreatureTexture::Unresolved(M2TextureKind::SkinExtra),
+                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
+            )),
+            M2TextureKind::Item => Ok(cape.as_ref().map_or(
+                ResidentCreatureTexture::Unresolved(M2TextureKind::Item),
+                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
+            )),
             kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
         })
         .collect()
@@ -1568,7 +2151,13 @@ fn load_optional_texture(
     assets: &mut solarity_asset::AssetStore,
     textures: &mut BlpTextureCache,
 ) -> Result<Option<Arc<BlpTextureSource>>, AssetError> {
-    path.map(|path| textures.load(assets, path)).transpose()
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if !assets.contains(path)? {
+        return Ok(None);
+    }
+    textures.load(assets, path).map(Some)
 }
 
 /// Resolves every body-model texture slot without inventing equipment inputs.

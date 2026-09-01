@@ -3,11 +3,12 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use solarity_ecs::ActiveWorld;
+use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_network::{
     InWorldSession, WorldLivenessPacketError, WorldPacketReader, WorldPacketWriter,
     WorldServerPacket, WorldSessionError, WorldTimePacketError,
 };
+use solarity_systems::{WorldEntryGroundContact, WorldEntryGroundContactError};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -42,6 +43,12 @@ pub enum RuntimeGameplayError {
     /// An authoritative object update could not enter ECS state.
     #[error(transparent)]
     Update(#[from] GameplayUpdateError),
+    /// The active world lost a required controlled-player invariant.
+    #[error(transparent)]
+    World(#[from] WorldStateError),
+    /// The first movement-owned resident ground contact was invalid.
+    #[error(transparent)]
+    GroundContact(#[from] WorldEntryGroundContactError),
     /// An object-update packet was malformed.
     #[error(transparent)]
     ObjectUpdate(#[from] solarity_network::ObjectUpdateError),
@@ -65,6 +72,7 @@ pub struct RuntimeGameplayCoordinator {
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
     unhandled_packets: VecDeque<WorldServerPacket>,
+    world_entry_grounded: bool,
 }
 
 impl RuntimeGameplayCoordinator {
@@ -76,6 +84,7 @@ impl RuntimeGameplayCoordinator {
             world: None,
             realm_clock: None,
             unhandled_packets: VecDeque::new(),
+            world_entry_grounded: false,
         }
     }
 
@@ -94,6 +103,7 @@ impl RuntimeGameplayCoordinator {
             return Err(RuntimeGameplayError::AlreadyActive);
         }
         let (network, setup_packets) = entry.into_parts();
+        let setup_packet_count = setup_packets.len();
         let mut gameplay = GameplaySession::enter(network);
         let mut retained = VecDeque::new();
         let mut realm_clock = None;
@@ -101,12 +111,21 @@ impl RuntimeGameplayCoordinator {
             dispatch_setup_packet(&mut gameplay, packet, &mut realm_clock, &mut retained)?;
         }
         let (network, world) = gameplay.into_parts();
+        let map_id = world.map_id().value();
         let (sender, receiver) = mpsc::channel(PACKET_CHANNEL_CAPACITY);
         let task = runtime.spawn(pump_world_packets(network, sender));
         self.active = Some(ActiveGameplayNetwork { receiver, task });
         self.world = Some(world);
         self.realm_clock = realm_clock;
         self.unhandled_packets = retained;
+        self.world_entry_grounded = false;
+        tracing::info!(
+            map_id,
+            setup_packet_count,
+            realm_clock_ready = self.realm_clock.is_some(),
+            retained_packet_count = self.unhandled_packets.len(),
+            "active gameplay ownership initialized"
+        );
         Ok(())
     }
 
@@ -172,6 +191,36 @@ impl RuntimeGameplayCoordinator {
         self.world.as_ref()
     }
 
+    /// Returns whether initial resident-world support still needs resolution.
+    #[must_use]
+    pub const fn world_entry_ground_contact_pending(&self) -> bool {
+        self.world.is_some() && !self.world_entry_grounded
+    }
+
+    /// Applies the movement-owned first terrain contact to the local player.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeGameplayError`] if ECS invariants or the resolved
+    /// surface are invalid.
+    pub fn apply_world_entry_ground_contact(
+        &mut self,
+        surface_height: f32,
+    ) -> Result<(), RuntimeGameplayError> {
+        let Some(world) = self.world.as_mut() else {
+            return Ok(());
+        };
+        if self.world_entry_grounded {
+            return Ok(());
+        }
+        let guid = world.local_player_guid()?;
+        let transform = world.local_player_transform()?;
+        let contact = WorldEntryGroundContact::resolve(transform, surface_height)?;
+        world.update_transform(guid, contact.transform(transform.orientation()))?;
+        self.world_entry_grounded = true;
+        Ok(())
+    }
+
     /// Returns the running authoritative realm clock, when received.
     #[must_use]
     pub const fn realm_clock(&self) -> Option<&RealmClock> {
@@ -198,6 +247,7 @@ impl RuntimeGameplayCoordinator {
         self.world = None;
         self.realm_clock = None;
         self.unhandled_packets.clear();
+        self.world_entry_grounded = false;
     }
 }
 
@@ -334,6 +384,11 @@ fn dispatch_setup_packet<S>(
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<(), RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
+        tracing::info!(
+            hour = source.hour(),
+            minute = source.minute(),
+            "realm clock became authoritative"
+        );
         *realm_clock = Some(RealmClock::new(source));
         return Ok(());
     }
@@ -351,6 +406,11 @@ fn dispatch_world_packet(
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<bool, RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
+        tracing::info!(
+            hour = source.hour(),
+            minute = source.minute(),
+            "realm clock became authoritative"
+        );
         *realm_clock = Some(RealmClock::new(source));
         return Ok(false);
     }
@@ -371,6 +431,12 @@ fn retain_unhandled(
             maximum: MAX_RETAINED_UNHANDLED_PACKETS,
         });
     }
+    tracing::debug!(
+        opcode = format_args!("{:#06X}", packet.opcode()),
+        name = packet.name().unwrap_or("unknown"),
+        payload_bytes = packet.payload().len(),
+        "retaining unhandled active-world packet"
+    );
     unhandled.push_back(packet);
     Ok(())
 }

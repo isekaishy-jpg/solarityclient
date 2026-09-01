@@ -7,8 +7,9 @@ use super::{WorldCamera, WorldCameraError, WorldCameraFrame};
 impl WorldCamera {
     /// Builds the renderer frame shared by visibility and draw submission.
     ///
-    /// The projection uses Vulkan's zero-to-one depth range and reverses clip
-    /// Y. Keeping the correction here gives every world pass one convention.
+    /// The projection uses Vulkan's zero-to-one depth range. World command
+    /// recording uses a negative-height viewport for the Y convention, so the
+    /// projection must retain positive camera-up in positive clip Y.
     ///
     /// # Errors
     ///
@@ -34,13 +35,12 @@ impl WorldCamera {
         up = right.cross(forward).normalize();
 
         let view = Mat4::look_at_rh(self.position(), self.target(), up);
-        let mut projection = Mat4::perspective_rh(
+        let projection = Mat4::perspective_rh(
             self.vertical_field_of_view_radians(),
             aspect_ratio,
             self.near_clip(),
             self.far_clip(),
         );
-        projection.y_axis.y = -projection.y_axis.y;
         Ok(WorldCameraFrame::new(
             self,
             aspect_ratio,

@@ -129,6 +129,24 @@ pub struct CharacterFacialHairStyle {
 }
 
 impl CharacterFacialHairStyle {
+    /// Returns the ChrRaces.dbc identifier.
+    #[must_use]
+    pub const fn race_id(self) -> u32 {
+        self.race_id
+    }
+
+    /// Returns the stock gender identifier.
+    #[must_use]
+    pub const fn gender_id(self) -> u32 {
+        self.gender_id
+    }
+
+    /// Returns the selectable facial-feature variation identifier.
+    #[must_use]
+    pub const fn variation_id(self) -> u32 {
+        self.variation_id
+    }
+
     /// Returns the five facial-hair geoset selections in stock column order.
     #[must_use]
     pub const fn geosets(self) -> [u32; 5] {
@@ -226,6 +244,95 @@ impl CharacterAppearanceCatalog {
             .ok()
             .map(|index| &self.facial_hair_styles[index])
     }
+
+    /// Returns authored player skin colors in physical-component order.
+    #[must_use]
+    pub fn player_skin_colors(&self, race_id: u32, gender_id: u32) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 0)
+                .iter()
+                .filter(|section| section.variation_index == 0 && section.flags & 0x08 == 0)
+                .map(|section| section.color_index),
+        )
+    }
+
+    /// Returns face variations valid for one selected skin color.
+    #[must_use]
+    pub fn player_faces(&self, race_id: u32, gender_id: u32, skin_color: u32) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 1)
+                .iter()
+                .filter(|section| section.color_index == skin_color && section.flags & 0x08 == 0)
+                .map(|section| section.variation_index),
+        )
+    }
+
+    /// Returns authored hair-style variations for a race and gender.
+    #[must_use]
+    pub fn player_hair_styles(&self, race_id: u32, gender_id: u32) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 3)
+                .iter()
+                .filter(|section| section.flags & 0x08 == 0)
+                .map(|section| section.variation_index),
+        )
+    }
+
+    /// Returns hair colors authored for one selected hair style.
+    #[must_use]
+    pub fn player_hair_colors(&self, race_id: u32, gender_id: u32, hair_style: u32) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 3)
+                .iter()
+                .filter(|section| {
+                    section.variation_index == hair_style && section.flags & 0x08 == 0
+                })
+                .map(|section| section.color_index),
+        )
+    }
+
+    /// Returns facial-feature variations authored for one race and gender.
+    ///
+    /// Stock builds the selectable feature count from
+    /// `CharacterFacialHairStyles.dbc`. `CharSections.dbc` only supplies an
+    /// optional color-dependent texture after a feature has been selected, so
+    /// the absence of such a texture does not remove the feature from Glue.
+    #[must_use]
+    pub fn player_facial_hair_styles(&self, race_id: u32, gender_id: u32) -> Vec<u32> {
+        distinct_values(
+            self.facial_hair_styles
+                .iter()
+                .filter(|style| style.race_id == race_id && style.gender_id == gender_id)
+                .map(|style| style.variation_id),
+        )
+    }
+
+    fn sections_for_kind(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        base_section: u32,
+    ) -> &[CharacterSection] {
+        let start_key = (race_id, gender_id, base_section, 0, 0);
+        let end_key = (race_id, gender_id, base_section, u32::MAX, u32::MAX);
+        let start = self
+            .sections
+            .partition_point(|section| section.key() < start_key);
+        let end = self
+            .sections
+            .partition_point(|section| section.key() <= end_key);
+        &self.sections[start..end]
+    }
+}
+
+fn distinct_values(values: impl Iterator<Item = u32>) -> Vec<u32> {
+    let mut distinct = Vec::new();
+    for value in values {
+        if !distinct.contains(&value) {
+            distinct.push(value);
+        }
+    }
+    distinct
 }
 
 /// Loads one named WDBC table without adding an alternate search path.

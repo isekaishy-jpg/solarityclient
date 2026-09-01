@@ -6,9 +6,9 @@ use std::io::Write;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use solarity_network::{
-    CharacterClass, CharacterGender, CharacterLoginProgress, CharacterLoginRejectionReason,
-    CharacterRace, WorldAddon, WorldAddonManifest, WorldAuthProgress, WorldConnection,
-    WorldObjectKind, WorldObjectUpdate,
+    CharacterClass, CharacterCreation, CharacterCreationResult, CharacterGender,
+    CharacterLoginProgress, CharacterLoginRejectionReason, CharacterRace, WorldAddon,
+    WorldAddonManifest, WorldAuthProgress, WorldConnection, WorldObjectKind, WorldObjectUpdate,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -21,6 +21,46 @@ use wow_world_messages::wrath::{
 };
 
 use super::authentication::authenticated_identity_and_realm;
+
+/// Character creation writes the exact stock fields and retains packets that
+/// arrive before the one-byte authoritative result.
+#[test]
+fn encrypted_session_creates_character_with_exact_wire_fields()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, server) = tokio::io::duplex(4_096);
+        let server_task = tokio::spawn(emulate_character_creation(server, session_key));
+        let mut session = match WorldConnection::authenticate(
+            client,
+            identity,
+            &realm,
+            WorldAddonManifest::empty(),
+        )
+        .await?
+        {
+            WorldAuthProgress::Authenticated(session) => session,
+            WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
+        };
+        let request = CharacterCreation::new("Solaritytest".to_owned(), 4, 11, 1, [2, 3, 4, 5, 6])?;
+        session.create_character(&request).await?;
+
+        let retained = session.receive_packet().await?;
+        assert_eq!(retained.opcode(), 0x0123);
+        assert!(retained.character_creation_result()?.is_none());
+        let response = session.receive_packet().await?;
+        assert_eq!(response.name(), Some("SMSG_CHAR_CREATE"));
+        let result = response
+            .character_creation_result()?
+            .ok_or("creation response did not decode")?;
+        assert_eq!(result, CharacterCreationResult::SUCCESS);
+        assert!(result.is_success());
+        assert_eq!(result.message_token(), "CHAR_CREATE_SUCCESS");
+
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
 
 /// The live session retains opaque setup packets and decodes the full character row.
 #[test]
@@ -405,6 +445,30 @@ async fn emulate_character_screen(
         message => return Err(format!("unexpected latency probe: {message}").into()),
     }
     write_encrypted_raw(&mut stream, &mut crypto, 0x01DD, &7_u32.to_le_bytes()).await?;
+    Ok(())
+}
+
+async fn emulate_character_creation(
+    mut stream: DuplexStream,
+    session_key: [u8; 40],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
+    let request =
+        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+    let ClientOpcodeMessage::CMSG_CHAR_CREATE(request) = request else {
+        return Err("fixture expected CMSG_CHAR_CREATE".into());
+    };
+    assert_eq!(request.name, "Solaritytest");
+    assert_eq!(request.race, Race::NightElf);
+    assert_eq!(request.class, Class::Druid);
+    assert_eq!(request.gender, Gender::Female);
+    assert_eq!(request.skin_color, 2);
+    assert_eq!(request.face, 3);
+    assert_eq!(request.hair_style, 4);
+    assert_eq!(request.hair_color, 5);
+    assert_eq!(request.facial_hair, 6);
+    write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0xA5]).await?;
+    write_encrypted_raw(&mut stream, &mut crypto, 0x003A, &[47]).await?;
     Ok(())
 }
 

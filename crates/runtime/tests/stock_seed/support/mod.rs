@@ -115,6 +115,10 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\CreatureModelData.dbc");
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\AnimationData.dbc");
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\ParticleColor.dbc");
+        builder = builder.add_file_data(
+            empty_wdbc_layout(77, 296),
+            "DBFilesClient\\CharStartOutfit.dbc",
+        );
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\CharSections.dbc");
         builder = builder.add_file_data(empty_wdbc(6), "DBFilesClient\\CharHairGeosets.dbc");
         builder = builder.add_file_data(
@@ -180,11 +184,16 @@ fn realm_configuration_dbc() -> Vec<u8> {
 
 /// Builds an empty exact-layout table for metadata not exercised at startup.
 fn empty_wdbc(field_count: u32) -> Vec<u8> {
+    empty_wdbc_layout(field_count, field_count * 4)
+}
+
+/// Builds an empty table whose packed record size differs from its field count.
+fn empty_wdbc_layout(field_count: u32, record_size: u32) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(21);
     bytes.extend_from_slice(b"WDBC");
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&field_count.to_le_bytes());
-    bytes.extend_from_slice(&(field_count * 4).to_le_bytes());
+    bytes.extend_from_slice(&record_size.to_le_bytes());
     bytes.extend_from_slice(&1_u32.to_le_bytes());
     bytes.push(0);
     bytes

@@ -44,6 +44,21 @@ impl RuntimeCharacterMetadata {
                     .classes
                     .class(u32::from(class_id))
                     .ok_or(CharacterProjectionError::UnknownClass { id: class_id })?;
+                let background_model = if class_id == 6 {
+                    class.file_string()
+                } else {
+                    let background_race_id = match race_id {
+                        7 => 3,
+                        8 => 2,
+                        race_id => race_id,
+                    };
+                    self.races
+                        .race(background_race_id)
+                        .ok_or(CharacterProjectionError::UnknownRace {
+                            id: background_race_id,
+                        })?
+                        .client_file_string()
+                };
                 let area_id = entry.location().area_id();
                 let zone_name = if area_id == 0 {
                     None
@@ -60,7 +75,7 @@ impl RuntimeCharacterMetadata {
                     entry.guid(),
                     entry.name().to_owned(),
                     race.name().to_owned(),
-                    race.client_file_string().to_owned(),
+                    background_model.to_owned(),
                     class.name().to_owned(),
                     class_id,
                     entry.level(),
@@ -71,7 +86,16 @@ impl RuntimeCharacterMetadata {
                 ))
             })
             .collect::<Result<Vec<_>, CharacterProjectionError>>()?;
-        Ok(UiCharacterDirectory::new(characters))
+        let default_background_model = self
+            .races
+            .race(2)
+            .ok_or(CharacterProjectionError::UnknownRace { id: 2 })?
+            .client_file_string()
+            .to_owned();
+        Ok(UiCharacterDirectory::new(
+            characters,
+            default_background_model,
+        ))
     }
 }
 

@@ -61,8 +61,8 @@ pub use equipment::{
     resolve_player_equipment,
 };
 pub use movement::{
-    UnitLocomotionAnimation, UnitModelAnimation, resolve_unit_locomotion_animation,
-    resolve_unit_model_animation,
+    UnitLocomotionAnimation, UnitModelAnimation, WorldEntryGroundContact,
+    WorldEntryGroundContactError, resolve_unit_locomotion_animation, resolve_unit_model_animation,
 };
 pub use object::{ObjectProjectionError, project_object_fields};
 pub use world::{

@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use solarity_asset::{AssetStore, AssetStoreHandle, BlpTextureCache};
+use solarity_cpu::BlizzardRand;
 
 use crate::glue::pointer::UiPointerPlan;
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
@@ -152,6 +153,62 @@ impl GlueManager {
         cvar_values: &[(String, String)],
         addon_catalog: &crate::AddonCatalog,
     ) -> Result<Self, GlueError> {
+        Self::start_shared_with_profile_and_character_creation(
+            assets,
+            logical_extent,
+            streaming_trial,
+            initial_screen,
+            cvar_values,
+            addon_catalog,
+            None,
+        )
+    }
+
+    /// Starts production Glue with DBC-backed character creation and the
+    /// process-wide Blizzard random stream.
+    ///
+    /// The simpler constructors intentionally omit this state so focused Glue
+    /// fixture tests do not have to fabricate unrelated client databases.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlueError`] under the same strict stock-loading rules as
+    /// [`Self::start_shared_with_profile`], including malformed character DBCs.
+    pub fn start_shared_with_profile_and_random(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+        initial_screen: super::GlueInitialScreen,
+        cvar_values: &[(String, String)],
+        addon_catalog: &crate::AddonCatalog,
+        random: Rc<RefCell<BlizzardRand>>,
+    ) -> Result<Self, GlueError> {
+        let character_creation = crate::UiCharacterCreationState::load(
+            &mut assets.borrow_mut(),
+            streaming_trial,
+            random,
+        )?;
+        Self::start_shared_with_profile_and_character_creation(
+            assets,
+            logical_extent,
+            streaming_trial,
+            initial_screen,
+            cvar_values,
+            addon_catalog,
+            Some(character_creation),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_shared_with_profile_and_character_creation(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+        initial_screen: super::GlueInitialScreen,
+        cvar_values: &[(String, String)],
+        addon_catalog: &crate::AddonCatalog,
+        character_creation: Option<crate::UiCharacterCreationState>,
+    ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
@@ -167,11 +224,14 @@ impl GlueManager {
         let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
         let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
         let animations = UiAnimationPlan::from_tree(&tree)?;
-        let environment =
+        let mut environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone())
                 .with_cvar_values(cvar_values)
                 .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog));
+        if let Some(character_creation) = character_creation {
+            environment = environment.with_character_creation_state(character_creation);
+        }
         let media_intent = environment.media_intent();
         let network = environment.network();
         let ui_extent = environment.ui_extent();
@@ -366,6 +426,22 @@ impl GlueManager {
         self.environment.current_screen().borrow().clone()
     }
 
+    /// Publishes the authenticated account entitlement used by character creation.
+    pub fn set_character_creation_expansion(&self, expansion: crate::UiCharacterExpansion) {
+        if let Some(state) = self.environment.character_creation_state() {
+            state.set_expansion(expansion);
+        }
+    }
+
+    /// Returns the current DBC-backed character preview when production Glue
+    /// attached character-creation state.
+    #[must_use]
+    pub fn character_creation_preview(&self) -> Option<crate::UiCharacterCreationPreview> {
+        self.environment
+            .character_creation_state()
+            .map(|state| state.preview())
+    }
+
     /// Returns the cursor-visibility request authored by the current screen.
     #[must_use]
     pub fn cursor_visible(&self) -> bool {
@@ -376,6 +452,27 @@ impl GlueManager {
     #[must_use]
     pub fn cvar_value(&self, name: &str) -> Option<String> {
         self.environment.cvar_value(name)
+    }
+
+    /// Resolves one localization token from the loaded Glue Lua globals.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::UiScriptError`] when Lua cannot read the global table.
+    pub fn localized_text(&self, token: &str) -> Result<String, crate::UiScriptError> {
+        self.bundle
+            .lua()
+            .globals()
+            .raw_get::<Option<String>>(token)
+            .map(|value| {
+                value
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| token.to_owned())
+            })
+            .map_err(|error| crate::UiScriptError::Execution {
+                label: format!("localization token {token}"),
+                message: error.to_string(),
+            })
     }
 
     /// Takes profile-backed CVars changed by built-in Glue Lua.

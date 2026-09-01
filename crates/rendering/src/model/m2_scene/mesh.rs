@@ -77,6 +77,16 @@ impl M2MeshPlan {
         &self.draws
     }
 
+    /// Reports whether the selected profile owns an ordinary mesh draw.
+    ///
+    /// Stock effect models may contain particles or ribbons with an empty
+    /// SKIN. Those models remain present in the scene but need no static
+    /// vertex/index allocation.
+    #[must_use]
+    pub fn has_drawable_geometry(&self) -> bool {
+        !self.draws.is_empty()
+    }
+
     /// Returns the greatest model-bone index referenced by a nonzero weight.
     #[must_use]
     pub fn max_bone_index(&self) -> Option<u16> {

@@ -98,6 +98,8 @@ Where the authorities disagree, the higher item wins. An exception MUST be local
 ## 6. Errors, panics, and stock behavior
 
 - **Stock behavior is the behavioral specification** unless a deliberate divergence is documented and approved.
+- Unknown stock behavior MUST be researched against the pinned client executable, its disassembly/decompilation, or exact stock data before implementation. Uncertainty MUST NOT be resolved with a plausible guess.
+- A stock-parity implementation MUST identify its evidence with an executable address, recovered stock symbol/path, exact data-format rule, or focused external test. If the available evidence does not bound the behavior, leave it unimplemented and document the research gap.
 - Code MUST NOT invent compatibility paths, recovery behavior, retries, substitutions, guessed defaults, or silent fallbacks that stock does not use.
 - Missing, malformed, or unsupported stock input MUST fail in the same observable way stock fails, unless a documented product requirement says otherwise.
 - A fallback that stock does use MUST identify the stock behavior it preserves in a comment, test name, fixture, or architecture decision.

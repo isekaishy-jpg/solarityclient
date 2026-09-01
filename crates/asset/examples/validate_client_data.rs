@@ -11,8 +11,8 @@ use std::str::FromStr;
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, BlsShaderStage, ClientDataRoot,
-    DecodedBlpTexture, DecodedBlsShader, Locale, RealmCategoryCatalog, RealmConfigurationCatalog,
-    WdbcTable,
+    DecodedBlpTexture, DecodedBlsShader, DecodedM2Model, Locale, M2Track, RealmCategoryCatalog,
+    RealmConfigurationCatalog, WdbcTable,
 };
 
 /// Mounts a real client archive set and reads every requested internal path.
@@ -145,6 +145,97 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             continue;
         }
+        if path.as_str().ends_with(".M2") {
+            let model = DecodedM2Model::load(&mut store, &path)?;
+            let collision = model.collision_mesh();
+            println!(
+                "{} render vertices, {} collision vertices, {} collision triangles\t{}\t{}",
+                model.vertices().len(),
+                collision.map_or(0, |mesh| mesh.vertices().len()),
+                collision.map_or(0, |mesh| mesh.indices().len() / 3),
+                model.source().relative_path().display(),
+                path
+            );
+            if let Some(collision) = collision {
+                println!(
+                    "  collision bounds {:?}..{:?}, radius {}",
+                    collision.bounds().minimum(),
+                    collision.bounds().maximum(),
+                    collision.bounds().sphere_radius()
+                );
+            }
+            let animations = model.animations();
+            println!(
+                "  {} global sequences, {} animation sequences, {} bones, {} colors, {} texture weights, {} texture transforms",
+                animations.global_sequence_durations_ms().len(),
+                animations.sequences().len(),
+                animations.bones().len(),
+                animations.colors().len(),
+                animations.texture_weights().len(),
+                animations.texture_transforms().len()
+            );
+            for (index, sequence) in animations.sequences().iter().copied().enumerate() {
+                println!(
+                    "  sequence[{index}] id={} variation={} duration={}ms flags={:#010x} frequency={} replay={:?} blend={}ms storage={:?} next={:?} alias={:?} available={:?}",
+                    sequence.animation_id(),
+                    sequence.variation_index(),
+                    sequence.duration_ms(),
+                    sequence.flags(),
+                    sequence.frequency(),
+                    sequence.replay_range(),
+                    sequence.blend_time_ms(),
+                    sequence.storage(),
+                    sequence.variation_next(),
+                    sequence.alias_next(),
+                    animations.is_sequence_available(index)
+                );
+            }
+            for (index, bone) in animations.bones().iter().enumerate() {
+                let animated = [
+                    track_key_count(bone.translation()),
+                    track_key_count(bone.rotation()),
+                    track_key_count(bone.scale()),
+                ]
+                .into_iter()
+                .any(|count| count != 0);
+                if bone.flags() & 0x78 == 0 && !animated {
+                    continue;
+                }
+                let weighted_vertices = model
+                    .vertices()
+                    .iter()
+                    .filter(|vertex| {
+                        vertex
+                            .bone_indices()
+                            .into_iter()
+                            .zip(vertex.bone_weights())
+                            .any(|(bone_index, weight)| {
+                                usize::from(bone_index) == index && weight != 0
+                            })
+                    })
+                    .count();
+                println!(
+                    "  animated_bone[{index}] flags={:#010x} billboard={:#04x} parent={:?} pivot={:?} weighted_vertices={} translation={} rotation={} scale={}",
+                    bone.flags(),
+                    bone.flags() & 0x78,
+                    bone.parent(),
+                    bone.pivot(),
+                    weighted_vertices,
+                    track_shape(bone.translation()),
+                    track_shape(bone.rotation()),
+                    track_shape(bone.scale())
+                );
+            }
+            for (index, transform) in animations.texture_transforms().iter().enumerate() {
+                println!(
+                    "  texture_transform[{index}] translation={} rotation={} scale={}",
+                    track_shape(transform.translation()),
+                    track_shape(transform.rotation()),
+                    track_shape(transform.scale())
+                );
+            }
+            continue;
+        }
 
         let read = store.read(&path)?;
         println!(
@@ -156,6 +247,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+/// Describes the clock selection and authored key shape without dumping values.
+fn track_shape<T>(track: &M2Track<T>) -> String {
+    let keys = track
+        .channels()
+        .iter()
+        .map(|channel| channel.timestamps_ms().len().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{:?}/global={:?}/channels={}/keys=[{}]",
+        track.interpolation(),
+        track.global_sequence(),
+        track.channels().len(),
+        keys
+    )
+}
+
+/// Counts timestamps across every sequence channel in one track.
+fn track_key_count<T>(track: &M2Track<T>) -> usize {
+    track
+        .channels()
+        .iter()
+        .map(|channel| channel.timestamps_ms().len())
+        .sum()
 }
 
 /// Creates one consistent usage failure for incomplete command lines.

@@ -163,6 +163,59 @@ pub(crate) fn sample_scalar(
     }
 }
 
+/// Evaluates the wrapped linear angle used by build-12340 M2 cameras.
+///
+/// Camera roll is not an ordinary scalar interpolation. The Northrend login
+/// camera authors equivalent endpoints at one full turn and zero; stock takes
+/// the signed remainder of their delta before interpolation, keeping that
+/// camera static instead of revolving the entire Glue scene once per cycle.
+pub(crate) fn sample_angle_radians(
+    animations: &M2AnimationSet,
+    track: &M2Track<f32>,
+    sequence: usize,
+    animation_time_ms: f32,
+    global_time_ms: f32,
+    default: f32,
+) -> f32 {
+    if track.interpolation() != M2Interpolation::Linear {
+        return sample_scalar(
+            animations,
+            track,
+            sequence,
+            animation_time_ms,
+            global_time_ms,
+            default,
+        );
+    }
+    let Some(location) = locate(
+        animations,
+        track,
+        sequence,
+        animation_time_ms,
+        global_time_ms,
+    ) else {
+        return default;
+    };
+    let Some((lower, upper, amount)) =
+        interval(location.channel, track.interpolation(), location.time_ms)
+    else {
+        return default;
+    };
+    let Some(&first) = location.channel.values().get(lower) else {
+        return default;
+    };
+    let Some(&second) = location.channel.values().get(upper) else {
+        return default;
+    };
+    if !first.is_finite() || !second.is_finite() {
+        return default;
+    }
+    let full_turn = core::f32::consts::TAU;
+    let authored_delta = second - first;
+    let wrapped_delta = authored_delta - full_turn * (authored_delta / full_turn).round_ties_even();
+    first + wrapped_delta * amount
+}
+
 /// Applies the selected vector interpolation using WotLK's value/tangent order.
 fn interpolate_vec3(
     channel: &M2TrackChannel<Vec3>,

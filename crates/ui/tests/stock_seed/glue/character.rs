@@ -39,34 +39,37 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
-    manager.set_character_directory(UiCharacterDirectory::new(vec![
-        UiCharacterInfo::new(
-            100,
-            "First".to_owned(),
-            "Human".to_owned(),
-            "Human".to_owned(),
-            "Mage".to_owned(),
-            8,
-            80,
-            Some("Dalaran".to_owned()),
-            3,
-            0x2000,
-            1,
-        ),
-        UiCharacterInfo::new(
-            200,
-            "Second".to_owned(),
-            "Orc".to_owned(),
-            "Orc".to_owned(),
-            "Death Knight".to_owned(),
-            6,
-            55,
-            None,
-            2,
-            0,
-            0x0010_0000,
-        ),
-    ]));
+    manager.set_character_directory(UiCharacterDirectory::new(
+        vec![
+            UiCharacterInfo::new(
+                100,
+                "First".to_owned(),
+                "Human".to_owned(),
+                "Human".to_owned(),
+                "Mage".to_owned(),
+                8,
+                80,
+                Some("Dalaran".to_owned()),
+                3,
+                0x2000,
+                1,
+            ),
+            UiCharacterInfo::new(
+                200,
+                "Second".to_owned(),
+                "Orc".to_owned(),
+                "DEATHKNIGHT".to_owned(),
+                "Death Knight".to_owned(),
+                6,
+                55,
+                None,
+                2,
+                0,
+                0x0010_0000,
+            ),
+        ],
+        "Orc".to_owned(),
+    ));
     let globals = manager.bundle().lua().globals();
 
     assert_eq!(
@@ -82,7 +85,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     let info = globals
         .get::<mlua::Function>("GetCharacterInfo")?
         .call::<mlua::MultiValue>(1_u32)?;
-    assert_eq!(info.len(), 11);
+    assert_eq!(info.len(), 10);
     assert_eq!(
         info[0].as_string().map(|value| value.to_string_lossy()),
         Some("First".to_owned())
@@ -104,6 +107,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert_eq!(info[7].as_boolean(), Some(true));
     let background = globals.get::<mlua::Function>("GetSelectBackgroundModel")?;
     assert_eq!(background.call::<String>(2_u32)?, "DEATHKNIGHT");
+    assert_eq!(background.call::<String>(0_u32)?, "Orc");
     globals
         .get::<mlua::Function>("SetCharSelectBackground")?
         .call::<()>("Interface\\Glues\\Models\\UI_Human\\UI_Human.m2")?;

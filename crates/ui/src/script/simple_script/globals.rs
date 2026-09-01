@@ -1526,7 +1526,223 @@ fn register_glue_network_globals(
     )?;
     register_realm_list_globals(lua, globals, environment)?;
     register_character_list_globals(lua, globals, environment)?;
+    register_character_creation_globals(lua, globals, environment)?;
     Ok(())
+}
+
+/// Registers the ordinary new-character surface consumed by
+/// `CharacterCreate.lua`. Paid-service functions are a distinct server-driven
+/// path and are not synthesized by this state owner.
+fn register_character_creation_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let Some(state) = environment.character_creation_state() else {
+        // Focused Glue fixtures intentionally omit unrelated client DBCs.
+        return Ok(());
+    };
+
+    let reset = state.clone();
+    globals.raw_set(
+        "ResetCharCustomize",
+        lua.create_function(move |_, ()| reset.reset().map_err(character_creation_error))?,
+    )?;
+    let selected_race_name = state.clone();
+    globals.raw_set(
+        "GetNameForRace",
+        lua.create_function(move |_, ()| Ok(selected_race_name.selected_race_info()))?,
+    )?;
+    let faction = state.clone();
+    globals.raw_set(
+        "GetFactionForRace",
+        lua.create_function(move |lua, index: u32| {
+            let Some((name, internal_name)) = faction.faction_for_race(index) else {
+                return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(name)?),
+                Value::String(lua.create_string(internal_name)?),
+            ]))
+        })?,
+    )?;
+    let races = state.clone();
+    globals.raw_set(
+        "SolarityGetAvailableRaces",
+        lua.create_function(move |lua, ()| creation_identity_table(lua, races.available_races()))?,
+    )?;
+    let classes = state.clone();
+    globals.raw_set(
+        "SolarityGetAvailableClasses",
+        lua.create_function(move |lua, ()| {
+            creation_identity_table(lua, classes.available_classes())
+        })?,
+    )?;
+    // Lua 5.1's C callback frame reserves only LUA_MINSTACK slots. Returning
+    // ten stock triples directly from Rust would exceed that frame while
+    // constructing strings. Authored Lua performs the vararg expansion on its
+    // own growable stack, preserving the exact native function ABI.
+    lua.load(
+        r#"
+function GetAvailableRaces()
+    return unpack(SolarityGetAvailableRaces())
+end
+function GetAvailableClasses()
+    return unpack(SolarityGetAvailableClasses())
+end
+"#,
+    )
+    .set_name("character creation identity adapters")
+    .exec()?;
+    let hair = state.clone();
+    globals.raw_set(
+        "GetHairCustomization",
+        lua.create_function(move |_, ()| Ok(hair.hair_customization()))?,
+    )?;
+    let facial_hair = state.clone();
+    globals.raw_set(
+        "GetFacialHairCustomization",
+        lua.create_function(move |_, ()| Ok(facial_hair.facial_hair_customization()))?,
+    )?;
+    let selected_race = state.clone();
+    globals.raw_set(
+        "GetSelectedRace",
+        lua.create_function(move |_, ()| Ok(selected_race.selected_race()))?,
+    )?;
+    let selected_sex = state.clone();
+    globals.raw_set(
+        "GetSelectedSex",
+        lua.create_function(move |_, ()| Ok(selected_sex.selected_sex()))?,
+    )?;
+    let selected_class = state.clone();
+    globals.raw_set(
+        "GetSelectedClass",
+        lua.create_function(move |_, ()| {
+            let (name, file_string, index, roles) = selected_class.selected_class_info();
+            Ok((
+                name,
+                file_string,
+                index,
+                roles.tank(),
+                roles.healer(),
+                roles.damage(),
+            ))
+        })?,
+    )?;
+    let set_race = state.clone();
+    globals.raw_set(
+        "SetSelectedRace",
+        lua.create_function(move |_, index: u32| {
+            set_race
+                .set_selected_race(index)
+                .map_err(character_creation_error)
+        })?,
+    )?;
+    let set_sex = state.clone();
+    globals.raw_set(
+        "SetSelectedSex",
+        lua.create_function(move |_, sex: u32| {
+            set_sex
+                .set_selected_sex(sex)
+                .map_err(character_creation_error)
+        })?,
+    )?;
+    let set_class = state.clone();
+    globals.raw_set(
+        "SetSelectedClass",
+        lua.create_function(move |_, index: u32| {
+            set_class
+                .set_selected_class(index)
+                .map_err(character_creation_error)
+        })?,
+    )?;
+    // These functions invalidate native model presentation in stock. State
+    // mutation is already synchronous here; the renderer consumes its next
+    // snapshot during the ordinary Glue presentation rebuild.
+    globals.raw_set(
+        "UpdateCustomizationBackground",
+        lua.create_function(|_, ()| Ok(()))?,
+    )?;
+    globals.raw_set(
+        "UpdateCustomizationScene",
+        lua.create_function(|_, ()| Ok(()))?,
+    )?;
+    let cycle = state.clone();
+    globals.raw_set(
+        "CycleCharCustomization",
+        lua.create_function(move |_, (index, delta): (u32, i32)| {
+            cycle
+                .cycle_customization(index, delta)
+                .map_err(character_creation_error)
+        })?,
+    )?;
+    let randomize = state.clone();
+    globals.raw_set(
+        "RandomizeCharCustomization",
+        lua.create_function(move |_, ()| {
+            randomize
+                .randomize_customization()
+                .map_err(character_creation_error)
+        })?,
+    )?;
+    let get_facing = state.clone();
+    globals.raw_set(
+        "GetCharacterCreateFacing",
+        lua.create_function(move |_, ()| Ok(get_facing.facing_degrees()))?,
+    )?;
+    let set_facing = state.clone();
+    globals.raw_set(
+        "SetCharacterCreateFacing",
+        lua.create_function(move |_, facing: f64| {
+            set_facing.set_facing_degrees(facing);
+            Ok(facing)
+        })?,
+    )?;
+    let valid_pair = state.clone();
+    globals.raw_set(
+        "IsRaceClassValid",
+        lua.create_function(move |_, (race, class): (u32, u32)| {
+            Ok(valid_pair.is_race_class_valid(race, class).then_some(1_u8))
+        })?,
+    )?;
+    let background = state.clone();
+    globals.raw_set(
+        "GetCreateBackgroundModel",
+        lua.create_function(move |_, ()| Ok(background.background_model()))?,
+    )?;
+    let create = state;
+    let network = environment.network();
+    globals.raw_set(
+        "CreateCharacter",
+        lua.create_function(move |_, name: LuaString| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::CreateCharacter(
+                    create.create_request(name.to_str()?.to_owned()),
+                ));
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
+
+fn creation_identity_table(
+    lua: &Lua,
+    identities: Vec<(String, String, bool)>,
+) -> mlua::Result<Table> {
+    let values = lua.create_table_with_capacity(identities.len() * 3, 0)?;
+    let mut index = 1;
+    for (name, file_string, enabled) in identities {
+        values.raw_set(index, name)?;
+        values.raw_set(index + 1, file_string)?;
+        values.raw_set(index + 2, i64::from(enabled))?;
+        index += 3;
+    }
+    Ok(values)
+}
+
+fn character_creation_error(error: impl std::fmt::Display) -> mlua::Error {
+    mlua::Error::runtime(error.to_string())
 }
 
 /// Registers the synchronous character-selection surface consumed by
@@ -1600,13 +1816,11 @@ fn register_character_list_globals(
         "GetSelectBackgroundModel",
         lua.create_function(move |_, index: u32| {
             let network = network.borrow();
-            Ok(network.characters().by_index(index).map(|character| {
-                if character.class_id() == 6 {
-                    "DEATHKNIGHT".to_owned()
-                } else {
-                    character.race_file_string().to_ascii_uppercase()
-                }
-            }))
+            let characters = network.characters();
+            Ok(characters.by_index(index).map_or_else(
+                || characters.default_background_model().to_owned(),
+                |character| character.background_model().to_owned(),
+            ))
         })?,
     )?;
     let network = environment.network();
@@ -1655,9 +1869,6 @@ fn character_info_values(
         Value::Boolean(character.has_paid_customization()),
         Value::Boolean(character.has_paid_race_change()),
         Value::Boolean(character.has_paid_faction_change()),
-        // Build 12340 computes this from realm/account service eligibility;
-        // no disable bit exists in SMSG_CHAR_ENUM itself.
-        Value::Boolean(false),
     ]))
 }
 

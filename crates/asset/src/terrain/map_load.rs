@@ -114,10 +114,16 @@ fn decode_adt(
     texture_flags: Option<Vec<u32>>,
     liquids: Option<TerrainLiquidTable>,
 ) -> Result<DecodedTerrainTile, AssetError> {
-    if root.version != AdtVersion::WotLK {
+    // Build 12340 ships legacy-authored Vanilla and TBC tiles unchanged
+    // alongside WotLK-authored tiles. Their monolithic root layout remains
+    // a native stock input; only post-WotLK split-era layouts are invalid.
+    if root.version > AdtVersion::WotLK {
         return Err(terrain_message(
             path,
-            format!("expected WotLK ADT; decoder identified {:?}", root.version),
+            format!(
+                "expected a monolithic build-12340-compatible ADT; decoder identified {:?}",
+                root.version
+            ),
         ));
     }
     validate_string_offsets(path, "MMID", &root.models, &root.model_indices)?;
@@ -262,14 +268,10 @@ fn decode_chunk(
     world_model_count: usize,
     big_alpha: bool,
 ) -> Result<TerrainChunk, AssetError> {
-    // The file names these fields `[zpos, xpos, ypos]`: the first two are
-    // horizontal client-view axes and `ypos` is elevation. Normalize that
-    // viewer `[X, Y-up, Z]` basis to the server/ECS `[X, Y, Z-up]` basis.
-    let world_position = [
-        chunk.header.position[1],
-        chunk.header.position[0],
-        chunk.header.position[2],
-    ];
+    // Build-12340 MCNK origins are already absolute server/ECS [X, Y, Z].
+    // ADT filename coordinates are transposed relative to those world axes;
+    // transposing the chunk itself instead moves the tile across the diagonal.
+    let world_position = chunk.header.position;
     let chunk_x = u8::try_from(chunk.header.index_x)
         .ok()
         .and_then(|x| {
@@ -316,9 +318,9 @@ fn decode_chunk(
         .into_iter()
         .map(|normal| {
             let decoded = normal.to_normalized();
-            // The decoder reports client-view `[X, vertical Y, Z]`. Convert
-            // to the network/ECS `[map X, map Y, vertical Z]` convention.
-            [decoded[0], decoded[2], decoded[1]]
+            // wow-adt has already restored MCNR's stored X/Z/Y byte order to
+            // the server/ECS [X, Y, Z] convention.
+            decoded
         })
         .collect::<Vec<_>>()
         .into_boxed_slice()
@@ -601,8 +603,8 @@ fn decode_world_models(
 /// server/ECS map X/Y/Z-up basis carried in world packets.
 const fn placement_position(position: [f32; 3]) -> [f32; 3] {
     [
-        CLIENT_MAP_ORIGIN - position[0],
         CLIENT_MAP_ORIGIN - position[2],
+        CLIENT_MAP_ORIGIN - position[0],
         position[1],
     ]
 }
@@ -612,13 +614,13 @@ const fn placement_position(position: [f32; 3]) -> [f32; 3] {
 const fn placement_bounds(minimum: [f32; 3], maximum: [f32; 3]) -> [[f32; 3]; 2] {
     [
         [
-            CLIENT_MAP_ORIGIN - maximum[0],
             CLIENT_MAP_ORIGIN - maximum[2],
+            CLIENT_MAP_ORIGIN - maximum[0],
             minimum[1],
         ],
         [
-            CLIENT_MAP_ORIGIN - minimum[0],
             CLIENT_MAP_ORIGIN - minimum[2],
+            CLIENT_MAP_ORIGIN - minimum[0],
             maximum[1],
         ],
     ]

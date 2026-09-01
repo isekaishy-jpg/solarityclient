@@ -9,6 +9,9 @@ mod appearance;
 mod area;
 mod c_data_store;
 mod character;
+mod character_base;
+mod character_faction;
+mod character_outfit;
 mod creature;
 mod db_cache;
 mod db_cache_instances;
@@ -36,6 +39,11 @@ pub use appearance::{
 pub use area::{AreaDefinition, AreaTableCatalog};
 pub use character::{
     CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
+};
+pub use character_base::{CharacterBaseCatalog, CharacterBaseInfo};
+pub use character_faction::{CharacterFactionCatalog, CharacterFactionGroup};
+pub use character_outfit::{
+    CharacterStartOutfit, CharacterStartOutfitCatalog, CharacterStartOutfitItem,
 };
 pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData,

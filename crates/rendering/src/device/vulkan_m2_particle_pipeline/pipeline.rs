@@ -101,6 +101,7 @@ pub(super) fn create_pipeline(
         } else {
             vk::CullModeFlags::NONE
         })
+        // Particle indices remain counter-clockwise after the world viewport.
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()

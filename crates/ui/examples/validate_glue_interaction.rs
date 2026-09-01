@@ -1,17 +1,20 @@
 //! Exercises real locale-backed first-run agreements and later-run bypass.
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, BlpTextureCache, ClientDataRoot,
     DecodedM2Model, Locale,
 };
+use solarity_cpu::BlizzardRand;
 use solarity_ui::{
-    AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterInfo,
-    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers,
-    UiObjectRole, UiPointerButton, UiTextureSource,
+    AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterExpansion,
+    UiCharacterInfo, UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiKeyboardModifiers, UiObjectRole, UiPointerButton, UiTextureSource,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -95,13 +98,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("readContest".to_owned(), "1".to_owned()),
     ];
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(data_root)?, locale)?;
-    let mut later = GlueManager::start_shared_with_profile(
+    let mut later = GlueManager::start_shared_with_profile_and_random(
         AssetStoreHandle::new(AssetStore::mount(catalog)?),
         (1280, 720),
         false,
         GlueInitialScreen::Login,
         &accepted_cvars,
         &addon_catalog,
+        Rc::new(RefCell::new(BlizzardRand::new(0x1234_5678))),
     )?;
     if later.current_screen() != "login"
         || !object_is_shown(&later, "AccountLoginUI")?
@@ -133,9 +137,279 @@ fn main() -> Result<(), Box<dyn Error>> {
     let atlas_extent = later.glyphs().extent();
     let atlas_bytes = later.glyphs().rgba8().len();
     let visible_glyphs = visible_glyph_owners(&later).len();
+    validate_initial_empty_character_selection(&mut later)?;
     validate_character_selection(&mut later)?;
+    validate_empty_character_selection(&mut later)?;
+    validate_character_creation(&mut later)?;
     println!(
-        "validated first-run agreements, later-run bypass, authored login input, and character selection: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} login_visible_glyphs={visible_glyphs}"
+        "validated first-run agreements, later-run bypass, authored login input, character selection, and character creation: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} login_visible_glyphs={visible_glyphs}"
+    );
+    Ok(())
+}
+
+fn validate_initial_empty_character_selection(
+    manager: &mut GlueManager,
+) -> Result<(), Box<dyn Error>> {
+    manager.set_network_status(UiGlueNetworkStatus::new(
+        Some("Validation Realm".to_owned()),
+        true,
+    ));
+    manager.set_character_directory(UiCharacterDirectory::new(Vec::new(), "Orc".to_owned()));
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+    )?;
+    manager.dispatch_event(
+        "CHARACTER_LIST_UPDATE",
+        &UiEventPayload::new([UiEventArgument::Integer(0)])?,
+    )?;
+    manager.update(0.25)?;
+    manager.update(0.25)?;
+
+    let create = object_index(manager, "CharSelectCreateCharacterButton")?;
+    let create_geometry = manager
+        .geometry()
+        .region(create)
+        .ok_or_else(|| invalid_data("empty-first create button has no geometry".to_owned()))?;
+    let normal_texture = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(create) && object.role() == UiObjectRole::NormalTexture
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("empty-first create button has no NormalTexture".to_owned()))?;
+    let button_text = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(create) && object.role() == UiObjectRole::ButtonText
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("empty-first create button has no ButtonText".to_owned()))?;
+    let mesh_objects = manager.render_plan().mesh().object_indices();
+    let create_in_mesh = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .any(|quad| quad.object_index() == normal_texture)
+        && mesh_objects.contains(&normal_texture)
+        && visible_glyph_owners(manager).contains(&button_text)
+        && mesh_objects.contains(&button_text);
+    if manager.current_screen() != "charselect"
+        || !create_geometry.effectively_shown()
+        || !create_in_mesh
+    {
+        return Err(invalid_data(format!(
+            "empty-first selection omitted its create control: screen={} shown={} mesh={create_in_mesh}",
+            manager.current_screen(),
+            create_geometry.effectively_shown()
+        ))
+        .into());
+    }
+    println!(
+        "empty-first character selection: create_bounds={:?} quads={} batches={}",
+        create_geometry.presentation_bounds(),
+        manager.presentation().member_count(),
+        manager.render_plan().mesh().batches().len(),
+    );
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+    )?;
+    manager.update(0.25)?;
+    manager.update(0.25)?;
+    if manager.current_screen() != "login" {
+        return Err(invalid_data("empty-first validation did not restore login".to_owned()).into());
+    }
+    while manager.take_network_action().is_some() {}
+    Ok(())
+}
+
+fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    manager.set_character_creation_expansion(UiCharacterExpansion::WRATH_OF_THE_LICH_KING);
+    if manager.current_screen() != "charcreate" {
+        manager.dispatch_event(
+            "SET_GLUE_SCREEN",
+            &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+        )?;
+        manager.update(0.25)?;
+        manager.update(0.25)?;
+    }
+    if manager.current_screen() != "charcreate" || !object_is_shown(manager, "CharacterCreate")? {
+        return Err(invalid_data(format!(
+            "stock character creation did not replace selection: screen={}",
+            manager.current_screen()
+        ))
+        .into());
+    }
+
+    let globals = manager.bundle().lua().globals();
+    manager
+        .bundle()
+        .lua()
+        .load(
+            "SOLARITY_RACE_VALUE_COUNT = select('#', GetAvailableRaces()); SOLARITY_CLASS_VALUE_COUNT = select('#', GetAvailableClasses())",
+        )
+        .exec()?;
+    let race_value_count = globals.get::<usize>("SOLARITY_RACE_VALUE_COUNT")?;
+    let class_value_count = globals.get::<usize>("SOLARITY_CLASS_VALUE_COUNT")?;
+    if race_value_count != 30 || class_value_count != 30 {
+        return Err(invalid_data(format!(
+            "creation metadata returned {} race values and {} class values",
+            race_value_count, class_value_count
+        ))
+        .into());
+    }
+    let background = globals
+        .get::<mlua::Function>("GetCreateBackgroundModel")?
+        .call::<String>(())?;
+    if background.is_empty() {
+        return Err(invalid_data("creation selected no stock background".to_owned()).into());
+    }
+    globals
+        .get::<mlua::Function>("RandomizeCharCustomization")?
+        .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("CreateCharacter")?
+        .call::<()>("Validationhero")?;
+    let Some(UiGlueNetworkAction::CreateCharacter(request)) = manager.take_network_action() else {
+        return Err(invalid_data("CreateCharacter emitted no protocol request".to_owned()).into());
+    };
+    if request.name() != "Validationhero"
+        || request.race_id() == 0
+        || request.class_id() == 0
+        || request.gender_id() > 1
+    {
+        return Err(invalid_data(format!(
+            "creation request has invalid identity fields: {request:?}"
+        ))
+        .into());
+    }
+    println!(
+        "character creation: background={background} race={} class={} gender={} appearance={:?}",
+        request.race_id(),
+        request.class_id(),
+        request.gender_id(),
+        request.appearance()
+    );
+    Ok(())
+}
+
+fn validate_empty_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    manager.set_character_directory(UiCharacterDirectory::new(Vec::new(), "Orc".to_owned()));
+    manager.dispatch_event(
+        "CHARACTER_LIST_UPDATE",
+        &UiEventPayload::new([UiEventArgument::Integer(0)])?,
+    )?;
+
+    let model = manager
+        .presentation()
+        .models()
+        .iter()
+        .find(|model| manager.objects()[model.object_index()].name() == Some("CharacterSelect"))
+        .ok_or_else(|| invalid_data("empty character selection has no ModelFFX".to_owned()))?;
+    let model_path = model.path().as_str().to_owned();
+    if model_path != "INTERFACE\\GLUES\\MODELS\\UI_ORC\\UI_ORC.M2" {
+        return Err(invalid_data(format!(
+            "empty character selection did not use stock's Orc default: {}",
+            model_path
+        ))
+        .into());
+    }
+
+    let create = object_index(manager, "CharSelectCreateCharacterButton")?;
+    let create_bounds = manager
+        .geometry()
+        .region(create)
+        .ok_or_else(|| invalid_data("create-character button has no geometry".to_owned()))?;
+    let create_presentation_bounds = create_bounds.presentation_bounds();
+    if !create_bounds.effectively_shown()
+        || (create_presentation_bounds.height() - 45.0).abs() > 0.000_01
+    {
+        return Err(invalid_data(format!(
+            "empty account did not show the stock 45px create-character button: {create_bounds:?}"
+        ))
+        .into());
+    }
+
+    let normal_texture = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(create) && object.role() == UiObjectRole::NormalTexture
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("create-character button has no NormalTexture".to_owned()))?;
+    if !manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .any(|quad| quad.object_index() == normal_texture)
+    {
+        return Err(
+            invalid_data("create-character button has no visible stock skin".to_owned()).into(),
+        );
+    }
+    let button_text = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            object.parent() == Some(create) && object.role() == UiObjectRole::ButtonText
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| invalid_data("create-character button has no ButtonText".to_owned()))?;
+    if !visible_glyph_owners(manager).contains(&button_text) {
+        return Err(invalid_data(
+            "create-character button label produced no visible glyphs".to_owned(),
+        )
+        .into());
+    }
+    let mesh_objects = manager.render_plan().mesh().object_indices();
+    if !mesh_objects.contains(&normal_texture) || !mesh_objects.contains(&button_text) {
+        return Err(invalid_data(format!(
+            "create-character skin/text did not reach the final mesh: normal={}, text={}",
+            mesh_objects.contains(&normal_texture),
+            mesh_objects.contains(&button_text)
+        ))
+        .into());
+    }
+    let mut texture_cache = BlpTextureCache::new();
+    let texture_bindings = manager.load_blocking_render_textures(&mut texture_cache)?;
+
+    let position = object_center(manager, create)?;
+    let down = manager.pointer_button(position, UiPointerButton::Left, true)?;
+    let up = manager.pointer_button(position, UiPointerButton::Left, false)?;
+    if down.object_index() != Some(create)
+        || up.object_index() != Some(create)
+        || !up.click_activated()
+    {
+        return Err(invalid_data(format!(
+            "create-character button did not receive stock pointer activation: down={down:?}, up={up:?}"
+        ))
+        .into());
+    }
+    manager.update(0.25)?;
+    manager.update(0.25)?;
+    if manager.current_screen() != "charcreate" || !object_is_shown(manager, "CharacterCreate")? {
+        return Err(invalid_data(format!(
+            "empty-account create button did not reach character creation: screen={}",
+            manager.current_screen()
+        ))
+        .into());
+    }
+    println!(
+        "empty character selection: default_model={} create_bounds={:?} quads={} batches={} resident_textures={} pending_textures={}",
+        model_path,
+        create_presentation_bounds,
+        manager.presentation().member_count(),
+        manager.render_plan().mesh().batches().len(),
+        texture_bindings.resident_count(),
+        texture_bindings.pending_count(),
     );
     Ok(())
 }
@@ -275,19 +549,22 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
         Some("Validation Realm".to_owned()),
         true,
     ));
-    manager.set_character_directory(UiCharacterDirectory::new(vec![UiCharacterInfo::new(
-        CHARACTER_GUID,
-        "SolarityTester".to_owned(),
-        "Human".to_owned(),
-        "Human".to_owned(),
-        "Warrior".to_owned(),
-        1,
-        80,
-        Some("Dalaran".to_owned()),
-        2,
-        0,
-        0,
-    )]));
+    manager.set_character_directory(UiCharacterDirectory::new(
+        vec![UiCharacterInfo::new(
+            CHARACTER_GUID,
+            "SolarityTester".to_owned(),
+            "Human".to_owned(),
+            "Human".to_owned(),
+            "Warrior".to_owned(),
+            1,
+            80,
+            Some("Dalaran".to_owned()),
+            2,
+            0,
+            0,
+        )],
+        "Orc".to_owned(),
+    ));
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
         &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,

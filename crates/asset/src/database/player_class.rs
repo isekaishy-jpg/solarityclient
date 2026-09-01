@@ -21,6 +21,7 @@ pub struct CharacterClassDefinition {
     female_name: String,
     male_name: String,
     file_string: String,
+    required_expansion: u32,
 }
 
 impl CharacterClassDefinition {
@@ -53,11 +54,33 @@ impl CharacterClassDefinition {
     pub fn file_string(&self) -> &str {
         &self.file_string
     }
+
+    /// Returns the minimum account expansion required to select the class.
+    #[must_use]
+    pub const fn required_expansion(&self) -> u32 {
+        self.required_expansion
+    }
+
+    /// Selects the exact stock display-name column for one binary gender.
+    #[must_use]
+    pub fn display_name(&self, gender_id: u8) -> &str {
+        let authored = match gender_id {
+            0 => &self.male_name,
+            1 => &self.female_name,
+            _ => "",
+        };
+        if authored.is_empty() {
+            &self.name
+        } else {
+            authored
+        }
+    }
 }
 
 /// Identifier-indexed build-12340 character-class metadata.
 pub struct CharacterClassCatalog {
     classes: Vec<CharacterClassDefinition>,
+    physical_order: Vec<usize>,
 }
 
 impl CharacterClassCatalog {
@@ -84,8 +107,13 @@ impl CharacterClassCatalog {
                 )?,
                 male_name: localized_string(&table, row, LOCALIZED_MALE_NAME_FIRST_FIELD, locale)?,
                 file_string: string(&table, row, FILE_STRING_FIELD)?,
+                required_expansion: field(&table, row, 59)?,
             });
         }
+        let physical_ids = classes
+            .iter()
+            .map(CharacterClassDefinition::id)
+            .collect::<Vec<_>>();
         classes.sort_unstable_by_key(CharacterClassDefinition::id);
         if let Some(duplicate) = classes.windows(2).find(|pair| pair[0].id == pair[1].id) {
             return Err(database_error(
@@ -93,7 +121,18 @@ impl CharacterClassCatalog {
                 format!("duplicate primary key {}", duplicate[0].id),
             ));
         }
-        Ok(Self { classes })
+        let physical_order = physical_ids
+            .into_iter()
+            .map(|id| {
+                classes
+                    .binary_search_by_key(&id, CharacterClassDefinition::id)
+                    .map_err(|_source| database_error(&table, format!("lost class key {id}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            classes,
+            physical_order,
+        })
     }
 
     /// Finds one exact class identifier.
@@ -108,6 +147,13 @@ impl CharacterClassCatalog {
     /// Iterates classes in ascending protocol-identifier order.
     pub fn classes(&self) -> impl ExactSizeIterator<Item = &CharacterClassDefinition> {
         self.classes.iter()
+    }
+
+    /// Iterates records in physical DBC order, matching stock creation globals.
+    pub fn physical_classes(&self) -> impl ExactSizeIterator<Item = &CharacterClassDefinition> {
+        self.physical_order
+            .iter()
+            .map(|index| &self.classes[*index])
     }
 }
 

@@ -80,6 +80,27 @@ impl CharacterCustomization {
             facial_hair_style_id: facial_hair_style_id as u32,
         }
     }
+
+    /// Creates a customization request from widened client-table identifiers.
+    ///
+    /// `CreatureDisplayInfoExtra.dbc` stores the same values as 32-bit words,
+    /// so retaining them avoids narrowing an authored NPC appearance.
+    #[must_use]
+    pub const fn from_ids(
+        skin_id: u32,
+        face_id: u32,
+        hair_style_id: u32,
+        hair_color_id: u32,
+        facial_hair_style_id: u32,
+    ) -> Self {
+        Self {
+            skin_id,
+            face_id,
+            hair_style_id,
+            hair_color_id,
+            facial_hair_style_id,
+        }
+    }
 }
 
 /// M2 geoset identifiers selected from hair and facial-feature tables.
@@ -111,7 +132,7 @@ pub struct CharacterModelAppearance<'catalog> {
     gender_id: u32,
     skin: &'catalog CharacterSection,
     face: Option<&'catalog CharacterSection>,
-    facial_hair: &'catalog CharacterSection,
+    facial_hair: Option<&'catalog CharacterSection>,
     hair: &'catalog CharacterSection,
     underwear: Option<&'catalog CharacterSection>,
     hair_geoset: Option<&'catalog CharacterHairGeoset>,
@@ -144,9 +165,9 @@ impl CharacterModelAppearance<'_> {
         self.face
     }
 
-    /// Returns facial-feature texture overlays.
+    /// Returns the optional color-dependent facial-feature texture overlays.
     #[must_use]
-    pub const fn facial_hair(&self) -> &CharacterSection {
+    pub const fn facial_hair(&self) -> Option<&CharacterSection> {
         self.facial_hair
     }
 
@@ -217,13 +238,18 @@ impl CharacterAppearanceCatalog {
                 customization.skin_id,
             )?)
         };
-        let facial_hair = self.require_section(
-            race_id,
-            gender_id,
-            CharacterSectionKind::FacialHair,
-            customization.facial_hair_style_id,
-            customization.hair_color_id,
-        )?;
+        // Stock permits geometry-only facial features. CharSections supplies
+        // an overlay only for authored style/color pairs; it does not define
+        // the selectable feature set from CharacterFacialHairStyles.
+        let facial_hair = self
+            .sections_for(
+                race_id,
+                gender_id,
+                CharacterSectionKind::FacialHair.value(),
+                customization.facial_hair_style_id,
+                customization.hair_color_id,
+            )
+            .last();
         let hair = self.require_section(
             race_id,
             gender_id,

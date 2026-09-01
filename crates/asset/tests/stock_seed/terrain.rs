@@ -71,7 +71,7 @@ fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(
         TerrainMap::tile_at_world_position(1_000.0, 5_800.0),
-        TerrainTileIndex::new(30, 21).ok_or("fixture world tile is invalid")?
+        TerrainTileIndex::new(21, 30).ok_or("fixture world tile is invalid")?
     );
     Ok(())
 }
@@ -192,14 +192,54 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     let sound_emitter = tile.chunks()[0].sound_emitters()[0];
     assert_eq!(sound_emitter.advanced_sound_entry_id(), 90);
     assert_eq!(sound_emitter.cone_orientation(), [4.0, 8.0, 12.0]);
-    assert_position(tile.doodads()[0].position(), [1_066.666, 5_066.666, 250.0]);
+    assert_position(tile.doodads()[0].position(), [5_066.666, 1_066.666, 250.0]);
     assert_position(
         tile.world_models()[0].position(),
-        [966.666, 4_966.666, 300.0],
+        [4_966.666, 966.666, 300.0],
     );
     let [minimum, maximum] = tile.world_models()[0].bounds();
-    assert_position(minimum, [866.666, 4_866.666, 200.0]);
-    assert_position(maximum, [1_066.666, 5_066.666, 400.0]);
+    assert_position(minimum, [4_866.666, 866.666, 200.0]);
+    assert_position(maximum, [5_066.666, 1_066.666, 400.0]);
+    Ok(())
+}
+
+/// WotLK archives retain legacy-authored continent tiles without conversion.
+#[test]
+fn terrain_tile_accepts_stock_legacy_monolithic_layout() -> Result<(), Box<dyn Error>> {
+    let map_table = map_table();
+    let wdt = terrain_wdt(Some((31, 43, 1)), false)?;
+    let adt = AdtBuilder::new()
+        .with_version(AdtVersion::VanillaEarly)
+        .add_texture("tileset/fixture/grass.blp")
+        .build()?
+        .to_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Map.dbc",
+            bytes: &map_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend.wdt",
+            bytes: &wdt,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend_31_43.adt",
+            bytes: &adt,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let definition = maps.map(571).ok_or("Northrend map is absent")?;
+    let terrain = TerrainMap::load(&mut store, definition)?;
+    let index = TerrainTileIndex::new(31, 43).ok_or("legacy fixture tile is invalid")?;
+
+    let tile = terrain.load_tile(&mut store, index)?;
+    assert_eq!(tile.index(), index);
+    assert_eq!(tile.chunks().len(), 256);
     Ok(())
 }
 
@@ -301,8 +341,9 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         .mcnk_chunks
         .first_mut()
         .ok_or("fixture root ADT contains no MCNK chunks")?;
-    // Stored `[zpos, xpos, ypos]` becomes ECS `[X, Y, Z]`.
-    first.header.position = [6_000.0, 1_000.0, 200.0];
+    // MCNK already stores absolute server/ECS `[X, Y, Z]`; filenames alone
+    // use their transposed terrain-grid convention.
+    first.header.position = [1_000.0, 6_000.0, 200.0];
     let first_normal = first
         .normals
         .as_mut()

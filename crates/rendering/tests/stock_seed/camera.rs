@@ -31,9 +31,9 @@ fn stock_world_camera_builds_vulkan_projection() -> Result<(), Box<dyn Error>> {
     assert!((near_clip.z / near_clip.w).abs() < 1.0e-5);
     assert!((far_clip.z / far_clip.w - 1.0).abs() < 1.0e-5);
 
-    // Positive world Z is screen-up before Vulkan's required clip-Y reversal.
+    // The renderer's negative-height viewport maps positive clip Y upward.
     let above = frame.view_projection() * Vec4::new(1.0, 0.0, 0.25, 1.0);
-    assert!(above.y / above.w < 0.0);
+    assert!(above.y / above.w > 0.0);
     Ok(())
 }
 

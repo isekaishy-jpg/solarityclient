@@ -286,6 +286,25 @@ fn world_model_decodes_stock_doodad_sets() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Exporter-era MOHD doodad counts remain advisory when MODD is smaller.
+#[test]
+fn world_model_accepts_stock_inflated_mohd_doodad_count() -> Result<(), Box<dyn Error>> {
+    let mut root_wmo = doodad_root_fixture();
+    set_u32(&mut root_wmo, 40, 9);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "World\\Wmo\\Doodads.wmo",
+        bytes: &root_wmo,
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Doodads.wmo")?)?;
+
+    assert_eq!(model.doodads().len(), 2);
+    assert_eq!(model.active_doodad_indices(1)?, [0, 1]);
+    Ok(())
+}
+
 /// Post-build chunks fail before the dependency can silently skip them.
 #[test]
 fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {

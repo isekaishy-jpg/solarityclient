@@ -243,6 +243,20 @@ pub enum RuntimeTerrainFrameError {
     /// The retained Glue model generation has no matching model placement.
     #[error("Glue M2 model placement is unavailable")]
     MissingGlueM2Placement,
+    /// The active Glue background lacks its authored character anchor.
+    #[error("Glue M2 {model} has no character attachment point {attachment_id}")]
+    MissingGlueM2Attachment {
+        /// Glue background model lacking the selected attachment.
+        model: AssetPath,
+        /// Exact build-12340 parent attachment identifier.
+        attachment_id: u32,
+    },
+    /// A Glue character was evaluated before its background attachment pose.
+    #[error("Glue character attachment point {attachment_id} has no current pose")]
+    MissingGlueM2AttachmentPose {
+        /// Exact build-12340 parent attachment identifier.
+        attachment_id: u32,
+    },
     /// A current player update has no matching placement in the GPU generation.
     #[error("local player {guid:#018X} has no M2 placement in the current frame")]
     MissingPlayerM2Placement {

@@ -1,12 +1,14 @@
 //! Owned wrapper around one decrypted server packet.
 
 use super::{
-    AddonPolicyError, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
-    ObjectUpdateError, WorldActionButtonPacketError, WorldActionButtons, WorldAddonManifest,
-    WorldAddonPolicy, WorldEntryPacketError, WorldLivenessPacketError, WorldLocation,
-    WorldObjectUpdateBatch, WorldTimePacketError, WorldTimeSpeed,
+    AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDirectory,
+    CharacterDirectoryError, CharacterLoginRejection, ObjectUpdateError,
+    WorldActionButtonPacketError, WorldActionButtons, WorldAddonManifest, WorldAddonPolicy,
+    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch,
+    WorldTimePacketError, WorldTimeSpeed,
 };
 
+const SMSG_CHAR_CREATE: u16 = 0x003A;
 const SMSG_CHAR_ENUM: u16 = 0x003B;
 const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
 const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
@@ -37,6 +39,7 @@ impl WorldServerPacket {
     #[must_use]
     pub const fn name(&self) -> Option<&'static str> {
         match self.opcode {
+            SMSG_CHAR_CREATE => Some("SMSG_CHAR_CREATE"),
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
             SMSG_LOGIN_SETTIMESPEED => Some("SMSG_LOGIN_SETTIMESPEED"),
@@ -70,6 +73,21 @@ impl WorldServerPacket {
             return Ok(None);
         }
         CharacterDirectory::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_CHAR_CREATE`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterCreationError`] unless the response contains exactly
+    /// one known build-12340 creation result.
+    pub fn character_creation_result(
+        &self,
+    ) -> Result<Option<CharacterCreationResult>, CharacterCreationError> {
+        if self.opcode != SMSG_CHAR_CREATE {
+            return Ok(None);
+        }
+        CharacterCreationResult::decode(&self.payload).map(Some)
     }
 
     /// Decodes positional `SMSG_ADDON_INFO` policy against the sent manifest.

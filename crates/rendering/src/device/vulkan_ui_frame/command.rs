@@ -225,12 +225,15 @@ fn record_draw(
             0,
             logical_extent_bytes,
         );
+        // Every UI quad has the same six-index pattern. Reuse the mesh's
+        // canonical prefix for each batch and select its contiguous vertices
+        // through baseVertex, retaining the exact source draw order.
         device.cmd_draw_indexed(
             command_buffer,
             draw.index_count(),
             1,
-            draw.first_index(),
             0,
+            draw.base_vertex(),
             0,
         );
     }

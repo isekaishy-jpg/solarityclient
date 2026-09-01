@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{WorldCamera, WorldCameraError, WorldCameraFrame};
 
-use super::sample::{sample_scalar, sample_vec3};
+use super::sample::{sample_angle_radians, sample_vec3};
 use super::{M2AnimationClock, M2BonePoseError};
 
 /// A decoded M2 camera cannot form its stock presentation frame.
@@ -76,7 +76,7 @@ pub fn sample_m2_camera_frame(
         up = Vec3::Y - forward * Vec3::Y.dot(forward);
     }
     up = up.normalize_or_zero();
-    let roll = sample_scalar(
+    let roll = sample_angle_radians(
         animations,
         camera.roll_radians(),
         sequence,
