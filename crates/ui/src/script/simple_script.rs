@@ -114,6 +114,7 @@ static TOOLTIP_OFFSET_Y_TOKEN: u8 = 74;
 static TEXT_COLOR_TOKEN: u8 = 75;
 static DESATURATED_TOKEN: u8 = 76;
 static DRAG_BUTTON_TOKEN: u8 = 77;
+static SPACING_TOKEN: u8 = 78;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -152,6 +153,7 @@ struct InitialFont {
     object_name: Option<String>,
     justify_h: String,
     justify_v: String,
+    spacing: f64,
 }
 
 impl Default for InitialFont {
@@ -161,6 +163,7 @@ impl Default for InitialFont {
             object_name: None,
             justify_h: "CENTER".to_owned(),
             justify_v: "MIDDLE".to_owned(),
+            spacing: 0.0,
         }
     }
 }
@@ -1247,6 +1250,7 @@ impl UiScriptRuntime {
                 .raw_set(font_set_key(), font.assigned)
                 .and_then(|()| table.raw_set(justify_h_key(), font.justify_h.as_str()))
                 .and_then(|()| table.raw_set(justify_v_key(), font.justify_v.as_str()))
+                .and_then(|()| table.raw_set(spacing_key(), font.spacing))
                 .and_then(|()| {
                     table.raw_set(
                         text_color_key(),
@@ -1737,6 +1741,7 @@ fn create_dynamic_object(
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
+        object.raw_set(spacing_key(), 0.0_f64)?;
         object.raw_set(
             text_color_key(),
             lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
@@ -2029,6 +2034,7 @@ fn register_font(
         })
         .and_then(|()| table.raw_set(font_height_key(), definition.height().map(f64::from)))
         .and_then(|()| table.raw_set(font_flags_key(), font_flags(definition)))
+        .and_then(|()| table.raw_set(spacing_key(), definition.spacing().map_or(0.0, f64::from)))
         .and_then(|()| table.raw_set(text_color_key(), lua.create_sequence_from(color)?))
         .map_err(|error| execution_error("font registration", error))?;
     let metatable: Table = lua
@@ -2068,6 +2074,7 @@ fn create_font_metatable(lua: &Lua) -> mlua::Result<Table> {
             Ok(candidate.eq_ignore_ascii_case("Font").then_some(true))
         })?,
     )?;
+    register_font_spacing_methods(lua, &methods)?;
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
     Ok(metatable)
@@ -2495,7 +2502,24 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             ))
         })?,
     )?;
-    register_font_string_justification_methods(lua, methods)
+    register_font_string_justification_methods(lua, methods)?;
+    register_font_spacing_methods(lua, methods)
+}
+
+fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetSpacing",
+        lua.create_function(|_, (object, spacing): (Table, f64)| {
+            if !spacing.is_finite() {
+                return Err(mlua::Error::runtime("SetSpacing(): spacing must be finite"));
+            }
+            object.raw_set(spacing_key(), spacing)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetSpacing",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(spacing_key()))?,
+    )
 }
 
 fn register_font_string_justification_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -3801,6 +3825,12 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
                 {
                     initial.justify_v = value.to_ascii_uppercase();
                 }
+                if let Some(value) = xml_attribute(layer.element(), "spacing")
+                    && let Ok(spacing) = value.parse::<f64>()
+                    && spacing.is_finite()
+                {
+                    initial.spacing = spacing;
+                }
             }
             initial
         })
@@ -3869,6 +3899,9 @@ fn stock_text(lua: &Lua, reference: &str) -> mlua::Result<String> {
 }
 
 fn apply_font_justification(initial: &mut InitialFont, definition: &FontDefinition) {
+    if let Some(spacing) = definition.spacing() {
+        initial.spacing = f64::from(spacing);
+    }
     if let Some(value) = definition.horizontal_justification() {
         initial.justify_h = match value {
             HorizontalJustification::Left => "LEFT",
@@ -4256,6 +4289,10 @@ pub(super) fn click_action_key() -> LightUserData {
 
 pub(super) fn drag_button_key() -> LightUserData {
     hidden_key(&DRAG_BUTTON_TOKEN)
+}
+
+fn spacing_key() -> LightUserData {
+    hidden_key(&SPACING_TOKEN)
 }
 
 fn model_sequence_time_sequence_key() -> LightUserData {
