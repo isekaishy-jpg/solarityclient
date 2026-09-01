@@ -521,6 +521,7 @@ fn register_client_runtime_globals(
     let battlenet = environment.battlenet_state();
     let connected = battlenet.clone();
     let enabled_and_connected = battlenet.clone();
+    let conversation_capacity = battlenet.clone();
     globals.raw_set(
         "BNFeaturesEnabled",
         lua.create_function(move |_, ()| Ok(battlenet.features_enabled().then_some(1_u32)))?,
@@ -532,6 +533,10 @@ fn register_client_runtime_globals(
     globals.raw_set(
         "BNFeaturesEnabledAndConnected",
         lua.create_function(move |_, ()| Ok(enabled_and_connected.connected().then_some(1_u32)))?,
+    )?;
+    globals.raw_set(
+        "BNGetMaxPlayersInConversation",
+        lua.create_function(move |_, ()| Ok(conversation_capacity.max_conversation_players()))?,
     )?;
     let bindings = environment.binding_assignments();
     let binding_keys = bindings.clone();

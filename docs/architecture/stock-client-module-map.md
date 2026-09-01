@@ -148,3 +148,8 @@ checks all 326 production plus 166 external test files.
 - The target AzerothCore environment uses the stock legacy Grunt/SRP path.
   Battlenet artifacts present in this particular binary do not justify adding
   a second authentication implementation to the initial architecture.
+  The `BNGetMaxPlayersInConversation` registration at `00accca8` points to
+  native function `00537a00`; its enabled path pushes the double at
+  `00a09f58`, exactly `12.0`, while failed service predicates return no Lua
+  values. The disabled runtime therefore registers the API but returns `nil`
+  instead of inventing a zero-capacity Battle.net service.

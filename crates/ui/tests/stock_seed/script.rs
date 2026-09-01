@@ -541,6 +541,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(reparented:GetParent() == nil)
   assert(GetModifiedClick("SELFCAST") == "ALT")
   assert(not BNFeaturesEnabled() and not BNConnected() and not BNFeaturesEnabledAndConnected())
+  assert(BNGetMaxPlayersInConversation() == nil)
   FontLabel:SetText("Label")
   assert(FontLabel:GetText() == "Label")
   FontLabel:SetTextColor(0.25, 0.5, 0.75, 0.8)

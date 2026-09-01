@@ -2,6 +2,9 @@
 
 use std::rc::Rc;
 
+/// Conversation capacity pushed by build 12340's native Lua binding.
+const MAX_CONVERSATION_PLAYERS: u8 = 12;
+
 /// Shared capability state read by the synchronous Battle.net Lua predicates.
 #[derive(Clone)]
 pub(crate) struct UiBattleNetState {
@@ -32,5 +35,14 @@ impl UiBattleNetState {
     /// Reports whether the enabled service currently has a live connection.
     pub(crate) fn connected(&self) -> bool {
         self.inner.features_enabled && self.inner.connected
+    }
+
+    /// Returns the stock conversation capacity only while the platform service
+    /// is both available and connected.
+    ///
+    /// The native binding returns no Lua values when its service predicates
+    /// fail, so a disabled installation must expose `nil` rather than zero.
+    pub(crate) fn max_conversation_players(&self) -> Option<u8> {
+        self.connected().then_some(MAX_CONVERSATION_PLAYERS)
     }
 }
