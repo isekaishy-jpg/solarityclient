@@ -547,6 +547,7 @@ struct UiWorldStateInner {
     realm_time: Cell<Option<UiRealmTime>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
+    target_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
     resting: Cell<bool>,
     friend_counts: Cell<UiFriendCounts>,
@@ -657,6 +658,7 @@ impl UiWorldState {
         self.inner.realm_time.set(None);
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
+        self.inner.target_trade_money_copper.set(0);
         self.inner.area_resurrection_available.set(false);
         self.inner.resting.set(false);
     }
@@ -797,5 +799,16 @@ impl UiWorldState {
     #[must_use]
     pub fn player_trade_money_copper(&self) -> u32 {
         self.inner.player_trade_money_copper.get()
+    }
+
+    /// Replaces copper offered by the other participant in the active trade.
+    pub fn set_target_trade_money_copper(&self, money_copper: u32) {
+        self.inner.target_trade_money_copper.set(money_copper);
+    }
+
+    /// Returns remotely offered trade copper, zero outside an active offer.
+    #[must_use]
+    pub fn target_trade_money_copper(&self) -> u32 {
+        self.inner.target_trade_money_copper.get()
     }
 }

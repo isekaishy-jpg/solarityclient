@@ -19,7 +19,7 @@ mod xml;
 
 pub use addon::{
     AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
-    STOCK_INTERFACE_VERSION, UiAddonLoadState,
+    STOCK_INTERFACE_VERSION, UiAddonLoadState, UiSavedVariableState,
 };
 pub use animation::{
     UiAnimation, UiAnimationError, UiAnimationGroup, UiAnimationKind, UiAnimationLooping,
@@ -33,12 +33,16 @@ pub use binding::{
 };
 pub use event::{UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload};
 pub use feature::{
-    MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UI_CHAT_WINDOW_COUNT, UiBattlefieldQueueError,
-    UiBattlefieldQueueState, UiBattlefieldQueueStatus, UiBattlefieldSlot, UiChatWindow,
-    UiChatWindowState, UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole,
-    UiGroupFinderRoleCheck, UiGroupFinderServerInfo, UiGroupFinderState, UiGroupRosterState,
-    UiLootMethod, UiMinimapTrackingState, UiSpellBookState, UiSpellBookTab, UiTrackingCategory,
-    UiTrackingError, UiTrackingType, UiVoiceChatState, UiWorldPvpQueueSlot,
+    MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UI_CHAT_WINDOW_COUNT, UiAccountExpansion,
+    UiAccountState, UiBattlefieldQueueError, UiBattlefieldQueueState, UiBattlefieldQueueStatus,
+    UiBattlefieldSlot, UiChannelCategory, UiChannelDisplay, UiChannelMember, UiChannelState,
+    UiChatWindow, UiChatWindowState, UiCompanion, UiCompanionState, UiCompanionType,
+    UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole, UiGroupFinderRoleCheck,
+    UiGroupFinderServerInfo, UiGroupFinderState, UiGroupRosterState, UiGuildState, UiLootMethod,
+    UiLootState, UiMinimapTrackingState, UiQuestLogEntry, UiQuestLogQuest, UiQuestLogState,
+    UiSkillLine, UiSkillLineSkill, UiSkillLineState, UiSocialQueryState, UiSpellBookState,
+    UiSpellBookTab, UiTrackingCategory, UiTrackingError, UiTrackingType, UiVoiceChatState,
+    UiWorldPvpQueueSlot,
 };
 pub use feature::{
     UI_ACTION_SLOT_COUNT, UiActionBarPageError, UiActionBarState, UiActionBarStateError,

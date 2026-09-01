@@ -13,6 +13,7 @@ use mlua::{Lua, Table, Value};
 pub struct UiVoiceChatState {
     disabled_by_client: Rc<Cell<bool>>,
     enabled: Rc<Cell<bool>>,
+    active_channel: Rc<Cell<Option<u32>>>,
 }
 
 impl UiVoiceChatState {
@@ -43,6 +44,11 @@ impl UiVoiceChatState {
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.set(enabled);
     }
+
+    /// Replaces the display-row identifier of the active voice channel.
+    pub fn set_active_channel(&self, channel: Option<u32>) {
+        self.active_channel.set(channel);
+    }
 }
 
 pub(crate) fn register_globals(
@@ -63,6 +69,11 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetVoiceCurrentSessionID",
         lua.create_function(|_, ()| Ok(Value::Nil))?,
+    )?;
+    let active_channel = state.clone();
+    globals.raw_set(
+        "GetActiveVoiceChannel",
+        lua.create_function(move |_, ()| Ok(active_channel.active_channel.get()))?,
     )?;
     let disabled = state.clone();
     globals.raw_set(

@@ -57,6 +57,7 @@ pub(super) fn register_base_globals(
     register_sound_globals(lua, &globals, environment)?;
     register_portrait_globals(lua, &globals)?;
     register_addon_globals(lua, &globals, environment.addon_load_state())?;
+    register_saved_variable_globals(lua, &globals, environment.saved_variable_state())?;
     match manifest_kind {
         UiManifestKind::Glue => register_glue_globals(lua, &globals, environment)?,
         UiManifestKind::Frame => register_frame_globals(lua, &globals, environment)?,
@@ -83,20 +84,58 @@ pub(super) fn register_base_globals(
     Ok(())
 }
 
+fn register_saved_variable_globals(
+    lua: &Lua,
+    globals: &Table,
+    state: crate::UiSavedVariableState,
+) -> mlua::Result<()> {
+    let character_state = state.clone();
+    globals.raw_set(
+        "RegisterForSave",
+        lua.create_function(move |_, name: Value| {
+            let Value::String(name) = name else {
+                return Err(mlua::Error::runtime("Usage: RegisterForSave(\"variable\")"));
+            };
+            state.register_account(name.to_str()?.to_owned());
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "RegisterForSavePerCharacter",
+        lua.create_function(move |_, name: Value| {
+            let Value::String(name) = name else {
+                return Err(mlua::Error::runtime(
+                    "Usage: RegisterForSavePerCharacter(\"variable\")",
+                ));
+            };
+            character_state.register_character(name.to_str()?.to_owned());
+            Ok(())
+        })?,
+    )
+}
+
 /// Installs native APIs whose backing state exists only in an active world.
 fn register_frame_globals(
     lua: &Lua,
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    crate::feature::register_account_globals(lua, globals, environment.account_state())?;
     crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
     crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
     crate::feature::register_chat_type_globals(lua, globals)?;
     crate::feature::register_chat_window_globals(lua, globals, environment.chat_window_state())?;
+    crate::feature::register_channel_globals(lua, globals, environment.channel_state())?;
+    crate::feature::register_companion_globals(lua, globals, environment.companion_state())?;
+    crate::feature::register_loot_globals(lua, globals, environment.loot_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_paper_doll_globals(lua, globals, environment.assets())?;
     crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
     crate::feature::register_group_roster_globals(lua, globals, environment.group_roster_state())?;
+    crate::feature::register_guild_globals(lua, globals, environment.guild_state())?;
+    crate::feature::register_quest_log_globals(lua, globals, environment.quest_log_state())?;
+    crate::feature::register_skill_globals(lua, globals, environment.skill_line_state())?;
+    crate::feature::register_social_globals(lua, globals, environment.social_query_state())?;
     crate::feature::register_spell_book_globals(lua, globals, environment.spell_book_state())?;
     crate::feature::register_voice_chat_globals(lua, globals, environment.voice_chat_state())?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
@@ -114,6 +153,7 @@ fn register_frame_globals(
     let realm_time = world.clone();
     let cursor_state = world.clone();
     let trade_state = world.clone();
+    let target_trade_state = world.clone();
     let area_resurrection = world.clone();
     let friend_counts = world.clone();
     let threat_warnings = environment.cvars();
@@ -248,6 +288,12 @@ fn register_frame_globals(
     globals.raw_set(
         "GetPlayerTradeMoney",
         lua.create_function(move |_, ()| Ok(f64::from(trade_state.player_trade_money_copper())))?,
+    )?;
+    globals.raw_set(
+        "GetTargetTradeMoney",
+        lua.create_function(move |_, ()| {
+            Ok(f64::from(target_trade_state.target_trade_money_copper()))
+        })?,
     )?;
     globals.raw_set(
         "CanHearthAndResurrectFromArea",

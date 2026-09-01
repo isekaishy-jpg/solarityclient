@@ -41,9 +41,11 @@ fn world_state_retains_only_authoritative_player_facts() -> Result<(), Box<dyn E
     );
     assert_eq!(world.cursor_money_copper(), 0);
     assert_eq!(world.player_trade_money_copper(), 0);
+    assert_eq!(world.target_trade_money_copper(), 0);
 
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);
+    world.set_target_trade_money_copper(890);
     world.set_zone(UiZoneState::new(
         "Elwynn Forest",
         "Elwynn Forest",
@@ -57,6 +59,7 @@ fn world_state_retains_only_authoritative_player_facts() -> Result<(), Box<dyn E
     world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     assert_eq!(world.cursor_money_copper(), 234);
     assert_eq!(world.player_trade_money_copper(), 567);
+    assert_eq!(world.target_trade_money_copper(), 890);
     let zone = match world.zone() {
         Some(zone) => zone,
         None => panic!("zone was just published"),
@@ -95,6 +98,7 @@ fn world_state_retains_only_authoritative_player_facts() -> Result<(), Box<dyn E
     assert_eq!(world.realm_time(), None);
     assert_eq!(world.cursor_money_copper(), 0);
     assert_eq!(world.player_trade_money_copper(), 0);
+    assert_eq!(world.target_trade_money_copper(), 0);
     Ok(())
 }
 

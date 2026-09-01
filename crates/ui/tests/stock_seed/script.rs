@@ -4,13 +4,14 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
-    UiFramePlan, UiFriendCounts, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog,
-    UiObjectTree, UiPlayerFactionState, UiPlayerIdentityState, UiPlayerLanguage,
-    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiSpellBookTab, UiTexturePlan,
-    UiTextureStatePlan,
+    FontCatalog, UiAccountExpansion, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog,
+    UiBundle, UiChannelCategory, UiChannelDisplay, UiChannelMember, UiCompanion, UiCompanionType,
+    UiFactionGroup, UiFramePlan, UiFriendCounts, UiLayoutPlan, UiManifestKind, UiModifierKeys,
+    UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerIdentityState, UiPlayerLanguage,
+    UiPlayerProgressionState, UiPlayerState, UiQuestLogEntry, UiQuestLogQuest, UiRealmDate,
+    UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
+    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
+    UiSkillLine, UiSkillLineSkill, UiSpellBookTab, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -375,6 +376,10 @@ roster:EnableMouse(true)
 assert(roster:IsMouseEnabled())
 roster:EnableMouse()
 assert(roster:IsMouseEnabled() == nil)
+roster:EnableMouseWheel(true)
+assert(roster:IsMouseWheelEnabled() == 1)
+roster:EnableMouseWheel()
+assert(roster:IsMouseWheelEnabled() == nil)
 local point, relative, relativePoint, x, y = roster:GetPoint(1)
 assert(point == "BOTTOM")
 assert(relative == PanelUpButton)
@@ -961,6 +966,22 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_SPELL_TAB_VALUES = select('#', GetSpellTabInfo(2))
     INITIAL_PET_SPELL_VALUES = select('#', HasPetSpells())
     INITIAL_PET_SPELL_COUNT, INITIAL_PET_NAME_TOKEN = HasPetSpells()
+    INITIAL_CRITTERS = GetNumCompanions("CRITTER")
+    INITIAL_MOUNTS = GetNumCompanions("MOUNT")
+    INITIAL_COMPANION_VALUES = select('#', GetCompanionInfo("CRITTER", 1))
+    INITIAL_SKILL_LINES = GetNumSkillLines()
+    INITIAL_SKILL_INFO_VALUES = select('#', GetSkillLineInfo(2))
+    INITIAL_INVALID_SKILL_VALUES = select('#', GetSkillLineInfo(0))
+    INITIAL_TALENT_POINTS, INITIAL_SKILL_POINTS = UnitCharacterPoints("player")
+    INITIAL_ACCOUNT_EXPANSION = GetAccountExpansionLevel()
+    INITIAL_QUEST_ENTRIES, INITIAL_QUESTS = GetNumQuestLogEntries()
+    INITIAL_MASTER_LOOT_CANDIDATE = GetMasterLootCandidate(2)
+    SetWhoToUI(true)
+    INITIAL_GUILD_MEMBER = IsInGuild()
+    INITIAL_GUILD_MOTD = GetGuildRosterMOTD()
+    INITIAL_DISPLAY_CHANNELS = GetNumDisplayChannels()
+    RegisterForSave("SOLARITY_ACCOUNT_FIXTURE")
+    RegisterForSavePerCharacter("SOLARITY_CHARACTER_FIXTURE")
   </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
@@ -979,10 +1000,20 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
+    let account = environment.account_state();
     let action_bar = environment.action_bar_state();
+    let companions = environment.companion_state();
+    let channels = environment.channel_state();
+    let guild = environment.guild_state();
+    let loot = environment.loot_state();
+    let quest_log = environment.quest_log_state();
+    let saved_variables = environment.saved_variable_state();
+    let social_queries = environment.social_query_state();
+    let skill_lines = environment.skill_line_state();
     let spell_book = environment.spell_book_state();
     let modifiers = environment.modifier_key_state();
     action_bar.set_slots([0; 144]);
+    account.set_expansion(UiAccountExpansion::WrathOfTheLichKing);
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_identity(UiPlayerIdentityState::new("Thrall", 80));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
@@ -997,6 +1028,60 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         0,
         2,
     )]);
+    companions.replace(
+        UiCompanionType::Mount,
+        vec![UiCompanion::new(
+            24_160,
+            Some("Black War Bear".to_owned()),
+            60_135,
+            Some("Interface\\Icons\\Ability_Mount_PolarBear_Black".to_owned()),
+            false,
+        )],
+    );
+    channels.replace(vec![
+        UiChannelDisplay::header("World", false, 1),
+        UiChannelDisplay::channel(
+            "General",
+            Some(1),
+            UiChannelCategory::World,
+            true,
+            vec![UiChannelMember::new("Thrall")],
+        ),
+    ]);
+    guild.set_member(true);
+    guild.set_roster_member_count(1);
+    guild.set_message_of_the_day("For the Horde!");
+    loot.set_master_loot_candidates(vec![None, Some("Thrall".to_owned())]);
+    quest_log.replace(vec![
+        UiQuestLogEntry::header("Icecrown"),
+        UiQuestLogEntry::Quest(
+            UiQuestLogQuest::new(13_366, "The Battle For The Undercity", 74)
+                .with_tag("Group")
+                .with_suggested_group(5)
+                .pushable(true)
+                .watched(true),
+        ),
+    ]);
+    quest_log.set_daily_quest_counts(2, 25);
+    skill_lines.replace(vec![
+        UiSkillLine::header("Professions"),
+        UiSkillLine::Skill(UiSkillLineSkill {
+            skill_id: 164,
+            name: "Blacksmithing".to_owned(),
+            rank: 375,
+            temporary_points: 0,
+            modifier: 10,
+            maximum_rank: 450,
+            abandonable: true,
+            step_cost: Some(5),
+            rank_cost: Some(1),
+            minimum_level: 65,
+            cost_type: 0,
+            description: Some("Allows a blacksmith to make weapons and armor.".to_owned()),
+        }),
+    ]);
+    skill_lines.set_adjusted_skill_points(4);
+    skill_lines.set_character_points(7, 3);
     modifiers.set(UiModifierKeys::new(true, false, false, true, false, false));
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
@@ -1011,6 +1096,40 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
 
     runtime.execute_all(&bundle, &tree, &scripts)?;
+    assert!(social_queries.who_results_to_ui());
+    assert_eq!(
+        saved_variables.account_names(),
+        ["SOLARITY_ACCOUNT_FIXTURE"]
+    );
+    assert_eq!(
+        saved_variables.character_names(),
+        ["SOLARITY_CHARACTER_FIXTURE"]
+    );
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_QUEST_ENTRIES")?,
+            bundle.lua().globals().get::<u8>("INITIAL_QUESTS")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<String>("INITIAL_MASTER_LOOT_CANDIDATE")?,
+            bundle.lua().globals().get::<u8>("INITIAL_GUILD_MEMBER")?,
+            bundle.lua().globals().get::<String>("INITIAL_GUILD_MOTD")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_DISPLAY_CHANNELS")?,
+        ),
+        (2, 1, "Thrall".to_owned(), 1, "For the Horde!".to_owned(), 2)
+    );
+    assert!(bundle
+        .lua()
+        .load("SelectQuestLogEntry(2); SetAbandonQuest(); local title, level, tag, group, header, collapsed, complete, daily, id = GetQuestLogTitle(2); return GetQuestLogSelection() == 2 and GetAbandonQuestName() == title and GetQuestLogPushable() == 1 and IsQuestWatched(2) == 1 and level == 74 and tag == 'Group' and group == 5 and header == nil and collapsed == nil and complete == nil and daily == nil and id == 13366")
+        .eval::<bool>()?);
+    assert!(bundle
+        .lua()
+        .load("SetSelectedDisplayChannel(2); local name, header, collapsed, number, count, active, category = GetChannelDisplayInfo(2); local member = GetChannelRosterInfo(2, 1); return GetSelectedDisplayChannel() == 2 and name == 'General' and header == nil and collapsed == nil and number == 1 and count == 1 and active == 1 and category == 'CHANNEL_CATEGORY_WORLD' and member == 'Thrall'")
+        .eval::<bool>()?);
     assert_eq!(
         bundle
             .lua()
@@ -1025,6 +1144,61 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .get::<mlua::Value>("INITIAL_PLAYER_REALM")?,
         mlua::Value::Nil
     ));
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_CRITTERS")?,
+            bundle.lua().globals().get::<u8>("INITIAL_MOUNTS")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_COMPANION_VALUES")?,
+        ),
+        (0, 1, 0)
+    );
+    assert_eq!(
+        (
+            bundle.lua().globals().get::<u8>("INITIAL_SKILL_LINES")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_SKILL_INFO_VALUES")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_INVALID_SKILL_VALUES")?,
+            bundle.lua().globals().get::<u8>("INITIAL_TALENT_POINTS")?,
+            bundle.lua().globals().get::<u8>("INITIAL_SKILL_POINTS")?,
+            bundle
+                .lua()
+                .globals()
+                .get::<u8>("INITIAL_ACCOUNT_EXPANSION")?,
+        ),
+        (2, 13, 13, 7, 3, 2)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("SetSelectedSkill(2); local selected = GetSelectedSkill(); CollapseSkillHeader(1); local collapsed = GetNumSkillLines(); ExpandSkillHeader(1); return selected, collapsed, GetNumSkillLines(), GetAdjustedSkillPoints()")
+            .eval::<(u8, u8, u8, u8)>()?,
+        (2, 1, 2, 4)
+    );
+    assert!(bundle
+        .lua()
+        .load("local name, isHeader, isExpanded, rank, temporary, modifier, maximum, abandonable, stepCost, rankCost, minimumLevel, costType, description = GetSkillLineInfo(2); return name == 'Blacksmithing' and isHeader == nil and isExpanded == nil and rank == 375 and temporary == 0 and modifier == 10 and maximum == 450 and abandonable == 1 and stepCost == 5 and rankCost == 1 and minimumLevel == 65 and costType == 0 and description == 'Allows a blacksmith to make weapons and armor.'")
+        .eval::<bool>()?);
+    assert_eq!(
+        bundle
+            .lua()
+            .load("local id, name, spell, icon, active = GetCompanionInfo('mount', 1); return id, name, spell, icon, active")
+            .eval::<(u32, String, u32, String, Option<u8>)>()?,
+        (
+            24_160,
+            "Black War Bear".to_owned(),
+            60_135,
+            "Interface\\Icons\\Ability_Mount_PolarBear_Black".to_owned(),
+            None,
+        )
+    );
     assert!(matches!(
         bundle
             .lua()
@@ -1349,6 +1523,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);
+    world.set_target_trade_money_copper(890);
     world.set_realm_date(UiRealmDate::new(7, 1, 1, 2000)?);
     world.set_realm_time(UiRealmTime::new(3, 5)?);
     modifiers.set(UiModifierKeys::new(false, true, true, false, false, true));
@@ -1375,9 +1550,9 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         bundle
             .lua()
-            .load("return GetCursorMoney(), GetPlayerTradeMoney()")
-            .eval::<(f64, f64)>()?,
-        (234.0, 567.0)
+            .load("return GetCursorMoney(), GetPlayerTradeMoney(), GetTargetTradeMoney()")
+            .eval::<(f64, f64, f64)>()?,
+        (234.0, 567.0, 890.0)
     );
     assert_eq!(
         bundle

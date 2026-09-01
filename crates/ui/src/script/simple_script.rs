@@ -143,6 +143,7 @@ static FRAME_USER_PLACED_TOKEN: u8 = 103;
 static FRAME_DONT_SAVE_POSITION_TOKEN: u8 = 104;
 static PORTRAIT_UNIT_TOKEN: u8 = 105;
 static HIT_RECT_INSETS_TOKEN: u8 = 106;
+static MOUSE_WHEEL_ENABLED_TOKEN: u8 = 107;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -345,15 +346,24 @@ pub struct UiScriptEnvironment {
     current_screen: Rc<RefCell<String>>,
     modifiers: crate::UiModifierKeyState,
     world: crate::UiWorldState,
+    account: crate::UiAccountState,
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
     chat_windows: crate::UiChatWindowState,
+    channels: crate::UiChannelState,
+    companions: crate::UiCompanionState,
+    loot: crate::UiLootState,
     minimap_tracking: crate::UiMinimapTrackingState,
     group_finder: crate::UiGroupFinderState,
     group_roster: crate::UiGroupRosterState,
+    guild: crate::UiGuildState,
+    quest_log: crate::UiQuestLogState,
+    skill_lines: crate::UiSkillLineState,
+    social_queries: crate::UiSocialQueryState,
     spell_book: crate::UiSpellBookState,
     voice_chat: crate::UiVoiceChatState,
     addons: crate::UiAddonLoadState,
+    saved_variables: crate::UiSavedVariableState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -390,15 +400,24 @@ impl UiScriptEnvironment {
             current_screen: Rc::new(RefCell::new(String::new())),
             modifiers: crate::UiModifierKeyState::new(),
             world: crate::UiWorldState::new(),
+            account: crate::UiAccountState::new(),
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
             chat_windows: crate::UiChatWindowState::new(),
+            channels: crate::UiChannelState::new(),
+            companions: crate::UiCompanionState::new(),
+            loot: crate::UiLootState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
             group_finder: crate::UiGroupFinderState::new(),
             group_roster: crate::UiGroupRosterState::new(),
+            guild: crate::UiGuildState::new(),
+            quest_log: crate::UiQuestLogState::new(),
+            skill_lines: crate::UiSkillLineState::new(),
+            social_queries: crate::UiSocialQueryState::new(),
             spell_book: crate::UiSpellBookState::new(),
             voice_chat: crate::UiVoiceChatState::new(),
             addons: crate::UiAddonLoadState::default(),
+            saved_variables: crate::UiSavedVariableState::new(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -489,6 +508,12 @@ impl UiScriptEnvironment {
         self.addons.clone()
     }
 
+    /// Returns built-in saved-variable declarations collected during startup.
+    #[must_use]
+    pub fn saved_variable_state(&self) -> crate::UiSavedVariableState {
+        self.saved_variables.clone()
+    }
+
     fn battlenet_state(&self) -> crate::feature::UiBattleNetState {
         self.battlenet.clone()
     }
@@ -519,6 +544,12 @@ impl UiScriptEnvironment {
         self.world.clone()
     }
 
+    /// Returns the shared authenticated account entitlement image.
+    #[must_use]
+    pub fn account_state(&self) -> crate::UiAccountState {
+        self.account.clone()
+    }
+
     /// Returns the shared physical modifier image consumed by FrameXML.
     #[must_use]
     pub fn modifier_key_state(&self) -> crate::UiModifierKeyState {
@@ -543,6 +574,24 @@ impl UiScriptEnvironment {
         self.chat_windows.clone()
     }
 
+    /// Returns the shared joined-channel display and roster state.
+    #[must_use]
+    pub fn channel_state(&self) -> crate::UiChannelState {
+        self.channels.clone()
+    }
+
+    /// Returns the shared learned mount and critter collection.
+    #[must_use]
+    pub fn companion_state(&self) -> crate::UiCompanionState {
+        self.companions.clone()
+    }
+
+    /// Returns the shared active loot-window eligibility projection.
+    #[must_use]
+    pub fn loot_state(&self) -> crate::UiLootState {
+        self.loot.clone()
+    }
+
     /// Returns the shared player-capability tracking projection.
     #[must_use]
     pub fn minimap_tracking_state(&self) -> crate::UiMinimapTrackingState {
@@ -559,6 +608,30 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn group_roster_state(&self) -> crate::UiGroupRosterState {
         self.group_roster.clone()
+    }
+
+    /// Returns the shared active-character guild membership state.
+    #[must_use]
+    pub fn guild_state(&self) -> crate::UiGuildState {
+        self.guild.clone()
+    }
+
+    /// Returns the shared ordered quest log and client selection state.
+    #[must_use]
+    pub fn quest_log_state(&self) -> crate::UiQuestLogState {
+        self.quest_log.clone()
+    }
+
+    /// Returns the shared player skill-line sequence and selection.
+    #[must_use]
+    pub fn skill_line_state(&self) -> crate::UiSkillLineState {
+        self.skill_lines.clone()
+    }
+
+    /// Returns the shared social-directory result routing state.
+    #[must_use]
+    pub fn social_query_state(&self) -> crate::UiSocialQueryState {
+        self.social_queries.clone()
     }
 
     /// Returns the shared ordered player spell-book projection.
@@ -1280,6 +1353,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
+                .and_then(|()| table.raw_set(mouse_wheel_enabled_key(), false))
                 .and_then(|()| table.raw_set(frame_clamped_key(), clamped_to_screen))
                 .and_then(|()| table.raw_set(frame_movable_key(), movable))
                 .and_then(|()| table.raw_set(frame_resizable_key(), resizable))
@@ -1885,6 +1959,7 @@ fn create_dynamic_object(
         object.raw_set(frame_strata_key(), strata)?;
         object.raw_set(keyboard_enabled_key(), false)?;
         object.raw_set(mouse_enabled_key(), false)?;
+        object.raw_set(mouse_wheel_enabled_key(), false)?;
         object.raw_set(
             frame_clamped_key(),
             record.raw_get::<bool>("clamped_to_screen")?,
@@ -3312,6 +3387,23 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
         lua.create_function(|_, object: Table| {
             Ok(object
                 .raw_get::<bool>(mouse_enabled_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
+    )?;
+    methods.raw_set(
+        "EnableMouseWheel",
+        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+            let enabled = arguments
+                .first()
+                .is_some_and(|value| lua_bool(value, false));
+            object.raw_set(mouse_wheel_enabled_key(), enabled)
+        })?,
+    )?;
+    methods.raw_set(
+        "IsMouseWheelEnabled",
+        lua.create_function(|_, object: Table| {
+            Ok(object
+                .raw_get::<bool>(mouse_wheel_enabled_key())?
                 .then_some(Value::Number(1.0)))
         })?,
     )?;
@@ -5790,6 +5882,10 @@ fn ignore_depth_key() -> LightUserData {
 
 fn mouse_enabled_key() -> LightUserData {
     hidden_key(&MOUSE_ENABLED_TOKEN)
+}
+
+fn mouse_wheel_enabled_key() -> LightUserData {
+    hidden_key(&MOUSE_WHEEL_ENABLED_TOKEN)
 }
 
 fn attributes_key() -> LightUserData {
