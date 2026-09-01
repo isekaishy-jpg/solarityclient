@@ -212,6 +212,48 @@ fn asset_presence_uses_exact_archive_paths() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// MovieFrame's extensionless identity resolves only in the selected locale's
+/// stock loose cinematic tree.
+#[test]
+fn cinematic_identity_resolves_locale_loose_avi() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write_loose_file(
+        "Data/enUS/Interface/Cinematics/Logo_1024.avi",
+        b"RIFF fixture",
+    )?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    let path = store.cinematic_file_path(&AssetPath::new("interface/cinematics/logo_1024")?)?;
+
+    assert_eq!(
+        path,
+        fs::canonicalize(
+            fixture
+                .data_root()
+                .join("enUS/Interface/Cinematics/Logo_1024.avi"),
+        )?
+    );
+    assert_eq!(fs::read(path)?, b"RIFF fixture");
+    Ok(())
+}
+
+/// Loose cinematic lookup is scoped and never becomes a general filesystem
+/// fallback for missing archive assets.
+#[test]
+fn cinematic_lookup_rejects_other_loose_namespaces() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write_loose_file("Data/enUS/DBFilesClient/Forbidden.avi", b"loose")?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+
+    assert!(matches!(
+        store.cinematic_file_path(&AssetPath::new("DBFilesClient/Forbidden")?),
+        Err(AssetError::InvalidAssetPath { .. })
+    ));
+    Ok(())
+}
+
 /// A missing required file identifies the expected consolidated archive.
 #[test]
 fn missing_required_archive_fails_discovery() -> Result<(), Box<dyn Error>> {

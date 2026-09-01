@@ -6,6 +6,7 @@
 
 mod file_cache;
 mod filestack_addons;
+mod filestack_cinematics;
 mod filestack_streaming;
 mod filestack_win32;
 mod handle;

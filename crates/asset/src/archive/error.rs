@@ -81,6 +81,14 @@ pub enum AssetError {
         /// Filesystem context.
         message: String,
     },
+    /// The selected locale's loose cinematic tree could not be inspected.
+    #[error("failed to resolve client cinematic path {path}: {message}")]
+    CinematicLookup {
+        /// Concrete locale-relative path being inspected.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
     /// An archive was present but could not be opened.
     #[error("failed to open client archive {path}: {message}")]
     ArchiveOpen {
