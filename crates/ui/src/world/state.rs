@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use super::{realm_date::UiRealmDate, realm_time::UiRealmTime};
+use super::{UiPlayerLanguage, realm_date::UiRealmDate, realm_time::UiRealmTime};
 
 /// Player facts exposed synchronously through the stock FrameXML API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -231,6 +231,7 @@ struct UiWorldStateInner {
     player: Cell<Option<UiPlayerState>>,
     player_progression: Cell<Option<UiPlayerProgressionState>>,
     player_faction: RefCell<Option<UiPlayerFactionState>>,
+    player_default_language: RefCell<Option<UiPlayerLanguage>>,
     zone: RefCell<Option<UiZoneState>>,
     realm_date: Cell<Option<UiRealmDate>>,
     realm_time: Cell<Option<UiRealmTime>>,
@@ -261,6 +262,11 @@ impl UiWorldState {
         *self.inner.player_faction.borrow_mut() = Some(faction);
     }
 
+    /// Publishes the active player's localized default chat language.
+    pub fn set_player_default_language(&self, language: UiPlayerLanguage) {
+        *self.inner.player_default_language.borrow_mut() = Some(language);
+    }
+
     /// Publishes the latest complete map-area projection.
     pub fn set_zone(&self, zone: UiZoneState) {
         *self.inner.zone.borrow_mut() = Some(zone);
@@ -281,6 +287,7 @@ impl UiWorldState {
         self.inner.player.set(None);
         self.inner.player_progression.set(None);
         *self.inner.player_faction.borrow_mut() = None;
+        *self.inner.player_default_language.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
         self.inner.realm_date.set(None);
         self.inner.realm_time.set(None);
@@ -305,6 +312,13 @@ impl UiWorldState {
     #[must_use]
     pub fn player_faction(&self) -> Option<UiPlayerFactionState> {
         self.inner.player_faction.borrow().clone()
+    }
+
+    /// Returns the default language only while an active player owns it.
+    #[must_use]
+    pub fn player_default_language(&self) -> Option<UiPlayerLanguage> {
+        self.player()
+            .and_then(|_| self.inner.player_default_language.borrow().clone())
     }
 
     /// Returns the current zone projection when map-area state is authoritative.

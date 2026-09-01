@@ -170,3 +170,9 @@ checks all 326 production plus 166 external test files.
 - Native CVar initialization at `0051e2d8` registers `chatStyle`; its default
   pointer `00a0189c` contains `im`. The local CVar catalog preserves that value
   so FrameXML's whole-window chat focus behavior follows the stock default.
+- `GetDefaultLanguage` at registration `00ac7a80` points to `00500910`. It
+  requires a live player, resolves that player's default language identifier
+  through the client language table, returns only the localized name, and
+  returns no values when either fact is absent. UI world state therefore
+  retains the explicit language row instead of deriving an English label from
+  faction.

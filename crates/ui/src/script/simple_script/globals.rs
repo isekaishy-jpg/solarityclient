@@ -97,6 +97,7 @@ fn register_frame_globals(
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
     let unit_faction = world.clone();
+    let default_language = world.clone();
     let zone_text = world.clone();
     let real_zone_text = world.clone();
     let sub_zone_text = world.clone();
@@ -158,6 +159,16 @@ fn register_frame_globals(
             let mut values = MultiValue::new();
             values.push_back(Value::String(lua.create_string(faction.group().as_str())?));
             values.push_back(Value::String(lua.create_string(faction.name())?));
+            Ok(values)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetDefaultLanguage",
+        lua.create_function(move |lua, ()| {
+            let mut values = MultiValue::new();
+            if let Some(language) = default_language.player_default_language() {
+                values.push_back(Value::String(lua.create_string(language.name())?));
+            }
             Ok(values)
         })?,
     )?;

@@ -6,10 +6,10 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
     UiFramePlan, UiLayoutPlan, UiManifestKind, UiModifierKeys, UiObjectCatalog, UiObjectTree,
-    UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime,
-    UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler,
-    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan,
-    UiTextureStatePlan,
+    UiPlayerFactionState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerState, UiRealmDate,
+    UiRealmTime, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
+    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
+    UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -799,6 +799,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     INITIAL_XP = UnitXP("player")
     INITIAL_XP_MAX = UnitXPMax("player")
     INITIAL_FACTION, INITIAL_FACTION_NAME = UnitFactionGroup("player")
+    INITIAL_LANGUAGE = GetDefaultLanguage()
     INITIAL_WEEKDAY, INITIAL_MONTH, INITIAL_MONTH_DAY, INITIAL_YEAR = CalendarGetDate()
     INITIAL_REALM_HOUR, INITIAL_REALM_MINUTE = GetGameTime()
     INITIAL_SHIFT = IsShiftKeyDown()
@@ -828,6 +829,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
+    world.set_player_default_language(UiPlayerLanguage::new(1, "Orcish"));
     world.set_realm_date(UiRealmDate::new(3, 12, 8, 2009)?);
     world.set_realm_time(UiRealmTime::new(21, 37)?);
     modifiers.set(UiModifierKeys::new(true, false, false, true, false, false));
@@ -863,6 +865,10 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .globals()
             .get::<String>("INITIAL_FACTION_NAME")?,
         "Horde"
+    );
+    assert_eq!(
+        bundle.lua().globals().get::<String>("INITIAL_LANGUAGE")?,
+        "Orcish"
     );
     assert_eq!(
         (
@@ -1087,6 +1093,13 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
         .eval::<(bool, String)>()?;
     assert!(!available);
     assert!(message.contains("authoritative realm date"));
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return select('#', GetDefaultLanguage())")
+            .eval::<u32>()?,
+        0
+    );
     Ok(())
 }
 

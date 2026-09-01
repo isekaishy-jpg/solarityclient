@@ -11,10 +11,10 @@ use solarity_asset::{
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiAnimationPlan, UiBindingAssignments,
     UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan, UiLayoutPlan, UiManifestKind,
-    UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerProgressionState, UiPlayerState,
-    UiRealmDate, UiRealmTime, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile,
-    UiTexturePlan, UiTextureStatePlan, UiZoneState,
+    UiObjectCatalog, UiObjectTree, UiPlayerFactionState, UiPlayerLanguage,
+    UiPlayerProgressionState, UiPlayerState, UiRealmDate, UiRealmTime, UiRegionStatePlan,
+    UiResourceContent, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
+    UiScriptRuntimePlan, UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -66,6 +66,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     UiFactionGroup::Alliance,
                     "Alliance",
                 ));
+                // Common is language row 7 for the explicit Alliance fixture.
+                world.set_player_default_language(UiPlayerLanguage::new(7, "Common"));
                 // Empty labels and no PvP classification are an explicit
                 // pre-map update, matching the temporal state before the
                 // world service publishes its first area transition.
