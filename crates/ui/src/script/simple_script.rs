@@ -17,11 +17,15 @@ use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canon
 use crate::script::UiGlueNetworkBridge;
 use crate::{
     FontCatalog, FontDefinition, FontOutline, HorizontalJustification, UiAnchorTarget,
-    UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan, UiFrameStrata,
-    UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole, UiObjectTree, UiPoint,
-    UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler,
-    UiScriptPlan, UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification,
-    XmlContent,
+    UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
+    UiFrameStrata, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole,
+    UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
+    UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget, UiTextureFile,
+    UiTextureStatePlan, VerticalJustification, XmlContent,
+};
+
+use crate::animation::{
+    UiAnimationMetatables, create_animation_metatables, register_owner_animations,
 };
 
 use self::cvars::UiCVarRegistry;
@@ -29,7 +33,7 @@ use self::globals::register_base_globals;
 use super::handlers::handler_for;
 use super::templates::TEMPLATE_REGISTRY;
 
-pub(super) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
+pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
@@ -206,6 +210,8 @@ pub struct UiScriptRuntime {
     next_action: usize,
     object_metatables: Vec<RegistryKey>,
     font_metatable: RegistryKey,
+    animation_metatables: UiAnimationMetatables,
+    animations: UiAnimationPlan,
     font_actions: Vec<Option<FontDefinition>>,
     region_dimensions: Vec<(f64, f64)>,
     region_shown: Vec<bool>,
@@ -228,6 +234,7 @@ pub struct UiScriptRuntime {
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
 pub struct UiScriptRuntimePlan<'plan, 'bundle> {
     tree: &'plan UiObjectTree<'bundle>,
+    animations: &'plan UiAnimationPlan,
     frames: &'plan UiFrameStatePlan,
     regions: &'plan UiRegionStatePlan,
     templates: &'plan UiRuntimeTemplatePlan,
@@ -240,6 +247,7 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
     #[must_use]
     pub const fn new(
         tree: &'plan UiObjectTree<'bundle>,
+        animations: &'plan UiAnimationPlan,
         frames: &'plan UiFrameStatePlan,
         regions: &'plan UiRegionStatePlan,
         templates: &'plan UiRuntimeTemplatePlan,
@@ -248,6 +256,7 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
     ) -> Self {
         Self {
             tree,
+            animations,
             frames,
             regions,
             templates,
@@ -518,6 +527,8 @@ impl UiScriptRuntime {
         let font_metatable = create_font_metatable(lua)
             .and_then(|metatable| lua.create_registry_value(metatable))
             .map_err(|error| execution_error("font metatable", error))?;
+        let animation_metatables = create_animation_metatables(lua)
+            .map_err(|error| execution_error("animation metatables", error))?;
         let mut font_actions = vec![None; bundle.actions().len()];
         for definition in plan.fonts.definitions() {
             let action_index = definition.action_index();
@@ -628,6 +639,8 @@ impl UiScriptRuntime {
             next_action: 0,
             object_metatables,
             font_metatable,
+            animation_metatables,
+            animations: plan.animations.clone(),
             font_actions,
             region_dimensions,
             region_shown,
@@ -1315,6 +1328,13 @@ impl UiScriptRuntime {
                     .map_err(|error| execution_error("object registration", error))?;
             }
         }
+        register_owner_animations(
+            lua,
+            &self.animations,
+            node_index,
+            &self.animation_metatables,
+        )
+        .map_err(|error| execution_error("animation registration", error))?;
         self.registered_objects
             .set(self.registered_objects.get() + 1);
         Ok(())

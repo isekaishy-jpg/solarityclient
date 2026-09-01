@@ -26,3 +26,4 @@ pub use templates::{
 
 pub(crate) use network_intent::UiGlueNetworkBridge;
 pub(crate) use runtime_state::{UiRuntimeAnchor, UiRuntimeObject, UiRuntimeObjectPlan};
+pub(crate) use simple_script::OBJECT_REGISTRY;

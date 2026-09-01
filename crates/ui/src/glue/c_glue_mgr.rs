@@ -9,11 +9,11 @@ use crate::glue::{GlueError, GlueObject, GlueStartupReport};
 use crate::script::UiGlueNetworkBridge;
 use crate::script::UiRuntimeObjectPlan;
 use crate::{
-    FontCatalog, UiBundle, UiEventArgument, UiEventDispatch, UiEventError, UiEventPayload,
-    UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus,
-    UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPresentationPlan,
-    UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    FontCatalog, UiAnimationPlan, UiBundle, UiEventArgument, UiEventDispatch, UiEventError,
+    UiEventPayload, UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction,
+    UiGlueNetworkStatus, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
+    UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
     UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
@@ -89,6 +89,7 @@ impl GlueManager {
         let templates = UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?;
         let textures = UiTexturePlan::from_tree(&tree)?;
         let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+        let animations = UiAnimationPlan::from_tree(&tree)?;
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
                 .with_shared_asset_store(assets.clone());
@@ -97,6 +98,7 @@ impl GlueManager {
         let ui_extent = environment.ui_extent();
         let runtime_plan = UiScriptRuntimePlan::new(
             &tree,
+            &animations,
             &frames,
             &regions,
             &templates,

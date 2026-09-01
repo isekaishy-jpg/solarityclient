@@ -303,6 +303,30 @@ non-frame parents, and level overflow are explicit startup failures.
 The installed client resolves 580 Glue and 4,938 FrameXML frame-derived
 objects through this pass.
 
+## Typed animation plan
+
+Animation groups form a frame-owned construction tree, not frame or render
+regions. They are registered after their owner table and before that owner's
+`OnLoad`, so XML `parentKey` fields and expanded global names are available to
+stock Lua at the same boundary as the original client. An unnamed group keeps
+its frame's name context; consequently an `Alpha` named `$parentPulser` inside
+`TutorialFrameCallOut` becomes the global `TutorialFrameCallOutPulser`.
+
+The installed build-12340 FrameXML corpus contains 13 `AnimationGroup`
+declarations, one timing-only `Animation`, 20 `Alpha` primitives, and two
+`Translation` primitives. Their authored order, start and end delays,
+duration, smoothing, looping mode, additive values, `OnLoad`, and `OnFinished`
+targets are retained. Equal order values execute as a parallel band, while
+higher orders follow sequentially. Later-client primitives such as `Scale`,
+`Rotation`, and path animation are rejected rather than assigned invented
+behavior. GlueXML contains no animation declarations in the installed corpus.
+
+Lua animation objects have their own metatables and retained playback state.
+They do not enter the frame layout arena, renderer batches, or frame event
+subscriber count. A renderer-clock update stage will advance their progress;
+construction-time `Play`, `Pause`, `Stop`, and `Finish` calls already preserve
+the stock script-visible lifecycle and group callback ownership.
+
 ## Typed texture plan
 
 Texture declarations are decoded into a flat plan parallel to the object tree.

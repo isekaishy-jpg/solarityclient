@@ -20,6 +20,10 @@ pub use addon::{
     AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
     STOCK_INTERFACE_VERSION,
 };
+pub use animation::{
+    UiAnimation, UiAnimationError, UiAnimationGroup, UiAnimationKind, UiAnimationLooping,
+    UiAnimationPlan, UiAnimationValue,
+};
 pub use binding::{
     UiBindingAction, UiBindingAssignment, UiBindingAssignmentError, UiBindingAssignmentId,
     UiBindingAssignments, UiBindingCatalog, UiBindingDefinition, UiBindingDocument, UiBindingError,

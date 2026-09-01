@@ -3,8 +3,8 @@
 use thiserror::Error;
 
 use crate::{
-    FontError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError, UiRenderError,
-    UiScriptError, UiTextureError,
+    FontError, UiAnimationError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError,
+    UiRenderError, UiScriptError, UiTextureError,
 };
 
 /// A stock built-in login UI could not be constructed or executed.
@@ -19,6 +19,9 @@ pub enum GlueError {
     /// Template or live object construction failed.
     #[error(transparent)]
     Object(#[from] UiObjectError),
+    /// Animation ownership or timeline properties are malformed.
+    #[error(transparent)]
+    Animation(#[from] UiAnimationError),
     /// Frame property decoding or parent resolution failed.
     #[error(transparent)]
     Frame(#[from] UiFrameError),

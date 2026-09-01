@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup, UiFramePlan,
-    UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
+    FontCatalog, UiAnimationPlan, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFactionGroup,
+    UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerFactionState,
     UiPlayerProgressionState, UiPlayerState, UiRegionStatePlan, UiRuntimeTemplatePlan,
     UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptRuntime,
     UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
@@ -150,8 +150,10 @@ fn runtime_template_plan_retains_later_addon_dependencies() -> Result<(), Box<dy
         "LaterAddonIconTemplate"
     );
 
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,
@@ -265,8 +267,10 @@ DYNAMIC_ANCHOR_TARGET = relative:GetName()"#,
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,
@@ -436,8 +440,10 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,
@@ -687,8 +693,10 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment =
         UiScriptEnvironment::new(1920, 1080, false)?.with_binding_assignments(bindings);
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,
@@ -744,8 +752,10 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,
@@ -800,8 +810,10 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     world.enter_player(UiPlayerState::new(12_345_678));
     world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     world.set_player_faction(UiPlayerFactionState::new(UiFactionGroup::Horde, "Horde"));
+    let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
+        &animations,
         &frames,
         &regions,
         &templates,

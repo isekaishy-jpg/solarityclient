@@ -54,6 +54,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let Some(element) = document.element(element_index) else {
                         continue;
                     };
+                    if element.name().contains(&needle) {
+                        let attributes = element
+                            .attributes()
+                            .iter()
+                            .map(|attribute| {
+                                format!(" {}=\"{}\"", attribute.name(), attribute.value())
+                            })
+                            .collect::<String>();
+                        println!(
+                            "{}:#{element_index}:<{}{attributes}>",
+                            resource.path(),
+                            element.name()
+                        );
+                    }
                     for attribute in element.attributes() {
                         if attribute.value().contains(&needle) {
                             println!(
