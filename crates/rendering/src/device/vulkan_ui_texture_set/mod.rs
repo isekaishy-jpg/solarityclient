@@ -4,4 +4,4 @@ mod registry;
 mod types;
 
 pub(in crate::device) use registry::UiTextureSetRegistry;
-pub use types::{UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo};
+pub use types::{UiSampledTexture, UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo};

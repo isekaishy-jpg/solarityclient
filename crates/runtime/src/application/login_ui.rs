@@ -47,13 +47,24 @@ impl LoginUiFrame {
         {
             textures.insert(path, handle);
         }
+        let glyph_texture = mesh_plan
+            .batches()
+            .iter()
+            .any(|batch| matches!(batch.source(), UiRenderSource::GlyphAtlas(_)))
+            .then(|| {
+                let glyphs = glue.glyphs();
+                renderer.upload_ui_glyph_texture(glyphs.identity(), glyphs.extent(), glyphs.rgba8())
+            })
+            .transpose()?;
 
         let mesh = renderer.upload_ui_mesh(mesh_plan)?;
         let mut batch_resources = Vec::with_capacity(mesh_plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in mesh_plan.batches().iter().enumerate() {
             let source = match batch.source() {
-                UiRenderSource::Texture(_) => UiShaderSource::Texture,
+                UiRenderSource::Texture(_) | UiRenderSource::GlyphAtlas(_) => {
+                    UiShaderSource::Texture
+                }
                 UiRenderSource::VertexColor => UiShaderSource::VertexColor,
             };
             let pipeline = renderer.prepare_ui_pipeline(source, batch.blend())?;
@@ -68,6 +79,21 @@ impl LoginUiFrame {
                     ))?;
                     let index = sampled_textures.len();
                     sampled_textures.push(UiSampledTexture::new(texture, sampler));
+                    Some(index)
+                }
+                UiRenderSource::GlyphAtlas(identity) => {
+                    let glyphs = glue.glyphs();
+                    if *identity != glyphs.identity() {
+                        return Err(solarity_rendering::VulkanError::UiDrawTextureMismatch.into());
+                    }
+                    let texture = glyph_texture
+                        .ok_or(solarity_rendering::VulkanError::UnknownUiGlyphTextureHandle)?;
+                    let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
+                        batch.horizontal_address(),
+                        batch.vertical_address(),
+                    ))?;
+                    let index = sampled_textures.len();
+                    sampled_textures.push(UiSampledTexture::glyph(texture, sampler));
                     Some(index)
                 }
                 UiRenderSource::VertexColor => None,

@@ -10,7 +10,7 @@ use solarity_asset::{AssetPath, AssetStore};
 use crate::font::{FontError, RasterizedGlyph};
 
 /// Stock font smoothing mode selected by a font object's `monochrome` flag.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FontRasterization {
     /// Grayscale antialiased coverage.
     Antialiased,
@@ -166,6 +166,84 @@ impl FontSystem {
             previous = Some(index);
         }
         Ok(width)
+    }
+
+    /// Returns the hinted ascender for one face and pixel height.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same archive, face, or size failures as glyph loading and
+    /// rejects a face that does not publish scalable size metrics.
+    pub fn ascender_26_6(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+        pixel_height: u32,
+    ) -> Result<i64, FontError> {
+        self.ensure_face(store, path)?;
+        let face = self.faces.get(path).ok_or_else(|| FontError::Face {
+            path: path.clone(),
+            message: "loaded face was not retained".to_owned(),
+        })?;
+        face.set_pixel_sizes(0, pixel_height)
+            .map_err(|error| FontError::PixelSize {
+                path: path.clone(),
+                pixel_height,
+                message: error.to_string(),
+            })?;
+        face.size_metrics()
+            .map(|metrics| i64::from(metrics.ascender))
+            .ok_or_else(|| FontError::Face {
+                path: path.clone(),
+                message: "face has no active size metrics".to_owned(),
+            })
+    }
+
+    /// Returns hinted horizontal kerning for one adjacent character pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an archive, face, size, glyph, or FreeType kerning failure.
+    pub fn kerning_x_26_6(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+        pixel_height: u32,
+        left: char,
+        right: char,
+    ) -> Result<i64, FontError> {
+        self.ensure_face(store, path)?;
+        let face = self.faces.get(path).ok_or_else(|| FontError::Face {
+            path: path.clone(),
+            message: "loaded face was not retained".to_owned(),
+        })?;
+        face.set_pixel_sizes(0, pixel_height)
+            .map_err(|error| FontError::PixelSize {
+                path: path.clone(),
+                pixel_height,
+                message: error.to_string(),
+            })?;
+        let left_index = face
+            .get_char_index(left as usize)
+            .ok_or_else(|| FontError::Glyph {
+                path: path.clone(),
+                character: left,
+                message: "font face does not contain the requested character".to_owned(),
+            })?;
+        let right_index = face
+            .get_char_index(right as usize)
+            .ok_or_else(|| FontError::Glyph {
+                path: path.clone(),
+                character: right,
+                message: "font face does not contain the requested character".to_owned(),
+            })?;
+        face.get_kerning(left_index, right_index, KerningMode::KerningDefault)
+            .map(|kerning| i64::from(kerning.x))
+            .map_err(|error| FontError::Glyph {
+                path: path.clone(),
+                character: right,
+                message: format!("failed to read kerning: {error}"),
+            })
     }
 
     /// Returns the number of distinct archive-backed faces retained in memory.

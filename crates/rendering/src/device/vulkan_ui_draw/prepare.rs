@@ -1,12 +1,13 @@
 //! Validation preventing CPU plans and renderer-local resources from skewing.
 
 use crate::device::vulkan_texture::BlpTextureRegistry;
+use crate::device::vulkan_ui_glyph_texture::UiGlyphTextureRegistry;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
 use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
 use crate::device::vulkan_ui_sampler::UiSamplerRegistry;
 use crate::device::vulkan_ui_texture_set::UiTextureSetRegistry;
 use crate::device::{UiMeshHandle, UiPipelineHandle, UiTextureSetHandle, VulkanError};
-use crate::{UiMeshPlan, UiRenderSource, UiSamplerInfo, UiShaderSource};
+use crate::{UiMeshPlan, UiRenderSource, UiSamplerInfo, UiShaderSource, UiTextureImageHandle};
 
 use super::UiPreparedDraw;
 
@@ -17,6 +18,7 @@ pub(in crate::device) fn prepare_draw(
     pipelines: &UiPipelineRegistry,
     texture_sets: &UiTextureSetRegistry,
     textures: &BlpTextureRegistry,
+    glyphs: &UiGlyphTextureRegistry,
     samplers: &UiSamplerRegistry,
     mesh: UiMeshHandle,
     pipeline: UiPipelineHandle,
@@ -50,7 +52,7 @@ pub(in crate::device) fn prepare_draw(
         .info(pipeline)
         .ok_or(VulkanError::UnknownUiPipelineHandle)?;
     let expected_source = match batch.source() {
-        UiRenderSource::Texture(_) => UiShaderSource::Texture,
+        UiRenderSource::Texture(_) | UiRenderSource::GlyphAtlas(_) => UiShaderSource::Texture,
         UiRenderSource::VertexColor => UiShaderSource::VertexColor,
     };
     if pipeline_info.source() != expected_source || pipeline_info.blend() != batch.blend() {
@@ -63,8 +65,11 @@ pub(in crate::device) fn prepare_draw(
                 .info(handle)
                 .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
             let sampled = set.sampled_texture();
+            let UiTextureImageHandle::Blp(texture_handle) = sampled.texture() else {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            };
             let texture = textures
-                .info(sampled.texture())
+                .info(texture_handle)
                 .ok_or(VulkanError::UnknownBlpTextureHandle)?;
             let sampler = samplers
                 .info(sampled.sampler())
@@ -72,6 +77,26 @@ pub(in crate::device) fn prepare_draw(
             let expected_sampler =
                 UiSamplerInfo::new(batch.horizontal_address(), batch.vertical_address());
             if texture.path() != path || sampler != expected_sampler {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            }
+        }
+        (UiRenderSource::GlyphAtlas(identity), Some(handle)) => {
+            let set = texture_sets
+                .info(handle)
+                .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
+            let sampled = set.sampled_texture();
+            let UiTextureImageHandle::Glyph(texture_handle) = sampled.texture() else {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            };
+            let texture = glyphs
+                .info(texture_handle)
+                .ok_or(VulkanError::UnknownUiGlyphTextureHandle)?;
+            let sampler = samplers
+                .info(sampled.sampler())
+                .ok_or(VulkanError::UnknownUiSamplerHandle)?;
+            let expected_sampler =
+                UiSamplerInfo::new(batch.horizontal_address(), batch.vertical_address());
+            if texture.identity() != *identity || sampler != expected_sampler {
                 return Err(VulkanError::UiDrawTextureMismatch);
             }
         }

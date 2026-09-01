@@ -34,6 +34,8 @@ pub enum UiTextureResidency {
 pub enum UiRenderSource {
     /// Canonical MPQ path selected through normal patch precedence.
     Texture(AssetPath),
+    /// Process-local immutable coverage atlas generated from archive fonts.
+    GlyphAtlas(u64),
     /// No sampled image; the interpolated vertex color is the final source.
     VertexColor,
 }

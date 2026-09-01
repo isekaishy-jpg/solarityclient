@@ -53,7 +53,8 @@ pub use feature::{
 };
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
-    FontSystem, HorizontalJustification, RasterizedGlyph, VerticalJustification,
+    FontSystem, HorizontalJustification, RasterizedGlyph, UiGlyphAtlasPlan, UiGlyphQuad,
+    VerticalJustification,
 };
 pub use frame::{
     UiDrawLayer, UiElementLayer, UiFrameError, UiFrameLayer, UiFrameNode, UiFramePlan,

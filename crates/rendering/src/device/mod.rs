@@ -37,6 +37,7 @@ mod vulkan_terrain_texture_set;
 mod vulkan_texture;
 mod vulkan_ui_draw;
 mod vulkan_ui_frame;
+mod vulkan_ui_glyph_texture;
 mod vulkan_ui_mesh;
 mod vulkan_ui_pipeline;
 mod vulkan_ui_sampler;
@@ -78,10 +79,13 @@ pub use vulkan_texture::{
 };
 pub use vulkan_ui_draw::UiPreparedDraw;
 pub use vulkan_ui_frame::UiFrameReport;
+pub use vulkan_ui_glyph_texture::{UiGlyphTextureHandle, UiGlyphTextureResourceInfo};
 pub use vulkan_ui_mesh::{UiMeshHandle, UiMeshResourceInfo};
 pub use vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo};
 pub use vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo};
-pub use vulkan_ui_texture_set::{UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo};
+pub use vulkan_ui_texture_set::{
+    UiSampledTexture, UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo,
+};
 pub use vulkan_world_frame::{WorldFrameReport, WorldFrameScene};
 pub use vulkan_world_model_draw::WorldModelPreparedDraw;
 pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};

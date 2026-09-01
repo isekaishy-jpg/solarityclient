@@ -11,10 +11,10 @@ use crate::script::UiRuntimeObjectPlan;
 use crate::{
     FontCatalog, UiAnimationPlan, UiBundle, UiEventArgument, UiEventDispatch, UiEventError,
     UiEventPayload, UiFramePlan, UiFrameStatePlan, UiGlueMediaIntent, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree,
-    UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
+    UiGlueNetworkStatus, UiGlyphAtlasPlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectTree, UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan,
+    UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime,
+    UiScriptRuntimePlan, UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -30,6 +30,7 @@ pub struct GlueManager {
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
     geometry: UiRegionGeometryPlan,
+    glyphs: UiGlyphAtlasPlan,
     presentation: UiPresentationPlan,
     render_plan: UiRenderPlan,
     textures: UiTexturePlan,
@@ -161,8 +162,16 @@ impl GlueManager {
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        let glyphs = UiGlyphAtlasPlan::from_simple_html(
+            runtime.simple_html(),
+            &geometry,
+            &fonts,
+            &mut assets.borrow_mut(),
+            logical_extent.1,
+        )?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
-        let render_plan = UiRenderPlan::prepare(&presentation, ui_extent)?;
+        let render_plan =
+            UiRenderPlan::prepare_with_glyphs(&presentation, &glyphs, &geometry, ui_extent)?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let report = GlueStartupReport::new(
             bundle.resources().len(),
@@ -186,6 +195,7 @@ impl GlueManager {
             frames,
             regions,
             geometry,
+            glyphs,
             presentation,
             render_plan,
             textures,
@@ -248,6 +258,12 @@ impl GlueManager {
     #[must_use]
     pub const fn geometry(&self) -> &UiRegionGeometryPlan {
         &self.geometry
+    }
+
+    /// Returns the immutable archive-font atlas retained across Glue screens.
+    #[must_use]
+    pub const fn glyphs(&self) -> &UiGlyphAtlasPlan {
+        &self.glyphs
     }
 
     /// Returns post-Lua texture packets in deterministic stock draw order.
@@ -416,7 +432,12 @@ impl GlueManager {
         let live = self.runtime.snapshot_objects(&self.bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry);
-        let render_plan = UiRenderPlan::prepare(&presentation, geometry.ui_extent())?;
+        let render_plan = UiRenderPlan::prepare_with_glyphs(
+            &presentation,
+            &self.glyphs,
+            &geometry,
+            geometry.ui_extent(),
+        )?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         self.geometry = geometry;
         self.presentation = presentation;

@@ -59,4 +59,10 @@ pub enum FontError {
         /// Structural, value, or inheritance context.
         message: String,
     },
+    /// Glyph layout or atlas construction exceeded a retained invariant.
+    #[error("failed to prepare font presentation: {message}")]
+    Presentation {
+        /// Layout, capacity, or atlas context.
+        message: String,
+    },
 }

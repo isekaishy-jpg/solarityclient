@@ -6,8 +6,8 @@ use solarity_rendering::{
 };
 
 use crate::{
-    UiBlendMode, UiPresentationPlan, UiRenderError, UiTextureAssetPlan, UiTexturePresentation,
-    UiTextureSource,
+    UiBlendMode, UiGlyphAtlasPlan, UiGlyphQuad, UiPresentationPlan, UiRegionGeometryPlan,
+    UiRenderError, UiTextureAssetPlan, UiTexturePresentation, UiTextureSource,
 };
 
 /// Renderer-owned mesh data derived from one complete live presentation pass.
@@ -42,6 +42,40 @@ impl UiRenderPlan {
         })
     }
 
+    /// Flattens live textures followed by clipped `SimpleHTML` glyphs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiRenderError`] under the same fixed mesh ABI constraints as
+    /// [`Self::prepare`].
+    pub fn prepare_with_glyphs(
+        presentation: &UiPresentationPlan,
+        glyphs: &UiGlyphAtlasPlan,
+        geometry: &UiRegionGeometryPlan,
+        logical_extent: (f64, f64),
+    ) -> Result<Self, UiRenderError> {
+        let mut quads = presentation
+            .members_in_draw_order()
+            .iter()
+            .map(render_quad)
+            .collect::<Vec<_>>();
+        quads.extend(
+            glyphs
+                .quads(geometry)
+                .into_iter()
+                .map(|quad| render_glyph_quad(glyphs.identity(), quad)),
+        );
+        let mesh = UiMeshPlan::prepare(
+            [logical_extent.0 as f32, logical_extent.1 as f32],
+            quads.into_iter(),
+        )?;
+        let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
+        Ok(Self {
+            mesh,
+            texture_assets,
+        })
+    }
+
     /// Returns upload-ready vertices, indices, and adjacent material batches.
     #[must_use]
     pub const fn mesh(&self) -> &UiMeshPlan {
@@ -53,6 +87,23 @@ impl UiRenderPlan {
     pub const fn texture_assets(&self) -> &UiTextureAssetPlan {
         &self.texture_assets
     }
+}
+
+/// Converts one already clipped coverage glyph into a sampled UI quad.
+fn render_glyph_quad(atlas_identity: u64, glyph: UiGlyphQuad) -> UiRenderQuad {
+    let color = glyph.color();
+    UiRenderQuad::new(
+        glyph.object_index(),
+        UiRenderSource::GlyphAtlas(atlas_identity),
+        UiRenderBlend::Alpha,
+        UiTextureAddressMode::Clamp,
+        UiTextureAddressMode::Clamp,
+        UiTextureResidency::Blocking,
+        false,
+        glyph.bounds(),
+        glyph.texture_coordinates(),
+        [color; 4],
+    )
 }
 
 /// Converts one live texture region without disturbing its established order.

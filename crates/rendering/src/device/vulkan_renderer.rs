@@ -56,6 +56,9 @@ use crate::device::vulkan_texture::{
 };
 use crate::device::vulkan_ui_draw::{UiPreparedDraw, prepare_draw as prepare_ui_draw};
 use crate::device::vulkan_ui_frame::{UiFrameContext, UiFrameRenderer, UiFrameReport};
+use crate::device::vulkan_ui_glyph_texture::{
+    UiGlyphTextureHandle, UiGlyphTextureRegistry, UiGlyphTextureResourceInfo,
+};
 use crate::device::vulkan_ui_mesh::{UiMeshHandle, UiMeshRegistry, UiMeshResourceInfo};
 use crate::device::vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo, UiPipelineRegistry};
 use crate::device::vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo, UiSamplerRegistry};
@@ -185,6 +188,7 @@ pub struct VulkanRenderer {
     ui_meshes: UiMeshRegistry,
     ui_samplers: UiSamplerRegistry,
     ui_texture_sets: UiTextureSetRegistry,
+    ui_glyph_textures: UiGlyphTextureRegistry,
     blp_textures: BlpTextureRegistry,
     swapchain_loader: ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
@@ -246,6 +250,7 @@ impl VulkanRenderer {
             ui_meshes: UiMeshRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
             ui_texture_sets: UiTextureSetRegistry::default(),
+            ui_glyph_textures: UiGlyphTextureRegistry::default(),
             blp_textures: BlpTextureRegistry::default(),
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -792,6 +797,43 @@ impl VulkanRenderer {
         self.ui_meshes.info(handle)
     }
 
+    /// Uploads or retrieves one immutable linear RGBA8 glyph atlas generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for malformed byte counts, handle exhaustion,
+    /// allocation, recording, submission, or synchronization failure.
+    pub fn upload_ui_glyph_texture(
+        &mut self,
+        identity: u64,
+        extent: (u32, u32),
+        rgba8: &[u8],
+    ) -> Result<UiGlyphTextureHandle, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.ui_glyph_textures.upload(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            identity,
+            extent,
+            rgba8,
+        )
+    }
+
+    /// Returns immutable diagnostics for one live glyph atlas.
+    #[must_use]
+    pub fn ui_glyph_texture_info(
+        &self,
+        handle: UiGlyphTextureHandle,
+    ) -> Option<UiGlyphTextureResourceInfo> {
+        self.ui_glyph_textures.info(handle)
+    }
+
     /// Creates or retrieves one exact UI texture-axis sampler.
     ///
     /// # Errors
@@ -826,6 +868,7 @@ impl VulkanRenderer {
             &self.device,
             layout,
             &self.blp_textures,
+            &self.ui_glyph_textures,
             &self.ui_samplers,
             requested,
         )
@@ -856,6 +899,7 @@ impl VulkanRenderer {
             &self.ui_pipelines,
             &self.ui_texture_sets,
             &self.blp_textures,
+            &self.ui_glyph_textures,
             &self.ui_samplers,
             mesh,
             pipeline,
@@ -1506,6 +1550,7 @@ impl Drop for VulkanRenderer {
             self.m2_texture_sets.destroy(&self.device);
             self.character_atlas_textures
                 .destroy(&self.device, allocator);
+            self.ui_glyph_textures.destroy(&self.device, allocator);
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);

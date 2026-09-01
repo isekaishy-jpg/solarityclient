@@ -53,6 +53,25 @@ fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// Coverage generations retain typed identity and batch independently of BLPs.
+#[test]
+fn ui_mesh_batches_adjacent_glyph_atlas_quads() -> Result<(), Box<dyn Error>> {
+    let quads = vec![
+        quad(21, UiRenderSource::GlyphAtlas(7), [0.0, 0.0, 10.0, 20.0]),
+        quad(21, UiRenderSource::GlyphAtlas(7), [10.0, 0.0, 20.0, 20.0]),
+        quad(22, UiRenderSource::GlyphAtlas(8), [20.0, 0.0, 30.0, 20.0]),
+    ];
+
+    let mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+
+    assert_eq!(mesh.batches().len(), 2);
+    assert_eq!(mesh.batches()[0].source(), &UiRenderSource::GlyphAtlas(7));
+    assert_eq!(mesh.batches()[0].quad_count(), 2);
+    assert_eq!(mesh.batches()[1].source(), &UiRenderSource::GlyphAtlas(8));
+    assert_eq!(mesh.batches()[1].quad_count(), 1);
+    Ok(())
+}
+
 /// Builds one alpha-blended, clamped, blocking quad for mesh tests.
 fn quad(object_index: usize, source: UiRenderSource, bounds: [f32; 4]) -> UiRenderQuad {
     UiRenderQuad::new(

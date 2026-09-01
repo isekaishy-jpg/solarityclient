@@ -1,11 +1,20 @@
 //! Validated UI sampled-texture pairs and renderer-local descriptor identities.
 
-use crate::device::{BlpTextureHandle, UiSamplerHandle};
+use crate::device::{BlpTextureHandle, UiGlyphTextureHandle, UiSamplerHandle};
+
+/// One typed sampled image accepted by the stock UI texture pipeline.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UiTextureImageHandle {
+    /// Archive-backed BLP image.
+    Blp(BlpTextureHandle),
+    /// Runtime-composed archive-font coverage atlas.
+    Glyph(UiGlyphTextureHandle),
+}
 
 /// One uploaded BLP paired with its independently cached UI sampler.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct UiSampledTexture {
-    texture: BlpTextureHandle,
+    texture: UiTextureImageHandle,
     sampler: UiSamplerHandle,
 }
 
@@ -13,12 +22,24 @@ impl UiSampledTexture {
     /// Joins image and sampler identities without exposing Vulkan handles.
     #[must_use]
     pub const fn new(texture: BlpTextureHandle, sampler: UiSamplerHandle) -> Self {
-        Self { texture, sampler }
+        Self {
+            texture: UiTextureImageHandle::Blp(texture),
+            sampler,
+        }
+    }
+
+    /// Joins one glyph coverage atlas to an independently cached sampler.
+    #[must_use]
+    pub const fn glyph(texture: UiGlyphTextureHandle, sampler: UiSamplerHandle) -> Self {
+        Self {
+            texture: UiTextureImageHandle::Glyph(texture),
+            sampler,
+        }
     }
 
     /// Returns the renderer-local uploaded BLP identity.
     #[must_use]
-    pub const fn texture(self) -> BlpTextureHandle {
+    pub const fn texture(self) -> UiTextureImageHandle {
         self.texture
     }
 

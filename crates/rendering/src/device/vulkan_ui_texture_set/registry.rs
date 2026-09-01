@@ -9,9 +9,10 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 use crate::device::vulkan_texture::BlpTextureRegistry;
+use crate::device::vulkan_ui_glyph_texture::UiGlyphTextureRegistry;
 use crate::device::vulkan_ui_sampler::UiSamplerRegistry;
 
-use super::{UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo};
+use super::{UiSampledTexture, UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo};
 
 /// One live set owned transitively by a registry descriptor pool.
 struct GpuUiTextureSet {
@@ -48,10 +49,11 @@ impl UiTextureSetRegistry {
         device: &Device,
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
+        glyphs: &UiGlyphTextureRegistry,
         samplers: &UiSamplerRegistry,
         requested: &[UiSampledTexture],
     ) -> Result<Vec<UiTextureSetHandle>, VulkanError> {
-        validate_resources(textures, samplers, requested)?;
+        validate_resources(textures, glyphs, samplers, requested)?;
         let mut seen = HashSet::new();
         let pending = requested
             .iter()
@@ -59,7 +61,7 @@ impl UiTextureSetRegistry {
             .filter(|pair| !self.handles.contains_key(pair) && seen.insert(*pair))
             .collect::<Vec<_>>();
         if !pending.is_empty() {
-            self.allocate_batch(device, layout, textures, samplers, &pending)?;
+            self.allocate_batch(device, layout, textures, glyphs, samplers, &pending)?;
         }
         requested
             .iter()
@@ -114,6 +116,7 @@ impl UiTextureSetRegistry {
         device: &Device,
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
+        glyphs: &UiGlyphTextureRegistry,
         samplers: &UiSamplerRegistry,
         pending: &[UiSampledTexture],
     ) -> Result<(), VulkanError> {
@@ -150,7 +153,7 @@ impl UiTextureSetRegistry {
             }
         };
         for (pair, descriptor_set) in pending.iter().copied().zip(sets) {
-            write_set(device, descriptor_set, textures, samplers, pair)?;
+            write_set(device, descriptor_set, textures, glyphs, samplers, pair)?;
             let slot = u32::try_from(self.resources.len())
                 .map_err(|_source| VulkanError::UiTextureSetCapacity)?;
             let handle = UiTextureSetHandle {
@@ -171,12 +174,19 @@ impl UiTextureSetRegistry {
 /// Rejects foreign image and sampler handles before allocating a pool.
 fn validate_resources(
     textures: &BlpTextureRegistry,
+    glyphs: &UiGlyphTextureRegistry,
     samplers: &UiSamplerRegistry,
     requested: &[UiSampledTexture],
 ) -> Result<(), VulkanError> {
     for pair in requested {
-        if textures.view(pair.texture()).is_none() {
-            return Err(VulkanError::UnknownBlpTextureHandle);
+        match pair.texture() {
+            UiTextureImageHandle::Blp(handle) if textures.view(handle).is_none() => {
+                return Err(VulkanError::UnknownBlpTextureHandle);
+            }
+            UiTextureImageHandle::Glyph(handle) if glyphs.view(handle).is_none() => {
+                return Err(VulkanError::UnknownUiGlyphTextureHandle);
+            }
+            UiTextureImageHandle::Blp(_) | UiTextureImageHandle::Glyph(_) => {}
         }
         if samplers.raw(pair.sampler()).is_none() {
             return Err(VulkanError::UnknownUiSamplerHandle);
@@ -190,6 +200,7 @@ fn write_set(
     device: &Device,
     descriptor_set: vk::DescriptorSet,
     textures: &BlpTextureRegistry,
+    glyphs: &UiGlyphTextureRegistry,
     samplers: &UiSamplerRegistry,
     pair: UiSampledTexture,
 ) -> Result<(), VulkanError> {
@@ -199,11 +210,14 @@ fn write_set(
                 .raw(pair.sampler())
                 .ok_or(VulkanError::UnknownUiSamplerHandle)?,
         )
-        .image_view(
-            textures
-                .view(pair.texture())
+        .image_view(match pair.texture() {
+            UiTextureImageHandle::Blp(handle) => textures
+                .view(handle)
                 .ok_or(VulkanError::UnknownBlpTextureHandle)?,
-        )
+            UiTextureImageHandle::Glyph(handle) => glyphs
+                .view(handle)
+                .ok_or(VulkanError::UnknownUiGlyphTextureHandle)?,
+        })
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     let image_infos = [image_info];
     let write = vk::WriteDescriptorSet::default()

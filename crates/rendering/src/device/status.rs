@@ -320,6 +320,12 @@ pub enum VulkanError {
     /// The renderer cannot assign another stable 32-bit UI texture-set handle.
     #[error("UI texture-set registry exhausted its 32-bit handle space")]
     UiTextureSetCapacity,
+    /// The renderer cannot assign another stable 32-bit UI glyph-atlas handle.
+    #[error("UI glyph texture registry exhausted its 32-bit handle space")]
+    UiGlyphTextureCapacity,
+    /// A UI descriptor references a glyph atlas from another renderer.
+    #[error("UI texture set references an unknown glyph texture handle")]
+    UnknownUiGlyphTextureHandle,
     /// The renderer cannot assign another stable 32-bit sampler handle.
     #[error("M2 sampler registry exhausted its 32-bit handle space")]
     M2SamplerCapacity,
