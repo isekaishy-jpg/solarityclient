@@ -99,6 +99,7 @@ pub struct UiRuntimeTemplateNode {
     non_blocking: bool,
     draw_layer: &'static str,
     draw_sub_level: i16,
+    clamped_to_screen: bool,
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
@@ -209,6 +210,9 @@ impl UiRuntimeTemplatePlan {
                 .map_err(|error| template_error(template_name, error))?;
             let texture_states = UiTextureStatePlan::resolve(&tree, &textures)
                 .map_err(|error| template_error(template_name, error))?;
+            let frame_states = crate::UiFramePlan::from_tree(&tree)
+                .and_then(|frames| frames.resolve(&tree))
+                .map_err(|error| template_error(template_name, error))?;
             let first_node = plan.nodes.len();
             for (local_index, object) in tree.nodes().iter().enumerate() {
                 let region =
@@ -268,6 +272,9 @@ impl UiRuntimeTemplatePlan {
                     non_blocking: texture.non_blocking,
                     draw_layer: texture.draw_layer,
                     draw_sub_level: texture.draw_sub_level,
+                    clamped_to_screen: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::clamped_to_screen),
                     script_targets,
                 });
             }
@@ -424,6 +431,7 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("non_blocking", node.non_blocking)?;
                 record.raw_set("draw_layer", node.draw_layer)?;
                 record.raw_set("draw_sub_level", node.draw_sub_level)?;
+                record.raw_set("clamped_to_screen", node.clamped_to_screen)?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {
                     match target {
@@ -455,7 +463,10 @@ fn initial_font(
     node: &crate::UiObjectNode<'_>,
     fonts: &FontCatalog,
 ) -> (bool, Option<String>, String, String) {
-    if node.kind() != UiObjectKind::FontString {
+    if !matches!(
+        node.kind(),
+        UiObjectKind::FontString | UiObjectKind::EditBox
+    ) {
         return (false, None, "CENTER".to_owned(), "MIDDLE".to_owned());
     }
     let mut assigned = false;

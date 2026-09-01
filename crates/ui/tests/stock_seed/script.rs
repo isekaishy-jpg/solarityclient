@@ -31,9 +31,9 @@ fn script_environment_derives_stock_ui_extent() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// ScrollChild XML establishes the same retained frame ownership as the stock setter.
+/// Stock frame and edit-box methods retain the state consumed by FrameXML.
 #[test]
-fn script_runtime_retains_scroll_frame_child() -> Result<(), Box<dyn Error>> {
+fn script_runtime_retains_frame_widget_state() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "Interface\\GlueXML\\GlueXML.toc",
@@ -51,6 +51,10 @@ fn script_runtime_retains_scroll_frame_child() -> Result<(), Box<dyn Error>> {
   </ScrollChild></ScrollFrame>
   <Texture name="$parentTexture"/>
   <Frame name="$parentReplacement"/>
+  <EditBox name="$parentEdit"><Scripts><OnTextChanged>
+    EDIT_CHANGES = (EDIT_CHANGES or 0) + 1
+    EDIT_USER_INPUT = userInput
+  </OnTextChanged></Scripts></EditBox>
 </Frames></Frame>
 </Ui>"#,
         },
@@ -67,6 +71,32 @@ assert(OwnerReplacement:GetParent() == OwnerScroller)
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, Owner))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, OwnerTexture))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, {}))
+Owner:SetClampedToScreen()
+Owner:SetClampRectInsets(-35, 35, 38, -50)
+local left, right, top, bottom = Owner:GetClampRectInsets()
+assert(Owner:IsClampedToScreen() == 1)
+assert(left == -35 and right == 35 and top == 38 and bottom == -50)
+local utf8Text = string.char(104, 195, 169)
+OwnerEdit:SetText(utf8Text)
+assert(OwnerEdit:GetText() == utf8Text)
+assert(OwnerEdit:GetCursorPosition() == 3 and OwnerEdit:GetUTF8CursorPosition() == 2)
+assert(OwnerEdit:GetNumLetters() == 2 and EDIT_CHANGES == 1 and not EDIT_USER_INPUT)
+OwnerEdit:SetMaxLetters(3)
+OwnerEdit:SetText("abcd")
+assert(OwnerEdit:GetText() == "abc")
+OwnerEdit:SetAltArrowKeyMode(true)
+assert(OwnerEdit:GetAltArrowKeyMode() == 1)
+OwnerEdit:SetFocus()
+assert(OwnerEdit:HasFocus() == 1)
+OwnerEdit:ClearFocus()
+assert(OwnerEdit:HasFocus() == nil)
+OwnerEdit:SetHistoryLines(2)
+OwnerEdit:AddHistoryLine("one")
+OwnerEdit:AddHistoryLine("two")
+OwnerEdit:AddHistoryLine("three")
+OwnerEdit:SetTextColor(0.1, 0.2, 0.3, 0.4)
+local red, green, blue, alpha = OwnerEdit:GetTextColor()
+assert(red == 0.1 and green == 0.2 and blue == 0.3 and alpha == 0.4)
 local dynamic = CreateFrame("ScrollFrame", "DynamicScroller", Owner, "ScrollTemplate")
 assert(dynamic:GetScrollChild() == DynamicScrollerChild)
 assert(DynamicScrollerChild:GetParent() == dynamic)"#,
@@ -102,7 +132,7 @@ assert(DynamicScrollerChild:GetParent() == dynamic)"#,
 
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
-    assert_eq!(runtime.registered_object_count(), 7);
+    assert_eq!(runtime.registered_object_count(), 8);
     Ok(())
 }
 

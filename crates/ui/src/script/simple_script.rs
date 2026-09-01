@@ -116,6 +116,24 @@ static DESATURATED_TOKEN: u8 = 76;
 static DRAG_BUTTON_TOKEN: u8 = 77;
 static SPACING_TOKEN: u8 = 78;
 static SCROLL_CHILD_TOKEN: u8 = 79;
+static EDIT_FOCUSED_TOKEN: u8 = 80;
+static EDIT_ALT_ARROW_TOKEN: u8 = 81;
+static EDIT_HISTORY_LINES_TOKEN: u8 = 82;
+static EDIT_HISTORY_TOKEN: u8 = 83;
+static EDIT_MAX_LETTERS_TOKEN: u8 = 84;
+static EDIT_MAX_BYTES_TOKEN: u8 = 85;
+static EDIT_CURSOR_TOKEN: u8 = 86;
+static EDIT_SELECTION_START_TOKEN: u8 = 87;
+static EDIT_SELECTION_END_TOKEN: u8 = 88;
+static EDIT_BLINK_SPEED_TOKEN: u8 = 89;
+static EDIT_PASSWORD_TOKEN: u8 = 90;
+static EDIT_NUMERIC_TOKEN: u8 = 91;
+static EDIT_MULTI_LINE_TOKEN: u8 = 92;
+static EDIT_COUNT_INVISIBLE_TOKEN: u8 = 93;
+static EDIT_AUTO_FOCUS_TOKEN: u8 = 94;
+static EDIT_TEXT_INSETS_TOKEN: u8 = 95;
+static FRAME_CLAMPED_TOKEN: u8 = 96;
+static FRAME_CLAMP_INSETS_TOKEN: u8 = 97;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -231,6 +249,7 @@ pub struct UiScriptRuntime {
     frame_strata: Vec<Option<&'static str>>,
     frame_keyboard_enabled: Vec<Option<bool>>,
     frame_mouse_enabled: Vec<Option<bool>>,
+    frame_clamped_to_screen: Vec<Option<bool>>,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
@@ -683,6 +702,13 @@ impl UiScriptRuntime {
         let frame_mouse_enabled = (0..plan.regions.state_count())
             .map(|index| plan.frames.state(index).map(|state| state.mouse_enabled()))
             .collect();
+        let frame_clamped_to_screen = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.frames
+                    .state(index)
+                    .map(|state| state.clamped_to_screen())
+            })
+            .collect();
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
         let textures = tree_textures(plan.tree, plan.texture_states)?;
@@ -708,6 +734,7 @@ impl UiScriptRuntime {
             frame_strata,
             frame_keyboard_enabled,
             frame_mouse_enabled,
+            frame_clamped_to_screen,
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
@@ -1025,6 +1052,21 @@ impl UiScriptRuntime {
         } else {
             None
         };
+        let clamped_to_screen = if is_frame_object(object.kind()) {
+            Some(
+                self.frame_clamped_to_screen
+                    .get(node_index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| UiScriptError::Plan {
+                        message: format!(
+                            "frame object {node_index} has no resolved screen-clamp state"
+                        ),
+                    })?,
+            )
+        } else {
+            None
+        };
         let frame_strata = if is_frame_object(object.kind()) {
             Some(
                 self.frame_strata
@@ -1140,6 +1182,13 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
+                .and_then(|()| table.raw_set(frame_clamped_key(), clamped_to_screen))
+                .and_then(|()| {
+                    table.raw_set(
+                        frame_clamp_insets_key(),
+                        lua.create_sequence_from([0.0_f64; 4])?,
+                    )
+                })
                 .and_then(|()| table.raw_set(frame_depth_key(), 0.0))
                 .and_then(|()| table.raw_set(ignore_depth_key(), false))
                 .and_then(|()| table.raw_set(attributes_key(), lua.create_table()?))
@@ -1202,6 +1251,10 @@ impl UiScriptRuntime {
                 .raw_set(checked_key(), false)
                 .map_err(|error| execution_error("object registration", error))?;
         }
+        if object.kind() == UiObjectKind::EditBox {
+            initialize_edit_box(lua, &table)
+                .map_err(|error| execution_error("object registration", error))?;
+        }
         if object.kind() == UiObjectKind::ScrollFrame {
             table
                 .raw_set(horizontal_scroll_key(), 0.0)
@@ -1257,7 +1310,10 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(model_scale_key(), 1.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
-        if object.kind() == UiObjectKind::FontString {
+        if matches!(
+            object.kind(),
+            UiObjectKind::FontString | UiObjectKind::EditBox
+        ) {
             let font = self
                 .font_strings
                 .get(node_index)
@@ -1698,6 +1754,14 @@ fn create_dynamic_object(
         object.raw_set(frame_strata_key(), strata)?;
         object.raw_set(keyboard_enabled_key(), false)?;
         object.raw_set(mouse_enabled_key(), false)?;
+        object.raw_set(
+            frame_clamped_key(),
+            record.raw_get::<bool>("clamped_to_screen")?,
+        )?;
+        object.raw_set(
+            frame_clamp_insets_key(),
+            lua.create_sequence_from([0.0_f64; 4])?,
+        )?;
         object.raw_set(frame_depth_key(), 0.0)?;
         object.raw_set(ignore_depth_key(), false)?;
         object.raw_set(attributes_key(), lua.create_table()?)?;
@@ -1720,6 +1784,9 @@ fn create_dynamic_object(
     }
     if kind == "CheckButton" {
         object.raw_set(checked_key(), false)?;
+    }
+    if kind == "EditBox" {
+        initialize_edit_box(lua, &object)?;
     }
     if kind == "ScrollFrame" {
         object.raw_set(horizontal_scroll_key(), 0.0)?;
@@ -1756,7 +1823,7 @@ fn create_dynamic_object(
         object.raw_set(model_sequence_time_key(), 0_i32)?;
         object.raw_set(model_scale_key(), 1.0)?;
     }
-    if kind == "FontString" {
+    if matches!(kind, "FontString" | "EditBox") {
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
@@ -2164,6 +2231,9 @@ fn create_object_metatable(
     }
     if kind == UiObjectKind::CheckButton {
         buttons::register_check_button_methods(lua, &methods)?;
+    }
+    if kind == UiObjectKind::EditBox {
+        register_edit_box_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::FontString {
         register_font_string_methods(lua, &methods)?;
@@ -3012,6 +3082,41 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
         })?,
     )?;
     methods.raw_set(
+        "SetClampedToScreen",
+        lua.create_function(|_, (object, enabled): (Table, Option<bool>)| {
+            object.raw_set(frame_clamped_key(), enabled.unwrap_or(true))
+        })?,
+    )?;
+    methods.raw_set(
+        "IsClampedToScreen",
+        lua.create_function(|_, object: Table| {
+            stock_optional_true(object.raw_get::<bool>(frame_clamped_key())?)
+        })?,
+    )?;
+    methods.raw_set(
+        "SetClampRectInsets",
+        lua.create_function(
+            |lua, (object, left, right, top, bottom): (Table, f64, f64, f64, f64)| {
+                object.raw_set(
+                    frame_clamp_insets_key(),
+                    lua.create_sequence_from([left, right, top, bottom])?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetClampRectInsets",
+        lua.create_function(|_, object: Table| {
+            let insets: Table = object.raw_get(frame_clamp_insets_key())?;
+            Ok((
+                insets.raw_get::<f64>(1)?,
+                insets.raw_get::<f64>(2)?,
+                insets.raw_get::<f64>(3)?,
+                insets.raw_get::<f64>(4)?,
+            ))
+        })?,
+    )?;
+    methods.raw_set(
         "SetDepth",
         lua.create_function(|_, (object, depth): (Table, f64)| {
             if !depth.is_finite() {
@@ -3061,6 +3166,464 @@ fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {
         }
         object = parent;
     }
+}
+
+/// Seeds the native edit-box defaults before XML scripts can observe them.
+fn initialize_edit_box(lua: &Lua, object: &Table) -> mlua::Result<()> {
+    object.raw_set(text_key(), "")?;
+    object.raw_set(edit_focused_key(), false)?;
+    object.raw_set(edit_alt_arrow_key(), false)?;
+    object.raw_set(edit_history_lines_key(), 0_u32)?;
+    object.raw_set(edit_history_key(), lua.create_table()?)?;
+    object.raw_set(edit_max_letters_key(), 0_u32)?;
+    object.raw_set(edit_max_bytes_key(), 0_u32)?;
+    object.raw_set(edit_cursor_key(), 0_u32)?;
+    object.raw_set(edit_selection_start_key(), 0_u32)?;
+    object.raw_set(edit_selection_end_key(), 0_u32)?;
+    object.raw_set(edit_blink_speed_key(), 0.5_f64)?;
+    object.raw_set(edit_password_key(), false)?;
+    object.raw_set(edit_numeric_key(), false)?;
+    object.raw_set(edit_multi_line_key(), false)?;
+    object.raw_set(edit_count_invisible_key(), false)?;
+    object.raw_set(edit_auto_focus_key(), true)?;
+    object.raw_set(
+        edit_text_insets_key(),
+        lua.create_sequence_from([0.0_f64; 4])?,
+    )
+}
+
+/// Registers the retained text-entry surface used by stock chat edit boxes.
+fn register_edit_box_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    register_edit_box_font_methods(lua, methods)?;
+    methods.raw_set(
+        "SetText",
+        lua.create_function(|lua, (object, value): (Table, Value)| {
+            let text = lua
+                .coerce_string(value)?
+                .ok_or_else(|| edit_box_usage(&object, "SetText", "\"text\""))?
+                .to_string_lossy();
+            set_edit_box_text(lua, &object, text, false)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetText",
+        lua.create_function(|_, object: Table| object.raw_get::<String>(text_key()))?,
+    )?;
+    methods.raw_set(
+        "SetNumber",
+        lua.create_function(|lua, (object, number): (Table, f64)| {
+            set_edit_box_text(lua, &object, number.to_string(), false)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetNumber",
+        lua.create_function(|_, object: Table| {
+            Ok(object
+                .raw_get::<String>(text_key())?
+                .parse::<f64>()
+                .unwrap_or(0.0))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetNumLetters",
+        lua.create_function(|_, object: Table| {
+            Ok(object.raw_get::<String>(text_key())?.chars().count() as u32)
+        })?,
+    )?;
+    register_edit_box_limit_methods(lua, methods)?;
+    register_edit_box_focus_methods(lua, methods)?;
+    register_edit_box_flag_methods(lua, methods)?;
+    register_edit_box_history_methods(lua, methods)?;
+    register_edit_box_cursor_methods(lua, methods)?;
+    register_edit_box_text_inset_methods(lua, methods)
+}
+
+fn register_edit_box_font_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetFontObject",
+        lua.create_function(|lua, (edit_box, value): (Table, Value)| {
+            let font = resolve_font_object(lua, value)
+                .ok_or_else(|| mlua::Error::runtime("Usage: EditBox:SetFontObject(fontObject)"))?;
+            let color: Table = font.raw_get(text_color_key())?;
+            edit_box.raw_set(font_object_key(), font)?;
+            edit_box.raw_set(text_color_key(), color)?;
+            edit_box.raw_set(font_set_key(), true)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetFontObject",
+        lua.create_function(|_, edit_box: Table| {
+            edit_box.raw_get::<Option<Table>>(font_object_key())
+        })?,
+    )?;
+    methods.raw_set(
+        "GetFont",
+        lua.create_function(|_, edit_box: Table| {
+            let Some(font) = edit_box.raw_get::<Option<Table>>(font_object_key())? else {
+                return Ok((None::<String>, None::<f64>, None::<String>));
+            };
+            Ok((
+                font.raw_get::<Option<String>>(font_face_key())?,
+                font.raw_get::<Option<f64>>(font_height_key())?,
+                font.raw_get::<Option<String>>(font_flags_key())?,
+            ))
+        })?,
+    )?;
+    methods.raw_set(
+        "SetTextColor",
+        lua.create_function(
+            |lua, (edit_box, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
+                edit_box.raw_set(
+                    text_color_key(),
+                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetTextColor",
+        lua.create_function(|_, edit_box: Table| {
+            let color: Table = edit_box.raw_get(text_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
+        })?,
+    )?;
+    register_font_string_justification_methods(lua, methods)?;
+    register_font_spacing_methods(lua, methods)
+}
+
+fn register_edit_box_limit_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    for (setter, getter, key) in [
+        ("SetMaxLetters", "GetMaxLetters", edit_max_letters_key()),
+        ("SetMaxBytes", "GetMaxBytes", edit_max_bytes_key()),
+    ] {
+        methods.raw_set(
+            setter,
+            lua.create_function(move |_, (object, limit): (Table, u32)| {
+                object.raw_set(key, limit)
+            })?,
+        )?;
+        methods.raw_set(
+            getter,
+            lua.create_function(move |_, object: Table| object.raw_get::<u32>(key))?,
+        )?;
+    }
+    methods.raw_set(
+        "SetBlinkSpeed",
+        lua.create_function(|_, (object, speed): (Table, f64)| {
+            object.raw_set(edit_blink_speed_key(), speed)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetBlinkSpeed",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(edit_blink_speed_key()))?,
+    )
+}
+
+fn register_edit_box_focus_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetFocus",
+        lua.create_function(|lua, object: Table| set_edit_box_focus(lua, &object, true))?,
+    )?;
+    methods.raw_set(
+        "ClearFocus",
+        lua.create_function(|_, object: Table| object.raw_set(edit_focused_key(), false))?,
+    )?;
+    methods.raw_set(
+        "HasFocus",
+        lua.create_function(|_, object: Table| {
+            stock_optional_true(object.raw_get::<bool>(edit_focused_key())?)
+        })?,
+    )
+}
+
+fn register_edit_box_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    for (setter, getter, key) in [
+        ("SetAutoFocus", "IsAutoFocus", edit_auto_focus_key()),
+        ("SetMultiLine", "IsMultiLine", edit_multi_line_key()),
+        ("SetNumeric", "IsNumeric", edit_numeric_key()),
+        ("SetPassword", "IsPassword", edit_password_key()),
+        (
+            "SetCountInvisibleLetters",
+            "IsCountInvisibleLetters",
+            edit_count_invisible_key(),
+        ),
+        (
+            "SetAltArrowKeyMode",
+            "GetAltArrowKeyMode",
+            edit_alt_arrow_key(),
+        ),
+    ] {
+        methods.raw_set(
+            setter,
+            lua.create_function(move |_, (object, enabled): (Table, Option<bool>)| {
+                object.raw_set(key, enabled.unwrap_or(true))
+            })?,
+        )?;
+        methods.raw_set(
+            getter,
+            lua.create_function(move |_, object: Table| {
+                stock_optional_true(object.raw_get::<bool>(key)?)
+            })?,
+        )?;
+    }
+    methods.raw_set(
+        "IsInIMECompositionMode",
+        lua.create_function(|_, _: Table| Ok(Value::Nil))?,
+    )?;
+    methods.raw_set(
+        "GetInputLanguage",
+        lua.create_function(|_, _: Table| Ok("ROMAN"))?,
+    )?;
+    methods.raw_set(
+        "ToggleInputLanguage",
+        lua.create_function(|_, _: Table| Ok(()))?,
+    )
+}
+
+fn register_edit_box_history_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetHistoryLines",
+        lua.create_function(|_, (object, lines): (Table, u32)| {
+            if lines == 0 {
+                return Err(edit_box_usage(&object, "SetHistoryLines", "numLines"));
+            }
+            object.raw_set(edit_history_lines_key(), lines)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetHistoryLines",
+        lua.create_function(|_, object: Table| object.raw_get::<u32>(edit_history_lines_key()))?,
+    )?;
+    methods.raw_set(
+        "ClearHistory",
+        lua.create_function(|lua, object: Table| {
+            object.raw_set(edit_history_key(), lua.create_table()?)
+        })?,
+    )?;
+    methods.raw_set(
+        "AddHistoryLine",
+        lua.create_function(|lua, (object, value): (Table, Value)| {
+            let text = lua
+                .coerce_string(value)?
+                .ok_or_else(|| edit_box_usage(&object, "AddHistoryLine", "\"text\""))?
+                .to_string_lossy();
+            let maximum = object.raw_get::<u32>(edit_history_lines_key())? as usize;
+            if maximum == 0 {
+                return Ok(());
+            }
+            let history: Table = object.raw_get(edit_history_key())?;
+            let count = history.raw_len();
+            if count >= maximum {
+                for index in 1..count {
+                    let next = history.raw_get::<Value>(index + 1)?;
+                    history.raw_set(index, next)?;
+                }
+                history.raw_set(count, text)
+            } else {
+                history.raw_set(count + 1, text)
+            }
+        })?,
+    )
+}
+
+fn register_edit_box_cursor_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetCursorPosition",
+        lua.create_function(|_, (object, position): (Table, u32)| {
+            let text = object.raw_get::<String>(text_key())?;
+            object.raw_set(
+                edit_cursor_key(),
+                clamp_utf8_boundary(&text, position as usize) as u32,
+            )
+        })?,
+    )?;
+    methods.raw_set(
+        "GetCursorPosition",
+        lua.create_function(|_, object: Table| object.raw_get::<u32>(edit_cursor_key()))?,
+    )?;
+    methods.raw_set(
+        "GetUTF8CursorPosition",
+        lua.create_function(|_, object: Table| {
+            let text = object.raw_get::<String>(text_key())?;
+            let cursor = object.raw_get::<u32>(edit_cursor_key())? as usize;
+            Ok(text[..clamp_utf8_boundary(&text, cursor)].chars().count() as u32)
+        })?,
+    )?;
+    methods.raw_set(
+        "HighlightText",
+        lua.create_function(
+            |_, (object, start, finish): (Table, Option<u32>, Option<i64>)| {
+                let text = object.raw_get::<String>(text_key())?;
+                let length = text.len() as u32;
+                let start = clamp_utf8_boundary(&text, start.unwrap_or(0).min(length) as usize);
+                let finish = clamp_utf8_boundary(
+                    &text,
+                    finish
+                        .map_or(length, |value| u32::try_from(value).unwrap_or(length))
+                        .min(length) as usize,
+                );
+                object.raw_set(edit_selection_start_key(), start as u32)?;
+                object.raw_set(edit_selection_end_key(), finish as u32)
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "Insert",
+        lua.create_function(|lua, (object, value): (Table, Value)| {
+            let inserted = lua
+                .coerce_string(value)?
+                .ok_or_else(|| edit_box_usage(&object, "Insert", "\"text\""))?
+                .to_string_lossy();
+            let text = object.raw_get::<String>(text_key())?;
+            let start = object.raw_get::<u32>(edit_selection_start_key())? as usize;
+            let end = object.raw_get::<u32>(edit_selection_end_key())? as usize;
+            let cursor = object.raw_get::<u32>(edit_cursor_key())? as usize;
+            let (start, end) = if start != end {
+                (
+                    clamp_utf8_boundary(&text, start.min(end)),
+                    clamp_utf8_boundary(&text, start.max(end)),
+                )
+            } else {
+                let cursor = clamp_utf8_boundary(&text, cursor);
+                (cursor, cursor)
+            };
+            let mut replacement = String::with_capacity(text.len() + inserted.len());
+            replacement.push_str(&text[..start]);
+            replacement.push_str(&inserted);
+            replacement.push_str(&text[end..]);
+            set_edit_box_text(lua, &object, replacement, false)?;
+            let cursor = (start + inserted.len()) as u32;
+            object.raw_set(edit_cursor_key(), cursor)?;
+            object.raw_set(edit_selection_start_key(), cursor)?;
+            object.raw_set(edit_selection_end_key(), cursor)
+        })?,
+    )
+}
+
+fn register_edit_box_text_inset_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetTextInsets",
+        lua.create_function(
+            |lua, (object, left, right, top, bottom): (Table, f64, f64, f64, f64)| {
+                object.raw_set(
+                    edit_text_insets_key(),
+                    lua.create_sequence_from([left, right, top, bottom])?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetTextInsets",
+        lua.create_function(|_, object: Table| {
+            let insets: Table = object.raw_get(edit_text_insets_key())?;
+            Ok((
+                insets.raw_get::<f64>(1)?,
+                insets.raw_get::<f64>(2)?,
+                insets.raw_get::<f64>(3)?,
+                insets.raw_get::<f64>(4)?,
+            ))
+        })?,
+    )
+}
+
+fn set_edit_box_text(
+    lua: &Lua,
+    object: &Table,
+    text: String,
+    user_input: bool,
+) -> mlua::Result<()> {
+    let byte_limit = object.raw_get::<u32>(edit_max_bytes_key())? as usize;
+    let letter_limit = object.raw_get::<u32>(edit_max_letters_key())? as usize;
+    let mut text = text;
+    if letter_limit != 0 {
+        text = text.chars().take(letter_limit).collect();
+    }
+    if byte_limit != 0 && text.len() > byte_limit {
+        let mut boundary = byte_limit;
+        while !text.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        text.truncate(boundary);
+    }
+    let cursor = text.len() as u32;
+    object.raw_set(text_key(), text)?;
+    object.raw_set(edit_cursor_key(), cursor)?;
+    object.raw_set(edit_selection_start_key(), cursor)?;
+    object.raw_set(edit_selection_end_key(), cursor)?;
+    if let Some(function) = object_script_function(lua, object, UiScriptHandler::TextChanged)? {
+        call_boolean_object_handler(lua, &function, object.clone(), user_input)?;
+    }
+    Ok(())
+}
+
+fn clamp_utf8_boundary(text: &str, requested: usize) -> usize {
+    let mut boundary = requested.min(text.len());
+    while !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
+}
+
+fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<()> {
+    if focused {
+        let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+        for pair in objects.pairs::<usize, Table>() {
+            let (_, candidate) = pair?;
+            if candidate.raw_get::<Option<String>>(type_key())?.as_deref() == Some("EditBox") {
+                candidate.raw_set(edit_focused_key(), false)?;
+            }
+        }
+    }
+    object.raw_set(edit_focused_key(), focused)
+}
+
+fn call_boolean_object_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    value: bool,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    let previous_arg = globals.raw_get::<Value>("arg1")?;
+    globals.raw_set("this", object.clone())?;
+    globals.raw_set("arg1", value)?;
+    let result = function.call::<()>((object, value));
+    let restore_this = globals.raw_set("this", previous_this);
+    let restore_arg = globals.raw_set("arg1", previous_arg);
+    match result {
+        Ok(()) => {
+            restore_this?;
+            restore_arg
+        }
+        Err(error) => {
+            let _ = restore_this;
+            let _ = restore_arg;
+            Err(error)
+        }
+    }
+}
+
+fn stock_optional_true(value: bool) -> mlua::Result<Value> {
+    Ok(if value {
+        Value::Number(1.0)
+    } else {
+        Value::Nil
+    })
+}
+
+fn edit_box_usage(object: &Table, method: &str, arguments: &str) -> mlua::Error {
+    let name = object
+        .raw_get::<Option<String>>(name_key())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "<unnamed>".to_owned());
+    mlua::Error::runtime(format!("Usage: {name}:{method}({arguments})"))
 }
 
 fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -3893,7 +4456,10 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
     tree.nodes()
         .iter()
         .map(|node| {
-            if node.kind() != UiObjectKind::FontString {
+            if !matches!(
+                node.kind(),
+                UiObjectKind::FontString | UiObjectKind::EditBox
+            ) {
                 return InitialFont::default();
             }
             let mut initial = InitialFont::default();
@@ -4300,6 +4866,78 @@ fn vertical_scroll_range_key() -> LightUserData {
 
 fn scroll_child_key() -> LightUserData {
     hidden_key(&SCROLL_CHILD_TOKEN)
+}
+
+fn edit_focused_key() -> LightUserData {
+    hidden_key(&EDIT_FOCUSED_TOKEN)
+}
+
+fn edit_alt_arrow_key() -> LightUserData {
+    hidden_key(&EDIT_ALT_ARROW_TOKEN)
+}
+
+fn edit_history_lines_key() -> LightUserData {
+    hidden_key(&EDIT_HISTORY_LINES_TOKEN)
+}
+
+fn edit_history_key() -> LightUserData {
+    hidden_key(&EDIT_HISTORY_TOKEN)
+}
+
+fn edit_max_letters_key() -> LightUserData {
+    hidden_key(&EDIT_MAX_LETTERS_TOKEN)
+}
+
+fn edit_max_bytes_key() -> LightUserData {
+    hidden_key(&EDIT_MAX_BYTES_TOKEN)
+}
+
+fn edit_cursor_key() -> LightUserData {
+    hidden_key(&EDIT_CURSOR_TOKEN)
+}
+
+fn edit_selection_start_key() -> LightUserData {
+    hidden_key(&EDIT_SELECTION_START_TOKEN)
+}
+
+fn edit_selection_end_key() -> LightUserData {
+    hidden_key(&EDIT_SELECTION_END_TOKEN)
+}
+
+fn edit_blink_speed_key() -> LightUserData {
+    hidden_key(&EDIT_BLINK_SPEED_TOKEN)
+}
+
+fn edit_password_key() -> LightUserData {
+    hidden_key(&EDIT_PASSWORD_TOKEN)
+}
+
+fn edit_numeric_key() -> LightUserData {
+    hidden_key(&EDIT_NUMERIC_TOKEN)
+}
+
+fn edit_multi_line_key() -> LightUserData {
+    hidden_key(&EDIT_MULTI_LINE_TOKEN)
+}
+
+fn edit_count_invisible_key() -> LightUserData {
+    hidden_key(&EDIT_COUNT_INVISIBLE_TOKEN)
+}
+
+fn edit_auto_focus_key() -> LightUserData {
+    hidden_key(&EDIT_AUTO_FOCUS_TOKEN)
+}
+
+fn edit_text_insets_key() -> LightUserData {
+    hidden_key(&EDIT_TEXT_INSETS_TOKEN)
+}
+
+fn frame_clamped_key() -> LightUserData {
+    hidden_key(&FRAME_CLAMPED_TOKEN)
+}
+
+fn frame_clamp_insets_key() -> LightUserData {
+    hidden_key(&FRAME_CLAMP_INSETS_TOKEN)
 }
 
 fn slider_min_key() -> LightUserData {
