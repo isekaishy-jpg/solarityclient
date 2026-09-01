@@ -240,6 +240,12 @@ subzone, and the minimap-selected area text. `GetZoneText`,
 fields. The UI layer never derives one label from another when map-area data is
 missing or temporally incomplete.
 
+The script environment registers build-12340 CVar metadata before either UI
+manifest executes. Native defaults and numeric boundaries are one catalog, so
+`GetCVar`, `GetCVarDefault`, `GetCVarMin`, and `GetCVarMax` observe the same
+case-insensitive identity. Unknown names remain errors instead of receiving an
+invented numeric or string fallback.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265
