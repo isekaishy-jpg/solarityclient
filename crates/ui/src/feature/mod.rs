@@ -23,3 +23,5 @@ mod tooltip;
 mod trade;
 mod trade_skill;
 mod trainer;
+
+pub(crate) use battlenet::UiBattleNetState;

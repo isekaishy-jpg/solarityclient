@@ -10,10 +10,11 @@ use solarity_asset::AssetStoreHandle;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
-    button_text_key, checked_key, click_action_key, disabled_font_key, disabled_texture_key,
-    font_object_key, font_set_key, highlight_font_key, highlight_locked_key, highlight_texture_key,
-    lua_bool, lua_text, name_key, normal_font_key, normal_texture_key, pushed_texture_key,
-    resolve_font_object, text_key, type_key,
+    DynamicArenaState, button_text_key, checked_key, click_action_key, create_dynamic_region,
+    disabled_font_key, disabled_texture_key, font_object_key, font_set_key, highlight_font_key,
+    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key, normal_font_key,
+    normal_texture_key, pushed_texture_key, resolve_font_object, text_key, texture_file_key,
+    texture_solid_color_key, type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
@@ -96,6 +97,7 @@ pub(super) fn register_button_methods(
     lua: &Lua,
     methods: &Table,
     measurement: Option<ButtonTextMeasurement>,
+    dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<()> {
     register_font_pair(
         lua,
@@ -124,10 +126,38 @@ pub(super) fn register_button_methods(
             button.raw_set(button_text_key(), font_string)
         })?,
     )?;
-    register_texture_getter(lua, methods, "GetNormalTexture", normal_texture_key())?;
-    register_texture_getter(lua, methods, "GetPushedTexture", pushed_texture_key())?;
-    register_texture_getter(lua, methods, "GetDisabledTexture", disabled_texture_key())?;
-    register_texture_getter(lua, methods, "GetHighlightTexture", highlight_texture_key())?;
+    register_texture_pair(
+        lua,
+        methods,
+        "SetNormalTexture",
+        "GetNormalTexture",
+        normal_texture_key(),
+        dynamic_arena.clone(),
+    )?;
+    register_texture_pair(
+        lua,
+        methods,
+        "SetPushedTexture",
+        "GetPushedTexture",
+        pushed_texture_key(),
+        dynamic_arena.clone(),
+    )?;
+    register_texture_pair(
+        lua,
+        methods,
+        "SetDisabledTexture",
+        "GetDisabledTexture",
+        disabled_texture_key(),
+        dynamic_arena.clone(),
+    )?;
+    register_texture_pair(
+        lua,
+        methods,
+        "SetHighlightTexture",
+        "GetHighlightTexture",
+        highlight_texture_key(),
+        dynamic_arena,
+    )?;
     register_font_pair(
         lua,
         methods,
@@ -255,16 +285,69 @@ fn register_font_pair(
     )
 }
 
-fn register_texture_getter(
+/// Registers one button texture slot with stock string/object overloads.
+fn register_texture_pair(
     lua: &Lua,
     methods: &Table,
+    setter: &'static str,
     getter: &'static str,
     key: LightUserData,
+    dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<()> {
+    methods.raw_set(
+        setter,
+        lua.create_function(move |lua, (button, value): (Table, Value)| {
+            let texture = match value {
+                Value::Nil => {
+                    button.raw_set(key, Option::<Table>::None)?;
+                    return Ok(());
+                }
+                Value::Table(texture) => {
+                    if texture.raw_get::<String>(type_key())? != "Texture" {
+                        return Err(button_texture_usage(&button, setter));
+                    }
+                    texture
+                }
+                Value::String(path) => {
+                    let texture = match button.raw_get::<Option<Table>>(key)? {
+                        Some(texture) => texture,
+                        None => create_dynamic_region(
+                            lua,
+                            "Texture",
+                            button.clone(),
+                            None,
+                            None,
+                            None,
+                            None,
+                            &dynamic_arena.counters(),
+                        )?,
+                    };
+                    let path = path.to_string_lossy();
+                    texture.raw_set(texture_file_key(), (!path.is_empty()).then_some(path))?;
+                    texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+                    texture
+                }
+                _ => return Err(button_texture_usage(&button, setter)),
+            };
+            button.raw_set(key, texture)
+        })?,
+    )?;
     methods.raw_set(
         getter,
         lua.create_function(move |_, button: Table| button.raw_get::<Option<Table>>(key))?,
     )
+}
+
+/// Produces the native-style method contract without accepting other objects.
+fn button_texture_usage(button: &Table, setter: &str) -> mlua::Error {
+    let name = button
+        .raw_get::<Option<String>>(name_key())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "<unnamed>".to_owned());
+    mlua::Error::runtime(format!(
+        "Usage: {name}:{setter}(\"filename\" or textureObject)"
+    ))
 }
 
 /// Reproduces build 12340's recognized `StringToClickAction` names.

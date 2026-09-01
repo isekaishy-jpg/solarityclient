@@ -161,6 +161,17 @@ impl<'bundle> UiObjectNode<'bundle> {
         self.role
     }
 
+    /// Returns the final XML `parentKey` used to publish this child on its
+    /// construction owner, independently of the child's global name.
+    #[must_use]
+    pub fn parent_key(&self) -> Option<&str> {
+        self.layers
+            .iter()
+            .filter_map(|layer| attribute(layer.element(), "parentKey"))
+            .next_back()
+            .filter(|key| !key.is_empty())
+    }
+
     /// Returns the parent arena index.
     #[must_use]
     pub const fn parent(&self) -> Option<usize> {

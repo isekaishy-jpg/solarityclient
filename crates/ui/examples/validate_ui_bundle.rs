@@ -9,10 +9,11 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, Locale,
 };
 use solarity_ui::{
-    FontCatalog, FontRasterization, FontSystem, GlueManager, UiBundle, UiFramePlan, UiLayoutPlan,
-    UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan, UiResourceContent,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTextureFile, UiTexturePlan, UiTextureStatePlan,
+    FontCatalog, FontRasterization, FontSystem, GlueManager, UiBindingAssignments,
+    UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectTree, UiPlayerState, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile,
+    UiTexturePlan, UiTextureStatePlan, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -45,7 +46,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("execute") => {
             let width = parse_dimension(arguments.next(), "logical width")?;
             let height = parse_dimension(arguments.next(), "logical height")?;
-            Some(UiScriptEnvironment::new(width, height, false)?)
+            let environment = UiScriptEnvironment::new(width, height, false)?;
+            if kind == UiManifestKind::Frame {
+                let money_copper = parse_player_money(arguments.next())?;
+                let world = environment.world_state();
+                world.enter_player(UiPlayerState::new(money_copper));
+                // Empty labels and no PvP classification are an explicit
+                // pre-map update, matching the temporal state before the
+                // world service publishes its first area transition.
+                world.set_zone(UiZoneState::new("", "", None, false, None));
+            }
+            Some(environment)
         }
         Some(_) => return Err(argument_error("optional mode must be execute").into()),
     };
@@ -57,8 +68,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let catalog = ArchiveCatalog::discover(root, locale)?;
     let archive_count = catalog.descriptors().len();
     let execution_environment = match execution_environment {
-        Some(environment) => {
-            Some(environment.with_asset_store(AssetStore::mount(catalog.clone())?))
+        Some(mut environment) => {
+            let mut environment_assets = AssetStore::mount(catalog.clone())?;
+            if kind == UiManifestKind::Frame {
+                let binding_catalog = UiBindingCatalog::load_builtin(&mut environment_assets)?;
+                let bindings =
+                    UiBindingAssignments::load_defaults(&mut environment_assets, &binding_catalog)?;
+                environment = environment.with_binding_assignments(bindings);
+            }
+            Some(environment.with_asset_store(environment_assets))
         }
         None => None,
     };
@@ -202,9 +220,17 @@ fn argument_error(message: &str) -> IoError {
     IoError::new(
         ErrorKind::InvalidInput,
         format!(
-            "{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame> [execute <logical-width> <logical-height>]"
+            "{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame> [execute <logical-width> <logical-height> [frame-player-money-copper]]"
         ),
     )
+}
+
+fn parse_player_money(value: Option<std::ffi::OsString>) -> Result<u32, IoError> {
+    value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| argument_error("frame execution requires authoritative player money"))?
+        .parse::<u32>()
+        .map_err(|_| argument_error("invalid frame player money"))
 }
 
 fn parse_dimension(value: Option<std::ffi::OsString>, label: &str) -> Result<u32, IoError> {

@@ -3,6 +3,7 @@
 mod buttons;
 mod cvars;
 mod globals;
+mod tooltips;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -10,16 +11,17 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
-use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle};
+use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle, Locale};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canonical_glue_event};
 use crate::script::UiGlueNetworkBridge;
 use crate::{
-    FontCatalog, FontDefinition, FontOutline, HorizontalJustification, UiAnchorTarget, UiBlendMode,
-    UiBundle, UiDrawLayer, UiFrameStatePlan, UiFrameStrata, UiLoadAction, UiManifestKind,
-    UiObjectBatch, UiObjectKind, UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan,
-    UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
+    FontCatalog, FontDefinition, FontOutline, HorizontalJustification, UiAnchorTarget,
+    UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan, UiFrameStrata,
+    UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind, UiObjectRole, UiObjectTree, UiPoint,
+    UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler,
+    UiScriptPlan, UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification,
+    XmlContent,
 };
 
 use self::cvars::UiCVarRegistry;
@@ -98,6 +100,14 @@ static FONT_FACE_TOKEN: u8 = 64;
 static FONT_HEIGHT_TOKEN: u8 = 65;
 static FONT_FLAGS_TOKEN: u8 = 66;
 static MOUSE_ENABLED_TOKEN: u8 = 67;
+static ATTRIBUTES_TOKEN: u8 = 68;
+static STATUS_BAR_COLOR_TOKEN: u8 = 69;
+static STATUS_BAR_TEXTURE_TOKEN: u8 = 70;
+static TOOLTIP_OWNER_TOKEN: u8 = 71;
+static TOOLTIP_ANCHOR_TOKEN: u8 = 72;
+static TOOLTIP_OFFSET_X_TOKEN: u8 = 73;
+static TOOLTIP_OFFSET_Y_TOKEN: u8 = 74;
+static TEXT_COLOR_TOKEN: u8 = 75;
 
 const OBJECT_KINDS: [UiObjectKind; 20] = [
     UiObjectKind::Frame,
@@ -278,6 +288,11 @@ pub struct UiScriptEnvironment {
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
+    world: crate::UiWorldState,
+    bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
+    battlenet: crate::feature::UiBattleNetState,
+    locale: Option<Locale>,
+    existing_locales: Rc<[Locale]>,
 }
 
 impl UiScriptEnvironment {
@@ -307,6 +322,13 @@ impl UiScriptEnvironment {
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
+            world: crate::UiWorldState::new(),
+            bindings: None,
+            // A process without an attached Battle.net platform service must
+            // not expose a second authentication or social-network path.
+            battlenet: crate::feature::UiBattleNetState::new(false),
+            locale: None,
+            existing_locales: Rc::from([]),
         })
     }
 
@@ -337,13 +359,27 @@ impl UiScriptEnvironment {
     /// Attaches the mounted stock archive stack used by synchronous UI loads.
     #[must_use]
     pub fn with_asset_store(mut self, store: AssetStore) -> Self {
+        self.locale = Some(store.locale());
+        self.existing_locales = Rc::from(store.existing_locales());
         self.assets = Some(AssetStoreHandle::new(store));
+        self
+    }
+
+    /// Attaches the effective stock key and modified-click assignment set.
+    #[must_use]
+    pub fn with_binding_assignments(mut self, assignments: UiBindingAssignments) -> Self {
+        self.bindings = Some(Rc::new(RefCell::new(assignments)));
         self
     }
 
     /// Attaches a main-thread archive stack already owned by a UI manager.
     #[must_use]
     pub(crate) fn with_shared_asset_store(mut self, store: AssetStoreHandle) -> Self {
+        {
+            let store = store.borrow();
+            self.locale = Some(store.locale());
+            self.existing_locales = Rc::from(store.existing_locales());
+        }
         self.assets = Some(store);
         self
     }
@@ -356,6 +392,22 @@ impl UiScriptEnvironment {
         self.assets.clone()
     }
 
+    fn binding_assignments(&self) -> Option<Rc<RefCell<UiBindingAssignments>>> {
+        self.bindings.clone()
+    }
+
+    fn battlenet_state(&self) -> crate::feature::UiBattleNetState {
+        self.battlenet.clone()
+    }
+
+    fn locale(&self) -> Option<Locale> {
+        self.locale
+    }
+
+    fn existing_locales(&self) -> Rc<[Locale]> {
+        self.existing_locales.clone()
+    }
+
     pub(crate) fn media_intent(&self) -> Rc<RefCell<UiGlueMediaIntent>> {
         self.media_intent.clone()
     }
@@ -366,6 +418,12 @@ impl UiScriptEnvironment {
 
     pub(crate) fn current_screen(&self) -> Rc<RefCell<String>> {
         self.current_screen.clone()
+    }
+
+    /// Returns the shared main-thread projection consumed by FrameXML globals.
+    #[must_use]
+    pub fn world_state(&self) -> crate::UiWorldState {
+        self.world.clone()
     }
 }
 
@@ -1009,6 +1067,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
                 .and_then(|()| table.raw_set(frame_depth_key(), 0.0))
                 .and_then(|()| table.raw_set(ignore_depth_key(), false))
+                .and_then(|()| table.raw_set(attributes_key(), lua.create_table()?))
                 .and_then(|()| table.raw_set(script_handlers_key(), script_handlers))
                 .map_err(|error| execution_error("object registration", error))?;
         }
@@ -1075,12 +1134,37 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(vertical_scroll_range_key(), 0.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
-        if object.kind() == UiObjectKind::Slider {
+        if matches!(
+            object.kind(),
+            UiObjectKind::Slider | UiObjectKind::StatusBar
+        ) {
             table
                 .raw_set(slider_min_key(), 0.0)
                 .and_then(|()| table.raw_set(slider_max_key(), 0.0))
                 .and_then(|()| table.raw_set(slider_value_key(), 0.0))
-                .and_then(|()| table.raw_set(slider_step_key(), 0.0))
+                .map_err(|error| execution_error("object registration", error))?;
+        }
+        if object.kind() == UiObjectKind::Slider {
+            table
+                .raw_set(slider_step_key(), 0.0)
+                .map_err(|error| execution_error("object registration", error))?;
+        }
+        if object.kind() == UiObjectKind::StatusBar {
+            table
+                .raw_set(
+                    status_bar_color_key(),
+                    lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])
+                        .map_err(|error| execution_error("object registration", error))?,
+                )
+                .and_then(|()| table.raw_set(status_bar_texture_key(), Option::<Table>::None))
+                .map_err(|error| execution_error("object registration", error))?;
+        }
+        if object.kind() == UiObjectKind::GameTooltip {
+            table
+                .raw_set(tooltip_owner_key(), Option::<usize>::None)
+                .and_then(|()| table.raw_set(tooltip_anchor_key(), "ANCHOR_NONE"))
+                .and_then(|()| table.raw_set(tooltip_offset_x_key(), 0.0))
+                .and_then(|()| table.raw_set(tooltip_offset_y_key(), 0.0))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if matches!(object.kind(), UiObjectKind::Model | UiObjectKind::ModelFfx) {
@@ -1103,6 +1187,12 @@ impl UiScriptRuntime {
                 .raw_set(font_set_key(), font.assigned)
                 .and_then(|()| table.raw_set(justify_h_key(), font.justify_h.as_str()))
                 .and_then(|()| table.raw_set(justify_v_key(), font.justify_v.as_str()))
+                .and_then(|()| {
+                    table.raw_set(
+                        text_color_key(),
+                        lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
+                    )
+                })
                 .map_err(|error| execution_error("object registration", error))?;
             if let Some(name) = &font.object_name {
                 let global: Table = lua.globals().raw_get(name.as_str()).map_err(|error| {
@@ -1114,8 +1204,12 @@ impl UiScriptRuntime {
                         )),
                     )
                 })?;
+                let color: Table = global
+                    .raw_get(text_color_key())
+                    .map_err(|error| execution_error("object registration", error))?;
                 table
                     .raw_set(font_object_key(), global)
+                    .and_then(|()| table.raw_set(text_color_key(), color))
                     .map_err(|error| execution_error("object registration", error))?;
             }
         }
@@ -1169,6 +1263,16 @@ impl UiScriptRuntime {
         objects
             .raw_set(node_index + 1, table.clone())
             .map_err(|error| execution_error("object registration", error))?;
+        if let Some(key) = object.parent_key()
+            && let Some(parent) = object.construction_parent()
+        {
+            let owner: Table = objects
+                .raw_get(parent + 1)
+                .map_err(|error| execution_error("object registration", error))?;
+            owner
+                .raw_set(key, table.clone())
+                .map_err(|error| execution_error("object registration", error))?;
+        }
         if let Some(key) = widget_region_key(object.role())
             && let Some(parent) = object.parent()
         {
@@ -1506,6 +1610,7 @@ fn create_dynamic_object(
         object.raw_set(mouse_enabled_key(), false)?;
         object.raw_set(frame_depth_key(), 0.0)?;
         object.raw_set(ignore_depth_key(), false)?;
+        object.raw_set(attributes_key(), lua.create_table()?)?;
         let handlers = lua.create_table()?;
         if let Some(initial) = record.raw_get::<Option<Table>>("scripts")? {
             for pair in initial.pairs::<String, Value>() {
@@ -1531,11 +1636,26 @@ fn create_dynamic_object(
         object.raw_set(horizontal_scroll_range_key(), 0.0)?;
         object.raw_set(vertical_scroll_range_key(), 0.0)?;
     }
-    if kind == "Slider" {
+    if matches!(kind, "Slider" | "StatusBar") {
         object.raw_set(slider_min_key(), 0.0)?;
         object.raw_set(slider_max_key(), 0.0)?;
         object.raw_set(slider_value_key(), 0.0)?;
+    }
+    if kind == "Slider" {
         object.raw_set(slider_step_key(), 0.0)?;
+    }
+    if kind == "StatusBar" {
+        object.raw_set(
+            status_bar_color_key(),
+            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
+        )?;
+        object.raw_set(status_bar_texture_key(), Option::<Table>::None)?;
+    }
+    if kind == "GameTooltip" {
+        object.raw_set(tooltip_owner_key(), Option::<usize>::None)?;
+        object.raw_set(tooltip_anchor_key(), "ANCHOR_NONE")?;
+        object.raw_set(tooltip_offset_x_key(), 0.0)?;
+        object.raw_set(tooltip_offset_y_key(), 0.0)?;
     }
     if matches!(kind, "Model" | "ModelFFX") {
         object.raw_set(model_camera_key(), 0)?;
@@ -1548,9 +1668,15 @@ fn create_dynamic_object(
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
+        object.raw_set(
+            text_color_key(),
+            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
+        )?;
         if let Some(name) = record.raw_get::<Option<String>>("font_object_name")? {
             let font: Table = lua.globals().raw_get(name.as_str())?;
+            let color: Table = font.raw_get(text_color_key())?;
             object.raw_set(font_object_key(), font)?;
+            object.raw_set(text_color_key(), color)?;
         }
     }
     if kind == "Texture" {
@@ -1597,6 +1723,11 @@ fn create_dynamic_object(
             object.raw_set(font_object_key(), font)?;
             object.raw_set(font_set_key(), true)?;
         }
+    }
+    if let Some(parent) = parent
+        && let Some(parent_key) = record.raw_get::<Option<String>>("parent_key")?
+    {
+        parent.raw_set(parent_key, object.clone())?;
     }
     if let Some(name) = name
         && matches!(lua.globals().raw_get::<Value>(name)?, Value::Nil)
@@ -1809,6 +1940,14 @@ fn register_font(
     let table = lua
         .create_table()
         .map_err(|error| execution_error("font registration", error))?;
+    let color = definition.color().map_or([1.0, 1.0, 1.0, 1.0], |color| {
+        [
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha().unwrap_or(1.0)),
+        ]
+    });
     table
         .raw_set(name_key(), definition.name())
         .and_then(|()| table.raw_set(type_key(), "Font"))
@@ -1820,6 +1959,7 @@ fn register_font(
         })
         .and_then(|()| table.raw_set(font_height_key(), definition.height().map(f64::from)))
         .and_then(|()| table.raw_set(font_flags_key(), font_flags(definition)))
+        .and_then(|()| table.raw_set(text_color_key(), lua.create_sequence_from(color)?))
         .map_err(|error| execution_error("font registration", error))?;
     let metatable: Table = lua
         .registry_value(metatable_key)
@@ -1916,14 +2056,15 @@ fn create_object_metatable(
         register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
         register_frame_visibility_methods(lua, &methods)?;
+        register_frame_attribute_methods(lua, &methods)?;
         register_frame_script_methods(lua, &methods, kind)?;
-        register_frame_region_factory_methods(lua, &methods, dynamic_arena)?;
+        register_frame_region_factory_methods(lua, &methods, dynamic_arena.clone())?;
     }
     if is_enabled_control(kind) {
         register_enabled_methods(lua, &methods, kind)?;
     }
     if matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton) {
-        buttons::register_button_methods(lua, &methods, button_measurement)?;
+        buttons::register_button_methods(lua, &methods, button_measurement, dynamic_arena.clone())?;
     }
     if kind == UiObjectKind::CheckButton {
         buttons::register_check_button_methods(lua, &methods)?;
@@ -1943,9 +2084,94 @@ fn create_object_metatable(
     if kind == UiObjectKind::Slider {
         register_slider_methods(lua, &methods)?;
     }
+    if kind == UiObjectKind::StatusBar {
+        register_status_bar_methods(lua, &methods, dynamic_arena)?;
+    }
+    if kind == UiObjectKind::GameTooltip {
+        tooltips::register_game_tooltip_methods(lua, &methods)?;
+    }
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
     Ok(metatable)
+}
+
+/// Installs the per-frame secure attribute store and wildcard lookup order.
+fn register_frame_attribute_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetAttribute",
+        lua.create_function(|lua, (object, name, value): (Table, String, Value)| {
+            let attributes: Table = object.raw_get(attributes_key())?;
+            attributes.raw_set(name.as_str(), value.clone())?;
+            if let Some(function) =
+                object_script_function(lua, &object, UiScriptHandler::AttributeChanged)?
+            {
+                call_attribute_changed_handler(lua, &function, object, name, value)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    methods.raw_set(
+        "GetAttribute",
+        lua.create_function(|lua, (object, arguments): (Table, Variadic<Value>)| {
+            let attributes: Table = object.raw_get(attributes_key())?;
+            match arguments.as_slice() {
+                [name] => {
+                    let name = attribute_name(lua, name)?;
+                    attributes.raw_get::<Value>(name)
+                }
+                [prefix, name, suffix] => {
+                    let prefix = attribute_name(lua, prefix)?;
+                    let name = attribute_name(lua, name)?;
+                    let suffix = attribute_name(lua, suffix)?;
+                    for candidate in [
+                        format!("{prefix}{name}{suffix}"),
+                        format!("*{name}{suffix}"),
+                        format!("{prefix}{name}*"),
+                        format!("*{name}*"),
+                        name,
+                    ] {
+                        let value = attributes.raw_get::<Value>(candidate)?;
+                        if !matches!(value, Value::Nil) {
+                            return Ok(value);
+                        }
+                    }
+                    Ok(Value::Nil)
+                }
+                _ => Err(mlua::Error::runtime(
+                    "Usage: Frame:GetAttribute(name) or Frame:GetAttribute(prefix, name, suffix)",
+                )),
+            }
+        })?,
+    )
+}
+
+/// Coerces a native attribute-name argument using Lua 5.1 string semantics.
+fn attribute_name(lua: &Lua, value: &Value) -> mlua::Result<String> {
+    lua.coerce_string(value.clone())?
+        .map(|value| value.to_string_lossy())
+        .ok_or_else(|| mlua::Error::runtime("frame attribute name must be a string"))
+}
+
+/// Preserves the legacy `this` global while delivering one attribute change.
+fn call_attribute_changed_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    name: String,
+    value: Value,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous = globals.raw_get::<Value>("this")?;
+    globals.raw_set("this", object.clone())?;
+    let result = function.call::<()>((object, name, value));
+    let restore = globals.raw_set("this", previous);
+    match result {
+        Ok(()) => restore,
+        Err(error) => {
+            let _restore_result = restore;
+            Err(error)
+        }
+    }
 }
 
 fn register_frame_script_methods(
@@ -2085,7 +2311,9 @@ fn create_dynamic_region(
         )?;
     }
     if let Some(font) = inherited_font {
+        let color: Table = font.raw_get(text_color_key())?;
         object.raw_set(font_object_key(), font)?;
+        object.raw_set(text_color_key(), color)?;
         object.raw_set(font_set_key(), true)?;
     }
     Ok(object)
@@ -2123,7 +2351,9 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             let font = resolve_font_object(lua, value).ok_or_else(|| {
                 mlua::Error::runtime("Usage: FontString:SetFontObject(fontObject)")
             })?;
+            let color: Table = font.raw_get(text_color_key())?;
             font_string.raw_set(font_object_key(), font)?;
+            font_string.raw_set(text_color_key(), color)?;
             font_string.raw_set(font_set_key(), true)
         })?,
     )?;
@@ -2167,6 +2397,29 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
         lua.create_function(|_, font_string: Table| {
             let text = font_string.raw_get::<Option<String>>(text_key())?;
             Ok(text.filter(|text| !text.is_empty()))
+        })?,
+    )?;
+    methods.raw_set(
+        "SetTextColor",
+        lua.create_function(
+            |lua, (font_string, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
+                font_string.raw_set(
+                    text_color_key(),
+                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
+                )
+            },
+        )?,
+    )?;
+    methods.raw_set(
+        "GetTextColor",
+        lua.create_function(|_, font_string: Table| {
+            let color: Table = font_string.raw_get(text_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
         })?,
     )?;
     register_font_string_justification_methods(lua, methods)
@@ -2728,6 +2981,22 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
 }
 
 fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    register_range_value_methods(lua, methods)?;
+    methods.raw_set(
+        "GetValueStep",
+        lua.create_function(|_, object: Table| object.raw_get::<f64>(slider_step_key()))?,
+    )?;
+    methods.raw_set(
+        "SetValueStep",
+        lua.create_function(|_, (object, step): (Table, f64)| {
+            object.raw_set(slider_step_key(), step)
+        })?,
+    )?;
+    Ok(())
+}
+
+/// Registers the value/range contract shared by Slider and StatusBar.
+fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "GetValue",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(slider_value_key()))?,
@@ -2763,17 +3032,89 @@ fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             object.raw_set(slider_value_key(), value.clamp(minimum, maximum))
         })?,
     )?;
+    Ok(())
+}
+
+/// Installs status-bar fill color and texture state on top of shared range state.
+fn register_status_bar_methods(
+    lua: &Lua,
+    methods: &Table,
+    dynamic_arena: DynamicArenaState,
+) -> mlua::Result<()> {
+    register_range_value_methods(lua, methods)?;
     methods.raw_set(
-        "GetValueStep",
-        lua.create_function(|_, object: Table| object.raw_get::<f64>(slider_step_key()))?,
+        "SetStatusBarColor",
+        lua.create_function(
+            |lua, (object, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
+                object.raw_set(
+                    status_bar_color_key(),
+                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
+                )
+            },
+        )?,
     )?;
     methods.raw_set(
-        "SetValueStep",
-        lua.create_function(|_, (object, step): (Table, f64)| {
-            object.raw_set(slider_step_key(), step)
+        "GetStatusBarColor",
+        lua.create_function(|_, object: Table| {
+            let color: Table = object.raw_get(status_bar_color_key())?;
+            Ok((
+                color.raw_get::<f64>(1)?,
+                color.raw_get::<f64>(2)?,
+                color.raw_get::<f64>(3)?,
+                color.raw_get::<f64>(4)?,
+            ))
         })?,
     )?;
-    Ok(())
+    methods.raw_set(
+        "SetStatusBarTexture",
+        lua.create_function(move |lua, (object, value): (Table, Value)| {
+            let texture = match value {
+                Value::Nil => {
+                    object.raw_set(status_bar_texture_key(), Option::<Table>::None)?;
+                    return Ok(());
+                }
+                Value::Table(texture) => {
+                    if texture.raw_get::<String>(type_key())? != "Texture" {
+                        return Err(mlua::Error::runtime(
+                            "Usage: StatusBar:SetStatusBarTexture(\"filename\" or textureObject)",
+                        ));
+                    }
+                    texture
+                }
+                Value::String(path) => {
+                    let texture = match object.raw_get::<Option<Table>>(status_bar_texture_key())? {
+                        Some(texture) => texture,
+                        None => create_dynamic_region(
+                            lua,
+                            "Texture",
+                            object.clone(),
+                            None,
+                            "ARTWORK".into(),
+                            None,
+                            None,
+                            &dynamic_arena.counters(),
+                        )?,
+                    };
+                    let path = path.to_string_lossy();
+                    texture.raw_set(texture_file_key(), (!path.is_empty()).then_some(path))?;
+                    texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+                    texture
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "Usage: StatusBar:SetStatusBarTexture(\"filename\" or textureObject)",
+                    ));
+                }
+            };
+            object.raw_set(status_bar_texture_key(), texture)
+        })?,
+    )?;
+    methods.raw_set(
+        "GetStatusBarTexture",
+        lua.create_function(|_, object: Table| {
+            object.raw_get::<Option<Table>>(status_bar_texture_key())
+        })?,
+    )
 }
 
 fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> mlua::Result<()> {
@@ -2804,6 +3145,28 @@ fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> m
 }
 
 fn register_region_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetParent",
+        lua.create_function(|lua, (object, requested): (Table, Option<Table>)| {
+            let object_index = object.raw_get::<usize>(index_key())?;
+            let requested_index = requested
+                .as_ref()
+                .map(|parent| parent.raw_get::<usize>(index_key()))
+                .transpose()?;
+            let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+            let mut cursor = requested_index;
+            while let Some(index) = cursor {
+                if index == object_index {
+                    return Err(mlua::Error::runtime(
+                        "SetParent(): parent would create a region hierarchy cycle",
+                    ));
+                }
+                let parent: Table = objects.raw_get(index)?;
+                cursor = parent.raw_get::<Option<usize>>(parent_key())?;
+            }
+            object.raw_set(parent_key(), requested_index)
+        })?,
+    )?;
     methods.raw_set(
         "GetWidth",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(width_key()))?,
@@ -3887,6 +4250,38 @@ fn ignore_depth_key() -> LightUserData {
 
 fn mouse_enabled_key() -> LightUserData {
     hidden_key(&MOUSE_ENABLED_TOKEN)
+}
+
+fn attributes_key() -> LightUserData {
+    hidden_key(&ATTRIBUTES_TOKEN)
+}
+
+fn status_bar_color_key() -> LightUserData {
+    hidden_key(&STATUS_BAR_COLOR_TOKEN)
+}
+
+fn status_bar_texture_key() -> LightUserData {
+    hidden_key(&STATUS_BAR_TEXTURE_TOKEN)
+}
+
+fn text_color_key() -> LightUserData {
+    hidden_key(&TEXT_COLOR_TOKEN)
+}
+
+pub(super) fn tooltip_owner_key() -> LightUserData {
+    hidden_key(&TOOLTIP_OWNER_TOKEN)
+}
+
+pub(super) fn tooltip_anchor_key() -> LightUserData {
+    hidden_key(&TOOLTIP_ANCHOR_TOKEN)
+}
+
+pub(super) fn tooltip_offset_x_key() -> LightUserData {
+    hidden_key(&TOOLTIP_OFFSET_X_TOKEN)
+}
+
+pub(super) fn tooltip_offset_y_key() -> LightUserData {
+    hidden_key(&TOOLTIP_OFFSET_Y_TOKEN)
 }
 
 fn font_face_key() -> LightUserData {

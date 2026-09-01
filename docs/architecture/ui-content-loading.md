@@ -189,11 +189,25 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
     frame
 ```
 
-Appending `execute <logical-width> <logical-height>` runs the ordered bootstrap
-until completion or the first unimplemented stock API boundary. Requiring an
-extent keeps `GetScreenWidth` and `GetScreenHeight` tied to real window facts
-instead of a guessed resolution. This mode is intentionally strict and is the
-incremental compatibility audit for global and widget bindings.
+Appending `execute <logical-width> <logical-height>` runs Glue's ordered
+bootstrap until completion or the first unimplemented stock API boundary.
+Frame execution additionally requires `<player-money-copper>` because
+`GetMoney` reads authoritative active-player state and deliberately has no
+offline zero fallback:
+
+```powershell
+cargo run -p solarity-ui --example validate_ui_bundle -- `
+    'C:\path\to\World of Warcraft\Data' `
+    enUS `
+    frame `
+    execute 1920 1080 0
+```
+
+Requiring an extent keeps `GetScreenWidth` and `GetScreenHeight` tied to real
+window facts instead of a guessed resolution. The explicit player value is a
+validation fixture, not a production default. This mode is intentionally
+strict and is the incremental compatibility audit for global and widget
+bindings.
 
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global

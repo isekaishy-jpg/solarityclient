@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
-use crate::player::{LocalPlayer, PlayerIdentity};
+use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney};
 use crate::unit::UnitPresentation;
 use crate::view::PlayerViewState;
 
@@ -100,6 +100,15 @@ impl ActiveWorld {
         self.storage
             .get::<&UnitPresentation>(self.local_player)
             .map(|presentation| **presentation)
+            .ok()
+    }
+
+    /// Returns private player coinage after its authoritative field arrives.
+    #[must_use]
+    pub fn local_player_money(&self) -> Option<PlayerMoney> {
+        self.storage
+            .get::<&PlayerMoney>(self.local_player)
+            .map(|money| **money)
             .ok()
     }
 

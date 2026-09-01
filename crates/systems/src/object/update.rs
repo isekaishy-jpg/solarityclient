@@ -1,7 +1,7 @@
 //! Projects the stock build-12340 update table into typed ECS components.
 
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
+    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
     UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
     VisibleEquipmentItem,
 };
@@ -33,6 +33,9 @@ const PLAYER_FIELD_BYTES: u16 = 153;
 const PLAYER_BYTES_2: u16 = 154;
 const PLAYER_VISIBLE_ITEM_START: u16 = 283;
 const PLAYER_VISIBLE_ITEM_LAST: u16 = 320;
+// `UNIT_END` is absolute word 0x0094. Build 12340 defines private player
+// coinage at `UNIT_END + 0x03FE`, yielding update-mask word 0x0492.
+const PLAYER_FIELD_COINAGE: u16 = 0x0492;
 
 /// Failure while projecting authoritative update words into component views.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -182,6 +185,7 @@ where
         .ok();
     let mut equipment_changed = false;
     let mut equipment_items = player_equipment.unwrap_or_default().items();
+    let mut player_money = None;
 
     for (index, value) in fields {
         match index {
@@ -277,6 +281,9 @@ where
                 };
                 equipment_changed = true;
             }
+            PLAYER_FIELD_COINAGE if kind == ObjectKind::Player => {
+                player_money = Some(PlayerMoney::new(value));
+            }
             _ => {}
         }
     }
@@ -346,6 +353,11 @@ where
         world
             .storage_mut()
             .add_component(entity, (PlayerEquipment::new(equipment_items),));
+    }
+    // Unlike public appearance fields, private coinage is not present for
+    // remote players. Materialize it only when that exact word is observed.
+    if let Some(player_money) = player_money {
+        world.storage_mut().add_component(entity, (player_money,));
     }
     Ok(())
 }

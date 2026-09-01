@@ -4,10 +4,10 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError,
-    UiScriptHandler, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
-    UiTexturePlan, UiTextureStatePlan,
+    FontCatalog, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan,
+    UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerState, UiRegionStatePlan,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -492,6 +492,14 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
 fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
         FixtureFile {
+            path: "Interface\\FrameXML\\Bindings.xml",
+            bytes: br#"<Bindings><Binding name="MOVEFORWARD">MoveForwardStart()</Binding><ModifiedClick action="SELFCAST" default="ALT"/></Bindings>"#,
+        },
+        FixtureFile {
+            path: "WTF\\DefaultBindings.wtf",
+            bytes: b"bind W MOVEFORWARD\n",
+        },
+        FixtureFile {
             path: "Interface\\GlueXML\\GlueXML.toc",
             bytes: b"Fonts.xml\nButton.xml\n",
         },
@@ -507,9 +515,25 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
 <FontString name="FontLabel" inherits="GlueFontTest"/>
 <Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
 <Texture name="GradientTexture"><Gradient orientation="VERTICAL"><MinColor r="0.1" g="0.2" b="0.3" a="0.4"/><MaxColor r="0.6" g="0.7" b="0.8" a="0.9"/></Gradient></Texture>
-<Button name="FontButton"><Scripts><OnLoad>
+<Frame name="OwnedTemplate" virtual="true"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames></Frame>
+<Button name="FontButton"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames><Scripts><OnLoad>
+  assert(self.owned == FontButtonOwned)
+  local dynamicOwned = CreateFrame("Frame", "DynamicOwned", self, "OwnedTemplate")
+  assert(dynamicOwned.owned == DynamicOwnedOwned)
+  local reparented = CreateFrame("Frame", "Reparented", self)
+  local newParent = CreateFrame("Frame", "NewParent", self)
+  reparented:SetParent(newParent)
+  assert(reparented:GetParent() == newParent)
+  assert(not pcall(function() newParent:SetParent(reparented) end))
+  reparented:SetParent(nil)
+  assert(reparented:GetParent() == nil)
+  assert(GetModifiedClick("SELFCAST") == "ALT")
+  assert(not BNFeaturesEnabled() and not BNConnected() and not BNFeaturesEnabledAndConnected())
   FontLabel:SetText("Label")
   assert(FontLabel:GetText() == "Label")
+  FontLabel:SetTextColor(0.25, 0.5, 0.75, 0.8)
+  local tr, tg, tb, ta = FontLabel:GetTextColor()
+  assert(tr == 0.25 and tg == 0.5 and tb == 0.75 and ta == 0.8)
   assert(FontLabel:GetFontObject() == GlueFontTest)
   local face, height, flags = FontLabel:GetFont()
   assert(face == "FONTS\\FRIZQT__.TTF" and height == 12 and flags == "")
@@ -577,6 +601,31 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   local childTexture = self:CreateTexture("$parentDynamicTexture", "BACKGROUND")
   assert(childTexture:GetName() == "FontButtonDynamicTexture")
   assert(childTexture:GetParent() == self and childTexture:GetDrawLayer() == "BACKGROUND")
+  childTexture:SetParent(newParent)
+  assert(childTexture:GetParent() == newParent)
+  assert(self:GetNormalTexture() == nil)
+  self:SetNormalTexture("Interface\\Buttons\\UI-DialogBox-Button-Up")
+  local normalTexture = self:GetNormalTexture()
+  assert(normalTexture:GetParent() == self)
+  assert(normalTexture:GetTexture() == "Interface\\Buttons\\UI-DialogBox-Button-Up")
+  self:SetPushedTexture(childTexture)
+  assert(self:GetPushedTexture() == childTexture)
+  self:SetDisabledTexture(nil)
+  assert(self:GetDisabledTexture() == nil)
+  assert(not pcall(function() self:SetHighlightTexture(self) end))
+  self:SetAttribute("plain", 17)
+  assert(self:GetAttribute("plain") == 17)
+  assert(ATTRIBUTE_CHANGED_NAME == "plain" and ATTRIBUTE_CHANGED_VALUE == 17)
+  self:SetAttribute("*type1", "wild-suffix")
+  self:SetAttribute("shift-type*", "prefix-wild")
+  assert(self:GetAttribute("shift-", "type", "1") == "wild-suffix")
+  self:SetAttribute("shift-type1", "exact")
+  assert(self:GetAttribute("shift-", "type", "1") == "exact")
+  local attributeTable = { marker = 9 }
+  self:SetAttribute("table", attributeTable)
+  assert(self:GetAttribute("table") == attributeTable)
+  self:SetAttribute("plain", nil)
+  assert(self:GetAttribute("plain") == nil)
   local bare = CreateFrame("FontString", "BareLabel", self)
   assert(bare:GetJustifyH() == "CENTER" and bare:GetJustifyV() == "MIDDLE")
   assert(not pcall(function() bare:SetText("invalid") end))
@@ -586,17 +635,41 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(check:GetChecked() == 1)
   check:SetChecked(0)
   assert(check:GetChecked() == nil)
+  local status = CreateFrame("StatusBar", "DynamicStatus", self)
+  status:SetMinMaxValues(0, 100)
+  status:SetValue(125)
+  assert(status:GetValue() == 100)
+  local minimum, maximum = status:GetMinMaxValues()
+  assert(minimum == 0 and maximum == 100)
+  status:SetStatusBarColor(0.25, 0.5, 0.75, 0.8)
+  local sr, sg, sb, sa = status:GetStatusBarColor()
+  assert(sr == 0.25 and sg == 0.5 and sb == 0.75 and sa == 0.8)
+  status:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+  assert(status:GetStatusBarTexture():GetTexture() == "Interface\\TargetingFrame\\UI-StatusBar")
+  local tooltip = CreateFrame("GameTooltip", "DynamicTooltip", self)
+  assert(tooltip:GetOwner() == nil and not tooltip:IsOwned(self))
+  tooltip:SetOwner(self, "ANCHOR_RIGHT", 3, -4)
+  assert(tooltip:GetOwner() == self and tooltip:IsOwned(self) == 1)
+  tooltip:Hide()
+  assert(tooltip:GetOwner() == nil and not tooltip:IsOwned(self))
+  assert(not pcall(function() tooltip:SetOwner(self, "INVALID_ANCHOR") end))
   local model = CreateFrame("ModelFFX", "DynamicModel", self)
   model:SetCamera(0)
   model:SetSequence(505)
   model:SetSequenceTime(0, 250)
   model:SetModelScale(1.25)
   assert(not pcall(function() model:SetSequence(506) end))
-</OnLoad></Scripts></Button>
+</OnLoad>
+<OnAttributeChanged>
+  ATTRIBUTE_CHANGED_NAME = name
+  ATTRIBUTE_CHANGED_VALUE = value
+</OnAttributeChanged></Scripts></Button>
 </Ui>"#,
         },
     ])?;
     let mut store = mount(&fixture)?;
+    let binding_catalog = UiBindingCatalog::load_builtin(&mut store)?;
+    let bindings = UiBindingAssignments::load_defaults(&mut store, &binding_catalog)?;
     let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
     let fonts = FontCatalog::from_bundle(&bundle)?;
     let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
@@ -608,7 +681,8 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
     let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
-    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    let environment =
+        UiScriptEnvironment::new(1920, 1080, false)?.with_binding_assignments(bindings);
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
         &frames,
@@ -681,6 +755,77 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     assert!(matches!(result, Err(UiScriptError::Execution { .. })));
     assert_eq!(runtime.next_action(), 0);
     assert_eq!(runtime.executed_chunk_count(), 0);
+    Ok(())
+}
+
+/// `GetMoney` observes live authoritative player state without a zero fallback.
+#[test]
+fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\FrameXML\\FrameXML.toc",
+            bytes: b"Money.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Money.xml",
+            bytes: br#"<Ui><Frame name="MoneyProbe"><Scripts>
+  <OnLoad>INITIAL_MONEY = GetMoney()</OnLoad>
+</Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Frame)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+    let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+    let frames = UiFramePlan::from_tree(&tree)?.resolve(&tree)?;
+    let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
+    let templates = UiRuntimeTemplatePlan::from_catalog(&objects, &fonts, bundle.lua())?;
+    let textures = UiTexturePlan::from_tree(&tree)?;
+    let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
+    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    let world = environment.world_state();
+    world.enter_player(UiPlayerState::new(12_345_678));
+    let runtime_plan = UiScriptRuntimePlan::new(
+        &tree,
+        &frames,
+        &regions,
+        &templates,
+        &fonts,
+        &texture_states,
+    );
+    let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment)?;
+
+    runtime.execute_all(&bundle, &tree, &scripts)?;
+    assert_eq!(
+        bundle.lua().globals().get::<f64>("INITIAL_MONEY")?,
+        12_345_678.0
+    );
+
+    world.enter_player(UiPlayerState::new(u32::MAX));
+    world.set_cursor_money_copper(234);
+    world.set_player_trade_money_copper(567);
+    assert_eq!(
+        bundle.lua().load("return GetMoney()").eval::<f64>()?,
+        f64::from(u32::MAX)
+    );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return GetCursorMoney(), GetPlayerTradeMoney()")
+            .eval::<(f64, f64)>()?,
+        (234.0, 567.0)
+    );
+
+    world.leave_world();
+    let (available, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(GetMoney); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!available);
+    assert!(message.contains("authoritative active-player state"));
     Ok(())
 }
 

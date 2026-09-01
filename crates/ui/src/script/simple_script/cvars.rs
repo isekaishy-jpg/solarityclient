@@ -81,7 +81,12 @@ impl UiCVarRegistry {
             ("Sound_MaxCacheableSizeInBytes", "1048576"),
             ("Sound_OutputQuality", "2"),
             ("Sound_OutputDriverIndex", "0"),
+            ("Sound_VoiceChatInputDriverIndex", "0"),
+            ("Sound_VoiceChatOutputDriverIndex", "0"),
             ("Sound_ZoneMusicNoDelay", "0"),
+            // Build 12340 uses zero for push-to-talk and one for voice
+            // activation. The AudioOptions drop-down indexes this value.
+            ("VoiceChatMode", "0"),
         ] {
             registry.register(name, default, false);
         }

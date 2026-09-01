@@ -2,7 +2,7 @@
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
-use solarity_asset::CharacterClassCatalog;
+use solarity_asset::{CharacterClassCatalog, Locale};
 
 use crate::{UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
 
@@ -53,8 +53,10 @@ pub(super) fn register_base_globals(
     register_localized_class_list(lua, &globals, environment)?;
     register_static_constants(lua, &globals)?;
     register_item_quality_color(lua, &globals)?;
-    if manifest_kind == UiManifestKind::Glue {
-        register_glue_globals(lua, &globals, environment)?;
+    register_client_runtime_globals(lua, &globals, environment)?;
+    match manifest_kind {
+        UiManifestKind::Glue => register_glue_globals(lua, &globals, environment)?,
+        UiManifestKind::Frame => register_frame_globals(lua, &globals, environment)?,
     }
     globals.raw_set(
         "seterrorhandler",
@@ -76,6 +78,74 @@ pub(super) fn register_base_globals(
         .set_name("compat.lua")
         .exec()?;
     Ok(())
+}
+
+/// Installs native APIs whose backing state exists only in an active world.
+fn register_frame_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let world = environment.world_state();
+    let zone_text = world.clone();
+    let sub_zone_text = world.clone();
+    let zone_pvp = world.clone();
+    let cursor_state = world.clone();
+    let trade_state = world.clone();
+    globals.raw_set(
+        "GetMoney",
+        lua.create_function(move |_, ()| {
+            let player = world.player().ok_or_else(|| {
+                mlua::Error::runtime("GetMoney requires authoritative active-player state")
+            })?;
+            // PUC Lua 5.1 represents numbers as doubles. Every u32 copper
+            // value is exactly representable, so this conversion loses no bits.
+            Ok(f64::from(player.money_copper()))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetCursorMoney",
+        lua.create_function(move |_, ()| Ok(f64::from(cursor_state.cursor_money_copper())))?,
+    )?;
+    globals.raw_set(
+        "GetPlayerTradeMoney",
+        lua.create_function(move |_, ()| Ok(f64::from(trade_state.player_trade_money_copper())))?,
+    )?;
+    globals.raw_set(
+        "GetZoneText",
+        lua.create_function(move |_, ()| {
+            zone_text
+                .zone()
+                .map(|zone| zone.zone_text().to_owned())
+                .ok_or_else(|| {
+                    mlua::Error::runtime("GetZoneText requires authoritative zone state")
+                })
+        })?,
+    )?;
+    globals.raw_set(
+        "GetSubZoneText",
+        lua.create_function(move |_, ()| {
+            sub_zone_text
+                .zone()
+                .map(|zone| zone.sub_zone_text().to_owned())
+                .ok_or_else(|| {
+                    mlua::Error::runtime("GetSubZoneText requires authoritative zone state")
+                })
+        })?,
+    )?;
+    globals.raw_set(
+        "GetZonePVPInfo",
+        lua.create_function(move |_, ()| {
+            let zone = zone_pvp.zone().ok_or_else(|| {
+                mlua::Error::runtime("GetZonePVPInfo requires authoritative zone state")
+            })?;
+            Ok((
+                zone.pvp_type().map(crate::UiZonePvpType::as_str),
+                zone.is_sub_zone_pvp().then_some(1_u32),
+                zone.faction_name().map(str::to_owned),
+            ))
+        })?,
+    )
 }
 
 fn register_item_quality_color(lua: &Lua, globals: &Table) -> mlua::Result<()> {
@@ -271,59 +341,61 @@ fn create_secure_call(lua: &Lua, name: &'static str) -> mlua::Result<Function> {
     })
 }
 
-fn register_glue_globals(
+/// Installs configuration and hardware queries shared by GlueXML and FrameXML.
+fn register_client_runtime_globals(
     lua: &Lua,
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
-    register_glue_media_globals(lua, globals, environment)?;
-    register_glue_network_globals(lua, globals, environment)?;
-    // The executable owns the current scene name; GlueParent.lua mirrors it
-    // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
-    let current_screen = environment.current_screen();
-    let setter_state = current_screen.clone();
+    let locale = environment.locale();
     globals.raw_set(
-        "SetCurrentScreen",
-        lua.create_function(move |lua, value: Value| {
-            let value = lua
-                .coerce_string(value)?
-                .map_or_else(String::new, |value| value.to_string_lossy());
-            *setter_state.borrow_mut() = value;
-            Ok(())
-        })?,
-    )?;
-    globals.raw_set(
-        "GetCurrentScreen",
-        lua.create_function(move |_, ()| Ok(current_screen.borrow().clone()))?,
-    )?;
-    let cvars = environment.cvars();
-    globals.raw_set(
-        "GetSavedAccountName",
+        "GetLocale",
         lua.create_function(move |_, ()| {
-            cvars
-                .get("accountName")
-                .ok_or_else(|| mlua::Error::runtime("stock accountName CVar is not registered"))
+            locale
+                .map(Locale::as_str)
+                .ok_or_else(|| mlua::Error::runtime("GetLocale requires a mounted client locale"))
         })?,
     )?;
-    let cvars = environment.cvars();
+    let existing_locales = environment.existing_locales();
     globals.raw_set(
-        "SetSavedAccountName",
-        lua.create_function(move |lua, value: Value| {
-            let Some(value) = lua.coerce_string(value)? else {
-                return Err(mlua::Error::runtime(
-                    "Usage: SetSavedAccountName(\"accountName\")",
-                ));
-            };
-            set_cvar(&cvars, "accountName", value.to_string_lossy())
+        "GetExistingLocales",
+        lua.create_function(move |lua, ()| {
+            let mut values = MultiValue::with_capacity(existing_locales.len());
+            for locale in existing_locales.iter() {
+                values.push_back(Value::String(lua.create_string(locale.as_str())?));
+            }
+            Ok(values)
         })?,
     )?;
-    let cvars = environment.cvars();
+    let battlenet = environment.battlenet_state();
+    let connected = battlenet.clone();
+    let enabled_and_connected = battlenet.clone();
     globals.raw_set(
-        "GetSavedAccountList",
-        lua.create_function(move |_, ()| {
-            cvars
-                .get("accountList")
-                .ok_or_else(|| mlua::Error::runtime("stock accountList CVar is not registered"))
+        "BNFeaturesEnabled",
+        lua.create_function(move |_, ()| Ok(battlenet.features_enabled().then_some(1_u32)))?,
+    )?;
+    globals.raw_set(
+        "BNConnected",
+        lua.create_function(move |_, ()| Ok(connected.connected().then_some(1_u32)))?,
+    )?;
+    globals.raw_set(
+        "BNFeaturesEnabledAndConnected",
+        lua.create_function(move |_, ()| Ok(enabled_and_connected.connected().then_some(1_u32)))?,
+    )?;
+    let bindings = environment.binding_assignments();
+    globals.raw_set(
+        "GetModifiedClick",
+        lua.create_function(move |_, action: String| {
+            let bindings = bindings.as_ref().ok_or_else(|| {
+                mlua::Error::runtime("GetModifiedClick requires authoritative binding assignments")
+            })?;
+            let bindings = bindings.borrow();
+            bindings
+                .modified_click(&action)
+                .map(|assignment| assignment.chord().as_str().to_owned())
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!("unknown modified-click action '{action}'"))
+                })
         })?,
     )?;
     let cvars = environment.cvars();
@@ -493,6 +565,79 @@ fn register_glue_globals(
     globals.raw_set(
         "Sound_GameSystem_GetOutputDriverNameByIndex",
         lua.create_function(|_, _index: u32| Ok(None::<String>))?,
+    )?;
+    globals.raw_set(
+        "Sound_ChatSystem_GetNumInputDrivers",
+        lua.create_function(|_, ()| Ok(0_u32))?,
+    )?;
+    globals.raw_set(
+        "Sound_ChatSystem_GetInputDriverNameByIndex",
+        lua.create_function(|_, _index: u32| Ok(None::<String>))?,
+    )?;
+    globals.raw_set(
+        "Sound_ChatSystem_GetNumOutputDrivers",
+        lua.create_function(|_, ()| Ok(0_u32))?,
+    )?;
+    globals.raw_set(
+        "Sound_ChatSystem_GetOutputDriverNameByIndex",
+        lua.create_function(|_, _index: u32| Ok(None::<String>))?,
+    )
+}
+
+fn register_glue_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    register_glue_media_globals(lua, globals, environment)?;
+    register_glue_network_globals(lua, globals, environment)?;
+    // The executable owns the current scene name; GlueParent.lua mirrors it
+    // into CURRENT_GLUE_SCREEN after selecting a declared GlueScreenInfo frame.
+    let current_screen = environment.current_screen();
+    let setter_state = current_screen.clone();
+    globals.raw_set(
+        "SetCurrentScreen",
+        lua.create_function(move |lua, value: Value| {
+            let value = lua
+                .coerce_string(value)?
+                .map_or_else(String::new, |value| value.to_string_lossy());
+            *setter_state.borrow_mut() = value;
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "GetCurrentScreen",
+        lua.create_function(move |_, ()| Ok(current_screen.borrow().clone()))?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetSavedAccountName",
+        lua.create_function(move |_, ()| {
+            cvars
+                .get("accountName")
+                .ok_or_else(|| mlua::Error::runtime("stock accountName CVar is not registered"))
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "SetSavedAccountName",
+        lua.create_function(move |lua, value: Value| {
+            let Some(value) = lua.coerce_string(value)? else {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetSavedAccountName(\"accountName\")",
+                ));
+            };
+            set_cvar(&cvars, "accountName", value.to_string_lossy())
+        })?,
+    )?;
+    let cvars = environment.cvars();
+    globals.raw_set(
+        "GetSavedAccountList",
+        lua.create_function(move |_, ()| {
+            cvars
+                .get("accountList")
+                .ok_or_else(|| mlua::Error::runtime("stock accountList CVar is not registered"))
+        })?,
     )?;
     register_model_frame_selector(
         lua,

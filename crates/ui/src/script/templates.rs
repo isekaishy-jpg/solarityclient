@@ -77,6 +77,7 @@ pub struct UiRuntimeTemplateNode {
     name: Option<UiRuntimeName>,
     kind: UiObjectKind,
     role: crate::UiObjectRole,
+    parent_key: Option<String>,
     parent: Option<usize>,
     external_parent: Option<String>,
     construction_children: Vec<usize>,
@@ -241,6 +242,7 @@ impl UiRuntimeTemplatePlan {
                     name: runtime_name(template_name, object.name()),
                     kind: object.kind(),
                     role: object.role(),
+                    parent_key: object.parent_key().map(str::to_owned),
                     parent: object.parent().map(|index| first_node + index),
                     external_parent: tree.pending_parent_name(local_index).map(str::to_owned),
                     construction_children: object
@@ -323,6 +325,9 @@ impl UiRuntimeTemplatePlan {
                 let record = lua.create_table()?;
                 record.raw_set("kind", object_kind_name(node.kind))?;
                 record.raw_set("role", object_role_name(node.role))?;
+                if let Some(parent_key) = &node.parent_key {
+                    record.raw_set("parent_key", parent_key.as_str())?;
+                }
                 match node.name() {
                     Some(UiRuntimeName::Root) => record.raw_set("root_name", true)?,
                     Some(UiRuntimeName::RootSuffix(suffix)) => {

@@ -22,7 +22,7 @@ pub use movement::{WorldMovementSpeeds, WorldMovementState, WorldTransform};
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 pub use player::{
     LocalPlayer, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerAppearance, PlayerEquipment,
-    PlayerEquipmentSlot, PlayerIdentity, VisibleEquipmentItem,
+    PlayerEquipmentSlot, PlayerIdentity, PlayerMoney, VisibleEquipmentItem,
 };
 pub use unit::{
     UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
