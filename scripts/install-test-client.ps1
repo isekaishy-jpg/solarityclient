@@ -153,6 +153,14 @@ function ConvertTo-SingleQuotedPowerShellLiteral([string] $Value) {
     return $Value.Replace("'", "''")
 }
 
+function Set-Utf8NoBomContent([string] $LiteralPath, [string[]] $Value) {
+    # Windows PowerShell 5.1 lacks Set-Content's utf8NoBOM encoding name. Use
+    # the framework encoder so the persistent launcher is portable across the
+    # PowerShell versions supported by the testing shortcut.
+    $encoding = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllLines($LiteralPath, $Value, $encoding)
+}
+
 $launcher = $launcherTemplate
 $launcher = $launcher.Replace("__DATA_ROOT__", (ConvertTo-SingleQuotedPowerShellLiteral $resolvedDataRoot))
 $launcher = $launcher.Replace("__LOCALE__", (ConvertTo-SingleQuotedPowerShellLiteral $Locale))
@@ -166,7 +174,7 @@ $launcher = $launcher.Replace("__WINDOW_WIDTH__", $WindowWidth.ToString([Globali
 $launcher = $launcher.Replace("__WINDOW_HEIGHT__", $WindowHeight.ToString([Globalization.CultureInfo]::InvariantCulture))
 $launcher = $launcher.Replace("__WINDOW_MODE__", $WindowMode)
 $launcher = $launcher.Replace("__GPU_INDEX__", $GpuIndex.ToString([Globalization.CultureInfo]::InvariantCulture))
-Set-Content -LiteralPath $launcherPath -Value $launcher -Encoding utf8NoBOM
+Set-Utf8NoBomContent -LiteralPath $launcherPath -Value $launcher
 
 $commit = (& git -C $resolvedRepositoryRoot rev-parse --verify HEAD).Trim()
 if ($LASTEXITCODE -ne 0) {
@@ -183,7 +191,7 @@ $buildInformation = @(
     "profile=test-client"
     "runtime_dlls=$([string]::Join(',', ($dependencyDlls.Name | Sort-Object)))"
 )
-Set-Content -LiteralPath (Join-Path $resolvedInstallRoot "build-info.txt") -Value $buildInformation -Encoding utf8NoBOM
+Set-Utf8NoBomContent -LiteralPath (Join-Path $resolvedInstallRoot "build-info.txt") -Value $buildInformation
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($resolvedShortcutPath)
