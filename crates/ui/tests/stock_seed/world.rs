@@ -1,18 +1,26 @@
 //! External stock-compatibility tests for active-world FrameXML state.
 
-use solarity_ui::{UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState};
+use solarity_ui::{
+    UiPlayerProgressionState, UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState,
+};
 
 /// Player entry, live replacement, and world exit preserve explicit absence.
 #[test]
 fn world_state_retains_only_authoritative_player_facts() {
     let world = UiWorldState::new();
     assert_eq!(world.player(), None);
+    assert_eq!(world.player_progression(), None);
     assert_eq!(world.zone(), None);
 
     world.enter_player(UiPlayerState::new(12_345_678));
+    world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     assert_eq!(
         world.player().map(UiPlayerState::money_copper),
         Some(12_345_678)
+    );
+    assert_eq!(
+        world.player_progression(),
+        Some(UiPlayerProgressionState::new(123_456, 1_000_000))
     );
     assert_eq!(world.cursor_money_copper(), 0);
     assert_eq!(world.player_trade_money_copper(), 0);
@@ -47,6 +55,7 @@ fn world_state_retains_only_authoritative_player_facts() {
 
     world.leave_world();
     assert_eq!(world.player(), None);
+    assert_eq!(world.player_progression(), None);
     assert_eq!(world.zone(), None);
     assert_eq!(world.cursor_money_copper(), 0);
     assert_eq!(world.player_trade_money_copper(), 0);

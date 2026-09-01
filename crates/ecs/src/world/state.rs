@@ -5,8 +5,8 @@ use thiserror::Error;
 
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
-use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney};
-use crate::unit::UnitPresentation;
+use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression};
+use crate::unit::{UnitIdentity, UnitPresentation};
 use crate::view::PlayerViewState;
 
 use super::{WorldMapId, registry::ObjectRegistry, types::WorldBootstrap};
@@ -109,6 +109,24 @@ impl ActiveWorld {
         self.storage
             .get::<&PlayerMoney>(self.local_player)
             .map(|money| **money)
+            .ok()
+    }
+
+    /// Returns private player XP after its authoritative fields arrive.
+    #[must_use]
+    pub fn local_player_progression(&self) -> Option<PlayerProgression> {
+        self.storage
+            .get::<&PlayerProgression>(self.local_player)
+            .map(|progression| **progression)
+            .ok()
+    }
+
+    /// Returns the local player's public unit identity after create projection.
+    #[must_use]
+    pub fn local_player_unit_identity(&self) -> Option<UnitIdentity> {
+        self.storage
+            .get::<&UnitIdentity>(self.local_player)
+            .map(|identity| **identity)
             .ok()
     }
 

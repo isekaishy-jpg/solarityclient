@@ -5,9 +5,10 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiBindingAssignments, UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan,
-    UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerState, UiRegionStatePlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan, UiTextureStatePlan,
+    UiManifestKind, UiObjectCatalog, UiObjectTree, UiPlayerProgressionState, UiPlayerState,
+    UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptError, UiScriptHandler,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget, UiTexturePlan,
+    UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -758,9 +759,9 @@ fn script_runtime_does_not_advance_past_execution_error() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// `GetMoney` observes live authoritative player state without a zero fallback.
+/// Player globals observe live authoritative state without offline fallbacks.
 #[test]
-fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
+fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "Interface\\FrameXML\\FrameXML.toc",
@@ -769,7 +770,11 @@ fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
         FixtureFile {
             path: "Interface\\FrameXML\\Money.xml",
             bytes: br#"<Ui><Frame name="MoneyProbe"><Scripts>
-  <OnLoad>INITIAL_MONEY = GetMoney()</OnLoad>
+  <OnLoad>
+    INITIAL_MONEY = GetMoney()
+    INITIAL_XP = UnitXP("player")
+    INITIAL_XP_MAX = UnitXPMax("player")
+  </OnLoad>
 </Scripts></Frame></Ui>"#,
         },
     ])?;
@@ -788,6 +793,7 @@ fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
     world.enter_player(UiPlayerState::new(12_345_678));
+    world.set_player_progression(UiPlayerProgressionState::new(123_456, 1_000_000));
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
         &frames,
@@ -803,8 +809,14 @@ fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
         bundle.lua().globals().get::<f64>("INITIAL_MONEY")?,
         12_345_678.0
     );
+    assert_eq!(bundle.lua().globals().get::<f64>("INITIAL_XP")?, 123_456.0);
+    assert_eq!(
+        bundle.lua().globals().get::<f64>("INITIAL_XP_MAX")?,
+        1_000_000.0
+    );
 
     world.enter_player(UiPlayerState::new(u32::MAX));
+    world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);
     assert_eq!(
@@ -818,6 +830,13 @@ fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
             .eval::<(f64, f64)>()?,
         (234.0, 567.0)
     );
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return UnitXP('player'), UnitXPMax('player'), UnitXP('target')")
+            .eval::<(f64, f64, f64)>()?,
+        (f64::from(u32::MAX), 0.0, 0.0)
+    );
 
     world.leave_world();
     let (available, message) = bundle
@@ -826,6 +845,12 @@ fn frame_runtime_reads_live_player_coinage() -> Result<(), Box<dyn Error>> {
         .eval::<(bool, String)>()?;
     assert!(!available);
     assert!(message.contains("authoritative active-player state"));
+    let (available, message) = bundle
+        .lua()
+        .load("local ok, value = pcall(UnitXP, 'player'); return ok, tostring(value)")
+        .eval::<(bool, String)>()?;
+    assert!(!available);
+    assert!(message.contains("authoritative local-player progression"));
     Ok(())
 }
 

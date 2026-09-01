@@ -191,21 +191,22 @@ cargo run -p solarity-ui --example validate_ui_bundle -- `
 
 Appending `execute <logical-width> <logical-height>` runs Glue's ordered
 bootstrap until completion or the first unimplemented stock API boundary.
-Frame execution additionally requires `<player-money-copper>` because
-`GetMoney` reads authoritative active-player state and deliberately has no
-offline zero fallback:
+Frame execution additionally requires `<player-money-copper> <player-xp>
+<player-next-level-xp>` because `GetMoney`, `UnitXP`, and `UnitXPMax` read
+authoritative active-player state and deliberately have no offline zero
+fallback:
 
 ```powershell
 cargo run -p solarity-ui --example validate_ui_bundle -- `
     'C:\path\to\World of Warcraft\Data' `
     enUS `
     frame `
-    execute 1920 1080 0
+    execute 1920 1080 0 0 400
 ```
 
 Requiring an extent keeps `GetScreenWidth` and `GetScreenHeight` tied to real
-window facts instead of a guessed resolution. The explicit player value is a
-validation fixture, not a production default. This mode is intentionally
+window facts instead of a guessed resolution. The explicit player values are
+validation fixtures, not production defaults. This mode is intentionally
 strict and is the incremental compatibility audit for global and widget
 bindings.
 

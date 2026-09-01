@@ -8,9 +8,11 @@ mod economy;
 mod equipment;
 mod player_c;
 mod player_name;
+mod progression;
 
 pub use economy::PlayerMoney;
 pub use equipment::{
     PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipment, PlayerEquipmentSlot, VisibleEquipmentItem,
 };
 pub use player_c::{LocalPlayer, PlayerAppearance, PlayerIdentity};
+pub use progression::PlayerProgression;

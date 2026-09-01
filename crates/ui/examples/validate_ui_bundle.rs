@@ -11,9 +11,9 @@ use solarity_asset::{
 use solarity_ui::{
     FontCatalog, FontRasterization, FontSystem, GlueManager, UiBindingAssignments,
     UiBindingCatalog, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiPlayerState, UiRegionStatePlan, UiResourceContent, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiTextureFile,
-    UiTexturePlan, UiTextureStatePlan, UiZoneState,
+    UiObjectTree, UiPlayerProgressionState, UiPlayerState, UiRegionStatePlan, UiResourceContent,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiTextureFile, UiTexturePlan, UiTextureStatePlan, UiZoneState,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -49,8 +49,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             let environment = UiScriptEnvironment::new(width, height, false)?;
             if kind == UiManifestKind::Frame {
                 let money_copper = parse_player_money(arguments.next())?;
+                let player_xp = parse_player_experience(arguments.next(), "player XP")?;
+                let next_level_xp =
+                    parse_player_experience(arguments.next(), "player next-level XP")?;
                 let world = environment.world_state();
                 world.enter_player(UiPlayerState::new(money_copper));
+                world.set_player_progression(UiPlayerProgressionState::new(
+                    player_xp,
+                    next_level_xp,
+                ));
                 // Empty labels and no PvP classification are an explicit
                 // pre-map update, matching the temporal state before the
                 // world service publishes its first area transition.
@@ -220,7 +227,7 @@ fn argument_error(message: &str) -> IoError {
     IoError::new(
         ErrorKind::InvalidInput,
         format!(
-            "{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame> [execute <logical-width> <logical-height> [frame-player-money-copper]]"
+            "{message}; usage: validate_ui_bundle <Data> <locale> <glue|frame> [execute <logical-width> <logical-height> [frame-player-money-copper frame-player-xp frame-next-level-xp]]"
         ),
     )
 }
@@ -231,6 +238,14 @@ fn parse_player_money(value: Option<std::ffi::OsString>) -> Result<u32, IoError>
         .ok_or_else(|| argument_error("frame execution requires authoritative player money"))?
         .parse::<u32>()
         .map_err(|_| argument_error("invalid frame player money"))
+}
+
+fn parse_player_experience(value: Option<std::ffi::OsString>, label: &str) -> Result<u32, IoError> {
+    value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| argument_error(&format!("frame execution requires authoritative {label}")))?
+        .parse::<u32>()
+        .map_err(|_| argument_error(&format!("invalid frame {label}")))
 }
 
 fn parse_dimension(value: Option<std::ffi::OsString>, label: &str) -> Result<u32, IoError> {

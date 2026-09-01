@@ -5,8 +5,8 @@ use std::error::Error;
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
-    PlayerEquipmentSlot, PlayerMoney, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
-    UnitSheathState, UnitVitals, WorldBootstrap, WorldMapId,
+    PlayerEquipmentSlot, PlayerMoney, PlayerProgression, UnitAnimationTier, UnitFlags,
+    UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals, WorldBootstrap, WorldMapId,
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
@@ -45,6 +45,8 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         (284, u32::from_le_bytes([17, 0, 23, 0])),
         (319, 50_019),
         (320, u32::from_le_bytes([31, 0, 0, 0])),
+        (0x027A, 123_456),
+        (0x027B, 1_000_000),
         (0x0492, 12_345_678),
     ];
     world.create_object(guid, ObjectKind::Player, None, create_fields)?;
@@ -55,7 +57,7 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     assert_eq!(object.entry_id(), 0);
     assert_eq!(object.scale(), 1.0);
 
-    let identity = *world.storage().get::<&UnitIdentity>(player)?;
+    let identity = **world.storage().get::<&UnitIdentity>(player)?;
     assert_eq!(identity.race_id(), 1);
     assert_eq!(identity.class_id(), 8);
     assert_eq!(identity.gender_id(), 0);
@@ -103,6 +105,11 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         world.local_player_money(),
         Some(PlayerMoney::new(12_345_678))
     );
+    assert_eq!(
+        world.local_player_progression(),
+        Some(PlayerProgression::new(123_456, 1_000_000))
+    );
+    assert_eq!(world.local_player_unit_identity(), Some(identity));
 
     // A VALUES update carries only changed words; all other typed values must
     // remain intact just as they do in the authoritative dense table.
@@ -110,6 +117,7 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         (24, 750),
         (154, u32::from_le_bytes([9, 0, 0, 2])),
         (283, 50_101),
+        (0x027A, 234_567),
         (0x0492, u32::MAX),
     ];
     world.update_fields(guid, values_fields)?;
@@ -127,6 +135,10 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         u32::from_le_bytes([17, 0, 23, 0])
     );
     assert_eq!(world.local_player_money(), Some(PlayerMoney::new(u32::MAX)));
+    assert_eq!(
+        world.local_player_progression(),
+        Some(PlayerProgression::new(234_567, 1_000_000))
+    );
     assert_eq!(world.storage().get::<&ObjectFields>(player)?.get(24), 750);
     Ok(())
 }

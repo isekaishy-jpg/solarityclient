@@ -3,4 +3,6 @@
 mod game_ui;
 mod state;
 
-pub use state::{UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState};
+pub use state::{
+    UiPlayerProgressionState, UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState,
+};

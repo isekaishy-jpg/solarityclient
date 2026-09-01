@@ -2,8 +2,8 @@
 
 use solarity_ecs::{
     ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
-    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
-    VisibleEquipmentItem,
+    PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
+    UnitSheathState, UnitVitals, VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -33,6 +33,9 @@ const PLAYER_FIELD_BYTES: u16 = 153;
 const PLAYER_BYTES_2: u16 = 154;
 const PLAYER_VISIBLE_ITEM_START: u16 = 283;
 const PLAYER_VISIBLE_ITEM_LAST: u16 = 320;
+// Stock reads these adjacent private words in `UnitXP` and `UnitXPMax`.
+const PLAYER_XP: u16 = 0x027A;
+const PLAYER_NEXT_LEVEL_XP: u16 = 0x027B;
 // `UNIT_END` is absolute word 0x0094. Build 12340 defines private player
 // coinage at `UNIT_END + 0x03FE`, yielding update-mask word 0x0492.
 const PLAYER_FIELD_COINAGE: u16 = 0x0492;
@@ -186,6 +189,15 @@ where
     let mut equipment_changed = false;
     let mut equipment_items = player_equipment.unwrap_or_default().items();
     let mut player_money = None;
+    let player_progression = world
+        .storage()
+        .get::<&PlayerProgression>(entity)
+        .map(|component| **component)
+        .ok();
+    let player_progression_state = player_progression.unwrap_or_default();
+    let mut experience = player_progression_state.experience();
+    let mut next_level_experience = player_progression_state.next_level_experience();
+    let mut progression_changed = false;
 
     for (index, value) in fields {
         match index {
@@ -281,6 +293,14 @@ where
                 };
                 equipment_changed = true;
             }
+            PLAYER_XP if entity == world.local_player() => {
+                experience = value;
+                progression_changed = true;
+            }
+            PLAYER_NEXT_LEVEL_XP if entity == world.local_player() => {
+                next_level_experience = value;
+                progression_changed = true;
+            }
             PLAYER_FIELD_COINAGE if kind == ObjectKind::Player => {
                 player_money = Some(PlayerMoney::new(value));
             }
@@ -358,6 +378,14 @@ where
     // remote players. Materialize it only when that exact word is observed.
     if let Some(player_money) = player_money {
         world.storage_mut().add_component(entity, (player_money,));
+    }
+    // XP is private to the controlled player. Preserve explicit absence until
+    // at least one of the two authoritative update words has been received.
+    if progression_changed {
+        world.storage_mut().add_component(
+            entity,
+            (PlayerProgression::new(experience, next_level_experience),),
+        );
     }
     Ok(())
 }

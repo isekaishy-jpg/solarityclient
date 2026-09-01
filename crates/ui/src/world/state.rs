@@ -23,6 +23,36 @@ impl UiPlayerState {
     }
 }
 
+/// Local-player progression values consumed by the stock experience bar.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiPlayerProgressionState {
+    experience: u32,
+    next_level_experience: u32,
+}
+
+impl UiPlayerProgressionState {
+    /// Creates a projection of the adjacent build-12340 player XP words.
+    #[must_use]
+    pub const fn new(experience: u32, next_level_experience: u32) -> Self {
+        Self {
+            experience,
+            next_level_experience,
+        }
+    }
+
+    /// Returns current experience within the player's level.
+    #[must_use]
+    pub const fn experience(self) -> u32 {
+        self.experience
+    }
+
+    /// Returns experience required to complete the player's level.
+    #[must_use]
+    pub const fn next_level_experience(self) -> u32 {
+        self.next_level_experience
+    }
+}
+
 /// Territory classification returned by build-12340's `GetZonePVPInfo`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiZonePvpType {
@@ -129,6 +159,7 @@ pub struct UiWorldState {
 #[derive(Debug, Default)]
 struct UiWorldStateInner {
     player: Cell<Option<UiPlayerState>>,
+    player_progression: Cell<Option<UiPlayerProgressionState>>,
     zone: RefCell<Option<UiZoneState>>,
     cursor_money_copper: Cell<u32>,
     player_trade_money_copper: Cell<u32>,
@@ -146,6 +177,11 @@ impl UiWorldState {
         self.inner.player.set(Some(player));
     }
 
+    /// Publishes the latest local-player experience projection.
+    pub fn set_player_progression(&self, progression: UiPlayerProgressionState) {
+        self.inner.player_progression.set(Some(progression));
+    }
+
     /// Publishes the latest complete map-area projection.
     pub fn set_zone(&self, zone: UiZoneState) {
         *self.inner.zone.borrow_mut() = Some(zone);
@@ -154,6 +190,7 @@ impl UiWorldState {
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         self.inner.player.set(None);
+        self.inner.player_progression.set(None);
         *self.inner.zone.borrow_mut() = None;
         self.inner.cursor_money_copper.set(0);
         self.inner.player_trade_money_copper.set(0);
@@ -163,6 +200,12 @@ impl UiWorldState {
     #[must_use]
     pub fn player(&self) -> Option<UiPlayerState> {
         self.inner.player.get()
+    }
+
+    /// Returns local-player experience after both stock fields are projected.
+    #[must_use]
+    pub fn player_progression(&self) -> Option<UiPlayerProgressionState> {
+        self.inner.player_progression.get()
     }
 
     /// Returns the current zone projection when map-area state is authoritative.

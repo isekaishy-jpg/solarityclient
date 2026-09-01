@@ -87,6 +87,8 @@ fn register_frame_globals(
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
     let world = environment.world_state();
+    let unit_xp = world.clone();
+    let unit_xp_max = world.clone();
     let zone_text = world.clone();
     let sub_zone_text = world.clone();
     let zone_pvp = world.clone();
@@ -106,6 +108,30 @@ fn register_frame_globals(
     globals.raw_set(
         "GetCursorMoney",
         lua.create_function(move |_, ()| Ok(f64::from(cursor_state.cursor_money_copper())))?,
+    )?;
+    globals.raw_set(
+        "UnitXP",
+        lua.create_function(move |_, unit: String| {
+            if unit != "player" {
+                return Ok(0.0);
+            }
+            let progression = unit_xp.player_progression().ok_or_else(|| {
+                mlua::Error::runtime("UnitXP requires authoritative local-player progression")
+            })?;
+            Ok(f64::from(progression.experience()))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitXPMax",
+        lua.create_function(move |_, unit: String| {
+            if unit != "player" {
+                return Ok(0.0);
+            }
+            let progression = unit_xp_max.player_progression().ok_or_else(|| {
+                mlua::Error::runtime("UnitXPMax requires authoritative local-player progression")
+            })?;
+            Ok(f64::from(progression.next_level_experience()))
+        })?,
     )?;
     globals.raw_set(
         "GetPlayerTradeMoney",

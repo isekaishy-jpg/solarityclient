@@ -60,7 +60,9 @@ pub use widget::{
     UiTextureGradient, UiTextureLayer, UiTextureNode, UiTexturePlan, UiTextureState,
     UiTextureStatePlan,
 };
-pub use world::{UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState};
+pub use world::{
+    UiPlayerProgressionState, UiPlayerState, UiWorldState, UiZonePvpType, UiZoneState,
+};
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,
     UiManifestEntryKind, UiManifestKind, UiResource, UiResourceContent, XmlAttribute, XmlContent,
