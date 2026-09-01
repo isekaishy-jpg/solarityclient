@@ -21,12 +21,15 @@ use solarity_rendering::{
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
-    AddonCatalog, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC, UiEventArgument,
-    UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
+    AddonCatalog, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
+    UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
 };
 
 use crate::application::ApplicationError;
 use crate::application::character_directory::RuntimeCharacterMetadata;
+use crate::application::cinematic_coordinator::{
+    RuntimeCinematicCoordinator, RuntimeCinematicPoll,
+};
 use crate::application::environment_coordinator::RuntimeWorldEnvironment;
 use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
@@ -46,7 +49,7 @@ use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
 use crate::application::world_coordinator::{
     RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
 };
-use crate::configuration::RuntimeConfiguration;
+use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion};
 use crate::platform::{PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
@@ -54,7 +57,8 @@ use crate::random::{BlizzardRand, CrtRand};
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
-    login_ui: LoginUiFrame,
+    login_ui: Option<LoginUiFrame>,
+    cinematic: RuntimeCinematicCoordinator,
     sound: RuntimeSoundCoordinator,
     platform: SdlPlatform,
     input: InputControl,
@@ -89,6 +93,12 @@ impl ClientServices {
     pub(crate) fn start(
         configuration: &RuntimeConfiguration,
     ) -> Result<(Self, usize, usize), ApplicationError> {
+        let mut startup_profile = StartupProfile::load(configuration.profile_root())?;
+        let initial_screen = if startup_profile.consume_intro_movie()? {
+            GlueInitialScreen::Movie
+        } else {
+            GlueInitialScreen::Login
+        };
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
@@ -142,15 +152,25 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let assets = AssetStoreHandle::new(assets);
-        let glue = GlueManager::start_shared(assets.clone(), platform.logical_extent(), false)?;
+        let glue = GlueManager::start_shared_with_initial_screen(
+            assets.clone(),
+            platform.logical_extent(),
+            false,
+            initial_screen,
+        )?;
         glue.set_realm_directory(realm_metadata.empty_directory());
         let sound = RuntimeSoundCoordinator::start(
             assets.clone(),
             &glue,
             SoundOutputTarget::DefaultDevice,
         )?;
-        let login_ui = LoginUiFrame::prepare(&mut renderer, &glue)?;
-        login_ui.present(&mut renderer)?;
+        let login_ui = if glue.media_intent().movie().is_some() {
+            None
+        } else {
+            let frame = LoginUiFrame::prepare(&mut renderer, &glue)?;
+            frame.present(&mut renderer)?;
+            Some(frame)
+        };
         platform.show()?;
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
@@ -175,6 +195,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                cinematic: RuntimeCinematicCoordinator::default(),
                 sound,
                 platform,
                 input,
@@ -252,11 +273,23 @@ impl ClientServices {
 
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        let movie = self.glue.media_intent().movie().cloned();
+        match self
+            .cinematic
+            .synchronize(movie.as_ref(), &mut self.renderer)?
+        {
+            RuntimeCinematicPoll::Presented => return Ok(()),
+            RuntimeCinematicPoll::Finished { object_index } => {
+                self.glue.movie_finished(object_index)?;
+                self.login_ui = None;
+                return Ok(());
+            }
+            RuntimeCinematicPoll::Idle => {}
+        }
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
         else {
-            self.login_ui.present(&mut self.renderer)?;
-            return Ok(());
+            return self.present_glue_frame();
         };
         let (width, height) = self.platform.pixel_extent();
         let aspect_ratio = width as f32 / height as f32;
@@ -279,13 +312,11 @@ impl ClientServices {
                 .update(&self.glue, clock, camera, &mut self.blizzard_rand)?;
         }
         let Some(plan) = self.terrain.resident_mesh_plan() else {
-            self.login_ui.present(&mut self.renderer)?;
-            return Ok(());
+            return self.present_glue_frame();
         };
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let Some(frame) = self.terrain_frame.as_mut() else {
-            self.login_ui.present(&mut self.renderer)?;
-            return Ok(());
+            return self.present_glue_frame();
         };
         let player = self
             .player
@@ -315,6 +346,19 @@ impl ClientServices {
         let m2_events = frame.drain_m2_events();
         self.sound
             .play_m2_events(&m2_events, camera, &mut self.blizzard_rand)?;
+        Ok(())
+    }
+
+    fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
+        if self.login_ui.is_none() {
+            self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+        }
+        self.login_ui
+            .as_ref()
+            .ok_or_else(|| ApplicationError::NetworkRuntime {
+                message: "Glue frame preparation produced no presentation state".to_owned(),
+            })?
+            .present(&mut self.renderer)?;
         Ok(())
     }
 
@@ -489,7 +533,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
                 }
             }
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
@@ -516,7 +560,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
                 }
             }
             Err(error) => self.publish_world_failure(error),
@@ -801,7 +845,7 @@ impl ClientServices {
         );
         self.glue.set_realm_directory(realms);
         self.glue.dispatch_event(event, &payload)?;
-        self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+        self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
         Ok(())
     }
 
@@ -830,7 +874,7 @@ impl ClientServices {
             self.glue
                 .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
         }
-        self.login_ui = LoginUiFrame::prepare(&mut self.renderer, &self.glue)?;
+        self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
         Ok(())
     }
 }

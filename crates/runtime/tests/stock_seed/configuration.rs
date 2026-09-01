@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::ffi::OsString;
 
-use solarity_runtime::{ConfigurationError, RuntimeConfiguration, WindowMode};
+use solarity_runtime::{ConfigurationError, RuntimeConfiguration, StartupProfile, WindowMode};
 
 use crate::support::ClientFixture;
 
@@ -17,6 +17,10 @@ fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>
     ))?;
 
     assert_eq!(configuration.locale().as_str(), "enUS");
+    assert_eq!(
+        configuration.profile_root(),
+        std::fs::canonicalize(fixture.profile_root())?
+    );
     assert_eq!(configuration.cpu_pool().worker_count().get(), 3);
     assert_eq!(configuration.cpu_pool().max_in_flight().get(), 24);
     assert_eq!(configuration.network_workers().get(), 2);
@@ -33,6 +37,26 @@ fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>
     assert_eq!(configuration.window().height(), 720);
     assert_eq!(configuration.window().mode(), WindowMode::Windowed);
     assert_eq!(configuration.gpu_index(), 0);
+    Ok(())
+}
+
+/// A fresh profile consumes the stock intro request exactly once and persists
+/// that decision independently of executable replacement.
+#[test]
+fn intro_movie_request_is_consumed_once() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let mut first = StartupProfile::load(fixture.profile_root())?;
+    assert!(first.play_intro_movie());
+    assert!(first.consume_intro_movie()?);
+    assert!(!first.play_intro_movie());
+
+    let mut second = StartupProfile::load(fixture.profile_root())?;
+    assert!(!second.play_intro_movie());
+    assert!(!second.consume_intro_movie()?);
+    assert_eq!(
+        std::fs::read_to_string(fixture.profile_root().join("WTF/Config.wtf"))?,
+        "SET playIntroMovie \"0\"\r\n"
+    );
     Ok(())
 }
 
@@ -145,6 +169,8 @@ fn arguments(fixture: &ClientFixture, cpu_options: &[&str]) -> Vec<OsString> {
     let mut arguments = vec![
         OsString::from("--data-root"),
         fixture.data_root().into_os_string(),
+        OsString::from("--profile-root"),
+        fixture.profile_root().as_os_str().to_owned(),
         OsString::from("--locale"),
         OsString::from("enUS"),
     ];
@@ -182,6 +208,8 @@ fn arguments_with_window(
     vec![
         OsString::from("--data-root"),
         fixture.data_root().into_os_string(),
+        OsString::from("--profile-root"),
+        fixture.profile_root().as_os_str().to_owned(),
         OsString::from("--locale"),
         OsString::from("enUS"),
         OsString::from("--cpu-workers"),

@@ -1,6 +1,7 @@
 //! Validated process-startup configuration.
 
 use std::ffi::OsString;
+use std::fs;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -16,6 +17,7 @@ use crate::configuration::{
 };
 
 const DATA_ROOT_OPTION: &str = "--data-root";
+const PROFILE_ROOT_OPTION: &str = "--profile-root";
 const LOCALE_OPTION: &str = "--locale";
 const CPU_WORKERS_OPTION: &str = "--cpu-workers";
 const CPU_CAPACITY_OPTION: &str = "--cpu-capacity";
@@ -33,6 +35,7 @@ const GPU_INDEX_OPTION: &str = "--gpu-index";
 #[derive(Clone, Debug)]
 pub struct RuntimeConfiguration {
     data_root: ClientDataRoot,
+    profile_root: PathBuf,
     locale: Locale,
     cpu_pool: CpuPoolConfig,
     network_workers: NonZeroUsize,
@@ -64,6 +67,10 @@ impl RuntimeConfiguration {
                 DATA_ROOT_OPTION => {
                     let value = next_value(&mut arguments, DATA_ROOT_OPTION)?;
                     set_once(&mut values.data_root, value, DATA_ROOT_OPTION)?;
+                }
+                PROFILE_ROOT_OPTION => {
+                    let value = next_value(&mut arguments, PROFILE_ROOT_OPTION)?;
+                    set_once(&mut values.profile_root, value, PROFILE_ROOT_OPTION)?;
                 }
                 LOCALE_OPTION => {
                     let value = next_value(&mut arguments, LOCALE_OPTION)?;
@@ -131,7 +138,8 @@ impl RuntimeConfiguration {
     /// Returns the executable's current explicit command-line contract.
     #[must_use]
     pub const fn usage() -> &'static str {
-        "solarity-runtime --data-root <Data> --locale <locale> --cpu-workers <count> \
+        "solarity-runtime --data-root <Data> --profile-root <directory> --locale <locale> \
+         --cpu-workers <count> \
          --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds> \
          --login-endpoint <host:port> --login-timezone-minutes <signed-minutes> \
          --login-client-ip <IPv4> \
@@ -143,6 +151,12 @@ impl RuntimeConfiguration {
     #[must_use]
     pub fn data_root(&self) -> &ClientDataRoot {
         &self.data_root
+    }
+
+    /// Returns the explicit root containing stock `WTF` profile state.
+    #[must_use]
+    pub fn profile_root(&self) -> &std::path::Path {
+        &self.profile_root
     }
 
     /// Returns the selected build-12340 locale.
@@ -190,6 +204,7 @@ impl RuntimeConfiguration {
     /// Validates parsed operating-system strings into domain types.
     fn from_parsed(values: ParsedValues) -> Result<Self, ConfigurationError> {
         let data_root = required(values.data_root, DATA_ROOT_OPTION)?;
+        let profile_root = required(values.profile_root, PROFILE_ROOT_OPTION)?;
         let locale = required(values.locale, LOCALE_OPTION)?;
         let locale = unicode(&locale, LOCALE_OPTION)?;
         let cpu_workers = positive_integer(
@@ -246,6 +261,19 @@ impl RuntimeConfiguration {
 
         let data_root = ClientDataRoot::new(PathBuf::from(data_root))
             .map_err(|source| ConfigurationError::InvalidDataRoot { source })?;
+        let profile_root = PathBuf::from(profile_root);
+        let profile_root = fs::canonicalize(&profile_root).map_err(|source| {
+            ConfigurationError::InvalidProfileRoot {
+                path: profile_root.clone(),
+                message: source.to_string(),
+            }
+        })?;
+        if !profile_root.is_dir() {
+            return Err(ConfigurationError::InvalidProfileRoot {
+                path: profile_root,
+                message: "path is not a directory".to_owned(),
+            });
+        }
         let locale = Locale::from_str(locale)
             .map_err(|source| ConfigurationError::InvalidLocale { source })?;
         let login = LoginConfiguration::new(
@@ -262,6 +290,7 @@ impl RuntimeConfiguration {
 
         Ok(Self {
             data_root,
+            profile_root,
             locale,
             cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity),
             network_workers,
@@ -277,6 +306,7 @@ impl RuntimeConfiguration {
 #[derive(Default)]
 struct ParsedValues {
     data_root: Option<OsString>,
+    profile_root: Option<OsString>,
     locale: Option<OsString>,
     cpu_workers: Option<OsString>,
     cpu_capacity: Option<OsString>,

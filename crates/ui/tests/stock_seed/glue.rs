@@ -2,11 +2,11 @@
 
 use std::error::Error;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
+use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
 use solarity_ui::{
-    GlueError, GlueManager, UiEventArgument, UiEventError, UiEventPayload, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiRealmCategory, UiRealmDirectory,
-    UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    GlueError, GlueInitialScreen, GlueManager, UiEventArgument, UiEventError, UiEventPayload,
+    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiRealmCategory,
+    UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -60,6 +60,70 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
         media.ambience(),
         Some("Sound\\Ambience\\GlueScreen\\Dwarf.mp3")
     );
+    Ok(())
+}
+
+/// Native first-run selection shows MovieFrame, runs its authored OnShow, and
+/// retains the exact locale-loose AVI request for the media owner.
+#[test]
+fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Movie.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Movie.xml",
+            bytes: br#"<Ui>
+<Frame name="GlueParent"><Scripts><OnLoad>
+  self:RegisterEvent("SET_GLUE_SCREEN")
+</OnLoad><OnEvent>
+  if event == "SET_GLUE_SCREEN" then
+    MovieFrame:Show()
+    SetCurrentScreen(arg1)
+  end
+</OnEvent></Scripts></Frame>
+<MovieFrame name="MovieFrame" hidden="true"><Scripts><OnShow>
+  self:EnableSubtitles(true)
+  HideCursor()
+  assert(self:StartMovie("Interface\\Cinematics\\Logo_1024", 250))
+</OnShow><OnMovieFinished>
+  self:StopMovie()
+  ShowCursor()
+  SetCurrentScreen("login")
+</OnMovieFinished></Scripts></MovieFrame>
+</Ui>"#,
+        },
+    ])?;
+    fixture.write_loose_file(
+        "Data/enUS/Interface/Cinematics/Logo_1024.avi",
+        b"RIFF fixture",
+    )?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start_shared_with_initial_screen(
+        AssetStoreHandle::new(AssetStore::mount(catalog)?),
+        (1920, 1080),
+        false,
+        GlueInitialScreen::Movie,
+    )?;
+
+    assert_eq!(manager.current_screen(), "movie");
+    assert!(!manager.cursor_visible());
+    let media = manager.media_intent();
+    let movie = media.movie().ok_or("missing first-run movie request")?;
+    assert!(
+        movie
+            .path()
+            .ends_with("enUS/Interface/Cinematics/Logo_1024.avi")
+    );
+    assert_eq!(movie.volume(), 250);
+    assert!(movie.subtitles_enabled());
+    let object_index = movie.object_index();
+    manager.movie_finished(object_index)?;
+    assert_eq!(manager.current_screen(), "login");
+    assert!(manager.cursor_visible());
+    assert!(manager.media_intent().movie().is_none());
     Ok(())
 }
 

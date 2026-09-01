@@ -8,7 +8,7 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture}
 use crate::device::vulkan_character_atlas::{
     CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
 };
-use crate::device::vulkan_frame::{FrameContext, present_blp};
+use crate::device::vulkan_frame::{FrameContext, present_rgba8};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
 use crate::device::vulkan_m2_particle_draw::{
@@ -301,10 +301,30 @@ impl VulkanRenderer {
     /// Returns [`VulkanError`] when frame composition, staging, command
     /// submission, synchronization, or presentation fails.
     pub fn present_blp(&mut self, texture: &DecodedBlpTexture) -> Result<(), VulkanError> {
+        self.present_rgba8((texture.width(), texture.height()), texture.rgba8())?;
+        self.report.presented_texture_extent = Some((texture.width(), texture.height()));
+        Ok(())
+    }
+
+    /// Fits and presents one tightly packed RGBA8 frame.
+    ///
+    /// This direct pixel boundary serves decoded cinematics without claiming a
+    /// texture-cache identity or retaining the caller's frame allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when the source extent or byte count is invalid,
+    /// or when staging, command submission, synchronization, or presentation
+    /// fails.
+    pub fn present_rgba8(
+        &mut self,
+        source_extent: (u32, u32),
+        rgba8: &[u8],
+    ) -> Result<(), VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        present_blp(FrameContext {
+        present_rgba8(FrameContext {
             device: &self.device,
             allocator,
             swapchain_loader: &self.swapchain_loader,
@@ -314,9 +334,9 @@ impl VulkanRenderer {
             present_queue: self.present_queue,
             graphics_queue_family: self.report.graphics_queue_family,
             frame_extent: self.report.extent,
-            texture,
+            source_extent,
+            rgba8,
         })?;
-        self.report.presented_texture_extent = Some((texture.width(), texture.height()));
         Ok(())
     }
 

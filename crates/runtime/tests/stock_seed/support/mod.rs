@@ -64,6 +64,11 @@ impl ClientFixture {
     pub(crate) fn data_root(&self) -> PathBuf {
         self.root.join("Data")
     }
+
+    /// Returns the generated root that owns persistent `WTF` state.
+    pub(crate) fn profile_root(&self) -> &Path {
+        &self.root
+    }
 }
 
 impl Drop for ClientFixture {

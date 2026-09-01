@@ -45,6 +45,7 @@ const fn ranged(
 pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("accountName", ""),
     value("accountList", ""),
+    ranged("playIntroMovie", "1", 0.0, 1.0),
     value("showToolsUI", "-1"),
     ranged("useUiScale", "0", 0.0, 1.0),
     ranged("uiScale", "1", 0.64, 1.0),

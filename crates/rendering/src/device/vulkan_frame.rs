@@ -1,14 +1,13 @@
-//! One-shot staging and presentation of the first decoded client texture.
+//! One-shot staging and presentation of decoded client pixels.
 
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
-use solarity_asset::DecodedBlpTexture;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 
-/// Borrowed live Vulkan objects needed for one bootstrap presentation.
+/// Borrowed live Vulkan objects needed for one pixel presentation.
 pub(super) struct FrameContext<'a> {
     pub(super) device: &'a Device,
     pub(super) allocator: &'a vk_mem::Allocator,
@@ -19,16 +18,13 @@ pub(super) struct FrameContext<'a> {
     pub(super) present_queue: vk::Queue,
     pub(super) graphics_queue_family: u32,
     pub(super) frame_extent: (u32, u32),
-    pub(super) texture: &'a DecodedBlpTexture,
+    pub(super) source_extent: (u32, u32),
+    pub(super) rgba8: &'a [u8],
 }
 
-/// Composes, transfers, presents, and synchronously retires the first frame.
-pub(super) fn present_blp(context: FrameContext<'_>) -> Result<(), VulkanError> {
-    let frame = compose_bgra_frame(
-        context.frame_extent,
-        (context.texture.width(), context.texture.height()),
-        context.texture.rgba8(),
-    )?;
+/// Composes, transfers, presents, and synchronously retires one pixel frame.
+pub(super) fn present_rgba8(context: FrameContext<'_>) -> Result<(), VulkanError> {
+    let frame = compose_bgra_frame(context.frame_extent, context.source_extent, context.rgba8)?;
     let mut resources = FrameResources::create(context.device, context.allocator, &frame)?;
     let command_buffer = resources.allocate_command_buffer(context.graphics_queue_family)?;
 

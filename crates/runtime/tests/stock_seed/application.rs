@@ -140,6 +140,8 @@ fn configuration(
     RuntimeConfiguration::from_arguments([
         OsString::from("--data-root"),
         fixture.data_root().into_os_string(),
+        OsString::from("--profile-root"),
+        fixture.profile_root().as_os_str().to_owned(),
         OsString::from("--locale"),
         OsString::from("enUS"),
         OsString::from("--cpu-workers"),

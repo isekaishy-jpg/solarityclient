@@ -5,4 +5,9 @@
 //! module owns decoded audio/video streams and their synchronization.
 
 mod dependency;
+mod status;
 mod types;
+
+pub use dependency::CinematicDecoder;
+pub use status::CinematicError;
+pub use types::CinematicVideoFrame;

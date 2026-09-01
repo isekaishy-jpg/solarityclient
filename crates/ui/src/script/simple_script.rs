@@ -145,6 +145,7 @@ static PORTRAIT_UNIT_TOKEN: u8 = 105;
 static HIT_RECT_INSETS_TOKEN: u8 = 106;
 static MOUSE_WHEEL_ENABLED_TOKEN: u8 = 107;
 static TOOLTIP_PADDING_TOKEN: u8 = 108;
+static MOVIE_SUBTITLES_TOKEN: u8 = 109;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -312,6 +313,50 @@ pub struct UiGlueMediaIntent {
     pub(crate) music: Option<String>,
     pub(crate) ambience: Option<String>,
     pub(crate) sounds: Vec<String>,
+    movie: Option<UiGlueMovieRequest>,
+    next_movie_generation: u64,
+}
+
+/// One active stock MovieFrame request resolved to a locale-loose AVI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiGlueMovieRequest {
+    object_index: usize,
+    generation: u64,
+    path: std::path::PathBuf,
+    volume: u32,
+    subtitles_enabled: bool,
+}
+
+impl UiGlueMovieRequest {
+    /// Returns the live MovieFrame arena index receiving completion callbacks.
+    #[must_use]
+    pub const fn object_index(&self) -> usize {
+        self.object_index
+    }
+
+    /// Returns the monotonically increasing playback generation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the exact locale-loose AVI selected through the file stack.
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Returns the unmodified integer volume supplied by stock Glue Lua.
+    #[must_use]
+    pub const fn volume(&self) -> u32 {
+        self.volume
+    }
+
+    /// Returns the subtitle policy captured when playback began.
+    #[must_use]
+    pub const fn subtitles_enabled(&self) -> bool {
+        self.subtitles_enabled
+    }
 }
 
 impl UiGlueMediaIntent {
@@ -332,6 +377,12 @@ impl UiGlueMediaIntent {
     pub fn sounds(&self) -> &[String] {
         &self.sounds
     }
+
+    /// Returns the currently active locale-loose Glue movie request.
+    #[must_use]
+    pub const fn movie(&self) -> Option<&UiGlueMovieRequest> {
+        self.movie.as_ref()
+    }
 }
 
 /// Immutable process facts required by built-in Lua globals.
@@ -346,6 +397,7 @@ pub struct UiScriptEnvironment {
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     current_screen: Rc<RefCell<String>>,
+    cursor_visible: Rc<Cell<bool>>,
     modifiers: crate::UiModifierKeyState,
     world: crate::UiWorldState,
     account: crate::UiAccountState,
@@ -407,6 +459,7 @@ impl UiScriptEnvironment {
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
+            cursor_visible: Rc::new(Cell::new(true)),
             modifiers: crate::UiModifierKeyState::new(),
             world: crate::UiWorldState::new(),
             account: crate::UiAccountState::new(),
@@ -552,6 +605,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn current_screen(&self) -> Rc<RefCell<String>> {
         self.current_screen.clone()
+    }
+
+    pub(crate) fn cursor_visible(&self) -> Rc<Cell<bool>> {
+        self.cursor_visible.clone()
     }
 
     /// Returns the shared main-thread projection consumed by FrameXML globals.
@@ -769,6 +826,7 @@ impl UiScriptRuntime {
                     kind,
                     environment.ui_extent(),
                     environment.assets(),
+                    environment.media_intent(),
                     button_measurement.clone(),
                     dynamic_arena.clone(),
                 )
@@ -1121,6 +1179,35 @@ impl UiScriptRuntime {
             (Err(error), _) => Err(execution_error(event, error)),
             (Ok(_), Err(error)) => Err(execution_error(event, error)),
         }
+    }
+
+    /// Delivers native movie completion to one live `MovieFrame`.
+    pub(crate) fn dispatch_movie_finished(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("MovieFrame object {object_index}:OnMovieFinished");
+        if object_index >= self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "movie completion object {object_index} is outside the live object arena"
+                ),
+            });
+        }
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error(&label, error))?;
+        let object: Table = objects
+            .raw_get(object_index + 1)
+            .map_err(|error| execution_error(&label, error))?;
+        let Some(function) = object_script_function(lua, &object, UiScriptHandler::MovieFinished)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_object_handler(lua, &function, object).map_err(|error| execution_error(&label, error))
     }
 
     fn execute_batch(
@@ -2523,12 +2610,14 @@ fn font_flags(definition: &FontDefinition) -> String {
     flags.join(", ")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
     ui_extent: (f64, f64),
     assets: Option<AssetStoreHandle>,
+    media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     button_measurement: Option<buttons::ButtonTextMeasurement>,
     dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<Table> {
@@ -2587,7 +2676,10 @@ fn create_object_metatable(
         register_texture_methods(lua, &methods)?;
     }
     if matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx) {
-        register_model_methods(lua, &methods, assets)?;
+        register_model_methods(lua, &methods, assets.clone())?;
+    }
+    if kind == UiObjectKind::MovieFrame {
+        register_movie_frame_methods(lua, &methods, assets, media_intent)?;
     }
     if kind == UiObjectKind::ScrollFrame {
         register_scroll_frame_methods(lua, &methods)?;
@@ -3355,6 +3447,90 @@ fn register_model_methods(
                 .coerce_number(value)?
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetModelScale(scale)"))?;
             model.raw_set(model_scale_key(), value)
+        })?,
+    )
+}
+
+fn register_movie_frame_methods(
+    lua: &Lua,
+    methods: &Table,
+    assets: Option<AssetStoreHandle>,
+    media_intent: Rc<RefCell<UiGlueMediaIntent>>,
+) -> mlua::Result<()> {
+    let start_intent = media_intent.clone();
+    methods.raw_set(
+        "StartMovie",
+        lua.create_function(
+            move |lua, (movie_frame, value, volume): (Table, Value, Option<Value>)| {
+                let Some(value) = lua.coerce_string(value)? else {
+                    return Err(mlua::Error::runtime(
+                        "Usage: MovieFrame:StartMovie(\"movie\" [, volume])",
+                    ));
+                };
+                let display = value.to_string_lossy();
+                let identity = AssetPath::new(&display).map_err(|error| {
+                    mlua::Error::runtime(format!("Invalid movie file: {error}"))
+                })?;
+                let Some(assets) = &assets else {
+                    return Err(mlua::Error::runtime(
+                        "MovieFrame:StartMovie requires a mounted asset store",
+                    ));
+                };
+                let path = match assets.borrow().cinematic_file_path(&identity) {
+                    Ok(path) => path,
+                    Err(solarity_asset::AssetError::AssetNotFound { .. }) => return Ok(false),
+                    Err(error) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "Invalid movie file {display}: {error}"
+                        )));
+                    }
+                };
+                let volume = volume
+                    .map(|value| lua.coerce_number(value))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(100.0);
+                if !volume.is_finite() || volume < 0.0 || volume > f64::from(u32::MAX) {
+                    return Err(mlua::Error::runtime("invalid movie volume"));
+                }
+                let mut intent = start_intent.borrow_mut();
+                let generation = intent.next_movie_generation.checked_add(1).ok_or_else(|| {
+                    mlua::Error::runtime("Glue movie playback generation capacity exceeded")
+                })?;
+                intent.next_movie_generation = generation;
+                intent.movie = Some(UiGlueMovieRequest {
+                    object_index: movie_frame.raw_get::<usize>(index_key())? - 1,
+                    generation,
+                    path,
+                    volume: volume as u32,
+                    subtitles_enabled: movie_frame
+                        .raw_get::<Option<bool>>(movie_subtitles_key())?
+                        .unwrap_or(false),
+                });
+                Ok(true)
+            },
+        )?,
+    )?;
+    let stop_intent = media_intent;
+    methods.raw_set(
+        "StopMovie",
+        lua.create_function(move |_, movie_frame: Table| {
+            let object_index = movie_frame.raw_get::<usize>(index_key())? - 1;
+            let mut intent = stop_intent.borrow_mut();
+            if intent
+                .movie
+                .as_ref()
+                .is_some_and(|movie| movie.object_index == object_index)
+            {
+                intent.movie = None;
+            }
+            Ok(())
+        })?,
+    )?;
+    methods.raw_set(
+        "EnableSubtitles",
+        lua.create_function(|_, (movie_frame, enabled): (Table, Option<bool>)| {
+            movie_frame.raw_set(movie_subtitles_key(), enabled.unwrap_or(true))
         })?,
     )
 }
@@ -4904,11 +5080,29 @@ fn parse_draw_layer_name(value: &str) -> Option<&'static str> {
 fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "Show",
-        lua.create_function(|_, object: Table| object.raw_set(shown_key(), true))?,
+        lua.create_function(|lua, object: Table| {
+            if !object.raw_get::<bool>(shown_key())? {
+                object.raw_set(shown_key(), true)?;
+                if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Show)?
+                {
+                    call_object_handler(lua, &function, object)?;
+                }
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "Hide",
-        lua.create_function(|_, object: Table| object.raw_set(shown_key(), false))?,
+        lua.create_function(|lua, object: Table| {
+            if object.raw_get::<bool>(shown_key())? {
+                object.raw_set(shown_key(), false)?;
+                if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Hide)?
+                {
+                    call_object_handler(lua, &function, object)?;
+                }
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "IsShown",
@@ -5937,6 +6131,10 @@ pub(super) fn horizontal_tiling_key() -> LightUserData {
 
 pub(super) fn vertical_tiling_key() -> LightUserData {
     hidden_key(&VERTICAL_TILING_TOKEN)
+}
+
+fn movie_subtitles_key() -> LightUserData {
+    hidden_key(&MOVIE_SUBTITLES_TOKEN)
 }
 
 pub(super) fn non_blocking_key() -> LightUserData {

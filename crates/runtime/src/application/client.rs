@@ -9,6 +9,7 @@ use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport, World
 use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError, UiRenderError};
 
 use crate::application::character_directory::CharacterProjectionError;
+use crate::application::cinematic_coordinator::RuntimeCinematicError;
 use crate::application::client_services::ClientServices;
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentError;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
@@ -19,6 +20,7 @@ use crate::application::sound_coordinator::RuntimeSoundError;
 use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
+use crate::configuration::ConfigurationError;
 use crate::configuration::RuntimeConfiguration;
 use crate::input::{InputControl, InputFrameMotion};
 use crate::platform::{PlatformError, PlatformEvent};
@@ -26,6 +28,12 @@ use crate::platform::{PlatformError, PlatformEvent};
 /// A failure while constructing or stopping concrete client services.
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+    /// Persistent startup-profile state could not be loaded or consumed.
+    #[error(transparent)]
+    Configuration(#[from] ConfigurationError),
+    /// First-run movie decode, timing, or presentation failed.
+    #[error(transparent)]
+    Cinematic(#[from] RuntimeCinematicError),
     /// Client archive discovery, mount, or validation failed.
     #[error(transparent)]
     Asset(#[from] AssetError),

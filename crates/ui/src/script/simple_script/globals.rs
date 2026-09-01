@@ -1245,6 +1245,27 @@ fn register_glue_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    let movie_resolution = environment.logical_extent().0;
+    globals.raw_set(
+        "GetMovieResolution",
+        lua.create_function(move |_, ()| Ok(movie_resolution))?,
+    )?;
+    let cursor_visible = environment.cursor_visible();
+    globals.raw_set(
+        "HideCursor",
+        lua.create_function(move |_, ()| {
+            cursor_visible.set(false);
+            Ok(())
+        })?,
+    )?;
+    let cursor_visible = environment.cursor_visible();
+    globals.raw_set(
+        "ShowCursor",
+        lua.create_function(move |_, ()| {
+            cursor_visible.set(true);
+            Ok(())
+        })?,
+    )?;
     register_glue_media_globals(lua, globals, environment)?;
     register_glue_network_globals(lua, globals, environment)?;
     // The executable owns the current scene name; GlueParent.lua mirrors it
@@ -1798,14 +1819,16 @@ fn register_glue_media_globals(
             Ok(())
         })?,
     )?;
-    let state = environment.media_intent();
-    globals.raw_set(
-        "StopMusic",
-        lua.create_function(move |_, ()| {
-            state.borrow_mut().music = None;
-            Ok(())
-        })?,
-    )?;
+    for name in ["StopMusic", "StopGlueMusic"] {
+        let state = environment.media_intent();
+        globals.raw_set(
+            name,
+            lua.create_function(move |_, ()| {
+                state.borrow_mut().music = None;
+                Ok(())
+            })?,
+        )?;
+    }
     let state = environment.media_intent();
     globals.raw_set(
         "StopGlueAmbience",

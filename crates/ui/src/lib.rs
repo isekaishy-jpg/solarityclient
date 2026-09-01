@@ -61,7 +61,7 @@ pub use frame::{
     UiObjectCatalog, UiObjectDefinition, UiObjectError, UiObjectKind, UiObjectNode, UiObjectRole,
     UiObjectTree,
 };
-pub use glue::{GlueError, GlueManager, GlueObject, GlueStartupReport};
+pub use glue::{GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport};
 pub use input::{UiModifierKeyState, UiModifierKeys};
 pub use region::{
     UiAnchor, UiAnchorTarget, UiDimensions, UiLayoutError, UiLayoutLayer, UiLayoutPlan,
@@ -75,11 +75,11 @@ pub use render::{
 };
 pub use script::{
     UiCharacterDirectory, UiCharacterInfo, UiClientClock, UiDeferredRuntimeTemplate,
-    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest, UiRealmCategory,
-    UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion, UiRuntimeTemplate,
-    UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding, UiScriptEnvironment,
-    UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptRuntime,
-    UiScriptRuntimePlan, UiScriptTarget,
+    UiGlueMediaIntent, UiGlueMovieRequest, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,
+    UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

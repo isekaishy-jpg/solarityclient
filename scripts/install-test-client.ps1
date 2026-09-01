@@ -85,6 +85,33 @@ finally {
     }
 }
 
+# The Rust executable dynamically links the pinned FFmpeg/vcpkg runtime. Keep
+# the installed DLL set identical to the current build tree so ABI-versioned
+# files are replaced instead of accumulating across test builds.
+$dependencyBin = Join-Path $resolvedRepositoryRoot "vcpkg_installed\x64-windows\bin"
+if (-not (Test-Path -LiteralPath $dependencyBin -PathType Container)) {
+    throw "The pinned x64 runtime dependency directory is unavailable: $dependencyBin"
+}
+$dependencyDlls = @(Get-ChildItem -LiteralPath $dependencyBin -Filter "*.dll" -File)
+if ($dependencyDlls.Count -eq 0) {
+    throw "No pinned x64 runtime DLLs were found in: $dependencyBin"
+}
+$dependencyNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($dependency in $dependencyDlls) {
+    [void] $dependencyNames.Add($dependency.Name)
+    Copy-Item -LiteralPath $dependency.FullName -Destination (Join-Path $resolvedInstallRoot $dependency.Name) -Force
+}
+foreach ($installedDll in Get-ChildItem -LiteralPath $resolvedInstallRoot -Filter "*.dll" -File) {
+    if ($dependencyNames.Contains($installedDll.Name)) {
+        continue
+    }
+    $resolvedDll = [IO.Path]::GetFullPath($installedDll.FullName)
+    if (-not [IO.Path]::GetDirectoryName($resolvedDll).Equals($resolvedInstallRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove a runtime DLL outside the install root: $resolvedDll"
+    }
+    Remove-Item -LiteralPath $resolvedDll -Force
+}
+
 $launcherPath = Join-Path $resolvedInstallRoot "launch-solarity-testing.ps1"
 $launcherTemplate = @'
 $ErrorActionPreference = "Stop"
@@ -97,6 +124,7 @@ $logPath = Join-Path $logDirectory ("solarity-{0:yyyyMMdd-HHmmss}.log" -f (Get-D
 $timezoneMinutes = [int][TimeZoneInfo]::Local.GetUtcOffset([DateTime]::Now).TotalMinutes
 $arguments = @(
     "--data-root", '__DATA_ROOT__',
+    "--profile-root", $PSScriptRoot,
     "--locale", '__LOCALE__',
     "--cpu-workers", '__CPU_WORKERS__',
     "--cpu-capacity", '__CPU_CAPACITY__',
@@ -153,6 +181,7 @@ $buildInformation = @(
     "locale=$Locale"
     "login_endpoint=$LoginEndpoint"
     "profile=test-client"
+    "runtime_dlls=$([string]::Join(',', ($dependencyDlls.Name | Sort-Object)))"
 )
 Set-Content -LiteralPath (Join-Path $resolvedInstallRoot "build-info.txt") -Value $buildInformation -Encoding utf8NoBOM
 

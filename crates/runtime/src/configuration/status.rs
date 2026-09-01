@@ -2,12 +2,48 @@
 
 use thiserror::Error;
 
+use std::path::PathBuf;
+
 use solarity_asset::AssetError;
 use solarity_network::TransportError;
 
 /// A failure to construct complete typed runtime configuration.
 #[derive(Debug, Error)]
 pub enum ConfigurationError {
+    /// The explicit persistent profile root is unavailable or not a directory.
+    #[error("invalid --profile-root value {path}: {message}")]
+    InvalidProfileRoot {
+        /// Caller-supplied profile directory.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
+    /// The stock Config.wtf profile could not be read.
+    #[error("failed to read client profile {path}: {message}")]
+    ProfileRead {
+        /// Concrete profile file.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
+    /// One startup CVar declaration was malformed.
+    #[error("invalid client profile {path} line {line}: {message}")]
+    ProfileParse {
+        /// Concrete profile file.
+        path: PathBuf,
+        /// One-based line number.
+        line: usize,
+        /// Stable parse context.
+        message: String,
+    },
+    /// A consumed startup CVar could not be persisted.
+    #[error("failed to write client profile {path}: {message}")]
+    ProfileWrite {
+        /// Concrete profile file or directory.
+        path: PathBuf,
+        /// Filesystem context.
+        message: String,
+    },
     /// A command-line option is not part of the current startup contract.
     #[error("unknown startup option {option}")]
     UnknownOption {

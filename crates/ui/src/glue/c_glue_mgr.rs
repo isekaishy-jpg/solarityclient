@@ -77,6 +77,26 @@ impl GlueManager {
         logical_extent: (u32, u32),
         streaming_trial: bool,
     ) -> Result<Self, GlueError> {
+        Self::start_shared_with_initial_screen(
+            assets,
+            logical_extent,
+            streaming_trial,
+            super::GlueInitialScreen::Login,
+        )
+    }
+
+    /// Starts Glue on the native screen selected from persistent startup state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlueError`] under the same strict stock-loading rules as
+    /// [`Self::start_shared`].
+    pub fn start_shared_with_initial_screen(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        streaming_trial: bool,
+        initial_screen: super::GlueInitialScreen,
+    ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
@@ -108,11 +128,13 @@ impl GlueManager {
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
         runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
-        let login_payload = UiEventPayload::new([UiEventArgument::String("login".to_owned())])
-            .map_err(|error| crate::UiScriptError::Plan {
-                message: format!("could not construct stock login-screen event: {error}"),
-            })?;
-        runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &login_payload)?;
+        let initial_payload = UiEventPayload::new([UiEventArgument::String(
+            initial_screen.script_name().to_owned(),
+        )])
+        .map_err(|error| crate::UiScriptError::Plan {
+            message: format!("could not construct stock initial-screen event: {error}"),
+        })?;
+        runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
@@ -238,6 +260,18 @@ impl GlueManager {
         self.media_intent.borrow().clone()
     }
 
+    /// Returns the native Glue screen name mirrored by `SetCurrentScreen`.
+    #[must_use]
+    pub fn current_screen(&self) -> String {
+        self.environment.current_screen().borrow().clone()
+    }
+
+    /// Returns the cursor-visibility request authored by the current screen.
+    #[must_use]
+    pub fn cursor_visible(&self) -> bool {
+        self.environment.cursor_visible().get()
+    }
+
     /// Returns one live script-visible CVar for native subsystem policy.
     #[must_use]
     pub fn cvar_value(&self, name: &str) -> Option<String> {
@@ -309,6 +343,18 @@ impl GlueManager {
             .dispatch_glue_event(&self.bundle, event, payload)?;
         self.refresh_live_state()?;
         Ok(UiEventDispatch::new(subscriber_count))
+    }
+
+    /// Delivers native decode completion to the owning stock `MovieFrame`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when the object is unavailable, its authored
+    /// `OnMovieFinished` handler fails, or the resulting live layout is invalid.
+    pub fn movie_finished(&mut self, object_index: usize) -> Result<(), UiEventError> {
+        self.runtime
+            .dispatch_movie_finished(&self.bundle, object_index)?;
+        self.refresh_live_state()
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {

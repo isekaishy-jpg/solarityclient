@@ -3,6 +3,24 @@
 use crate::script::UiRuntimeObject;
 use crate::{UiObjectKind, UiObjectRole};
 
+/// Native screen selected immediately after built-in Glue has loaded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlueInitialScreen {
+    /// Startup login screen used after the intro request was consumed.
+    Login,
+    /// Full-screen startup movie selected by `playIntroMovie`.
+    Movie,
+}
+
+impl GlueInitialScreen {
+    pub(super) const fn script_name(self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Movie => "movie",
+        }
+    }
+}
+
 /// Durable identity and hierarchy for one instantiated GlueXML object.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GlueObject {

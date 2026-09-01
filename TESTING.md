@@ -15,7 +15,10 @@ directory, and retains a failing console until acknowledged.
 
 The generated launcher contains explicit client-data, locale, realm, worker,
 window, and GPU arguments. Re-run the installer after code changes; it updates
-the stable binary and records the installed Git revision in `build-info.txt`.
+the stable binary and pinned native DLL set, and records the installed Git
+revision in `build-info.txt`. The install directory is also the persistent
+profile root: a fresh profile plays the stock first-run movies once, writes
+`WTF\Config.wtf`, and later launches continue directly to login.
 
 ## Vertical-slice gates
 

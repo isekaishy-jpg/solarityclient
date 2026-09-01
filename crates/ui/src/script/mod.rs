@@ -19,7 +19,8 @@ pub use network_intent::{
     UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 pub use simple_script::{
-    UiGlueMediaIntent, UiScriptEnvironment, UiScriptRuntime, UiScriptRuntimePlan,
+    UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,
+    UiScriptRuntimePlan,
 };
 pub use status::UiScriptError;
 pub use templates::{

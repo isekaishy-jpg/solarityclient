@@ -6,10 +6,12 @@
 
 mod login;
 mod profile;
+mod startup_profile;
 mod status;
 mod window;
 
 pub use login::LoginConfiguration;
 pub use profile::RuntimeConfiguration;
+pub use startup_profile::StartupProfile;
 pub use status::ConfigurationError;
 pub use window::{WindowConfiguration, WindowMode};

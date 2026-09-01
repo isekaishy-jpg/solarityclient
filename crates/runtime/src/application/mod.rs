@@ -5,6 +5,7 @@
 //! concrete workspace subsystems.
 
 mod character_directory;
+mod cinematic_coordinator;
 mod client;
 mod client_services;
 mod environment_coordinator;

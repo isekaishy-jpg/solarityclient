@@ -6,6 +6,8 @@
 
 mod audio;
 mod cinematic;
+
+pub use cinematic::{CinematicDecoder, CinematicError, CinematicVideoFrame};
 mod voice;
 
 pub use audio::{

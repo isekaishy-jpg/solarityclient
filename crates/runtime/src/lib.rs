@@ -34,7 +34,8 @@ pub use application::{
     world_model_environment_emissive,
 };
 pub use configuration::{
-    ConfigurationError, LoginConfiguration, RuntimeConfiguration, WindowConfiguration, WindowMode,
+    ConfigurationError, LoginConfiguration, RuntimeConfiguration, StartupProfile,
+    WindowConfiguration, WindowMode,
 };
 pub use input::{
     InputBindingInvocation, InputBindingPhase, InputBindingRouter, InputControl, InputFrameMotion,
