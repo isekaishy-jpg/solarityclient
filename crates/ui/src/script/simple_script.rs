@@ -302,6 +302,7 @@ pub struct UiScriptEnvironment {
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
     minimap_tracking: crate::UiMinimapTrackingState,
+    group_finder: crate::UiGroupFinderState,
     bindings: Option<Rc<RefCell<UiBindingAssignments>>>,
     battlenet: crate::feature::UiBattleNetState,
     locale: Option<Locale>,
@@ -339,6 +340,7 @@ impl UiScriptEnvironment {
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
+            group_finder: crate::UiGroupFinderState::new(),
             bindings: None,
             // A process without an attached Battle.net platform service must
             // not expose a second authentication or social-network path.
@@ -458,6 +460,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn minimap_tracking_state(&self) -> crate::UiMinimapTrackingState {
         self.minimap_tracking.clone()
+    }
+
+    /// Returns the shared dungeon and raid finder lifecycle projection.
+    #[must_use]
+    pub fn group_finder_state(&self) -> crate::UiGroupFinderState {
+        self.group_finder.clone()
     }
 }
 

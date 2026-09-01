@@ -89,6 +89,7 @@ fn register_frame_globals(
     crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
     crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
+    crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();

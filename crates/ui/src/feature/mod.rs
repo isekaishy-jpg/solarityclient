@@ -7,6 +7,7 @@ mod chat;
 mod commentator;
 mod container;
 mod dress_up;
+mod group_finder;
 mod guild_bank;
 mod health_bar;
 mod item_text;
@@ -33,6 +34,11 @@ pub use battlefield::{
     UiBattlefieldQueueStatus, UiBattlefieldSlot, UiWorldPvpQueueSlot,
 };
 pub(crate) use battlenet::UiBattleNetState;
+pub(crate) use group_finder::register_globals as register_group_finder_globals;
+pub use group_finder::{
+    UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole, UiGroupFinderRoleCheck,
+    UiGroupFinderServerInfo, UiGroupFinderState,
+};
 pub(crate) use minimap::register_globals as register_minimap_globals;
 pub use minimap::{UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType};
 pub(crate) use minimap::{

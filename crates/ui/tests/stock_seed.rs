@@ -27,6 +27,8 @@ mod feature_commentator;
 mod feature_container;
 #[path = "stock_seed/feature/dress_up.rs"]
 mod feature_dress_up;
+#[path = "stock_seed/feature/group_finder.rs"]
+mod feature_group_finder;
 #[path = "stock_seed/feature/guild_bank.rs"]
 mod feature_guild_bank;
 #[path = "stock_seed/feature/health_bar.rs"]

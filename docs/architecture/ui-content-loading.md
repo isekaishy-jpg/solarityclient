@@ -226,6 +226,14 @@ those capabilities arrive the list is empty; `GetNumTrackingTypes` therefore
 returns zero rather than exposing fabricated defaults. `SetTracking(nil)`
 clears the selection represented by the dropdown's authored “None” row.
 
+Group-finder mode is derived by stock `UIParent.lua` from one shared lifecycle,
+not a synthetic mode flag. The UI environment therefore retains the complete
+12-value proposal, seven-value server queue summary, role-check counts,
+raid-finder listing state, LFG-party identity, dungeon occupancy, and queue
+restrictions. The initial session state has no proposal, queue, role check, or
+listing; native queries expose those inactive sentinels until corresponding
+world-session state is published.
+
 Against the current local client, the complete 16-archive stack expands and
 validates 59 Glue resources (31 XML and 28 external Lua) containing 76 global
 fonts, 71 object templates, and 34 live roots. Frame expansion validates 265
