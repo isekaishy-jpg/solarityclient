@@ -5,6 +5,7 @@ use solarity_asset::AssetPath;
 use crate::script::{
     UiRuntimeModelLight, UiRuntimeModelLightSets, UiRuntimeObject, UiRuntimeObjectPlan,
 };
+use crate::widget::nearest_owning_scroll_frame;
 use crate::{
     UiBackdropState, UiBackdropStatePlan, UiBlendMode, UiDrawLayer, UiFrameStrata, UiObjectRole,
     UiRegionGeometryPlan, UiScreenRect,
@@ -84,6 +85,8 @@ impl UiPresentationPacketKey {
 pub struct UiTexturePresentation {
     key: UiPresentationPacketKey,
     object_index: usize,
+    /// Assigned ScrollFrame viewport, excluding sibling scrollbar chrome.
+    clip_object: Option<usize>,
     source: UiTextureSource,
     blend_mode: UiBlendMode,
     bounds: UiScreenRect,
@@ -290,6 +293,10 @@ impl UiTexturePresentation {
         self.key
     }
 
+    pub(crate) const fn clip_object(&self) -> Option<usize> {
+        self.clip_object
+    }
+
     /// Returns the live object-arena index used for subsequent updates.
     #[must_use]
     pub const fn object_index(&self) -> usize {
@@ -403,6 +410,7 @@ impl UiPresentationPlan {
                     BackdropPresentationContext {
                         object_index,
                         object,
+                        clip_object: nearest_owning_scroll_frame(live, object_index),
                         bounds: region.presentation_bounds(),
                         effective_alpha: region.effective_alpha() as f32,
                         effective_scale: region.effective_scale(),
@@ -488,6 +496,7 @@ impl UiPresentationPlan {
                 UiTexturePresentation {
                     key,
                     object_index,
+                    clip_object: nearest_owning_scroll_frame(live, object_index),
                     source,
                     blend_mode: texture.blend_mode,
                     bounds: region.presentation_bounds(),
@@ -564,6 +573,7 @@ impl UiPresentationPlan {
 struct BackdropPresentationContext<'runtime> {
     object_index: usize,
     object: &'runtime UiRuntimeObject,
+    clip_object: Option<usize>,
     bounds: UiScreenRect,
     effective_alpha: f32,
     effective_scale: f64,
@@ -594,6 +604,7 @@ fn append_backdrop(
     let BackdropPresentationContext {
         object_index,
         object,
+        clip_object,
         bounds,
         effective_alpha,
         effective_scale,
@@ -621,6 +632,7 @@ fn append_backdrop(
             push_backdrop_quad(
                 output,
                 object_index,
+                clip_object,
                 path,
                 backdrop.blend_mode(),
                 background_bounds,
@@ -691,6 +703,7 @@ fn append_backdrop(
         push_backdrop_quad(
             output,
             object_index,
+            clip_object,
             path,
             backdrop.blend_mode(),
             corner_bounds,
@@ -707,6 +720,7 @@ fn append_backdrop(
     append_vertical_edge(
         output,
         object_index,
+        clip_object,
         path,
         backdrop,
         color,
@@ -721,6 +735,7 @@ fn append_backdrop(
     append_vertical_edge(
         output,
         object_index,
+        clip_object,
         path,
         backdrop,
         color,
@@ -735,6 +750,7 @@ fn append_backdrop(
     append_horizontal_edge(
         output,
         object_index,
+        clip_object,
         path,
         backdrop,
         color,
@@ -749,6 +765,7 @@ fn append_backdrop(
     append_horizontal_edge(
         output,
         object_index,
+        clip_object,
         path,
         backdrop,
         color,
@@ -766,6 +783,7 @@ fn append_backdrop(
 fn append_vertical_edge(
     output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
     object_index: usize,
+    clip_object: Option<usize>,
     path: &AssetPath,
     backdrop: &UiBackdropState,
     color: [[f32; 4]; 4],
@@ -784,6 +802,7 @@ fn append_vertical_edge(
         push_backdrop_quad(
             output,
             object_index,
+            clip_object,
             path,
             backdrop.blend_mode(),
             UiScreenRect::from_edges(left, next, left + edge, cursor),
@@ -803,6 +822,7 @@ fn append_vertical_edge(
 fn append_horizontal_edge(
     output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
     object_index: usize,
+    clip_object: Option<usize>,
     path: &AssetPath,
     backdrop: &UiBackdropState,
     color: [[f32; 4]; 4],
@@ -826,6 +846,7 @@ fn append_horizontal_edge(
         push_backdrop_quad(
             output,
             object_index,
+            clip_object,
             path,
             backdrop.blend_mode(),
             UiScreenRect::from_edges(cursor, bottom, cursor + length, bottom + edge),
@@ -861,6 +882,7 @@ fn runtime_backdrop_color(
 fn push_backdrop_quad(
     output: &mut Vec<(UiPresentationPacketKey, UiTexturePresentation)>,
     object_index: usize,
+    clip_object: Option<usize>,
     path: &AssetPath,
     blend_mode: UiBlendMode,
     bounds: UiScreenRect,
@@ -884,6 +906,7 @@ fn push_backdrop_quad(
         UiTexturePresentation {
             key,
             object_index,
+            clip_object,
             source: UiTextureSource::Asset(path.clone()),
             blend_mode,
             bounds,

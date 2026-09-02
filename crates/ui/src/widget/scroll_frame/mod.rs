@@ -2,4 +2,5 @@
 
 mod types;
 
+pub(crate) use types::nearest_owning_scroll_frame;
 pub use types::{UiScrollFramePlan, UiScrollFrameState};

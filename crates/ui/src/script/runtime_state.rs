@@ -18,10 +18,10 @@ use super::simple_script::{
     model_fog_near_key, model_glow_key, model_pet_light_ghost_key, model_pet_light_live_key,
     model_scale_key, model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key,
     mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key,
-    normal_font_key, parent_key, parse_point, role_key, scale_key, shown_key, slider_max_key,
-    slider_min_key, slider_orientation_key, slider_step_key, slider_value_key, spacing_key,
-    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
-    texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
+    normal_font_key, parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key,
+    slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
+    spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
+    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
     vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::{
@@ -66,6 +66,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) hit_rect_insets: Option<[f64; 4]>,
     pub(crate) scroll_offset: Option<(f64, f64)>,
     pub(crate) scroll_range: Option<(f64, f64)>,
+    pub(crate) scroll_child: Option<usize>,
     pub(crate) slider: Option<UiRuntimeSlider>,
     pub(crate) enabled: Option<bool>,
     pub(crate) click_action: Option<u64>,
@@ -251,6 +252,40 @@ pub(super) fn snapshot_runtime_objects(
             .then(|| table.raw_get::<u64>(click_action_key()))
             .transpose()
             .map_err(|error| snapshot_error(format!("object {lua_index} click action"), error))?;
+        // Snapshot the assigned child identity rather than inferring ownership
+        // from ancestry; ScrollFrame chrome shares the same direct parent.
+        let scroll_child = (kind == UiObjectKind::ScrollFrame)
+            .then(|| {
+                table
+                    .raw_get::<Option<Table>>(scroll_child_key())
+                    .map_err(|error| {
+                        snapshot_error(format!("object {lua_index} scroll child"), error)
+                    })?
+                    .map(|child| {
+                        let stored = child.raw_get::<usize>(index_key()).map_err(|error| {
+                            snapshot_error(
+                                format!("object {lua_index} scroll child index"),
+                                error,
+                            )
+                        })?;
+                        let index = stored.checked_sub(1).ok_or_else(|| UiScriptError::Plan {
+                            message: format!(
+                                "live UI object {lua_index} has invalid scroll child index {stored}"
+                            ),
+                        })?;
+                        if index >= object_count || stored == lua_index {
+                            return Err(UiScriptError::Plan {
+                                message: format!(
+                                    "live UI object {lua_index} has invalid scroll child index {stored}"
+                                ),
+                            });
+                        }
+                        Ok(index)
+                    })
+                    .transpose()
+            })
+            .transpose()?
+            .flatten();
         objects.push(UiRuntimeObject {
             name: table
                 .raw_get(name_key())
@@ -368,6 +403,7 @@ pub(super) fn snapshot_runtime_objects(
                     ))
                 })
                 .transpose()?,
+            scroll_child,
             slider: (kind == UiObjectKind::Slider)
                 .then(|| snapshot_slider(lua_index, &table))
                 .transpose()?,

@@ -407,3 +407,12 @@ The instantiated local Glue tree retains 1,671 texture layers referencing 97
 unique concrete paths; Frame retains 10,913 layers referencing 494. The
 validator reads every unique canonical path through the mounted archive stack
 so a naming-rule or precedence regression fails before rendering begins.
+
+`CSimpleScrollFrame` applies its two live offsets only to the region tree rooted
+at the frame assigned through `SetScrollChild`. Texture regions and native
+backdrop slices in that tree are translated, cropped to the ScrollFrame's
+presentation rectangle, and have both texture coordinates and corner colors
+interpolated at the cropped edges. Directly parented scrollbar and button
+chrome is not part of the assigned child and therefore remains stationary and
+unclipped. FontString and SimpleHTML presentation uses the same ownership test,
+preventing an ancestor-only approximation from moving sibling labels.

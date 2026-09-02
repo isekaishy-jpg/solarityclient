@@ -367,3 +367,91 @@ fn glue_presentation_builds_stock_native_backdrop_quads() -> Result<(), Box<dyn 
     assert_eq!(manager.render_plan().texture_assets().requests().len(), 2);
     Ok(())
 }
+
+/// ScrollFrame translates and clips every region beneath its assigned child
+/// while leaving sibling scrollbar chrome in the ScrollFrame's own space.
+#[test]
+fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"TextureScroll.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\TextureScroll.xml",
+            bytes: br#"<Ui>
+<ScrollFrame name="Viewport" frameStrata="DIALOG" frameLevel="3">
+  <Size x="100" y="50"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <ScrollChild><Frame name="Content"><Size x="100" y="100"/>
+    <Layers><Layer level="ARTWORK">
+      <Texture name="ContentTexture" file="Interface\Glues\Content" setAllPoints="true"/>
+    </Layer></Layers>
+  </Frame></ScrollChild>
+  <Frames><Frame name="Chrome"><Size x="20" y="20"/>
+    <Anchors><Anchor point="TOP" relativeTo="Viewport" relativePoint="TOP">
+      <Offset><AbsDimension x="0" y="20"/></Offset>
+    </Anchor></Anchors>
+    <Layers><Layer level="OVERLAY">
+      <Texture name="ChromeTexture" file="Interface\Glues\Chrome" setAllPoints="true"/>
+    </Layer></Layers>
+  </Frame></Frames>
+  <Scripts><OnLoad>
+    ContentTexture:SetGradientAlpha("VERTICAL", 0, 0, 1, 1, 1, 0, 0, 1)
+    self:SetVerticalScroll(25)
+  </OnLoad></Scripts>
+</ScrollFrame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let content_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("ContentTexture"))
+        .ok_or("missing scrolled content texture")?;
+    let chrome_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("ChromeTexture"))
+        .ok_or("missing ScrollFrame chrome texture")?;
+    let mesh = manager.render_plan().mesh();
+    let content_quad = mesh
+        .object_indices()
+        .iter()
+        .position(|index| *index == content_index)
+        .ok_or("scrolled texture did not render")?;
+    let content = &mesh.vertices()[content_quad * 4..content_quad * 4 + 4];
+    let positions = content
+        .iter()
+        .map(|vertex| vertex.position())
+        .collect::<Vec<_>>();
+    let expected_left = 1920.0 / 1080.0 * 384.0 - 50.0;
+    assert!(positions.iter().all(|position| {
+        (position[0] - expected_left).abs() < 0.000_1
+            || (position[0] - (expected_left + 100.0)).abs() < 0.000_1
+    }));
+    assert!(positions.iter().all(|position| {
+        (position[1] - 359.0).abs() < 0.000_1 || (position[1] - 409.0).abs() < 0.000_1
+    }));
+    assert_eq!(content[0].texture_coordinates(), [0.0, 0.25]);
+    assert_eq!(content[1].texture_coordinates(), [0.0, 0.75]);
+    assert_eq!(content[2].texture_coordinates(), [1.0, 0.25]);
+    assert_eq!(content[3].texture_coordinates(), [1.0, 0.75]);
+    assert_eq!(content[0].color(), [0.75, 0.0, 0.25, 1.0]);
+    assert_eq!(content[1].color(), [0.25, 0.0, 0.75, 1.0]);
+
+    let chrome_quad = mesh
+        .object_indices()
+        .iter()
+        .position(|index| *index == chrome_index)
+        .ok_or("ScrollFrame chrome did not render")?;
+    let chrome = &mesh.vertices()[chrome_quad * 4..chrome_quad * 4 + 4];
+    assert!(
+        chrome
+            .iter()
+            .any(|vertex| (vertex.position()[1] - 429.0).abs() < 0.000_1)
+    );
+    Ok(())
+}

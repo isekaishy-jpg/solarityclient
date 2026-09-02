@@ -11,6 +11,7 @@ use solarity_rendering::{
 
 use super::EditBoxTextLayout;
 use crate::script::{UiRuntimeObjectPlan, UiRuntimeText};
+use crate::widget::nearest_owning_scroll_frame;
 use crate::{
     FontCatalog, FontError, FontRasterization, FontSystem, RasterizedGlyph, UiObjectKind,
     UiObjectRole, UiPresentationPacketKey, UiRegionGeometryPlan, UiScrollFramePlan,
@@ -1076,7 +1077,7 @@ fn layout_live_quads(
         let clip_object = if object.kind == UiObjectKind::EditBox {
             Some(object_index)
         } else {
-            nearest_live_scroll_frame(live, object.parent)
+            nearest_owning_scroll_frame(live, object_index)
         };
         let mut primary_quads = Vec::new();
         let mut selection_quads = Vec::new();
@@ -1273,21 +1274,6 @@ fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) 
         texture_coordinates: source.texture_coordinates,
         color,
     }
-}
-
-/// Finds the nearest live ScrollFrame that owns a region's ancestor chain.
-fn nearest_live_scroll_frame(
-    live: &UiRuntimeObjectPlan,
-    mut parent: Option<usize>,
-) -> Option<usize> {
-    while let Some(index) = parent {
-        let object = live.objects().get(index)?;
-        if object.kind == UiObjectKind::ScrollFrame {
-            return Some(index);
-        }
-        parent = object.parent;
-    }
-    None
 }
 
 /// Resolves the byte-indexed EditBox cursor to its visible insertion cell.

@@ -7682,7 +7682,7 @@ pub(super) fn vertical_scroll_range_key() -> LightUserData {
     hidden_key(&VERTICAL_SCROLL_RANGE_TOKEN)
 }
 
-fn scroll_child_key() -> LightUserData {
+pub(super) fn scroll_child_key() -> LightUserData {
     hidden_key(&SCROLL_CHILD_TOKEN)
 }
 

@@ -313,7 +313,7 @@ impl UiSimpleHtmlPlan {
                 document,
                 lines,
                 content_height: content_height as f32,
-                clip_object: nearest_scroll_frame(tree, object.parent()),
+                clip_object: nearest_scroll_frame(tree, index),
             }));
         }
         Ok(Self { nodes })
@@ -327,12 +327,17 @@ impl UiSimpleHtmlPlan {
 }
 
 /// Finds the viewport that clips this retained scroll child.
-fn nearest_scroll_frame(tree: &UiObjectTree<'_>, mut parent: Option<usize>) -> Option<usize> {
+fn nearest_scroll_frame(tree: &UiObjectTree<'_>, object_index: usize) -> Option<usize> {
+    let mut descendant = object_index;
+    let mut parent = tree.nodes().get(object_index)?.parent();
     while let Some(index) = parent {
         let object = tree.nodes().get(index)?;
-        if object.kind() == UiObjectKind::ScrollFrame {
+        if object.kind() == UiObjectKind::ScrollFrame
+            && tree.nodes().get(descendant)?.role() == crate::UiObjectRole::ScrollChild
+        {
             return Some(index);
         }
+        descendant = index;
         parent = object.parent();
     }
     None
