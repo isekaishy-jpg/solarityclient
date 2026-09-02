@@ -17,7 +17,7 @@ use solarity_ui::UiRenderError;
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
 
-use super::RuntimeLoadingStage;
+use super::{RuntimeLoadingStage, layout::centered_aspect_fill_uv};
 
 const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
@@ -57,6 +57,11 @@ pub(crate) struct RuntimeLoadingScreen {
     final_frame_presented: bool,
 }
 
+struct UploadedLoadingTextures {
+    handles: HashMap<AssetPath, BlpTextureHandle>,
+    extents: HashMap<AssetPath, (u32, u32)>,
+}
+
 impl RuntimeLoadingScreen {
     /// Resolves stock loading art and prepares each finite progress generation.
     pub(crate) fn prepare(
@@ -82,12 +87,16 @@ impl RuntimeLoadingScreen {
         if let Some(background) = &background {
             paths.push(background.clone());
         }
-        let textures = upload_textures(renderer, assets, &paths)?;
+        let uploaded = upload_textures(renderer, assets, &paths)?;
+        let background = background.as_ref().map(|path| {
+            let extent = uploaded.extents[path];
+            (path, centered_aspect_fill_uv(logical_extent, extent))
+        });
         let frames = RuntimeLoadingStage::ALL
             .into_iter()
             .map(|stage| {
-                let plan = loading_mesh(logical_extent, background.as_ref(), stage.progress())?;
-                PreparedUiFrame::prepare(renderer, &plan, &textures, None)
+                let plan = loading_mesh(logical_extent, background, stage.progress())?;
+                PreparedUiFrame::prepare(renderer, &plan, &uploaded.handles, None)
             })
             .collect::<Result<Vec<_>, ApplicationError>>()?;
         Ok(Self {
@@ -159,7 +168,7 @@ fn upload_textures(
     renderer: &mut VulkanRenderer,
     assets: &AssetStoreHandle,
     paths: &[AssetPath],
-) -> Result<HashMap<AssetPath, BlpTextureHandle>, ApplicationError> {
+) -> Result<UploadedLoadingTextures, ApplicationError> {
     let mut cache = BlpTextureCache::new();
     let mut store = assets.borrow_mut();
     let sources = paths
@@ -172,12 +181,24 @@ fn upload_textures(
         .map(|source| BlpTextureUploadRequest::new(source, BlpColorSpace::Linear))
         .collect::<Vec<_>>();
     let handles = renderer.upload_blp_textures(&requests)?;
-    Ok(paths.iter().cloned().zip(handles).collect())
+    let extents = paths
+        .iter()
+        .cloned()
+        .zip(
+            sources
+                .iter()
+                .map(|source| (source.width(), source.height())),
+        )
+        .collect();
+    Ok(UploadedLoadingTextures {
+        handles: paths.iter().cloned().zip(handles).collect(),
+        extents,
+    })
 }
 
 fn loading_mesh(
     logical_extent: [f32; 2],
-    background: Option<&AssetPath>,
+    background: Option<(&AssetPath, [[f32; 2]; 4])>,
     progress: f32,
 ) -> Result<UiMeshPlan, ApplicationError> {
     let width = logical_extent[0];
@@ -195,8 +216,13 @@ fn loading_mesh(
         [0.0, 0.0, width, height],
         [0.015, 0.015, 0.02, 1.0],
     )];
-    if let Some(path) = background {
-        quads.push(texture_quad(1, path.clone(), [0.0, 0.0, width, height]));
+    if let Some((path, texture_coordinates)) = background {
+        quads.push(texture_quad_with_coordinates(
+            1,
+            path.clone(),
+            [0.0, 0.0, width, height],
+            texture_coordinates,
+        ));
     }
     quads.extend([
         texture_quad(
@@ -236,6 +262,20 @@ fn loading_mesh(
 }
 
 fn texture_quad(object_index: usize, path: AssetPath, bounds: [f32; 4]) -> UiRenderQuad {
+    texture_quad_with_coordinates(
+        object_index,
+        path,
+        bounds,
+        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
+    )
+}
+
+fn texture_quad_with_coordinates(
+    object_index: usize,
+    path: AssetPath,
+    bounds: [f32; 4],
+    texture_coordinates: [[f32; 2]; 4],
+) -> UiRenderQuad {
     UiRenderQuad::new(
         object_index,
         UiRenderSource::Texture(path),
@@ -245,7 +285,7 @@ fn texture_quad(object_index: usize, path: AssetPath, bounds: [f32; 4]) -> UiRen
         UiTextureResidency::Blocking,
         false,
         bounds,
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
+        texture_coordinates,
         [[1.0; 4]; 4],
     )
 }

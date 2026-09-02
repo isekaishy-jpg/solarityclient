@@ -3,6 +3,7 @@
 //! This boundary follows `LoadingScreen.cpp`. It reports real subsystem
 //! progress and must not mask failed asset or network phases as completion.
 
+mod layout;
 mod loading_screen;
 mod readiness;
 

@@ -1,9 +1,39 @@
 //! External stock-compatibility tests for ordered world-transition progress.
 
+#[path = "../../src/loading/layout.rs"]
+mod layout;
 #[path = "../../src/loading/readiness.rs"]
 mod readiness;
 
+use layout::centered_aspect_fill_uv;
 use readiness::{RuntimeLoadingReadiness, RuntimeLoadingStage};
+
+/// Loading art retains its authored aspect ratio and crops around the center.
+#[test]
+fn loading_art_uses_stock_centered_aspect_fill_coordinates() {
+    assert_eq!(
+        centered_aspect_fill_uv([1_024.0, 768.0], (1_024, 768)),
+        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
+    );
+
+    let widescreen_viewport = centered_aspect_fill_uv([1_366.0, 768.0], (1_024, 768));
+    assert_uv_close(widescreen_viewport[0], [0.125_183_02, 0.0]);
+    assert_uv_close(widescreen_viewport[3], [0.874_816_95, 1.0]);
+
+    let standard_viewport = centered_aspect_fill_uv([1_024.0, 768.0], (1_920, 1_080));
+    assert_uv_close(standard_viewport[0], [0.0, 0.125]);
+    assert_uv_close(standard_viewport[3], [1.0, 0.875]);
+}
+
+fn assert_uv_close(actual: [f32; 2], expected: [f32; 2]) {
+    assert!(
+        actual
+            .into_iter()
+            .zip(expected)
+            .all(|(actual, expected)| (actual - expected).abs() < 0.000_01),
+        "actual={actual:?} expected={expected:?}"
+    );
+}
 
 /// Later subsystem readiness cannot bypass an earlier first-frame prerequisite.
 #[test]
