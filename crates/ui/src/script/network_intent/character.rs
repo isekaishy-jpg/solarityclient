@@ -387,7 +387,9 @@ impl UiCharacterDirectory {
         self.facing_radians_bits = radians.to_bits();
     }
 
-    pub(crate) fn selection_preview(&self) -> Option<UiCharacterSelectionPreview> {
+    /// Projects the currently selected row into its complete renderer input.
+    #[must_use]
+    pub fn selection_preview(&self) -> Option<UiCharacterSelectionPreview> {
         let character = self
             .selected_guid
             .and_then(|guid| self.characters.iter().find(|row| row.guid == guid))?;

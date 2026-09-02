@@ -16,7 +16,10 @@ use solarity_cpu::BlizzardRand;
 use solarity_runtime::{
     RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
 };
-use solarity_ui::{UiCharacterCreationPreview, UiCharacterCreationState, UiCharacterExpansion};
+use solarity_ui::{
+    UiCharacterCreationPreview, UiCharacterCreationState, UiCharacterDirectory,
+    UiCharacterEquipment, UiCharacterExpansion, UiCharacterInfo, UiCharacterPetPreview,
+};
 
 const CUSTOMIZATION_AXIS_COUNT: usize = 5;
 const MAX_CUSTOMIZATION_VALUES: usize = 256;
@@ -120,11 +123,80 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    validate_selection_representation(&mut presentation)?;
     presentation.synchronize_character_creation(None)?;
 
     println!(
-        "validated {outfit_count} race/class/gender outfits and {appearance_count} authored customization representations"
+        "validated {outfit_count} race/class/gender outfits, {appearance_count} authored customization representations, and one complete enum-time equipment/pet representation"
     );
+    Ok(())
+}
+
+/// Resolves one real playerbots-style enum row spanning all modeled slot kinds.
+fn validate_selection_representation(
+    presentation: &mut RuntimePlayerPresentation,
+) -> Result<(), Box<dyn Error>> {
+    let equipment = [
+        UiCharacterEquipment::new(65_131, 1, 0),
+        UiCharacterEquipment::new(64_190, 2, 0),
+        UiCharacterEquipment::new(64_829, 3, 0),
+        UiCharacterEquipment::new(7_904, 4, 0),
+        UiCharacterEquipment::new(64_840, 5, 0),
+        UiCharacterEquipment::new(65_035, 6, 0),
+        UiCharacterEquipment::new(64_832, 7, 0),
+        UiCharacterEquipment::new(64_822, 8, 0),
+        UiCharacterEquipment::new(64_421, 9, 0),
+        UiCharacterEquipment::new(64_827, 10, 0),
+        UiCharacterEquipment::new(64_225, 11, 0),
+        UiCharacterEquipment::new(64_230, 11, 0),
+        UiCharacterEquipment::new(68_106, 12, 0),
+        UiCharacterEquipment::new(68_109, 12, 0),
+        UiCharacterEquipment::new(28_951, 16, 0),
+        UiCharacterEquipment::new(64_554, 17, 0),
+        UiCharacterEquipment::default(),
+        UiCharacterEquipment::new(64_356, 15, 0),
+        UiCharacterEquipment::new(20_621, 19, 0),
+        UiCharacterEquipment::new(56_653, 18, 0),
+        UiCharacterEquipment::default(),
+        UiCharacterEquipment::default(),
+        UiCharacterEquipment::default(),
+    ];
+    let directory = UiCharacterDirectory::new(
+        vec![UiCharacterInfo::new(
+            1,
+            "ValidationHunter".to_owned(),
+            "Night Elf".to_owned(),
+            4,
+            "NightElf".to_owned(),
+            "Hunter".to_owned(),
+            3,
+            80,
+            None,
+            2,
+            0,
+            [0, 1, 6, 5, 2],
+            equipment,
+            UiCharacterPetPreview::new(2_711, 80, 25),
+            0,
+            0,
+        )],
+        "Human".to_owned(),
+    );
+    let preview = directory
+        .selection_preview()
+        .ok_or_else(|| invalid_data("selection fixture produced no preview".to_owned()))?;
+    if !presentation.synchronize_character_selection(Some(&preview))? {
+        return Err(invalid_data(
+            "complete selection fixture did not replace the creation representation".to_owned(),
+        )
+        .into());
+    }
+    if presentation.synchronize_character_selection(Some(&preview))? {
+        return Err(invalid_data(
+            "unchanged selection fixture rebuilt its resident representation".to_owned(),
+        )
+        .into());
+    }
     Ok(())
 }
 
