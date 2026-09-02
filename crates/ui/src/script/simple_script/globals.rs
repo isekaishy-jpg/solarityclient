@@ -5,7 +5,8 @@ use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 use solarity_asset::{CharacterClassCatalog, Locale};
 
 use crate::{
-    UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo, UiRealmSort,
+    UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiProcessAction,
+    UiRealmInfo, UiRealmSort,
 };
 
 use super::UiScriptEnvironment;
@@ -1057,6 +1058,22 @@ fn register_client_runtime_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    let process = environment.process();
+    let quit = process.clone();
+    globals.raw_set(
+        "Quit",
+        lua.create_function(move |_, _: Variadic<Value>| {
+            quit.borrow_mut().push(UiProcessAction::Quit);
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "QuitGame",
+        lua.create_function(move |_, _: Variadic<Value>| {
+            process.borrow_mut().push(UiProcessAction::Quit);
+            Ok(())
+        })?,
+    )?;
     let client_clock = environment.client_clock();
     globals.raw_set(
         "GetTime",

@@ -440,6 +440,7 @@ pub struct UiScriptEnvironment {
     character_creation: Option<crate::UiCharacterCreationState>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
+    process: Rc<RefCell<crate::script::UiProcessBridge>>,
     current_screen: Rc<RefCell<String>>,
     cursor_visible: Rc<Cell<bool>>,
     modifiers: crate::UiModifierKeyState,
@@ -503,6 +504,7 @@ impl UiScriptEnvironment {
             character_creation: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
+            process: Rc::new(RefCell::new(crate::script::UiProcessBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
             cursor_visible: Rc::new(Cell::new(true)),
             modifiers: crate::UiModifierKeyState::new(),
@@ -680,6 +682,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn network(&self) -> Rc<RefCell<UiGlueNetworkBridge>> {
         self.network.clone()
+    }
+
+    pub(crate) fn process(&self) -> Rc<RefCell<crate::script::UiProcessBridge>> {
+        self.process.clone()
     }
 
     pub(crate) fn current_screen(&self) -> Rc<RefCell<String>> {

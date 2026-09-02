@@ -6,7 +6,8 @@ use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoo
 use solarity_ui::{
     GlueError, GlueInitialScreen, GlueManager, UiEventArgument, UiEventError, UiEventPayload,
     UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiObjectRole,
-    UiPointerButton, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiPointerButton, UiProcessAction, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo,
+    UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -615,6 +616,32 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
             from_login_screen: true
         })
     ));
+    Ok(())
+}
+
+/// Stock shared Lua runtime exports both quit spellings to one ordered process action.
+#[test]
+fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Process.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Process.xml",
+            bytes: br#"<Ui><Frame name="Process"><Scripts><OnLoad>
+  Quit()
+  QuitGame()
+</OnLoad></Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+
+    assert_eq!(manager.take_process_action(), Some(UiProcessAction::Quit));
+    assert_eq!(manager.take_process_action(), Some(UiProcessAction::Quit));
+    assert_eq!(manager.take_process_action(), None);
     Ok(())
 }
 

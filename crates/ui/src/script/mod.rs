@@ -7,6 +7,7 @@
 mod clock;
 mod handlers;
 mod network_intent;
+mod process_intent;
 mod runtime_state;
 mod simple_script;
 mod status;
@@ -19,6 +20,7 @@ pub use network_intent::{
     UiCharacterSelectionPreview, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest,
     UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort, UiRealmVersion,
 };
+pub use process_intent::UiProcessAction;
 pub use simple_script::{
     UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,
     UiScriptRuntimePlan,
@@ -29,6 +31,7 @@ pub use templates::{
 };
 
 pub(crate) use network_intent::UiGlueNetworkBridge;
+pub(crate) use process_intent::UiProcessBridge;
 pub(crate) use runtime_state::{
     UiRuntimeAnchor, UiRuntimeModelLight, UiRuntimeModelLightSets, UiRuntimeObject,
     UiRuntimeObjectPlan, UiRuntimeText,

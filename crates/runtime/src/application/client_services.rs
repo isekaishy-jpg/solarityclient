@@ -30,7 +30,7 @@ use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
     AddonCatalog, GlueError, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
     UiCharacterExpansion, UiEventArgument, UiEventPayload, UiGlueNetworkAction,
-    UiGlueNetworkStatus, UiKeyboardModifiers, UiPointerButton,
+    UiGlueNetworkStatus, UiKeyboardModifiers, UiPointerButton, UiProcessAction,
 };
 
 use crate::application::ApplicationError;
@@ -365,7 +365,7 @@ impl ClientServices {
         &mut self,
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
-        if self.loading_screen.is_some() {
+        if self.loading_screen.is_some() || self.gameplay.world().is_some() {
             return Ok(());
         }
         match event {
@@ -484,6 +484,11 @@ impl ClientServices {
         Ok(())
     }
 
+    /// Takes one process-level action emitted by the currently owned built-in UI.
+    pub(crate) fn take_process_action(&mut self) -> Option<UiProcessAction> {
+        self.glue.take_process_action()
+    }
+
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
         let update_time = std::time::Instant::now();
@@ -514,43 +519,50 @@ impl ClientServices {
             }
             return Ok(());
         }
-        let glue_elapsed = update_time
-            .duration_since(self.glue_update_clock)
-            .as_secs_f64();
-        self.glue_update_clock = update_time;
-        if self.glue.update(glue_elapsed)? {
-            self.login_ui = None;
-        }
-        self.sync_platform_text_input();
-        self.persist_glue_cvars()?;
-        let movie = self.glue.media_intent().movie().cloned();
-        let cinematic_overlay = self
-            .glue
-            .cvar_boolean("showfps")
-            .then(|| {
-                self.fps
-                    .as_ref()
-                    .map(|fps| (fps.logical_extent(), fps.draws()))
-            })
-            .flatten();
-        match self.cinematic.synchronize(
-            movie.as_ref(),
-            &mut self.renderer,
-            &mut self.sound,
-            cinematic_overlay,
-        )? {
-            RuntimeCinematicPoll::Presented => {
-                if let Some(fps) = self.fps.as_mut() {
-                    fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
-                }
-                return Ok(());
-            }
-            RuntimeCinematicPoll::Finished { object_index } => {
-                self.glue.movie_finished(object_index)?;
+        if self.gameplay.world().is_none() {
+            let glue_elapsed = update_time
+                .duration_since(self.glue_update_clock)
+                .as_secs_f64();
+            self.glue_update_clock = update_time;
+            if self.glue.update(glue_elapsed)? {
                 self.login_ui = None;
-                return Ok(());
             }
-            RuntimeCinematicPoll::Idle => {}
+            self.sync_platform_text_input();
+            self.persist_glue_cvars()?;
+            let movie = self.glue.media_intent().movie().cloned();
+            let cinematic_overlay = self
+                .glue
+                .cvar_boolean("showfps")
+                .then(|| {
+                    self.fps
+                        .as_ref()
+                        .map(|fps| (fps.logical_extent(), fps.draws()))
+                })
+                .flatten();
+            match self.cinematic.synchronize(
+                movie.as_ref(),
+                &mut self.renderer,
+                &mut self.sound,
+                cinematic_overlay,
+            )? {
+                RuntimeCinematicPoll::Presented => {
+                    if let Some(fps) = self.fps.as_mut() {
+                        fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+                    }
+                    return Ok(());
+                }
+                RuntimeCinematicPoll::Finished { object_index } => {
+                    self.glue.movie_finished(object_index)?;
+                    self.login_ui = None;
+                    return Ok(());
+                }
+                RuntimeCinematicPoll::Idle => {}
+            }
+        } else {
+            // The stock client transfers event and update ownership from GlueXML
+            // to FrameXML after world entry. Keeping Glue alive for disconnect
+            // does not permit its hidden edit boxes or buttons to remain active.
+            self.platform.set_text_input_active(false);
         }
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())

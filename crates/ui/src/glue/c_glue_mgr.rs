@@ -8,8 +8,8 @@ use solarity_cpu::BlizzardRand;
 
 use crate::glue::pointer::UiPointerPlan;
 use crate::glue::{GlueError, GlueObject, GlueStartupReport};
-use crate::script::UiGlueNetworkBridge;
 use crate::script::UiRuntimeObjectPlan;
+use crate::script::{UiGlueNetworkBridge, UiProcessBridge};
 use crate::{
     FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
     UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan, UiFrameStatePlan,
@@ -50,6 +50,7 @@ pub struct GlueManager {
     environment: UiScriptEnvironment,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
+    process: Rc<RefCell<UiProcessBridge>>,
     assets: AssetStoreHandle,
     bundle: UiBundle,
 }
@@ -234,6 +235,7 @@ impl GlueManager {
         }
         let media_intent = environment.media_intent();
         let network = environment.network();
+        let process = environment.process();
         let ui_extent = environment.ui_extent();
         let runtime_plan = UiScriptRuntimePlan::new(
             &tree,
@@ -315,6 +317,7 @@ impl GlueManager {
             environment,
             media_intent,
             network,
+            process,
             assets,
             bundle,
         })
@@ -499,6 +502,12 @@ impl GlueManager {
     #[must_use]
     pub fn take_network_action(&self) -> Option<UiGlueNetworkAction> {
         self.network.borrow_mut().take()
+    }
+
+    /// Takes the oldest process-lifetime action emitted by built-in UI Lua.
+    #[must_use]
+    pub fn take_process_action(&self) -> Option<crate::UiProcessAction> {
+        self.process.borrow_mut().take()
     }
 
     /// Publishes runtime-owned server facts for synchronous Glue queries.

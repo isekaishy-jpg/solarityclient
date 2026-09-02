@@ -18,7 +18,7 @@ use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::login_model::RuntimeGlueModelError;
 use crate::application::player_coordinator::RuntimePlayerError;
-use crate::application::run::{self, ApplicationRunReport};
+use crate::application::run::{self, ApplicationExitReason, ApplicationRunReport};
 use crate::application::sound_coordinator::RuntimeSoundError;
 use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
@@ -289,6 +289,24 @@ impl ClientApplication {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
                 self.services.service_platform_event(&event)?;
+                if matches!(
+                    self.services.take_process_action(),
+                    Some(solarity_ui::UiProcessAction::Quit)
+                ) {
+                    return Ok(ApplicationRunReport::new(
+                        ApplicationExitReason::UiQuitRequested,
+                        admitted_event_count,
+                    ));
+                }
+            }
+            if matches!(
+                self.services.take_process_action(),
+                Some(solarity_ui::UiProcessAction::Quit)
+            ) {
+                return Ok(ApplicationRunReport::new(
+                    ApplicationExitReason::UiQuitRequested,
+                    admitted_event_count,
+                ));
             }
             self.services.service_login()?;
             self.services.present_frame()?;

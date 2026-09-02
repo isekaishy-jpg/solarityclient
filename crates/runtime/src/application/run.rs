@@ -11,6 +11,8 @@ pub enum ApplicationExitReason {
     ApplicationTerminating,
     /// The operating system requested closure of the primary client window.
     PrimaryWindowCloseRequested,
+    /// Built-in GlueXML or FrameXML requested orderly client termination.
+    UiQuitRequested,
 }
 
 /// Immutable facts collected while the main-thread event loop was active.
