@@ -61,7 +61,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
                 [1, 2, 3, 4, 5],
                 first_equipment,
                 UiCharacterPetPreview::new(321, 80, 45),
-                0x6000,
+                0x6C00,
                 1,
             ),
             UiCharacterInfo::new(
@@ -109,6 +109,8 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert_eq!(preview.appearance(), [1, 2, 3, 4, 5]);
     assert_eq!(preview.equipment()[15], first_equipment[15]);
     assert_eq!(preview.pet(), UiCharacterPetPreview::new(321, 80, 45));
+    assert!(!preview.show_helmet());
+    assert!(!preview.show_cloak());
     assert!((preview.facing_degrees() - 45.0).abs() < 0.000_01);
 
     assert_eq!(

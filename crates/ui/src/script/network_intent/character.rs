@@ -2,6 +2,8 @@
 
 const CHARACTER_FLAG_GHOST: u32 = 0x0000_2000;
 const CHARACTER_FLAG_RENAME: u32 = 0x0000_4000;
+const CHARACTER_FLAG_HIDE_HELM: u32 = 0x0000_0400;
+const CHARACTER_FLAG_HIDE_CLOAK: u32 = 0x0000_0800;
 const CUSTOMIZE_CHARACTER: u32 = 0x0000_0001;
 const CHANGE_FACTION: u32 = 0x0001_0000;
 const CHANGE_RACE: u32 = 0x0010_0000;
@@ -93,6 +95,7 @@ pub struct UiCharacterSelectionPreview {
     appearance: [u8; 5],
     equipment: [UiCharacterEquipment; CHARACTER_EQUIPMENT_SLOT_COUNT],
     pet: UiCharacterPetPreview,
+    flags: u32,
     facing_degrees: f64,
 }
 
@@ -137,6 +140,18 @@ impl UiCharacterSelectionPreview {
     #[must_use]
     pub const fn pet(&self) -> UiCharacterPetPreview {
         self.pet
+    }
+
+    /// Reports whether the enum-time helmet remains visible in Glue.
+    #[must_use]
+    pub const fn show_helmet(&self) -> bool {
+        self.flags & CHARACTER_FLAG_HIDE_HELM == 0
+    }
+
+    /// Reports whether the enum-time cloak remains visible in Glue.
+    #[must_use]
+    pub const fn show_cloak(&self) -> bool {
+        self.flags & CHARACTER_FLAG_HIDE_CLOAK == 0
     }
 
     /// Returns the Glue-controlled character facing in degrees.
@@ -378,6 +393,7 @@ impl UiCharacterDirectory {
             appearance: character.appearance,
             equipment: character.equipment,
             pet: character.pet,
+            flags: character.flags,
             facing_degrees: self.facing_degrees(),
         })
     }

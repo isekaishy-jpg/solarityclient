@@ -549,7 +549,11 @@ impl RuntimePlayerPresentation {
             u32::from(preview.gender_id()),
             customization,
         )?;
-        let equipment_items = resolve_selection_equipment(preview, &self.item_displays)?;
+        let mut equipment_items = resolve_selection_equipment(preview, &self.item_displays)?;
+        equipment_items.retain(|item| {
+            (preview.show_helmet() || item.slot() != PlayerEquipmentSlot::Head)
+                && (preview.show_cloak() || item.slot() != PlayerEquipmentSlot::Back)
+        });
         let texture_plan = CharacterTexturePlan::equipped(
             &appearance,
             &self.assets.borrow(),
