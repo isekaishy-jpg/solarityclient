@@ -10,7 +10,8 @@ use super::types::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadRequest,
 };
 use super::upload::{
-    GpuBlpTexture, TextureUploadContext, upload_stock_world_model_green, upload_textures,
+    GpuBlpTexture, TextureUploadContext, upload_stock_m2_failure, upload_stock_m2_white,
+    upload_stock_world_model_green, upload_textures,
 };
 
 /// Image identity includes color interpretation because it fixes VkFormat.
@@ -21,6 +22,8 @@ enum BlpTextureKey {
         color_space: BlpColorSpace,
     },
     StockWorldModelGreen,
+    StockM2White,
+    StockM2Failure,
 }
 
 /// Owns every uploaded BLP image until the parent renderer is torn down.
@@ -144,13 +147,46 @@ impl BlpTextureRegistry {
         &mut self,
         context: TextureUploadContext<'_>,
     ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
-        let key = BlpTextureKey::StockWorldModelGreen;
+        self.upload_generated(
+            context,
+            BlpTextureKey::StockWorldModelGreen,
+            upload_stock_world_model_green,
+        )
+    }
+
+    /// Returns or creates stock's renderer-local empty-filename M2 image.
+    pub(in crate::device) fn upload_stock_m2_white(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        self.upload_generated(context, BlpTextureKey::StockM2White, upload_stock_m2_white)
+    }
+
+    /// Returns or creates stock's renderer-local failed-request M2 image.
+    pub(in crate::device) fn upload_stock_m2_failure(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        self.upload_generated(
+            context,
+            BlpTextureKey::StockM2Failure,
+            upload_stock_m2_failure,
+        )
+    }
+
+    /// Deduplicates one generated stock texture identity.
+    fn upload_generated(
+        &mut self,
+        context: TextureUploadContext<'_>,
+        key: BlpTextureKey,
+        upload: fn(TextureUploadContext<'_>) -> Result<GpuBlpTexture, BlpTextureUploadError>,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
         if let Some(handle) = self.handles.get(&key) {
             return Ok(*handle);
         }
         let slot = u32::try_from(self.resources.len())
             .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
-        let resource = upload_stock_world_model_green(context)?;
+        let resource = upload(context)?;
         let handle = BlpTextureHandle {
             registry_id: self.registry_id,
             slot,

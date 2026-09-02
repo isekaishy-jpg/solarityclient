@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use glam::{Vec3, Vec4};
 use solarity_asset::{
-    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2ModelCache, M2TextureKind,
+    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2HardcodedTextureSource,
+    M2ModelCache, M2TextureKind,
 };
 use solarity_rendering::{
     M2CameraFrameError, M2DirectionalLight, M2LocalLightCount, M2LocalLightState,
@@ -18,7 +19,7 @@ use thiserror::Error;
 use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
-use crate::application::terrain_frame::m2::M2Frame;
+use crate::application::terrain_frame::m2::{GlueM2Texture, M2Frame};
 use crate::random::CrtRand;
 
 const STOCK_GLUE_AMBIENT: Vec3 = Vec3::splat(0.35);
@@ -326,14 +327,37 @@ impl RuntimeGlueModelScene {
                     kind: texture.kind(),
                 });
             }
-            let path =
-                texture
-                    .filename()
-                    .ok_or_else(|| RuntimeGlueModelError::MissingTexturePath {
-                        model: model.path().clone(),
-                        texture_index,
-                    })?;
-            texture_sources.push(self.textures.load(&mut store, path)?);
+            match texture.hardcoded_source().ok_or_else(|| {
+                RuntimeGlueModelError::MissingTexturePath {
+                    model: model.path().clone(),
+                    texture_index,
+                }
+            })? {
+                M2HardcodedTextureSource::Archive(path) => {
+                    match self.textures.load(&mut store, path) {
+                        Ok(texture) => texture_sources.push(GlueM2Texture::Authored(texture)),
+                        Err(source) => {
+                            tracing::warn!(
+                                model = %model.path(),
+                                texture = %path,
+                                error = %source,
+                                "Glue M2 texture request failed; using stock green texture"
+                            );
+                            texture_sources.push(GlueM2Texture::StockFailure);
+                        }
+                    }
+                }
+                M2HardcodedTextureSource::StockWhite => {
+                    texture_sources.push(GlueM2Texture::StockWhite);
+                }
+                M2HardcodedTextureSource::StockFailure => {
+                    tracing::warn!(
+                        model = %model.path(),
+                        "Glue M2 contains a non-archive texture name; using stock green texture"
+                    );
+                    texture_sources.push(GlueM2Texture::StockFailure);
+                }
+            }
         }
         drop(store);
         let mut frame = M2Frame::prepare_glue_model(

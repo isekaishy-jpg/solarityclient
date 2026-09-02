@@ -7,7 +7,8 @@ use solarity_asset::{
     BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog,
     CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog, CreatureModelAppearance,
     DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource, M2ModelCache, M2Texture,
+    M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
     ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
@@ -1918,6 +1919,10 @@ impl ResidentCreatureGeosets {
 pub(super) enum ResidentCreatureTexture {
     /// A concrete hardcoded or monster-skin BLP.
     Authored(Arc<BlpTextureSource>),
+    /// Stock's generated white image for an empty hardcoded filename.
+    StockWhite,
+    /// Stock's generated green image for a failed hardcoded texture request.
+    StockFailure,
     /// An unsupported replacement category remains explicitly unresolved.
     Unresolved(M2TextureKind),
 }
@@ -1926,6 +1931,10 @@ pub(super) enum ResidentCreatureTexture {
 pub(super) enum ResidentPlayerTexture {
     /// A concrete BLP selected through ordinary archive precedence.
     Authored(Arc<BlpTextureSource>),
+    /// Stock's generated white image for an empty hardcoded filename.
+    StockWhite,
+    /// Stock's generated green image for a failed hardcoded texture request.
+    StockFailure,
     /// The placement-owned body atlas produced by stock composition.
     BodyAtlas,
     /// A replacement category not supplied by the naked body presentation.
@@ -2356,6 +2365,48 @@ fn resolve_resident_animation(
     })
 }
 
+/// One hardcoded M2 texture after stock shared-loader fallback resolution.
+enum ResidentHardcodedTexture {
+    Authored(Arc<BlpTextureSource>),
+    StockWhite,
+    StockFailure,
+}
+
+/// Applies M2Shared.cpp's white-empty and Texture.cpp's green-failure paths.
+fn prepare_hardcoded_texture(
+    model: &DecodedM2Model,
+    texture: &M2Texture,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<ResidentHardcodedTexture, RuntimePlayerError> {
+    match texture.hardcoded_source().ok_or_else(|| {
+        RuntimePlayerError::MissingHardcodedTexturePath {
+            model: model.path().clone(),
+        }
+    })? {
+        M2HardcodedTextureSource::Archive(path) => match textures.load(assets, path) {
+            Ok(texture) => Ok(ResidentHardcodedTexture::Authored(texture)),
+            Err(source) => {
+                tracing::warn!(
+                    model = %model.path(),
+                    texture = %path,
+                    error = %source,
+                    "M2 texture request failed; using stock green texture"
+                );
+                Ok(ResidentHardcodedTexture::StockFailure)
+            }
+        },
+        M2HardcodedTextureSource::StockWhite => Ok(ResidentHardcodedTexture::StockWhite),
+        M2HardcodedTextureSource::StockFailure => {
+            tracing::warn!(
+                model = %model.path(),
+                "M2 contains a non-archive texture name; using stock green texture"
+            );
+            Ok(ResidentHardcodedTexture::StockFailure)
+        }
+    }
+}
+
 /// Resolves hardcoded and display-selected monster texture categories.
 fn prepare_creature_textures(
     model: &DecodedM2Model,
@@ -2368,14 +2419,15 @@ fn prepare_creature_textures(
         .iter()
         .map(|texture| match texture.kind() {
             M2TextureKind::Hardcoded => {
-                let path = texture.filename().ok_or_else(|| {
-                    RuntimePlayerError::MissingHardcodedTexturePath {
-                        model: model.path().clone(),
+                match prepare_hardcoded_texture(model, texture, assets, textures)? {
+                    ResidentHardcodedTexture::Authored(texture) => {
+                        Ok(ResidentCreatureTexture::Authored(texture))
                     }
-                })?;
-                Ok(ResidentCreatureTexture::Authored(
-                    textures.load(assets, path)?,
-                ))
+                    ResidentHardcodedTexture::StockWhite => Ok(ResidentCreatureTexture::StockWhite),
+                    ResidentHardcodedTexture::StockFailure => {
+                        Ok(ResidentCreatureTexture::StockFailure)
+                    }
+                }
             }
             kind
             @ (M2TextureKind::Monster1 | M2TextureKind::Monster2 | M2TextureKind::Monster3) => {
@@ -2441,14 +2493,15 @@ fn prepare_npc_character_textures(
         .iter()
         .map(|texture| match texture.kind() {
             M2TextureKind::Hardcoded => {
-                let path = texture.filename().ok_or_else(|| {
-                    RuntimePlayerError::MissingHardcodedTexturePath {
-                        model: model.path().clone(),
+                match prepare_hardcoded_texture(model, texture, assets, textures)? {
+                    ResidentHardcodedTexture::Authored(texture) => {
+                        Ok(ResidentCreatureTexture::Authored(texture))
                     }
-                })?;
-                Ok(ResidentCreatureTexture::Authored(
-                    textures.load(assets, path)?,
-                ))
+                    ResidentHardcodedTexture::StockWhite => Ok(ResidentCreatureTexture::StockWhite),
+                    ResidentHardcodedTexture::StockFailure => {
+                        Ok(ResidentCreatureTexture::StockFailure)
+                    }
+                }
             }
             M2TextureKind::Body => Ok(ResidentCreatureTexture::Authored(Arc::clone(&baked))),
             M2TextureKind::Environment => Ok(hair.as_ref().map_or(
@@ -2606,14 +2659,15 @@ fn prepare_model_textures(
         .iter()
         .map(|texture| match texture.kind() {
             M2TextureKind::Hardcoded => {
-                let path = texture.filename().ok_or_else(|| {
-                    RuntimePlayerError::MissingHardcodedTexturePath {
-                        model: model.path().clone(),
+                match prepare_hardcoded_texture(model, texture, assets, textures)? {
+                    ResidentHardcodedTexture::Authored(texture) => {
+                        Ok(ResidentPlayerTexture::Authored(texture))
                     }
-                })?;
-                Ok(ResidentPlayerTexture::Authored(
-                    textures.load(assets, path)?,
-                ))
+                    ResidentHardcodedTexture::StockWhite => Ok(ResidentPlayerTexture::StockWhite),
+                    ResidentHardcodedTexture::StockFailure => {
+                        Ok(ResidentPlayerTexture::StockFailure)
+                    }
+                }
             }
             M2TextureKind::Body => Ok(ResidentPlayerTexture::BodyAtlas),
             // Build-12340 CCharacterComponent binds its resolved hair image to
@@ -2649,14 +2703,15 @@ fn prepare_attachment_textures(
         .iter()
         .map(|texture| match texture.kind() {
             M2TextureKind::Hardcoded => {
-                let path = texture.filename().ok_or_else(|| {
-                    RuntimePlayerError::MissingHardcodedTexturePath {
-                        model: model.path().clone(),
+                match prepare_hardcoded_texture(model, texture, assets, textures)? {
+                    ResidentHardcodedTexture::Authored(texture) => {
+                        Ok(ResidentPlayerTexture::Authored(texture))
                     }
-                })?;
-                Ok(ResidentPlayerTexture::Authored(
-                    textures.load(assets, path)?,
-                ))
+                    ResidentHardcodedTexture::StockWhite => Ok(ResidentPlayerTexture::StockWhite),
+                    ResidentHardcodedTexture::StockFailure => {
+                        Ok(ResidentPlayerTexture::StockFailure)
+                    }
+                }
             }
             M2TextureKind::Item | M2TextureKind::WeaponArmorBasic | M2TextureKind::WeaponBlade => {
                 Ok(replacement.map_or(

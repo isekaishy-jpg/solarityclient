@@ -5,7 +5,8 @@ use std::io::Cursor;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
-    M2BlendMode, M2Interpolation, M2ModelCache, M2SequenceStorage, M2TextureKind,
+    M2BlendMode, M2HardcodedTextureSource, M2Interpolation, M2ModelCache, M2SequenceStorage,
+    M2TextureKind,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -1338,6 +1339,81 @@ fn empty_m2_replacement_filename_decodes_as_absent() -> Result<(), Box<dyn Error
 
     assert_eq!(decoded.textures()[1].kind(), M2TextureKind::Monster1);
     assert_eq!(decoded.textures()[1].filename(), None);
+    Ok(())
+}
+
+/// Export-machine M2 names retain stock's missing-texture behavior without
+/// weakening the archive-relative path boundary.
+#[test]
+fn absolute_m2_texture_filename_selects_stock_failure_texture() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("AbsoluteTexture", 1)?;
+    let texture_offset = m2_array_offset(&model, 0x50)?;
+    let filename = b"Z:\\World of Warcraft Proj Server\\Item\\Quiver\\QuiverSkin.tga";
+    let filename_offset = u32::try_from(model.len())?;
+    model[texture_offset + 8..texture_offset + 12]
+        .copy_from_slice(&u32::try_from(filename.len() + 1)?.to_le_bytes());
+    model[texture_offset + 12..texture_offset + 16].copy_from_slice(&filename_offset.to_le_bytes());
+    model.extend_from_slice(filename);
+    model.push(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Item\\ObjectComponents\\Quiver\\Quiver_A.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Item\\ObjectComponents\\Quiver\\Quiver_A00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Item/ObjectComponents/Quiver/Quiver_A.m2")?;
+
+    let decoded = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(decoded.textures()[0].filename(), None);
+    assert_eq!(
+        decoded.textures()[0].hardcoded_source(),
+        Some(M2HardcodedTextureSource::StockFailure)
+    );
+    Ok(())
+}
+
+/// A hardcoded slot with no filename uses M2Shared's generated white image.
+#[test]
+fn empty_m2_hardcoded_filename_selects_stock_white_texture() -> Result<(), Box<dyn Error>> {
+    let mut model = m2_bytes("EmptyHardcoded", 1)?;
+    let texture_offset = m2_array_offset(&model, 0x50)?;
+    model[texture_offset + 8..texture_offset + 16].fill(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\EmptyHardcoded.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Creature\\Solarity\\EmptyHardcoded00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature/Solarity/EmptyHardcoded.m2")?;
+
+    let decoded = DecodedM2Model::load(&mut store, &path)?;
+
+    assert_eq!(decoded.textures()[0].filename(), None);
+    assert_eq!(
+        decoded.textures()[0].hardcoded_source(),
+        Some(M2HardcodedTextureSource::StockWhite)
+    );
     Ok(())
 }
 

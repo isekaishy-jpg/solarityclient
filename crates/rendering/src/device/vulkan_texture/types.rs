@@ -21,6 +21,10 @@ pub enum BlpTextureSourceKind {
     Authored,
     /// Stock's opaque 8x8 green image for an empty WMO material stage.
     StockWorldModelGreen,
+    /// Stock's opaque 8x8 white image for an empty M2 texture filename.
+    StockM2White,
+    /// Stock's opaque 8x8 green image for a failed M2 texture request.
+    StockM2Failure,
 }
 
 /// Device image storage selected from the authored BLP representation.

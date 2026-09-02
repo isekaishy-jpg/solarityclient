@@ -188,6 +188,28 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(stock_green_info.extent(), (8, 8));
     assert_eq!(stock_green_info.mip_count(), 1);
     assert_eq!(stock_green_info.upload_byte_count(), 8 * 8 * 4);
+    let stock_m2_white = renderer.upload_stock_m2_white()?;
+    assert_eq!(renderer.upload_stock_m2_white()?, stock_m2_white);
+    let stock_m2_white_info = renderer
+        .blp_texture_info(stock_m2_white)
+        .ok_or("stock M2 white image is absent")?;
+    assert_eq!(
+        stock_m2_white_info.source_kind(),
+        BlpTextureSourceKind::StockM2White
+    );
+    assert_eq!(stock_m2_white_info.color_space(), BlpColorSpace::Linear);
+    assert_eq!(stock_m2_white_info.extent(), (8, 8));
+    let stock_m2_failure = renderer.upload_stock_m2_failure()?;
+    assert_eq!(renderer.upload_stock_m2_failure()?, stock_m2_failure);
+    let stock_m2_failure_info = renderer
+        .blp_texture_info(stock_m2_failure)
+        .ok_or("stock M2 failure image is absent")?;
+    assert_eq!(
+        stock_m2_failure_info.source_kind(),
+        BlpTextureSourceKind::StockM2Failure
+    );
+    assert_eq!(stock_m2_failure_info.color_space(), BlpColorSpace::Linear);
+    assert_eq!(stock_m2_failure_info.extent(), (8, 8));
     let world_model_mesh = renderer.upload_world_model_mesh(&world_model_plan)?;
     let world_model_material = &world_model_plan.materials()[0];
     let world_model_sampler = renderer.prepare_world_model_sampler(

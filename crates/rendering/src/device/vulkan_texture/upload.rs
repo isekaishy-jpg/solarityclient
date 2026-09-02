@@ -468,20 +468,62 @@ pub(super) fn upload_textures(
 pub(super) fn upload_stock_world_model_green(
     context: TextureUploadContext<'_>,
 ) -> Result<GpuBlpTexture, BlpTextureUploadError> {
-    const EXTENT: (u32, u32) = (8, 8);
-    const PIXEL: [u8; 4] = [0, 255, 0, 255];
-    const BYTE_COUNT: usize = EXTENT.0 as usize * EXTENT.1 as usize * PIXEL.len();
-
-    let mut bytes = [0_u8; BYTE_COUNT];
-    for pixel in bytes.as_chunks_mut::<4>().0 {
-        pixel.copy_from_slice(&PIXEL);
-    }
-    let image = upload_rgba8_image_with_color_space(context, EXTENT, &bytes, BlpColorSpace::Srgb)?;
-    let path = solarity_asset::AssetPath::new("SOLARITY\\STOCK\\WMO_GREEN.BLP")?;
-    let info = BlpTextureResourceInfo::new(
-        path,
+    upload_stock_solid_texture(
+        context,
+        [0, 255, 0, 255],
+        "SOLARITY\\STOCK\\WMO_GREEN.BLP",
         BlpTextureSourceKind::StockWorldModelGreen,
         BlpColorSpace::Srgb,
+    )
+}
+
+/// Uploads stock's opaque 8x8 white image for an empty M2 filename.
+pub(super) fn upload_stock_m2_white(
+    context: TextureUploadContext<'_>,
+) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+    upload_stock_solid_texture(
+        context,
+        [255, 255, 255, 255],
+        "SOLARITY\\STOCK\\M2_WHITE.BLP",
+        BlpTextureSourceKind::StockM2White,
+        BlpColorSpace::Linear,
+    )
+}
+
+/// Uploads stock's opaque 8x8 green image for a failed M2 texture request.
+pub(super) fn upload_stock_m2_failure(
+    context: TextureUploadContext<'_>,
+) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+    upload_stock_solid_texture(
+        context,
+        [0, 255, 0, 255],
+        "SOLARITY\\STOCK\\M2_FAILURE.BLP",
+        BlpTextureSourceKind::StockM2Failure,
+        BlpColorSpace::Linear,
+    )
+}
+
+/// Materializes one of Texture.cpp's renderer-local generated images.
+fn upload_stock_solid_texture(
+    context: TextureUploadContext<'_>,
+    pixel: [u8; 4],
+    identity: &str,
+    source_kind: BlpTextureSourceKind,
+    color_space: BlpColorSpace,
+) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+    const EXTENT: (u32, u32) = (8, 8);
+    const BYTE_COUNT: usize = EXTENT.0 as usize * EXTENT.1 as usize * 4;
+
+    let mut bytes = [0_u8; BYTE_COUNT];
+    for texel in bytes.as_chunks_mut::<4>().0 {
+        texel.copy_from_slice(&pixel);
+    }
+    let image = upload_rgba8_image_with_color_space(context, EXTENT, &bytes, color_space)?;
+    let path = solarity_asset::AssetPath::new(identity)?;
+    let info = BlpTextureResourceInfo::new(
+        path,
+        source_kind,
+        color_space,
         BlpTextureStorage::Rgba8,
         EXTENT,
         1,

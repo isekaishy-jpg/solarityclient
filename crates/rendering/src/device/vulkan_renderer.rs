@@ -822,6 +822,48 @@ impl VulkanRenderer {
             })
     }
 
+    /// Creates or retrieves stock's opaque 8x8 white M2 placeholder.
+    ///
+    /// M2Shared.cpp `0x0083CC80` selects this generated image when a texture
+    /// declaration has no filename.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlpTextureUploadError`] for Vulkan allocation or transfer failure.
+    pub fn upload_stock_m2_white(&mut self) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.blp_textures
+            .upload_stock_m2_white(TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            })
+    }
+
+    /// Creates or retrieves stock's opaque 8x8 green failed-request texture.
+    ///
+    /// Texture.cpp `0x004B9760` selects this image after a model texture cannot
+    /// be opened or decoded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlpTextureUploadError`] for Vulkan allocation or transfer failure.
+    pub fn upload_stock_m2_failure(&mut self) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.blp_textures
+            .upload_stock_m2_failure(TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            })
+    }
+
     /// Returns immutable diagnostics for a live renderer-owned BLP image.
     #[must_use]
     pub fn blp_texture_info(&self, handle: BlpTextureHandle) -> Option<&BlpTextureResourceInfo> {

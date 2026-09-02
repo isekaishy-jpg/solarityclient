@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use glam::{Mat4, Quat, Vec3};
 use solarity_asset::{
-    AssetPath, AssetStore, BlpTextureCache, BlpTextureSource, DecodedM2Model, M2ModelCache,
-    M2TextureKind, TerrainDoodadPlacement, TerrainWorldModelPlacement, WorldModelDoodad,
+    AssetPath, AssetStore, BlpTextureCache, BlpTextureSource, DecodedM2Model,
+    M2HardcodedTextureSource, M2ModelCache, M2TextureKind, TerrainDoodadPlacement,
+    TerrainWorldModelPlacement, WorldModelDoodad,
 };
 use solarity_systems::{M2CollisionScene, PlacedM2Collision};
 
@@ -28,6 +29,10 @@ pub(in crate::application) enum ResidentM2Owner {
 pub(in crate::application) enum ResidentM2Texture {
     /// A concrete BLP selected through ordinary MPQ precedence.
     Authored(Arc<BlpTextureSource>),
+    /// Stock's generated white image for an empty hardcoded filename.
+    StockWhite,
+    /// Stock's generated green image for a failed hardcoded texture request.
+    StockFailure,
     /// A display/customization input which this static world owner cannot fill.
     Replaceable(M2TextureKind),
 }
@@ -287,15 +292,32 @@ fn prepare_textures(
             if texture.kind() != M2TextureKind::Hardcoded {
                 return Ok(ResidentM2Texture::Replaceable(texture.kind()));
             }
-            let path = texture.filename().ok_or_else(|| {
+            match texture.hardcoded_source().ok_or_else(|| {
                 RuntimeTerrainError::MissingM2HardcodedTexturePath {
                     model: model.path().clone(),
                 }
-            })?;
-            cache
-                .load(store, path)
-                .map(ResidentM2Texture::Authored)
-                .map_err(RuntimeTerrainError::from)
+            })? {
+                M2HardcodedTextureSource::Archive(path) => match cache.load(store, path) {
+                    Ok(texture) => Ok(ResidentM2Texture::Authored(texture)),
+                    Err(source) => {
+                        tracing::warn!(
+                            model = %model.path(),
+                            texture = %path,
+                            error = %source,
+                            "M2 texture request failed; using stock green texture"
+                        );
+                        Ok(ResidentM2Texture::StockFailure)
+                    }
+                },
+                M2HardcodedTextureSource::StockWhite => Ok(ResidentM2Texture::StockWhite),
+                M2HardcodedTextureSource::StockFailure => {
+                    tracing::warn!(
+                        model = %model.path(),
+                        "M2 contains a non-archive texture name; using stock green texture"
+                    );
+                    Ok(ResidentM2Texture::StockFailure)
+                }
+            }
         })
         .collect()
 }

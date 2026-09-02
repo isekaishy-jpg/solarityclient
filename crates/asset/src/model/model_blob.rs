@@ -55,6 +55,18 @@ pub struct M2Texture {
     kind: M2TextureKind,
     flags: u32,
     filename: Option<AssetPath>,
+    invalid_filename: bool,
+}
+
+/// Stock image selected for one hardcoded M2 texture declaration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum M2HardcodedTextureSource<'path> {
+    /// A valid client-internal path is passed to the shared texture loader.
+    Archive(&'path AssetPath),
+    /// An empty filename produces stock's opaque white generated texture.
+    StockWhite,
+    /// A non-archive filename reaches the shared missing-texture fallback.
+    StockFailure,
 }
 
 impl M2Texture {
@@ -74,6 +86,22 @@ impl M2Texture {
     #[must_use]
     pub const fn filename(&self) -> Option<&AssetPath> {
         self.filename.as_ref()
+    }
+
+    /// Resolves stock's hardcoded-filename boundary without exposing unsafe
+    /// build-machine paths to the archive API.
+    #[must_use]
+    pub const fn hardcoded_source(&self) -> Option<M2HardcodedTextureSource<'_>> {
+        if !matches!(self.kind, M2TextureKind::Hardcoded) {
+            return None;
+        }
+        if self.invalid_filename {
+            return Some(M2HardcodedTextureSource::StockFailure);
+        }
+        match self.filename.as_ref() {
+            Some(path) => Some(M2HardcodedTextureSource::Archive(path)),
+            None => Some(M2HardcodedTextureSource::StockWhite),
+        }
     }
 }
 
@@ -375,17 +403,34 @@ fn decode_textures(
             }
         };
         let filename_ref = array_ref(path, bytes, offset + 8, "texture filename")?;
-        let filename = decode_c_string(path, bytes, filename_ref, "texture filename")?
-            .filter(|filename| !filename.is_empty())
-            .map(AssetPath::new)
-            .transpose()
-            .map_err(|source| {
-                model_decode(path, format!("texture {index} name is invalid: {source}"))
-            })?;
+        let (filename, invalid_filename) =
+            match decode_c_string(path, bytes, filename_ref, "texture filename")?
+                .filter(|filename| !filename.is_empty())
+            {
+                Some(filename) => match AssetPath::new(&filename) {
+                    Ok(filename) => (Some(filename), false),
+                    // M2Shared.cpp 0x0083CC80 passes nonempty authored names
+                    // directly to Texture.cpp 0x004B9760. A failed archive
+                    // request returns the shared green texture rather than
+                    // rejecting the complete model. Keep that result typed so
+                    // build-machine names never cross the AssetPath boundary.
+                    Err(_source) if filename.starts_with("Z:\\World of Warcraft Proj Server\\") => {
+                        (None, true)
+                    }
+                    Err(source) => {
+                        return Err(model_decode(
+                            path,
+                            format!("texture {index} name is invalid: {source}"),
+                        ));
+                    }
+                },
+                None => (None, false),
+            };
         decoded.push(M2Texture {
             kind,
             flags: read_u32(path, bytes, offset + 4, "texture flags")?,
             filename,
+            invalid_filename,
         });
     }
     Ok(decoded)

@@ -145,8 +145,22 @@ enum M2ResolvedTexture<'source> {
     Authored(&'source solarity_asset::BlpTextureSource),
     /// A dynamic body image composed for one character placement.
     CharacterAtlas(&'source CharacterAtlasTexture),
+    /// M2Shared's generated opaque white texture for an empty filename.
+    StockWhite,
+    /// Texture.cpp's generated opaque green texture for a failed request.
+    StockFailure,
     /// A replacement category not supplied by this presentation owner.
     Unresolved(solarity_asset::M2TextureKind),
+}
+
+/// One Glue-environment M2 texture after stock loader fallback resolution.
+pub(in crate::application) enum GlueM2Texture {
+    /// A shared authored BLP selected through archive precedence.
+    Authored(Arc<BlpTextureSource>),
+    /// M2Shared's generated opaque white texture for an empty filename.
+    StockWhite,
+    /// Texture.cpp's generated opaque green texture for a failed request.
+    StockFailure,
 }
 
 /// One resident submesh-selection scheme consumed during GPU preparation.
@@ -647,7 +661,7 @@ impl M2Frame {
     pub(in crate::application) fn prepare_glue_model(
         renderer: &mut VulkanRenderer,
         model: Arc<DecodedM2Model>,
-        textures: &[Arc<BlpTextureSource>],
+        textures: &[GlueM2Texture],
         object_index: usize,
         animation_id: u16,
         model_scale: f32,
@@ -660,7 +674,11 @@ impl M2Frame {
         }
         let resolved = textures
             .iter()
-            .map(|texture| M2ResolvedTexture::Authored(texture.as_ref()))
+            .map(|texture| match texture {
+                GlueM2Texture::Authored(texture) => M2ResolvedTexture::Authored(texture.as_ref()),
+                GlueM2Texture::StockWhite => M2ResolvedTexture::StockWhite,
+                GlueM2Texture::StockFailure => M2ResolvedTexture::StockFailure,
+            })
             .collect::<Vec<_>>();
         let source = prepare_gpu_source(renderer, &model, &resolved, None, local_light_count)?;
         let playback = M2Playback::new(&model, animation_id, random)?;
@@ -739,6 +757,8 @@ impl M2Frame {
                 ResidentPlayerTexture::Authored(source) => {
                     M2ResolvedTexture::Authored(source.as_ref())
                 }
+                ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
                 ResidentPlayerTexture::BodyAtlas => {
                     M2ResolvedTexture::CharacterAtlas(input.atlas())
                 }
@@ -783,6 +803,8 @@ impl M2Frame {
                     ResidentPlayerTexture::Authored(source) => {
                         M2ResolvedTexture::Authored(source.as_ref())
                     }
+                    ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                    ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
                     ResidentPlayerTexture::BodyAtlas => {
                         M2ResolvedTexture::CharacterAtlas(input.atlas())
                     }
@@ -817,6 +839,8 @@ impl M2Frame {
                         ResidentPlayerTexture::Authored(source) => {
                             M2ResolvedTexture::Authored(source.as_ref())
                         }
+                        ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                        ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
                         ResidentPlayerTexture::BodyAtlas => {
                             M2ResolvedTexture::CharacterAtlas(input.atlas())
                         }
@@ -859,6 +883,8 @@ impl M2Frame {
                     ResidentCreatureTexture::Authored(source) => {
                         M2ResolvedTexture::Authored(source.as_ref())
                     }
+                    ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                    ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
                     ResidentCreatureTexture::Unresolved(kind) => {
                         M2ResolvedTexture::Unresolved(*kind)
                     }
@@ -1020,6 +1046,8 @@ impl M2Frame {
                     ResidentCreatureTexture::Authored(source) => {
                         M2ResolvedTexture::Authored(source.as_ref())
                     }
+                    ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                    ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
                     ResidentCreatureTexture::Unresolved(kind) => {
                         M2ResolvedTexture::Unresolved(*kind)
                     }
@@ -2208,6 +2236,8 @@ fn prepare_character_gpu(
                 ResidentCreatureTexture::Authored(source) => {
                     M2ResolvedTexture::Authored(source.as_ref())
                 }
+                ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
                 ResidentCreatureTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
             })
             .collect::<Vec<_>>();
@@ -2243,6 +2273,8 @@ fn prepare_character_gpu(
         .iter()
         .map(|texture| match texture {
             ResidentPlayerTexture::Authored(source) => M2ResolvedTexture::Authored(source.as_ref()),
+            ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+            ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
             ResidentPlayerTexture::BodyAtlas => M2ResolvedTexture::CharacterAtlas(input.atlas()),
             ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
         })
@@ -2278,6 +2310,8 @@ fn prepare_character_gpu(
                 ResidentPlayerTexture::Authored(source) => {
                     M2ResolvedTexture::Authored(source.as_ref())
                 }
+                ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
                 ResidentPlayerTexture::BodyAtlas => {
                     M2ResolvedTexture::CharacterAtlas(input.atlas())
                 }
@@ -2312,6 +2346,8 @@ fn prepare_character_gpu(
                     ResidentPlayerTexture::Authored(source) => {
                         M2ResolvedTexture::Authored(source.as_ref())
                     }
+                    ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                    ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
                     ResidentPlayerTexture::BodyAtlas => {
                         M2ResolvedTexture::CharacterAtlas(input.atlas())
                     }
@@ -2582,6 +2618,8 @@ fn prepare_source(
         .iter()
         .map(|texture| match texture {
             ResidentM2Texture::Authored(source) => M2ResolvedTexture::Authored(source.as_ref()),
+            ResidentM2Texture::StockWhite => M2ResolvedTexture::StockWhite,
+            ResidentM2Texture::StockFailure => M2ResolvedTexture::StockFailure,
             ResidentM2Texture::Replaceable(kind) => M2ResolvedTexture::Unresolved(*kind),
         })
         .collect::<Vec<_>>();
@@ -2703,6 +2741,28 @@ fn prepare_gpu_source(
                 }
             };
             texture_handles[texture_index] = Some(M2TextureImageHandle::CharacterAtlas(handle));
+        }
+    }
+    let stock_white = textures
+        .iter()
+        .any(|texture| matches!(texture, M2ResolvedTexture::StockWhite))
+        .then(|| renderer.upload_stock_m2_white())
+        .transpose()?;
+    let stock_failure = textures
+        .iter()
+        .any(|texture| matches!(texture, M2ResolvedTexture::StockFailure))
+        .then(|| renderer.upload_stock_m2_failure())
+        .transpose()?;
+    for (texture_index, texture) in textures.iter().enumerate() {
+        let handle = match texture {
+            M2ResolvedTexture::StockWhite => stock_white,
+            M2ResolvedTexture::StockFailure => stock_failure,
+            M2ResolvedTexture::Authored(_)
+            | M2ResolvedTexture::CharacterAtlas(_)
+            | M2ResolvedTexture::Unresolved(_) => None,
+        };
+        if let Some(handle) = handle {
+            texture_handles[texture_index] = Some(M2TextureImageHandle::Blp(handle));
         }
     }
 
@@ -2850,7 +2910,12 @@ fn require_resolved_texture(
     texture_index: usize,
 ) -> Result<(), RuntimeTerrainFrameError> {
     match textures.get(texture_index) {
-        Some(M2ResolvedTexture::Authored(_) | M2ResolvedTexture::CharacterAtlas(_)) => Ok(()),
+        Some(
+            M2ResolvedTexture::Authored(_)
+            | M2ResolvedTexture::CharacterAtlas(_)
+            | M2ResolvedTexture::StockWhite
+            | M2ResolvedTexture::StockFailure,
+        ) => Ok(()),
         Some(M2ResolvedTexture::Unresolved(kind)) => {
             Err(RuntimeTerrainFrameError::M2UnresolvedTexture {
                 model: model.path().clone(),
@@ -2899,7 +2964,10 @@ fn require_texture_handle(
             texture_index,
             kind: *kind,
         }),
-        M2ResolvedTexture::Authored(_) | M2ResolvedTexture::CharacterAtlas(_) => handles
+        M2ResolvedTexture::Authored(_)
+        | M2ResolvedTexture::CharacterAtlas(_)
+        | M2ResolvedTexture::StockWhite
+        | M2ResolvedTexture::StockFailure => handles
             .get(texture_index)
             .copied()
             .flatten()
