@@ -13,11 +13,11 @@ mod world_model_scene;
 pub use character_component::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
-    CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemAttachment,
-    CharacterItemVisualEffect, CharacterItemVisualPlan, CharacterSelectionQuiver,
-    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
+    CharacterAttachmentPlanError, CharacterAttachmentPoint, CharacterComponentTextureLevel,
+    CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError,
+    CharacterItemAttachment, CharacterItemVisualEffect, CharacterItemVisualPlan,
+    CharacterSelectionQuiver, CharacterTabardMode, CharacterTextureComposeError,
+    CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
 };
 pub use m2_animation::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraFrameError, M2EventTimeWindow,

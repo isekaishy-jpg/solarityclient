@@ -13,12 +13,12 @@ use solarity_asset::{
 use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState, VisibleEquipmentItem};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureStorage, CharacterAtlasLayerKind, CharacterAtlasRegion,
-    CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan, CharacterSelectionQuiver,
-    CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState, CreatureGeosetPlan,
-    M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EventTimeWindow, M2LocalLightCount,
-    M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan,
-    M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterComponentTextureLevel,
+    CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan,
+    CharacterSelectionQuiver, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState,
+    CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EventTimeWindow,
+    M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform,
+    M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
     M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
     M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
@@ -260,7 +260,7 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
 
     let plan = CharacterTexturePlan::base(&appearance)?;
 
-    assert_eq!(plan.atlas_size(), 256);
+    assert_eq!(plan.atlas_size(), 512);
     assert_eq!(plan.atlas_layers().len(), 16);
     let visible_order = plan
         .atlas_layers()
@@ -351,25 +351,24 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
 
     let mut texture_cache = BlpTextureCache::new();
     let atlas = plan.compose(&mut store, &mut texture_cache)?;
-    assert_eq!(atlas.mips().len(), 9);
-    assert_eq!(atlas.mip(0).map(|mip| mip.width()), Some(256));
-    assert_eq!(atlas.mip(8).map(|mip| mip.width()), Some(1));
+    assert_eq!(atlas.mips().len(), 10);
+    assert_eq!(atlas.mip(0).map(|mip| mip.width()), Some(512));
+    assert_eq!(atlas.mip(9).map(|mip| mip.width()), Some(1));
     let top = atlas.mip(0).ok_or("top character atlas mip is absent")?;
-    // The 512-pixel HD skin selects authored mip one instead of resampling mip
-    // zero. Underwear and head overlays likewise select their authored mip one.
-    // HairUpper is deliberately absent: stock retains the planned variation but
-    // skips the overlay when TextureCacheCreateTexture returns no handle.
+    // Default componentTextureLevel 9 retains the authored 512-pixel skin and
+    // 256-pixel regional overlays. HairUpper is deliberately absent: stock
+    // retains the planned variation but skips an absent texture-cache handle.
     assert_eq!(
         rgba8_pixel(top.rgba8(), top.width(), 10, 10),
-        [0, 0, 255, 255]
+        [255, 0, 0, 255]
     );
     assert_eq!(
-        rgba8_pixel(top.rgba8(), top.width(), 130, 10),
-        [0, 128, 127, 255]
+        rgba8_pixel(top.rgba8(), top.width(), 260, 10),
+        [254, 0, 0, 255]
     );
     assert_eq!(
-        rgba8_pixel(top.rgba8(), top.width(), 10, 170),
-        [0, 191, 0, 255]
+        rgba8_pixel(top.rgba8(), top.width(), 10, 340),
+        [190, 0, 0, 255]
     );
     assert_eq!(texture_cache.len(), 8);
 
@@ -393,10 +392,74 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
         .character_atlas_texture_info(atlas_handle)
         .ok_or("uploaded character atlas handle did not resolve")?;
     assert_eq!(atlas_info.color_space(), BlpColorSpace::Linear);
-    assert_eq!(atlas_info.extent(), (256, 256));
-    assert_eq!(atlas_info.mip_count(), 9);
-    assert_eq!(atlas_info.upload_byte_count(), 349_524);
+    assert_eq!(atlas_info.extent(), (512, 512));
+    assert_eq!(atlas_info.mip_count(), 10);
+    assert_eq!(atlas_info.upload_byte_count(), 1_398_100);
     assert_eq!(renderer.character_atlas_upload_submission_count(), 1);
+    Ok(())
+}
+
+/// Level nine uses stock's recovered exact two-times component scaler.
+#[test]
+fn character_texture_level_nine_scales_legacy_skin_pixels() -> Result<(), Box<dyn Error>> {
+    let tables = character_tables(0, 0);
+    let mut pixels = vec![0xFF00_0000; 256 * 256];
+    pixels[0] = 0xFFFF_0000;
+    pixels[1] = 0xFF00_FF00;
+    pixels[256] = 0xFF00_00FF;
+    pixels[257] = 0xFFFF_FFFF;
+    let skin = raw3_blp_pixels(256, 256, &pixels);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &tables.sections,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &tables.hair_geosets,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &tables.facial_hair,
+        },
+        FixtureFile {
+            path: "Character\\Human\\Male\\Skin.blp",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let characters = CharacterAppearanceCatalog::load(&mut store)?;
+    let appearance = characters.resolve_player(1, 0, CharacterCustomization::new(2, 3, 4, 5, 6))?;
+    let plan = CharacterTexturePlan::base(&appearance)?;
+    let mut texture_cache = BlpTextureCache::new();
+
+    let atlas = plan.compose_at_level(
+        &mut store,
+        &mut texture_cache,
+        CharacterComponentTextureLevel::DEFAULT,
+    )?;
+    let top = atlas
+        .mip(0)
+        .ok_or("scaled top character atlas mip is absent")?;
+    assert_eq!(top.width(), 512);
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 0, 0),
+        [255, 0, 0, 255]
+    );
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 1, 0),
+        [127, 127, 0, 255]
+    );
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 0, 1),
+        [127, 0, 127, 255]
+    );
+    assert_eq!(
+        rgba8_pixel(top.rgba8(), top.width(), 1, 1),
+        [127, 127, 127, 255]
+    );
     Ok(())
 }
 
@@ -3806,6 +3869,31 @@ fn solid_raw3_blp(width: u32, height: u32, colors: &[u32]) -> Vec<u8> {
         for _pixel in 0..pixel_count {
             bytes.extend_from_slice(&color.to_le_bytes());
         }
+    }
+    bytes
+}
+
+/// Builds a one-mip BLP2/RAW3 image from exact row-major BGRA words.
+fn raw3_blp_pixels(width: u32, height: u32, pixels: &[u32]) -> Vec<u8> {
+    const HEADER_SIZE: u32 = 148;
+    const PALETTE_SIZE: u32 = 256 * 4;
+    const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
+
+    assert_eq!(pixels.len(), width as usize * height as usize);
+    let byte_size = width.saturating_mul(height).saturating_mul(4);
+    let mut bytes = Vec::with_capacity((PIXEL_OFFSET + byte_size) as usize);
+    bytes.extend_from_slice(b"BLP2");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&[3, 8, 8, 0]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.extend_from_slice(&PIXEL_OFFSET.to_le_bytes());
+    bytes.resize(bytes.len() + 15 * 4, 0);
+    bytes.extend_from_slice(&byte_size.to_le_bytes());
+    bytes.resize(bytes.len() + 15 * 4, 0);
+    bytes.resize(PIXEL_OFFSET as usize, 0);
+    for pixel in pixels {
+        bytes.extend_from_slice(&pixel.to_le_bytes());
     }
     bytes
 }

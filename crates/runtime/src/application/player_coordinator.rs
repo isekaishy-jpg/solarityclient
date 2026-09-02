@@ -16,10 +16,10 @@ use solarity_ecs::{
 };
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
-    CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
-    CharacterGeosetPlanError, CharacterItemVisualPlan, CharacterSelectionQuiver,
-    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
-    CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
+    CharacterAttachmentPoint, CharacterComponentTextureLevel, CharacterEquipmentItem,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemVisualPlan,
+    CharacterSelectionQuiver, CharacterTabardMode, CharacterTextureComposeError,
+    CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
     M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
@@ -333,6 +333,7 @@ pub struct RuntimePlayerPresentation {
     particle_colors: ParticleColorCatalog,
     models: M2ModelCache,
     textures: BlpTextureCache,
+    component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
@@ -358,11 +359,24 @@ impl RuntimePlayerPresentation {
             particle_colors: catalogs.particle_colors,
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
+            component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
         }
+    }
+
+    /// Applies the live component-texture level and invalidates affected models.
+    pub fn set_component_texture_level(&mut self, level: CharacterComponentTextureLevel) -> bool {
+        if self.component_texture_level == level {
+            return false;
+        }
+        self.component_texture_level = level;
+        self.resident = None;
+        self.remote_players.clear();
+        self.glue_character = None;
+        true
     }
 
     /// Synchronizes the unequipped character-creation body from Glue choices.
@@ -454,7 +468,11 @@ impl RuntimePlayerPresentation {
         };
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, body.model_path())?;
-        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let atlas = texture_plan.compose_at_level(
+            &mut assets,
+            &mut self.textures,
+            self.component_texture_level,
+        )?;
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
@@ -581,7 +599,11 @@ impl RuntimePlayerPresentation {
         };
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, body.model_path())?;
-        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let atlas = texture_plan.compose_at_level(
+            &mut assets,
+            &mut self.textures,
+            self.component_texture_level,
+        )?;
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
@@ -876,7 +898,11 @@ impl RuntimePlayerPresentation {
             &self.helmet_visibility,
             equipment_items.iter().copied(),
         )?;
-        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let atlas = texture_plan.compose_at_level(
+            &mut assets,
+            &mut self.textures,
+            self.component_texture_level,
+        )?;
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
@@ -1337,7 +1363,11 @@ impl RuntimePlayerPresentation {
             &self.helmet_visibility,
             equipment_items.iter().copied(),
         )?;
-        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let atlas = texture_plan.compose_at_level(
+            &mut assets,
+            &mut self.textures,
+            self.component_texture_level,
+        )?;
         let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
         let extra_skin =
             load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;

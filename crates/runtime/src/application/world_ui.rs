@@ -180,6 +180,16 @@ impl RuntimeWorldUi {
         Ok(())
     }
 
+    /// Returns one registered active-world console variable's current text.
+    pub(super) fn cvar_value(&self, name: &str) -> Option<String> {
+        self.manager.cvar_value(name)
+    }
+
+    /// Takes profile-backed CVars changed by built-in FrameXML Lua.
+    pub(super) fn take_changed_cvars(&self) -> Vec<(String, String)> {
+        self.manager.take_changed_cvars()
+    }
+
     /// Advances visible handlers and records whether GPU presentation changed.
     pub(super) fn update(&mut self, elapsed_seconds: f64) -> Result<(), ApplicationError> {
         self.dirty |= self.manager.update(elapsed_seconds)?;

@@ -41,8 +41,11 @@ cache continues to own the parsed source for other consumers.
 
 A character body does not bind one authored body BLP. Build 12340 composes the
 resolved skin, face, facial-hair, hair-detail, underwear, and equipped-item
-layers into a placement-owned 256-by-256 RGBA8 mip chain. That dynamic atlas
-replaces M2 texture type 1. Authored hair and extra-skin BLPs remain separate
+layers into a placement-owned RGBA8 mip chain. The registered
+`componentTextureLevel` selects a 256-by-256 or 512-by-512 top mip and defaults
+to level 9 (512). Wow.exe `0x00401FF0` reads the CVar, while `0x004F1A20`
+computes `1 << level` and scales the fixed component-region table. That dynamic
+atlas replaces M2 texture type 1. Authored hair and extra-skin BLPs remain separate
 shared sources for character special-texture slots 6 and 8. Stock playable body
 M2s label slot 6 with the generic `Environment` texture category; the character
 component still binds its resolved hair image there. An equipped cloak resolves
@@ -55,8 +58,13 @@ runtime joins every nonempty slot through `Item.dbc` and
 `ItemDisplayInfo.dbc`; unknown entries and displays are errors rather than
 appearance fallbacks. A customization or equipment change can therefore
 recompose the atlas without duplicating the decoded M2 or any same-path HD BLP
-source. The dynamic atlas receives its own placement-owned GPU image identity
-and complete sRGB mip upload; it is not disguised as an archive-backed BLP
+source. A source one mip below its destination enters stock's recovered
+`PasteScale` dispatch (`0x004F07D0`/`0x004F08A0` to `0x004EF9D0`): even pixels
+copy directly and odd pixels use the exact integer two- or four-sample average
+before the authored lower-mip chain resumes. Overlay blending retains stock's
+integer divide-by-256 behavior. The dynamic atlas receives its own
+placement-owned GPU image identity and complete linear byte-space mip upload;
+it is not disguised as an archive-backed BLP
 path. M2 descriptor stages use a closed typed image domain so the composed
 atlas and ordinary shared BLPs can enter the same material without conflating
 their residency rules.

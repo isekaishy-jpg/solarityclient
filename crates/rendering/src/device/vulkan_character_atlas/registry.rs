@@ -8,7 +8,7 @@ use crate::device::vulkan_texture::{
     GpuSampledImage, Rgba8MipUpload, TextureUploadContext, upload_rgba8_mip_chain,
 };
 use crate::device::{BlpColorSpace, VulkanError};
-use crate::model::CharacterAtlasTexture;
+use crate::model::{CharacterAtlasTexture, CharacterComponentTextureLevel};
 
 use super::types::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 
@@ -114,25 +114,40 @@ impl CharacterAtlasTextureRegistry {
     }
 }
 
-/// Verifies the private composer's fixed complete mip-chain invariant.
+/// Verifies the private composer's selected complete mip-chain invariant.
 fn validate_mips(
     atlas: &CharacterAtlasTexture,
 ) -> Result<(Vec<Rgba8MipUpload<'_>>, usize), VulkanError> {
-    const TOP_WIDTH: u32 = 256;
-    const MIP_COUNT: usize = 9;
-
-    if atlas.mips().len() != MIP_COUNT {
+    let top_width = atlas.mips().first().map(|mip| mip.width()).ok_or_else(|| {
+        VulkanError::operation("validate character atlas", "character atlas is empty")
+    })?;
+    if top_width == 0 {
+        return Err(VulkanError::operation(
+            "validate character atlas",
+            "character atlas top width is zero",
+        ));
+    }
+    let component_level = CharacterComponentTextureLevel::new(top_width.ilog2() as u8)
+        .filter(|level| level.atlas_size() == top_width)
+        .ok_or_else(|| {
+            VulkanError::operation(
+                "validate character atlas",
+                format!("unsupported character atlas top width {top_width}"),
+            )
+        })?;
+    let mip_count = component_level.mip_count();
+    if atlas.mips().len() != mip_count {
         return Err(VulkanError::operation(
             "validate character atlas",
             format!(
-                "stock atlas requires {MIP_COUNT} mips; received {}",
+                "{top_width}-pixel stock atlas requires {mip_count} mips; received {}",
                 atlas.mips().len()
             ),
         ));
     }
-    let mut expected_width = TOP_WIDTH;
+    let mut expected_width = top_width;
     let mut byte_count = 0_usize;
-    let mut uploads = Vec::with_capacity(MIP_COUNT);
+    let mut uploads = Vec::with_capacity(mip_count);
     for (expected_level, mip) in atlas.mips().iter().enumerate() {
         if mip.level() != expected_level || mip.width() != expected_width {
             return Err(VulkanError::operation(

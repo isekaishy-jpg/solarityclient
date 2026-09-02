@@ -86,9 +86,9 @@ pub enum CharacterTextureComposeError {
         /// Zero-based authored mip level.
         mip_level: usize,
     },
-    /// Stock would invoke its not-yet-recovered smaller-source scaler.
+    /// Source dimensions cannot enter stock's exact one-level scaler.
     #[error(
-        "character texture {path} is {source_width}x{source_height}, below its {target_width}x{target_height} destination"
+        "character texture {path} is {source_width}x{source_height}, which cannot scale exactly once into its {target_width}x{target_height} destination"
     )]
     SourceScalingRequired {
         /// Planned normalized BLP path.

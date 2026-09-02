@@ -5,10 +5,9 @@ use std::array;
 use solarity_asset::{AssetPath, AssetStore, CharacterModelAppearance, CharacterSection};
 use solarity_ecs::PlayerEquipmentSlot;
 
-use super::types::STOCK_CHARACTER_ATLAS_SIZE;
 use super::{
-    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRegion, CharacterEquipmentItem,
-    CharacterTexturePlanError,
+    CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasRegion,
+    CharacterComponentTextureLevel, CharacterEquipmentItem, CharacterTexturePlanError,
 };
 
 const SECTION_FLAG_NPC_SKIN: u32 = 0x08;
@@ -191,7 +190,7 @@ impl CharacterTexturePlan {
     /// Returns the stock-default dynamic body atlas width and height.
     #[must_use]
     pub const fn atlas_size(&self) -> u32 {
-        STOCK_CHARACTER_ATLAS_SIZE
+        CharacterComponentTextureLevel::DEFAULT.atlas_size()
     }
 
     /// Returns archive pastes in stock component-section order.

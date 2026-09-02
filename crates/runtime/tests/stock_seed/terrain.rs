@@ -12,7 +12,9 @@ use solarity_asset::{
     TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
-use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
+use solarity_rendering::{
+    CharacterComponentTextureLevel, WorldCamera, WorldFrustum, WorldScreenWindow,
+};
 use solarity_runtime::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
     RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeTerrainCoordinator,
@@ -368,6 +370,16 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
     );
     assert_eq!(presentation.resident_remote_player_count(), 1);
     assert_eq!(presentation.resident_remote_mount_count(), 1);
+    let level_eight = CharacterComponentTextureLevel::new(8)
+        .ok_or("stock component texture level eight was rejected")?;
+    assert!(presentation.set_component_texture_level(level_eight));
+    assert_eq!(presentation.resident_remote_player_count(), 0);
+    assert_eq!(
+        presentation.synchronize_remote_players(Some(&world))?,
+        RuntimeRemotePlayerPoll::ModelsChanged
+    );
+    assert_eq!(presentation.resident_remote_player_count(), 1);
+    assert!(!presentation.set_component_texture_level(level_eight));
     world.update_transform(guid, WorldTransform::new(Vec3::Y, 1.0))?;
     assert_eq!(
         presentation.synchronize_remote_players(Some(&world))?,

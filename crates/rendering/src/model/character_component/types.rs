@@ -4,10 +4,70 @@ use std::fmt;
 
 use solarity_asset::AssetPath;
 
-/// Default build-12340 character component texture width and height.
-pub(super) const STOCK_CHARACTER_ATLAS_SIZE: u32 = 256;
+/// Lowest script-visible build-12340 component-texture level.
+pub(super) const STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MINIMUM: u8 = 8;
 
-/// One of the ten non-overlapping regions in the stock 512-unit atlas layout.
+/// Highest and default script-visible build-12340 component-texture level.
+pub(super) const STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MAXIMUM: u8 = 9;
+
+/// Typed build-12340 character component-texture resolution.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CharacterComponentTextureLevel(u8);
+
+impl CharacterComponentTextureLevel {
+    /// Stock's registered default, a 512-by-512 component texture.
+    pub const DEFAULT: Self = Self(STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MAXIMUM);
+
+    /// Creates a level accepted by the stock-facing settings boundary.
+    #[must_use]
+    pub const fn new(level: u8) -> Option<Self> {
+        if level >= STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MINIMUM
+            && level <= STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MAXIMUM
+        {
+            Some(Self(level))
+        } else {
+            None
+        }
+    }
+
+    /// Clamps an untrusted numeric CVar value to the supported stock range.
+    #[must_use]
+    pub const fn clamped(level: u32) -> Self {
+        if level < STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MINIMUM as u32 {
+            Self(STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MINIMUM)
+        } else if level > STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MAXIMUM as u32 {
+            Self(STOCK_CHARACTER_COMPONENT_TEXTURE_LEVEL_MAXIMUM)
+        } else {
+            Self(level as u8)
+        }
+    }
+
+    /// Returns the script-visible logarithmic texture level.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    /// Returns the square top-mip extent selected by this level.
+    #[must_use]
+    pub const fn atlas_size(self) -> u32 {
+        1_u32 << self.0
+    }
+
+    /// Returns the complete top-through-one mip count.
+    #[must_use]
+    pub const fn mip_count(self) -> usize {
+        self.0 as usize + 1
+    }
+}
+
+impl Default for CharacterComponentTextureLevel {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// One of the ten non-overlapping regions in stock's 256-unit base layout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CharacterAtlasRegion {
     /// Upper arm surface.
@@ -33,7 +93,7 @@ pub enum CharacterAtlasRegion {
 }
 
 impl CharacterAtlasRegion {
-    /// Returns the region rectangle scaled to stock's default 256-pixel atlas.
+    /// Returns the region rectangle in stock's 256-unit base layout.
     #[must_use]
     pub const fn rect(self) -> CharacterAtlasRect {
         match self {
@@ -51,7 +111,7 @@ impl CharacterAtlasRegion {
     }
 }
 
-/// A validated pixel rectangle within the 256-by-256 character atlas.
+/// A validated rectangle within a character-atlas mip.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CharacterAtlasRect {
     x: u32,
@@ -61,9 +121,9 @@ pub struct CharacterAtlasRect {
 }
 
 impl CharacterAtlasRect {
-    /// Returns a rectangle covering the full stock-default atlas.
-    pub(super) const fn atlas() -> Self {
-        Self::new(0, 0, STOCK_CHARACTER_ATLAS_SIZE, STOCK_CHARACTER_ATLAS_SIZE)
+    /// Returns a rectangle covering an atlas with the supplied extent.
+    pub(super) const fn atlas(size: u32) -> Self {
+        Self::new(0, 0, size, size)
     }
 
     /// Creates a compile-time rectangle from the recovered stock layout.
@@ -155,7 +215,7 @@ impl CharacterAtlasTexture {
         Self { mips }
     }
 
-    /// Returns all destination mips from 256-by-256 through 1-by-1.
+    /// Returns all destination mips from the selected top extent through 1-by-1.
     #[must_use]
     pub fn mips(&self) -> &[CharacterAtlasMip] {
         &self.mips

@@ -209,6 +209,18 @@ impl FrameManager {
         self.owner.focused_edit_box()
     }
 
+    /// Returns one registered FrameXML console variable's current text.
+    #[must_use]
+    pub fn cvar_value(&self, name: &str) -> Option<String> {
+        self.owner.cvar_value(name)
+    }
+
+    /// Takes profile-backed CVars changed by built-in FrameXML Lua.
+    #[must_use]
+    pub fn take_changed_cvars(&self) -> Vec<(String, String)> {
+        self.owner.take_changed_cvars()
+    }
+
     /// Takes the oldest process-lifetime action emitted by built-in FrameXML.
     #[must_use]
     pub fn take_process_action(&self) -> Option<UiProcessAction> {

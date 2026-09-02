@@ -28,5 +28,5 @@ pub use status::{
 };
 pub use types::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
-    CharacterAtlasRegion, CharacterAtlasTexture,
+    CharacterAtlasRegion, CharacterAtlasTexture, CharacterComponentTextureLevel,
 };

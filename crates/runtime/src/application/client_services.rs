@@ -23,8 +23,8 @@ use solarity_network::{
     WorldAddon, WorldAddonManifest,
 };
 use solarity_rendering::{
-    M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera,
-    WorldModelBaseMip, WorldModelTextureFiltering,
+    CharacterComponentTextureLevel, M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer,
+    VulkanReport, WorldCamera, WorldModelBaseMip, WorldModelTextureFiltering,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
@@ -621,7 +621,7 @@ impl ClientServices {
                 self.login_ui = None;
             }
             self.sync_platform_text_input();
-            self.persist_glue_cvars()?;
+            self.persist_active_cvars()?;
             let movie = self.glue.media_intent().movie().cloned();
             let cinematic_overlay = self
                 .glue
@@ -667,6 +667,7 @@ impl ClientServices {
             } else {
                 self.platform.set_text_input_active(false);
             }
+            self.persist_active_cvars()?;
         }
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
@@ -761,6 +762,7 @@ impl ClientServices {
     }
 
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
+        self.synchronize_component_texture_level();
         if self.login_ui.is_none() {
             self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                 &mut self.renderer,
@@ -1354,6 +1356,7 @@ impl ClientServices {
         }
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
+        self.synchronize_component_texture_level();
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
@@ -1686,7 +1689,7 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
-        self.persist_glue_cvars()?;
+        self.persist_active_cvars()?;
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
@@ -1707,10 +1710,33 @@ impl ClientServices {
         cpu_result
     }
 
-    fn persist_glue_cvars(&mut self) -> Result<(), ApplicationError> {
-        let changed = self.glue.take_changed_cvars();
+    fn persist_active_cvars(&mut self) -> Result<(), ApplicationError> {
+        let mut changed = self.glue.take_changed_cvars();
+        if let Some(world_ui) = self.world_ui.as_ref() {
+            changed.extend(world_ui.take_changed_cvars());
+        }
         self.startup_profile.persist_cvars(&changed)?;
         Ok(())
+    }
+
+    fn synchronize_component_texture_level(&mut self) {
+        let value = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_value("componentTextureLevel"),
+            |world_ui| world_ui.cvar_value("componentTextureLevel"),
+        );
+        let level = value
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .map_or(CharacterComponentTextureLevel::DEFAULT, |value| {
+                CharacterComponentTextureLevel::clamped(value.round() as u32)
+            });
+        if self.player.set_component_texture_level(level) {
+            tracing::info!(
+                component_texture_level = level.value(),
+                atlas_size = level.atlas_size(),
+                "applied character component texture level"
+            );
+        }
     }
 
     fn sync_platform_text_input(&mut self) {
