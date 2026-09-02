@@ -684,7 +684,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
         FixtureFile {
             path: "Interface\\GlueXML\\Button.xml",
             bytes: br#"<Ui>
-<FontString name="FontLabel" inherits="GlueFontTest" text="STATIC_TEXT"/>
+<FontString name="FontLabel" inherits="GlueFontTest" text="STATIC_TEXT" wordwrap="false" nonspacewrap="true" maxLines="3"/>
 <Texture name="CoordinateTexture"><TexCoords left="0.25" right="0.75" top="0.5" bottom="0.875"/></Texture>
 <Texture name="GradientTexture"><Gradient orientation="VERTICAL"><MinColor r="0.1" g="0.2" b="0.3" a="0.4"/><MaxColor r="0.6" g="0.7" b="0.8" a="0.9"/></Gradient></Texture>
 <Frame name="OwnedTemplate" virtual="true"><Frames><Frame name="$parentOwned" parentKey="owned"/></Frames></Frame>
@@ -723,6 +723,10 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(face == "FONTS\\FRIZQT__.TTF" and height == 12 and flags == "")
   assert(FontLabel:GetJustifyH() == "RIGHT")
   assert(FontLabel:GetJustifyV() == "BOTTOM")
+  assert(not FontLabel:CanWordWrap() and FontLabel:CanNonSpaceWrap())
+  FontLabel:SetWordWrap(true)
+  FontLabel:SetNonSpaceWrap(false)
+  assert(FontLabel:CanWordWrap() and not FontLabel:CanNonSpaceWrap())
   FontLabel:SetJustifyH("left")
   FontLabel:SetJustifyV("middle")
   assert(FontLabel:GetJustifyH() == "LEFT")
@@ -792,6 +796,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(not pcall(function() childLabel:SetSpacing(0/0) end))
   assert(childLabel:GetName() == "FontButtonDynamicLabel")
   assert(childLabel:GetParent() == self and childLabel:GetFontObject() == GlueFontTest)
+  assert(childLabel:CanWordWrap() and not childLabel:CanNonSpaceWrap())
   assert(childLabel:GetDrawLayer() == "OVERLAY")
   self:SetFontString(childLabel)
   assert(self:GetFontString() == childLabel)

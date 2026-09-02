@@ -11,17 +11,18 @@ use super::simple_script::{
     font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key, frame_level_key,
     frame_strata_key, height_key, highlight_font_key, highlight_locked_key, hit_rect_insets_key,
     horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key, hovered_key,
-    index_key, justify_h_key, justify_v_key, keyboard_enabled_key,
+    index_key, justify_h_key, justify_v_key, keyboard_enabled_key, max_text_lines_key,
     model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
     model_character_light_ghost_key, model_character_light_live_key, model_file_key,
     model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
     model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
     model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
-    mouse_wheel_enabled_key, name_key, non_blocking_key, normal_font_key, parent_key, parse_point,
-    role_key, scale_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key,
-    slider_step_key, slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key,
-    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
+    mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key, normal_font_key,
+    parent_key, parse_point, role_key, scale_key, shown_key, slider_max_key, slider_min_key,
+    slider_orientation_key, slider_step_key, slider_value_key, spacing_key, tex_coord_key,
+    text_color_key, text_key, texture_blend_mode_key, texture_color_key, texture_file_key,
+    texture_solid_color_key, type_key, vertical_scroll_key, vertical_scroll_range_key,
+    vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -95,6 +96,9 @@ pub(crate) struct UiRuntimeText {
     pub(crate) shadow_offset: [f64; 2],
     pub(crate) shadow_color: [f64; 4],
     pub(crate) spacing: f64,
+    pub(crate) word_wrap: bool,
+    pub(crate) non_space_wrap: bool,
+    pub(crate) max_lines: u32,
     pub(crate) horizontal: HorizontalJustification,
     pub(crate) vertical: VerticalJustification,
     pub(crate) draw_layer: UiDrawLayer,
@@ -631,7 +635,16 @@ fn snapshot_text(
             .map_or_else(|| numeric_array::<4>(&color, lua_index, "text color"), Ok)?,
         shadow_offset: numeric_array::<2>(&shadow_offset, lua_index, "shadow offset")?,
         shadow_color: numeric_array::<4>(&shadow_color, lua_index, "shadow color")?,
-        spacing: finite_region_number(font, spacing_key(), lua_index, "font spacing")?,
+        spacing: finite_region_number(table, spacing_key(), lua_index, "font spacing")?,
+        word_wrap: table
+            .raw_get(word_wrap_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} word wrap"), error))?,
+        non_space_wrap: table
+            .raw_get(non_space_wrap_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} non-space wrap"), error))?,
+        max_lines: table
+            .raw_get(max_text_lines_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} maximum lines"), error))?,
         horizontal: parse_horizontal_justification(&horizontal).ok_or_else(|| {
             UiScriptError::Plan {
                 message: format!(

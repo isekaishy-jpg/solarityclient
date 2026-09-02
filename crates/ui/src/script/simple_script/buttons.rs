@@ -8,6 +8,7 @@ use mlua::{LightUserData, Lua, Table, Value, Variadic};
 use solarity_asset::AssetStoreHandle;
 
 use crate::UiScriptHandler;
+use crate::font::wrap_line;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
@@ -16,10 +17,17 @@ use super::{
     click_action_key, create_dynamic_region, disabled_font_key, disabled_text_color_key,
     disabled_texture_key, drag_button_key, enabled_key, font_object_key, font_set_key,
     font_shadow_offset_key, height_key, highlight_font_key, highlight_locked_key,
-    highlight_texture_key, lua_bool, lua_text, mark_live_state_changed, name_key, normal_font_key,
-    normal_texture_key, object_script_function, pushed_texture_key, resolve_font_object,
-    spacing_key, text_key, texture_file_key, texture_solid_color_key, type_key, width_key,
+    highlight_texture_key, lua_bool, lua_text, mark_live_state_changed, max_text_lines_key,
+    name_key, non_space_wrap_key, normal_font_key, normal_texture_key, object_script_function,
+    pushed_texture_key, resolve_font_object, spacing_key, text_key, texture_file_key,
+    texture_solid_color_key, type_key, width_key, word_wrap_key,
 };
+
+#[derive(Clone, Copy)]
+struct MeasuredCharacter {
+    character: char,
+    advance: f64,
+}
 
 /// Archive-backed state required by the stock text-extent methods.
 #[derive(Clone)]
@@ -51,6 +59,11 @@ impl TextMeasurement {
     pub(super) fn font_string_width(&self, font_string: &Table) -> mlua::Result<f64> {
         self.font_string_dimensions(font_string)
             .map(|dimensions| dimensions.0)
+    }
+
+    pub(super) fn font_string_height(&self, font_string: &Table) -> mlua::Result<f64> {
+        self.font_string_dimensions(font_string)
+            .map(|dimensions| dimensions.1)
     }
 
     pub(super) fn update_auto_font_string_size(&self, font_string: &Table) -> mlua::Result<()> {
@@ -179,7 +192,7 @@ impl TextMeasurement {
         self.pixels_per_ui_unit.recip()
     }
 
-    fn font_string_dimensions(&self, font_string: &Table) -> mlua::Result<(f64, f64)> {
+    pub(super) fn font_string_dimensions(&self, font_string: &Table) -> mlua::Result<(f64, f64)> {
         let Some(text) = font_string.raw_get::<Option<String>>(text_key())? else {
             return Ok((0.0, 0.0));
         };
@@ -217,18 +230,60 @@ impl TextMeasurement {
         let shadow_x = shadow.raw_get::<f64>(1)?.max(0.0);
         let shadow_y = shadow.raw_get::<f64>(2)?.max(0.0);
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-        let lines = normalized.split('\n').collect::<Vec<_>>();
+        let auto_width = font_string.raw_get::<bool>(auto_text_width_key())?;
+        let word_wrap = font_string.raw_get::<bool>(word_wrap_key())?;
+        let non_space_wrap = font_string.raw_get::<bool>(non_space_wrap_key())?;
+        let max_lines = font_string.raw_get::<u32>(max_text_lines_key())? as usize;
+        let wrap_width = (!auto_width && word_wrap)
+            .then(|| font_string.raw_get::<f64>(width_key()))
+            .transpose()?
+            .filter(|width| width.is_finite() && *width > 0.0);
         let mut widest = 0.0_f64;
+        let mut line_count = 0_usize;
         let mut assets = assets.borrow_mut();
         let mut system = self.system.borrow_mut();
-        for line in &lines {
-            let width = system
-                .measure_line_width_26_6(&mut assets, path, pixel_height, line, rasterization)
+        for line in normalized.split('\n') {
+            let advances = system
+                .measure_character_advances_26_6(
+                    &mut assets,
+                    path,
+                    pixel_height,
+                    line,
+                    rasterization,
+                )
                 .map_err(|error| mlua::Error::runtime(error.to_string()))?;
-            widest = widest.max(width as f64 / 64.0 / self.pixels_per_ui_unit);
+            let measured = line
+                .chars()
+                .zip(advances)
+                .map(|(character, advance)| MeasuredCharacter {
+                    character,
+                    advance: advance as f64 / 64.0 / self.pixels_per_ui_unit,
+                })
+                .collect::<Vec<_>>();
+            let wrapped = match wrap_width {
+                Some(width) => wrap_line(
+                    &measured,
+                    width,
+                    non_space_wrap,
+                    |item| item.character,
+                    |item| item.advance,
+                ),
+                None => vec![measured],
+            };
+            for wrapped_line in wrapped {
+                if max_lines > 0 && line_count == max_lines {
+                    break;
+                }
+                widest = widest.max(wrapped_line.iter().map(|item| item.advance).sum());
+                line_count += 1;
+            }
+            if max_lines > 0 && line_count == max_lines {
+                break;
+            }
         }
-        let height = f64::from(line_height) * lines.len() as f64
-            + spacing * lines.len().saturating_sub(1) as f64;
+        let rendered_line_height = f64::from(pixel_height) / self.pixels_per_ui_unit;
+        let height = rendered_line_height * line_count as f64
+            + spacing * line_count.saturating_sub(1) as f64;
         Ok((
             (widest + shadow_x).max(self.one_pixel()),
             (height + shadow_y).max(self.one_pixel()),
@@ -249,6 +304,11 @@ fn visible_text(source: &str) -> String {
             continue;
         }
         if remaining.starts_with("|r") {
+            cursor += 2;
+            continue;
+        }
+        if remaining.starts_with("|n") {
+            output.push('\n');
             cursor += 2;
             continue;
         }

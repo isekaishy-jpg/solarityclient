@@ -164,6 +164,9 @@ static HOVERED_TOKEN: u8 = 123;
 static DISABLED_TEXT_COLOR_TOKEN: u8 = 124;
 static AUTO_TEXT_WIDTH_TOKEN: u8 = 125;
 static AUTO_TEXT_HEIGHT_TOKEN: u8 = 126;
+static WORD_WRAP_TOKEN: u8 = 127;
+static NON_SPACE_WRAP_TOKEN: u8 = 128;
+static MAX_TEXT_LINES_TOKEN: u8 = 129;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -205,6 +208,9 @@ struct InitialFont {
     justify_h: String,
     justify_v: String,
     spacing: f64,
+    word_wrap: bool,
+    non_space_wrap: bool,
+    max_lines: u32,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -220,6 +226,9 @@ impl Default for InitialFont {
             justify_h: "CENTER".to_owned(),
             justify_v: "MIDDLE".to_owned(),
             spacing: 0.0,
+            word_wrap: true,
+            non_space_wrap: false,
+            max_lines: 0,
             edit_max_letters: 0,
             edit_password: false,
             edit_multiline: false,
@@ -2280,6 +2289,9 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(justify_h_key(), font.justify_h.as_str()))
                 .and_then(|()| table.raw_set(justify_v_key(), font.justify_v.as_str()))
                 .and_then(|()| table.raw_set(spacing_key(), font.spacing))
+                .and_then(|()| table.raw_set(word_wrap_key(), font.word_wrap))
+                .and_then(|()| table.raw_set(non_space_wrap_key(), font.non_space_wrap))
+                .and_then(|()| table.raw_set(max_text_lines_key(), font.max_lines))
                 .and_then(|()| {
                     table.raw_set(
                         text_color_key(),
@@ -2587,6 +2599,9 @@ fn create_dynamic_frame(
         record.raw_set("font_assigned", false)?;
         record.raw_set("font_text_reference", Option::<String>::None)?;
         record.raw_set("font_spacing", 0.0_f64)?;
+        record.raw_set("font_word_wrap", true)?;
+        record.raw_set("font_non_space_wrap", false)?;
+        record.raw_set("font_max_lines", 0_u32)?;
         record.raw_set("edit_max_letters", 0_u32)?;
         record.raw_set("edit_password", false)?;
         record.raw_set("edit_multiline", false)?;
@@ -2896,6 +2911,15 @@ fn create_dynamic_object(
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
         object.raw_set(spacing_key(), record.raw_get::<f64>("font_spacing")?)?;
+        object.raw_set(word_wrap_key(), record.raw_get::<bool>("font_word_wrap")?)?;
+        object.raw_set(
+            non_space_wrap_key(),
+            record.raw_get::<bool>("font_non_space_wrap")?,
+        )?;
+        object.raw_set(
+            max_text_lines_key(),
+            record.raw_get::<u32>("font_max_lines")?,
+        )?;
         object.raw_set(
             text_color_key(),
             lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
@@ -3846,15 +3870,72 @@ fn register_font_string_methods(
             ))
         })?,
     )?;
+    let width_measurement = measurement.clone();
     methods.raw_set(
         "GetStringWidth",
         lua.create_function(move |_, font_string: Table| {
-            let Some(measurement) = &measurement else {
+            let Some(measurement) = &width_measurement else {
                 return Err(mlua::Error::runtime(
                     "FontString:GetStringWidth requires a mounted stock asset store",
                 ));
             };
             measurement.font_string_width(&font_string)
+        })?,
+    )?;
+    let height_measurement = measurement.clone();
+    methods.raw_set(
+        "GetStringHeight",
+        lua.create_function(move |_, font_string: Table| {
+            let Some(measurement) = &height_measurement else {
+                return Err(mlua::Error::runtime(
+                    "FontString:GetStringHeight requires a mounted stock asset store",
+                ));
+            };
+            measurement.font_string_height(&font_string)
+        })?,
+    )?;
+    let field_measurement = measurement.clone();
+    methods.raw_set(
+        "GetFieldSize",
+        lua.create_function(move |_, font_string: Table| {
+            let Some(measurement) = &field_measurement else {
+                return Err(mlua::Error::runtime(
+                    "FontString:GetFieldSize requires a mounted stock asset store",
+                ));
+            };
+            measurement.font_string_dimensions(&font_string)
+        })?,
+    )?;
+    let word_wrap_measurement = measurement.clone();
+    methods.raw_set(
+        "SetWordWrap",
+        lua.create_function(move |_, (font_string, enabled): (Table, bool)| {
+            font_string.raw_set(word_wrap_key(), enabled)?;
+            if let Some(measurement) = &word_wrap_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    methods.raw_set(
+        "CanWordWrap",
+        lua.create_function(|_, font_string: Table| font_string.raw_get::<bool>(word_wrap_key()))?,
+    )?;
+    let non_space_measurement = measurement;
+    methods.raw_set(
+        "SetNonSpaceWrap",
+        lua.create_function(move |_, (font_string, enabled): (Table, bool)| {
+            font_string.raw_set(non_space_wrap_key(), enabled)?;
+            if let Some(measurement) = &non_space_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    methods.raw_set(
+        "CanNonSpaceWrap",
+        lua.create_function(|_, font_string: Table| {
+            font_string.raw_get::<bool>(non_space_wrap_key())
         })?,
     )?;
     register_font_string_justification_methods(lua, methods)?;
@@ -7016,6 +7097,15 @@ fn apply_initial_font_element(
     {
         initial.spacing = spacing;
     }
+    if let Some(value) = xml_attribute(element, "wordwrap").and_then(stock_xml_bool) {
+        initial.word_wrap = value;
+    }
+    if let Some(value) = xml_attribute(element, "nonspacewrap").and_then(stock_xml_bool) {
+        initial.non_space_wrap = value;
+    }
+    if let Some(value) = xml_attribute(element, "maxLines").and_then(|value| value.parse().ok()) {
+        initial.max_lines = value;
+    }
     if let Some(reference) = xml_attribute(element, "text") {
         initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
     }
@@ -7623,6 +7713,18 @@ pub(super) fn auto_text_width_key() -> LightUserData {
 
 pub(super) fn auto_text_height_key() -> LightUserData {
     hidden_key(&AUTO_TEXT_HEIGHT_TOKEN)
+}
+
+pub(super) fn word_wrap_key() -> LightUserData {
+    hidden_key(&WORD_WRAP_TOKEN)
+}
+
+pub(super) fn non_space_wrap_key() -> LightUserData {
+    hidden_key(&NON_SPACE_WRAP_TOKEN)
+}
+
+pub(super) fn max_text_lines_key() -> LightUserData {
+    hidden_key(&MAX_TEXT_LINES_TOKEN)
 }
 
 pub(super) fn highlight_font_key() -> LightUserData {

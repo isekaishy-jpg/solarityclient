@@ -15,6 +15,7 @@ pub use c_simple_font::{
     FontCatalog, FontColor, FontDefinition, FontOutline, FontShadow, HorizontalJustification,
     VerticalJustification,
 };
+pub(crate) use gxu_font_string::wrap_line;
 pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
 pub use gxu_font_util::{FontRasterization, FontSystem};
 pub use i_gxu_font_glyph::RasterizedGlyph;

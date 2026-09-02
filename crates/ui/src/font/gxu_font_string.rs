@@ -771,6 +771,77 @@ struct PresentedCharacter {
     color: Option<[f32; 4]>,
 }
 
+/// Wraps one explicit line at whitespace boundaries using stock glyph advances.
+///
+/// `CSimpleFontString::LoadXML` at `0x004873E0` leaves word wrapping enabled
+/// unless the `wordwrap` attribute disables it. The same path admits
+/// `nonspacewrap` for words wider than the field. Leading and boundary
+/// whitespace is not carried onto a continuation line.
+pub(crate) fn wrap_line<T: Copy>(
+    items: &[T],
+    max_width: f64,
+    non_space_wrap: bool,
+    character: impl Fn(&T) -> char,
+    advance: impl Fn(&T) -> f64,
+) -> Vec<Vec<T>> {
+    if items.is_empty() || !max_width.is_finite() || max_width <= 0.0 {
+        return vec![items.to_vec()];
+    }
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut current_width = 0.0;
+    let mut cursor = 0;
+    while cursor < items.len() {
+        let whitespace_start = cursor;
+        while cursor < items.len() && character(&items[cursor]).is_whitespace() {
+            cursor += 1;
+        }
+        if cursor == items.len() {
+            break;
+        }
+        let word_start = cursor;
+        while cursor < items.len() && !character(&items[cursor]).is_whitespace() {
+            cursor += 1;
+        }
+        let whitespace = &items[whitespace_start..word_start];
+        let word = &items[word_start..cursor];
+        let whitespace_width = whitespace.iter().map(&advance).sum::<f64>();
+        let word_width = word.iter().map(&advance).sum::<f64>();
+        let joined_width = current_width
+            + if current.is_empty() {
+                0.0
+            } else {
+                whitespace_width
+            }
+            + word_width;
+        if !current.is_empty() && joined_width > max_width {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0.0;
+        } else if !current.is_empty() {
+            current.extend_from_slice(whitespace);
+            current_width += whitespace_width;
+        }
+        if non_space_wrap && word_width > max_width {
+            for item in word {
+                let item_width = advance(item);
+                if !current.is_empty() && current_width + item_width > max_width {
+                    lines.push(std::mem::take(&mut current));
+                    current_width = 0.0;
+                }
+                current.push(*item);
+                current_width += item_width;
+            }
+        } else {
+            current.extend_from_slice(word);
+            current_width += word_width;
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 /// Removes the inline formatting vocabulary consumed by build-12340
 /// FontStrings while retaining the active color on each visible scalar.
 fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
@@ -792,6 +863,14 @@ fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
         }
         if remaining.starts_with("|r") {
             color = None;
+            cursor += 2;
+            continue;
+        }
+        if remaining.starts_with("|n") {
+            output.push(PresentedCharacter {
+                character: '\n',
+                color,
+            });
             cursor += 2;
             continue;
         }
@@ -884,7 +963,7 @@ fn layout_live_quads(
             }
             lines
         };
-        let lines = if lines.is_empty() {
+        let mut lines = if lines.is_empty() {
             vec![Vec::new()]
         } else {
             lines
@@ -893,6 +972,29 @@ fn layout_live_quads(
         let [inset_left, inset_right, inset_top, inset_bottom] = text.text_insets;
         let available_width = (owner.width() - inset_left - inset_right).max(0.0);
         let available_height = (owner.height() - inset_top - inset_bottom).max(0.0);
+        if object.kind == UiObjectKind::FontString && text.word_wrap {
+            lines = lines
+                .into_iter()
+                .flat_map(|line| {
+                    wrap_line(
+                        &line,
+                        available_width,
+                        text.non_space_wrap,
+                        |presented| presented.character,
+                        |presented| {
+                            glyphs
+                                .get(&GlyphKey::new(&font, presented.character))
+                                .map_or(0.0, |glyph| {
+                                    glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit
+                                })
+                        },
+                    )
+                })
+                .collect();
+        }
+        if text.max_lines > 0 {
+            lines.truncate(text.max_lines as usize);
+        }
         let line_height = f64::from(font.pixel_height) / pixels_per_ui_unit;
         let block_height =
             line_height * lines.len() as f64 + text.spacing * lines.len().saturating_sub(1) as f64;

@@ -247,6 +247,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .into());
     }
     validate_visible_font_string_extents(manager, "character creation")?;
+    validate_character_creation_text_layout(manager)?;
     let globals = manager.bundle().lua().globals();
     manager
         .bundle()
@@ -326,6 +327,64 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         request.gender_id(),
         request.appearance()
     );
+    Ok(())
+}
+
+fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
+    let quads = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames());
+    for name in ["CharacterCreateRaceText", "CharacterCreateClassText"] {
+        let object = object_index(manager, name)?;
+        let bounds = manager
+            .geometry()
+            .region(object)
+            .ok_or_else(|| invalid_data(format!("{name} has no geometry")))?
+            .presentation_bounds();
+        let font_string = manager.bundle().lua().globals().get::<mlua::Table>(name)?;
+        let measured_height = font_string
+            .get::<mlua::Function>("GetStringHeight")?
+            .call::<f64>(font_string.clone())?;
+        let (measured_width, field_height) = font_string
+            .get::<mlua::Function>("GetFieldSize")?
+            .call::<(f64, f64)>(font_string)?;
+        let glyph_bounds = quads
+            .iter()
+            .filter(|glyph| glyph.object_index() == object)
+            .map(|glyph| glyph.bounds())
+            .collect::<Vec<_>>();
+        let glyph_top = glyph_bounds
+            .iter()
+            .map(|glyph| glyph[3])
+            .reduce(f32::max)
+            .ok_or_else(|| invalid_data(format!("{name} has no glyphs")))?;
+        let glyph_bottom = glyph_bounds
+            .iter()
+            .map(|glyph| glyph[1])
+            .reduce(f32::min)
+            .ok_or_else(|| invalid_data(format!("{name} has no glyphs")))?;
+        if (bounds.width() - 220.0).abs() > 0.01
+            || bounds.height() < 40.0
+            || measured_width > 222.0
+            || (measured_height - field_height).abs() > 0.01
+            || glyph_top - glyph_bottom < 40.0
+        {
+            return Err(invalid_data(format!(
+                "{name} did not retain stock fixed-width wrapping: bounds={bounds:?} measured=({measured_width}, {measured_height}) glyph_span={}",
+                glyph_top - glyph_bottom,
+            ))
+            .into());
+        }
+        let overflow = glyph_bounds.iter().any(|glyph| {
+            f64::from(glyph[0]) < bounds.left() - 2.0 || f64::from(glyph[2]) > bounds.right() + 2.0
+        });
+        if overflow {
+            return Err(invalid_data(format!(
+                "{name} emitted wrapped glyphs outside its fixed-width field"
+            ))
+            .into());
+        }
+    }
     Ok(())
 }
 

@@ -134,6 +134,22 @@ impl FontSystem {
         text: &str,
         rasterization: FontRasterization,
     ) -> Result<i64, FontError> {
+        self.measure_character_advances_26_6(store, path, pixel_height, text, rasterization)
+            .map(|advances| advances.into_iter().fold(0_i64, i64::saturating_add))
+    }
+
+    /// Measures each scalar after selecting one stock face and size.
+    ///
+    /// FontString wrapping consumes the same unfitted advances as ordinary
+    /// line measurement without reopening or resizing the face per scalar.
+    pub(crate) fn measure_character_advances_26_6(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+        pixel_height: u32,
+        text: &str,
+        rasterization: FontRasterization,
+    ) -> Result<Vec<i64>, FontError> {
         self.ensure_face(store, path)?;
         let Some(face) = self.faces.get(path) else {
             return Err(FontError::Face {
@@ -158,7 +174,7 @@ impl FontSystem {
                 stock_flags | LoadFlag::MONOCHROME | LoadFlag::TARGET_MONO
             }
         };
-        let mut width = 0_i64;
+        let mut advances = Vec::with_capacity(text.chars().count());
         for character in text.chars() {
             let Some(index) = face.get_char_index(character as usize) else {
                 return Err(FontError::Glyph {
@@ -174,9 +190,9 @@ impl FontSystem {
                     message: error.to_string(),
                 })?;
             let advance = i64::from(face.glyph().metrics().horiAdvance) / 64 + 1;
-            width = width.saturating_add(advance.saturating_mul(64));
+            advances.push(advance.saturating_mul(64));
         }
-        Ok(width)
+        Ok(advances)
     }
 
     /// Returns the hinted ascender for one face and pixel height.

@@ -125,6 +125,14 @@ bearing and 26.6 advance metrics. Grayscale and one-bit monochrome bitmaps are
 handled explicitly; other formats, corrupt fonts, and missing glyph assets are
 errors instead of requests for an operating-system substitute.
 
+FontStrings without an authored width or height derive that axis from their
+laid-out text. Fixed-width strings retain build-12340's default word wrapping,
+optional non-space wrapping, and `maxLines` cap; automatic height is then
+computed from the wrapped line set. The renderer consumes the same per-glyph
+advances, explicit CR/LF boundaries, and `|n` control-line breaks as the Lua
+measurement methods, so character-creation descriptions and their scroll
+children cannot disagree about the field extent.
+
 ## Object declarations
 
 Every expanded root XML action is registered as either a virtual template or a

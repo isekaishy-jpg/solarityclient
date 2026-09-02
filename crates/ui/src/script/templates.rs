@@ -90,6 +90,9 @@ pub struct UiRuntimeTemplateNode {
     font_object_name: Option<String>,
     font_text_reference: Option<String>,
     font_spacing: f64,
+    font_word_wrap: bool,
+    font_non_space_wrap: bool,
+    font_max_lines: u32,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -277,6 +280,9 @@ impl UiRuntimeTemplatePlan {
                     font_object_name: font.object_name,
                     font_text_reference: font.text_reference,
                     font_spacing: font.spacing,
+                    font_word_wrap: font.word_wrap,
+                    font_non_space_wrap: font.non_space_wrap,
+                    font_max_lines: font.max_lines,
                     edit_max_letters: font.edit_max_letters,
                     edit_password: font.edit_password,
                     edit_multiline: font.edit_multiline,
@@ -452,6 +458,9 @@ impl UiRuntimeTemplatePlan {
                 }
                 record.raw_set("font_text_reference", node.font_text_reference.as_deref())?;
                 record.raw_set("font_spacing", node.font_spacing)?;
+                record.raw_set("font_word_wrap", node.font_word_wrap)?;
+                record.raw_set("font_non_space_wrap", node.font_non_space_wrap)?;
+                record.raw_set("font_max_lines", node.font_max_lines)?;
                 record.raw_set("edit_max_letters", node.edit_max_letters)?;
                 record.raw_set("edit_password", node.edit_password)?;
                 record.raw_set("edit_multiline", node.edit_multiline)?;
@@ -521,6 +530,9 @@ struct InitialFont {
     object_name: Option<String>,
     text_reference: Option<String>,
     spacing: f64,
+    word_wrap: bool,
+    non_space_wrap: bool,
+    max_lines: u32,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -543,6 +555,7 @@ fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialF
     let mut initial = InitialFont {
         justify_h: "CENTER".to_owned(),
         justify_v: "MIDDLE".to_owned(),
+        word_wrap: true,
         ..InitialFont::default()
     };
     for layer in node.layers() {
@@ -587,6 +600,15 @@ fn apply_initial_font_element(
         && spacing.is_finite()
     {
         initial.spacing = spacing;
+    }
+    if let Some(value) = attribute(element, "wordwrap").and_then(stock_xml_bool) {
+        initial.word_wrap = value;
+    }
+    if let Some(value) = attribute(element, "nonspacewrap").and_then(stock_xml_bool) {
+        initial.non_space_wrap = value;
+    }
+    if let Some(value) = attribute(element, "maxLines").and_then(|value| value.parse().ok()) {
+        initial.max_lines = value;
     }
     if let Some(reference) = attribute(element, "text") {
         initial.text_reference = (!reference.is_empty()).then(|| reference.to_owned());
