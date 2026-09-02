@@ -50,6 +50,8 @@ const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
+    /// Character-eye billboard bones retained in model orientation.
+    model_oriented_billboard_bones: Vec<bool>,
     mesh: Option<M2MeshHandle>,
     draws: Vec<Option<M2GpuDraw>>,
     particles: Vec<M2GpuParticle>,
@@ -1557,10 +1559,11 @@ impl M2Frame {
             let advance =
                 playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
             if let Some(expired) = advance.expired_variation {
-                let expired_pose = M2BonePose::compose_with_model_view(
+                let expired_pose = M2BonePose::compose_with_model_view_and_orientation_mask(
                     source.model.animations(),
                     expired.clock,
                     camera.view() * placement.transform,
+                    &source.model_oriented_billboard_bones,
                 )?;
                 append_triggered_events(
                     &mut self.triggered_events,
@@ -1574,8 +1577,12 @@ impl M2Frame {
             let clock = advance.clock;
             let event_window = playback.event_window(animation_time_ms, global_time_ms);
             let model_view = camera.view() * placement.transform;
-            let bone_pose =
-                M2BonePose::compose_with_model_view(source.model.animations(), clock, model_view)?;
+            let bone_pose = M2BonePose::compose_with_model_view_and_orientation_mask(
+                source.model.animations(),
+                clock,
+                model_view,
+                &source.model_oriented_billboard_bones,
+            )?;
             append_triggered_events(
                 &mut self.triggered_events,
                 &source.model,
@@ -2609,6 +2616,12 @@ fn prepare_gpu_source(
     }
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     validate_gpu_texture_coverage(model, &plan, textures, geosets)?;
+    let model_oriented_billboard_bones = match geosets {
+        Some(M2GeosetSelection::Character(geosets)) => {
+            plan.character_eye_orientation_mask(geosets, model.animations().bones().len())
+        }
+        Some(M2GeosetSelection::Creature(_)) | None => Vec::new(),
+    };
     let mut upload_indices = Vec::new();
     let mut uploads = Vec::new();
     for (texture_index, texture) in textures.iter().enumerate() {
@@ -2745,6 +2758,7 @@ fn prepare_gpu_source(
     Ok(M2GpuSource {
         model: Arc::clone(model),
         plan,
+        model_oriented_billboard_bones,
         mesh,
         draws,
         particles,

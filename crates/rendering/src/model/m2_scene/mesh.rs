@@ -107,6 +107,46 @@ impl M2MeshPlan {
             .filter(|draw| geosets.is_visible(draw.geoset_id()))
     }
 
+    /// Marks bones weighted by the selected character-eye surface.
+    ///
+    /// Character 17xx geometry uses authored billboard flags for its eye-card
+    /// implementation, but build 12340's character compositor keeps those
+    /// selected bones oriented with the face. The returned table is indexed
+    /// by the model's bone array and deliberately excludes hidden eye variants.
+    #[must_use]
+    pub fn character_eye_orientation_mask(
+        &self,
+        geosets: &CharacterGeosetPlan,
+        bone_count: usize,
+    ) -> Vec<bool> {
+        let mut mask = vec![false; bone_count];
+        for draw in self
+            .character_draws(geosets)
+            .filter(|draw| draw.geoset_id() / 100 == 17)
+        {
+            let first = draw.first_index() as usize;
+            let end = first.saturating_add(draw.index_count() as usize);
+            let Some(indices) = self.indices.get(first..end) else {
+                debug_assert!(false, "validated M2 draw range left the index table");
+                continue;
+            };
+            for vertex_index in indices.iter().copied().map(usize::from) {
+                let Some(vertex) = self.vertices.get(vertex_index) else {
+                    debug_assert!(false, "validated M2 index left the vertex table");
+                    continue;
+                };
+                for (weight, bone) in vertex.bone_weights().into_iter().zip(vertex.bone_indices()) {
+                    if weight != 0
+                        && let Some(entry) = mask.get_mut(usize::from(bone))
+                    {
+                        *entry = true;
+                    }
+                }
+            }
+        }
+        mask
+    }
+
     /// Serializes vertices without relying on Rust layout or unsafe casts.
     #[must_use]
     pub fn vertex_bytes(&self) -> Vec<u8> {

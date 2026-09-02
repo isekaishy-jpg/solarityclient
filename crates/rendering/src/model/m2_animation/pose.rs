@@ -98,7 +98,7 @@ impl M2BonePose {
         animations: &M2AnimationSet,
         clock: M2AnimationClock,
     ) -> Result<Self, M2BonePoseError> {
-        Self::compose_inner(animations, clock, None)
+        Self::compose_inner(animations, clock, None, &[])
     }
 
     /// Samples every bone and applies stock's camera-relative billboards.
@@ -115,6 +115,26 @@ impl M2BonePose {
         clock: M2AnimationClock,
         model_view: Mat4,
     ) -> Result<Self, M2BonePoseError> {
+        Self::compose_with_model_view_and_orientation_mask(animations, clock, model_view, &[])
+    }
+
+    /// Samples every bone while keeping selected billboard bones model-oriented.
+    ///
+    /// Build 12340's character compositor uses this exception for the bones
+    /// weighted by the selected 17xx eye card. Other billboard bones retain
+    /// the ordinary camera-relative path. A mask shorter than the bone table
+    /// leaves every missing entry camera-relative.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2BonePoseError`] for invalid animation selection or a
+    /// non-finite/non-invertible model-view transform.
+    pub fn compose_with_model_view_and_orientation_mask(
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Mat4,
+        model_oriented_billboard_bones: &[bool],
+    ) -> Result<Self, M2BonePoseError> {
         if !finite_matrix(model_view) {
             return Err(M2BonePoseError::InvalidModelView);
         }
@@ -129,6 +149,7 @@ impl M2BonePose {
                 model_view,
                 inverse_model_view: model_view.inverse(),
             }),
+            model_oriented_billboard_bones,
         )
     }
 
@@ -137,6 +158,7 @@ impl M2BonePose {
         animations: &M2AnimationSet,
         clock: M2AnimationClock,
         model_view: Option<BillboardView>,
+        model_oriented_billboard_bones: &[bool],
     ) -> Result<Self, M2BonePoseError> {
         let sequence = clock.resolve(animations)?;
         if model_view.is_none()
@@ -193,6 +215,7 @@ impl M2BonePose {
                 &mut transforms,
                 &mut states,
                 model_view,
+                model_oriented_billboard_bones,
             );
         }
         Ok(Self { transforms })
@@ -254,6 +277,7 @@ fn compose_bone(
     transforms: &mut [Mat4],
     states: &mut [u8],
     model_view: Option<BillboardView>,
+    model_oriented_billboard_bones: &[bool],
 ) {
     if states[index] == 2 {
         return;
@@ -261,7 +285,15 @@ fn compose_bone(
     states[index] = 1;
     if let Some(parent) = animations.bones()[index].parent().map(usize::from) {
         if states[parent] == 0 {
-            compose_bone(parent, animations, local, transforms, states, model_view);
+            compose_bone(
+                parent,
+                animations,
+                local,
+                transforms,
+                states,
+                model_view,
+                model_oriented_billboard_bones,
+            );
         }
         transforms[index] =
             inherited_parent_transform(transforms[parent], animations.bones()[index].flags())
@@ -271,7 +303,12 @@ fn compose_bone(
     }
     if let Some(view) = model_view {
         let flags = animations.bones()[index].flags() & 0x78;
-        if flags != 0 {
+        if flags != 0
+            && !model_oriented_billboard_bones
+                .get(index)
+                .copied()
+                .unwrap_or(false)
+        {
             transforms[index] = billboard_transform(
                 transforms[index],
                 local[index],

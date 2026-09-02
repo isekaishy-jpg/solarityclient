@@ -1965,6 +1965,16 @@ fn m2_bone_pose_applies_stock_view_space_billboard() -> Result<(), Box<dyn Error
     assert_eq!(view_bone.x_axis.truncate(), Vec3::new(0.0, 0.0, -1.0));
     assert_eq!(view_bone.y_axis.truncate(), Vec3::X);
     assert_eq!(view_bone.z_axis.truncate(), Vec3::Y);
+    let model_oriented = M2BonePose::compose_with_model_view_and_orientation_mask(
+        model.animations(),
+        M2AnimationClock::new(0, 500.0, 0.0),
+        camera.view(),
+        &[true],
+    )?;
+    assert_eq!(
+        model_oriented.transforms()[0],
+        Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))
+    );
     Ok(())
 }
 
@@ -2033,6 +2043,13 @@ fn character_geosets_apply_helmet_masks_before_eye_glow() -> Result<(), Box<dyn 
         ],
         b"\0",
     );
+    let mut eye_model = render_m2_bytes("Eye.blp", 1)?;
+    let bone_offset = usize::try_from(u32::from_le_bytes(eye_model[0x30..0x34].try_into()?))?;
+    let eye_bone_offset = bone_offset + 2 * 88;
+    eye_model[eye_bone_offset + 4..eye_bone_offset + 8].copy_from_slice(&0x8_u32.to_le_bytes());
+    let mut eye_skin = render_skin_bytes()?;
+    let eye_submesh_offset = usize::try_from(u32::from_le_bytes(eye_skin[32..36].try_into()?))?;
+    eye_skin[eye_submesh_offset..eye_submesh_offset + 2].copy_from_slice(&1703_u16.to_le_bytes());
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "DBFilesClient\\CharSections.dbc",
@@ -2058,6 +2075,14 @@ fn character_geosets_apply_helmet_masks_before_eye_glow() -> Result<(), Box<dyn 
             path: "DBFilesClient\\HelmetGeosetVisData.dbc",
             bytes: &helmet_visibility,
         },
+        FixtureFile {
+            path: "Character\\Solarity\\Eye.m2",
+            bytes: &eye_model,
+        },
+        FixtureFile {
+            path: "Character\\Solarity\\Eye00.skin",
+            bytes: &eye_skin,
+        },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
@@ -2071,7 +2096,7 @@ fn character_geosets_apply_helmet_masks_before_eye_glow() -> Result<(), Box<dyn 
     let head_definition = definitions.item(70_001).ok_or("head item is absent")?;
     let head_display = displays.display(71_001).ok_or("head display is absent")?;
 
-    let plan = CharacterGeosetPlan::equipped(
+    let geoset_plan = CharacterGeosetPlan::equipped(
         &appearance,
         CharacterGeosetContext::new(6, CharacterTabardMode::Equipment),
         &helmet_visibility,
@@ -2083,11 +2108,17 @@ fn character_geosets_apply_helmet_masks_before_eye_glow() -> Result<(), Box<dyn 
     )?;
 
     for hidden in [12, 106, 205, 304, 702, 1606, 1707] {
-        assert!(!plan.visible_geosets().contains(&hidden));
+        assert!(!geoset_plan.visible_geosets().contains(&hidden));
     }
     for visible in [1, 101, 201, 301, 701, 1601, 1703] {
-        assert!(plan.visible_geosets().contains(&visible));
+        assert!(geoset_plan.visible_geosets().contains(&visible));
     }
+    let eye_model =
+        DecodedM2Model::load(&mut store, &AssetPath::new("Character\\Solarity\\Eye.m2")?)?;
+    let eye_plan = M2MeshPlan::prepare(&eye_model, 0)?;
+    let eye_mask =
+        eye_plan.character_eye_orientation_mask(&geoset_plan, eye_model.animations().bones().len());
+    assert_eq!(eye_mask, vec![false, false, true]);
     Ok(())
 }
 
