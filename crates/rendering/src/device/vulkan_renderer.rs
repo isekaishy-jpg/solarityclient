@@ -8,7 +8,7 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture}
 use crate::device::vulkan_character_atlas::{
     CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
 };
-use crate::device::vulkan_frame::{FrameContext, present_rgba8};
+use crate::device::vulkan_frame::{FrameContext, FrameUiContext, present_rgba8};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
 use crate::device::vulkan_m2_particle_draw::{
@@ -328,19 +328,46 @@ impl VulkanRenderer {
         source_extent: (u32, u32),
         rgba8: &[u8],
     ) -> Result<(), VulkanError> {
-        match self.present_rgba8_once(source_extent, rgba8) {
-            Err(VulkanError::SwapchainOutOfDate) => {
-                self.recreate_swapchain()?;
-                self.present_rgba8_once(source_extent, rgba8)
-            }
-            result => result,
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_rgba8_once(source_extent, rgba8, None)
+        })
+    }
+
+    /// Fits one tightly packed RGBA8 frame and composites retained UI over it.
+    ///
+    /// This is the movie presentation boundary: decoded pixels retain the
+    /// direct transfer path while process-wide overlays are blended before the
+    /// acquired swapchain image enters presentation layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for invalid source or logical extents, malformed
+    /// pixels, stale UI resources, or Vulkan presentation failures.
+    pub fn present_rgba8_with_ui(
+        &mut self,
+        source_extent: (u32, u32),
+        rgba8: &[u8],
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+    ) -> Result<(), VulkanError> {
+        if logical_extent
+            .iter()
+            .any(|extent| !extent.is_finite() || *extent <= 0.0)
+        {
+            return Err(VulkanError::UiFrameExtent);
         }
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_rgba8_once(source_extent, rgba8, Some((logical_extent, draws)))
+        })?;
+        self.report.presented_ui_draw_count = Some(draws.len());
+        Ok(())
     }
 
     fn present_rgba8_once(
         &mut self,
         source_extent: (u32, u32),
         rgba8: &[u8],
+        ui: Option<([f32; 2], &[UiPreparedDraw])>,
     ) -> Result<(), VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
@@ -351,12 +378,20 @@ impl VulkanRenderer {
             swapchain_loader: &self.swapchain_loader,
             swapchain: self.swapchain,
             swapchain_images: &self.swapchain_images,
+            image_views: &self.image_views,
             graphics_queue: self.graphics_queue,
             present_queue: self.present_queue,
             graphics_queue_family: self.report.graphics_queue_family,
             frame_extent: self.report.extent,
             source_extent,
             rgba8,
+            ui: ui.map(|(logical_extent, draws)| FrameUiContext {
+                logical_extent,
+                pipelines: &self.ui_pipelines,
+                meshes: &self.ui_meshes,
+                texture_sets: &self.ui_texture_sets,
+                draws,
+            }),
         })?;
         self.is_idle = false;
         Ok(())

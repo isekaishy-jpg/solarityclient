@@ -514,10 +514,21 @@ impl ClientServices {
         self.sync_platform_text_input();
         self.persist_glue_cvars()?;
         let movie = self.glue.media_intent().movie().cloned();
-        match self
-            .cinematic
-            .synchronize(movie.as_ref(), &mut self.renderer, &mut self.sound)?
-        {
+        let cinematic_overlay = self
+            .glue
+            .cvar_boolean("showfps")
+            .then(|| {
+                self.fps
+                    .as_ref()
+                    .map(|fps| (fps.logical_extent(), fps.draws()))
+            })
+            .flatten();
+        match self.cinematic.synchronize(
+            movie.as_ref(),
+            &mut self.renderer,
+            &mut self.sound,
+            cinematic_overlay,
+        )? {
             RuntimeCinematicPoll::Presented => {
                 if let Some(fps) = self.fps.as_mut() {
                     fps.record_presented(&mut self.renderer, std::time::Instant::now())?;

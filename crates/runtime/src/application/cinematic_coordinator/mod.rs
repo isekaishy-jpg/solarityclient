@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use solarity_media::{CinematicDecoder, CinematicError, CinematicVideoFrame};
-use solarity_rendering::{VulkanError, VulkanRenderer};
+use solarity_rendering::{UiPreparedDraw, VulkanError, VulkanRenderer};
 use solarity_ui::UiGlueMovieRequest;
 
 use super::sound_coordinator::{RuntimeSoundCoordinator, RuntimeSoundError};
@@ -47,6 +47,7 @@ impl RuntimeCinematicCoordinator {
         request: Option<&UiGlueMovieRequest>,
         renderer: &mut VulkanRenderer,
         sound: &mut RuntimeSoundCoordinator,
+        overlay: Option<([f32; 2], &[UiPreparedDraw])>,
     ) -> Result<RuntimeCinematicPoll, RuntimeCinematicError> {
         let Some(request) = request else {
             if let Some(active) = self.active.take() {
@@ -93,10 +94,17 @@ impl RuntimeCinematicCoordinator {
             );
             return Ok(RuntimeCinematicPoll::Finished { object_index });
         }
-        renderer.present_rgba8(
-            (active.current.width(), active.current.height()),
-            active.current.rgba8(),
-        )?;
+        let source_extent = (active.current.width(), active.current.height());
+        if let Some((logical_extent, draws)) = overlay {
+            renderer.present_rgba8_with_ui(
+                source_extent,
+                active.current.rgba8(),
+                logical_extent,
+                draws,
+            )?;
+        } else {
+            renderer.present_rgba8(source_extent, active.current.rgba8())?;
+        }
         Ok(RuntimeCinematicPoll::Presented)
     }
 }

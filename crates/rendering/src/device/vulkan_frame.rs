@@ -6,6 +6,21 @@ use ash::{Device, vk};
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_ui_draw::UiPreparedDraw;
+use crate::device::vulkan_ui_frame::{UiOverlayRecordContext, record_loaded_overlay};
+use crate::device::vulkan_ui_mesh::UiMeshRegistry;
+use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
+use crate::device::vulkan_ui_texture_set::UiTextureSetRegistry;
+
+/// Retained UI state appended after a direct pixel transfer.
+#[derive(Clone, Copy)]
+pub(super) struct FrameUiContext<'a> {
+    pub(super) logical_extent: [f32; 2],
+    pub(super) pipelines: &'a UiPipelineRegistry,
+    pub(super) meshes: &'a UiMeshRegistry,
+    pub(super) texture_sets: &'a UiTextureSetRegistry,
+    pub(super) draws: &'a [UiPreparedDraw],
+}
 
 /// Borrowed live Vulkan objects needed for one pixel presentation.
 pub(super) struct FrameContext<'a> {
@@ -14,12 +29,14 @@ pub(super) struct FrameContext<'a> {
     pub(super) swapchain_loader: &'a ash::khr::swapchain::Device,
     pub(super) swapchain: vk::SwapchainKHR,
     pub(super) swapchain_images: &'a [vk::Image],
+    pub(super) image_views: &'a [vk::ImageView],
     pub(super) graphics_queue: vk::Queue,
     pub(super) present_queue: vk::Queue,
     pub(super) graphics_queue_family: u32,
     pub(super) frame_extent: (u32, u32),
     pub(super) source_extent: (u32, u32),
     pub(super) rgba8: &'a [u8],
+    pub(super) ui: Option<FrameUiContext<'a>>,
 }
 
 /// Composes, transfers, presents, and synchronously retires one pixel frame.
@@ -44,12 +61,21 @@ pub(super) fn present_rgba8(context: FrameContext<'_>) -> Result<(), VulkanError
         .get(image_index as usize)
         .copied()
         .ok_or_else(|| VulkanError::operation("index swapchain image", "index is out of range"))?;
+    let image_view = context
+        .image_views
+        .get(image_index as usize)
+        .copied()
+        .ok_or_else(|| {
+            VulkanError::operation("index swapchain image view", "index is out of range")
+        })?;
     record_transfer(
         context.device,
         command_buffer,
         resources.staging_buffer,
         image,
+        image_view,
         context.frame_extent,
+        context.ui,
     )?;
     submit_and_present(&context, &resources, command_buffer, image_index)?;
     Ok(())
@@ -195,7 +221,9 @@ fn record_transfer(
     command_buffer: vk::CommandBuffer,
     staging_buffer: vk::Buffer,
     image: vk::Image,
+    image_view: vk::ImageView,
     extent: (u32, u32),
+    ui: Option<FrameUiContext<'_>>,
 ) -> Result<(), VulkanError> {
     let begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -250,20 +278,23 @@ fn record_transfer(
             &[copy_region],
         );
     }
-    let to_present = vk::ImageMemoryBarrier2::default()
-        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
-        .dst_access_mask(vk::AccessFlags2::NONE)
-        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-        .image(image)
-        .subresource_range(subresource_range);
-    let present_barriers = [to_present];
-    let dependency = vk::DependencyInfo::default().image_memory_barriers(&present_barriers);
-    // SAFETY: The transfer write precedes the presentation layout transition
-    // in the same command buffer.
-    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
+    if let Some(ui) = ui.filter(|ui| !ui.draws.is_empty()) {
+        transition_transfer_to_ui(device, command_buffer, image, subresource_range);
+        record_loaded_overlay(UiOverlayRecordContext {
+            device,
+            command_buffer,
+            image_view,
+            extent,
+            logical_extent: ui.logical_extent,
+            pipelines: ui.pipelines,
+            meshes: ui.meshes,
+            texture_sets: ui.texture_sets,
+            draws: ui.draws,
+        })?;
+        transition_ui_to_present(device, command_buffer, image, subresource_range);
+    } else {
+        transition_transfer_to_present(device, command_buffer, image, subresource_range);
+    }
     // SAFETY: All recorded commands reference resources alive through fence retirement.
     unsafe { device.end_command_buffer(command_buffer) }
         .map_err(|source| VulkanError::operation("end transfer command buffer", source))
@@ -319,6 +350,74 @@ fn submit_and_present(
     let wait_result = resources.wait();
     present_result?;
     wait_result
+}
+
+/// Makes transferred movie pixels available as the blending destination.
+fn transition_transfer_to_ui(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+    subresource_range: vk::ImageSubresourceRange,
+) {
+    let barriers = [vk::ImageMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(
+            vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+        )
+        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .image(image)
+        .subresource_range(subresource_range)];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: The transfer completed earlier in this command buffer and the
+    // following dynamic-rendering scope uses this same acquired image.
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
+}
+
+/// Exposes the completed blended movie/UI image to the presentation engine.
+fn transition_ui_to_present(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+    subresource_range: vk::ImageSubresourceRange,
+) {
+    let barriers = [vk::ImageMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+        .dst_access_mask(vk::AccessFlags2::NONE)
+        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .image(image)
+        .subresource_range(subresource_range)];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: The overlay rendering scope ended before this same-command-buffer
+    // presentation transition.
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
+}
+
+/// Exposes a transferred image directly when no retained UI is requested.
+fn transition_transfer_to_present(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+    subresource_range: vk::ImageSubresourceRange,
+) {
+    let barriers = [vk::ImageMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+        .dst_access_mask(vk::AccessFlags2::NONE)
+        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .image(image)
+        .subresource_range(subresource_range)];
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+    // SAFETY: The transfer write precedes the presentation layout transition
+    // in the same command buffer.
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
 }
 
 pub(super) fn swapchain_error(operation: &'static str, source: vk::Result) -> VulkanError {
