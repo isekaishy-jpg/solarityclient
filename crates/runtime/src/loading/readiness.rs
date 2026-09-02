@@ -50,8 +50,8 @@ pub(crate) struct RuntimeLoadingReadiness {
     pub(crate) player_ready: bool,
     /// Terrain and its complete GPU generation are resident.
     pub(crate) scene_ready: bool,
-    /// The local movement parent's game object has entered the destination world.
-    pub(crate) transport_admitted: bool,
+    /// The local movement parent's game object has complete display inputs.
+    pub(crate) transport_presentable: bool,
 }
 
 impl RuntimeLoadingReadiness {
@@ -68,7 +68,7 @@ impl RuntimeLoadingReadiness {
         }
         // Stock `0x006E7F50 -> 0x00409800` retains the card when the local
         // movement state names a transport until that game object resolves.
-        if !self.scene_ready || !self.transport_admitted {
+        if !self.scene_ready || !self.transport_presentable {
             return RuntimeLoadingStage::PlayerReady;
         }
         RuntimeLoadingStage::SceneReady

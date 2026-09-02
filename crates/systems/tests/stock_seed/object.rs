@@ -143,6 +143,49 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     Ok(())
 }
 
+/// Game-object display identity survives sparse field projection for residency.
+#[test]
+fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<dyn Error>> {
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let guid = 0xF110_0000_0000_002A;
+    let create_fields = [(3, 17), (4, 1.0_f32.to_bits()), (8, 42)];
+    world.create_object(
+        guid,
+        ObjectKind::GameObject,
+        Some(solarity_ecs::WorldTransform::new(Vec3::ZERO, 0.0)),
+        create_fields,
+    )?;
+    project_object_fields(&mut world, guid, create_fields)?;
+
+    assert_eq!(
+        world
+            .game_object_presentation(guid)
+            .ok_or("game-object presentation was absent")?
+            .display_id(),
+        42
+    );
+    assert!(world.game_object_presentation(guid).is_some());
+
+    let sparse_fields = [(9, 0x20)];
+    world.update_fields(guid, sparse_fields)?;
+    project_object_fields(&mut world, guid, sparse_fields)?;
+    assert_eq!(
+        world
+            .game_object_presentation(guid)
+            .ok_or("sparse update discarded game-object presentation")?
+            .display_id(),
+        42
+    );
+    assert!(world.unit_presentation(guid).is_none());
+    Ok(())
+}
+
 /// Projection rejects a pre-seeded player until its create type arrives.
 #[test]
 fn projection_requires_the_stock_create_type() -> Result<(), Box<dyn Error>> {

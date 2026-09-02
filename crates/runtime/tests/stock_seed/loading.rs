@@ -13,7 +13,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: true,
         player_ready: true,
         scene_ready: true,
-        transport_admitted: true,
+        transport_presentable: true,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::AwaitingWorld);
 
@@ -22,7 +22,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: false,
         player_ready: true,
         scene_ready: true,
-        transport_admitted: true,
+        transport_presentable: true,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::WorldAccepted);
 
@@ -31,7 +31,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: true,
         player_ready: false,
         scene_ready: true,
-        transport_admitted: true,
+        transport_presentable: true,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::EnvironmentReady);
 
@@ -40,7 +40,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: true,
         player_ready: true,
         scene_ready: false,
-        transport_admitted: true,
+        transport_presentable: true,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::PlayerReady);
 
@@ -49,7 +49,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: true,
         player_ready: true,
         scene_ready: true,
-        transport_admitted: false,
+        transport_presentable: false,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::PlayerReady);
 
@@ -58,7 +58,7 @@ fn loading_readiness_requires_the_complete_stage_chain() {
         environment_ready: true,
         player_ready: true,
         scene_ready: true,
-        transport_admitted: true,
+        transport_presentable: true,
     };
     assert_eq!(readiness.stage(), RuntimeLoadingStage::SceneReady);
 }

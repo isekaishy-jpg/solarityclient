@@ -1,9 +1,9 @@
 //! Projects the stock build-12340 update table into typed ECS components.
 
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
-    PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
-    UnitSheathState, UnitVitals, VisibleEquipmentItem,
+    ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, PlayerAppearance,
+    PlayerEquipment, PlayerMoney, PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity,
+    UnitPresentation, UnitSheathState, UnitVitals, VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -12,6 +12,7 @@ use thiserror::Error;
 // views consumed by later gameplay and rendering systems.
 const OBJECT_FIELD_ENTRY: u16 = 3;
 const OBJECT_FIELD_SCALE_X: u16 = 4;
+const GAME_OBJECT_DISPLAY_ID: u16 = 8;
 const UNIT_FIELD_BYTES_0: u16 = 23;
 const UNIT_FIELD_HEALTH: u16 = 24;
 const UNIT_FIELD_POWER_START: u16 = 25;
@@ -117,6 +118,14 @@ where
     let mut entry_id = object_state.entry_id();
     let mut scale = object_state.scale();
 
+    let game_object_presentation = world
+        .storage()
+        .get::<&GameObjectPresentation>(entity)
+        .map(|component| **component)
+        .ok();
+    let mut game_object_presentation_changed = false;
+    let mut game_object_display_id = game_object_presentation.unwrap_or_default().display_id();
+
     let unit_identity = world
         .storage()
         .get::<&UnitIdentity>(entity)
@@ -208,6 +217,10 @@ where
             OBJECT_FIELD_SCALE_X => {
                 scale = f32::from_bits(value);
                 object_changed = true;
+            }
+            GAME_OBJECT_DISPLAY_ID if kind == ObjectKind::GameObject => {
+                game_object_display_id = value;
+                game_object_presentation_changed = true;
             }
             UNIT_FIELD_BYTES_0 if is_unit(kind) => {
                 [race_id, class_id, gender_id, power_type_id] = value.to_le_bytes();
@@ -312,6 +325,14 @@ where
         world
             .storage_mut()
             .add_component(entity, (ObjectPresentation::new(entry_id, scale),));
+    }
+    if kind == ObjectKind::GameObject
+        && (game_object_presentation.is_none() || game_object_presentation_changed)
+    {
+        world.storage_mut().add_component(
+            entity,
+            (GameObjectPresentation::new(game_object_display_id),),
+        );
     }
     if is_unit(kind) {
         if unit_identity.is_none() || identity_changed {

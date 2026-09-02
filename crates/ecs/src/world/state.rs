@@ -3,6 +3,7 @@
 use shipyard::{EntityId, World};
 use thiserror::Error;
 
+use crate::game_object::GameObjectPresentation;
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind};
 use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression};
@@ -171,6 +172,18 @@ impl ActiveWorld {
             .is_none_or(|guid| self.object_kind(guid) == Some(ObjectKind::GameObject))
     }
 
+    /// Reports whether the admitted transport owns complete display inputs.
+    #[must_use]
+    pub fn is_local_player_transport_presentable(&self) -> bool {
+        self.local_player_transport_guid().is_none_or(|guid| {
+            self.object_kind(guid) == Some(ObjectKind::GameObject)
+                && self.object_transform(guid).is_some()
+                && self
+                    .game_object_presentation(guid)
+                    .is_some_and(|presentation| presentation.display_id() != 0)
+        })
+    }
+
     /// Returns every visible unit/player GUID in deterministic identifier order.
     #[must_use]
     pub fn visible_unit_guids(&self) -> Vec<u64> {
@@ -205,6 +218,16 @@ impl ActiveWorld {
         let entity = self.objects.find(guid)?;
         self.storage
             .get::<&UnitPresentation>(entity)
+            .map(|presentation| **presentation)
+            .ok()
+    }
+
+    /// Returns the display identity projected for one visible game object.
+    #[must_use]
+    pub fn game_object_presentation(&self, guid: u64) -> Option<GameObjectPresentation> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&GameObjectPresentation>(entity)
             .map(|presentation| **presentation)
             .ok()
     }

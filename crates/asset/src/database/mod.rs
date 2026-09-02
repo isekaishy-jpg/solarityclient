@@ -16,6 +16,7 @@ mod creature;
 mod db_cache;
 mod db_cache_instances;
 mod db_client;
+mod game_object;
 mod item;
 mod light;
 mod loading_screen;
@@ -50,6 +51,7 @@ pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureFamilyCatalog,
     CreatureFamilyDefinition, CreatureModelData,
 };
+pub use game_object::{GameObjectDisplayCatalog, GameObjectDisplayInfo};
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, ItemVisual, ItemVisualCatalog,

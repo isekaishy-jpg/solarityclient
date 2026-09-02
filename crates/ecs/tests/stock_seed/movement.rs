@@ -2,7 +2,8 @@
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldMovementSpeeds, WorldMovementState,
+    ActiveWorld, GameObjectPresentation, ObjectKind, WorldBootstrap, WorldMapId,
+    WorldMovementSpeeds, WorldMovementState, WorldTransform,
 };
 use std::error::Error;
 
@@ -43,5 +44,14 @@ fn active_world_retains_complete_living_movement_state() -> Result<(), Box<dyn E
     assert!(!world.is_local_player_transport_admitted());
     world.create_object(transport_guid, ObjectKind::GameObject, None, [])?;
     assert!(world.is_local_player_transport_admitted());
+    assert!(!world.is_local_player_transport_presentable());
+    world.update_transform(transport_guid, WorldTransform::new(Vec3::ZERO, 0.0))?;
+    let transport = world
+        .entity_by_guid(transport_guid)
+        .ok_or("transport entity was absent")?;
+    world
+        .storage_mut()
+        .add_component(transport, (GameObjectPresentation::new(42),));
+    assert!(world.is_local_player_transport_presentable());
     Ok(())
 }
