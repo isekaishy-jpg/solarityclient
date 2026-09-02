@@ -11,7 +11,7 @@ use solarity_rendering::{
     M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameScene,
     WorldFrustum, WorldModelSceneUniform, WorldScreenWindow, sample_m2_camera_frame,
 };
-use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation};
+use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
 
 use crate::application::login_ui::RuntimeUiFrame;
@@ -63,6 +63,12 @@ pub enum RuntimeGlueModelError {
         model: AssetPath,
         texture_index: usize,
     },
+    /// The live Model frame does not define a finite viewport inside its UI canvas.
+    #[error("Glue model {object_index} has invalid viewport bounds")]
+    InvalidViewport {
+        /// Live UI arena identity of the model widget.
+        object_index: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +113,8 @@ struct GlueModelEnvironment {
     local_lights: [M2LocalLightState; 4],
     character_local_lights: [M2LocalLightState; 4],
     pet_local_lights: [M2LocalLightState; 4],
+    bounds: UiScreenRect,
+    alpha: f32,
 }
 
 impl GlueModelEnvironment {
@@ -150,6 +158,8 @@ impl GlueModelEnvironment {
             local_lights,
             character_local_lights,
             pet_local_lights,
+            bounds: model.bounds(),
+            alpha: model.alpha(),
         }
     }
 }
@@ -217,6 +227,7 @@ impl RuntimeGlueModelScene {
                     random,
                 )?;
             }
+            active.frame.set_glue_opacity(active.environment.alpha)?;
             return Ok(());
         }
         if key.camera < 0 {
@@ -270,6 +281,7 @@ impl RuntimeGlueModelScene {
             local_light_count(environment.pet_local_lights),
             random,
         )?;
+        frame.set_glue_opacity(environment.alpha)?;
         self.active = Some(ActiveGlueModel {
             key,
             environment,
@@ -284,7 +296,6 @@ impl RuntimeGlueModelScene {
         &mut self,
         renderer: &mut VulkanRenderer,
         ui: &RuntimeUiFrame,
-        pixel_extent: (u32, u32),
         global_time_ms: f32,
         random: &mut CrtRand,
         overlay: &[solarity_rendering::UiPreparedDraw],
@@ -292,7 +303,14 @@ impl RuntimeGlueModelScene {
         let Some(active) = self.active.as_mut() else {
             return Ok(false);
         };
-        let aspect_ratio = pixel_extent.0 as f32 / pixel_extent.1 as f32;
+        let ui_extent = ui.logical_extent();
+        let screen_window = model_screen_window(
+            active.key.object_index,
+            active.environment.bounds,
+            ui_extent,
+        )?;
+        let aspect_ratio =
+            active.environment.bounds.width() as f32 / active.environment.bounds.height() as f32;
         let animation_time_ms = active.frame.animation_time_ms();
         let clock =
             active
@@ -354,11 +372,48 @@ impl RuntimeGlueModelScene {
             visible.particle_draws,
             visible.ribbon_vertices,
             visible.ribbon_draws,
+            screen_window,
             ui.logical_extent(),
             &ui_draws,
         )?;
         Ok(true)
     }
+}
+
+/// Converts a bottom-left UI rectangle to Vulkan's normalized model window.
+fn model_screen_window(
+    object_index: usize,
+    bounds: UiScreenRect,
+    ui_extent: [f32; 2],
+) -> Result<WorldScreenWindow, RuntimeGlueModelError> {
+    let ui_width = f64::from(ui_extent[0]);
+    let ui_height = f64::from(ui_extent[1]);
+    let values = [
+        bounds.left(),
+        bounds.bottom(),
+        bounds.right(),
+        bounds.top(),
+        ui_width,
+        ui_height,
+    ];
+    if values.into_iter().any(|value| !value.is_finite())
+        || ui_width <= 0.0
+        || ui_height <= 0.0
+        || bounds.width() <= 0.0
+        || bounds.height() <= 0.0
+        || bounds.left() < 0.0
+        || bounds.bottom() < 0.0
+        || bounds.right() > ui_width
+        || bounds.top() > ui_height
+    {
+        return Err(RuntimeGlueModelError::InvalidViewport { object_index });
+    }
+    Ok(WorldScreenWindow::new(
+        (2.0 * bounds.left() / ui_width - 1.0) as f32,
+        (2.0 * bounds.bottom() / ui_height - 1.0) as f32,
+        (2.0 * bounds.right() / ui_width - 1.0) as f32,
+        (2.0 * bounds.top() / ui_height - 1.0) as f32,
+    ))
 }
 
 fn local_light_count(lights: [M2LocalLightState; 4]) -> M2LocalLightCount {

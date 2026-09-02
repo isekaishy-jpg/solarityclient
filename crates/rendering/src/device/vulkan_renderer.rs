@@ -66,7 +66,8 @@ use crate::device::vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureSetHandle, UiTextureSetInfo, UiTextureSetRegistry,
 };
 use crate::device::vulkan_world_frame::{
-    WorldFrameContext, WorldFrameRenderer, WorldFrameReport, WorldFrameScene, WorldUiOverlay,
+    WorldFrameContext, WorldFrameRenderer, WorldFrameReport, WorldFrameScene, WorldFrameWindow,
+    WorldUiOverlay,
 };
 use crate::device::vulkan_world_model_draw::{
     WorldModelPreparedDraw, prepare_draw as prepare_world_model_draw,
@@ -1412,6 +1413,7 @@ impl VulkanRenderer {
                 particle_draws,
                 ribbon_vertices,
                 ribbon_draws,
+                crate::WorldScreenWindow::FULL,
                 None,
             )
         })
@@ -1440,6 +1442,7 @@ impl VulkanRenderer {
         particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
+        screen_window: crate::WorldScreenWindow,
         ui_logical_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
@@ -1455,6 +1458,7 @@ impl VulkanRenderer {
                 particle_draws,
                 ribbon_vertices,
                 ribbon_draws,
+                screen_window,
                 Some(WorldUiOverlay {
                     logical_extent: ui_logical_extent,
                     draws: ui_draws,
@@ -1476,6 +1480,7 @@ impl VulkanRenderer {
         particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
+        screen_window: crate::WorldScreenWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
@@ -1533,6 +1538,9 @@ impl VulkanRenderer {
             particle_draws,
             ribbon_vertices,
             ribbon_draws,
+            WorldFrameWindow {
+                screen: screen_window,
+            },
             ui,
         )?;
         self.is_idle = false;

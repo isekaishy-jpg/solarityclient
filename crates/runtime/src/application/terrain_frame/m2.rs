@@ -93,6 +93,7 @@ struct M2GpuPlacement {
     owner: M2GpuPlacementOwner,
     flags: u16,
     color: [u8; 4],
+    opacity: f32,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2Playback>,
     particles: Vec<M2ParticleSimulation>,
@@ -500,6 +501,7 @@ impl M2Frame {
                 owner: M2GpuPlacementOwner::Static(placement.owner()),
                 flags: placement.flags(),
                 color: placement.color(),
+                opacity: 1.0,
                 particle_colors: None,
                 playback,
                 particles,
@@ -681,6 +683,7 @@ impl M2Frame {
                 owner: M2GpuPlacementOwner::GlueModel { object_index },
                 flags: 0,
                 color: [u8::MAX; 4],
+                opacity: 1.0,
                 particle_colors: None,
                 playback,
                 particles,
@@ -880,6 +883,30 @@ impl M2Frame {
                 source_index,
                 ..placement
             });
+        }
+        Ok(())
+    }
+
+    /// Applies the Model frame's effective alpha to its environment,
+    /// character, equipment, effects, and pet as one composed widget.
+    pub(in crate::application) fn set_glue_opacity(
+        &mut self,
+        opacity: f32,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(RuntimeTerrainFrameError::InvalidGlueM2Opacity { opacity });
+        }
+        for placement in &mut self.placements {
+            if matches!(
+                placement.owner,
+                M2GpuPlacementOwner::GlueModel { .. }
+                    | M2GpuPlacementOwner::GluePet
+                    | M2GpuPlacementOwner::PlayerBody { guid: 0 }
+                    | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
+                    | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. }
+            ) {
+                placement.opacity = opacity;
+            }
         }
         Ok(())
     }
@@ -1694,7 +1721,7 @@ impl M2Frame {
                     simulation.particles(),
                     camera,
                     particle_to_world,
-                    placement_color(placement.color).w,
+                    placement_color(placement.color).w * placement.opacity,
                     &self.particle_twinkle,
                     placement.particle_colors.as_ref(),
                 )?;
@@ -1733,7 +1760,8 @@ impl M2Frame {
             )?;
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
-            let instance_color = placement_color(placement.color);
+            let mut instance_color = placement_color(placement.color);
+            instance_color.w *= placement.opacity;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             if let Some(mesh) = source.mesh {
                 for (draw_index, resources) in source.draws.iter().enumerate() {
@@ -2159,6 +2187,7 @@ fn unit_gpu_placement(
         owner,
         flags: 0,
         color: [255; 4],
+        opacity: 1.0,
         particle_colors,
         playback,
         particles,

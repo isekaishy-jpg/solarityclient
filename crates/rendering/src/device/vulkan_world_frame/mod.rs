@@ -9,6 +9,7 @@ mod types;
 use ash::{Device, vk};
 use glam::Mat4;
 
+use crate::WorldScreenWindow;
 use crate::device::VulkanError;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
@@ -76,6 +77,12 @@ pub(in crate::device) struct WorldUiOverlay<'a> {
     pub(in crate::device) draws: &'a [UiPreparedDraw],
 }
 
+/// Partial normalized screen window used by Glue model widgets.
+#[derive(Clone, Copy)]
+pub(in crate::device) struct WorldFrameWindow {
+    pub(in crate::device) screen: WorldScreenWindow,
+}
+
 #[derive(Default)]
 pub(in crate::device) struct WorldFrameRenderer {
     resources: WorldFrameResources,
@@ -97,6 +104,7 @@ impl WorldFrameRenderer {
         particle_draws: &[M2ParticlePreparedDraw],
         ribbon_vertices: &[M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
+        window: WorldFrameWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
         if terrain_draws.is_empty()
@@ -225,6 +233,7 @@ impl WorldFrameRenderer {
             depth_image: slot.depth_image(),
             depth_view: slot.depth_view(),
             extent: context.extent,
+            screen_window: window.screen,
             frame_sets: slot.descriptor_sets(),
             world_model_material_stride: slot.world_model_material_stride(),
             m2_material_stride: slot.m2_material_stride(),

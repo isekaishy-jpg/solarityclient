@@ -35,6 +35,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_image: vk::Image,
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
+    pub(super) screen_window: crate::WorldScreenWindow,
     pub(super) frame_sets: [vk::DescriptorSet; 6],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
@@ -112,13 +113,30 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .device
             .cmd_begin_rendering(context.command_buffer, &rendering)
     };
+    let window = context.screen_window;
+    let width = context.extent.0 as f32;
+    let height = context.extent.1 as f32;
+    let left = (window.minimum_x() + 1.0) * 0.5 * width;
+    let right = (window.maximum_x() + 1.0) * 0.5 * width;
+    let bottom = (window.minimum_y() + 1.0) * 0.5 * height;
+    let top = (window.maximum_y() + 1.0) * 0.5 * height;
     let viewport = vk::Viewport {
-        x: 0.0,
-        y: context.extent.1 as f32,
-        width: context.extent.0 as f32,
-        height: -(context.extent.1 as f32),
+        x: left,
+        y: height - bottom,
+        width: right - left,
+        height: -(top - bottom),
         min_depth: 0.0,
         max_depth: 1.0,
+    };
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D {
+            x: left.floor() as i32,
+            y: (height - top).floor() as i32,
+        },
+        extent: vk::Extent2D {
+            width: (right.ceil() - left.floor()) as u32,
+            height: (top.ceil() - bottom.floor()) as u32,
+        },
     };
     // SAFETY: Every terrain, WMO, and M2 pipeline declares these dynamic.
     unsafe {
@@ -127,7 +145,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .cmd_set_viewport(context.command_buffer, 0, &[viewport]);
         context
             .device
-            .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
+            .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw)?;

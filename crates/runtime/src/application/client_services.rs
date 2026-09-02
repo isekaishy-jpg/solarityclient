@@ -242,14 +242,7 @@ impl ClientServices {
             } else {
                 &[]
             };
-            if !glue_model.present(
-                &mut renderer,
-                &frame,
-                platform.pixel_extent(),
-                0.0,
-                &mut crt_rand,
-                overlay,
-            )? {
+            if !glue_model.present(&mut renderer, &frame, 0.0, &mut crt_rand, overlay)? {
                 frame.present_with_overlay(&mut renderer, overlay)?;
             }
             if let Some(fps) = fps.as_mut() {
@@ -799,7 +792,6 @@ impl ClientServices {
         if !self.glue_model.present(
             &mut self.renderer,
             frame,
-            self.platform.pixel_extent(),
             global_time_ms,
             &mut self.crt_rand,
             overlay,

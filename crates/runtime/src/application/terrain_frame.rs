@@ -244,6 +244,12 @@ pub enum RuntimeTerrainFrameError {
     /// A Glue model widget supplied a non-positive or non-finite local scale.
     #[error("Glue M2 model scale is invalid")]
     InvalidGlueM2Scale,
+    /// Glue effective alpha is outside the normalized finite interval.
+    #[error("Glue M2 opacity {opacity} is outside the normalized finite interval")]
+    InvalidGlueM2Opacity {
+        /// Invalid effective Model frame alpha.
+        opacity: f32,
+    },
     /// The retained Glue model generation has no matching model placement.
     #[error("Glue M2 model placement is unavailable")]
     MissingGlueM2Placement,
@@ -655,6 +661,7 @@ impl TerrainFrame {
             m2.particle_draws,
             m2.ribbon_vertices,
             m2.ribbon_draws,
+            WorldScreenWindow::FULL,
             ui_extent,
             ui_draws,
         )?)
