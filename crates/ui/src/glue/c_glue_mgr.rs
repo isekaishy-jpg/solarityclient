@@ -442,6 +442,15 @@ impl GlueManager {
             .map(|state| state.preview())
     }
 
+    /// Returns the currently selected enumeration row as renderer inputs.
+    #[must_use]
+    pub fn character_selection_preview(&self) -> Option<crate::UiCharacterSelectionPreview> {
+        self.environment
+            .network()
+            .borrow()
+            .character_selection_preview()
+    }
+
     /// Returns the cursor-visibility request authored by the current screen.
     #[must_use]
     pub fn cursor_visible(&self) -> bool {

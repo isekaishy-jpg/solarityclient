@@ -12,9 +12,10 @@ use solarity_asset::{
 };
 use solarity_cpu::BlizzardRand;
 use solarity_ui::{
-    AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterExpansion,
-    UiCharacterInfo, UiEventArgument, UiEventPayload, UiGlueNetworkAction, UiGlueNetworkStatus,
-    UiKeyboardModifiers, UiObjectRole, UiPointerButton, UiTextureSource,
+    AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterEquipment,
+    UiCharacterExpansion, UiCharacterInfo, UiCharacterPetPreview, UiEventArgument, UiEventPayload,
+    UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers, UiObjectRole, UiPointerButton,
+    UiTextureSource,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -245,7 +246,6 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         ))
         .into());
     }
-
     let globals = manager.bundle().lua().globals();
     manager
         .bundle()
@@ -402,6 +402,13 @@ fn validate_empty_character_selection(manager: &mut GlueManager) -> Result<(), B
         ))
         .into());
     }
+    let Some(UiGlueNetworkAction::SelectCharacter { index: 1 }) = manager.take_network_action()
+    else {
+        return Err(invalid_data(
+            "empty selection did not publish stock's normalized first-row event".to_owned(),
+        )
+        .into());
+    };
     println!(
         "empty character selection: default_model={} create_bounds={:?} quads={} batches={} resident_textures={} pending_textures={}",
         model_path,
@@ -554,12 +561,17 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
             CHARACTER_GUID,
             "SolarityTester".to_owned(),
             "Human".to_owned(),
+            1,
             "Human".to_owned(),
             "Warrior".to_owned(),
             1,
             80,
             Some("Dalaran".to_owned()),
             2,
+            0,
+            [0; 5],
+            [UiCharacterEquipment::default(); 23],
+            UiCharacterPetPreview::default(),
             0,
             0,
         )],
@@ -647,15 +659,15 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
             .into());
         }
     }
-    let Some(UiGlueNetworkAction::SelectCharacter { guid }) = manager.take_network_action() else {
+    let Some(UiGlueNetworkAction::SelectCharacter { index }) = manager.take_network_action() else {
         return Err(invalid_data(
             "stock character-selection refresh did not select the first row".to_owned(),
         )
         .into());
     };
-    if guid != CHARACTER_GUID {
+    if index != 1 {
         return Err(invalid_data(format!(
-            "stock character-selection refresh selected GUID {guid:#x}"
+            "stock character-selection refresh selected row {index}"
         ))
         .into());
     }

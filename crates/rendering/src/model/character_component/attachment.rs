@@ -180,6 +180,66 @@ impl CharacterAttachmentPlan {
         Ok(Self { attachments })
     }
 
+    /// Plans the held character-enumeration presentation used by Glue.
+    ///
+    /// Unlike world equipment, `SMSG_CHAR_ENUM` carries display and inventory
+    /// identifiers but no item entry. Build 12340 presents those weapons in
+    /// the hands, selects a hunter's ranged slot, and treats inventory type 14
+    /// as a shield attachment.
+    pub fn character_selection<'catalog, I>(
+        equipment: I,
+        race: &CharacterRace,
+        gender_id: u32,
+        class_id: u8,
+    ) -> Result<Self, CharacterAttachmentPlanError>
+    where
+        I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+    {
+        let equipment = equipment.into_iter().collect::<Vec<_>>();
+        let mut attachments = Vec::with_capacity(6);
+        for item in &equipment {
+            match item.slot() {
+                PlayerEquipmentSlot::Head => {
+                    push_helmet(&mut attachments, *item, race, gender_id)?;
+                }
+                PlayerEquipmentSlot::Shoulders => {
+                    push_shoulders(&mut attachments, *item)?;
+                }
+                _ => {}
+            }
+        }
+
+        let at_slot = |slot| equipment.iter().copied().find(|item| item.slot() == slot);
+        let visible = |item: Option<CharacterEquipmentItem<'catalog>>| {
+            item.filter(|item| item.inventory_type() != Some(InventoryType::RangedRight))
+        };
+        let main_hand = at_slot(PlayerEquipmentSlot::MainHand);
+        let off_hand = at_slot(PlayerEquipmentSlot::OffHand);
+        let ranged = at_slot(PlayerEquipmentSlot::Ranged);
+        if class_id == 3 {
+            if let Some(item) = ranged {
+                let point = if item.inventory_type() == Some(InventoryType::Ranged) {
+                    CharacterAttachmentPoint::HandLeft
+                } else {
+                    CharacterAttachmentPoint::HandRight
+                };
+                push_selection_held_item(&mut attachments, item, point)?;
+                return Ok(Self { attachments });
+            }
+        } else if let Some(item) = visible(main_hand).or_else(|| visible(ranged)) {
+            push_selection_held_item(&mut attachments, item, CharacterAttachmentPoint::HandRight)?;
+        }
+        if let Some(item) = visible(off_hand) {
+            let point = if item.inventory_type() == Some(InventoryType::Shield) {
+                CharacterAttachmentPoint::Shield
+            } else {
+                CharacterAttachmentPoint::HandLeft
+            };
+            push_selection_held_item(&mut attachments, item, point)?;
+        }
+        Ok(Self { attachments })
+    }
+
     /// Plans stock main-hand, off-hand, and ranged child models.
     ///
     /// Stock reads only model/texture channel zero for this path. A display with
@@ -243,7 +303,9 @@ fn push_helmet(
             race.client_prefix()
         ))?,
         texture: attachment_texture("Item\\ObjectComponents\\Head", texture_name)?,
-        item_visual_id: display.item_visual_id(),
+        item_visual_id: item
+            .item_visual_override()
+            .unwrap_or(display.item_visual_id()),
         enchantment_word: item.visible().enchantment_word(),
         particle_color_id: display.particle_color_id(),
     });
@@ -274,7 +336,9 @@ fn push_shoulders(
                 models[channel]
             ))?,
             texture: attachment_texture("Item\\ObjectComponents\\Shoulder", textures[channel])?,
-            item_visual_id: display.item_visual_id(),
+            item_visual_id: item
+                .item_visual_override()
+                .unwrap_or(display.item_visual_id()),
             enchantment_word: item.visible().enchantment_word(),
             particle_color_id: display.particle_color_id(),
         });
@@ -309,8 +373,41 @@ fn push_held_item(
         point,
         model: AssetPath::new(format!("{folder}\\{model_name}"))?,
         texture: attachment_texture(folder, texture_name)?,
-        item_visual_id: display.item_visual_id(),
+        item_visual_id: item
+            .item_visual_override()
+            .unwrap_or(display.item_visual_id()),
         enchantment_word: item.visible().enchantment_word(),
+        particle_color_id: display.particle_color_id(),
+    });
+    Ok(())
+}
+
+/// Adds one hand-held display from character-enumeration metadata alone.
+fn push_selection_held_item(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    item: CharacterEquipmentItem<'_>,
+    point: CharacterAttachmentPoint,
+) -> Result<(), CharacterAttachmentPlanError> {
+    let display = item.display();
+    let [model_name, _] = display.model_names();
+    if model_name.is_empty() {
+        return Ok(());
+    }
+    let [texture_name, _] = display.model_textures();
+    let folder = if item.inventory_type() == Some(InventoryType::Shield) {
+        "Item\\ObjectComponents\\Shield"
+    } else {
+        "Item\\ObjectComponents\\Weapon"
+    };
+    attachments.push(CharacterItemAttachment {
+        slot: item.slot(),
+        point,
+        model: AssetPath::new(format!("{folder}\\{model_name}"))?,
+        texture: attachment_texture(folder, texture_name)?,
+        item_visual_id: item
+            .item_visual_override()
+            .unwrap_or(display.item_visual_id()),
+        enchantment_word: 0,
         particle_color_id: display.particle_color_id(),
     });
     Ok(())

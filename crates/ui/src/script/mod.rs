@@ -15,9 +15,9 @@ mod templates;
 pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use network_intent::{
-    UiCharacterDirectory, UiCharacterInfo, UiGlueNetworkAction, UiGlueNetworkStatus,
-    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort,
-    UiRealmVersion,
+    UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
+    UiCharacterSelectionPreview, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest,
+    UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort, UiRealmVersion,
 };
 pub use simple_script::{
     UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,

@@ -7,8 +7,8 @@ use glam::{Mat4, Vec3, Vec4};
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, BlpTextureSource,
     CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog, ClientDataRoot,
-    DecodedM2Model, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog,
-    ItemVisualCatalog, Locale, M2BlendMode, ParticleColorCatalog,
+    DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, Locale, M2BlendMode, ParticleColorCatalog,
 };
 use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState, VisibleEquipmentItem};
 use solarity_rendering::{
@@ -2423,6 +2423,98 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
             CharacterAttachmentPoint::SheathShield,
             CharacterAttachmentPoint::HandLeft,
         ]
+    );
+    Ok(())
+}
+
+/// Character enumeration uses display/inventory fields without inventing item IDs.
+#[test]
+fn character_selection_plan_uses_stock_held_equipment_rules() -> Result<(), Box<dyn Error>> {
+    let items = held_equipment_tables();
+    let mut race_strings = vec![0];
+    let client_prefix = append_string(&mut race_strings, "Hu");
+    let client_file_string = append_string(&mut race_strings, "Human");
+    let mut race_fields = [0_u32; 69];
+    race_fields[0] = 1;
+    race_fields[6] = client_prefix;
+    race_fields[11] = client_file_string;
+    let races = create_wdbc(1, 69, &race_fields, &race_strings);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient\\ItemDisplayInfo.dbc",
+            bytes: &items.displays,
+        },
+        FixtureFile {
+            path: "DBFilesClient\\ChrRaces.dbc",
+            bytes: &races,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let displays = ItemDisplayCatalog::load(&mut store)?;
+    let races = CharacterRaceCatalog::load(&mut store)?;
+    let race = races.race(1).ok_or("character race is absent")?;
+    let main = CharacterEquipmentItem::new_selection(
+        PlayerEquipmentSlot::MainHand,
+        displays
+            .display(61_001)
+            .ok_or("main-hand display is absent")?,
+        InventoryType::Weapon,
+        9_001,
+    );
+    let off = CharacterEquipmentItem::new_selection(
+        PlayerEquipmentSlot::OffHand,
+        displays
+            .display(61_002)
+            .ok_or("off-hand display is absent")?,
+        InventoryType::Shield,
+        0,
+    );
+    let ranged = CharacterEquipmentItem::new_selection(
+        PlayerEquipmentSlot::Ranged,
+        displays.display(61_003).ok_or("ranged display is absent")?,
+        InventoryType::Ranged,
+        0,
+    );
+
+    let ordinary = CharacterAttachmentPlan::character_selection([main, off, ranged], race, 0, 1)?;
+    assert_eq!(
+        ordinary
+            .attachments()
+            .iter()
+            .map(|attachment| (
+                attachment.slot(),
+                attachment.point(),
+                attachment.item_visual_id()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                PlayerEquipmentSlot::MainHand,
+                CharacterAttachmentPoint::HandRight,
+                9_001,
+            ),
+            (
+                PlayerEquipmentSlot::OffHand,
+                CharacterAttachmentPoint::Shield,
+                702,
+            ),
+        ]
+    );
+
+    let hunter = CharacterAttachmentPlan::character_selection([main, off, ranged], race, 0, 3)?;
+    assert_eq!(
+        hunter
+            .attachments()
+            .iter()
+            .map(|attachment| (attachment.slot(), attachment.point()))
+            .collect::<Vec<_>>(),
+        [(
+            PlayerEquipmentSlot::Ranged,
+            CharacterAttachmentPoint::HandLeft,
+        )]
     );
     Ok(())
 }

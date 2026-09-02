@@ -634,23 +634,29 @@ impl ClientServices {
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
-        let creation_preview = if self.glue.current_screen() == "charcreate" {
-            self.glue.character_creation_preview()
-        } else {
-            None
+        let current_screen = self.glue.current_screen();
+        let glue_character_changed = match current_screen.as_str() {
+            "charcreate" => {
+                let preview = self.glue.character_creation_preview();
+                self.player
+                    .synchronize_character_creation(preview.as_ref())?
+            }
+            "charselect" => {
+                let preview = self.glue.character_selection_preview();
+                self.player
+                    .synchronize_character_selection(preview.as_ref())?
+            }
+            _ => self.player.synchronize_character_creation(None)?,
         };
-        let creation_changed = self
-            .player
-            .synchronize_character_creation(creation_preview.as_ref())?;
-        let creation = self.player.creation_frame_input();
+        let glue_character = self.player.creation_frame_input();
         self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,
             &self.assets,
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),
-            creation,
-            creation_changed,
+            glue_character,
+            glue_character_changed,
         )?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let overlay = if self.glue.cvar_boolean("showfps") {
@@ -904,8 +910,9 @@ impl ClientServices {
                         &UiEventPayload::new([UiEventArgument::String(message_token.to_owned())])?,
                     )?;
                 }
-                UiGlueNetworkAction::SelectCharacter { guid } => {
-                    let payload = UiEventPayload::new([UiEventArgument::Number(guid as f64)])?;
+                UiGlueNetworkAction::SelectCharacter { index } => {
+                    let payload =
+                        UiEventPayload::new([UiEventArgument::Integer(i64::from(index))])?;
                     self.glue
                         .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)?;
                 }

@@ -1766,6 +1766,26 @@ fn register_character_list_globals(
 ) -> mlua::Result<()> {
     let network = environment.network();
     globals.raw_set(
+        "GetCharacterSelectFacing",
+        lua.create_function(move |_, ()| Ok(network.borrow().character_select_facing()))?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
+        "SetCharacterSelectFacing",
+        lua.create_function(move |_, facing: f64| {
+            network.borrow_mut().set_character_select_facing(facing);
+            Ok(facing)
+        })?,
+    )?;
+    // Wow.exe 0x004E2FD0 reapplies the selected enumeration row to the
+    // registered model. Selection state is synchronous here and is consumed
+    // by the renderer snapshot on the next Glue presentation rebuild.
+    globals.raw_set(
+        "UpdateSelectionCustomizationScene",
+        lua.create_function(|_, ()| Ok(()))?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
         "ReadyForAccountDataTimes",
         lua.create_function(move |_, ()| {
             network
@@ -1840,9 +1860,8 @@ fn register_character_list_globals(
         "SelectCharacter",
         lua.create_function(move |_, index: u32| {
             let mut network = network.borrow_mut();
-            if let Some(guid) = network.select_character_index(index) {
-                network.push(UiGlueNetworkAction::SelectCharacter { guid });
-            }
+            let index = network.select_character_index(index);
+            network.push(UiGlueNetworkAction::SelectCharacter { index });
             Ok(())
         })?,
     )?;

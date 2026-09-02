@@ -5,6 +5,146 @@ const CHARACTER_FLAG_RENAME: u32 = 0x0000_4000;
 const CUSTOMIZE_CHARACTER: u32 = 0x0000_0001;
 const CHANGE_FACTION: u32 = 0x0001_0000;
 const CHANGE_RACE: u32 = 0x0010_0000;
+const CHARACTER_EQUIPMENT_SLOT_COUNT: usize = 23;
+
+/// One display-only equipment row carried by `SMSG_CHAR_ENUM`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UiCharacterEquipment {
+    display_id: u32,
+    inventory_type_id: u8,
+    enchantment_visual_id: u32,
+}
+
+impl UiCharacterEquipment {
+    /// Captures the three exact character-enumeration equipment fields.
+    #[must_use]
+    pub const fn new(display_id: u32, inventory_type_id: u8, enchantment_visual_id: u32) -> Self {
+        Self {
+            display_id,
+            inventory_type_id,
+            enchantment_visual_id,
+        }
+    }
+
+    /// Returns the `ItemDisplayInfo.dbc` identifier.
+    #[must_use]
+    pub const fn display_id(self) -> u32 {
+        self.display_id
+    }
+
+    /// Returns the build-12340 inventory-type identifier.
+    #[must_use]
+    pub const fn inventory_type_id(self) -> u8 {
+        self.inventory_type_id
+    }
+
+    /// Returns the selection-scene item visual override.
+    #[must_use]
+    pub const fn enchantment_visual_id(self) -> u32 {
+        self.enchantment_visual_id
+    }
+}
+
+/// Pet preview fields carried beside one character-enumeration row.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UiCharacterPetPreview {
+    display_id: u32,
+    level: u8,
+    family_id: u8,
+}
+
+impl UiCharacterPetPreview {
+    /// Captures the exact character-selection pet fields.
+    #[must_use]
+    pub const fn new(display_id: u32, level: u8, family_id: u8) -> Self {
+        Self {
+            display_id,
+            level,
+            family_id,
+        }
+    }
+
+    /// Returns the creature display identifier, or zero for no pet.
+    #[must_use]
+    pub const fn display_id(self) -> u32 {
+        self.display_id
+    }
+
+    /// Returns the pet level.
+    #[must_use]
+    pub const fn level(self) -> u8 {
+        self.level
+    }
+
+    /// Returns the creature-family identifier.
+    #[must_use]
+    pub const fn family_id(self) -> u8 {
+        self.family_id
+    }
+}
+
+/// Current selected-character model inputs consumed by the pre-world renderer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiCharacterSelectionPreview {
+    guid: u64,
+    race_id: u8,
+    class_id: u8,
+    gender_id: u8,
+    appearance: [u8; 5],
+    equipment: [UiCharacterEquipment; CHARACTER_EQUIPMENT_SLOT_COUNT],
+    pet: UiCharacterPetPreview,
+    facing_degrees: f64,
+}
+
+impl UiCharacterSelectionPreview {
+    /// Returns the selected world-object GUID.
+    #[must_use]
+    pub const fn guid(&self) -> u64 {
+        self.guid
+    }
+
+    /// Returns the protocol race identifier.
+    #[must_use]
+    pub const fn race_id(&self) -> u8 {
+        self.race_id
+    }
+
+    /// Returns the protocol class identifier.
+    #[must_use]
+    pub const fn class_id(&self) -> u8 {
+        self.class_id
+    }
+
+    /// Returns the zero-based protocol gender identifier.
+    #[must_use]
+    pub const fn gender_id(&self) -> u8 {
+        self.gender_id
+    }
+
+    /// Returns skin, face, hair style, hair color, and facial-hair bytes.
+    #[must_use]
+    pub const fn appearance(&self) -> [u8; 5] {
+        self.appearance
+    }
+
+    /// Returns all 23 character-enumeration equipment records in wire order.
+    #[must_use]
+    pub const fn equipment(&self) -> &[UiCharacterEquipment; CHARACTER_EQUIPMENT_SLOT_COUNT] {
+        &self.equipment
+    }
+
+    /// Returns the selected character's pet preview.
+    #[must_use]
+    pub const fn pet(&self) -> UiCharacterPetPreview {
+        self.pet
+    }
+
+    /// Returns the Glue-controlled character facing in degrees.
+    #[must_use]
+    pub const fn facing_degrees(&self) -> f64 {
+        self.facing_degrees
+    }
+}
 
 /// One character row projected from the authenticated world response.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,12 +152,17 @@ pub struct UiCharacterInfo {
     guid: u64,
     name: String,
     race_name: String,
+    race_id: u8,
     background_model: String,
     class_name: String,
     class_id: u8,
     level: u8,
     zone_name: Option<String>,
     sex: u8,
+    gender_id: u8,
+    appearance: [u8; 5],
+    equipment: [UiCharacterEquipment; CHARACTER_EQUIPMENT_SLOT_COUNT],
+    pet: UiCharacterPetPreview,
     flags: u32,
     customization_flags: u32,
 }
@@ -30,12 +175,17 @@ impl UiCharacterInfo {
         guid: u64,
         name: String,
         race_name: String,
+        race_id: u8,
         background_model: String,
         class_name: String,
         class_id: u8,
         level: u8,
         zone_name: Option<String>,
         sex: u8,
+        gender_id: u8,
+        appearance: [u8; 5],
+        equipment: [UiCharacterEquipment; CHARACTER_EQUIPMENT_SLOT_COUNT],
+        pet: UiCharacterPetPreview,
         flags: u32,
         customization_flags: u32,
     ) -> Self {
@@ -43,12 +193,17 @@ impl UiCharacterInfo {
             guid,
             name,
             race_name,
+            race_id,
             background_model,
             class_name,
             class_id,
             level,
             zone_name,
             sex,
+            gender_id,
+            appearance,
+            equipment,
+            pet,
             flags,
             customization_flags,
         }
@@ -145,6 +300,7 @@ pub struct UiCharacterDirectory {
     characters: Vec<UiCharacterInfo>,
     selected_guid: Option<u64>,
     default_background_model: String,
+    facing_radians_bits: u32,
 }
 
 impl UiCharacterDirectory {
@@ -156,6 +312,7 @@ impl UiCharacterDirectory {
             characters,
             selected_guid,
             default_background_model,
+            facing_radians_bits: 0.0_f32.to_bits(),
         }
     }
 
@@ -187,9 +344,41 @@ impl UiCharacterDirectory {
             .and_then(|index| u32::try_from(index + 1).ok())
     }
 
-    pub(crate) fn select_index(&mut self, one_based_index: u32) -> Option<u64> {
-        let guid = self.by_index(one_based_index).map(UiCharacterInfo::guid)?;
-        self.selected_guid = Some(guid);
-        Some(guid)
+    pub(crate) fn select_index(&mut self, one_based_index: u32) -> u32 {
+        // Wow.exe 0x004E4580 converts the Lua index to zero-based form and
+        // normalizes every out-of-range value to the first row before event 8
+        // publishes the corresponding one-based index.
+        let normalized_index = self
+            .by_index(one_based_index)
+            .map_or(1, |_character| one_based_index);
+        self.selected_guid = self.by_index(normalized_index).map(UiCharacterInfo::guid);
+        normalized_index
+    }
+
+    pub(crate) fn facing_degrees(&self) -> f64 {
+        f64::from(f32::from_bits(self.facing_radians_bits).to_degrees())
+    }
+
+    pub(crate) fn set_facing_degrees(&mut self, facing_degrees: f64) {
+        // Wow.exe 0x004E3030 narrows the Lua number to a float, multiplies by
+        // the stock degrees-to-radians constant, and stores that native value.
+        let radians = (facing_degrees as f32).to_radians();
+        self.facing_radians_bits = radians.to_bits();
+    }
+
+    pub(crate) fn selection_preview(&self) -> Option<UiCharacterSelectionPreview> {
+        let character = self
+            .selected_guid
+            .and_then(|guid| self.characters.iter().find(|row| row.guid == guid))?;
+        Some(UiCharacterSelectionPreview {
+            guid: character.guid,
+            race_id: character.race_id,
+            class_id: character.class_id,
+            gender_id: character.gender_id,
+            appearance: character.appearance,
+            equipment: character.equipment,
+            pet: character.pet,
+            facing_degrees: self.facing_degrees(),
+        })
     }
 }

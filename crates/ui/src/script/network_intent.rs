@@ -8,7 +8,10 @@ use zeroize::Zeroize;
 mod character;
 mod realm;
 
-pub use character::{UiCharacterDirectory, UiCharacterInfo};
+pub use character::{
+    UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
+    UiCharacterSelectionPreview,
+};
 pub use realm::{
     UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort, UiRealmVersion,
 };
@@ -132,8 +135,8 @@ pub enum UiGlueNetworkAction {
     },
     /// Select one character identity for character-screen presentation.
     SelectCharacter {
-        /// World object GUID returned by enumeration.
-        guid: u64,
+        /// One-based row index normalized by the stock native wrapper.
+        index: u32,
     },
     /// Enter the world with the currently selected character.
     EnterWorld {
@@ -256,7 +259,19 @@ impl UiGlueNetworkBridge {
         self.characters = characters;
     }
 
-    pub(crate) fn select_character_index(&mut self, one_based_index: u32) -> Option<u64> {
+    pub(crate) fn select_character_index(&mut self, one_based_index: u32) -> u32 {
         self.characters.select_index(one_based_index)
+    }
+
+    pub(crate) fn character_select_facing(&self) -> f64 {
+        self.characters.facing_degrees()
+    }
+
+    pub(crate) fn set_character_select_facing(&mut self, facing_degrees: f64) {
+        self.characters.set_facing_degrees(facing_degrees);
+    }
+
+    pub(crate) fn character_selection_preview(&self) -> Option<UiCharacterSelectionPreview> {
+        self.characters.selection_preview()
     }
 }

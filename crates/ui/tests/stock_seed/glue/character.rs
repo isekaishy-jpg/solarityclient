@@ -3,7 +3,10 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{GlueManager, UiCharacterDirectory, UiCharacterInfo, UiGlueNetworkAction};
+use solarity_ui::{
+    GlueManager, UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo,
+    UiCharacterPetPreview, UiGlueNetworkAction,
+};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -39,18 +42,25 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let mut first_equipment = [UiCharacterEquipment::default(); 23];
+    first_equipment[15] = UiCharacterEquipment::new(1_234, 13, 77);
     manager.set_character_directory(UiCharacterDirectory::new(
         vec![
             UiCharacterInfo::new(
                 100,
                 "First".to_owned(),
                 "Human".to_owned(),
+                1,
                 "Human".to_owned(),
                 "Mage".to_owned(),
                 8,
                 80,
                 Some("Dalaran".to_owned()),
                 3,
+                1,
+                [1, 2, 3, 4, 5],
+                first_equipment,
+                UiCharacterPetPreview::new(321, 80, 45),
                 0x6000,
                 1,
             ),
@@ -58,6 +68,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
                 200,
                 "Second".to_owned(),
                 "Orc".to_owned(),
+                2,
                 "DEATHKNIGHT".to_owned(),
                 "Death Knight".to_owned(),
                 6,
@@ -65,12 +76,40 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
                 None,
                 2,
                 0,
+                [5, 4, 3, 2, 1],
+                [UiCharacterEquipment::default(); 23],
+                UiCharacterPetPreview::default(),
+                0,
                 0x0010_0000,
             ),
         ],
         "Orc".to_owned(),
     ));
     let globals = manager.bundle().lua().globals();
+
+    let get_facing = globals.get::<mlua::Function>("GetCharacterSelectFacing")?;
+    assert_eq!(get_facing.call::<f64>(())?, 0.0);
+    assert_eq!(
+        globals
+            .get::<mlua::Function>("SetCharacterSelectFacing")?
+            .call::<f64>(45.0)?,
+        45.0
+    );
+    globals
+        .get::<mlua::Function>("UpdateSelectionCustomizationScene")?
+        .call::<()>(())?;
+    assert!((get_facing.call::<f64>(())? - 45.0).abs() < 0.000_01);
+    let preview = manager.character_selection_preview().ok_or_else(|| {
+        std::io::Error::other("first character did not produce a selection preview")
+    })?;
+    assert_eq!(preview.guid(), 100);
+    assert_eq!(preview.race_id(), 1);
+    assert_eq!(preview.class_id(), 8);
+    assert_eq!(preview.gender_id(), 1);
+    assert_eq!(preview.appearance(), [1, 2, 3, 4, 5]);
+    assert_eq!(preview.equipment()[15], first_equipment[15]);
+    assert_eq!(preview.pet(), UiCharacterPetPreview::new(321, 80, 45));
+    assert!((preview.facing_degrees() - 45.0).abs() < 0.000_01);
 
     assert_eq!(
         globals
@@ -158,6 +197,15 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     globals
         .get::<mlua::Function>("SelectCharacter")?
         .call::<()>(2_u32)?;
+    assert_eq!(
+        manager
+            .character_selection_preview()
+            .ok_or_else(|| {
+                std::io::Error::other("second character did not produce a selection preview")
+            })?
+            .guid(),
+        200
+    );
     globals
         .get::<mlua::Function>("EnterWorld")?
         .call::<()>(())?;
@@ -175,7 +223,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert!(!rename.call::<bool>((1_u32, "Booo"))?);
     assert!(matches!(
         manager.take_network_action(),
-        Some(UiGlueNetworkAction::SelectCharacter { guid: 200 })
+        Some(UiGlueNetworkAction::SelectCharacter { index: 2 })
     ));
     assert!(matches!(
         manager.take_network_action(),
@@ -210,13 +258,13 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert!(manager.take_network_action().is_none());
     globals
         .get::<mlua::Function>("SelectCharacter")?
-        .call::<()>(1_u32)?;
+        .call::<()>(99_u32)?;
     globals
         .get::<mlua::Function>("EnterWorld")?
         .call::<()>(())?;
     assert!(matches!(
         manager.take_network_action(),
-        Some(UiGlueNetworkAction::SelectCharacter { guid: 100 })
+        Some(UiGlueNetworkAction::SelectCharacter { index: 1 })
     ));
     assert!(matches!(
         manager.take_network_action(),

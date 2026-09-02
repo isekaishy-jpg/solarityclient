@@ -4,7 +4,9 @@ use solarity_asset::{
     AreaTableCatalog, AssetError, AssetStore, CharacterClassCatalog, CharacterRaceCatalog,
 };
 use solarity_network::{CharacterDirectory, CharacterGender};
-use solarity_ui::{UiCharacterDirectory, UiCharacterInfo};
+use solarity_ui::{
+    UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
+};
 use thiserror::Error;
 
 /// Client-authored labels required by character-selection Glue.
@@ -71,16 +73,36 @@ impl RuntimeCharacterMetadata {
                             .to_owned(),
                     )
                 };
+                let equipment = std::array::from_fn(|slot| {
+                    let item = entry.equipment()[slot];
+                    UiCharacterEquipment::new(
+                        item.display_id(),
+                        item.inventory_type_id(),
+                        item.enchantment(),
+                    )
+                });
+                let pet = entry.pet();
                 Ok(UiCharacterInfo::new(
                     entry.guid(),
                     entry.name().to_owned(),
                     race.name().to_owned(),
+                    appearance.race().protocol_id(),
                     background_model.to_owned(),
                     class.name().to_owned(),
                     class_id,
                     entry.level(),
                     zone_name,
                     lua_sex(appearance.gender()),
+                    appearance.gender().protocol_id(),
+                    [
+                        appearance.skin(),
+                        appearance.face(),
+                        appearance.hair_style(),
+                        appearance.hair_color(),
+                        appearance.facial_hair(),
+                    ],
+                    equipment,
+                    UiCharacterPetPreview::new(pet.display_id(), pet.level(), pet.family_id()),
                     entry.flags(),
                     entry.recustomization_flags(),
                 ))

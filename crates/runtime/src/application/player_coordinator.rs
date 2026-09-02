@@ -28,7 +28,7 @@ use solarity_systems::{
     resolve_mounted_player_camera_pose, resolve_player_equipment,
     resolve_unit_locomotion_animation, resolve_unit_model, resolve_unit_model_animation,
 };
-use solarity_ui::UiCharacterCreationPreview;
+use solarity_ui::{UiCharacterCreationPreview, UiCharacterSelectionPreview};
 use thiserror::Error;
 
 /// `CreatureDisplayInfoExtra` item-display columns in stock component order.
@@ -135,6 +135,22 @@ pub enum RuntimePlayerError {
         /// Absent `ItemDisplayInfo.dbc` identifier.
         display_id: u32,
     },
+    /// Character enumeration supplied an inventory category outside the stock domain.
+    #[error("character selection slot {slot} has invalid inventory type {inventory_type_id}")]
+    InvalidSelectionInventoryType {
+        /// Zero-based character-enumeration slot.
+        slot: usize,
+        /// Rejected raw inventory type.
+        inventory_type_id: u8,
+    },
+    /// Character enumeration references an absent item display.
+    #[error("character selection slot {slot} references missing display {display_id}")]
+    MissingSelectionItemDisplay {
+        /// Zero-based character-enumeration slot.
+        slot: usize,
+        /// Absent `ItemDisplayInfo.dbc` identifier.
+        display_id: u32,
+    },
     /// A player-model NPC has no stock baked body texture.
     #[error("creature display {display_id} has no baked character texture")]
     MissingNpcBakedTexture {
@@ -176,6 +192,12 @@ pub enum RuntimePlayerError {
     /// Glue supplied a non-finite character-model facing.
     #[error("character creation facing {facing_degrees} degrees is invalid")]
     InvalidCreationFacing {
+        /// Rejected model-facing value.
+        facing_degrees: f64,
+    },
+    /// Glue supplied a non-finite selected-character facing.
+    #[error("character selection facing {facing_degrees} degrees is invalid")]
+    InvalidSelectionFacing {
         /// Rejected model-facing value.
         facing_degrees: f64,
     },
@@ -308,7 +330,7 @@ pub struct RuntimePlayerPresentation {
     resident: Option<ResidentPlayerModel>,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
-    creation: Option<ResidentCreationModel>,
+    glue_character: Option<ResidentGlueCharacterModel>,
 }
 
 impl RuntimePlayerPresentation {
@@ -332,7 +354,7 @@ impl RuntimePlayerPresentation {
             resident: None,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
-            creation: None,
+            glue_character: None,
         }
     }
 
@@ -347,13 +369,11 @@ impl RuntimePlayerPresentation {
         preview: Option<&UiCharacterCreationPreview>,
     ) -> Result<bool, RuntimePlayerError> {
         let Some(preview) = preview else {
-            return Ok(self.creation.take().is_some());
+            return Ok(self.glue_character.take().is_some());
         };
-        if self
-            .creation
-            .as_ref()
-            .is_some_and(|resident| resident.key == *preview)
-        {
+        if self.glue_character.as_ref().is_some_and(|resident| {
+            resident.key == ResidentGlueCharacterKey::Creation(preview.clone())
+        }) {
             return Ok(false);
         }
         if !preview.facing_degrees().is_finite() {
@@ -446,8 +466,124 @@ impl RuntimePlayerPresentation {
             UnitLocomotionAnimation::STAND,
             UnitAnimationTier::Ground,
         )?;
-        self.creation = Some(ResidentCreationModel {
-            key: preview.clone(),
+        self.glue_character = Some(ResidentGlueCharacterModel {
+            key: ResidentGlueCharacterKey::Creation(preview.clone()),
+            model,
+            textures,
+            atlas,
+            geosets,
+            animation,
+            model_scale,
+            facing_radians: preview.facing_degrees().to_radians() as f32,
+            attachments,
+            particle_colors: M2ParticleColorReplacement::resolve(
+                &self.particle_colors,
+                body.display().particle_color_id(),
+            ),
+        });
+        Ok(true)
+    }
+
+    /// Synchronizes the selected roster character and its enum-time equipment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimePlayerError`] when the roster fields cannot be joined
+    /// to the pinned client DBCs or their model resources cannot be prepared.
+    pub fn synchronize_character_selection(
+        &mut self,
+        preview: Option<&UiCharacterSelectionPreview>,
+    ) -> Result<bool, RuntimePlayerError> {
+        let Some(preview) = preview else {
+            return Ok(self.glue_character.take().is_some());
+        };
+        if self.glue_character.as_ref().is_some_and(|resident| {
+            resident.key == ResidentGlueCharacterKey::Selection(Box::new(preview.clone()))
+        }) {
+            return Ok(false);
+        }
+        if !preview.facing_degrees().is_finite() {
+            return Err(RuntimePlayerError::InvalidSelectionFacing {
+                facing_degrees: preview.facing_degrees(),
+            });
+        }
+        let race = self.races.race(u32::from(preview.race_id())).ok_or(
+            RuntimePlayerError::MissingCharacterRace {
+                race_id: u32::from(preview.race_id()),
+            },
+        )?;
+        let display_id = match preview.gender_id() {
+            0 => race.male_display_id(),
+            1 => race.female_display_id(),
+            gender_id => {
+                return Err(RuntimePlayerError::InvalidCreationGender { gender_id });
+            }
+        };
+        let body = self.creatures.resolve_model(display_id)?;
+        let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
+        let customization =
+            CharacterCustomization::new(skin, face, hair_style, hair_color, facial_hair);
+        let appearance = self.characters.resolve_player(
+            u32::from(preview.race_id()),
+            u32::from(preview.gender_id()),
+            customization,
+        )?;
+        let equipment_items = resolve_selection_equipment(preview, &self.item_displays)?;
+        let texture_plan = CharacterTexturePlan::equipped(
+            &appearance,
+            &self.assets.borrow(),
+            equipment_items.iter().copied(),
+        )?;
+        let geosets = CharacterGeosetPlan::equipped(
+            &appearance,
+            CharacterGeosetContext::new(preview.class_id(), CharacterTabardMode::Equipment),
+            &self.helmet_visibility,
+            equipment_items.iter().copied(),
+        )?;
+        let attachment_plan = CharacterAttachmentPlan::character_selection(
+            equipment_items.iter().copied(),
+            race,
+            u32::from(preview.gender_id()),
+            preview.class_id(),
+        )?;
+        let authored_scale = body.display().model_scale() * body.model().model_scale();
+        let model_scale = if authored_scale > 0.0 {
+            authored_scale
+        } else {
+            1.0
+        };
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, body.model_path())?;
+        let atlas = texture_plan.compose(&mut assets, &mut self.textures)?;
+        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
+        let extra_skin =
+            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
+        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
+        let textures = prepare_model_textures(
+            &model,
+            hair.as_ref(),
+            extra_skin.as_ref(),
+            cape.as_ref(),
+            &mut assets,
+            &mut self.textures,
+        )?;
+        let attachments = load_player_attachments(
+            &attachment_plan,
+            &self.item_visuals,
+            &self.particle_colors,
+            &mut self.models,
+            &mut self.textures,
+            &mut assets,
+        )?;
+        drop(assets);
+        let animation = resolve_resident_animation(
+            &self.animations,
+            &model,
+            UnitLocomotionAnimation::STAND,
+            UnitAnimationTier::Ground,
+        )?;
+        self.glue_character = Some(ResidentGlueCharacterModel {
+            key: ResidentGlueCharacterKey::Selection(Box::new(preview.clone())),
             model,
             textures,
             atlas,
@@ -466,7 +602,7 @@ impl RuntimePlayerPresentation {
 
     /// Returns renderer inputs for the current character-creation body.
     pub(super) fn creation_frame_input(&self) -> Option<ResidentCreationFrameInput<'_>> {
-        self.creation
+        self.glue_character
             .as_ref()
             .map(ResidentCreationFrameInput::from_resident)
     }
@@ -1361,7 +1497,7 @@ impl RuntimePlayerPresentation {
     /// Releases local-player residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.resident = None;
-        self.creation = None;
+        self.glue_character = None;
         self.creatures_resident.clear();
         self.remote_players.clear();
         self.models.collect_unused();
@@ -1369,8 +1505,14 @@ impl RuntimePlayerPresentation {
     }
 }
 
-struct ResidentCreationModel {
-    key: UiCharacterCreationPreview,
+#[derive(Clone, Debug, PartialEq)]
+enum ResidentGlueCharacterKey {
+    Creation(UiCharacterCreationPreview),
+    Selection(Box<UiCharacterSelectionPreview>),
+}
+
+struct ResidentGlueCharacterModel {
+    key: ResidentGlueCharacterKey,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
     atlas: CharacterAtlasTexture,
@@ -1396,7 +1538,7 @@ pub(super) struct ResidentCreationFrameInput<'a> {
 }
 
 impl<'a> ResidentCreationFrameInput<'a> {
-    fn from_resident(resident: &'a ResidentCreationModel) -> Self {
+    fn from_resident(resident: &'a ResidentGlueCharacterModel) -> Self {
         Self {
             model: &resident.model,
             textures: &resident.textures,
@@ -1847,6 +1989,40 @@ fn resolve_creation_equipment<'catalog>(
         ));
     }
     Ok(equipment)
+}
+
+/// Resolves the first nineteen display-only character-enumeration slots.
+fn resolve_selection_equipment<'catalog>(
+    preview: &UiCharacterSelectionPreview,
+    displays: &'catalog ItemDisplayCatalog,
+) -> Result<Vec<CharacterEquipmentItem<'catalog>>, RuntimePlayerError> {
+    PlayerEquipmentSlot::ALL
+        .into_iter()
+        .zip(preview.equipment())
+        .enumerate()
+        .filter(|(_, (_, item))| item.display_id() != 0)
+        .map(|(slot, (equipment_slot, item))| {
+            let inventory_type = InventoryType::try_from(u32::from(item.inventory_type_id()))
+                .map_err(
+                    |_source| RuntimePlayerError::InvalidSelectionInventoryType {
+                        slot,
+                        inventory_type_id: item.inventory_type_id(),
+                    },
+                )?;
+            let display = displays.display(item.display_id()).ok_or(
+                RuntimePlayerError::MissingSelectionItemDisplay {
+                    slot,
+                    display_id: item.display_id(),
+                },
+            )?;
+            Ok(CharacterEquipmentItem::new_selection(
+                equipment_slot,
+                display,
+                inventory_type,
+                item.enchantment_visual_id(),
+            ))
+        })
+        .collect()
 }
 
 /// Maps an inventory type to the first compatible public equipment slot.

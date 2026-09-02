@@ -1,6 +1,6 @@
 //! Render-bound item records for stock character composition.
 
-use solarity_asset::{ItemDefinition, ItemDisplayInfo};
+use solarity_asset::{InventoryType, ItemDefinition, ItemDisplayInfo};
 use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 
 /// One resolved player item supplied to character render preparation.
@@ -10,6 +10,8 @@ pub struct CharacterEquipmentItem<'catalog> {
     visible: VisibleEquipmentItem,
     definition: Option<&'catalog ItemDefinition>,
     display: &'catalog ItemDisplayInfo,
+    inventory_type: Option<InventoryType>,
+    item_visual_override: Option<u32>,
 }
 
 impl<'catalog> CharacterEquipmentItem<'catalog> {
@@ -25,6 +27,8 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
             visible: VisibleEquipmentItem::new(0, 0),
             definition: Some(definition),
             display,
+            inventory_type: Some(definition.inventory_type()),
+            item_visual_override: None,
         }
     }
 
@@ -41,6 +45,8 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
             visible,
             definition: Some(definition),
             display,
+            inventory_type: Some(definition.inventory_type()),
+            item_visual_override: None,
         }
     }
 
@@ -56,6 +62,30 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
             visible: VisibleEquipmentItem::new(0, 0),
             definition: None,
             display,
+            inventory_type: None,
+            item_visual_override: None,
+        }
+    }
+
+    /// Creates one display-only character-enumeration input.
+    #[must_use]
+    pub const fn new_selection(
+        slot: PlayerEquipmentSlot,
+        display: &'catalog ItemDisplayInfo,
+        inventory_type: InventoryType,
+        item_visual_override: u32,
+    ) -> Self {
+        Self {
+            slot,
+            visible: VisibleEquipmentItem::new(0, 0),
+            definition: None,
+            display,
+            inventory_type: Some(inventory_type),
+            item_visual_override: if item_visual_override == 0 {
+                None
+            } else {
+                Some(item_visual_override)
+            },
         }
     }
 
@@ -75,6 +105,18 @@ impl<'catalog> CharacterEquipmentItem<'catalog> {
     #[must_use]
     pub const fn definition(self) -> Option<&'catalog ItemDefinition> {
         self.definition
+    }
+
+    /// Returns the authoritative equipment category when supplied.
+    #[must_use]
+    pub const fn inventory_type(self) -> Option<InventoryType> {
+        self.inventory_type
+    }
+
+    /// Returns the character-enumeration visual override when nonzero.
+    #[must_use]
+    pub const fn item_visual_override(self) -> Option<u32> {
+        self.item_visual_override
     }
 
     /// Returns the item display supplying models, geosets, and texture stems.
