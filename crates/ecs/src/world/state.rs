@@ -156,6 +156,21 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns the transport parent named by the controlled player's movement.
+    #[must_use]
+    pub fn local_player_transport_guid(&self) -> Option<u64> {
+        self.movement_state(self.local_player_guid().ok()?)
+            .and_then(WorldMovementState::transport_guid)
+            .filter(|guid| *guid != 0)
+    }
+
+    /// Reports whether the controlled player's transport parent is admitted.
+    #[must_use]
+    pub fn is_local_player_transport_admitted(&self) -> bool {
+        self.local_player_transport_guid()
+            .is_none_or(|guid| self.object_kind(guid) == Some(ObjectKind::GameObject))
+    }
+
     /// Returns every visible unit/player GUID in deterministic identifier order.
     #[must_use]
     pub fn visible_unit_guids(&self) -> Vec<u64> {

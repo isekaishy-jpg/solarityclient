@@ -1318,11 +1318,16 @@ impl ClientServices {
             }
         }
         if let Some(loading) = self.loading_screen.as_mut() {
+            let transport_admitted = self
+                .gameplay
+                .world()
+                .is_none_or(|world| world.is_local_player_transport_admitted());
             let readiness = RuntimeLoadingReadiness {
                 world_accepted: self.gameplay.world().is_some(),
                 environment_ready: self.environment.current().is_some(),
                 player_ready: self.player.resident_frame_input().is_some(),
                 scene_ready: self.terrain_frame.is_some(),
+                transport_admitted,
             };
             loading.advance(readiness.stage());
         }

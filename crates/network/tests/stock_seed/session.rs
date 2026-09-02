@@ -365,6 +365,13 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             .ok_or("compressed packet did not decode as an update batch")?;
         assert_eq!(compressed_updates, object_updates);
 
+        let transport_packet = reader.receive_packet().await?;
+        assert_eq!(transport_packet.name(), Some("SMSG_UPDATE_OBJECT"));
+        let transport_updates = transport_packet
+            .object_updates()?
+            .ok_or("transport packet did not decode as an update batch")?;
+        assert_transport_player_update(&transport_updates)?;
+
         let oversized_packet = reader.receive_packet().await?;
         let error = match oversized_packet.object_updates() {
             Err(error) => error,
@@ -607,6 +614,13 @@ async fn emulate_character_screen(
     write_encrypted_raw(
         &mut stream,
         &mut crypto,
+        0x00A9,
+        &transport_object_update_body(),
+    )
+    .await?;
+    write_encrypted_raw(
+        &mut stream,
+        &mut crypto,
         0x01F6,
         &0x0080_0000_u32.to_le_bytes(),
     )
@@ -820,6 +834,7 @@ fn assert_create_player_update(
     );
     assert_eq!(movement.orientation(), Some(0.0));
     assert_eq!(movement.movement_flags(), Some(0));
+    assert_eq!(movement.transport_guid(), None);
     assert_eq!(
         movement
             .speeds()
@@ -847,6 +862,21 @@ fn assert_create_player_update(
     Ok(())
 }
 
+fn assert_transport_player_update(
+    batch: &solarity_network::WorldObjectUpdateBatch,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let update = batch
+        .updates()
+        .first()
+        .ok_or("transport fixture object update was empty")?;
+    let WorldObjectUpdate::Create { movement, .. } = update else {
+        return Err("transport fixture was not a create update".into());
+    };
+    assert_eq!(movement.movement_flags(), Some(0x0200));
+    assert_eq!(movement.transport_guid(), Some(0x2A));
+    Ok(())
+}
+
 fn compressed_object_update() -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(&UPDATE_OBJECT_BODY)?;
@@ -855,6 +885,20 @@ fn compressed_object_update() -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
     payload.extend_from_slice(&(UPDATE_OBJECT_BODY.len() as u32).to_le_bytes());
     payload.extend_from_slice(&compressed);
     Ok(payload)
+}
+
+fn transport_object_update_body() -> Vec<u8> {
+    let mut body = UPDATE_OBJECT_BODY.to_vec();
+    body[10..14].copy_from_slice(&0x0200_u32.to_le_bytes());
+    let mut transport = Vec::with_capacity(23);
+    transport.extend_from_slice(&[0x01, 0x2A]);
+    for value in [1.0_f32, 2.0, 3.0, 0.5] {
+        transport.extend_from_slice(&value.to_le_bytes());
+    }
+    transport.extend_from_slice(&0x1122_3344_u32.to_le_bytes());
+    transport.push(3);
+    body.splice(36..36, transport);
+    body
 }
 
 // Canonical build-12340 CREATE_OBJECT2 player body from the pinned protocol corpus.

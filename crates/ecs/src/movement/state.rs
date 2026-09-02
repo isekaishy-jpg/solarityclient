@@ -82,13 +82,18 @@ impl WorldMovementSpeeds {
 pub struct WorldMovementState {
     flags: u64,
     speeds: WorldMovementSpeeds,
+    transport_guid: Option<u64>,
 }
 
 impl WorldMovementState {
-    /// Creates state from the packet's exact 32-bit flags plus 16-bit flags2.
+    /// Creates state from the packet's exact flags, speeds, and transport parent.
     #[must_use]
-    pub const fn new(flags: u64, speeds: WorldMovementSpeeds) -> Self {
-        Self { flags, speeds }
+    pub const fn new(flags: u64, speeds: WorldMovementSpeeds, transport_guid: Option<u64>) -> Self {
+        Self {
+            flags,
+            speeds,
+            transport_guid,
+        }
     }
 
     /// Returns the exact combined 48-bit movement flag word.
@@ -101,5 +106,11 @@ impl WorldMovementState {
     #[must_use]
     pub const fn speeds(self) -> WorldMovementSpeeds {
         self.speeds
+    }
+
+    /// Returns the transport parent named by the authoritative movement block.
+    #[must_use]
+    pub const fn transport_guid(self) -> Option<u64> {
+        self.transport_guid
     }
 }

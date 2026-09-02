@@ -80,6 +80,7 @@ impl ObjectFieldUpdate {
 pub struct ObjectMovementUpdate {
     update_flags: u16,
     movement_flags: Option<u64>,
+    transport_guid: Option<u64>,
     speeds: Option<ObjectMovementSpeeds>,
     position: Option<[f32; 3]>,
     orientation: Option<f32>,
@@ -96,6 +97,12 @@ impl ObjectMovementUpdate {
     #[must_use]
     pub const fn movement_flags(self) -> Option<u64> {
         self.movement_flags
+    }
+
+    /// Returns the exact associated transport GUID carried by this block.
+    #[must_use]
+    pub const fn transport_guid(self) -> Option<u64> {
+        self.transport_guid
     }
 
     /// Returns all nine ordered speed values supplied by a living block.
@@ -444,6 +451,7 @@ impl<'a> UpdateCursor<'a> {
             return Err(self.error("movement update contains unknown flags"));
         }
         let mut movement_flags = None;
+        let mut transport_guid = None;
         let mut speeds = None;
         let mut position = None;
         let mut orientation = None;
@@ -456,7 +464,7 @@ impl<'a> UpdateCursor<'a> {
             position = Some(self.read_position()?);
             orientation = Some(self.read_f32("living movement orientation is truncated")?);
             if flags & MOVEMENT_ON_TRANSPORT != 0 {
-                self.read_transport_info()?;
+                transport_guid = Some(self.read_transport_info()?);
                 if flags & MOVEMENT_INTERPOLATED != 0 {
                     self.skip(4, "interpolated transport time is truncated")?;
                 }
@@ -488,7 +496,7 @@ impl<'a> UpdateCursor<'a> {
                 self.read_spline()?;
             }
         } else if update_flags & UPDATE_FLAG_POSITION != 0 {
-            self.read_packed_guid("position transport GUID is truncated")?;
+            transport_guid = Some(self.read_packed_guid("position transport GUID is truncated")?);
             position = Some(self.read_position()?);
             self.skip(12, "position transport offset is truncated")?;
             orientation = Some(self.read_f32("position orientation is truncated")?);
@@ -518,15 +526,17 @@ impl<'a> UpdateCursor<'a> {
         Ok(ObjectMovementUpdate {
             update_flags,
             movement_flags,
+            transport_guid,
             speeds,
             position,
             orientation,
         })
     }
 
-    fn read_transport_info(&mut self) -> Result<(), ObjectUpdateError> {
-        self.read_packed_guid("transport GUID is truncated")?;
-        self.skip(12 + 4 + 4 + 1, "transport movement is truncated")
+    fn read_transport_info(&mut self) -> Result<u64, ObjectUpdateError> {
+        let guid = self.read_packed_guid("transport GUID is truncated")?;
+        self.skip(12 + 4 + 4 + 1, "transport movement is truncated")?;
+        Ok(guid)
     }
 
     fn read_spline(&mut self) -> Result<(), ObjectUpdateError> {

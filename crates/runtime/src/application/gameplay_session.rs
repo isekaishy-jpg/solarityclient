@@ -166,6 +166,7 @@ fn movement_state(movement: ObjectMovementUpdate) -> Option<WorldMovementState> 
     Some(WorldMovementState::new(
         movement.movement_flags()?,
         WorldMovementSpeeds::new(movement.speeds()?.values()),
+        movement.transport_guid(),
     ))
 }
 
