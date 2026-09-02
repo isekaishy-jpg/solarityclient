@@ -156,7 +156,6 @@ $ErrorActionPreference = $previousErrorActionPreference
 if ($exitCode -ne 0) {
     Write-Host ""
     Write-Host "Solarity exited with code $exitCode. Log: $logPath" -ForegroundColor Red
-    Read-Host "Press Enter to close"
 }
 exit $exitCode
 '@
