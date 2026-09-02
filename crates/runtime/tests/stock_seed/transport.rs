@@ -66,7 +66,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         entity,
         (
             ObjectPresentation::new(7, 1.25),
-            GameObjectPresentation::new(42),
+            GameObjectPresentation::new(42, 1),
         ),
     );
 
@@ -80,6 +80,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     assert!(presentation.is_ready());
     assert_eq!(presentation.resident_guid(), Some(transport_guid));
     assert_eq!(presentation.resident_display_id(), Some(42));
+    assert_eq!(presentation.resident_state(), Some(1));
     assert_eq!(presentation.resident_scale(), Some(1.25));
     assert_eq!(
         presentation
@@ -102,6 +103,22 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
             kind: RuntimeTransportResourceKind::WorldModel,
         }
     );
+
+    world.storage_mut().add_component(
+        entity,
+        (
+            ObjectPresentation::new(7, 1.25),
+            GameObjectPresentation::new(42, 0),
+        ),
+    );
+    assert_eq!(
+        presentation.synchronize(Some(&world))?,
+        RuntimeTransportPoll::Current {
+            guid: transport_guid,
+            kind: RuntimeTransportResourceKind::WorldModel,
+        }
+    );
+    assert_eq!(presentation.resident_state(), Some(0));
 
     world.remove_object(transport_guid)?;
     assert_eq!(

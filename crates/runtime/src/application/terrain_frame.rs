@@ -22,6 +22,7 @@ use crate::application::player_coordinator::{
 };
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
+use crate::application::transport_coordinator::ResidentTransport;
 use crate::random::CrtRand;
 
 pub(in crate::application) mod m2;
@@ -237,6 +238,9 @@ pub enum RuntimeTerrainFrameError {
     /// Authoritative unit placement data cannot form a finite model matrix.
     #[error("unit M2 transform is invalid")]
     InvalidUnitM2Transform,
+    /// Authoritative transport placement data cannot form a finite model matrix.
+    #[error("transport M2 transform is invalid")]
+    InvalidTransportM2Transform,
     /// A Glue model widget supplied a non-positive or non-finite local scale.
     #[error("Glue M2 model scale is invalid")]
     InvalidGlueM2Scale,
@@ -453,6 +457,7 @@ impl TerrainFrame {
         player: Option<ResidentPlayerFrameInput<'_>>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
+        transport: Option<&ResidentTransport>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         validate_texture_table(plan, sources)?;
 
@@ -534,17 +539,20 @@ impl TerrainFrame {
         m2.replace_player(renderer, player, random)?;
         m2.replace_creatures(renderer, creatures, random)?;
         m2.replace_remote_players(renderer, remote_players, random)?;
+        m2.replace_transport(renderer, transport, random)?;
+        let mut world_models = WorldModelFrame::prepare(
+            renderer,
+            world_models,
+            world_model_filtering,
+            world_model_base_mip,
+        )?;
+        world_models.replace_transport(renderer, transport)?;
         Ok(Self {
             tile: plan.tile(),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
             m2,
-            world_models: WorldModelFrame::prepare(
-                renderer,
-                world_models,
-                world_model_filtering,
-                world_model_base_mip,
-            )?,
+            world_models,
         })
     }
 
@@ -565,6 +573,7 @@ impl TerrainFrame {
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
+        transport: Option<&ResidentTransport>,
         ui_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
@@ -576,6 +585,10 @@ impl TerrainFrame {
                 plan_y: plan.tile().y(),
             });
         }
+        let local_animation_time_ms = self.m2.animation_time_ms();
+        self.m2
+            .update_transport_state(transport, local_animation_time_ms, random)?;
+        self.world_models.update_transport_state(transport)?;
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         self.visible_draws.clear();
         for (chunk, draw) in plan.chunks().iter().zip(&self.draws) {
@@ -616,7 +629,6 @@ impl TerrainFrame {
             environment.world_model_emissive(),
             light.fog_color(),
         )?;
-        let local_animation_time_ms = self.m2.animation_time_ms();
         self.m2
             .update_player_state(player, local_animation_time_ms, random)?;
         self.m2
@@ -676,6 +688,17 @@ impl TerrainFrame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.m2.replace_remote_players(renderer, players, random)
+    }
+
+    /// Replaces only the dynamic movement-parent renderer generation.
+    pub(super) fn replace_transport(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        transport: Option<&ResidentTransport>,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2.replace_transport(renderer, transport, random)?;
+        self.world_models.replace_transport(renderer, transport)
     }
 
     /// Transfers callbacks generated while advancing the current M2 frame.

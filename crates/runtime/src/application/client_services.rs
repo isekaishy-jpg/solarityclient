@@ -613,6 +613,7 @@ impl ClientServices {
             player,
             &creatures,
             &remote_players,
+            self.transport.resident(),
             ui_extent,
             ui_draws,
         )?;
@@ -1248,14 +1249,29 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Current => {}
         }
-        if let RuntimeTransportPoll::ResourceLoaded { guid, kind } =
-            self.transport.synchronize(self.gameplay.world())?
-        {
-            tracing::debug!(
-                transport_guid = guid,
-                resource_kind = ?kind,
-                "local player transport resource became resident"
-            );
+        match self.transport.synchronize(self.gameplay.world())? {
+            RuntimeTransportPoll::ResourceLoaded { guid, kind } => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_transport(
+                        &mut self.renderer,
+                        self.transport.resident(),
+                        &mut self.crt_rand,
+                    )?;
+                }
+                tracing::debug!(
+                    transport_guid = guid,
+                    resource_kind = ?kind,
+                    "local player transport resource became resident"
+                );
+            }
+            RuntimeTransportPoll::Idle
+            | RuntimeTransportPoll::AwaitingObject { .. }
+            | RuntimeTransportPoll::NoResource { .. } => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_transport(&mut self.renderer, None, &mut self.crt_rand)?;
+                }
+            }
+            RuntimeTransportPoll::Current { .. } => {}
         }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
@@ -1306,6 +1322,7 @@ impl ClientServices {
                     self.player.resident_frame_input(),
                     &self.player.resident_creature_frame_inputs(),
                     &self.player.resident_remote_player_frame_inputs(),
+                    self.transport.resident(),
                 )?;
                 tracing::info!(
                     tile_x = tile.x(),

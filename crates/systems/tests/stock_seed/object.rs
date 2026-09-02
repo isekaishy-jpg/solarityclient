@@ -4,9 +4,10 @@ use std::error::Error;
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectFields, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment,
-    PlayerEquipmentSlot, PlayerMoney, PlayerProgression, UnitAnimationTier, UnitFlags,
-    UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals, WorldBootstrap, WorldMapId,
+    ActiveWorld, GameObjectPresentation, ObjectFields, ObjectKind, ObjectPresentation,
+    PlayerAppearance, PlayerEquipment, PlayerEquipmentSlot, PlayerMoney, PlayerProgression,
+    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
+    WorldBootstrap, WorldMapId,
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
@@ -154,7 +155,12 @@ fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<
         0.0,
     ));
     let guid = 0xF110_0000_0000_002A;
-    let create_fields = [(3, 17), (4, 1.0_f32.to_bits()), (8, 42)];
+    let create_fields = [
+        (3, 17),
+        (4, 1.0_f32.to_bits()),
+        (8, 42),
+        (17, u32::from_le_bytes([1, 5, 7, 100])),
+    ];
     world.create_object(
         guid,
         ObjectKind::GameObject,
@@ -163,13 +169,10 @@ fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<
     )?;
     project_object_fields(&mut world, guid, create_fields)?;
 
-    assert_eq!(
-        world
-            .game_object_presentation(guid)
-            .ok_or("game-object presentation was absent")?
-            .display_id(),
-        42
-    );
+    let presentation = world
+        .game_object_presentation(guid)
+        .ok_or("game-object presentation was absent")?;
+    assert_eq!(presentation, GameObjectPresentation::new(42, 1));
     assert!(world.game_object_presentation(guid).is_some());
 
     let sparse_fields = [(9, 0x20)];
@@ -181,6 +184,13 @@ fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<
             .ok_or("sparse update discarded game-object presentation")?
             .display_id(),
         42
+    );
+    assert_eq!(
+        world
+            .game_object_presentation(guid)
+            .ok_or("sparse update discarded game-object state")?
+            .state(),
+        1
     );
     assert!(world.unit_presentation(guid).is_none());
     Ok(())

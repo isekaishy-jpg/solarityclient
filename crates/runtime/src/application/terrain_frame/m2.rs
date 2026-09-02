@@ -27,6 +27,7 @@ use crate::application::player_coordinator::{
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
 };
+use crate::application::transport_coordinator::{ResidentTransport, ResidentTransportResource};
 use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
@@ -117,6 +118,8 @@ enum M2GpuPlacementOwner {
     RemotePlayerMount { guid: u64 },
     /// One visible non-player unit projected from authoritative ECS state.
     CreatureBody { guid: u64 },
+    /// The controlled player's current movement-parent GameObject.
+    Transport { guid: u64 },
     /// One equipment M2 driven by an animated player attachment point.
     PlayerItem {
         guid: u64,
@@ -520,6 +523,114 @@ impl M2Frame {
             mount_camera_sample: None,
             last_effect_time_ms: None,
         })
+    }
+
+    /// Replaces the dynamic movement-parent M2 without disturbing terrain M2s.
+    pub(super) fn replace_transport(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        transport: Option<&ResidentTransport>,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let prepared = match transport {
+            Some(transport) => match (
+                transport.resource(),
+                transport.transform(),
+                transport.scale(),
+            ) {
+                (ResidentTransportResource::M2(source), Some(transform), Some(scale)) => {
+                    match prepare_source(renderer, source)? {
+                        Some(gpu) => {
+                            let matrix = transport_placement_transform(transform, scale)?;
+                            let placement = unit_gpu_placement(
+                                0,
+                                matrix,
+                                M2GpuPlacementOwner::Transport {
+                                    guid: transport.guid(),
+                                },
+                                source.model(),
+                                transport_animation_id(transport.state()),
+                                None,
+                                random,
+                            )?;
+                            Some((gpu, placement))
+                        }
+                        None => None,
+                    }
+                }
+                _ => None,
+            },
+            None => None,
+        };
+
+        self.remove_transport();
+        if let Some((source, mut placement)) = prepared {
+            let source_index = self.sources.len();
+            placement.source_index = source_index;
+            self.sources.push(Some(source));
+            self.placements.push(placement);
+        }
+        Ok(())
+    }
+
+    /// Applies the latest replicated transport transform in place.
+    pub(super) fn update_transport_state(
+        &mut self,
+        transport: Option<&ResidentTransport>,
+        animation_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(transport) = transport else {
+            return Ok(());
+        };
+        let (ResidentTransportResource::M2(_), Some(transform), Some(scale)) = (
+            transport.resource(),
+            transport.transform(),
+            transport.scale(),
+        ) else {
+            return Ok(());
+        };
+        let Some(placement) = self.placements.iter_mut().find(|placement| {
+            placement.owner
+                == M2GpuPlacementOwner::Transport {
+                    guid: transport.guid(),
+                }
+        }) else {
+            return Ok(());
+        };
+        let matrix = transport_placement_transform(transform, scale)?;
+        placement.local_transform = matrix;
+        placement.transform = matrix;
+        let Some(source) = self.sources[placement.source_index].as_ref() else {
+            return Ok(());
+        };
+        if let Some(playback) = placement.playback.as_mut() {
+            playback.select_animation(
+                &source.model,
+                transport_animation_id(transport.state()),
+                animation_time_ms,
+                random,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Drops renderer references owned only by the current transport.
+    fn remove_transport(&mut self) {
+        let mut source_indices = Vec::new();
+        self.placements.retain(|placement| {
+            if matches!(placement.owner, M2GpuPlacementOwner::Transport { .. }) {
+                source_indices.push(placement.source_index);
+                false
+            } else {
+                true
+            }
+        });
+        for source_index in source_indices {
+            if let Some(source) = self.sources.get_mut(source_index) {
+                *source = None;
+            }
+        }
     }
 
     /// Publishes one fully authored Glue model without terrain-owner aliases.
@@ -1069,7 +1180,8 @@ impl M2Frame {
                 | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                | M2GpuPlacementOwner::CreatureBody { .. } => false,
+                | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::Transport { .. } => false,
             };
             if owned {
                 player_sources.push(placement.source_index);
@@ -1125,7 +1237,8 @@ impl M2Frame {
                 | M2GpuPlacementOwner::GluePet
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
-                | M2GpuPlacementOwner::CreatureBody { .. } => false,
+                | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::Transport { .. } => false,
             };
             if owned {
                 remote_sources.push(placement.source_index);
@@ -1247,6 +1360,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::Transport { .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -1267,6 +1381,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::Transport { .. }
                 | M2GpuPlacementOwner::PlayerItem { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -1839,6 +1954,7 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
         | M2GpuPlacementOwner::RemotePlayerBody { guid }
         | M2GpuPlacementOwner::RemotePlayerMount { guid }
         | M2GpuPlacementOwner::CreatureBody { guid }
+        | M2GpuPlacementOwner::Transport { guid }
         | M2GpuPlacementOwner::PlayerItem { guid, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
     }
@@ -2199,6 +2315,32 @@ fn unit_placement_transform(
         return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
     }
     Ok(matrix)
+}
+
+/// Converts a GameObject movement parent into the ordinary M2 world basis.
+fn transport_placement_transform(
+    transform: WorldTransform,
+    object_scale: f32,
+) -> Result<Mat4, RuntimeTerrainFrameError> {
+    if !transform.position().is_finite()
+        || !transform.orientation().is_finite()
+        || !object_scale.is_finite()
+        || object_scale <= 0.0
+    {
+        return Err(RuntimeTerrainFrameError::InvalidTransportM2Transform);
+    }
+    let matrix = Mat4::from_translation(transform.position())
+        * Mat4::from_rotation_z(transform.orientation())
+        * Mat4::from_scale(glam::Vec3::splat(object_scale));
+    if !matrix.is_finite() || matrix.determinant().abs() <= f32::EPSILON {
+        return Err(RuntimeTerrainFrameError::InvalidTransportM2Transform);
+    }
+    Ok(matrix)
+}
+
+/// Selects the stable generic GameObject sequence recovered at `FUN_00710460`.
+const fn transport_animation_id(state: u8) -> u16 {
+    if state == 1 { 147 } else { 149 }
 }
 
 /// Publishes a source only when every selected draw has concrete BLP stages.

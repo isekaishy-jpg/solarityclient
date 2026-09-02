@@ -81,6 +81,7 @@ impl ResidentTransportResource {
 pub(in crate::application) struct ResidentTransport {
     guid: u64,
     display_id: u32,
+    state: u8,
     transform: Option<WorldTransform>,
     scale: Option<f32>,
     resource: ResidentTransportResource,
@@ -95,6 +96,11 @@ impl ResidentTransport {
     /// Returns the display identity used to select this generation.
     pub(in crate::application) const fn display_id(&self) -> u32 {
         self.display_id
+    }
+
+    /// Returns the generic GameObject state selecting its stable animation.
+    pub(in crate::application) const fn state(&self) -> u8 {
+        self.state
     }
 
     /// Returns a finite authoritative transform when movement supplied one.
@@ -180,6 +186,7 @@ impl RuntimeTransportPresentation {
             return Ok(RuntimeTransportPoll::NoResource { guid });
         };
         let display_id = presentation.display_id();
+        let state = presentation.state();
         let Some(display) = self.displays.display(display_id) else {
             self.clear();
             self.readiness = true;
@@ -205,6 +212,7 @@ impl RuntimeTransportPresentation {
             if let Some(resident) = self.resident.as_mut() {
                 resident.transform = transform;
                 resident.scale = scale;
+                resident.state = state;
             }
             self.readiness = true;
             return Ok(RuntimeTransportPoll::Current { guid, kind });
@@ -232,6 +240,7 @@ impl RuntimeTransportPresentation {
         self.resident = Some(ResidentTransport {
             guid,
             display_id,
+            state,
             transform,
             scale,
             resource,
@@ -247,6 +256,11 @@ impl RuntimeTransportPresentation {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         self.readiness
+    }
+
+    /// Borrows the completed generation for renderer-local publication.
+    pub(in crate::application) const fn resident(&self) -> Option<&ResidentTransport> {
+        self.resident.as_ref()
     }
 
     /// Returns the currently retained resource family for diagnostics.
@@ -267,6 +281,12 @@ impl RuntimeTransportPresentation {
     #[must_use]
     pub fn resident_display_id(&self) -> Option<u32> {
         self.resident.as_ref().map(ResidentTransport::display_id)
+    }
+
+    /// Returns the retained generic GameObject state byte.
+    #[must_use]
+    pub fn resident_state(&self) -> Option<u8> {
+        self.resident.as_ref().map(ResidentTransport::state)
     }
 
     /// Returns the latest finite authoritative placement, when materialized.

@@ -13,6 +13,7 @@ use thiserror::Error;
 const OBJECT_FIELD_ENTRY: u16 = 3;
 const OBJECT_FIELD_SCALE_X: u16 = 4;
 const GAME_OBJECT_DISPLAY_ID: u16 = 8;
+const GAME_OBJECT_BYTES_1: u16 = 17;
 const UNIT_FIELD_BYTES_0: u16 = 23;
 const UNIT_FIELD_HEALTH: u16 = 24;
 const UNIT_FIELD_POWER_START: u16 = 25;
@@ -124,7 +125,9 @@ where
         .map(|component| **component)
         .ok();
     let mut game_object_presentation_changed = false;
-    let mut game_object_display_id = game_object_presentation.unwrap_or_default().display_id();
+    let game_object_state = game_object_presentation.unwrap_or_default();
+    let mut game_object_display_id = game_object_state.display_id();
+    let mut game_object_stable_state = game_object_state.state();
 
     let unit_identity = world
         .storage()
@@ -220,6 +223,10 @@ where
             }
             GAME_OBJECT_DISPLAY_ID if kind == ObjectKind::GameObject => {
                 game_object_display_id = value;
+                game_object_presentation_changed = true;
+            }
+            GAME_OBJECT_BYTES_1 if kind == ObjectKind::GameObject => {
+                game_object_stable_state = value.to_le_bytes()[0];
                 game_object_presentation_changed = true;
             }
             UNIT_FIELD_BYTES_0 if is_unit(kind) => {
@@ -331,7 +338,10 @@ where
     {
         world.storage_mut().add_component(
             entity,
-            (GameObjectPresentation::new(game_object_display_id),),
+            (GameObjectPresentation::new(
+                game_object_display_id,
+                game_object_stable_state,
+            ),),
         );
     }
     if is_unit(kind) {

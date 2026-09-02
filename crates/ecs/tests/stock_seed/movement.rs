@@ -50,7 +50,7 @@ fn active_world_retains_complete_living_movement_state() -> Result<(), Box<dyn E
         .ok_or("transport entity was absent")?;
     world
         .storage_mut()
-        .add_component(transport, (GameObjectPresentation::new(42),));
+        .add_component(transport, (GameObjectPresentation::new(42, 1),));
     assert_eq!(
         world
             .game_object_presentation(transport_guid)

@@ -13,8 +13,10 @@ use solarity_rendering::{
 };
 
 use crate::application::terrain_coordinator::world_model_residency::{
-    ResidentWorldModelMaterialTextures, ResidentWorldModelScene, ResidentWorldModelTexture,
+    ResidentWorldModelMaterialTextures, ResidentWorldModelScene, ResidentWorldModelSource,
+    ResidentWorldModelTexture,
 };
+use crate::application::transport_coordinator::{ResidentTransport, ResidentTransportResource};
 
 use super::RuntimeTerrainFrameError;
 
@@ -41,15 +43,27 @@ struct WorldModelGpuSource {
 /// One MODF transform with retained visibility scratch.
 struct WorldModelGpuPlacement {
     source_index: usize,
+    owner: WorldModelGpuPlacementOwner,
     plan: PlacedWorldModelDrawPlan,
     visible_draw_indices: Vec<usize>,
 }
 
+/// Placement identity used to retire only the dynamic transport generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorldModelGpuPlacementOwner {
+    /// One immutable terrain MODF owner.
+    Static,
+    /// The controlled player's current movement parent.
+    Transport { guid: u64 },
+}
+
 /// Complete resident WMO generation for one terrain tile.
 pub(super) struct WorldModelFrame {
-    sources: Vec<WorldModelGpuSource>,
+    sources: Vec<Option<WorldModelGpuSource>>,
     placements: Vec<WorldModelGpuPlacement>,
     prepared_draws: Vec<WorldModelPreparedDraw>,
+    filtering: WorldModelTextureFiltering,
+    base_mip: WorldModelBaseMip,
 }
 
 impl WorldModelFrame {
@@ -62,77 +76,20 @@ impl WorldModelFrame {
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let mut sources = Vec::with_capacity(scene.sources().len());
         for source in scene.sources() {
-            let plan = Arc::new(WorldModelMeshPlan::prepare(source.model())?);
-            let mesh = renderer.upload_world_model_mesh(&plan)?;
-            let mut uploads = Vec::new();
-            let mut needs_stock_green = false;
-            for textures in source.materials() {
-                match textures {
-                    ResidentWorldModelMaterialTextures::One(texture) => {
-                        collect_texture_upload(texture, &mut uploads, &mut needs_stock_green);
-                    }
-                    ResidentWorldModelMaterialTextures::Two(textures) => {
-                        collect_texture_upload(&textures[0], &mut uploads, &mut needs_stock_green);
-                        collect_texture_upload(&textures[1], &mut uploads, &mut needs_stock_green);
-                    }
-                }
-            }
-            let uploaded = renderer.upload_blp_textures(&uploads)?;
-            let texture_handles = uploads
-                .iter()
-                .zip(uploaded)
-                .map(|(request, handle)| (request.source().path().clone(), handle))
-                .collect::<HashMap<_, _>>();
-            let stock_green = if needs_stock_green {
-                Some(renderer.upload_stock_world_model_green()?)
-            } else {
-                None
-            };
-            let mut texture_requests = Vec::with_capacity(source.materials().len());
-            for (material, textures) in plan.materials().iter().zip(source.materials()) {
-                let state = WorldModelMaterialState::from_material(material);
-                let sampler = renderer.prepare_world_model_sampler(state, filtering, base_mip)?;
-                texture_requests.push(match textures {
-                    ResidentWorldModelMaterialTextures::One(texture) => {
-                        WorldModelTextureSet::One(WorldModelSampledTexture::new(
-                            resolve_texture(texture, &texture_handles, stock_green)?,
-                            sampler,
-                        ))
-                    }
-                    ResidentWorldModelMaterialTextures::Two(textures) => {
-                        WorldModelTextureSet::Two([
-                            WorldModelSampledTexture::new(
-                                resolve_texture(&textures[0], &texture_handles, stock_green)?,
-                                sampler,
-                            ),
-                            WorldModelSampledTexture::new(
-                                resolve_texture(&textures[1], &texture_handles, stock_green)?,
-                                sampler,
-                            ),
-                        ])
-                    }
-                });
-            }
-            if texture_requests.len() != plan.materials().len() {
-                return Err(VulkanError::WorldModelDrawMaterial.into());
-            }
-            let texture_sets = if texture_requests.is_empty() {
-                Vec::new()
-            } else {
-                renderer.prepare_world_model_texture_sets(&texture_requests)?
-            };
-            let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
-            sources.push(WorldModelGpuSource { plan, mesh, draws });
+            sources.push(Some(prepare_gpu_source(
+                renderer, source, filtering, base_mip,
+            )?));
         }
 
         let mut placements = Vec::with_capacity(scene.placements().len());
         for placement in scene.placements() {
-            let source = sources.get(placement.source_index()).ok_or(
-                RuntimeTerrainFrameError::WorldModelSourceIndex {
+            let source = sources
+                .get(placement.source_index())
+                .and_then(Option::as_ref)
+                .ok_or(RuntimeTerrainFrameError::WorldModelSourceIndex {
                     source_index: placement.source_index(),
                     source_count: sources.len(),
-                },
-            )?;
+                })?;
             let plan = PlacedWorldModelDrawPlan::prepare(
                 Arc::clone(&source.plan),
                 placement.position(),
@@ -141,25 +98,123 @@ impl WorldModelFrame {
             )?;
             placements.push(WorldModelGpuPlacement {
                 source_index: placement.source_index(),
+                owner: WorldModelGpuPlacementOwner::Static,
                 visible_draw_indices: Vec::with_capacity(source.plan.draws().len()),
                 plan,
             });
         }
-        let prepared_capacity = placements
-            .iter()
-            .map(|placement| {
-                sources[placement.source_index]
-                    .draws
-                    .iter()
-                    .map(|draw| draw.pass_count)
-                    .sum::<usize>()
-            })
-            .sum::<usize>();
+        let mut prepared_capacity = 0;
+        for placement in &placements {
+            let source = sources[placement.source_index].as_ref().ok_or(
+                RuntimeTerrainFrameError::WorldModelSourceIndex {
+                    source_index: placement.source_index,
+                    source_count: sources.len(),
+                },
+            )?;
+            prepared_capacity += source
+                .draws
+                .iter()
+                .map(|draw| draw.pass_count)
+                .sum::<usize>();
+        }
         Ok(Self {
             sources,
             placements,
             prepared_draws: Vec::with_capacity(prepared_capacity),
+            filtering,
+            base_mip,
         })
+    }
+
+    /// Replaces the dynamic movement-parent WMO without disturbing MODF state.
+    pub(super) fn replace_transport(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        transport: Option<&ResidentTransport>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let prepared = match transport {
+            Some(transport) => match (
+                transport.resource(),
+                transport.transform(),
+                transport.scale(),
+            ) {
+                (ResidentTransportResource::WorldModel(source), Some(transform), Some(scale)) => {
+                    let gpu = prepare_gpu_source(renderer, source, self.filtering, self.base_mip)?;
+                    let plan = transport_draw_plan(&gpu.plan, transform, scale)?;
+                    Some((transport.guid(), gpu, plan))
+                }
+                _ => None,
+            },
+            None => None,
+        };
+
+        self.remove_transport();
+        if let Some((guid, source, plan)) = prepared {
+            let source_index = self.sources.len();
+            let visible_draw_indices = Vec::with_capacity(source.plan.draws().len());
+            self.sources.push(Some(source));
+            self.placements.push(WorldModelGpuPlacement {
+                source_index,
+                owner: WorldModelGpuPlacementOwner::Transport { guid },
+                plan,
+                visible_draw_indices,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies the latest replicated transport transform to the retained WMO.
+    pub(super) fn update_transport_state(
+        &mut self,
+        transport: Option<&ResidentTransport>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(transport) = transport else {
+            return Ok(());
+        };
+        let (ResidentTransportResource::WorldModel(_), Some(transform), Some(scale)) = (
+            transport.resource(),
+            transport.transform(),
+            transport.scale(),
+        ) else {
+            return Ok(());
+        };
+        let Some(placement) = self.placements.iter_mut().find(|placement| {
+            placement.owner
+                == WorldModelGpuPlacementOwner::Transport {
+                    guid: transport.guid(),
+                }
+        }) else {
+            return Ok(());
+        };
+        let source = self.sources[placement.source_index].as_ref().ok_or(
+            RuntimeTerrainFrameError::WorldModelSourceIndex {
+                source_index: placement.source_index,
+                source_count: self.sources.len(),
+            },
+        )?;
+        placement.plan = transport_draw_plan(&source.plan, transform, scale)?;
+        Ok(())
+    }
+
+    /// Retires only the renderer references owned by the current transport.
+    fn remove_transport(&mut self) {
+        let mut source_indices = Vec::new();
+        self.placements.retain(|placement| {
+            if matches!(
+                placement.owner,
+                WorldModelGpuPlacementOwner::Transport { .. }
+            ) {
+                source_indices.push(placement.source_index);
+                false
+            } else {
+                true
+            }
+        });
+        for source_index in source_indices {
+            if let Some(source) = self.sources.get_mut(source_index) {
+                *source = None;
+            }
+        }
     }
 
     /// Culls placements and replaces the retained physical packet buffer.
@@ -175,7 +230,12 @@ impl WorldModelFrame {
             placement
                 .plan
                 .select_visible_draws(frustum, &mut placement.visible_draw_indices)?;
-            let source = &self.sources[placement.source_index];
+            let source = self.sources[placement.source_index].as_ref().ok_or(
+                RuntimeTerrainFrameError::WorldModelSourceIndex {
+                    source_index: placement.source_index,
+                    source_count: self.sources.len(),
+                },
+            )?;
             for draw_index in placement.visible_draw_indices.iter().copied() {
                 let resources =
                     source
@@ -212,6 +272,88 @@ impl WorldModelFrame {
     pub(super) const fn placement_count(&self) -> usize {
         self.placements.len()
     }
+}
+
+/// Uploads one retained root/group generation and its exact material stages.
+fn prepare_gpu_source(
+    renderer: &mut VulkanRenderer,
+    source: &ResidentWorldModelSource,
+    filtering: WorldModelTextureFiltering,
+    base_mip: WorldModelBaseMip,
+) -> Result<WorldModelGpuSource, RuntimeTerrainFrameError> {
+    let plan = Arc::new(WorldModelMeshPlan::prepare(source.model())?);
+    let mesh = renderer.upload_world_model_mesh(&plan)?;
+    let mut uploads = Vec::new();
+    let mut needs_stock_green = false;
+    for textures in source.materials() {
+        match textures {
+            ResidentWorldModelMaterialTextures::One(texture) => {
+                collect_texture_upload(texture, &mut uploads, &mut needs_stock_green);
+            }
+            ResidentWorldModelMaterialTextures::Two(textures) => {
+                collect_texture_upload(&textures[0], &mut uploads, &mut needs_stock_green);
+                collect_texture_upload(&textures[1], &mut uploads, &mut needs_stock_green);
+            }
+        }
+    }
+    let uploaded = renderer.upload_blp_textures(&uploads)?;
+    let texture_handles = uploads
+        .iter()
+        .zip(uploaded)
+        .map(|(request, handle)| (request.source().path().clone(), handle))
+        .collect::<HashMap<_, _>>();
+    let stock_green = if needs_stock_green {
+        Some(renderer.upload_stock_world_model_green()?)
+    } else {
+        None
+    };
+    let mut texture_requests = Vec::with_capacity(source.materials().len());
+    for (material, textures) in plan.materials().iter().zip(source.materials()) {
+        let state = WorldModelMaterialState::from_material(material);
+        let sampler = renderer.prepare_world_model_sampler(state, filtering, base_mip)?;
+        texture_requests.push(match textures {
+            ResidentWorldModelMaterialTextures::One(texture) => {
+                WorldModelTextureSet::One(WorldModelSampledTexture::new(
+                    resolve_texture(texture, &texture_handles, stock_green)?,
+                    sampler,
+                ))
+            }
+            ResidentWorldModelMaterialTextures::Two(textures) => WorldModelTextureSet::Two([
+                WorldModelSampledTexture::new(
+                    resolve_texture(&textures[0], &texture_handles, stock_green)?,
+                    sampler,
+                ),
+                WorldModelSampledTexture::new(
+                    resolve_texture(&textures[1], &texture_handles, stock_green)?,
+                    sampler,
+                ),
+            ]),
+        });
+    }
+    if texture_requests.len() != plan.materials().len() {
+        return Err(VulkanError::WorldModelDrawMaterial.into());
+    }
+    let texture_sets = if texture_requests.is_empty() {
+        Vec::new()
+    } else {
+        renderer.prepare_world_model_texture_sets(&texture_requests)?
+    };
+    let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
+    Ok(WorldModelGpuSource { plan, mesh, draws })
+}
+
+/// Converts ECS Z-up yaw using `world_game_object_projector.cpp::makeWmo`.
+fn transport_draw_plan(
+    source: &Arc<WorldModelMeshPlan>,
+    transform: solarity_ecs::WorldTransform,
+    scale: f32,
+) -> Result<PlacedWorldModelDrawPlan, RuntimeTerrainFrameError> {
+    Ok(PlacedWorldModelDrawPlan::prepare(
+        Arc::clone(source),
+        transform.position(),
+        Vec3::new(0.0, transform.orientation().to_degrees() - 180.0, 0.0),
+        scale,
+    )?)
 }
 
 fn prepare_draw_resources(
