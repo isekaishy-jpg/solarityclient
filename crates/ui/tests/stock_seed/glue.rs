@@ -567,7 +567,7 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
         .call::<()>((2_u32, true, true))?;
     globals
         .get::<mlua::Function>("SortRealms")?
-        .call::<()>(())?;
+        .call::<()>("name")?;
     globals
         .get::<mlua::Function>("SetCurrentScreen")?
         .call::<()>("login")?;
@@ -600,7 +600,9 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
     ));
     assert!(matches!(
         manager.take_network_action(),
-        Some(UiGlueNetworkAction::SortRealms)
+        Some(UiGlueNetworkAction::SortRealms {
+            sort: solarity_ui::UiRealmSort::Name,
+        })
     ));
     assert!(matches!(
         manager.take_network_action(),
@@ -609,6 +611,56 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
         })
     ));
     Ok(())
+}
+
+/// Realm sorting preserves stock's promoted four-key precedence and direction toggles.
+#[test]
+fn realm_directory_applies_stock_sort_generations() {
+    let realm = |id, name: &str, characters, load, pvp, rp| {
+        UiRealmInfo::new(
+            id,
+            name.to_owned(),
+            characters,
+            UiRealmFlags::new(false, false, false, pvp, rp),
+            load,
+            None,
+        )
+    };
+    let mut directory = UiRealmDirectory::new(
+        vec![UiRealmCategory::new(
+            1,
+            "Test".to_owned(),
+            vec![
+                realm(1, "A", 2, 1.0, false, false),
+                realm(2, "b", 1, 2.0, true, false),
+                realm(3, "C", 1, 0.0, false, true),
+                realm(4, "d", 1, 0.0, false, false),
+            ],
+        )],
+        None,
+    );
+    let names = |directory: &UiRealmDirectory| {
+        directory.categories()[0]
+            .realms()
+            .iter()
+            .map(|realm| realm.name().to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    directory.sort(solarity_ui::UiRealmSort::Name);
+    assert_eq!(names(&directory), ["A", "b", "C", "d"]);
+    directory.sort(solarity_ui::UiRealmSort::Name);
+    assert_eq!(names(&directory), ["d", "C", "b", "A"]);
+    directory.sort(solarity_ui::UiRealmSort::Characters);
+    assert_eq!(names(&directory), ["d", "C", "b", "A"]);
+    directory.sort(solarity_ui::UiRealmSort::Characters);
+    assert_eq!(names(&directory), ["A", "d", "C", "b"]);
+    directory.sort(solarity_ui::UiRealmSort::Load);
+    assert_eq!(names(&directory), ["d", "C", "A", "b"]);
+    directory.sort(solarity_ui::UiRealmSort::Mode);
+    assert_eq!(names(&directory), ["d", "A", "C", "b"]);
+    directory.sort(solarity_ui::UiRealmSort::Mode);
+    assert_eq!(names(&directory), ["b", "C", "d", "A"]);
 }
 
 /// Reads either Lua numeric representation without changing value semantics.

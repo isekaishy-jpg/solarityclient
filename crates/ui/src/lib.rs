@@ -84,10 +84,10 @@ pub use render::{
 pub use script::{
     UiCharacterDirectory, UiCharacterInfo, UiClientClock, UiDeferredRuntimeTemplate,
     UiGlueMediaIntent, UiGlueMovieRequest, UiGlueNetworkAction, UiGlueNetworkStatus,
-    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
-    UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan, UiScriptBinding,
-    UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
+    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort,
+    UiRealmVersion, UiRuntimeTemplate, UiRuntimeTemplateNode, UiRuntimeTemplatePlan,
+    UiScriptBinding, UiScriptEnvironment, UiScriptError, UiScriptHandler, UiScriptNode,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScriptTarget,
 };
 pub use widget::{
     UiBlendMode, UiGradientOrientation, UiScrollFramePlan, UiScrollFrameState,

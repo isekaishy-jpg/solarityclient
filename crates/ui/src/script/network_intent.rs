@@ -9,7 +9,9 @@ mod character;
 mod realm;
 
 pub use character::{UiCharacterDirectory, UiCharacterInfo};
-pub use realm::{UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion};
+pub use realm::{
+    UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort, UiRealmVersion,
+};
 
 /// One credential submission emitted by stock `DefaultServerLogin`.
 pub struct UiLoginRequest {
@@ -87,7 +89,10 @@ pub enum UiGlueNetworkAction {
         roleplaying: bool,
     },
     /// Apply the stock realm-list sort criteria.
-    SortRealms,
+    SortRealms {
+        /// Stock column selected by the authored realm-list button.
+        sort: UiRealmSort,
+    },
     /// Report that the player closed the realm-list dialog.
     RealmListDialogCancelled {
         /// Whether the active Glue screen was the account-login screen.

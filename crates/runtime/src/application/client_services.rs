@@ -761,7 +761,12 @@ impl ClientServices {
                         roleplaying,
                     )?;
                 }
-                UiGlueNetworkAction::SortRealms => {}
+                UiGlueNetworkAction::SortRealms { sort } => {
+                    self.glue.sort_realm_directory(sort);
+                    self.glue
+                        .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
+                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                }
                 UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen } => {
                     if from_login_screen {
                         self.login.disconnect();

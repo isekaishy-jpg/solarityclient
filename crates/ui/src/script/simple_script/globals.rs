@@ -4,7 +4,9 @@ use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
 use solarity_asset::{CharacterClassCatalog, Locale};
 
-use crate::{UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo};
+use crate::{
+    UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiRealmInfo, UiRealmSort,
+};
 
 use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
@@ -2010,8 +2012,27 @@ fn register_realm_list_globals(
     let network = environment.network();
     globals.raw_set(
         "SortRealms",
-        lua.create_function(move |_, _arguments: Variadic<Value>| {
-            network.borrow_mut().push(UiGlueNetworkAction::SortRealms);
+        lua.create_function(move |lua, arguments: Variadic<Value>| {
+            let value = arguments
+                .first()
+                .cloned()
+                .ok_or_else(|| mlua::Error::runtime("Usgae: SortRealms(\"type\")"))?;
+            let value = lua
+                .coerce_string(value)?
+                .map(|value| value.to_string_lossy())
+                .ok_or_else(|| mlua::Error::runtime("Usgae: SortRealms(\"type\")"))?;
+            let sort = if value.eq_ignore_ascii_case("characters") {
+                UiRealmSort::Characters
+            } else if value.eq_ignore_ascii_case("load") {
+                UiRealmSort::Load
+            } else if value.eq_ignore_ascii_case("mode") {
+                UiRealmSort::Mode
+            } else {
+                UiRealmSort::Name
+            };
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::SortRealms { sort });
             Ok(())
         })?,
     )?;

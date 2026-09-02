@@ -16,7 +16,8 @@ pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use network_intent::{
     UiCharacterDirectory, UiCharacterInfo, UiGlueNetworkAction, UiGlueNetworkStatus,
-    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiLoginRequest, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmSort,
+    UiRealmVersion,
 };
 pub use simple_script::{
     UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,

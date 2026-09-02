@@ -502,6 +502,11 @@ impl GlueManager {
         self.network.borrow_mut().set_realms(realms);
     }
 
+    /// Applies one stock realm-list sort generation before Glue redraws it.
+    pub fn sort_realm_directory(&self, sort: crate::UiRealmSort) {
+        self.network.borrow_mut().realms_mut().sort(sort);
+    }
+
     /// Publishes the complete runtime-owned character directory for Glue queries.
     pub fn set_character_directory(&self, characters: crate::UiCharacterDirectory) {
         self.network.borrow_mut().set_characters(characters);

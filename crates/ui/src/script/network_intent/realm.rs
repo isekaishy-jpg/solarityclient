@@ -1,5 +1,35 @@
 //! UI-owned realm directory values exposed synchronously to Glue Lua.
 
+use std::cmp::Ordering;
+
+/// Stock realm-list column accepted by `SortRealms`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiRealmSort {
+    /// Account character count.
+    Characters,
+    /// Normalized population load.
+    Load,
+    /// Case-insensitive realm name.
+    Name,
+    /// Player-killing and roleplaying rule pair.
+    Mode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UiRealmSortCriterion {
+    key: UiRealmSort,
+    descending: bool,
+}
+
+impl UiRealmSortCriterion {
+    const fn new(key: UiRealmSort) -> Self {
+        Self {
+            key,
+            descending: false,
+        }
+    }
+}
+
 /// Boolean realm properties returned by stock `GetRealmInfo`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UiRealmFlags {
@@ -260,11 +290,18 @@ impl UiRealmCategory {
 }
 
 /// Complete realm state queried synchronously by stock Glue Lua.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiRealmDirectory {
     categories: Vec<UiRealmCategory>,
     selected_category: usize,
     selected_realm_id: Option<u32>,
+    sort: [UiRealmSortCriterion; 4],
+}
+
+impl Default for UiRealmDirectory {
+    fn default() -> Self {
+        Self::new(Vec::new(), None)
+    }
 }
 
 impl UiRealmDirectory {
@@ -282,6 +319,12 @@ impl UiRealmDirectory {
             categories,
             selected_category,
             selected_realm_id,
+            sort: [
+                UiRealmSortCriterion::new(UiRealmSort::Characters),
+                UiRealmSortCriterion::new(UiRealmSort::Load),
+                UiRealmSortCriterion::new(UiRealmSort::Name),
+                UiRealmSortCriterion::new(UiRealmSort::Mode),
+            ],
         }
     }
 
@@ -295,6 +338,26 @@ impl UiRealmDirectory {
     #[must_use]
     pub const fn selected_realm_id(&self) -> Option<u32> {
         self.selected_realm_id
+    }
+
+    /// Promotes one stock column, toggles an already-primary direction, and
+    /// sorts every physical category by the complete four-key precedence.
+    pub fn sort(&mut self, key: UiRealmSort) {
+        let Some(index) = self.sort.iter().position(|criterion| criterion.key == key) else {
+            debug_assert!(false, "stock realm sort permutation lost a column");
+            return;
+        };
+        if index == 0 {
+            self.sort[0].descending = !self.sort[0].descending;
+        } else {
+            self.sort[..=index].rotate_right(1);
+        }
+        let sort = self.sort;
+        for category in &mut self.categories {
+            category
+                .realms
+                .sort_unstable_by(|left, right| compare_realms(left, right, &sort));
+        }
     }
 
     pub(crate) fn displayed_categories(&self) -> impl Iterator<Item = &UiRealmCategory> {
@@ -351,4 +414,35 @@ impl UiRealmDirectory {
             .and_then(|index| u32::try_from(index + 1).ok())
             .unwrap_or(1)
     }
+}
+
+fn compare_realms(
+    left: &UiRealmInfo,
+    right: &UiRealmInfo,
+    sort: &[UiRealmSortCriterion; 4],
+) -> Ordering {
+    for criterion in sort {
+        let ordering = match criterion.key {
+            UiRealmSort::Characters => left.character_count.cmp(&right.character_count),
+            UiRealmSort::Load => left.load.total_cmp(&right.load),
+            UiRealmSort::Name => compare_ascii_case_insensitive(&left.name, &right.name),
+            UiRealmSort::Mode => (left.flags.player_killing_allowed, left.flags.roleplaying)
+                .cmp(&(right.flags.player_killing_allowed, right.flags.roleplaying)),
+        };
+        let ordering = if criterion.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
+}
+
+fn compare_ascii_case_insensitive(left: &str, right: &str) -> Ordering {
+    left.bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
 }
