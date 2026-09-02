@@ -21,6 +21,7 @@ mod run;
 mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
+mod transport_coordinator;
 pub(crate) mod ui_frame;
 mod world_coordinator;
 
@@ -47,6 +48,10 @@ pub use terrain_coordinator::{
     RuntimeTerrainPoll,
 };
 pub use terrain_frame::RuntimeTerrainFrameError;
+pub use transport_coordinator::{
+    RuntimeTransportError, RuntimeTransportPoll, RuntimeTransportPresentation,
+    RuntimeTransportResourceKind,
+};
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,

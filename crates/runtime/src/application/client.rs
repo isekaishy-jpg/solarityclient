@@ -22,6 +22,7 @@ use crate::application::run::{self, ApplicationRunReport};
 use crate::application::sound_coordinator::RuntimeSoundError;
 use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
+use crate::application::transport_coordinator::RuntimeTransportError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::configuration::ConfigurationError;
 use crate::configuration::RuntimeConfiguration;
@@ -70,6 +71,9 @@ pub enum ApplicationError {
     /// A resident ADT could not enter renderer-owned GPU state.
     #[error(transparent)]
     TerrainFrame(#[from] RuntimeTerrainFrameError),
+    /// A referenced player-transport display resource failed admission.
+    #[error(transparent)]
+    Transport(#[from] RuntimeTransportError),
     /// A pre-world stock model could not enter the Glue compositor.
     #[error(transparent)]
     GlueModel(#[from] RuntimeGlueModelError),

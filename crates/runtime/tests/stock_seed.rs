@@ -38,3 +38,5 @@ mod telemetry;
 mod terrain;
 #[path = "stock_seed/time.rs"]
 mod time;
+#[path = "stock_seed/transport.rs"]
+mod transport;

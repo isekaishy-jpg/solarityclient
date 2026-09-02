@@ -12,9 +12,9 @@ use tokio::runtime::{Builder, Runtime};
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle,
     CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
-    CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, LoadingScreenCatalog, MapCatalog,
-    ParticleColorCatalog,
+    CreatureFamilyCatalog, GameObjectDisplayCatalog, HelmetGeosetVisibilityCatalog,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, LightCatalog,
+    LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -56,6 +56,9 @@ use crate::application::sound_coordinator::RuntimeSoundCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainPoll;
 use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
+use crate::application::transport_coordinator::{
+    RuntimeTransportPoll, RuntimeTransportPresentation,
+};
 use crate::application::world_coordinator::{
     RuntimeCharacterScreenRequests, RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll,
     RuntimeWorldState,
@@ -85,6 +88,7 @@ pub(crate) struct ClientServices {
     gameplay: RuntimeGameplayCoordinator,
     environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
+    transport: RuntimeTransportPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
@@ -137,6 +141,7 @@ impl ClientServices {
         let item_displays = ItemDisplayCatalog::load(&mut assets)?;
         let item_visuals = ItemVisualCatalog::load(&mut assets)?;
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
+        let game_object_displays = GameObjectDisplayCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
         let loading_screens = match LoadingScreenCatalog::load(&mut assets) {
@@ -299,6 +304,7 @@ impl ClientServices {
                         particle_colors,
                     ),
                 ),
+                transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 fps,
@@ -1242,6 +1248,15 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Current => {}
         }
+        if let RuntimeTransportPoll::ResourceLoaded { guid, kind } =
+            self.transport.synchronize(self.gameplay.world())?
+        {
+            tracing::debug!(
+                transport_guid = guid,
+                resource_kind = ?kind,
+                "local player transport resource became resident"
+            );
+        }
         match self.terrain.synchronize(self.gameplay.world())? {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
@@ -1318,16 +1333,12 @@ impl ClientServices {
             }
         }
         if let Some(loading) = self.loading_screen.as_mut() {
-            let transport_presentable = self
-                .gameplay
-                .world()
-                .is_none_or(|world| world.is_local_player_transport_presentable());
             let readiness = RuntimeLoadingReadiness {
                 world_accepted: self.gameplay.world().is_some(),
                 environment_ready: self.environment.current().is_some(),
                 player_ready: self.player.resident_frame_input().is_some(),
                 scene_ready: self.terrain_frame.is_some(),
-                transport_presentable,
+                transport_resource_ready: self.transport.is_ready(),
             };
             loading.advance(readiness.stage());
         }
@@ -1391,6 +1402,7 @@ impl ClientServices {
         self.gameplay.disconnect();
         self.environment.disconnect();
         self.player.disconnect();
+        self.transport.disconnect();
         self.terrain.disconnect();
         self.sound.disconnect()?;
         self.terrain_frame = None;

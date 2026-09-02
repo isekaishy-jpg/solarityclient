@@ -16,7 +16,11 @@ use crate::support::ClientFixture;
 /// The composition root mounts assets and owns both executor classes.
 #[test]
 fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn Error>> {
-    let fixture = ClientFixture::new()?;
+    let game_object_displays = empty_wdbc(19);
+    let fixture = ClientFixture::with_common_files(&[(
+        "DBFilesClient\\GameObjectDisplayInfo.dbc",
+        &game_object_displays,
+    )])?;
     let runtime_configuration = configuration(&fixture, 0)?;
 
     let mut application = ClientApplication::start(runtime_configuration)?;
@@ -130,6 +134,18 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
         })) if requested == usize::MAX
     ));
     Ok(())
+}
+
+/// Builds an empty table with the exact record width required at startup.
+fn empty_wdbc(field_count: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(21);
+    bytes.extend_from_slice(b"WDBC");
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&field_count.to_le_bytes());
+    bytes.extend_from_slice(&(field_count * 4).to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(0);
+    bytes
 }
 
 /// Builds the complete runtime profile with an explicit Vulkan adapter index.

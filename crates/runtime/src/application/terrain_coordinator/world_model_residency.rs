@@ -40,6 +40,18 @@ pub(in crate::application) struct ResidentWorldModelSource {
 }
 
 impl ResidentWorldModelSource {
+    /// Loads one complete root/group generation and every MOMT texture stage.
+    pub(in crate::application) fn load(
+        path: &AssetPath,
+        model_cache: &mut WmoModelCache,
+        texture_cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<Self, RuntimeTerrainError> {
+        let model = model_cache.load(store, path)?;
+        let materials = prepare_material_textures(&model, texture_cache, store)?;
+        Ok(Self { model, materials })
+    }
+
     /// Returns the immutable root/group generation selected by MPQ priority.
     pub(in crate::application) const fn model(&self) -> &Arc<DecodedWorldModel> {
         &self.model
@@ -151,13 +163,13 @@ pub(super) fn prepare_world_models(
         let source_index = if let Some(source_index) = source_indices.get(placement.path()) {
             *source_index
         } else {
-            let model = model_cache.load(store, placement.path())?;
-            let materials = prepare_material_textures(&model, texture_cache, store)?;
             let source_index = result.sources.len();
-            result.sources.push(ResidentWorldModelSource {
-                model: Arc::clone(&model),
-                materials,
-            });
+            result.sources.push(ResidentWorldModelSource::load(
+                placement.path(),
+                model_cache,
+                texture_cache,
+                store,
+            )?);
             source_indices.insert(placement.path().clone(), source_index);
             source_index
         };

@@ -44,7 +44,6 @@ fn active_world_retains_complete_living_movement_state() -> Result<(), Box<dyn E
     assert!(!world.is_local_player_transport_admitted());
     world.create_object(transport_guid, ObjectKind::GameObject, None, [])?;
     assert!(world.is_local_player_transport_admitted());
-    assert!(!world.is_local_player_transport_presentable());
     world.update_transform(transport_guid, WorldTransform::new(Vec3::ZERO, 0.0))?;
     let transport = world
         .entity_by_guid(transport_guid)
@@ -52,6 +51,11 @@ fn active_world_retains_complete_living_movement_state() -> Result<(), Box<dyn E
     world
         .storage_mut()
         .add_component(transport, (GameObjectPresentation::new(42),));
-    assert!(world.is_local_player_transport_presentable());
+    assert_eq!(
+        world
+            .game_object_presentation(transport_guid)
+            .map(GameObjectPresentation::display_id),
+        Some(42)
+    );
     Ok(())
 }

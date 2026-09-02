@@ -39,6 +39,18 @@ pub(in crate::application) struct ResidentM2Source {
 }
 
 impl ResidentM2Source {
+    /// Loads one complete M2/SKIN generation and its authored texture inputs.
+    pub(in crate::application) fn load(
+        path: &AssetPath,
+        cache: &mut M2ModelCache,
+        texture_cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<Self, RuntimeTerrainError> {
+        let model = cache.load(store, path)?;
+        let textures = prepare_textures(&model, texture_cache, store)?;
+        Ok(Self { model, textures })
+    }
+
     /// Returns the immutable M2/SKIN generation selected by MPQ precedence.
     pub(in crate::application) const fn model(&self) -> &Arc<DecodedM2Model> {
         &self.model
@@ -221,11 +233,9 @@ impl ResidentM2SceneBuilder {
             *index
         } else {
             let index = self.scene.sources.len();
-            let textures = prepare_textures(&model, texture_cache, store)?;
-            self.scene.sources.push(ResidentM2Source {
-                model: Arc::clone(&model),
-                textures,
-            });
+            self.scene
+                .sources
+                .push(ResidentM2Source::load(path, cache, texture_cache, store)?);
             self.source_indices.insert(model.path().clone(), index);
             index
         };
