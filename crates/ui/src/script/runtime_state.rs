@@ -6,9 +6,9 @@ use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key, backdrop_color_key,
     button_pressed_key, checked_key, click_action_key, desaturated_key, disabled_font_key,
     disabled_text_color_key, draw_layer_key, draw_sub_level_key, edit_caret_visible_key,
-    edit_cursor_key, edit_focused_key, edit_multi_line_key, edit_password_key,
-    edit_selection_end_key, edit_selection_start_key, edit_text_insets_key, enabled_key,
-    font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
+    edit_cursor_key, edit_focused_key, edit_highlight_color_key, edit_multi_line_key,
+    edit_password_key, edit_selection_end_key, edit_selection_start_key, edit_text_insets_key,
+    enabled_key, font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
     font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
     highlight_font_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
     horizontal_scroll_range_key, horizontal_tiling_key, hovered_key, index_key, justify_h_key,
@@ -110,6 +110,7 @@ pub(crate) struct UiRuntimeText {
     pub(crate) cursor: usize,
     pub(crate) selection: [usize; 2],
     pub(crate) caret_visible: bool,
+    pub(crate) highlight_color: [f64; 4],
 }
 
 /// Post-Lua model source and animation-selection properties.
@@ -693,6 +694,16 @@ fn snapshot_text(
                 .map_err(|error| {
                     snapshot_error(format!("object {lua_index} caret visibility"), error)
                 })?,
+        highlight_color: if is_edit_box {
+            let values = table
+                .raw_get::<Table>(edit_highlight_color_key())
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} highlight color"), error)
+                })?;
+            numeric_array::<4>(&values, lua_index, "highlight color")?
+        } else {
+            [0.0; 4]
+        },
     }))
 }
 

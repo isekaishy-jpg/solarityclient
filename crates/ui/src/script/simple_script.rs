@@ -169,6 +169,7 @@ static NON_SPACE_WRAP_TOKEN: u8 = 128;
 static MAX_TEXT_LINES_TOKEN: u8 = 129;
 static EDIT_CARET_ELAPSED_TOKEN: u8 = 130;
 static EDIT_CARET_VISIBLE_TOKEN: u8 = 131;
+static EDIT_HIGHLIGHT_COLOR_TOKEN: u8 = 132;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -217,6 +218,7 @@ struct InitialFont {
     edit_password: bool,
     edit_multiline: bool,
     edit_text_insets: [f64; 4],
+    edit_highlight_color: [f64; 4],
 }
 
 impl Default for InitialFont {
@@ -235,6 +237,7 @@ impl Default for InitialFont {
             edit_password: false,
             edit_multiline: false,
             edit_text_insets: [0.0; 4],
+            edit_highlight_color: [96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0],
         }
     }
 }
@@ -2218,6 +2221,12 @@ impl UiScriptRuntime {
                         lua.create_sequence_from(edit.edit_text_insets)?,
                     )
                 })
+                .and_then(|()| {
+                    table.raw_set(
+                        edit_highlight_color_key(),
+                        lua.create_sequence_from(edit.edit_highlight_color)?,
+                    )
+                })
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::ScrollFrame {
@@ -2610,6 +2619,10 @@ fn create_dynamic_frame(
         record.raw_set("edit_password", false)?;
         record.raw_set("edit_multiline", false)?;
         record.raw_set("edit_text_insets", lua.create_sequence_from([0.0_f64; 4])?)?;
+        record.raw_set(
+            "edit_highlight_color",
+            lua.create_sequence_from([96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0])?,
+        )?;
         record.raw_set("justify_h", "CENTER")?;
         record.raw_set("justify_v", "MIDDLE")?;
         record.raw_set(
@@ -2865,6 +2878,10 @@ fn create_dynamic_object(
         object.raw_set(
             edit_text_insets_key(),
             record.raw_get::<Table>("edit_text_insets")?,
+        )?;
+        object.raw_set(
+            edit_highlight_color_key(),
+            record.raw_get::<Table>("edit_highlight_color")?,
         )?;
     }
     if kind == "ScrollFrame" {
@@ -5026,6 +5043,10 @@ fn initialize_edit_box(lua: &Lua, object: &Table) -> mlua::Result<()> {
     object.raw_set(edit_blink_speed_key(), 0.5_f64)?;
     object.raw_set(edit_caret_elapsed_key(), 0.0_f64)?;
     object.raw_set(edit_caret_visible_key(), true)?;
+    object.raw_set(
+        edit_highlight_color_key(),
+        lua.create_sequence_from([96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0])?,
+    )?;
     object.raw_set(edit_password_key(), false)?;
     object.raw_set(edit_numeric_key(), false)?;
     object.raw_set(edit_multi_line_key(), false)?;
@@ -7221,6 +7242,15 @@ fn apply_initial_edit_box_element(
                     }
                 }
             }
+        } else if child.name() == "HighlightColor" {
+            for (slot, name) in ["r", "g", "b", "a"].into_iter().enumerate() {
+                if let Some(value) = xml_attribute(child, name)
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| value.is_finite())
+                {
+                    initial.edit_highlight_color[slot] = value;
+                }
+            }
         }
     }
 }
@@ -7691,6 +7721,10 @@ fn edit_auto_focus_key() -> LightUserData {
 
 pub(super) fn edit_text_insets_key() -> LightUserData {
     hidden_key(&EDIT_TEXT_INSETS_TOKEN)
+}
+
+pub(super) fn edit_highlight_color_key() -> LightUserData {
+    hidden_key(&EDIT_HIGHLIGHT_COLOR_TOKEN)
 }
 
 fn frame_clamped_key() -> LightUserData {

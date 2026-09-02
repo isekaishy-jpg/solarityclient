@@ -97,6 +97,7 @@ pub struct UiRuntimeTemplateNode {
     edit_password: bool,
     edit_multiline: bool,
     edit_text_insets: [f64; 4],
+    edit_highlight_color: [f64; 4],
     justify_h: String,
     justify_v: String,
     button_text_reference: Option<String>,
@@ -287,6 +288,7 @@ impl UiRuntimeTemplatePlan {
                     edit_password: font.edit_password,
                     edit_multiline: font.edit_multiline,
                     edit_text_insets: font.edit_text_insets,
+                    edit_highlight_color: font.edit_highlight_color,
                     justify_h: font.justify_h,
                     justify_v: font.justify_v,
                     button_text_reference: button.text_reference,
@@ -468,6 +470,10 @@ impl UiRuntimeTemplatePlan {
                     "edit_text_insets",
                     lua.create_sequence_from(node.edit_text_insets)?,
                 )?;
+                record.raw_set(
+                    "edit_highlight_color",
+                    lua.create_sequence_from(node.edit_highlight_color)?,
+                )?;
                 record.raw_set("justify_h", node.justify_h.as_str())?;
                 record.raw_set("justify_v", node.justify_v.as_str())?;
                 record.raw_set(
@@ -524,7 +530,6 @@ impl UiRuntimeTemplatePlan {
     }
 }
 
-#[derive(Default)]
 struct InitialFont {
     assigned: bool,
     object_name: Option<String>,
@@ -537,8 +542,30 @@ struct InitialFont {
     edit_password: bool,
     edit_multiline: bool,
     edit_text_insets: [f64; 4],
+    edit_highlight_color: [f64; 4],
     justify_h: String,
     justify_v: String,
+}
+
+impl Default for InitialFont {
+    fn default() -> Self {
+        Self {
+            assigned: false,
+            object_name: None,
+            text_reference: None,
+            spacing: 0.0,
+            word_wrap: false,
+            non_space_wrap: false,
+            max_lines: 0,
+            edit_max_letters: 0,
+            edit_password: false,
+            edit_multiline: false,
+            edit_text_insets: [0.0; 4],
+            edit_highlight_color: [96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0],
+            justify_h: String::new(),
+            justify_v: String::new(),
+        }
+    }
 }
 
 fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialFont {
@@ -657,6 +684,15 @@ fn apply_initial_edit_box_element(
                     {
                         initial.edit_text_insets[slot] = value;
                     }
+                }
+            }
+        } else if child.name() == "HighlightColor" {
+            for (slot, name) in ["r", "g", "b", "a"].into_iter().enumerate() {
+                if let Some(value) = attribute(child, name)
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| value.is_finite())
+                {
+                    initial.edit_highlight_color[slot] = value;
                 }
             }
         }

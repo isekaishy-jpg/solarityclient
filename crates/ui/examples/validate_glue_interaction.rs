@@ -1184,6 +1184,21 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
             invalid_data(format!("account EditBox produced {account_glyphs} glyphs")).into(),
         );
     }
+    if manager.keyboard_key("HOME", true, UiKeyboardModifiers::new(true, false, false))?
+        != Some(account_index)
+    {
+        return Err(invalid_data(
+            "account EditBox did not receive shifted selection key".to_owned(),
+        )
+        .into());
+    }
+    let solid_account_quads = solid_quad_count(manager, account_index);
+    if solid_account_quads != "VALIDATION_ACCOUNT".chars().count() + 1 {
+        return Err(invalid_data(format!(
+            "account EditBox produced {solid_account_quads} solid selection/caret quads"
+        ))
+        .into());
+    }
     if manager.keyboard_key("TAB", true, UiKeyboardModifiers::default())? != Some(account_index)
         || manager.focused_edit_box() != Some(password_index)
     {
@@ -1238,17 +1253,22 @@ fn visible_glyph_owners(manager: &GlueManager) -> Vec<usize> {
 }
 
 fn has_solid_caret(manager: &GlueManager, object_index: usize) -> bool {
+    solid_quad_count(manager, object_index) > 0
+}
+
+fn solid_quad_count(manager: &GlueManager, object_index: usize) -> usize {
     manager
         .glyphs()
         .quads_with_scroll(manager.geometry(), manager.scroll_frames())
         .into_iter()
         .filter(|quad| quad.object_index() == object_index)
-        .any(|quad| {
+        .filter(|quad| {
             let coordinates = quad.texture_coordinates();
             coordinates[1..]
                 .iter()
                 .all(|coordinate| *coordinate == coordinates[0])
         })
+        .count()
 }
 
 fn contains_change(changes: &[(String, String)], name: &str, value: &str) -> bool {

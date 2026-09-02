@@ -769,6 +769,8 @@ fn request_live_glyphs(
 struct PresentedCharacter {
     character: char,
     color: Option<[f32; 4]>,
+    source_begin: usize,
+    source_end: usize,
 }
 
 /// Wraps one explicit line at whitespace boundaries using stock glyph advances.
@@ -870,6 +872,8 @@ fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
             output.push(PresentedCharacter {
                 character: '\n',
                 color,
+                source_begin: cursor,
+                source_end: cursor + 2,
             });
             cursor += 2;
             continue;
@@ -878,6 +882,8 @@ fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
             output.push(PresentedCharacter {
                 character: if text.password { '*' } else { '|' },
                 color,
+                source_begin: cursor,
+                source_end: cursor + 2,
             });
             cursor += 2;
             continue;
@@ -885,6 +891,7 @@ fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
         let Some(character) = remaining.chars().next() else {
             break;
         };
+        let source_begin = cursor;
         cursor += character.len_utf8();
         output.push(PresentedCharacter {
             character: if text.password && !matches!(character, ' ' | '\t' | '\r' | '\n') {
@@ -893,6 +900,8 @@ fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
                 character
             },
             color,
+            source_begin,
+            source_end: cursor,
         });
     }
     output
@@ -1025,6 +1034,7 @@ fn layout_live_quads(
             nearest_live_scroll_frame(live, object.parent)
         };
         let mut primary_quads = Vec::new();
+        let mut selection_quads = Vec::new();
         let mut caret_quads = Vec::new();
         for (line_index, line) in lines.iter().enumerate() {
             let line_width = line.iter().try_fold(0.0, |width, presented| {
@@ -1056,6 +1066,7 @@ fn layout_live_quads(
             let caret = (object.kind == UiObjectKind::EditBox
                 && object.edit_focused.unwrap_or(false)
                 && text.caret_visible
+                && !text.multiline
                 && line_index == 0)
                 .then(|| {
                     edit_box_caret_metrics(text, &font, glyphs, pixels_per_ui_unit, available_width)
@@ -1072,6 +1083,8 @@ fn layout_live_quads(
                 }
             }
             let line_start_x = pen_x;
+            let selection_begin = text.selection[0].min(text.selection[1]);
+            let selection_end = text.selection[0].max(text.selection[1]);
             for presented in line {
                 let character = presented.character;
                 let key = GlyphKey::new(&font, character);
@@ -1080,6 +1093,26 @@ fn layout_live_quads(
                         "live text object {object_index} uses unavailable glyph {character:?}"
                     ),
                 })?;
+                let advance = glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
+                if selection_begin != selection_end
+                    && presented.source_end > selection_begin
+                    && presented.source_begin < selection_end
+                    && advance > 0.0
+                {
+                    selection_quads.push(LocalGlyphQuad {
+                        packet_key,
+                        object_index,
+                        clip_object,
+                        bounds: [
+                            pen_x as f32,
+                            (line_top - line_height) as f32,
+                            (pen_x + advance) as f32,
+                            line_top as f32,
+                        ],
+                        texture_coordinates: solid_coordinates(extent),
+                        color: text.highlight_color.map(|component| component as f32),
+                    });
+                }
                 if glyph.width() > 0 && glyph.height() > 0 {
                     let placement = placements.get(&key).ok_or_else(|| {
                         FontError::Presentation {
@@ -1105,18 +1138,12 @@ fn layout_live_quads(
                         color: presented.color.unwrap_or(color),
                     });
                 }
-                pen_x += glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
+                pen_x += advance;
             }
             if let Some((caret_offset, caret_width)) = caret {
                 // Build 12340 presents the insertion point as a full
                 // character-cell block. Pixel (0, 0) is the atlas-owned solid
                 // coverage sample reserved by `compose_atlas`.
-                let solid = [
-                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
-                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
-                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
-                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
-                ];
                 caret_quads.push(LocalGlyphQuad {
                     packet_key,
                     object_index,
@@ -1127,7 +1154,7 @@ fn layout_live_quads(
                         (line_start_x + caret_offset + caret_width) as f32,
                         line_top as f32,
                     ],
-                    texture_coordinates: solid,
+                    texture_coordinates: solid_coordinates(extent),
                     color,
                 });
             }
@@ -1135,6 +1162,7 @@ fn layout_live_quads(
         // GxuFontString draws material passes in outline, shadow, then face
         // order. Keeping these as separate quads restores the black edging
         // and offset shadow that make Glue labels legible over animated M2s.
+        quads.extend(selection_quads);
         let outline = text.outline_width as f32;
         if outline > 0.0 {
             for primary in &primary_quads {
@@ -1165,6 +1193,10 @@ fn layout_live_quads(
         quads.extend(caret_quads);
     }
     Ok(quads)
+}
+
+fn solid_coordinates(extent: (u32, u32)) -> [[f32; 2]; 4] {
+    [[0.5 / extent.0 as f32, 0.5 / extent.1 as f32]; 4]
 }
 
 /// Reuses one glyph's atlas coverage for an offset live-text material pass.
@@ -1496,6 +1528,7 @@ mod tests {
             cursor: 2,
             selection: [2, 2],
             caret_visible: true,
+            highlight_color: [96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0],
         };
 
         assert_eq!(
