@@ -881,6 +881,35 @@ impl M2Frame {
             placement.glue_parent_attachment = Some(1);
             prepared.push((source, placement));
         }
+        // Build 12340 changes character textures and geosets without replacing
+        // the same-model CM2Model animation timer. Preserve the complete
+        // playback/event history only after every replacement resource has
+        // prepared successfully, keeping this update transactional.
+        let retained_playback = self
+            .placements
+            .iter()
+            .position(|placement| {
+                if !matches!(placement.owner, M2GpuPlacementOwner::PlayerBody { guid: 0 }) {
+                    return false;
+                }
+                self.sources
+                    .get(placement.source_index)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|source| source.model.path() == input.model().path())
+                    && placement.playback.as_ref().is_some_and(|playback| {
+                        playback.animation_id == input.animation().animation_id()
+                    })
+            })
+            .and_then(|index| self.placements[index].playback.take());
+        if let Some(playback) = retained_playback
+            && let Some((_source, replacement)) = prepared.first_mut()
+        {
+            replacement.playback = Some(playback);
+            tracing::debug!(
+                model = %input.model().path(),
+                "retained same-model Glue character animation timeline"
+            );
+        }
         self.remove_player();
         for (source, placement) in prepared {
             let source_index = self.sources.len();
