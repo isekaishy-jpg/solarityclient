@@ -92,6 +92,12 @@ impl SelectedAdapter {
         {
             return Err(VulkanError::TransferDestinationUsage);
         }
+        if !surface_capabilities
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+        {
+            return Err(VulkanError::TransferSourceUsage);
+        }
 
         let device_name = properties.device_name_as_c_str().map_or_else(
             |_source| "invalid Vulkan adapter name".to_owned(),

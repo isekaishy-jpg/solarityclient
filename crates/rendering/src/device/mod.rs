@@ -15,6 +15,7 @@ mod gfx_singleton_manager;
 mod status;
 mod vulkan_character_atlas;
 mod vulkan_frame;
+mod vulkan_glow;
 mod vulkan_instance;
 mod vulkan_m2_draw;
 mod vulkan_m2_frame;
@@ -51,6 +52,7 @@ mod vulkan_world_model_texture_set;
 
 pub use status::VulkanError;
 pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
+pub use vulkan_glow::WorldFrameGlow;
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_draw::M2PreparedDraw;
 pub use vulkan_m2_frame::M2FrameReport;

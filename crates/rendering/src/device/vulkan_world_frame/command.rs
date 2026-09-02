@@ -6,6 +6,7 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 use crate::device::vulkan_frame::swapchain_error;
+use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -59,6 +60,8 @@ pub(super) struct RecordContext<'a> {
     pub(super) particle_index_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ribbon_vertex_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ui: Option<UiOverlayRecordContext<'a>>,
+    pub(super) glow: Option<(&'a VulkanGlowRenderer, WorldFrameGlow)>,
+    pub(super) image_index: u32,
 }
 
 pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
@@ -164,6 +167,17 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     }
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    if let Some((glow, settings)) = context.glow {
+        glow.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            context.image_view,
+            context.image_index,
+            context.screen_window,
+            settings,
+        )?;
+    }
     if let Some(ui) = context.ui {
         transition_to_ui_overlay(&context);
         record_loaded_overlay(ui)?;

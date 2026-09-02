@@ -88,6 +88,27 @@ pub enum VulkanError {
     /// Swapchain images cannot receive the bootstrap texture transfer.
     #[error("surface images do not support transfer-destination usage")]
     TransferDestinationUsage,
+    /// Swapchain images cannot be sampled through the glow capture path.
+    #[error("surface images do not support transfer-source usage")]
+    TransferSourceUsage,
+    /// A live FFXGlow factor was not finite or outside the supported stock range.
+    #[error("glow strength {strength} is outside 0..=4")]
+    GlowStrength {
+        /// Rejected strength value.
+        strength: f32,
+    },
+    /// A live display gamma was not finite or outside the supported range.
+    #[error("glow gamma {gamma} is outside 0.1..=4")]
+    GlowGamma {
+        /// Rejected gamma value.
+        gamma: f32,
+    },
+    /// A fixed FFXGlow shader failed pinned compilation.
+    #[error("glow shader preparation failed: {message}")]
+    GlowShader {
+        /// Shader compiler diagnostic.
+        message: String,
+    },
     /// CPU frame composition overflowed addressable memory.
     #[error("bootstrap frame dimensions exceed addressable memory")]
     FrameSize,

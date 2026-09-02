@@ -8,8 +8,9 @@ use solarity_asset::{
 };
 use solarity_rendering::{
     M2CameraFrameError, M2LocalLightCount, M2LocalLightState, M2ParticleTwinkleTable,
-    M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameScene,
-    WorldFrustum, WorldModelSceneUniform, WorldScreenWindow, sample_m2_camera_frame,
+    M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameGlow,
+    WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
+    sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
@@ -69,6 +70,9 @@ pub enum RuntimeGlueModelError {
         /// Live UI arena identity of the model widget.
         object_index: usize,
     },
+    /// The live stock display-gamma CVar could not form a finite renderer input.
+    #[error("Glue gamma CVar has invalid value {value:?}")]
+    InvalidGamma { value: Option<String> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +119,7 @@ struct GlueModelEnvironment {
     pet_local_lights: [M2LocalLightState; 4],
     bounds: UiScreenRect,
     alpha: f32,
+    glow: f32,
 }
 
 impl GlueModelEnvironment {
@@ -160,6 +165,7 @@ impl GlueModelEnvironment {
             pet_local_lights,
             bounds: model.bounds(),
             alpha: model.alpha(),
+            glow: model.glow(),
         }
     }
 }
@@ -300,6 +306,7 @@ impl RuntimeGlueModelScene {
     pub(crate) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
+        glue: &GlueManager,
         ui: &RuntimeUiFrame,
         global_time_ms: f32,
         random: &mut CrtRand,
@@ -366,21 +373,52 @@ impl RuntimeGlueModelScene {
         let mut ui_draws = Vec::with_capacity(ui.draws().len() + overlay.len());
         ui_draws.extend_from_slice(ui.draws());
         ui_draws.extend_from_slice(overlay);
-        renderer.present_world_frame_with_ui(
-            WorldFrameScene::new(terrain, world_model, model),
-            visible.bone_transforms,
-            &[],
-            &[],
-            visible.draws,
-            visible.particle_vertices,
-            visible.particle_indices,
-            visible.particle_draws,
-            visible.ribbon_vertices,
-            visible.ribbon_draws,
-            screen_window,
-            ui.logical_extent(),
-            &ui_draws,
-        )?;
+        let gamma_value = glue.cvar_value("gamma");
+        let gamma = gamma_value
+            .as_deref()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite())
+            .ok_or(RuntimeGlueModelError::InvalidGamma { value: gamma_value })?;
+        let strength = if glue.cvar_boolean("ffxGlow") {
+            active.environment.glow
+        } else {
+            0.0
+        };
+        let scene = WorldFrameScene::new(terrain, world_model, model);
+        if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
+            renderer.present_world_frame_with_ui_and_glow(
+                scene,
+                visible.bone_transforms,
+                &[],
+                &[],
+                visible.draws,
+                visible.particle_vertices,
+                visible.particle_indices,
+                visible.particle_draws,
+                visible.ribbon_vertices,
+                visible.ribbon_draws,
+                screen_window,
+                WorldFrameGlow::new(strength.clamp(0.0, 4.0), gamma.clamp(0.1, 4.0))?,
+                ui.logical_extent(),
+                &ui_draws,
+            )?;
+        } else {
+            renderer.present_world_frame_with_ui(
+                scene,
+                visible.bone_transforms,
+                &[],
+                &[],
+                visible.draws,
+                visible.particle_vertices,
+                visible.particle_indices,
+                visible.particle_draws,
+                visible.ribbon_vertices,
+                visible.ribbon_draws,
+                screen_window,
+                ui.logical_extent(),
+                &ui_draws,
+            )?;
+        }
         Ok(true)
     }
 }

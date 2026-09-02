@@ -12,6 +12,7 @@ use glam::Mat4;
 use crate::WorldScreenWindow;
 use crate::device::VulkanError;
 use crate::device::vulkan_frame::swapchain_error;
+use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -68,6 +69,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) ui_pipelines: &'a UiPipelineRegistry,
     pub(in crate::device) ui_meshes: &'a UiMeshRegistry,
     pub(in crate::device) ui_texture_sets: &'a UiTextureSetRegistry,
+    pub(in crate::device) glow: Option<(&'a VulkanGlowRenderer, WorldFrameGlow)>,
 }
 
 /// One color-only UI overlay appended after all world/M2 effect draws.
@@ -267,6 +269,8 @@ impl WorldFrameRenderer {
                 texture_sets: context.ui_texture_sets,
                 draws: ui.draws,
             }),
+            glow: context.glow,
+            image_index,
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
         Ok(WorldFrameReport::new(

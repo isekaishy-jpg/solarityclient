@@ -37,11 +37,12 @@ pub use device::{
     UiGlyphTextureResourceInfo, UiMeshHandle, UiMeshResourceInfo, UiPipelineHandle, UiPipelineInfo,
     UiPreparedDraw, UiSampledTexture, UiSamplerHandle, UiSamplerInfo, UiTextureImageHandle,
     UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap, VulkanError, VulkanRenderer,
-    VulkanReport, WorldFrameReport, WorldFrameScene, WorldModelBaseMip, WorldModelMeshHandle,
-    WorldModelMeshResourceInfo, WorldModelPipelineHandle, WorldModelPipelineInfo,
-    WorldModelPreparedDraw, WorldModelSampledTexture, WorldModelSamplerHandle,
-    WorldModelSamplerInfo, WorldModelTextureAddressMode, WorldModelTextureFiltering,
-    WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo,
+    VulkanReport, WorldFrameGlow, WorldFrameReport, WorldFrameScene, WorldModelBaseMip,
+    WorldModelMeshHandle, WorldModelMeshResourceInfo, WorldModelPipelineHandle,
+    WorldModelPipelineInfo, WorldModelPreparedDraw, WorldModelSampledTexture,
+    WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelTextureAddressMode,
+    WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
+    WorldModelTextureSetInfo,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
@@ -70,15 +71,16 @@ pub use particle::{
     M2RibbonTrailError,
 };
 pub use shader::{
-    M2BlendFactor, M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler,
-    M2ParticleSpirvError, M2ParticleSpirvProgram, M2PixelShader, M2RibbonSpirvCompiler,
-    M2RibbonSpirvError, M2RibbonSpirvProgram, M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError,
-    M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2SpirvError, M2SpirvKey,
-    M2SpirvProgram, M2VertexShader, TerrainLayerCount, TerrainLayerCountError,
-    TerrainSpirvCompiler, TerrainSpirvError, TerrainSpirvProgram, UiShaderSource, UiSpirvCompiler,
-    UiSpirvError, UiSpirvProgram, WorldModelBlendFactor, WorldModelBlendState, WorldModelFogMode,
-    WorldModelLightingMode, WorldModelMaterialState, WorldModelSpirvCompiler, WorldModelSpirvError,
-    WorldModelSpirvKey, WorldModelSpirvProgram, WorldModelSurfacePass, WorldModelSurfacePassPlan,
+    GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram, M2BlendFactor,
+    M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler, M2ParticleSpirvError,
+    M2ParticleSpirvProgram, M2PixelShader, M2RibbonSpirvCompiler, M2RibbonSpirvError,
+    M2RibbonSpirvProgram, M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader,
+    TerrainLayerCount, TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError,
+    TerrainSpirvProgram, UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram,
+    WorldModelBlendFactor, WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode,
+    WorldModelMaterialState, WorldModelSpirvCompiler, WorldModelSpirvError, WorldModelSpirvKey,
+    WorldModelSpirvProgram, WorldModelSurfacePass, WorldModelSurfacePassPlan,
 };
 pub use terrain::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,

@@ -9,6 +9,7 @@ use crate::device::vulkan_character_atlas::{
     CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
 };
 use crate::device::vulkan_frame::{FrameContext, FrameUiContext, present_rgba8};
+use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
 use crate::device::vulkan_m2_particle_draw::{
@@ -177,6 +178,7 @@ pub struct VulkanRenderer {
     world_model_samplers: WorldModelSamplerRegistry,
     world_model_texture_sets: WorldModelTextureSetRegistry,
     world_frames: WorldFrameRenderer,
+    glow: VulkanGlowRenderer,
     terrain_meshes: TerrainMeshRegistry,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
@@ -240,6 +242,7 @@ impl VulkanRenderer {
             world_model_samplers: WorldModelSamplerRegistry::default(),
             world_model_texture_sets: WorldModelTextureSetRegistry::default(),
             world_frames: WorldFrameRenderer::default(),
+            glow: VulkanGlowRenderer::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -421,6 +424,7 @@ impl VulkanRenderer {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
         self.world_frames.destroy(&self.device, allocator);
+        self.glow.destroy(&self.device, allocator);
         self.terrain_frames.destroy(&self.device, allocator);
         self.m2_frames.destroy(&self.device, allocator);
         // SAFETY: The device is idle, so no frame can reference these views or
@@ -1415,6 +1419,7 @@ impl VulkanRenderer {
                 ribbon_draws,
                 crate::WorldScreenWindow::FULL,
                 None,
+                None,
             )
         })
     }
@@ -1463,6 +1468,48 @@ impl VulkanRenderer {
                     logical_extent: ui_logical_extent,
                     draws: ui_draws,
                 }),
+                None,
+            )
+        })
+    }
+
+    /// Presents a ModelFFX scene through stock glow/gamma before loaded UI.
+    #[allow(clippy::too_many_arguments)]
+    pub fn present_world_frame_with_ui_and_glow(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
+        screen_window: crate::WorldScreenWindow,
+        glow: WorldFrameGlow,
+        ui_logical_extent: [f32; 2],
+        ui_draws: &[UiPreparedDraw],
+    ) -> Result<WorldFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_world_frame_internal(
+                scene,
+                bone_transforms,
+                terrain_draws,
+                world_model_draws,
+                m2_draws,
+                particle_vertices,
+                particle_indices,
+                particle_draws,
+                ribbon_vertices,
+                ribbon_draws,
+                screen_window,
+                Some(WorldUiOverlay {
+                    logical_extent: ui_logical_extent,
+                    draws: ui_draws,
+                }),
+                Some(glow),
             )
         })
     }
@@ -1482,6 +1529,7 @@ impl VulkanRenderer {
         ribbon_draws: &[M2RibbonPreparedDraw],
         screen_window: crate::WorldScreenWindow,
         ui: Option<WorldUiOverlay<'_>>,
+        glow: Option<WorldFrameGlow>,
     ) -> Result<WorldFrameReport, VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
@@ -1497,6 +1545,15 @@ impl VulkanRenderer {
             m2_layouts[1],
             m2_layouts[2],
         ];
+        if glow.is_some() {
+            self.glow.ensure(
+                &self.device,
+                allocator,
+                self.color_format,
+                self.report.extent,
+                self.swapchain_images.len(),
+            )?;
+        }
         let report = self.world_frames.present(
             WorldFrameContext {
                 device: &self.device,
@@ -1526,6 +1583,7 @@ impl VulkanRenderer {
                 ui_pipelines: &self.ui_pipelines,
                 ui_meshes: &self.ui_meshes,
                 ui_texture_sets: &self.ui_texture_sets,
+                glow: glow.map(|settings| (&self.glow, settings)),
             },
             descriptor_layouts,
             scene,
@@ -1714,7 +1772,11 @@ impl VulkanRenderer {
             .image_color_space(selected.surface_format.color_space)
             .image_extent(extent)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
+            .image_usage(
+                vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::TRANSFER_DST
+                    | vk::ImageUsageFlags::TRANSFER_SRC,
+            )
             .pre_transform(selected.surface_capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(vk::PresentModeKHR::FIFO)
@@ -1795,6 +1857,7 @@ impl Drop for VulkanRenderer {
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
             self.world_frames.destroy(&self.device, allocator);
+            self.glow.destroy(&self.device, allocator);
             self.terrain_frames.destroy(&self.device, allocator);
             self.m2_frames.destroy(&self.device, allocator);
             self.ui_meshes.destroy(allocator);

@@ -4,6 +4,7 @@
 //! responsibility. `shaderc` produces the pinned SPIR-V target consumed by the
 //! Vulkan 1.3 backend; unsupported stock shader forms fail explicitly.
 
+mod glow_spirv;
 mod m2_effect;
 mod m2_spirv;
 mod particle_spirv;
@@ -14,6 +15,7 @@ mod ui_spirv;
 mod world_model_effect;
 mod world_model_spirv;
 
+pub use glow_spirv::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram};
 pub use m2_effect::{
     M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
     M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,

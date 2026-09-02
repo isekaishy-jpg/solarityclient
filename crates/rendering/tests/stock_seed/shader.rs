@@ -4,9 +4,9 @@ use std::error::Error;
 
 use solarity_asset::{M2BlendMode, WorldModelShader};
 use solarity_rendering::{
-    M2BlendFactor, M2MaterialState, M2ParticleSpirvCompiler, TerrainLayerCount,
-    TerrainSpirvCompiler, UiShaderSource, UiSpirvCompiler, WorldModelSpirvCompiler,
-    WorldModelSpirvKey,
+    GlowShaderPass, GlowSpirvCompiler, M2BlendFactor, M2MaterialState, M2ParticleSpirvCompiler,
+    TerrainLayerCount, TerrainSpirvCompiler, UiShaderSource, UiSpirvCompiler,
+    WorldModelSpirvCompiler, WorldModelSpirvKey,
 };
 
 /// Particle blend bytes and low flags synthesize stock's dedicated material state.
@@ -63,6 +63,25 @@ fn particle_shader_variants_compile_for_pinned_target() -> Result<(), Box<dyn Er
 
 const SPIRV_MAGIC: u32 = 0x0723_0203;
 const SPIRV_VERSION_1_6: u32 = 0x0001_0600;
+
+/// Every fixed FFXGlow stage compiles for the renderer's pinned target.
+#[test]
+fn glow_shader_passes_compile_for_pinned_target() -> Result<(), Box<dyn Error>> {
+    let compiler = GlowSpirvCompiler::new()?;
+    for pass in [
+        GlowShaderPass::Composite,
+        GlowShaderPass::Blur,
+        GlowShaderPass::Box,
+    ] {
+        let program = compiler.compile(pass)?;
+        assert_eq!(program.pass(), pass);
+        assert_eq!(program.vertex_words()[0], SPIRV_MAGIC);
+        assert_eq!(program.vertex_words()[1], SPIRV_VERSION_1_6);
+        assert_eq!(program.fragment_words()[0], SPIRV_MAGIC);
+        assert_eq!(program.fragment_words()[1], SPIRV_VERSION_1_6);
+    }
+    Ok(())
+}
 
 /// Both simple-render source paths compile for the pinned SPIR-V 1.6 target.
 #[test]
