@@ -44,6 +44,9 @@ pub use device::{
     WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
     WorldModelTextureSetInfo,
 };
+pub use lighting::{
+    M2DirectionalLight, M2Sunlight, glue_character_sunlight, merge_wotlk_directional_lights,
+};
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
