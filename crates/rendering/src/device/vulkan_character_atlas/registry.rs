@@ -39,7 +39,7 @@ impl Default for CharacterAtlasTextureRegistry {
 }
 
 impl CharacterAtlasTextureRegistry {
-    /// Uploads one complete stock-composed sRGB mip chain as a new placement image.
+    /// Uploads one complete stock-composed mip chain as an M2 byte-space image.
     pub(in crate::device) fn upload(
         &mut self,
         context: TextureUploadContext<'_>,
@@ -48,7 +48,9 @@ impl CharacterAtlasTextureRegistry {
         let (mips, byte_count) = validate_mips(atlas)?;
         let slot = u32::try_from(self.resources.len())
             .map_err(|_source| VulkanError::CharacterAtlasTextureCapacity)?;
-        let image = upload_rgba8_mip_chain(context, &mips, BlpColorSpace::Srgb)?;
+        // The atlas occupies an ordinary M2 texture stage after composition;
+        // preserve the same fixed-function byte-space sampling as authored BLPs.
+        let image = upload_rgba8_mip_chain(context, &mips, BlpColorSpace::Linear)?;
         let top = mips.first().ok_or_else(|| {
             VulkanError::operation("admit character atlas", "validated mip chain is empty")
         })?;
@@ -59,6 +61,7 @@ impl CharacterAtlasTextureRegistry {
         self.resources.push(GpuCharacterAtlasTexture {
             image,
             info: CharacterAtlasTextureResourceInfo::new(
+                BlpColorSpace::Linear,
                 (top.width(), top.height()),
                 mips.len(),
                 byte_count,

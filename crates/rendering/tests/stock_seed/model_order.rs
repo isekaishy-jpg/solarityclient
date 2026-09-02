@@ -1,7 +1,9 @@
 //! External checks for build-12340's shared transparent-element prefix.
 
 use glam::{Mat4, Vec3};
-use solarity_rendering::{M2TransparentSortKey, compare_m2_transparent, m2_section_distance_key};
+use solarity_rendering::{
+    M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
+};
 
 /// Distance remains the first key; the remaining fields resolve exact ties in
 /// alternate-copy, plane, secondary-distance, instance, then layer order.
@@ -89,4 +91,16 @@ fn section_sort_sphere_uses_stock_near_far_and_signed_keys() {
         m2_section_distance_key(Vec3::ZERO, 2.0, 0x2, behind),
         -144.0
     );
+}
+
+/// Multi-view instances retain the transformed model origin independently of
+/// animated section centers so priority planes can order one shared model.
+#[test]
+fn model_sort_distance_uses_transformed_origin() {
+    let model_view = Mat4::from_scale_rotation_translation(
+        Vec3::splat(3.0),
+        glam::Quat::from_rotation_z(0.5),
+        Vec3::new(2.0, -3.0, 6.0),
+    );
+    assert_eq!(m2_model_distance_key(model_view), 49.0);
 }

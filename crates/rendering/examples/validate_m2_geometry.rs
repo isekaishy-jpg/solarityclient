@@ -101,11 +101,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("model={}", model.path());
     println!("animation_time_ms={animation_time_ms}");
     println!(
-        "vertices={} indices={} draws={} bones={} attachments={} cameras={}",
+        "vertices={} indices={} draws={} bones={} sequences={} authored_skin_profiles={} attachments={} cameras={}",
         plan.vertices().len(),
         plan.indices().len(),
         plan.draws().len(),
         pose.transforms().len(),
+        model.animations().sequences().len(),
+        model.skin_profile_count(),
         model.animations().attachments().len(),
         model.animations().cameras().len(),
     );
@@ -163,8 +165,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     for attachment in model.animations().attachments() {
+        let transform = pose
+            .attachment_transform(
+                model.animations(),
+                attachment,
+                M2AnimationClock::new(0, animation_time_ms, animation_time_ms),
+                Mat4::IDENTITY,
+            )?
+            .map(|transform| transform.to_cols_array());
         println!(
-            "attachment={} bone={} position={:?}",
+            "attachment={} bone={} position={:?} transform={transform:?}",
             attachment.id(),
             attachment.bone_index(),
             attachment.position()

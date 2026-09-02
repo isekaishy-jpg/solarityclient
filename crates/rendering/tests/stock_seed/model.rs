@@ -392,6 +392,7 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
     let atlas_info = renderer
         .character_atlas_texture_info(atlas_handle)
         .ok_or("uploaded character atlas handle did not resolve")?;
+    assert_eq!(atlas_info.color_space(), BlpColorSpace::Linear);
     assert_eq!(atlas_info.extent(), (256, 256));
     assert_eq!(atlas_info.mip_count(), 9);
     assert_eq!(atlas_info.upload_byte_count(), 349_524);

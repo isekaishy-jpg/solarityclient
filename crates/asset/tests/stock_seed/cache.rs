@@ -92,6 +92,7 @@ fn m2_cache_does_not_read_unselected_hd_skin_profiles() -> Result<(), Box<dyn Er
     let mut cache = M2ModelCache::new();
     let selected = cache.load(&mut store, &path)?;
     assert_eq!(selected.skins().len(), 1);
+    assert_eq!(selected.skin_profile_count(), 2);
     assert_eq!(selected.skins()[0].bone_count_max(), 96);
     Ok(())
 }

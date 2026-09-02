@@ -273,6 +273,7 @@ impl ModelBodyHeader {
 pub(super) struct ModelBlob {
     pub(super) name: Option<String>,
     pub(super) flags: u32,
+    pub(super) skin_profile_count: u32,
     pub(super) bounds: M2ModelBounds,
     pub(super) collision: Option<M2CollisionMesh>,
     pub(super) vertices: Vec<M2Vertex>,
@@ -298,6 +299,7 @@ impl ModelBlob {
         Ok(Self {
             name: decode_model_name(path, bytes, header.name)?,
             flags: header.flags,
+            skin_profile_count: header.skin_profile_count,
             bounds: header.bounds,
             collision: decode_collision_mesh(path, bytes, header.collision_bounds)?,
             vertices: decode_vertices(path, bytes, header.vertices)?,

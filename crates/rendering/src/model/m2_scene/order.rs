@@ -104,3 +104,12 @@ pub fn m2_section_distance_key(
     }
     center.length_squared()
 }
+
+/// Computes the transformed model-origin key retained by multi-view M2s.
+///
+/// Build 12340 stores this squared distance on each instance and uses it as
+/// the primary transparent key when the shared-model bit is inherited.
+#[must_use]
+pub fn m2_model_distance_key(model_view: Mat4) -> f32 {
+    model_view.transform_point3(Vec3::ZERO).length_squared()
+}

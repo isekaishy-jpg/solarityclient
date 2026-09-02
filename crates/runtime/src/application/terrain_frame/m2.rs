@@ -16,8 +16,8 @@ use solarity_rendering::{
     M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
     M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
-    triggered_m2_event_indices,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -426,6 +426,7 @@ pub(in crate::application) struct M2Frame {
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     transparent_draws: Vec<M2TransparentDraw>,
+    model_distance_sort: Vec<bool>,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
     particle_draws: Vec<M2ParticlePreparedDraw>,
@@ -516,6 +517,7 @@ impl M2Frame {
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
+            model_distance_sort: Vec::new(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_draws: Vec::new(),
@@ -694,6 +696,7 @@ impl M2Frame {
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
+            model_distance_sort: Vec::new(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_draws: Vec::new(),
@@ -746,7 +749,7 @@ impl M2Frame {
         )?;
         let transform = Mat4::from_rotation_z(input.facing_radians())
             * Mat4::from_scale(glam::Vec3::splat(input.model_scale()));
-        let mut placement = unit_gpu_placement(
+        let placement = unit_gpu_placement(
             0,
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: 0 },
@@ -755,10 +758,11 @@ impl M2Frame {
             input.particle_colors().cloned(),
             random,
         )?;
-        // CCharacterCreation attaches the body to attachment zero of the
-        // active ModelFFX background. The child retains its facing as a local
-        // transform beneath that animated parent attachment.
-        placement.glue_parent_attachment = Some(0);
+        // Wow.exe 0x004E0160/0x004E2E70 installs the Glue body at the scene
+        // origin with unit translation and scale. Facing is retained beside
+        // that transform and consumed by the model renderer. Attachment zero
+        // belongs to the backdrop scene; parenting the body to its rotated
+        // marker moves the preview rightward and turns it away from camera.
         let mut prepared = vec![(source, placement)];
         for attachment in input.attachments() {
             if input.model().attachment(attachment.point().id()).is_none() {
@@ -1453,7 +1457,12 @@ impl M2Frame {
         glue_attachment_ids.sort_unstable();
         glue_attachment_ids.dedup();
         let mut glue_attachment_transforms = Vec::with_capacity(glue_attachment_ids.len());
-        for placement in &mut self.placements {
+        update_model_distance_sort_flags(
+            &self.placements,
+            &self.sources,
+            &mut self.model_distance_sort,
+        );
+        for (placement_index, placement) in self.placements.iter_mut().enumerate() {
             if let Some(attachment_id) = placement.glue_parent_attachment {
                 let parent = glue_attachment_transforms
                     .iter()
@@ -1839,13 +1848,18 @@ impl M2Frame {
                         .with_light_bank(light_bank);
                     if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
                     {
-                        let distance = section_distance_key(draw, &bone_pose, model_view)?;
+                        let section_distance = section_distance_key(draw, &bone_pose, model_view)?;
+                        let primary_distance = if self.model_distance_sort[placement_index] {
+                            m2_model_distance_key(model_view)
+                        } else {
+                            section_distance
+                        };
                         self.transparent_draws.push(M2TransparentDraw {
                             key: M2TransparentSortKey::new(
-                                distance,
+                                primary_distance,
                                 false,
                                 draw.batch().priority_plane,
-                                distance,
+                                section_distance,
                                 instance_identity,
                                 draw.batch().material_layer,
                             ),
@@ -1922,6 +1936,70 @@ impl M2Frame {
     /// Takes the controlled mount's marker sample from the latest model pose.
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
+    }
+}
+
+/// Replays the shared-model distance bit computed after M2/SKIN publication.
+///
+/// Stock enables the bit for models authored with at least two external view
+/// profiles. A child retains it only when its parent has it, so attachments do
+/// not silently change the containing model's transparency domain.
+fn update_model_distance_sort_flags(
+    placements: &[M2GpuPlacement],
+    sources: &[Option<M2GpuSource>],
+    enabled: &mut Vec<bool>,
+) {
+    enabled.clear();
+    enabled.reserve(placements.len().saturating_sub(enabled.capacity()));
+    for (placement_index, placement) in placements.iter().enumerate() {
+        let authored = sources
+            .get(placement.source_index)
+            .and_then(Option::as_ref)
+            .is_some_and(|source| source.model.skin_profile_count() >= 2);
+        let parent = placement_parent_index(placements, placement_index, placement);
+        enabled.push(authored && parent.is_none_or(|index| enabled[index]));
+    }
+}
+
+/// Resolves the parent-first placement relations already used for transforms.
+fn placement_parent_index(
+    placements: &[M2GpuPlacement],
+    placement_index: usize,
+    placement: &M2GpuPlacement,
+) -> Option<usize> {
+    let preceding = &placements[..placement_index];
+    if placement.glue_parent_attachment.is_some() {
+        return preceding.iter().rposition(|candidate| {
+            matches!(candidate.owner, M2GpuPlacementOwner::GlueModel { .. })
+        });
+    }
+    match placement.owner {
+        M2GpuPlacementOwner::PlayerBody { guid } => preceding
+            .iter()
+            .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::PlayerMount { guid }),
+        M2GpuPlacementOwner::RemotePlayerBody { guid } => preceding.iter().rposition(|candidate| {
+            candidate.owner == M2GpuPlacementOwner::RemotePlayerMount { guid }
+        }),
+        M2GpuPlacementOwner::PlayerItem { guid, .. } => preceding.iter().rposition(|candidate| {
+            candidate.owner == M2GpuPlacementOwner::PlayerBody { guid }
+                || candidate.owner == M2GpuPlacementOwner::RemotePlayerBody { guid }
+        }),
+        M2GpuPlacementOwner::PlayerItemVisual {
+            guid, item_point, ..
+        } => preceding.iter().rposition(|candidate| {
+            candidate.owner
+                == M2GpuPlacementOwner::PlayerItem {
+                    guid,
+                    point: item_point,
+                }
+        }),
+        M2GpuPlacementOwner::Static(_)
+        | M2GpuPlacementOwner::GlueModel { .. }
+        | M2GpuPlacementOwner::GluePet
+        | M2GpuPlacementOwner::PlayerMount { .. }
+        | M2GpuPlacementOwner::RemotePlayerMount { .. }
+        | M2GpuPlacementOwner::CreatureBody { .. }
+        | M2GpuPlacementOwner::Transport { .. } => None,
     }
 }
 
@@ -2533,7 +2611,10 @@ fn prepare_gpu_source(
             upload_indices.push(texture_index);
             uploads.push(BlpTextureUploadRequest::new(
                 source_texture,
-                BlpColorSpace::Srgb,
+                // Build 12340's fixed-function M2 combiners multiply and add
+                // sampled byte values directly. An sRGB image view would
+                // linearize them first, darkening smoke and suppressing glow.
+                BlpColorSpace::Linear,
             ));
         }
     }

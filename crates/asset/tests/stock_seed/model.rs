@@ -67,6 +67,7 @@ fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Resul
 
     assert_eq!(model.name(), Some("HdModel"));
     assert_eq!(model.vertices().len(), 3);
+    assert_eq!(model.skin_profile_count(), 2);
     assert_eq!(model.skins().len(), 2);
     assert_eq!(
         model.skins()[0].path().as_str(),

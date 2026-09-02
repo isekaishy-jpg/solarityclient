@@ -133,6 +133,13 @@ impl DecodedM2Model {
         self.blob.flags
     }
 
+    /// Returns the authored external SKIN/view count even when runtime loading
+    /// deliberately retains only the highest-capability primary profile.
+    #[must_use]
+    pub const fn skin_profile_count(&self) -> u32 {
+        self.blob.skin_profile_count
+    }
+
     /// Returns the authored model-space render bounds.
     #[must_use]
     pub const fn bounds(&self) -> M2ModelBounds {
