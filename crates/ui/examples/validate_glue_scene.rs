@@ -78,9 +78,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let character = model.character_lights().live().iter().flatten().count();
         let pet = model.pet_lights().live().iter().flatten().count();
         println!(
-            "model {} camera={} bounds=({}, {}, {}, {}) alpha={} glow={} lights={}/{}/{}",
+            "model {} camera={} sequence={} sequence_time={}:{} scale={} bounds=({}, {}, {}, {}) alpha={} glow={} lights={}/{}/{}",
             model.path(),
             model.camera(),
+            model.sequence(),
+            model.sequence_time_sequence(),
+            model.sequence_time_ms(),
+            model.model_scale(),
             model.bounds().left(),
             model.bounds().bottom(),
             model.bounds().right(),
