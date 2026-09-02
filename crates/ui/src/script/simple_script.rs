@@ -162,6 +162,8 @@ static BUTTON_STATE_LOCKED_TOKEN: u8 = 121;
 static SLIDER_ORIENTATION_TOKEN: u8 = 122;
 static HOVERED_TOKEN: u8 = 123;
 static DISABLED_TEXT_COLOR_TOKEN: u8 = 124;
+static AUTO_TEXT_WIDTH_TOKEN: u8 = 125;
+static AUTO_TEXT_HEIGHT_TOKEN: u8 = 126;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -294,6 +296,7 @@ pub struct UiScriptRuntime {
     frame_resizable: Vec<Option<bool>>,
     frame_top_level: Vec<Option<bool>>,
     frame_dont_save_position: Vec<Option<bool>>,
+    text_measurement: buttons::TextMeasurement,
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
@@ -905,19 +908,14 @@ impl UiScriptRuntime {
                 .map(|definition| (definition.name().to_owned(), definition))
                 .collect::<HashMap<_, _>>(),
         );
-        let text_measurement = Some(
-            buttons::TextMeasurement::new(
-                environment.assets(),
-                font_definitions.clone(),
-                environment.logical_extent().1,
-            )
-            .map_err(|error| {
-                execution_error(
-                    "button text measurement",
-                    mlua::Error::runtime(error.to_string()),
-                )
-            })?,
-        );
+        let text_measurement = buttons::TextMeasurement::new(
+            environment.assets(),
+            font_definitions.clone(),
+            environment.logical_extent().1,
+        )
+        .map_err(|error| {
+            execution_error("text measurement", mlua::Error::runtime(error.to_string()))
+        })?;
         let object_metatables = OBJECT_KINDS
             .into_iter()
             .map(|kind| {
@@ -928,7 +926,7 @@ impl UiScriptRuntime {
                     environment.ui_extent(),
                     environment.assets(),
                     environment.media_intent(),
-                    text_measurement.clone(),
+                    Some(text_measurement.clone()),
                     dynamic_arena.clone(),
                 )
                 .map_err(|error| execution_error("object metatable", error))?;
@@ -1122,6 +1120,7 @@ impl UiScriptRuntime {
             frame_resizable,
             frame_top_level,
             frame_dont_save_position,
+            text_measurement,
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
@@ -1285,6 +1284,9 @@ impl UiScriptRuntime {
         &self,
         bundle: &UiBundle,
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
+        self.text_measurement
+            .synchronize_auto_font_strings(bundle.lua(), self.registered_object_count())
+            .map_err(|error| execution_error("automatic FontString extent", error))?;
         super::runtime_state::snapshot_runtime_objects(bundle.lua(), self.registered_object_count())
     }
 
@@ -2267,6 +2269,12 @@ impl UiScriptRuntime {
                 .ok_or_else(|| UiScriptError::Plan {
                     message: format!("font string {node_index} has no initial font state"),
                 })?;
+            if object.kind() == UiObjectKind::FontString {
+                table
+                    .raw_set(auto_text_width_key(), dimensions.0 == 0.0)
+                    .and_then(|()| table.raw_set(auto_text_height_key(), dimensions.1 == 0.0))
+                    .map_err(|error| execution_error("object registration", error))?;
+            }
             table
                 .raw_set(font_set_key(), font.assigned)
                 .and_then(|()| table.raw_set(justify_h_key(), font.justify_h.as_str()))
@@ -2874,6 +2882,16 @@ fn create_dynamic_object(
         initialize_model_runtime_state(lua, &object)?;
     }
     if matches!(kind, "FontString" | "EditBox") {
+        if kind == "FontString" {
+            object.raw_set(
+                auto_text_width_key(),
+                record.raw_get::<f64>("width")? == 0.0,
+            )?;
+            object.raw_set(
+                auto_text_height_key(),
+                record.raw_get::<f64>("height")? == 0.0,
+            )?;
+        }
         object.raw_set(font_set_key(), record.raw_get::<bool>("font_assigned")?)?;
         object.raw_set(justify_h_key(), record.raw_get::<String>("justify_h")?)?;
         object.raw_set(justify_v_key(), record.raw_get::<String>("justify_v")?)?;
@@ -3414,7 +3432,7 @@ fn create_object_metatable(
             objects.raw_get::<Option<Table>>(parent)
         })?,
     )?;
-    register_region_methods(lua, &methods, ui_extent)?;
+    register_region_methods(lua, &methods, kind, ui_extent)?;
     if is_frame_object(kind) {
         register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
@@ -3730,9 +3748,10 @@ fn register_font_string_methods(
     methods: &Table,
     measurement: Option<buttons::TextMeasurement>,
 ) -> mlua::Result<()> {
+    let font_measurement = measurement.clone();
     methods.raw_set(
         "SetFontObject",
-        lua.create_function(|lua, (font_string, value): (Table, Value)| {
+        lua.create_function(move |lua, (font_string, value): (Table, Value)| {
             let font = resolve_font_object(lua, value).ok_or_else(|| {
                 mlua::Error::runtime("Usage: FontString:SetFontObject(fontObject)")
             })?;
@@ -3743,7 +3762,11 @@ fn register_font_string_methods(
             font_string.raw_set(text_color_key(), color)?;
             font_string.raw_set(font_shadow_offset_key(), shadow_offset)?;
             font_string.raw_set(font_shadow_color_key(), shadow_color)?;
-            font_string.raw_set(font_set_key(), true)
+            font_string.raw_set(font_set_key(), true)?;
+            if let Some(measurement) = &font_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -3765,21 +3788,33 @@ fn register_font_string_methods(
             ))
         })?,
     )?;
+    let set_text_measurement = measurement.clone();
     methods.raw_set(
         "SetText",
-        lua.create_function(|lua, (font_string, value): (Table, Value)| {
+        lua.create_function(move |lua, (font_string, value): (Table, Value)| {
             require_font_string_font(&font_string, "SetText")?;
-            font_string.raw_set(text_key(), lua_text(lua, value)?)
+            font_string.raw_set(text_key(), lua_text(lua, value)?)?;
+            if let Some(measurement) = &set_text_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
+            Ok(())
         })?,
     )?;
+    let formatted_text_measurement = measurement.clone();
     methods.raw_set(
         "SetFormattedText",
-        lua.create_function(|lua, (font_string, arguments): (Table, Variadic<Value>)| {
-            require_font_string_font(&font_string, "SetFormattedText")?;
-            let library: Table = lua.globals().raw_get("string")?;
-            let format: mlua::Function = library.raw_get("format")?;
-            font_string.raw_set(text_key(), format.call::<String>(arguments)?)
-        })?,
+        lua.create_function(
+            move |lua, (font_string, arguments): (Table, Variadic<Value>)| {
+                require_font_string_font(&font_string, "SetFormattedText")?;
+                let library: Table = lua.globals().raw_get("string")?;
+                let format: mlua::Function = library.raw_get("format")?;
+                font_string.raw_set(text_key(), format.call::<String>(arguments)?)?;
+                if let Some(measurement) = &formatted_text_measurement {
+                    measurement.update_auto_font_string_size(&font_string)?;
+                }
+                Ok(())
+            },
+        )?,
     )?;
     methods.raw_set(
         "GetText",
@@ -5962,7 +5997,12 @@ fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> m
     Ok(())
 }
 
-fn register_region_methods(lua: &Lua, methods: &Table, ui_extent: (f64, f64)) -> mlua::Result<()> {
+fn register_region_methods(
+    lua: &Lua,
+    methods: &Table,
+    kind: UiObjectKind,
+    ui_extent: (f64, f64),
+) -> mlua::Result<()> {
     methods.raw_set(
         "SetParent",
         lua.create_function(|lua, (object, requested): (Table, Option<Table>)| {
@@ -5995,19 +6035,34 @@ fn register_region_methods(lua: &Lua, methods: &Table, ui_extent: (f64, f64)) ->
     )?;
     methods.raw_set(
         "SetWidth",
-        lua.create_function(|_, (object, width): (Table, f64)| object.raw_set(width_key(), width))?,
+        lua.create_function(move |_, (object, width): (Table, f64)| {
+            object.raw_set(width_key(), width)?;
+            if kind == UiObjectKind::FontString {
+                object.raw_set(auto_text_width_key(), false)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "SetHeight",
-        lua.create_function(|_, (object, height): (Table, f64)| {
-            object.raw_set(height_key(), height)
+        lua.create_function(move |_, (object, height): (Table, f64)| {
+            object.raw_set(height_key(), height)?;
+            if kind == UiObjectKind::FontString {
+                object.raw_set(auto_text_height_key(), false)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "SetSize",
-        lua.create_function(|_, (object, width, height): (Table, f64, f64)| {
+        lua.create_function(move |_, (object, width, height): (Table, f64, f64)| {
             object.raw_set(width_key(), width)?;
-            object.raw_set(height_key(), height)
+            object.raw_set(height_key(), height)?;
+            if kind == UiObjectKind::FontString {
+                object.raw_set(auto_text_width_key(), false)?;
+                object.raw_set(auto_text_height_key(), false)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -7560,6 +7615,14 @@ pub(super) fn disabled_font_key() -> LightUserData {
 
 pub(super) fn disabled_text_color_key() -> LightUserData {
     hidden_key(&DISABLED_TEXT_COLOR_TOKEN)
+}
+
+pub(super) fn auto_text_width_key() -> LightUserData {
+    hidden_key(&AUTO_TEXT_WIDTH_TOKEN)
+}
+
+pub(super) fn auto_text_height_key() -> LightUserData {
+    hidden_key(&AUTO_TEXT_HEIGHT_TOKEN)
 }
 
 pub(super) fn highlight_font_key() -> LightUserData {

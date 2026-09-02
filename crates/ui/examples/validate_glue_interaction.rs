@@ -14,8 +14,8 @@ use solarity_cpu::BlizzardRand;
 use solarity_ui::{
     AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterEquipment,
     UiCharacterExpansion, UiCharacterInfo, UiCharacterPetPreview, UiEventArgument, UiEventPayload,
-    UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers, UiObjectRole, UiPointerButton,
-    UiTextureSource,
+    UiGlueNetworkAction, UiGlueNetworkStatus, UiKeyboardModifiers, UiObjectKind, UiObjectRole,
+    UiPointerButton, UiTextureSource,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -246,6 +246,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         ))
         .into());
     }
+    validate_visible_font_string_extents(manager, "character creation")?;
     let globals = manager.bundle().lua().globals();
     manager
         .bundle()
@@ -334,6 +335,7 @@ fn validate_empty_character_selection(manager: &mut GlueManager) -> Result<(), B
         "CHARACTER_LIST_UPDATE",
         &UiEventPayload::new([UiEventArgument::Integer(0)])?,
     )?;
+    validate_visible_font_string_extents(manager, "empty character selection")?;
 
     let model = manager
         .presentation()
@@ -488,6 +490,7 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         ))
         .into());
     }
+    validate_automatic_font_string_extents(manager)?;
     for name in ["AccountLoginAccountEdit", "AccountLoginPasswordEdit"] {
         let object_index = object_index(manager, name)?;
         let backdrop = manager
@@ -728,6 +731,59 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     Ok(())
 }
 
+fn validate_automatic_font_string_extents(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
+    let version = object_index(manager, "AccountLoginVersion")?;
+    let version_bounds = manager
+        .geometry()
+        .region(version)
+        .ok_or_else(|| invalid_data("AccountLoginVersion has no geometry".to_owned()))?
+        .presentation_bounds();
+    if version_bounds.width() <= 0.0 || version_bounds.height() <= 0.0 {
+        return Err(invalid_data(format!(
+            "automatic version FontString retained empty bounds: {version_bounds:?}"
+        ))
+        .into());
+    }
+    let version_bottom = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .iter()
+        .filter(|glyph| glyph.object_index() == version)
+        .map(|glyph| glyph.bounds()[1])
+        .reduce(f32::min)
+        .ok_or_else(|| invalid_data("AccountLoginVersion has no visible glyphs".to_owned()))?;
+    if version_bottom < 0.0 {
+        return Err(invalid_data(format!(
+            "bottom-anchored version text is clipped below the canvas: {version_bottom}"
+        ))
+        .into());
+    }
+
+    let launcher = object_index(manager, "AccountLoginShowLauncher")?;
+    let launcher_label = manager
+        .children(launcher)
+        .and_then(|children| {
+            children
+                .iter()
+                .copied()
+                .find(|index| manager.objects()[*index].kind() == UiObjectKind::FontString)
+        })
+        .ok_or_else(|| invalid_data("Show Launcher has no FontString child".to_owned()))?;
+    let label_bounds = manager
+        .geometry()
+        .region(launcher_label)
+        .ok_or_else(|| invalid_data("Show Launcher label has no geometry".to_owned()))?
+        .presentation_bounds();
+    if label_bounds.width() <= 0.0 || label_bounds.height() <= 0.0 || label_bounds.left() < 0.0 {
+        return Err(invalid_data(format!(
+            "automatic Show Launcher label bounds are clipped: {label_bounds:?}"
+        ))
+        .into());
+    }
+    validate_visible_font_string_extents(manager, "login")?;
+    Ok(())
+}
+
 fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     const CHARACTER_GUID: u64 = 0xAABB_CCDD_EEFF_0011;
     manager.set_network_status(UiGlueNetworkStatus::new(
@@ -799,6 +855,7 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
         ))
         .into());
     }
+    validate_visible_font_string_extents(manager, "character selection")?;
     let model = manager
         .presentation()
         .models()
@@ -1149,6 +1206,35 @@ fn object_center(manager: &GlueManager, object_index: usize) -> Result<(f64, f64
         bounds.left() + bounds.width() * 0.5,
         bounds.bottom() + bounds.height() * 0.5,
     ))
+}
+
+fn validate_visible_font_string_extents(
+    manager: &GlueManager,
+    screen: &str,
+) -> Result<(), Box<dyn Error>> {
+    let glyph_owners = visible_glyph_owners(manager);
+    for (object_index, object) in manager.objects().iter().enumerate() {
+        if object.kind() != UiObjectKind::FontString || !glyph_owners.contains(&object_index) {
+            continue;
+        }
+        let bounds = manager
+            .geometry()
+            .region(object_index)
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "{screen} FontString {object_index} has no geometry"
+                ))
+            })?
+            .presentation_bounds();
+        if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+            return Err(invalid_data(format!(
+                "{screen} visible FontString {:?} retained empty bounds: {bounds:?}",
+                object.name()
+            ))
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn invalid_data(message: String) -> IoError {

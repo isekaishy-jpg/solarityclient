@@ -11,13 +11,14 @@ use crate::UiScriptHandler;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
-    DynamicArenaState, button_pressed_key, button_state_locked_key, button_text_key, checked_key,
-    clamped_color, click_action_key, create_dynamic_region, disabled_font_key,
-    disabled_text_color_key, disabled_texture_key, drag_button_key, enabled_key, font_object_key,
-    font_set_key, highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool,
-    lua_text, mark_live_state_changed, name_key, normal_font_key, normal_texture_key,
-    object_script_function, pushed_texture_key, resolve_font_object, text_key, texture_file_key,
-    texture_solid_color_key, type_key,
+    DynamicArenaState, OBJECT_REGISTRY, auto_text_height_key, auto_text_width_key,
+    button_pressed_key, button_state_locked_key, button_text_key, checked_key, clamped_color,
+    click_action_key, create_dynamic_region, disabled_font_key, disabled_text_color_key,
+    disabled_texture_key, drag_button_key, enabled_key, font_object_key, font_set_key,
+    font_shadow_offset_key, height_key, highlight_font_key, highlight_locked_key,
+    highlight_texture_key, lua_bool, lua_text, mark_live_state_changed, name_key, normal_font_key,
+    normal_texture_key, object_script_function, pushed_texture_key, resolve_font_object,
+    spacing_key, text_key, texture_file_key, texture_solid_color_key, type_key, width_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
@@ -48,7 +49,44 @@ impl TextMeasurement {
     }
 
     pub(super) fn font_string_width(&self, font_string: &Table) -> mlua::Result<f64> {
-        self.width_with_font(font_string, font_object_key(), "FontString:GetStringWidth")
+        self.font_string_dimensions(font_string)
+            .map(|dimensions| dimensions.0)
+    }
+
+    pub(super) fn update_auto_font_string_size(&self, font_string: &Table) -> mlua::Result<()> {
+        // Asset-less script fixtures validate Lua behavior without constructing
+        // a presentation. Exact automatic extents require the mounted stock face.
+        if self.assets.is_none() {
+            return Ok(());
+        }
+        let auto_width = font_string.raw_get::<bool>(auto_text_width_key())?;
+        let auto_height = font_string.raw_get::<bool>(auto_text_height_key())?;
+        if !auto_width && !auto_height {
+            return Ok(());
+        }
+        let dimensions = self.font_string_dimensions(font_string)?;
+        if auto_width {
+            font_string.raw_set(width_key(), dimensions.0)?;
+        }
+        if auto_height {
+            font_string.raw_set(height_key(), dimensions.1)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn synchronize_auto_font_strings(
+        &self,
+        lua: &Lua,
+        object_count: usize,
+    ) -> mlua::Result<()> {
+        let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+        for index in 1..=object_count {
+            let object: Table = objects.raw_get(index)?;
+            if object.raw_get::<String>(type_key())? == "FontString" {
+                self.update_auto_font_string_size(&object)?;
+            }
+        }
+        Ok(())
     }
 
     fn width_with_font(
@@ -140,6 +178,62 @@ impl TextMeasurement {
     fn one_pixel(&self) -> f64 {
         self.pixels_per_ui_unit.recip()
     }
+
+    fn font_string_dimensions(&self, font_string: &Table) -> mlua::Result<(f64, f64)> {
+        let Some(text) = font_string.raw_get::<Option<String>>(text_key())? else {
+            return Ok((0.0, 0.0));
+        };
+        let text = visible_text(&text);
+        if text.is_empty() {
+            return Ok((0.0, 0.0));
+        }
+        let Some(font) = font_string.raw_get::<Option<Table>>(font_object_key())? else {
+            return Ok((self.one_pixel(), self.one_pixel()));
+        };
+        let name = font.raw_get::<String>(name_key())?;
+        let Some(definition) = self.fonts.get(&name) else {
+            return Err(mlua::Error::runtime(format!(
+                "FontString extent font object {name} has no stock definition"
+            )));
+        };
+        let (Some(path), Some(line_height)) = (definition.face(), definition.height()) else {
+            return Ok((self.one_pixel(), self.one_pixel()));
+        };
+        let Some(assets) = &self.assets else {
+            return Err(mlua::Error::runtime(
+                "FontString extent requires a mounted stock asset store",
+            ));
+        };
+        let pixel_height = (f64::from(line_height) * self.pixels_per_ui_unit)
+            .round()
+            .max(1.0) as u32;
+        let rasterization = if definition.monochrome().unwrap_or(false) {
+            FontRasterization::Monochrome
+        } else {
+            FontRasterization::Antialiased
+        };
+        let spacing = font_string.raw_get::<f64>(spacing_key())?;
+        let shadow: Table = font_string.raw_get(font_shadow_offset_key())?;
+        let shadow_x = shadow.raw_get::<f64>(1)?.max(0.0);
+        let shadow_y = shadow.raw_get::<f64>(2)?.max(0.0);
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let lines = normalized.split('\n').collect::<Vec<_>>();
+        let mut widest = 0.0_f64;
+        let mut assets = assets.borrow_mut();
+        let mut system = self.system.borrow_mut();
+        for line in &lines {
+            let width = system
+                .measure_line_width_26_6(&mut assets, path, pixel_height, line, rasterization)
+                .map_err(|error| mlua::Error::runtime(error.to_string()))?;
+            widest = widest.max(width as f64 / 64.0 / self.pixels_per_ui_unit);
+        }
+        let height = f64::from(line_height) * lines.len() as f64
+            + spacing * lines.len().saturating_sub(1) as f64;
+        Ok((
+            (widest + shadow_x).max(self.one_pixel()),
+            (height + shadow_y).max(self.one_pixel()),
+        ))
+    }
 }
 
 /// Removes build-12340 inline color controls before native text measurement.
@@ -203,9 +297,10 @@ pub(super) fn register_button_methods(
         "GetFontString",
         lua.create_function(|_, button: Table| button.raw_get::<Option<Table>>(button_text_key()))?,
     )?;
+    let font_string_measurement = measurement.clone();
     methods.raw_set(
         "SetFontString",
-        lua.create_function(|_, (button, font_string): (Table, Table)| {
+        lua.create_function(move |_, (button, font_string): (Table, Table)| {
             if font_string.raw_get::<String>(type_key())? != "FontString" {
                 return Err(mlua::Error::runtime(
                     "Usage: Button:SetFontString(fontString)",
@@ -216,6 +311,9 @@ pub(super) fn register_button_methods(
                 font_string.raw_set(font_set_key(), true)?;
             }
             font_string.raw_set(text_key(), button.raw_get::<Option<String>>(text_key())?)?;
+            if let Some(measurement) = &font_string_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
             button.raw_set(button_text_key(), font_string)
         })?,
     )?;
@@ -267,19 +365,25 @@ pub(super) fn register_button_methods(
         highlight_font_key(),
         false,
     )?;
+    let set_text_measurement = measurement.clone();
     methods.raw_set(
         "SetText",
-        lua.create_function(|lua, (button, value): (Table, Value)| {
-            set_button_text(&button, lua_text(lua, value)?)
+        lua.create_function(move |lua, (button, value): (Table, Value)| {
+            set_button_text(
+                &button,
+                lua_text(lua, value)?,
+                set_text_measurement.as_ref(),
+            )
         })?,
     )?;
+    let formatted_text_measurement = measurement.clone();
     methods.raw_set(
         "SetFormattedText",
-        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
+        lua.create_function(move |lua, (button, arguments): (Table, Variadic<Value>)| {
             let library: Table = lua.globals().raw_get("string")?;
             let format: mlua::Function = library.raw_get("format")?;
             let text = format.call::<String>(arguments)?;
-            set_button_text(&button, Some(text))
+            set_button_text(&button, Some(text), formatted_text_measurement.as_ref())
         })?,
     )?;
     methods.raw_set(
@@ -403,10 +507,17 @@ pub(super) fn register_button_methods(
     )
 }
 
-fn set_button_text(button: &Table, text: Option<String>) -> mlua::Result<()> {
+fn set_button_text(
+    button: &Table,
+    text: Option<String>,
+    measurement: Option<&TextMeasurement>,
+) -> mlua::Result<()> {
     button.raw_set(text_key(), text.as_deref())?;
     if let Some(font_string) = button.raw_get::<Option<Table>>(button_text_key())? {
         font_string.raw_set(text_key(), text.as_deref())?;
+        if let Some(measurement) = measurement {
+            measurement.update_auto_font_string_size(&font_string)?;
+        }
     }
     Ok(())
 }
