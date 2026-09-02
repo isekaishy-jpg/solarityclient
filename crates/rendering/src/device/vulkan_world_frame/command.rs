@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -571,6 +572,6 @@ pub(super) fn submit_and_present(
             .swapchain_loader
             .queue_present(context.present_queue, &present)
     }
-    .map_err(|source| VulkanError::operation("present world frame", source))?;
+    .map_err(|source| swapchain_error("present world frame", source))?;
     Ok(())
 }

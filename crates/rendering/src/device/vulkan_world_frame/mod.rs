@@ -10,6 +10,7 @@ use ash::{Device, vk};
 use glam::Mat4;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -69,6 +70,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
 }
 
 /// One color-only UI overlay appended after all world/M2 effect draws.
+#[derive(Clone, Copy)]
 pub(in crate::device) struct WorldUiOverlay<'a> {
     pub(in crate::device) logical_extent: [f32; 2],
     pub(in crate::device) draws: &'a [UiPreparedDraw],
@@ -201,7 +203,7 @@ impl WorldFrameRenderer {
                     vk::Fence::null(),
                 )
             }
-            .map_err(|source| VulkanError::operation("acquire world frame image", source))?
+            .map_err(|source| swapchain_error("acquire world frame image", source))?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

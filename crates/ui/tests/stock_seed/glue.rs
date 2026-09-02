@@ -5,8 +5,8 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
 use solarity_ui::{
     GlueError, GlueInitialScreen, GlueManager, UiEventArgument, UiEventError, UiEventPayload,
-    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiPointerButton,
-    UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
+    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiObjectRole,
+    UiPointerButton, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -86,7 +86,11 @@ fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
 <MovieFrame name="MovieFrame" hidden="true"><Scripts><OnShow>
   self:EnableSubtitles(true)
   HideCursor()
-  assert(self:StartMovie("Interface\\Cinematics\\Logo_1024", 250))
+  local suffix = GetMovieResolution() >= 1024 and "1024" or "800"
+  local movies = { [3] = { [2] = "Interface\\Cinematics\\WOW_Intro_LK_" .. suffix } }
+  local index = 1
+  repeat index = index + 1 until movies[GetClientExpansionLevel()][index]
+  assert(self:StartMovie(movies[GetClientExpansionLevel()][index], 250))
 </OnShow><OnMovieFinished>
   self:StopMovie()
   ShowCursor()
@@ -98,7 +102,7 @@ fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
         },
     ])?;
     fixture.write_loose_file(
-        "Data/enUS/Interface/Cinematics/Logo_1024.avi",
+        "Data/enUS/Interface/Cinematics/WOW_Intro_LK_1024.avi",
         b"RIFF fixture",
     )?;
     let catalog =
@@ -117,7 +121,7 @@ fn glue_manager_starts_first_run_movie() -> Result<(), Box<dyn Error>> {
     assert!(
         movie
             .path()
-            .ends_with("enUS/Interface/Cinematics/Logo_1024.avi")
+            .ends_with("enUS/Interface/Cinematics/WOW_Intro_LK_1024.avi")
     );
     assert_eq!(movie.volume(), 250);
     assert!(movie.subtitles_enabled());
@@ -313,6 +317,81 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
             .get::<f64>("SCROLL_OFFSET")?,
         50.0
     );
+    Ok(())
+}
+
+/// Slider is a native mouse target whose vertical thumb follows its value and
+/// whose capture prevents clicks from falling through to lower Glue frames.
+#[test]
+fn glue_manager_routes_vertical_slider_click_and_drag() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Slider.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Slider.xml",
+            bytes: br#"<Ui>
+<Button name="UnderButton" enableMouse="true" frameStrata="DIALOG" frameLevel="1">
+  <Size x="20" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>UNDER_CLICKS = 0</OnLoad><OnClick>UNDER_CLICKS = UNDER_CLICKS + 1</OnClick></Scripts>
+</Button>
+<Slider name="LegalSlider" frameStrata="DIALOG" frameLevel="2">
+  <Size x="20" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <ThumbTexture><Size x="18" y="24"/></ThumbTexture>
+  <Scripts><OnLoad>
+    self:SetMinMaxValues(0, 300)
+    self:SetValueStep(25)
+  </OnLoad><OnValueChanged>SLIDER_VALUE = value</OnValueChanged></Scripts>
+</Slider>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let slider_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("LegalSlider"))
+        .ok_or("missing slider")?;
+    let thumb_index = manager
+        .objects()
+        .iter()
+        .position(|object| {
+            object.parent() == Some(slider_index) && object.role() == UiObjectRole::ThumbTexture
+        })
+        .ok_or("missing slider thumb")?;
+    let track = manager
+        .geometry()
+        .region(slider_index)
+        .ok_or("missing slider geometry")?
+        .presentation_bounds();
+    let initial_thumb = manager
+        .geometry()
+        .region(thumb_index)
+        .ok_or("missing initial thumb geometry")?
+        .presentation_bounds();
+    assert!((initial_thumb.top() - track.top()).abs() < 0.001);
+
+    let top = ((track.left() + track.right()) * 0.5, track.top());
+    let bottom = ((track.left() + track.right()) * 0.5, track.bottom());
+    let down = manager.pointer_button(top, UiPointerButton::Left, true)?;
+    assert_eq!(down.object_index(), Some(slider_index));
+    assert_eq!(manager.pointer_motion(bottom)?, Some(slider_index));
+    let up = manager.pointer_button(bottom, UiPointerButton::Left, false)?;
+    assert_eq!(up.object_index(), Some(slider_index));
+    assert!(!up.click_activated());
+
+    let globals = manager.bundle().lua().globals();
+    assert_eq!(globals.get::<f64>("SLIDER_VALUE")?, 300.0);
+    assert_eq!(globals.get::<u32>("UNDER_CLICKS")?, 0);
+    let final_thumb = manager
+        .geometry()
+        .region(thumb_index)
+        .ok_or("missing final thumb geometry")?
+        .presentation_bounds();
+    assert!((final_thumb.bottom() - track.bottom()).abs() < 0.001);
     Ok(())
 }
 

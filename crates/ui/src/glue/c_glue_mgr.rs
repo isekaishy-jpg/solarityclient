@@ -663,10 +663,52 @@ impl GlueManager {
                 )?;
                 false
             }
+            UiObjectKind::Slider => {
+                if button == UiPointerButton::Left
+                    && let Some(value) =
+                        self.pointer
+                            .slider_value_at(&self.geometry, object_index, position)
+                {
+                    self.runtime
+                        .dispatch_slider_value(&self.bundle, object_index, value)?;
+                }
+                self.runtime.dispatch_frame_pointer(
+                    &self.bundle,
+                    object_index,
+                    button.script_name(),
+                    pressed,
+                )?;
+                false
+            }
             _ => false,
         };
         self.refresh_live_state()?;
         Ok(UiPointerDispatch::new(Some(object_index), click_activated))
+    }
+
+    /// Updates a captured Slider from one bottom-left-origin pointer position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when the slider's `OnValueChanged` handler
+    /// fails or the resulting live presentation cannot be resolved.
+    pub fn pointer_motion(&mut self, position: (f64, f64)) -> Result<Option<usize>, UiEventError> {
+        let Some((object_index, UiPointerButton::Left)) = self.pointer_capture else {
+            return Ok(None);
+        };
+        if self.pointer.kind(object_index) != Some(UiObjectKind::Slider) {
+            return Ok(None);
+        }
+        let Some(value) = self
+            .pointer
+            .slider_value_at(&self.geometry, object_index, position)
+        else {
+            return Ok(None);
+        };
+        self.runtime
+            .dispatch_slider_value(&self.bundle, object_index, value)?;
+        self.refresh_live_state()?;
+        Ok(Some(object_index))
     }
 
     /// Returns the live object index of the focused visible EditBox.

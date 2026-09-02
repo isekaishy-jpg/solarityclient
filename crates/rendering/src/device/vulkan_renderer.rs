@@ -163,6 +163,7 @@ pub struct VulkanRenderer {
     // Manual drop order is M2 buffers/pipelines, image views, swapchain,
     // allocator, device, then the bootstrap's surface, instance, and loader.
     bootstrap: VulkanBootstrap,
+    adapter_index: usize,
     device: Device,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
@@ -225,6 +226,7 @@ impl VulkanRenderer {
         let extent = choose_extent(selected.surface_capabilities, requested_extent);
         let mut renderer = Self {
             bootstrap,
+            adapter_index,
             device,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
@@ -326,6 +328,20 @@ impl VulkanRenderer {
         source_extent: (u32, u32),
         rgba8: &[u8],
     ) -> Result<(), VulkanError> {
+        match self.present_rgba8_once(source_extent, rgba8) {
+            Err(VulkanError::SwapchainOutOfDate) => {
+                self.recreate_swapchain()?;
+                self.present_rgba8_once(source_extent, rgba8)
+            }
+            result => result,
+        }
+    }
+
+    fn present_rgba8_once(
+        &mut self,
+        source_extent: (u32, u32),
+        rgba8: &[u8],
+    ) -> Result<(), VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -342,6 +358,70 @@ impl VulkanRenderer {
             source_extent,
             rgba8,
         })?;
+        self.is_idle = false;
+        Ok(())
+    }
+
+    fn with_swapchain_retry<T>(
+        &mut self,
+        mut present: impl FnMut(&mut Self) -> Result<T, VulkanError>,
+    ) -> Result<T, VulkanError> {
+        match present(self) {
+            Err(VulkanError::SwapchainOutOfDate) => {
+                self.recreate_swapchain()?;
+                present(self)
+            }
+            result => result,
+        }
+    }
+
+    /// Rebuilds every swapchain-shaped frame owner after the desktop surface
+    /// reports its ordinary resize/out-of-date transition.
+    fn recreate_swapchain(&mut self) -> Result<(), VulkanError> {
+        let previous_extent = self.report.extent;
+        self.wait_idle()?;
+        self.ui_frames.destroy(&self.device);
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.world_frames.destroy(&self.device, allocator);
+        self.terrain_frames.destroy(&self.device, allocator);
+        self.m2_frames.destroy(&self.device, allocator);
+        // SAFETY: The device is idle, so no frame can reference these views or
+        // the old swapchain while they are released in dependency order.
+        unsafe {
+            for image_view in self.image_views.drain(..).rev() {
+                self.device.destroy_image_view(image_view, None);
+            }
+            if self.swapchain != vk::SwapchainKHR::null() {
+                self.swapchain_loader
+                    .destroy_swapchain(self.swapchain, None);
+                self.swapchain = vk::SwapchainKHR::null();
+            }
+        }
+        self.swapchain_images.clear();
+        let selected = SelectedAdapter::select(&self.bootstrap, self.adapter_index)?;
+        if selected.surface_format.format != self.color_format
+            || selected.depth_format != self.depth_format
+            || selected.graphics_family != self.report.graphics_queue_family
+            || selected.present_family != self.report.present_queue_family
+        {
+            return Err(VulkanError::operation(
+                "recreate swapchain",
+                "adapter presentation contract changed",
+            ));
+        }
+        let extent = choose_extent(selected.surface_capabilities, self.report.extent);
+        self.report.extent = (extent.width, extent.height);
+        self.create_swapchain(&selected, extent)?;
+        tracing::info!(
+            previous_width = previous_extent.0,
+            previous_height = previous_extent.1,
+            width = extent.width,
+            height = extent.height,
+            image_count = self.swapchain_images.len(),
+            "recreated Vulkan swapchain"
+        );
         Ok(())
     }
 
@@ -580,6 +660,14 @@ impl VulkanRenderer {
     /// Returns [`VulkanError`] for empty input, frame-resource creation, scene
     /// upload, command recording, queue submission, or presentation failure.
     pub fn present_terrain(
+        &mut self,
+        scene: TerrainSceneUniform,
+        draws: &[TerrainPreparedDraw],
+    ) -> Result<TerrainFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| renderer.present_terrain_once(scene, draws))
+    }
+
+    fn present_terrain_once(
         &mut self,
         scene: TerrainSceneUniform,
         draws: &[TerrainPreparedDraw],
@@ -925,6 +1013,14 @@ impl VulkanRenderer {
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| renderer.present_ui_once(logical_extent, draws))
+    }
+
+    fn present_ui_once(
+        &mut self,
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+    ) -> Result<UiFrameReport, VulkanError> {
         let report = self.ui_frames.present(
             UiFrameContext {
                 device: &self.device,
@@ -1248,19 +1344,21 @@ impl VulkanRenderer {
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.present_world_frame_internal(
-            scene,
-            bone_transforms,
-            terrain_draws,
-            world_model_draws,
-            m2_draws,
-            particle_vertices,
-            particle_indices,
-            particle_draws,
-            ribbon_vertices,
-            ribbon_draws,
-            None,
-        )
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_world_frame_internal(
+                scene,
+                bone_transforms,
+                terrain_draws,
+                world_model_draws,
+                m2_draws,
+                particle_vertices,
+                particle_indices,
+                particle_draws,
+                ribbon_vertices,
+                ribbon_draws,
+                None,
+            )
+        })
     }
 
     /// Presents the unified model/effect scene followed by a loaded UI pass.
@@ -1289,22 +1387,24 @@ impl VulkanRenderer {
         ui_logical_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.present_world_frame_internal(
-            scene,
-            bone_transforms,
-            terrain_draws,
-            world_model_draws,
-            m2_draws,
-            particle_vertices,
-            particle_indices,
-            particle_draws,
-            ribbon_vertices,
-            ribbon_draws,
-            Some(WorldUiOverlay {
-                logical_extent: ui_logical_extent,
-                draws: ui_draws,
-            }),
-        )
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_world_frame_internal(
+                scene,
+                bone_transforms,
+                terrain_draws,
+                world_model_draws,
+                m2_draws,
+                particle_vertices,
+                particle_indices,
+                particle_draws,
+                ribbon_vertices,
+                ribbon_draws,
+                Some(WorldUiOverlay {
+                    logical_extent: ui_logical_extent,
+                    draws: ui_draws,
+                }),
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1487,6 +1587,17 @@ impl VulkanRenderer {
     /// Returns [`VulkanError`] for an empty frame, insufficient bone transforms,
     /// resource growth/mapping, command recording, submission, or presentation.
     pub fn present_m2(
+        &mut self,
+        scene: M2SceneUniform,
+        bone_transforms: &[Mat4],
+        draws: &[M2PreparedDraw],
+    ) -> Result<M2FrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_m2_once(scene, bone_transforms, draws)
+        })
+    }
+
+    fn present_m2_once(
         &mut self,
         scene: M2SceneUniform,
         bone_transforms: &[Mat4],

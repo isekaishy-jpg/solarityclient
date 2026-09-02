@@ -18,6 +18,7 @@ mod os_url_download;
 mod os_version_hash;
 mod sdl_platform;
 mod status;
+mod window_identity;
 
 pub use event::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,

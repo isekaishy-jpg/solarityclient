@@ -139,8 +139,20 @@ $arguments = @(
     "--gpu-index", '__GPU_INDEX__'
 )
 
-& $executable @arguments *>&1 | Tee-Object -LiteralPath $logPath
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $executable @arguments 2>&1 |
+    ForEach-Object {
+        if ($_ -is [Management.Automation.ErrorRecord]) {
+            $_.Exception.Message
+        }
+        else {
+            $_
+        }
+    } |
+    Tee-Object -LiteralPath $logPath
 $exitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorActionPreference
 if ($exitCode -ne 0) {
     Write-Host ""
     Write-Host "Solarity exited with code $exitCode. Log: $logPath" -ForegroundColor Red

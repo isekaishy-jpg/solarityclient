@@ -108,7 +108,7 @@ impl ClientServices {
         configuration: &RuntimeConfiguration,
     ) -> Result<(Self, usize, usize), ApplicationError> {
         let mut startup_profile = StartupProfile::load(configuration.profile_root())?;
-        let initial_screen = if startup_profile.consume_intro_movie()? {
+        let initial_screen = if startup_profile.play_intro_movie() {
             GlueInitialScreen::Movie
         } else {
             GlueInitialScreen::Login
@@ -170,6 +170,15 @@ impl ClientServices {
         // The stock process owns one Blizzard RNG stream. Character creation
         // and sound variation consume it in actual main-thread call order.
         let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
+        if initial_screen == GlueInitialScreen::Movie {
+            // Consume only once the expensive native prerequisites have
+            // succeeded and immediately before selecting the movie Glue
+            // screen. A failed archive, SDL, or Vulkan startup must not spend
+            // the user's one-shot intro request without presenting a frame.
+            let consumed = startup_profile.consume_intro_movie()?;
+            debug_assert!(consumed);
+        }
+        tracing::info!(?initial_screen, "selected initial Glue screen");
         let glue = GlueManager::start_shared_with_profile_and_random(
             assets.clone(),
             platform.logical_extent(),
@@ -392,6 +401,20 @@ impl ClientServices {
                     self.login_ui = None;
                 }
             }
+            PlatformEvent::MouseMotion(pointer)
+                if pointer.window_id == self.platform.window_id()
+                    && self.glue.media_intent().movie().is_none() =>
+            {
+                let (window_width, window_height) = self.platform.logical_extent();
+                let (ui_width, ui_height) = self.glue.geometry().ui_extent();
+                let position = (
+                    f64::from(pointer.x) / f64::from(window_width) * ui_width,
+                    ui_height - f64::from(pointer.y) / f64::from(window_height) * ui_height,
+                );
+                if self.glue.pointer_motion(position)?.is_some() {
+                    self.login_ui = None;
+                }
+            }
             PlatformEvent::MouseWheel(wheel)
                 if wheel.window_id == self.platform.window_id()
                     && self.glue.media_intent().movie().is_none() =>
@@ -427,6 +450,14 @@ impl ClientServices {
     /// Presents one FIFO-paced Glue or resident-world frame.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
         let update_time = std::time::Instant::now();
+        if self.platform.presentation_suspended() {
+            // FIFO presentation normally paces the main loop. A minimized Vulkan
+            // surface cannot do that reliably, so keep animation time bounded and
+            // yield briefly while the event pump remains responsive to restoration.
+            self.glue_update_clock = update_time;
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            return Ok(());
+        }
         let glue_elapsed = update_time
             .duration_since(self.glue_update_clock)
             .as_secs_f64();

@@ -49,8 +49,13 @@ impl RuntimeCinematicCoordinator {
         sound: &mut RuntimeSoundCoordinator,
     ) -> Result<RuntimeCinematicPoll, RuntimeCinematicError> {
         let Some(request) = request else {
-            if self.active.take().is_some() {
+            if let Some(active) = self.active.take() {
                 sound.stop_cinematic_audio()?;
+                tracing::info!(
+                    object_index = active.object_index,
+                    generation = active.generation,
+                    "stopped Glue cinematic"
+                );
             }
             return Ok(RuntimeCinematicPoll::Idle);
         };
@@ -64,6 +69,14 @@ impl RuntimeCinematicCoordinator {
             }
             let mut active = ActiveCinematic::open(request)?;
             active.feed_audio(sound)?;
+            tracing::info!(
+                path = %request.path().display(),
+                object_index = request.object_index(),
+                generation = request.generation(),
+                width = active.current.width(),
+                height = active.current.height(),
+                "started Glue cinematic"
+            );
             self.active = Some(active);
         }
         let active = self.active.as_mut().ok_or(RuntimeCinematicError::State)?;
@@ -73,6 +86,11 @@ impl RuntimeCinematicCoordinator {
             let object_index = active.object_index;
             self.active = None;
             sound.stop_cinematic_audio()?;
+            tracing::info!(
+                object_index,
+                elapsed_ms = elapsed.as_millis(),
+                "finished Glue cinematic"
+            );
             return Ok(RuntimeCinematicPoll::Finished { object_index });
         }
         renderer.present_rgba8(

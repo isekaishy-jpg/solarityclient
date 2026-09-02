@@ -1,7 +1,7 @@
 //! Stock-ordered pointer targeting for the retained Glue object arena.
 
 use crate::script::UiRuntimeObjectPlan;
-use crate::{UiFrameStrata, UiObjectKind, UiRegionGeometryPlan};
+use crate::{UiFrameStrata, UiObjectKind, UiObjectRole, UiRegionGeometryPlan};
 
 use super::UiPointerButton;
 
@@ -16,7 +16,8 @@ impl UiPointerPlan {
         let targets = live
             .objects()
             .iter()
-            .map(|object| {
+            .enumerate()
+            .map(|(index, object)| {
                 Some(UiPointerTarget {
                     kind: object.kind,
                     strata: object.frame_strata?,
@@ -28,6 +29,16 @@ impl UiPointerPlan {
                     hit_rect_insets: object.hit_rect_insets?,
                     click_action: object.click_action.unwrap_or(0),
                     edit_focused: object.edit_focused.unwrap_or(false),
+                    slider: object.slider.map(|slider| UiPointerSlider {
+                        minimum: slider.minimum,
+                        maximum: slider.maximum,
+                        step: slider.step,
+                        vertical: slider.vertical,
+                        thumb_index: live.objects().iter().position(|candidate| {
+                            candidate.parent == Some(index)
+                                && candidate.role == UiObjectRole::ThumbTexture
+                        }),
+                    }),
                 })
             })
             .collect();
@@ -48,7 +59,10 @@ impl UiPointerPlan {
                 let region = geometry.region(index)?;
                 if !matches!(
                     target.kind,
-                    UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::EditBox
+                    UiObjectKind::Button
+                        | UiObjectKind::CheckButton
+                        | UiObjectKind::EditBox
+                        | UiObjectKind::Slider
                 ) || !target.mouse_enabled
                     || !target.enabled
                     || !region.effectively_shown()
@@ -110,6 +124,47 @@ impl UiPointerPlan {
             .map(|target| target.kind)
     }
 
+    /// Maps one pointer coordinate to the stock slider range, accounting for
+    /// the thumb extent at both ends of the usable track.
+    pub(super) fn slider_value_at(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+        point: (f64, f64),
+    ) -> Option<f64> {
+        let target = self.targets.get(object_index)?.as_ref()?;
+        let slider = target.slider?;
+        let track = geometry.region(object_index)?.presentation_bounds();
+        let thumb = slider
+            .thumb_index
+            .and_then(|index| geometry.region(index))
+            .map(|region| region.presentation_bounds());
+        let fraction = if slider.vertical {
+            let thumb_height = thumb.map_or(0.0, |bounds| bounds.height());
+            let usable = (track.height() - thumb_height).max(0.0);
+            if usable == 0.0 {
+                0.0
+            } else {
+                ((track.top() - thumb_height * 0.5 - point.1) / usable).clamp(0.0, 1.0)
+            }
+        } else {
+            let thumb_width = thumb.map_or(0.0, |bounds| bounds.width());
+            let usable = (track.width() - thumb_width).max(0.0);
+            if usable == 0.0 {
+                0.0
+            } else {
+                ((point.0 - track.left() - thumb_width * 0.5) / usable).clamp(0.0, 1.0)
+            }
+        };
+        let value = slider.minimum + fraction * (slider.maximum - slider.minimum);
+        Some(if slider.step > 0.0 {
+            (slider.minimum + ((value - slider.minimum) / slider.step).round() * slider.step)
+                .clamp(slider.minimum, slider.maximum)
+        } else {
+            value.clamp(slider.minimum, slider.maximum)
+        })
+    }
+
     /// Returns the frontmost wheel-enabled ScrollFrame under one UI point.
     pub(super) fn wheel_hit_test(
         &self,
@@ -166,4 +221,14 @@ struct UiPointerTarget {
     hit_rect_insets: [f64; 4],
     click_action: u64,
     edit_focused: bool,
+    slider: Option<UiPointerSlider>,
+}
+
+#[derive(Clone, Copy)]
+struct UiPointerSlider {
+    minimum: f64,
+    maximum: f64,
+    step: f64,
+    vertical: bool,
+    thumb_index: Option<usize>,
 }

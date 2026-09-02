@@ -818,13 +818,29 @@ fn accept_notice(
             ))
             .into());
         }
-        let remaining = ((advanced.range().1 - advanced.offset().1) / step)
-            .ceil()
-            .max(0.0) as usize;
-        for _ in 0..remaining {
-            if manager.pointer_wheel(position, -1.0)? != Some(scroll_index) {
-                return Err(invalid_data(format!("{scroll_name} lost wheel targeting")).into());
-            }
+        let slider_name = format!("{scroll_name}ScrollBar");
+        let slider_index = object_index(manager, &slider_name)?;
+        let track = manager
+            .geometry()
+            .region(slider_index)
+            .ok_or_else(|| invalid_data(format!("{slider_name} has no geometry")))?
+            .presentation_bounds();
+        let slider_center = (
+            track.left() + track.width() * 0.5,
+            track.bottom() + track.height() * 0.5,
+        );
+        let slider_bottom = (slider_center.0, track.bottom());
+        let down = manager.pointer_button(slider_center, UiPointerButton::Left, true)?;
+        let motion = manager.pointer_motion(slider_bottom)?;
+        let up = manager.pointer_button(slider_bottom, UiPointerButton::Left, false)?;
+        if down.object_index() != Some(slider_index)
+            || motion != Some(slider_index)
+            || up.object_index() != Some(slider_index)
+        {
+            return Err(invalid_data(format!(
+                "{slider_name} did not retain native drag capture: down={down:?}, motion={motion:?}, up={up:?}"
+            ))
+            .into());
         }
     }
     let state = manager

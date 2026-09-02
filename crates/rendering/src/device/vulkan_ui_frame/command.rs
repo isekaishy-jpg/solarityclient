@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
 use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
@@ -343,6 +344,6 @@ pub(super) fn submit_and_present(
             .swapchain_loader
             .queue_present(context.present_queue, &present)
     }
-    .map_err(|source| VulkanError::operation("present UI frame", source))?;
+    .map_err(|source| swapchain_error("present UI frame", source))?;
     Ok(())
 }

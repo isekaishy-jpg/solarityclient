@@ -10,6 +10,7 @@ use ash::{Device, vk};
 use glam::Mat4;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
@@ -109,7 +110,7 @@ impl M2FrameRenderer {
                     vk::Fence::null(),
                 )
             }
-            .map_err(|source| VulkanError::operation("acquire M2 frame image", source))?
+            .map_err(|source| swapchain_error("acquire M2 frame image", source))?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

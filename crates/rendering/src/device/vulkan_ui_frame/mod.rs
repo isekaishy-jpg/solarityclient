@@ -9,6 +9,7 @@ mod types;
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
 use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
@@ -78,7 +79,7 @@ impl UiFrameRenderer {
                     vk::Fence::null(),
                 )
             }
-            .map_err(|source| VulkanError::operation("acquire UI frame image", source))?
+            .map_err(|source| swapchain_error("acquire UI frame image", source))?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

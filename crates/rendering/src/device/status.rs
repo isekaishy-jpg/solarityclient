@@ -37,6 +37,9 @@ pub enum VulkanError {
         /// Vulkan result rendered without exposing Ash types.
         message: String,
     },
+    /// The desktop surface changed shape and its swapchain must be rebuilt.
+    #[error("Vulkan presentation swapchain is out of date")]
+    SwapchainOutOfDate,
     /// The explicit zero-based adapter index does not exist.
     #[error("Vulkan adapter index {requested} is unavailable; found {available} adapters")]
     AdapterUnavailable {

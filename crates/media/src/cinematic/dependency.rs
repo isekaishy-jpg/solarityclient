@@ -214,26 +214,44 @@ impl CinematicDecoder {
                 Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
                 Err(ffmpeg::Error::Eof) if !audio.drained => {
                     audio.drained = true;
-                    let mut converted = Audio::empty();
-                    while audio
-                        .resampler
-                        .flush(&mut converted)
-                        .map_err(|source| {
-                            CinematicError::adapter(
-                                &self.path,
-                                "drain cinematic audio resampler",
-                                source,
-                            )
-                        })?
-                        .is_some()
-                    {
+                    while let Some(delay) = audio.resampler.delay() {
+                        let sample_capacity = usize::try_from(delay.output)
+                            .ok()
+                            .and_then(|samples| samples.checked_add(1))
+                            .ok_or_else(|| CinematicError::Initialization {
+                                message: "cinematic audio drain size overflowed".to_owned(),
+                            })?;
+                        let output = *audio.resampler.output();
+                        // `swr_convert_frame` requires the drain frame to carry
+                        // the configured output format, layout, and capacity.
+                        // Passing `Audio::empty()` reports AVERROR_OUTPUT_CHANGED
+                        // at the natural end of the stock Wrath AVI.
+                        let mut converted =
+                            Audio::new(output.format, sample_capacity, output.channel_layout);
+                        let remaining =
+                            audio.resampler.flush(&mut converted).map_err(|source| {
+                                CinematicError::adapter(
+                                    &self.path,
+                                    "drain cinematic audio resampler",
+                                    source,
+                                )
+                            })?;
                         let samples = converted
                             .plane::<(i16, i16)>(0)
                             .iter()
                             .flat_map(|&(left, right)| [left, right])
                             .collect();
                         self.audio_frames.push(CinematicAudioFrame::new(samples));
-                        converted = Audio::empty();
+                        if remaining.is_none() {
+                            break;
+                        }
+                        if remaining.is_some_and(|remaining| remaining.output >= delay.output) {
+                            // libswresample may retain a fractional delay that
+                            // cannot form another output sample. It reports the
+                            // same rounded count indefinitely; stock playback
+                            // has no sample to queue at that point.
+                            break;
+                        }
                     }
                     return Ok(());
                 }

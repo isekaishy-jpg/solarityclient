@@ -38,7 +38,7 @@ pub(super) fn present_rgba8(context: FrameContext<'_>) -> Result<(), VulkanError
             vk::Fence::null(),
         )
     }
-    .map_err(|source| VulkanError::operation("acquire swapchain image", source))?;
+    .map_err(|source| swapchain_error("acquire swapchain image", source))?;
     let image = context
         .swapchain_images
         .get(image_index as usize)
@@ -313,12 +313,20 @@ fn submit_and_present(
             .swapchain_loader
             .queue_present(context.present_queue, &present_info)
     }
-    .map_err(|source| VulkanError::operation("present bootstrap frame", source));
+    .map_err(|source| swapchain_error("present bootstrap frame", source));
     // Submission succeeded, so the fence must retire before any error path can
     // release its command pool, semaphores, or staging allocation.
     let wait_result = resources.wait();
     present_result?;
     wait_result
+}
+
+pub(super) fn swapchain_error(operation: &'static str, source: vk::Result) -> VulkanError {
+    if source == vk::Result::ERROR_OUT_OF_DATE_KHR {
+        VulkanError::SwapchainOutOfDate
+    } else {
+        VulkanError::operation(operation, source)
+    }
 }
 
 /// Fits RGBA8 source pixels inside the frame and converts them to BGRA8.

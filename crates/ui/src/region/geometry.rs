@@ -218,6 +218,43 @@ impl GeometryResolver<'_> {
         let role = object.role;
         let mut anchors = self.live.anchors_for(object).to_vec();
         if anchors.is_empty()
+            && role == UiObjectRole::ThumbTexture
+            && let Some(parent_index) = parent_index
+            && let Some(slider) = self.live.objects()[parent_index].slider
+        {
+            let parent_bounds = self.resolve(parent_index)?.public.logical_bounds;
+            let fraction = if slider.maximum > slider.minimum {
+                ((slider.value - slider.minimum) / (slider.maximum - slider.minimum))
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let (relative_point, offset) = if slider.vertical {
+                (
+                    UiPoint::Top,
+                    (
+                        0.0,
+                        -authored.1 * 0.5
+                            - fraction * (parent_bounds.height() - authored.1).max(0.0),
+                    ),
+                )
+            } else {
+                (
+                    UiPoint::Left,
+                    (
+                        authored.0 * 0.5 + fraction * (parent_bounds.width() - authored.0).max(0.0),
+                        0.0,
+                    ),
+                )
+            };
+            anchors.push(UiRuntimeAnchor {
+                point: UiPoint::Center,
+                target: Some(parent_index),
+                relative_point,
+                offset,
+            });
+        }
+        if anchors.is_empty()
             && let Some(parent) = parent_index
         {
             if stock_role_texture_fills_owner(role) && authored == (0.0, 0.0) {

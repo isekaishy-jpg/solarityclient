@@ -159,6 +159,7 @@ static MODEL_CHARACTER_LIGHT_GHOST_TOKEN: u8 = 118;
 static MODEL_PET_LIGHT_LIVE_TOKEN: u8 = 119;
 static MODEL_PET_LIGHT_GHOST_TOKEN: u8 = 120;
 static BUTTON_STATE_LOCKED_TOKEN: u8 = 121;
+static SLIDER_ORIENTATION_TOKEN: u8 = 122;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -1679,6 +1680,39 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error(&label, error))
     }
 
+    /// Applies a native pointer-derived value to one live Slider.
+    pub(crate) fn dispatch_slider_value(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        value: f64,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("Slider object {object_index}:pointer-value");
+        if !value.is_finite() {
+            return Err(UiScriptError::Plan {
+                message: format!("invalid slider value for object {object_index}"),
+            });
+        }
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        if object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?
+            != "Slider"
+        {
+            return Err(UiScriptError::Plan {
+                message: format!("pointer-value target {object_index} is not a Slider"),
+            });
+        }
+        if !object
+            .raw_get::<bool>(enabled_key())
+            .map_err(|error| execution_error(&label, error))?
+        {
+            return Ok(());
+        }
+        set_range_value(lua, object, value).map_err(|error| execution_error(&label, error))
+    }
+
     fn runtime_object(
         &self,
         lua: &Lua,
@@ -2115,6 +2149,7 @@ impl UiScriptRuntime {
         if object.kind() == UiObjectKind::Slider {
             table
                 .raw_set(slider_step_key(), 0.0)
+                .and_then(|()| table.raw_set(slider_orientation_key(), "VERTICAL"))
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::StatusBar {
@@ -2739,6 +2774,7 @@ fn create_dynamic_object(
     }
     if kind == "Slider" {
         object.raw_set(slider_step_key(), 0.0)?;
+        object.raw_set(slider_orientation_key(), "VERTICAL")?;
     }
     if kind == "StatusBar" {
         object.raw_set(
@@ -5535,13 +5571,31 @@ fn set_scroll_child(lua: &Lua, object: &Table, requested: Value) -> mlua::Result
 fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     register_range_value_methods(lua, methods)?;
     methods.raw_set(
+        "GetOrientation",
+        lua.create_function(|_, object: Table| object.raw_get::<String>(slider_orientation_key()))?,
+    )?;
+    methods.raw_set(
+        "SetOrientation",
+        lua.create_function(|_, (object, orientation): (Table, String)| {
+            let orientation = orientation.to_ascii_uppercase();
+            if !matches!(orientation.as_str(), "HORIZONTAL" | "VERTICAL") {
+                return Err(mlua::Error::runtime(
+                    "SetOrientation expects HORIZONTAL or VERTICAL",
+                ));
+            }
+            object.raw_set(slider_orientation_key(), orientation)
+        })?,
+    )?;
+    methods.raw_set(
         "GetValueStep",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(slider_step_key()))?,
     )?;
     methods.raw_set(
         "SetValueStep",
-        lua.create_function(|_, (object, step): (Table, f64)| {
-            object.raw_set(slider_step_key(), step)
+        lua.create_function(|lua, (object, step): (Table, f64)| {
+            object.raw_set(slider_step_key(), step.max(0.0))?;
+            let value = object.raw_get::<f64>(slider_value_key())?;
+            set_range_value(lua, object, value)
         })?,
     )?;
     Ok(())
@@ -5556,20 +5610,7 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
     methods.raw_set(
         "SetValue",
         lua.create_function(|lua, (object, value): (Table, f64)| {
-            let minimum = object.raw_get::<f64>(slider_min_key())?;
-            let maximum = object.raw_get::<f64>(slider_max_key())?;
-            let value = value.clamp(minimum, maximum);
-            let previous = object.raw_get::<f64>(slider_value_key())?;
-            if value == previous {
-                return Ok(());
-            }
-            object.raw_set(slider_value_key(), value)?;
-            if let Some(function) =
-                object_script_function(lua, &object, UiScriptHandler::ValueChanged)?
-            {
-                call_number_object_handler(lua, &function, object, value)?;
-            }
-            Ok(())
+            set_range_value(lua, object, value)
         })?,
     )?;
     methods.raw_set(
@@ -5595,6 +5636,28 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             object.raw_set(slider_value_key(), value.clamp(minimum, maximum))
         })?,
     )?;
+    Ok(())
+}
+
+fn set_range_value(lua: &Lua, object: Table, value: f64) -> mlua::Result<()> {
+    let minimum = object.raw_get::<f64>(slider_min_key())?;
+    let maximum = object.raw_get::<f64>(slider_max_key())?;
+    let step = object
+        .raw_get::<Option<f64>>(slider_step_key())?
+        .unwrap_or(0.0);
+    let value = if step > 0.0 {
+        (minimum + ((value - minimum) / step).round() * step).clamp(minimum, maximum)
+    } else {
+        value.clamp(minimum, maximum)
+    };
+    let previous = object.raw_get::<f64>(slider_value_key())?;
+    if value == previous {
+        return Ok(());
+    }
+    object.raw_set(slider_value_key(), value)?;
+    if let Some(function) = object_script_function(lua, &object, UiScriptHandler::ValueChanged)? {
+        call_number_object_handler(lua, &function, object, value)?;
+    }
     Ok(())
 }
 
@@ -7244,20 +7307,24 @@ fn frame_dont_save_position_key() -> LightUserData {
     hidden_key(&FRAME_DONT_SAVE_POSITION_TOKEN)
 }
 
-fn slider_min_key() -> LightUserData {
+pub(super) fn slider_min_key() -> LightUserData {
     hidden_key(&SLIDER_MIN_TOKEN)
 }
 
-fn slider_max_key() -> LightUserData {
+pub(super) fn slider_max_key() -> LightUserData {
     hidden_key(&SLIDER_MAX_TOKEN)
 }
 
-fn slider_value_key() -> LightUserData {
+pub(super) fn slider_value_key() -> LightUserData {
     hidden_key(&SLIDER_VALUE_TOKEN)
 }
 
-fn slider_step_key() -> LightUserData {
+pub(super) fn slider_step_key() -> LightUserData {
     hidden_key(&SLIDER_STEP_TOKEN)
+}
+
+pub(super) fn slider_orientation_key() -> LightUserData {
+    hidden_key(&SLIDER_ORIENTATION_TOKEN)
 }
 
 pub(super) fn shown_key() -> LightUserData {

@@ -10,6 +10,7 @@ use ash::{Device, vk};
 
 use crate::TerrainSceneUniform;
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
@@ -73,7 +74,7 @@ impl TerrainFrameRenderer {
                     vk::Fence::null(),
                 )
             }
-            .map_err(|source| VulkanError::operation("acquire terrain frame image", source))?
+            .map_err(|source| swapchain_error("acquire terrain frame image", source))?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

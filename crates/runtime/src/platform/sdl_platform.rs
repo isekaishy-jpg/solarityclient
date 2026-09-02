@@ -2,11 +2,12 @@
 
 #![allow(unsafe_code)]
 
-use sdl3::video::Window;
+use sdl3::video::{Window, WindowFlags};
 use sdl3::{EventPump, Sdl, VideoSubsystem};
 
 use crate::configuration::{WindowConfiguration, WindowMode};
 use crate::platform::event_translation;
+use crate::platform::window_identity;
 use crate::platform::{PlatformError, PlatformEvent, WindowId};
 
 const CLIENT_WINDOW_TITLE: &str = "Solarity";
@@ -29,6 +30,7 @@ impl SdlPlatform {
     /// The window remains hidden until a Vulkan swapchain can present a fully
     /// initialized frame; this avoids exposing undefined startup contents.
     pub(crate) fn start(configuration: WindowConfiguration) -> Result<Self, PlatformError> {
+        window_identity::establish()?;
         let sdl = sdl3::init().map_err(|source| PlatformError::Initialize {
             message: source.to_string(),
         })?;
@@ -53,6 +55,7 @@ impl SdlPlatform {
         let window = builder.build().map_err(|source| PlatformError::Window {
             message: source.to_string(),
         })?;
+        window_identity::mark_primary_window(&window)?;
         let event_pump = sdl
             .event_pump()
             .map_err(|source| PlatformError::EventPump {
@@ -79,6 +82,21 @@ impl SdlPlatform {
     pub(crate) fn poll_event(&mut self) -> Option<PlatformEvent> {
         while let Some(event) = self.event_pump.poll_event() {
             if let Some(event) = event_translation::translate(event) {
+                if let PlatformEvent::Window {
+                    window_id,
+                    event: window_event,
+                } = &event
+                    && *window_id == self.window_id()
+                {
+                    tracing::info!(
+                        event = ?window_event,
+                        position = ?self.window.position(),
+                        logical_extent = ?self.logical_extent(),
+                        pixel_extent = ?self.pixel_extent(),
+                        flags = ?WindowFlags::from(self.window.window_flags()),
+                        "primary SDL window lifecycle event"
+                    );
+                }
                 return Some(event);
             }
         }
@@ -98,6 +116,15 @@ impl SdlPlatform {
     /// Returns the physical drawable size required for swapchain construction.
     pub(crate) fn pixel_extent(&self) -> (u32, u32) {
         self.window.size_in_pixels()
+    }
+
+    /// Returns whether desktop presentation must pause until the window is restored.
+    ///
+    /// Vulkan presentation against a minimized Win32 surface can repeatedly report
+    /// an obsolete desktop-sized extent. Waiting for SDL's restore transition keeps
+    /// swapchain recovery scoped to this window instead of churning compositor state.
+    pub(crate) fn presentation_suspended(&self) -> bool {
+        self.window.is_minimized()
     }
 
     /// Returns SDL's process-start total RAM report in bytes.

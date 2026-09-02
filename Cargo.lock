@@ -2210,6 +2210,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "wow-adt",
  "wow-m2",
  "wow-mpq",

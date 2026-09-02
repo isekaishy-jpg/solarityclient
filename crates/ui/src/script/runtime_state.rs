@@ -17,9 +17,10 @@ use super::simple_script::{
     model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
     model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
     mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
-    scale_key, shown_key, spacing_key, tex_coord_key, text_color_key, text_key,
-    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
+    scale_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key, slider_step_key,
+    slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
+    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
+    vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -63,12 +64,23 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) hit_rect_insets: Option<[f64; 4]>,
     pub(crate) scroll_offset: Option<(f64, f64)>,
     pub(crate) scroll_range: Option<(f64, f64)>,
+    pub(crate) slider: Option<UiRuntimeSlider>,
     pub(crate) enabled: Option<bool>,
     pub(crate) click_action: Option<u64>,
     pub(crate) checked: Option<bool>,
     pub(crate) highlighted: Option<bool>,
     pub(crate) pushed: Option<bool>,
     pub(crate) edit_focused: Option<bool>,
+}
+
+/// Native value and axis state for one live Slider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiRuntimeSlider {
+    pub(crate) minimum: f64,
+    pub(crate) maximum: f64,
+    pub(crate) value: f64,
+    pub(crate) step: f64,
+    pub(crate) vertical: bool,
 }
 
 /// Post-Lua text, font, alignment, and EditBox presentation state.
@@ -340,6 +352,9 @@ pub(super) fn snapshot_runtime_objects(
                     ))
                 })
                 .transpose()?,
+            slider: (kind == UiObjectKind::Slider)
+                .then(|| snapshot_slider(lua_index, &table))
+                .transpose()?,
             enabled: matches!(
                 kind,
                 UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::Slider
@@ -368,6 +383,39 @@ pub(super) fn snapshot_runtime_objects(
     }
 
     Ok(UiRuntimeObjectPlan { objects, anchors })
+}
+
+fn snapshot_slider(lua_index: usize, table: &Table) -> Result<UiRuntimeSlider, UiScriptError> {
+    let minimum = finite_region_number(table, slider_min_key(), lua_index, "slider minimum")?;
+    let maximum = finite_region_number(table, slider_max_key(), lua_index, "slider maximum")?;
+    let value = finite_region_number(table, slider_value_key(), lua_index, "slider value")?;
+    let step = finite_region_number(table, slider_step_key(), lua_index, "slider step")?;
+    let orientation = table
+        .raw_get::<String>(slider_orientation_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} slider orientation"), error))?;
+    let vertical = match orientation.as_str() {
+        "VERTICAL" => true,
+        "HORIZONTAL" => false,
+        _ => {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "live Slider object {lua_index} has invalid orientation {orientation}"
+                ),
+            });
+        }
+    };
+    if minimum > maximum || value < minimum || value > maximum || step < 0.0 {
+        return Err(UiScriptError::Plan {
+            message: format!("live Slider object {lua_index} has invalid range state"),
+        });
+    }
+    Ok(UiRuntimeSlider {
+        minimum,
+        maximum,
+        value,
+        step,
+        vertical,
+    })
 }
 
 fn snapshot_optional_color(

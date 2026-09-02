@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
@@ -269,6 +270,6 @@ pub(super) fn submit_and_present(
             .swapchain_loader
             .queue_present(context.present_queue, &present)
     }
-    .map_err(|source| VulkanError::operation("present terrain frame", source))?;
+    .map_err(|source| swapchain_error("present terrain frame", source))?;
     Ok(())
 }

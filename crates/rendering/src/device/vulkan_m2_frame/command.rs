@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
@@ -164,7 +165,7 @@ pub(super) fn submit_and_present(
             .swapchain_loader
             .queue_present(context.present_queue, &present_info)
     }
-    .map_err(|source| VulkanError::operation("present M2 frame", source))?;
+    .map_err(|source| swapchain_error("present M2 frame", source))?;
     Ok(())
 }
 

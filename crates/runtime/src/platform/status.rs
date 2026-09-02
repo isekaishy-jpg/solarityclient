@@ -5,6 +5,18 @@ use thiserror::Error;
 /// A failure while owning the primary SDL window and event source.
 #[derive(Debug, Error)]
 pub enum PlatformError {
+    /// Windows rejected the process identity that isolates taskbar and Snap grouping.
+    #[error("failed to establish standalone Windows application identity: HRESULT {code:#010x}")]
+    ApplicationIdentity {
+        /// HRESULT returned by the Windows shell.
+        code: u32,
+    },
+    /// Windows rejected the standalone extended style for the primary HWND.
+    #[error("failed to establish standalone primary-window style: Win32 error {code}")]
+    ApplicationWindowStyle {
+        /// Error returned by the failing Win32 call.
+        code: u32,
+    },
     /// SDL process initialization failed.
     #[error("failed to initialize SDL: {message}")]
     Initialize {
