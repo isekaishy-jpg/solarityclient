@@ -73,6 +73,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     creation.set_expansion(UiCharacterExpansion::WRATH_OF_THE_LICH_KING);
     creation.reset()?;
+    if creation.selected_sex() != 2 {
+        return Err(invalid_data(
+            "ResetCharCustomize replaced the stock default male selection".to_owned(),
+        )
+        .into());
+    }
+    creation.set_selected_sex(3)?;
+    creation.reset()?;
+    if creation.selected_sex() != 3 {
+        return Err(invalid_data(
+            "ResetCharCustomize replaced the current female selection".to_owned(),
+        )
+        .into());
+    }
+    creation.set_selected_sex(2)?;
+    creation.reset()?;
     let available_races = creation.available_races();
     let available_classes = creation.available_classes();
     let mut outfit_count = 0_usize;

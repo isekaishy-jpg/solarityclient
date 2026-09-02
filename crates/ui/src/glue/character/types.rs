@@ -478,7 +478,7 @@ impl UiCharacterCreationState {
         self.inner.borrow_mut().expansion = expansion;
     }
 
-    /// Reproduces stock's random race, sex, class, and appearance reset.
+    /// Reproduces stock's random race, class, and appearance reset.
     ///
     /// # Errors
     ///
@@ -486,6 +486,10 @@ impl UiCharacterCreationState {
     /// playable combination for the authenticated expansion.
     pub fn reset(&self) -> Result<(), UiCharacterCreationError> {
         let mut inner = self.inner.borrow_mut();
+        // ResetCharCustomize clears the per-race/sex model cache but leaves
+        // the current sex untouched. CharacterCreate enters with the authored
+        // male default and immediately reapplies that same selection.
+        inner.preferences.fill([UiPreference::default(); 2]);
         let eligible_races = inner
             .catalog
             .races
@@ -505,7 +509,6 @@ impl UiCharacterCreationState {
             .copied()
             .ok_or(UiCharacterCreationError::NoPlayableRace { expansion })?;
         inner.selected_race = race_choice;
-        inner.gender_id = (self.random.borrow_mut().next_u32() % 2) as u8;
         choose_random_valid_class(&mut inner, &mut self.random.borrow_mut())?;
         randomize_appearance(&mut inner, &mut self.random.borrow_mut())?;
         let gender_index = usize::from(inner.gender_id);
