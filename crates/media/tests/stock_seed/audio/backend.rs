@@ -220,10 +220,19 @@ fn backend_streams_cinematic_pcm_on_a_dedicated_track() -> Result<(), Box<dyn Er
     let samples = [0_i16, 12_000, 0, -12_000].repeat(22_050);
 
     backend.start_cinematic_audio(&samples, 1.0)?;
+    assert_eq!(
+        backend.cinematic_playback_time(),
+        Some(std::time::Duration::ZERO)
+    );
     let mut mixed = [0_u8; 4_096];
     let mixed_byte_count = backend.generate(&mut mixed)?;
     assert!(mixed_byte_count > 0);
     assert!(mixed.iter().any(|byte| *byte != 0));
+    assert!(
+        backend
+            .cinematic_playback_time()
+            .is_some_and(|time| !time.is_zero())
+    );
     backend.queue_cinematic_audio(&samples[..4_096])?;
     backend.stop_cinematic_audio()?;
     assert!(matches!(

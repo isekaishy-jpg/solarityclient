@@ -8,7 +8,9 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture}
 use crate::device::vulkan_character_atlas::{
     CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
 };
-use crate::device::vulkan_frame::{FrameContext, FrameUiContext, present_rgba8};
+use crate::device::vulkan_frame::{
+    CinematicFrameIdentity, FrameContext, FrameRenderer, FrameUiContext,
+};
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
@@ -107,6 +109,7 @@ pub struct VulkanReport {
     swapchain_image_count: usize,
     extent: (u32, u32),
     presented_texture_extent: Option<(u32, u32)>,
+    presented_source_reused: Option<bool>,
     presented_ui_draw_count: Option<usize>,
 }
 
@@ -153,6 +156,12 @@ impl VulkanReport {
         self.presented_texture_extent
     }
 
+    /// Reports whether the most recent decoded-pixel presentation reused its upload.
+    #[must_use]
+    pub const fn presented_source_reused(&self) -> Option<bool> {
+        self.presented_source_reused
+    }
+
     /// Returns the number of batches in the most recently presented UI frame.
     #[must_use]
     pub const fn presented_ui_draw_count(&self) -> Option<usize> {
@@ -188,6 +197,7 @@ pub struct VulkanRenderer {
     m2_texture_sets: M2TextureSetRegistry,
     character_atlas_textures: CharacterAtlasTextureRegistry,
     ui_pipelines: UiPipelineRegistry,
+    cinematic_frames: FrameRenderer,
     ui_frames: UiFrameRenderer,
     ui_meshes: UiMeshRegistry,
     ui_samplers: UiSamplerRegistry,
@@ -252,6 +262,7 @@ impl VulkanRenderer {
             m2_texture_sets: M2TextureSetRegistry::default(),
             character_atlas_textures: CharacterAtlasTextureRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
+            cinematic_frames: FrameRenderer::default(),
             ui_frames: UiFrameRenderer::default(),
             ui_meshes: UiMeshRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
@@ -276,6 +287,7 @@ impl VulkanRenderer {
                 swapchain_image_count: 0,
                 extent: (extent.width, extent.height),
                 presented_texture_extent: None,
+                presented_source_reused: None,
                 presented_ui_draw_count: None,
             },
             is_idle: false,
@@ -333,7 +345,26 @@ impl VulkanRenderer {
         rgba8: &[u8],
     ) -> Result<(), VulkanError> {
         self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(source_extent, rgba8, None)
+            renderer.present_rgba8_once(source_extent, rgba8, None, None)
+        })
+    }
+
+    /// Presents one retained authored movie frame with linear hardware scaling.
+    ///
+    /// Repeated calls with the same identity reuse the device-local decoded
+    /// image while still presenting at the display's FIFO cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for malformed pixels or Vulkan failures.
+    pub fn present_cinematic_rgba8(
+        &mut self,
+        identity: CinematicFrameIdentity,
+        source_extent: (u32, u32),
+        rgba8: &[u8],
+    ) -> Result<(), VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_rgba8_once(source_extent, rgba8, Some(identity), None)
         })
     }
 
@@ -361,7 +392,39 @@ impl VulkanRenderer {
             return Err(VulkanError::UiFrameExtent);
         }
         self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(source_extent, rgba8, Some((logical_extent, draws)))
+            renderer.present_rgba8_once(source_extent, rgba8, None, Some((logical_extent, draws)))
+        })?;
+        self.report.presented_ui_draw_count = Some(draws.len());
+        Ok(())
+    }
+
+    /// Presents one retained authored movie frame and its process-wide UI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for invalid extents, malformed pixels, stale UI
+    /// resources, or Vulkan presentation failures.
+    pub fn present_cinematic_rgba8_with_ui(
+        &mut self,
+        identity: CinematicFrameIdentity,
+        source_extent: (u32, u32),
+        rgba8: &[u8],
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+    ) -> Result<(), VulkanError> {
+        if logical_extent
+            .iter()
+            .any(|extent| !extent.is_finite() || *extent <= 0.0)
+        {
+            return Err(VulkanError::UiFrameExtent);
+        }
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_rgba8_once(
+                source_extent,
+                rgba8,
+                Some(identity),
+                Some((logical_extent, draws)),
+            )
         })?;
         self.report.presented_ui_draw_count = Some(draws.len());
         Ok(())
@@ -371,12 +434,13 @@ impl VulkanRenderer {
         &mut self,
         source_extent: (u32, u32),
         rgba8: &[u8],
+        identity: Option<CinematicFrameIdentity>,
         ui: Option<([f32; 2], &[UiPreparedDraw])>,
     ) -> Result<(), VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        present_rgba8(FrameContext {
+        let uploaded = self.cinematic_frames.present(FrameContext {
             device: &self.device,
             allocator,
             swapchain_loader: &self.swapchain_loader,
@@ -389,6 +453,7 @@ impl VulkanRenderer {
             frame_extent: self.report.extent,
             source_extent,
             rgba8,
+            identity,
             ui: ui.map(|(logical_extent, draws)| FrameUiContext {
                 logical_extent,
                 pipelines: &self.ui_pipelines,
@@ -397,6 +462,7 @@ impl VulkanRenderer {
                 draws,
             }),
         })?;
+        self.report.presented_source_reused = Some(!uploaded);
         self.is_idle = false;
         Ok(())
     }
@@ -419,10 +485,11 @@ impl VulkanRenderer {
     fn recreate_swapchain(&mut self) -> Result<(), VulkanError> {
         let previous_extent = self.report.extent;
         self.wait_idle()?;
-        self.ui_frames.destroy(&self.device);
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
+        self.cinematic_frames.destroy(&self.device, allocator);
+        self.ui_frames.destroy(&self.device);
         self.world_frames.destroy(&self.device, allocator);
         self.glow.destroy(&self.device, allocator);
         self.terrain_frames.destroy(&self.device, allocator);
@@ -1900,6 +1967,7 @@ impl Drop for VulkanRenderer {
         let _idle_result = self.wait_idle();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
+            self.cinematic_frames.destroy(&self.device, allocator);
             self.world_frames.destroy(&self.device, allocator);
             self.glow.destroy(&self.device, allocator);
             self.terrain_frames.destroy(&self.device, allocator);

@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use solarity_media::{CinematicDecoder, CinematicError, CinematicVideoFrame};
-use solarity_rendering::{UiPreparedDraw, VulkanError, VulkanRenderer};
+use solarity_rendering::{CinematicFrameIdentity, UiPreparedDraw, VulkanError, VulkanRenderer};
 use solarity_ui::UiGlueMovieRequest;
 
 use super::sound_coordinator::{RuntimeSoundCoordinator, RuntimeSoundError};
@@ -25,6 +25,7 @@ struct ActiveCinematic {
     object_index: usize,
     decoder: CinematicDecoder,
     current: CinematicVideoFrame,
+    frame_index: u64,
     pending: Option<CinematicVideoFrame>,
     started_at: Instant,
     first_presentation_time: Duration,
@@ -81,7 +82,15 @@ impl RuntimeCinematicCoordinator {
             self.active = Some(active);
         }
         let active = self.active.as_mut().ok_or(RuntimeCinematicError::State)?;
-        let elapsed = active.started_at.elapsed();
+        // Stock `CSimpleMovieFrame.cpp` update at 0x0095EBF0 reads the active
+        // movie channel before falling back to its monotonic tick clock.
+        let elapsed = if active.audio_started {
+            sound
+                .cinematic_playback_time()
+                .unwrap_or_else(|| active.started_at.elapsed())
+        } else {
+            active.started_at.elapsed()
+        };
         active.advance(elapsed, sound)?;
         if active.end_time.is_some_and(|end_time| elapsed >= end_time) {
             let object_index = active.object_index;
@@ -95,15 +104,17 @@ impl RuntimeCinematicCoordinator {
             return Ok(RuntimeCinematicPoll::Finished { object_index });
         }
         let source_extent = (active.current.width(), active.current.height());
+        let identity = CinematicFrameIdentity::new(active.generation, active.frame_index);
         if let Some((logical_extent, draws)) = overlay {
-            renderer.present_rgba8_with_ui(
+            renderer.present_cinematic_rgba8_with_ui(
+                identity,
                 source_extent,
                 active.current.rgba8(),
                 logical_extent,
                 draws,
             )?;
         } else {
-            renderer.present_rgba8(source_extent, active.current.rgba8())?;
+            renderer.present_cinematic_rgba8(identity, source_extent, active.current.rgba8())?;
         }
         Ok(RuntimeCinematicPoll::Presented)
     }
@@ -133,6 +144,7 @@ impl ActiveCinematic {
             object_index: request.object_index(),
             decoder,
             current,
+            frame_index: 0,
             pending,
             started_at: Instant::now(),
             first_presentation_time,
@@ -162,6 +174,10 @@ impl ActiveCinematic {
                 self.last_interval = interval;
             }
             self.current = next;
+            self.frame_index = self
+                .frame_index
+                .checked_add(1)
+                .ok_or(RuntimeCinematicError::FrameIndexCapacity)?;
             self.pending = self.decoder.next_video_frame()?;
             self.feed_audio(sound)?;
             if self.pending.is_none() {
@@ -207,4 +223,7 @@ pub enum RuntimeCinematicError {
     /// Coordinator ownership was internally inconsistent.
     #[error("cinematic coordinator lost its active movie state")]
     State,
+    /// A movie exceeded the representable authored frame identity.
+    #[error("cinematic decoded frame index exceeds u64 capacity")]
+    FrameIndexCapacity,
 }

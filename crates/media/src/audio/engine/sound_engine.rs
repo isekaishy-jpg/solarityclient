@@ -1,6 +1,7 @@
 //! SoundEntries-driven orchestration over media-owned backend resources.
 
 use std::num::NonZeroU16;
+use std::time::Duration;
 
 use solarity_asset::AssetStore;
 
@@ -119,6 +120,12 @@ impl<'output> SoundEngine<'output> {
     pub fn queue_cinematic_audio(&mut self, samples: &[i16]) -> Result<(), SoundEngineError> {
         self.backend.queue_cinematic_audio(samples)?;
         Ok(())
+    }
+
+    /// Returns the output-consumed position of the active movie stream.
+    #[must_use]
+    pub fn cinematic_playback_time(&self) -> Option<Duration> {
+        self.backend.cinematic_playback_time()
     }
 
     /// Stops the dedicated cinematic stream if one is active.

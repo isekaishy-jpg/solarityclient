@@ -52,6 +52,7 @@ mod vulkan_world_model_texture_set;
 
 pub use status::VulkanError;
 pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
+pub use vulkan_frame::CinematicFrameIdentity;
 pub use vulkan_glow::WorldFrameGlow;
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};

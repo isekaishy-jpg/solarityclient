@@ -4,6 +4,7 @@
 
 use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::mixer::{Mixer, Point3D, StereoGains, Track};
@@ -275,6 +276,22 @@ impl<'output> SoundBackend<'output> {
             ._stream
             .put_data_i16(samples)
             .map_err(|source| SoundBackendError::adapter("queue movie audio", source))
+    }
+
+    /// Returns the output-consumed position of the active cinematic track.
+    ///
+    /// SDL reports this in sample frames. Stock's movie update at
+    /// `CSimpleMovieFrame.cpp` 0x0095EBF0 likewise selects audio as the master
+    /// clock while its movie channel is active.
+    #[must_use]
+    pub fn cinematic_playback_time(&self) -> Option<Duration> {
+        let cinematic = self.cinematic.as_ref()?;
+        let frames = cinematic.track.playback_position();
+        if frames < 0 {
+            return None;
+        }
+        let milliseconds = cinematic.track.frames_to_ms(frames);
+        u64::try_from(milliseconds).ok().map(Duration::from_millis)
     }
 
     /// Stops and releases the dedicated cinematic stream when one is active.

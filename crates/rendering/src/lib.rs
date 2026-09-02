@@ -26,9 +26,9 @@ pub use camera::{
 pub use device::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureSourceKind,
     BlpTextureStorage, BlpTextureUploadError, BlpTextureUploadRequest, CharacterAtlasTextureHandle,
-    CharacterAtlasTextureResourceInfo, M2FrameReport, M2MeshHandle, M2MeshResourceInfo,
-    M2ParticlePipelineHandle, M2ParticlePipelineInfo, M2ParticlePreparedDraw, M2PipelineHandle,
-    M2PipelineInfo, M2PreparedDraw, M2RibbonPipelineHandle, M2RibbonPipelineInfo,
+    CharacterAtlasTextureResourceInfo, CinematicFrameIdentity, M2FrameReport, M2MeshHandle,
+    M2MeshResourceInfo, M2ParticlePipelineHandle, M2ParticlePipelineInfo, M2ParticlePreparedDraw,
+    M2PipelineHandle, M2PipelineInfo, M2PreparedDraw, M2RibbonPipelineHandle, M2RibbonPipelineInfo,
     M2RibbonPreparedDraw, M2SampledTexture, M2SamplerHandle, M2SamplerInfo, M2SceneLightBank,
     M2TextureAddressMode, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
     TerrainFrameReport, TerrainMaterialHandle, TerrainMaterialResourceInfo, TerrainMeshHandle,

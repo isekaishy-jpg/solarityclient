@@ -65,6 +65,7 @@ impl SelectedAdapter {
         validate_vulkan13_features(bootstrap, physical_device)?;
         let (graphics_family, present_family) = select_queue_families(bootstrap, physical_device)?;
         let surface_format = select_surface_format(bootstrap, physical_device)?;
+        validate_cinematic_blit(bootstrap, physical_device, surface_format.format)?;
         let depth_format = select_depth_format(bootstrap, physical_device)?;
         validate_present_mode(bootstrap, physical_device)?;
         // SAFETY: The physical device and surface belong to the live bootstrap.
@@ -118,6 +119,37 @@ impl SelectedAdapter {
             surface_capabilities,
         })
     }
+}
+
+/// Requires the exact filtered image blit used by retained movie presentation.
+fn validate_cinematic_blit(
+    bootstrap: &VulkanBootstrap,
+    physical_device: vk::PhysicalDevice,
+    surface_format: vk::Format,
+) -> Result<(), VulkanError> {
+    // SAFETY: The selected physical device belongs to the live instance.
+    let source = unsafe {
+        bootstrap
+            .instance
+            .get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_UNORM)
+    };
+    let required_source = vk::FormatFeatureFlags::TRANSFER_DST
+        | vk::FormatFeatureFlags::BLIT_SRC
+        | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR;
+    // SAFETY: The selected physical device belongs to the live instance.
+    let destination = unsafe {
+        bootstrap
+            .instance
+            .get_physical_device_format_properties(physical_device, surface_format)
+    };
+    if !source.optimal_tiling_features.contains(required_source)
+        || !destination
+            .optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::BLIT_DST)
+    {
+        return Err(VulkanError::CinematicBlitFormat);
+    }
+    Ok(())
 }
 
 /// Requires direct sampled uploads for every authored WotLK DXT family.

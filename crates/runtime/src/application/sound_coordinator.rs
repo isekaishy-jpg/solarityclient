@@ -1,6 +1,6 @@
 //! Main-thread sound output, live CVar policy, and terrain-emitter ownership.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use solarity_asset::{AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
@@ -147,6 +147,12 @@ impl RuntimeSoundCoordinator {
     ) -> Result<(), RuntimeSoundError> {
         self.engine.queue_cinematic_audio(samples)?;
         Ok(())
+    }
+
+    /// Returns the output-consumed movie time used by stock as master clock.
+    #[must_use]
+    pub(crate) fn cinematic_playback_time(&self) -> Option<Duration> {
+        self.engine.cinematic_playback_time()
     }
 
     /// Stops and releases movie audio when playback ends or is replaced.

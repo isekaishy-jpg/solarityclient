@@ -112,6 +112,15 @@ pub enum VulkanError {
     /// CPU frame composition overflowed addressable memory.
     #[error("bootstrap frame dimensions exceed addressable memory")]
     FrameSize,
+    /// Swapchain-indexed movie resources cannot address the requested slot.
+    #[error("cinematic frame resources exceed swapchain capacity")]
+    FrameCapacity,
+    /// A retained frame ring cannot silently change its swapchain shape.
+    #[error("cinematic frame swapchain image count changed without renderer recreation")]
+    FrameSwapchainChanged,
+    /// The adapter cannot linearly blit decoded RGBA into the surface format.
+    #[error("selected Vulkan adapter cannot linearly blit cinematic frames")]
+    CinematicBlitFormat,
     /// A decoded M2 has no geometry that Vulkan can bind and draw.
     #[error("M2 mesh {path} has no {buffer_kind} data to upload")]
     EmptyM2Mesh {
