@@ -94,6 +94,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     creation.reset()?;
     let available_races = creation.available_races();
     let available_classes = creation.available_classes();
+    validate_bald_facial_hair_representation(
+        &mut presentation,
+        &creation,
+        &available_races,
+        &available_classes,
+    )?;
     let mut outfit_count = 0_usize;
     let mut appearance_count = 0_usize;
 
@@ -128,6 +134,58 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!(
         "validated {outfit_count} race/class/gender outfits, {appearance_count} authored customization representations, and one complete enum-time equipment/pet representation"
+    );
+    Ok(())
+}
+
+/// Locks the stock-valid Gnome case that previously reached Vulkan with a
+/// selected facial-hair draw and an unresolved bald-hair texture slot.
+fn validate_bald_facial_hair_representation(
+    presentation: &mut RuntimePlayerPresentation,
+    creation: &UiCharacterCreationState,
+    races: &[(String, String, bool)],
+    classes: &[(String, String, bool)],
+) -> Result<(), Box<dyn Error>> {
+    let race_offset = races
+        .iter()
+        .position(|race| race.1.eq_ignore_ascii_case("Gnome"))
+        .ok_or_else(|| invalid_data("playable Gnome race is absent".to_owned()))?;
+    let race_index = one_based(race_offset)?;
+    creation.set_selected_race(race_index)?;
+    creation.set_selected_sex(2)?;
+    let class_offset = classes
+        .iter()
+        .enumerate()
+        .find(|(offset, class)| {
+            class.2
+                && one_based(*offset)
+                    .is_ok_and(|index| creation.is_race_class_valid(race_index, index))
+        })
+        .map(|(offset, _class)| offset)
+        .ok_or_else(|| invalid_data("playable Gnome class is absent".to_owned()))?;
+    creation.set_selected_class(one_based(class_offset)?)?;
+    for (axis, target) in [7_u8, 0, 0, 8, 5].into_iter().enumerate() {
+        for _attempt in 0..MAX_CUSTOMIZATION_VALUES {
+            if creation.preview().appearance()[axis] == target {
+                break;
+            }
+            creation.cycle_customization(one_based(axis)?, 1)?;
+        }
+        if creation.preview().appearance()[axis] != target {
+            return Err(invalid_data(format!(
+                "Gnome customization axis {} cannot select value {target}",
+                axis + 1
+            ))
+            .into());
+        }
+    }
+    let preview = creation.preview();
+    validate_preview(presentation, &preview)?;
+    println!(
+        "validated bald facial-hair representation race={} gender={} appearance={:?}",
+        preview.race_id(),
+        preview.gender_id(),
+        preview.appearance(),
     );
     Ok(())
 }
@@ -191,6 +249,7 @@ fn validate_selection_representation(
         )
         .into());
     }
+    presentation.validate_glue_character_geometry_textures()?;
     if presentation.synchronize_character_selection(Some(&preview))? {
         return Err(invalid_data(
             "unchanged selection fixture rebuilt its resident representation".to_owned(),
@@ -232,6 +291,7 @@ fn validate_preview(
     preview: &UiCharacterCreationPreview,
 ) -> Result<(), Box<dyn Error>> {
     presentation.synchronize_character_creation(Some(preview))?;
+    presentation.validate_glue_character_geometry_textures()?;
     Ok(())
 }
 

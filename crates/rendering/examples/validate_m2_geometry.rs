@@ -148,6 +148,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "topology_maximum_edge={maximum_edge} long_edges={long_edges} nonzero_submesh_levels={nonzero_levels}"
     );
+    for (texture_index, texture) in model.textures().iter().enumerate() {
+        println!(
+            "texture={texture_index} kind={:?} filename={:?}",
+            texture.kind(),
+            texture.filename(),
+        );
+    }
+    for (draw_index, draw) in plan.draws().iter().enumerate() {
+        let bindings = draw
+            .texture_bindings()
+            .iter()
+            .map(|binding| {
+                format!(
+                    "{}:{}@{}",
+                    binding.stage(),
+                    binding.texture_index(),
+                    binding.texture_coordinate(),
+                )
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "draw={draw_index} geoset={} indices={} bindings={bindings:?}",
+            draw.geoset_id(),
+            draw.index_count(),
+        );
+    }
     for (camera_index, camera) in model.animations().cameras().iter().enumerate() {
         let frame = sample_m2_camera_frame(
             model.animations(),

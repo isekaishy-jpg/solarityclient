@@ -20,7 +20,7 @@ use solarity_rendering::{
     CharacterGeosetContext, CharacterGeosetPlan, CharacterGeosetPlanError, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTextureComposeError,
     CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
-    M2ParticleColorReplacement, WorldCamera,
+    M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, MountCameraGeometry, MountCameraHeightError,
@@ -81,6 +81,9 @@ pub enum RuntimePlayerError {
     /// Resolved customization could not form stock's body-geoset mask.
     #[error(transparent)]
     CharacterGeosetPlan(#[from] CharacterGeosetPlanError),
+    /// A character body M2 or SKIN cannot form its validated mesh plan.
+    #[error(transparent)]
+    CharacterMeshPlan(#[from] M2MeshPlanError),
     /// Equipped child-model paths could not be formed from client tables.
     #[error(transparent)]
     CharacterAttachmentPlan(#[from] CharacterAttachmentPlanError),
@@ -172,6 +175,20 @@ pub enum RuntimePlayerError {
     MissingHardcodedTexturePath {
         /// Model containing the invalid declaration.
         model: AssetPath,
+    },
+    /// One visible character body draw still lacks an owner-supplied texture.
+    #[error(
+        "player M2 {model} geoset {geoset_id} texture {texture_index} requires unresolved replacement {kind:?}"
+    )]
+    UnresolvedCharacterTexture {
+        /// Character body containing the visible draw.
+        model: AssetPath,
+        /// Selected character submesh identifier.
+        geoset_id: u16,
+        /// Referenced M2 texture declaration.
+        texture_index: u16,
+        /// Replacement category with no source.
+        kind: M2TextureKind,
     },
     /// The local player resolved without the character-only appearance join.
     #[error("local player {guid:#018X} has no character appearance")]
@@ -479,9 +496,9 @@ impl RuntimePlayerPresentation {
         let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
         let textures = prepare_model_textures(
             &model,
-            hair.as_ref(),
-            extra_skin.as_ref(),
-            cape.as_ref(),
+            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
+            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
+            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
             &mut assets,
             &mut self.textures,
         )?;
@@ -610,9 +627,9 @@ impl RuntimePlayerPresentation {
         let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
         let textures = prepare_model_textures(
             &model,
-            hair.as_ref(),
-            extra_skin.as_ref(),
-            cape.as_ref(),
+            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
+            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
+            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
             &mut assets,
             &mut self.textures,
         )?;
@@ -738,6 +755,23 @@ impl RuntimePlayerPresentation {
         self.glue_character
             .as_ref()
             .map(ResidentGlueCharacterFrameInput::from_resident)
+    }
+
+    /// Verifies that every selected character-body draw has a concrete or
+    /// stock-neutral texture before the GPU frame is prepared.
+    ///
+    /// This exposes the same invariant to the installed-data representation
+    /// validator that the Vulkan path enforces at publication time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimePlayerError`] for an invalid M2/SKIN plan or a visible
+    /// draw whose replacement texture remains unresolved.
+    pub fn validate_glue_character_geometry_textures(&self) -> Result<(), RuntimePlayerError> {
+        let Some(resident) = self.glue_character.as_ref() else {
+            return Ok(());
+        };
+        validate_character_geometry_textures(&resident.model, &resident.textures, &resident.geosets)
     }
 
     /// Synchronizes the local player's exact body M2 and stable camera height.
@@ -909,9 +943,9 @@ impl RuntimePlayerPresentation {
         let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
         let textures = prepare_model_textures(
             &model,
-            hair.as_ref(),
-            extra_skin.as_ref(),
-            cape.as_ref(),
+            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
+            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
+            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
             &mut assets,
             &mut self.textures,
         )?;
@@ -1374,9 +1408,9 @@ impl RuntimePlayerPresentation {
         let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
         let textures = prepare_model_textures(
             &model,
-            hair.as_ref(),
-            extra_skin.as_ref(),
-            cape.as_ref(),
+            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
+            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
+            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
             &mut assets,
             &mut self.textures,
         )?;
@@ -2402,6 +2436,47 @@ enum ResidentHardcodedTexture {
     StockFailure,
 }
 
+/// One optional replacement request after archive residency has been probed.
+///
+/// `Wow.exe` `0x0081F450` binds texture handle zero when a material stage's
+/// logical replacement is absent. The fixed-function combiner treats that as
+/// a neutral texture stage, represented by the renderer's opaque-white image.
+/// A nonempty name that fails its archive probe is different: stock's texture
+/// failure path publishes the diagnostic green image.
+#[derive(Clone, Copy)]
+struct OptionalTextureBinding<'source> {
+    requested: Option<&'source AssetPath>,
+    resident: Option<&'source Arc<BlpTextureSource>>,
+}
+
+impl<'source> OptionalTextureBinding<'source> {
+    const fn new(
+        requested: Option<&'source AssetPath>,
+        resident: Option<&'source Arc<BlpTextureSource>>,
+    ) -> Self {
+        Self {
+            requested,
+            resident,
+        }
+    }
+
+    fn player_texture(self) -> ResidentPlayerTexture {
+        match (self.requested, self.resident) {
+            (_, Some(source)) => ResidentPlayerTexture::Authored(Arc::clone(source)),
+            (None, None) => ResidentPlayerTexture::StockWhite,
+            (Some(_), None) => ResidentPlayerTexture::StockFailure,
+        }
+    }
+
+    fn creature_texture(self) -> ResidentCreatureTexture {
+        match (self.requested, self.resident) {
+            (_, Some(source)) => ResidentCreatureTexture::Authored(Arc::clone(source)),
+            (None, None) => ResidentCreatureTexture::StockWhite,
+            (Some(_), None) => ResidentCreatureTexture::StockFailure,
+        }
+    }
+}
+
 /// Applies M2Shared.cpp's white-empty and Texture.cpp's green-failure paths.
 fn prepare_hardcoded_texture(
     model: &DecodedM2Model,
@@ -2517,6 +2592,9 @@ fn prepare_npc_character_textures(
     let hair = load_optional_texture(plan.hair(), assets, textures)?;
     let extra_skin = load_optional_texture(plan.extra_skin(), assets, textures)?;
     let cape = load_optional_texture(plan.cape(), assets, textures)?;
+    let hair = OptionalTextureBinding::new(plan.hair(), hair.as_ref());
+    let extra_skin = OptionalTextureBinding::new(plan.extra_skin(), extra_skin.as_ref());
+    let cape = OptionalTextureBinding::new(plan.cape(), cape.as_ref());
 
     model
         .textures()
@@ -2534,18 +2612,9 @@ fn prepare_npc_character_textures(
                 }
             }
             M2TextureKind::Body => Ok(ResidentCreatureTexture::Authored(Arc::clone(&baked))),
-            M2TextureKind::Environment => Ok(hair.as_ref().map_or(
-                ResidentCreatureTexture::Unresolved(M2TextureKind::Environment),
-                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
-            )),
-            M2TextureKind::SkinExtra => Ok(extra_skin.as_ref().map_or(
-                ResidentCreatureTexture::Unresolved(M2TextureKind::SkinExtra),
-                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
-            )),
-            M2TextureKind::Item => Ok(cape.as_ref().map_or(
-                ResidentCreatureTexture::Unresolved(M2TextureKind::Item),
-                |source| ResidentCreatureTexture::Authored(Arc::clone(source)),
-            )),
+            M2TextureKind::Environment => Ok(hair.creature_texture()),
+            M2TextureKind::SkinExtra => Ok(extra_skin.creature_texture()),
+            M2TextureKind::Item => Ok(cape.creature_texture()),
             kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
         })
         .collect()
@@ -2627,8 +2696,13 @@ fn load_player_attachments(
         } else {
             None
         };
-        let resolved_textures =
-            prepare_attachment_textures(&model, replacement.as_ref(), assets, textures)?;
+        let requested_replacement = if uses_replacement {
+            attachment.texture()
+        } else {
+            None
+        };
+        let replacement = OptionalTextureBinding::new(requested_replacement, replacement.as_ref());
+        let resolved_textures = prepare_attachment_textures(&model, replacement, assets, textures)?;
         let visual_plan = CharacterItemVisualPlan::resolve(attachment, item_visuals);
         let mut visual_effects = Vec::with_capacity(visual_plan.effects().len());
         for effect in visual_plan.effects() {
@@ -2638,8 +2712,12 @@ fn load_player_attachments(
                 continue;
             }
             let effect_model = models.load(assets, effect.model())?;
-            let effect_textures =
-                prepare_attachment_textures(&effect_model, None, assets, textures)?;
+            let effect_textures = prepare_attachment_textures(
+                &effect_model,
+                OptionalTextureBinding::new(None, None),
+                assets,
+                textures,
+            )?;
             visual_effects.push(ResidentPlayerItemVisualEffect {
                 point: effect.attachment_id(),
                 model: effect_model,
@@ -2670,6 +2748,7 @@ fn load_optional_texture(
         return Ok(None);
     };
     if !assets.contains(path)? {
+        tracing::warn!(texture = %path, "named optional M2 replacement is absent; using stock failure texture");
         return Ok(None);
     }
     textures.load(assets, path).map(Some)
@@ -2678,9 +2757,9 @@ fn load_optional_texture(
 /// Resolves every body-model texture slot without inventing equipment inputs.
 fn prepare_model_textures(
     model: &DecodedM2Model,
-    hair: Option<&Arc<BlpTextureSource>>,
-    extra_skin: Option<&Arc<BlpTextureSource>>,
-    cape: Option<&Arc<BlpTextureSource>>,
+    hair: OptionalTextureBinding<'_>,
+    extra_skin: OptionalTextureBinding<'_>,
+    cape: OptionalTextureBinding<'_>,
     assets: &mut solarity_asset::AssetStore,
     textures: &mut BlpTextureCache,
 ) -> Result<Vec<ResidentPlayerTexture>, RuntimePlayerError> {
@@ -2704,27 +2783,43 @@ fn prepare_model_textures(
             // special texture slot 6. Every stock playable body M2 authors
             // that slot as Environment; the generic type-7 Hair category is
             // not a substitute.
-            M2TextureKind::Environment => Ok(hair.map_or(
-                ResidentPlayerTexture::Unresolved(M2TextureKind::Environment),
-                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
-            )),
-            M2TextureKind::SkinExtra => Ok(extra_skin.map_or(
-                ResidentPlayerTexture::Unresolved(M2TextureKind::SkinExtra),
-                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
-            )),
-            M2TextureKind::Item => Ok(cape.map_or(
-                ResidentPlayerTexture::Unresolved(M2TextureKind::Item),
-                |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
-            )),
+            M2TextureKind::Environment => Ok(hair.player_texture()),
+            M2TextureKind::SkinExtra => Ok(extra_skin.player_texture()),
+            M2TextureKind::Item => Ok(cape.player_texture()),
             kind => Ok(ResidentPlayerTexture::Unresolved(kind)),
         })
         .collect()
 }
 
+/// Applies the renderer's selected-draw texture invariant without a GPU.
+fn validate_character_geometry_textures(
+    model: &DecodedM2Model,
+    textures: &[ResidentPlayerTexture],
+    geosets: &CharacterGeosetPlan,
+) -> Result<(), RuntimePlayerError> {
+    let plan = M2MeshPlan::prepare(model, 0)?;
+    for draw in plan.character_draws(geosets) {
+        for binding in draw.texture_bindings() {
+            let texture_index = binding.texture_index();
+            if let Some(ResidentPlayerTexture::Unresolved(kind)) =
+                textures.get(usize::from(texture_index))
+            {
+                return Err(RuntimePlayerError::UnresolvedCharacterTexture {
+                    model: model.path().clone(),
+                    geoset_id: draw.geoset_id(),
+                    texture_index,
+                    kind: *kind,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Resolves one attached item M2's hardcoded and display replacement slots.
 fn prepare_attachment_textures(
     model: &DecodedM2Model,
-    replacement: Option<&Arc<BlpTextureSource>>,
+    replacement: OptionalTextureBinding<'_>,
     assets: &mut solarity_asset::AssetStore,
     textures: &mut BlpTextureCache,
 ) -> Result<Vec<ResidentPlayerTexture>, RuntimePlayerError> {
@@ -2744,10 +2839,7 @@ fn prepare_attachment_textures(
                 }
             }
             M2TextureKind::Item | M2TextureKind::WeaponArmorBasic | M2TextureKind::WeaponBlade => {
-                Ok(replacement.map_or(
-                    ResidentPlayerTexture::Unresolved(texture.kind()),
-                    |source| ResidentPlayerTexture::Authored(Arc::clone(source)),
-                ))
+                Ok(replacement.player_texture())
             }
             kind => Ok(ResidentPlayerTexture::Unresolved(kind)),
         })
