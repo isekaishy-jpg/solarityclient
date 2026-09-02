@@ -1,5 +1,7 @@
 //! Archive-backed top-left frame-rate overlay.
 
+mod layout;
+
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -11,9 +13,11 @@ use crate::FrameRateCounter;
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
 
+pub(super) use layout::overlay_extent;
+use layout::{FPS_TEXT_REGION_HEIGHT, FPS_TEXT_TOP_LEFT};
+
 const FONT_PATH: &str = "Fonts\\FRIZQT__.TTF";
 const GLYPH_REPERTOIRE: &str = "-0123456789. FPS";
-const UI_HEIGHT: f32 = 768.0;
 
 /// Renderer-resident developer FPS overlay matching SolCL's default style.
 pub(super) struct RuntimeFpsOverlay {
@@ -57,8 +61,8 @@ impl RuntimeFpsOverlay {
             &text,
             &style,
             logical_extent,
-            [12.0, 10.0],
-            24.0,
+            FPS_TEXT_TOP_LEFT,
+            FPS_TEXT_REGION_HEIGHT,
             pixel_extent.1,
         )?;
         let frame = PreparedUiFrame::prepare(
@@ -94,8 +98,8 @@ impl RuntimeFpsOverlay {
             &text,
             &self.style,
             self.logical_extent,
-            [12.0, 10.0],
-            24.0,
+            FPS_TEXT_TOP_LEFT,
+            FPS_TEXT_REGION_HEIGHT,
             self.display_height,
         )?;
         self.frame.replace_mesh(renderer, &plan)?;
@@ -110,11 +114,4 @@ impl RuntimeFpsOverlay {
     pub(super) fn draws(&self) -> &[UiPreparedDraw] {
         self.frame.draws()
     }
-}
-
-pub(super) fn overlay_extent(pixel_extent: (u32, u32)) -> [f32; 2] {
-    [
-        pixel_extent.0 as f32 / pixel_extent.1 as f32 * UI_HEIGHT,
-        UI_HEIGHT,
-    ]
 }

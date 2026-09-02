@@ -1,8 +1,25 @@
 //! External frame-rate measurement tests.
 
+#[path = "../../src/application/performance_overlay/layout.rs"]
+mod performance_overlay_layout;
+
 use std::time::{Duration, Instant};
 
 use solarity_runtime::FrameRateCounter;
+
+use performance_overlay_layout::{
+    FPS_TEXT_REGION_HEIGHT, FPS_TEXT_TOP_LEFT, UI_HEIGHT, overlay_extent,
+};
+
+/// The FPS label retains a fixed top-left inset across window resolutions.
+#[test]
+fn fps_overlay_uses_stock_canvas_top_left_coordinates() {
+    assert_eq!(overlay_extent((1024, 768)), [1024.0, UI_HEIGHT]);
+    assert_eq!(overlay_extent((1920, 1080)), [1_365.333_4, UI_HEIGHT]);
+    assert_eq!(overlay_extent((2560, 1440)), [1_365.333_4, UI_HEIGHT]);
+    assert_eq!(FPS_TEXT_TOP_LEFT, [12.0, 10.0]);
+    assert_eq!(FPS_TEXT_REGION_HEIGHT, 24.0);
+}
 
 /// FPS counts completed intervals and publishes on the quarter-second boundary.
 #[test]
