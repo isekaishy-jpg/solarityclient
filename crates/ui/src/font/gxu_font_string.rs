@@ -922,7 +922,9 @@ fn layout_live_quads(
         let Some(text) = &object.text else {
             continue;
         };
-        if text.content.is_empty() {
+        if text.content.is_empty()
+            && !(object.kind == UiObjectKind::EditBox && object.edit_focused.unwrap_or(false))
+        {
             continue;
         }
         let Some(region) = geometry.region(object_index) else {
@@ -1023,6 +1025,7 @@ fn layout_live_quads(
             nearest_live_scroll_frame(live, object.parent)
         };
         let mut primary_quads = Vec::new();
+        let mut caret_quads = Vec::new();
         for (line_index, line) in lines.iter().enumerate() {
             let line_width = line.iter().try_fold(0.0, |width, presented| {
                 let character = presented.character;
@@ -1050,6 +1053,24 @@ fn layout_live_quads(
             };
             let line_top = block_top - line_index as f64 * (line_height + text.spacing);
             let baseline = line_top - ascender;
+            let caret = (object.kind == UiObjectKind::EditBox
+                && object.edit_focused.unwrap_or(false)
+                && line_index == 0)
+                .then(|| {
+                    edit_box_caret_metrics(text, &font, glyphs, pixels_per_ui_unit, available_width)
+                });
+            if let Some((caret_offset, caret_width)) = caret {
+                // CSimpleEditBox scrolls its one-line text just enough to keep
+                // the insertion cell inside the authored text insets.
+                let caret_left = pen_x + caret_offset;
+                let content_right = owner.width() - inset_right;
+                if caret_left + caret_width > content_right {
+                    pen_x += content_right - caret_width - caret_left;
+                } else if caret_left < inset_left {
+                    pen_x += inset_left - caret_left;
+                }
+            }
+            let line_start_x = pen_x;
             for presented in line {
                 let character = presented.character;
                 let key = GlyphKey::new(&font, character);
@@ -1085,6 +1106,30 @@ fn layout_live_quads(
                 }
                 pen_x += glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
             }
+            if let Some((caret_offset, caret_width)) = caret {
+                // Build 12340 presents the insertion point as a full
+                // character-cell block. Pixel (0, 0) is the atlas-owned solid
+                // coverage sample reserved by `compose_atlas`.
+                let solid = [
+                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
+                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
+                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
+                    [0.5 / extent.0 as f32, 0.5 / extent.1 as f32],
+                ];
+                caret_quads.push(LocalGlyphQuad {
+                    packet_key,
+                    object_index,
+                    clip_object,
+                    bounds: [
+                        (line_start_x + caret_offset) as f32,
+                        (line_top - line_height) as f32,
+                        (line_start_x + caret_offset + caret_width) as f32,
+                        line_top as f32,
+                    ],
+                    texture_coordinates: solid,
+                    color,
+                });
+            }
         }
         // GxuFontString draws material passes in outline, shadow, then face
         // order. Keeping these as separate quads restores the black edging
@@ -1116,6 +1161,7 @@ fn layout_live_quads(
             );
         }
         quads.extend(primary_quads);
+        quads.extend(caret_quads);
     }
     Ok(quads)
 }
@@ -1145,6 +1191,46 @@ fn nearest_live_scroll_frame(
         parent = object.parent;
     }
     None
+}
+
+/// Resolves the byte-indexed EditBox cursor to its visible insertion cell.
+fn edit_box_caret_metrics(
+    text: &UiRuntimeText,
+    font: &LineFontKey,
+    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
+    pixels_per_ui_unit: f64,
+    available_width: f64,
+) -> (f64, f64) {
+    let mut cursor = text.cursor.min(text.content.len());
+    while !text.content.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    let presented = |character: char| {
+        if text.password && !matches!(character, ' ' | '\t' | '\r' | '\n') {
+            '*'
+        } else {
+            character
+        }
+    };
+    let advance = |character| {
+        glyphs
+            .get(&GlyphKey::new(font, presented(character)))
+            .map_or(0.0, |glyph| {
+                glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit
+            })
+    };
+    let offset = text.content[..cursor]
+        .chars()
+        .filter(|character| text.multiline || !matches!(character, '\r' | '\n'))
+        .map(advance)
+        .sum();
+    let width = text.content[cursor..]
+        .chars()
+        .find(|character| text.multiline || !matches!(character, '\r' | '\n'))
+        .map_or_else(|| advance(' '), advance)
+        .max(pixels_per_ui_unit.recip())
+        .min(available_width.max(0.0));
+    (offset, width)
 }
 
 fn pack(
@@ -1199,6 +1285,9 @@ fn compose_atlas(
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or_else(atlas_overflow)?;
     let mut rgba8 = vec![0; byte_count];
+    // The first padding texel is dedicated solid coverage for retained text
+    // material primitives such as the stock EditBox insertion block.
+    rgba8[..4].copy_from_slice(&[255; 4]);
     for key in keys {
         let glyph = &glyphs[key];
         let placement = placements[key];
@@ -1355,4 +1444,68 @@ fn atlas_overflow() -> FontError {
 fn next_identity() -> u64 {
     static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
     NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn glyph(advance: i64) -> RasterizedGlyph {
+        RasterizedGlyph {
+            width: 1,
+            height: 1,
+            bearing_x: 0,
+            bearing_y: 1,
+            advance_x_26_6: advance * 64,
+            coverage: vec![255],
+        }
+    }
+
+    #[test]
+    fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() {
+        let face = AssetPath::new("Fonts\\FRIZQT__.TTF").expect("valid stock font path");
+        let font = LineFontKey {
+            face: face.clone(),
+            pixel_height: 12,
+            rasterization: FontRasterization::Antialiased,
+        };
+        let mut glyphs = HashMap::new();
+        glyphs.insert(GlyphKey::new(&font, '*'), glyph(7));
+        glyphs.insert(GlyphKey::new(&font, ' '), glyph(3));
+        let text = UiRuntimeText {
+            content: "éx".to_owned(),
+            face,
+            height: 12.0,
+            rasterization: FontRasterization::Antialiased,
+            outline_width: 0.0,
+            color: [1.0; 4],
+            shadow_offset: [0.0; 2],
+            shadow_color: [0.0; 4],
+            spacing: 0.0,
+            word_wrap: false,
+            non_space_wrap: false,
+            max_lines: 0,
+            horizontal: crate::HorizontalJustification::Left,
+            vertical: crate::VerticalJustification::Middle,
+            draw_layer: crate::UiDrawLayer::Artwork,
+            draw_sub_level: 0,
+            password: true,
+            multiline: false,
+            text_insets: [0.0; 4],
+            cursor: 2,
+            selection: [2, 2],
+        };
+
+        assert_eq!(
+            edit_box_caret_metrics(&text, &font, &glyphs, 1.0, 100.0),
+            (7.0, 7.0)
+        );
+    }
+
+    #[test]
+    fn atlas_reserves_opaque_padding_texel_for_text_primitives() {
+        let pixels =
+            compose_atlas((1, 1), &[], &HashMap::new(), &HashMap::new()).expect("one-pixel atlas");
+        assert_eq!(pixels, [255; 4]);
+    }
 }

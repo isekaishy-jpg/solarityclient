@@ -1155,6 +1155,12 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
             invalid_data("stock login did not focus the account EditBox".to_owned()).into(),
         );
     }
+    if !has_solid_caret(manager, account_index) {
+        return Err(invalid_data(
+            "focused empty account EditBox produced no stock insertion block".to_owned(),
+        )
+        .into());
+    }
     let atlas_identity = manager.glyphs().identity();
     manager.text_input("VALIDATION_ACCOUNT")?;
     if manager.glyphs().identity() != atlas_identity {
@@ -1167,7 +1173,7 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         .into_iter()
         .filter(|owner| *owner == account_index)
         .count();
-    if account_glyphs != "VALIDATION_ACCOUNT".chars().count() {
+    if account_glyphs != "VALIDATION_ACCOUNT".chars().count() + 1 {
         return Err(
             invalid_data(format!("account EditBox produced {account_glyphs} glyphs")).into(),
         );
@@ -1185,7 +1191,7 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         .into_iter()
         .filter(|owner| *owner == password_index)
         .count();
-    if password_glyphs != VALIDATION_PASSWORD.chars().count() {
+    if password_glyphs != VALIDATION_PASSWORD.chars().count() + 1 {
         return Err(invalid_data(format!(
             "password EditBox produced {password_glyphs} masked glyphs"
         ))
@@ -1223,6 +1229,20 @@ fn visible_glyph_owners(manager: &GlueManager) -> Vec<usize> {
         .into_iter()
         .map(|quad| quad.object_index())
         .collect()
+}
+
+fn has_solid_caret(manager: &GlueManager, object_index: usize) -> bool {
+    manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|quad| quad.object_index() == object_index)
+        .any(|quad| {
+            let coordinates = quad.texture_coordinates();
+            coordinates[1..]
+                .iter()
+                .all(|coordinate| *coordinate == coordinates[0])
+        })
 }
 
 fn contains_change(changes: &[(String, String)], name: &str, value: &str) -> bool {
