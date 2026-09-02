@@ -167,6 +167,8 @@ static AUTO_TEXT_HEIGHT_TOKEN: u8 = 126;
 static WORD_WRAP_TOKEN: u8 = 127;
 static NON_SPACE_WRAP_TOKEN: u8 = 128;
 static MAX_TEXT_LINES_TOKEN: u8 = 129;
+static EDIT_CARET_ELAPSED_TOKEN: u8 = 130;
+static EDIT_CARET_VISIBLE_TOKEN: u8 = 131;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -1382,6 +1384,8 @@ impl UiScriptRuntime {
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let object_count = self.registered_object_count();
+        advance_edit_box_carets(lua, &objects, object_count, elapsed_seconds)
+            .map_err(|error| execution_error("Glue EditBox caret", error))?;
         let mut dispatched = 0;
         for index in 1..=object_count {
             let object = objects
@@ -5020,6 +5024,8 @@ fn initialize_edit_box(lua: &Lua, object: &Table) -> mlua::Result<()> {
     object.raw_set(edit_selection_start_key(), 0_u32)?;
     object.raw_set(edit_selection_end_key(), 0_u32)?;
     object.raw_set(edit_blink_speed_key(), 0.5_f64)?;
+    object.raw_set(edit_caret_elapsed_key(), 0.0_f64)?;
+    object.raw_set(edit_caret_visible_key(), true)?;
     object.raw_set(edit_password_key(), false)?;
     object.raw_set(edit_numeric_key(), false)?;
     object.raw_set(edit_multi_line_key(), false)?;
@@ -5159,7 +5165,11 @@ fn register_edit_box_limit_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
     methods.raw_set(
         "SetBlinkSpeed",
         lua.create_function(|_, (object, speed): (Table, f64)| {
-            object.raw_set(edit_blink_speed_key(), speed)
+            if !speed.is_finite() {
+                return Err(mlua::Error::runtime("non-finite EditBox blink speed"));
+            }
+            object.raw_set(edit_blink_speed_key(), speed)?;
+            reset_edit_box_caret(&object)
         })?,
     )?;
     methods.raw_set(
@@ -5283,7 +5293,8 @@ fn register_edit_box_cursor_methods(lua: &Lua, methods: &Table) -> mlua::Result<
             object.raw_set(
                 edit_cursor_key(),
                 clamp_utf8_boundary(&text, position as usize) as u32,
-            )
+            )?;
+            reset_edit_box_caret(&object)
         })?,
     )?;
     methods.raw_set(
@@ -5312,7 +5323,8 @@ fn register_edit_box_cursor_methods(lua: &Lua, methods: &Table) -> mlua::Result<
                         .min(length) as usize,
                 );
                 object.raw_set(edit_selection_start_key(), start as u32)?;
-                object.raw_set(edit_selection_end_key(), finish as u32)
+                object.raw_set(edit_selection_end_key(), finish as u32)?;
+                reset_edit_box_caret(&object)
             },
         )?,
     )?;
@@ -5389,6 +5401,7 @@ fn set_edit_box_text_at_cursor(
     object.raw_set(edit_cursor_key(), cursor)?;
     object.raw_set(edit_selection_start_key(), cursor)?;
     object.raw_set(edit_selection_end_key(), cursor)?;
+    reset_edit_box_caret(object)?;
     if let Some(function) = object_script_function(lua, object, UiScriptHandler::TextChanged)? {
         call_boolean_object_handler(lua, &function, object.clone(), user_input)?;
     }
@@ -5429,6 +5442,7 @@ fn dispatch_edit_box_key(
         object.raw_set(edit_selection_start_key(), 0_u32)?;
         object.raw_set(edit_selection_end_key(), length)?;
         object.raw_set(edit_cursor_key(), length)?;
+        reset_edit_box_caret(object)?;
         return Ok(());
     }
     match key {
@@ -5452,6 +5466,7 @@ fn dispatch_edit_box_key(
         }
         _ => {}
     }
+    reset_edit_box_caret(object)?;
     Ok(())
 }
 
@@ -5583,6 +5598,7 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
     if !focused {
         if was_focused {
             object.raw_set(edit_focused_key(), false)?;
+            reset_edit_box_caret(object)?;
             call_optional_object_handler(lua, object, UiScriptHandler::EditFocusLost)?;
         }
         return Ok(());
@@ -5600,11 +5616,61 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
     }
     for candidate in losing_focus {
         candidate.raw_set(edit_focused_key(), false)?;
+        reset_edit_box_caret(&candidate)?;
         call_optional_object_handler(lua, &candidate, UiScriptHandler::EditFocusLost)?;
     }
     if !was_focused {
         object.raw_set(edit_focused_key(), true)?;
+        reset_edit_box_caret(object)?;
         call_optional_object_handler(lua, object, UiScriptHandler::EditFocusGained)?;
+    }
+    Ok(())
+}
+
+fn reset_edit_box_caret(object: &Table) -> mlua::Result<()> {
+    object.raw_set(edit_caret_elapsed_key(), 0.0_f64)?;
+    object.raw_set(edit_caret_visible_key(), true)
+}
+
+/// Advances the one focused EditBox's authored half-cycle and marks only
+/// visibility boundaries as retained presentation changes.
+fn advance_edit_box_carets(
+    lua: &Lua,
+    objects: &Table,
+    object_count: usize,
+    elapsed_seconds: f64,
+) -> mlua::Result<()> {
+    let mut changed = false;
+    for index in 1..=object_count {
+        let object = objects.raw_get::<Table>(index)?;
+        if object.raw_get::<Option<String>>(type_key())?.as_deref() != Some("EditBox")
+            || !object.raw_get::<bool>(edit_focused_key())?
+        {
+            continue;
+        }
+        let interval = object.raw_get::<f64>(edit_blink_speed_key())?;
+        let visible = object.raw_get::<bool>(edit_caret_visible_key())?;
+        if interval <= 0.0 {
+            if !visible {
+                reset_edit_box_caret(&object)?;
+                changed = true;
+            }
+            continue;
+        }
+        let total = object.raw_get::<f64>(edit_caret_elapsed_key())? + elapsed_seconds;
+        if total < interval {
+            object.raw_set(edit_caret_elapsed_key(), total)?;
+            continue;
+        }
+        let boundaries = (total / interval).floor() as u64;
+        object.raw_set(edit_caret_elapsed_key(), total % interval)?;
+        if boundaries & 1 != 0 {
+            object.raw_set(edit_caret_visible_key(), !visible)?;
+            changed = true;
+        }
+    }
+    if changed {
+        mark_live_state_changed(lua)?;
     }
     Ok(())
 }
@@ -7593,6 +7659,14 @@ pub(super) fn edit_selection_end_key() -> LightUserData {
 
 fn edit_blink_speed_key() -> LightUserData {
     hidden_key(&EDIT_BLINK_SPEED_TOKEN)
+}
+
+pub(super) fn edit_caret_elapsed_key() -> LightUserData {
+    hidden_key(&EDIT_CARET_ELAPSED_TOKEN)
+}
+
+pub(super) fn edit_caret_visible_key() -> LightUserData {
+    hidden_key(&EDIT_CARET_VISIBLE_TOKEN)
 }
 
 pub(super) fn edit_password_key() -> LightUserData {

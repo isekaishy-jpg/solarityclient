@@ -1055,6 +1055,7 @@ fn layout_live_quads(
             let baseline = line_top - ascender;
             let caret = (object.kind == UiObjectKind::EditBox
                 && object.edit_focused.unwrap_or(false)
+                && text.caret_visible
                 && line_index == 0)
                 .then(|| {
                     edit_box_caret_metrics(text, &font, glyphs, pixels_per_ui_unit, available_width)
@@ -1494,6 +1495,7 @@ mod tests {
             text_insets: [0.0; 4],
             cursor: 2,
             selection: [2, 2],
+            caret_visible: true,
         };
 
         assert_eq!(

@@ -69,6 +69,9 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     globals.raw_set("INPUT_LOG", "")?;
 
     assert_eq!(manager.focused_edit_box(), Some(account_index));
+    assert!(manager.update(0.5)?);
+    assert!(!manager.update(0.25)?);
+    assert!(manager.update(0.25)?);
     assert_eq!(manager.text_input("Alice")?, Some(account_index));
     let account: mlua::Table = globals.get("Account")?;
     let get_account_text: mlua::Function = account.get("GetText")?;

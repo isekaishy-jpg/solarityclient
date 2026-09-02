@@ -1155,6 +1155,12 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
             invalid_data("stock login did not focus the account EditBox".to_owned()).into(),
         );
     }
+    if manager.keyboard_key("END", true, UiKeyboardModifiers::default())? != Some(account_index) {
+        return Err(invalid_data(
+            "focused account EditBox did not receive cursor reset key".to_owned(),
+        )
+        .into());
+    }
     if !has_solid_caret(manager, account_index) {
         return Err(invalid_data(
             "focused empty account EditBox produced no stock insertion block".to_owned(),
