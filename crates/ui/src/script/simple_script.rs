@@ -571,6 +571,12 @@ impl UiScriptEnvironment {
         self.cvars.get(name)
     }
 
+    /// Applies stock's numeric truth test to one registered console variable.
+    #[must_use]
+    pub fn cvar_boolean(&self, name: &str) -> bool {
+        self.cvars.boolean(name)
+    }
+
     /// Applies Config.wtf values before built-in scripts execute.
     #[must_use]
     pub(crate) fn with_cvar_values(self, values: &[(String, String)]) -> Self {

@@ -11,6 +11,7 @@ mod foundation;
 mod input;
 mod legal;
 mod loading;
+mod performance;
 mod platform;
 mod random;
 mod security;
@@ -41,6 +42,7 @@ pub use input::{
     InputBindingInvocation, InputBindingPhase, InputBindingRouter, InputControl, InputFrameMotion,
     PointerPosition,
 };
+pub use performance::FrameRateCounter;
 pub use platform::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
     MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformError, PlatformEvent, ScanCode,

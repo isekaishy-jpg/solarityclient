@@ -32,7 +32,7 @@ by the implemented services:
 --login-client-ip <IPv4>
 --window-width <pixels>
 --window-height <pixels>
---window-mode <windowed|fullscreen>
+--window-mode <windowed|fullscreen-windowed>
 --gpu-index <zero-based-index>
 ```
 
@@ -41,6 +41,11 @@ configuration layer does not infer worker counts from the machine or silently
 select a locale/data directory. Platform capability detection may later
 produce suggested values for a launcher, but the typed composition input stays
 complete.
+
+`fullscreen-windowed` means a borderless desktop-composited window pinned to
+the primary display's full logical bounds. It does not enter SDL exclusive
+fullscreen, change the display mode, or minimize when focus moves to another
+application. `windowed` retains an ordinary resizable decorated window.
 
 ## Ownership and shutdown
 
@@ -79,3 +84,19 @@ realm directory. `CancelLogin` aborts only an in-progress task;
 login failures remain ordered for the Glue status layer, while a successful
 result retains both the authenticated realmd stream and the exact server-order
 realm rows for explicit realm selection.
+
+Character entry owns a distinct retained loading presentation rather than
+leaving character selection visible. The selected character's authoritative
+map joins `Map.dbc` to `LoadingScreens.dbc`; source-art texture references are
+canonicalized to their packed BLP paths, widescreen art is selected when
+authored, and a generic stock card remains available when optional table or art
+data is absent. Its progress generations advance only after world acceptance,
+environment availability, player-model residency, and first terrain-frame
+residency. Input remains with the transition until one complete final card has
+been presented.
+
+The native top-left performance display uses the archive-backed
+`Fonts\FRIZQT__.TTF` face and stock `showfps` default. It samples completed
+presentations in quarter-second windows, replaces one stable device mesh when
+the displayed one-decimal value changes, and shares the same overlay path on
+Glue, loading, and world frames.

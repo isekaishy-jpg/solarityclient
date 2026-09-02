@@ -15,7 +15,7 @@ pub use c_simple_font::{
     FontCatalog, FontColor, FontDefinition, FontOutline, FontShadow, HorizontalJustification,
     VerticalJustification,
 };
-pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad};
+pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
 pub use gxu_font_util::{FontRasterization, FontSystem};
 pub use i_gxu_font_glyph::RasterizedGlyph;
 pub use status::FontError;

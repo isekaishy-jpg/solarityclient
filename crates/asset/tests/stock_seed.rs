@@ -12,6 +12,8 @@ mod database;
 mod database_sound_environment;
 #[path = "stock_seed/file_stack.rs"]
 mod file_stack;
+#[path = "stock_seed/loading_screen.rs"]
+mod loading_screen;
 #[path = "stock_seed/model.rs"]
 mod model;
 #[path = "stock_seed/realm.rs"]

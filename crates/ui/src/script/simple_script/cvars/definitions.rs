@@ -46,6 +46,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("accountName", ""),
     value("accountList", ""),
     ranged("playIntroMovie", "1", 0.0, 1.0),
+    // Enabled by default in build 12340's native performance display.
+    ranged("showfps", "1", 0.0, 1.0),
     ranged("readTOS", "-1", -1.0, 1.0),
     ranged("readEULA", "-1", -1.0, 1.0),
     ranged("readTerminationWithoutNotice", "-1", -1.0, 1.0),

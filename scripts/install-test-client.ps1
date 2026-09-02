@@ -35,8 +35,8 @@ param(
     [ValidateRange(1, 2147483647)]
     [int] $WindowHeight = 720,
 
-    [ValidateSet("windowed", "fullscreen")]
-    [string] $WindowMode = "windowed",
+    [ValidateSet("windowed", "fullscreen-windowed")]
+    [string] $WindowMode = "fullscreen-windowed",
 
     [ValidateRange(0, 1024)]
     [int] $GpuIndex = 0,

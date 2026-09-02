@@ -520,6 +520,7 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   SetSavedAccountList("")
   assert(GetCVar("showToolsUI") == "-1")
   assert(GetCVarDefault("showToolsUI") == "-1")
+  assert(GetCVar("showfps") == "1" and GetCVarBool("showfps"))
   assert(GetCVarDefault("gxVSync") == "1")
   assert(GetCVarMin("farclip") == 177 and GetCVarMax("farclip") == 1277)
   assert(GetCVarBool("gxVSync"))

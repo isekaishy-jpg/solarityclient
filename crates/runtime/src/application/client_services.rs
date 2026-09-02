@@ -10,10 +10,10 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
-    AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
-    CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle,
+    CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
     HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    LightCatalog, MapCatalog, ParticleColorCatalog,
+    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -44,6 +44,7 @@ use crate::application::login_coordinator::{
 };
 use crate::application::login_model::RuntimeGlueModelScene;
 use crate::application::login_ui::LoginUiFrame;
+use crate::application::performance_overlay::{RuntimeFpsOverlay, overlay_extent};
 use crate::application::player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
     RuntimePlayerPresentation, RuntimeRemotePlayerPoll,
@@ -59,6 +60,7 @@ use crate::application::world_coordinator::{
 };
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
+use crate::loading::{LoadingScreenDirectory, RuntimeLoadingScreen, RuntimeLoadingStage};
 use crate::platform::{ButtonState, MouseButton, MouseWheelDirection, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
@@ -83,6 +85,9 @@ pub(crate) struct ClientServices {
     player: RuntimePlayerPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
+    fps: Option<RuntimeFpsOverlay>,
+    loading_directory: LoadingScreenDirectory,
+    loading_screen: Option<RuntimeLoadingScreen>,
     glue_update_clock: std::time::Instant,
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
@@ -131,6 +136,12 @@ impl ClientServices {
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
+        let loading_screens = match LoadingScreenCatalog::load(&mut assets) {
+            Ok(catalog) => Some(catalog),
+            Err(AssetError::AssetNotFound { .. }) => None,
+            Err(error) => return Err(error.into()),
+        };
+        let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
         let lights = LightCatalog::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
@@ -167,6 +178,7 @@ impl ClientServices {
             bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
         }?;
         let assets = AssetStoreHandle::new(assets);
+        let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
         // The stock process owns one Blizzard RNG stream. Character creation
         // and sound variation consume it in actual main-thread call order.
         let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
@@ -214,14 +226,23 @@ impl ClientServices {
             None
         } else {
             let frame = LoginUiFrame::prepare(&mut renderer, &glue)?;
+            let overlay = if glue.cvar_boolean("showfps") {
+                fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
+            } else {
+                &[]
+            };
             if !glue_model.present(
                 &mut renderer,
                 &frame,
                 platform.pixel_extent(),
                 0.0,
                 &mut crt_rand,
+                overlay,
             )? {
-                frame.present(&mut renderer)?;
+                frame.present_with_overlay(&mut renderer, overlay)?;
+            }
+            if let Some(fps) = fps.as_mut() {
+                fps.record_presented(&mut renderer, std::time::Instant::now())?;
             }
             Some(frame)
         };
@@ -276,6 +297,9 @@ impl ClientServices {
                 ),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
+                fps,
+                loading_directory,
+                loading_screen: None,
                 glue_update_clock: std::time::Instant::now(),
                 m2_global_clock: std::time::Instant::now(),
                 crt_rand,
@@ -331,6 +355,9 @@ impl ClientServices {
         &mut self,
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
+        if self.loading_screen.is_some() {
+            return Ok(());
+        }
         match event {
             PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
                 let Some(scan_code) = key_event.scan_code else {
@@ -458,6 +485,25 @@ impl ClientServices {
             std::thread::sleep(std::time::Duration::from_millis(16));
             return Ok(());
         }
+        if self
+            .loading_screen
+            .as_ref()
+            .is_some_and(RuntimeLoadingScreen::ready_to_complete)
+        {
+            self.loading_screen = None;
+        } else if let Some(loading) = self.loading_screen.as_mut() {
+            self.glue_update_clock = update_time;
+            let overlay = if self.glue.cvar_boolean("showfps") {
+                self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
+            } else {
+                &[]
+            };
+            loading.present(&mut self.renderer, overlay)?;
+            if let Some(fps) = self.fps.as_mut() {
+                fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+            }
+            return Ok(());
+        }
         let glue_elapsed = update_time
             .duration_since(self.glue_update_clock)
             .as_secs_f64();
@@ -472,7 +518,12 @@ impl ClientServices {
             .cinematic
             .synchronize(movie.as_ref(), &mut self.renderer, &mut self.sound)?
         {
-            RuntimeCinematicPoll::Presented => return Ok(()),
+            RuntimeCinematicPoll::Presented => {
+                if let Some(fps) = self.fps.as_mut() {
+                    fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+                }
+                return Ok(());
+            }
             RuntimeCinematicPoll::Finished { object_index } => {
                 self.glue.movie_finished(object_index)?;
                 self.login_ui = None;
@@ -522,6 +573,15 @@ impl ClientServices {
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2FrameInput)?;
         let creatures = self.player.resident_creature_frame_inputs();
         let remote_players = self.player.resident_remote_player_frame_inputs();
+        let ui_extent = self.fps.as_ref().map_or_else(
+            || overlay_extent((width, height)),
+            RuntimeFpsOverlay::logical_extent,
+        );
+        let ui_draws = if self.glue.cvar_boolean("showfps") {
+            self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
+        } else {
+            &[]
+        };
         frame.present(
             &mut self.renderer,
             plan,
@@ -532,6 +592,8 @@ impl ClientServices {
             player,
             &creatures,
             &remote_players,
+            ui_extent,
+            ui_draws,
         )?;
         let mount_camera_sample = frame.take_mount_camera_sample();
         let camera_time_ms = mount_camera_sample
@@ -544,6 +606,9 @@ impl ClientServices {
         let m2_events = frame.drain_m2_events();
         self.sound
             .play_m2_events(&m2_events, camera, &mut self.blizzard_rand.borrow_mut())?;
+        if let Some(fps) = self.fps.as_mut() {
+            fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+        }
         Ok(())
     }
 
@@ -576,14 +641,23 @@ impl ClientServices {
             creation_changed,
         )?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
+        let overlay = if self.glue.cvar_boolean("showfps") {
+            self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
+        } else {
+            &[]
+        };
         if !self.glue_model.present(
             &mut self.renderer,
             frame,
             self.platform.pixel_extent(),
             global_time_ms,
             &mut self.crt_rand,
+            overlay,
         )? {
-            frame.present(&mut self.renderer)?;
+            frame.present_with_overlay(&mut self.renderer, overlay)?;
+        }
+        if let Some(fps) = self.fps.as_mut() {
+            fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
         Ok(())
     }
@@ -727,8 +801,25 @@ impl ClientServices {
                         .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)?;
                 }
                 UiGlueNetworkAction::EnterWorld { guid } => {
+                    let map_id = self
+                        .world
+                        .character_selection()
+                        .and_then(|selection| selection.directory().by_guid(guid))
+                        .map(|character| character.location().map_id());
+                    let loading = map_id
+                        .map(|map_id| {
+                            RuntimeLoadingScreen::prepare(
+                                &mut self.renderer,
+                                &self.assets,
+                                &self.loading_directory,
+                                map_id,
+                                self.platform.logical_extent(),
+                            )
+                        })
+                        .transpose()?;
                     match self.world.enter_world(&handle, guid) {
-                        Ok(()) | Err(RuntimeWorldError::AlreadyActive) => {}
+                        Ok(()) => self.loading_screen = loading,
+                        Err(RuntimeWorldError::AlreadyActive) => {}
                         Err(error) => self.publish_world_failure(error),
                     }
                 }
@@ -876,10 +967,14 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     self.gameplay.begin(&handle, entry)?;
+                    if let Some(loading) = self.loading_screen.as_mut() {
+                        loading.advance(RuntimeLoadingStage::WorldAccepted);
+                    }
                     tracing::info!("selected character entered the active world");
                 }
             }
             Ok(RuntimeWorldPoll::CharacterRejected(rejection)) => {
+                self.loading_screen = None;
                 tracing::warn!(
                     result_code = rejection.result_code(),
                     reason = ?rejection.reason(),
@@ -906,8 +1001,16 @@ impl ClientServices {
         self.gameplay.service()?;
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
+        if self.environment.current().is_some()
+            && let Some(loading) = self.loading_screen.as_mut()
+        {
+            loading.advance(RuntimeLoadingStage::EnvironmentReady);
+        }
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
+                if let Some(loading) = self.loading_screen.as_mut() {
+                    loading.advance(RuntimeLoadingStage::PlayerReady);
+                }
                 if let (Some(model), Some(height)) = (
                     self.player.resident_model(),
                     self.player.camera_subject_height(),
@@ -933,6 +1036,11 @@ impl ClientServices {
                 }
             }
             RuntimePlayerPoll::Current => {}
+        }
+        if self.player.resident_frame_input().is_some()
+            && let Some(loading) = self.loading_screen.as_mut()
+        {
+            loading.advance(RuntimeLoadingStage::PlayerReady);
         }
         match self.player.synchronize_creatures(self.gameplay.world())? {
             RuntimeCreaturePoll::ModelsChanged => {
@@ -1029,6 +1137,9 @@ impl ClientServices {
                     "resident terrain entered renderer resources"
                 );
                 self.terrain_frame = Some(frame);
+                if let Some(loading) = self.loading_screen.as_mut() {
+                    loading.advance(RuntimeLoadingStage::SceneReady);
+                }
             }
             RuntimeTerrainPoll::Idle | RuntimeTerrainPoll::GlobalWorldModel { .. } => {
                 self.sound.disconnect()?;
@@ -1043,6 +1154,11 @@ impl ClientServices {
                     .into());
                 }
             }
+        }
+        if self.terrain_frame.is_some()
+            && let Some(loading) = self.loading_screen.as_mut()
+        {
+            loading.advance(RuntimeLoadingStage::SceneReady);
         }
         Ok(())
     }
@@ -1107,6 +1223,7 @@ impl ClientServices {
         self.terrain.disconnect();
         self.sound.disconnect()?;
         self.terrain_frame = None;
+        self.loading_screen = None;
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
@@ -1149,6 +1266,7 @@ impl ClientServices {
     }
 
     fn publish_world_failure(&mut self, error: RuntimeWorldError) {
+        self.loading_screen = None;
         self.character_screen_published = false;
         self.character_directory_published = false;
         if let Some(selected) = &self.selected_realm {

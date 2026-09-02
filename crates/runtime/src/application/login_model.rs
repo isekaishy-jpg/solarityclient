@@ -279,6 +279,7 @@ impl RuntimeGlueModelScene {
         pixel_extent: (u32, u32),
         global_time_ms: f32,
         random: &mut CrtRand,
+        overlay: &[solarity_rendering::UiPreparedDraw],
     ) -> Result<bool, RuntimeGlueModelError> {
         let Some(active) = self.active.as_mut() else {
             return Ok(false);
@@ -331,6 +332,9 @@ impl RuntimeGlueModelScene {
             active.environment.fog_range,
             active.environment.local_lights,
         );
+        let mut ui_draws = Vec::with_capacity(ui.draws().len() + overlay.len());
+        ui_draws.extend_from_slice(ui.draws());
+        ui_draws.extend_from_slice(overlay);
         renderer.present_world_frame_with_ui(
             WorldFrameScene::new(terrain, world_model, model),
             visible.bone_transforms,
@@ -343,7 +347,7 @@ impl RuntimeGlueModelScene {
             visible.ribbon_vertices,
             visible.ribbon_draws,
             ui.logical_extent(),
-            ui.draws(),
+            &ui_draws,
         )?;
         Ok(true)
     }

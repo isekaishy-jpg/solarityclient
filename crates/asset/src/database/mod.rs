@@ -18,6 +18,7 @@ mod db_cache_instances;
 mod db_client;
 mod item;
 mod light;
+mod loading_screen;
 mod localized;
 mod map;
 mod paper_doll;
@@ -57,6 +58,7 @@ pub use light::{
     LightCatalog, LightDefinition, LightParameter, LightSkybox, SkyboxBlend, WorldLightCondition,
     WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
+pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};
 pub use map::{MapCatalog, MapDefinition, MapKind};
 pub use paper_doll::{PaperDollItemFrameCatalog, PaperDollItemFrameDefinition};
 pub use particle_color::{ParticleColorCatalog, ParticleColorDefinition};

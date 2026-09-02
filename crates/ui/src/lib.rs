@@ -54,7 +54,7 @@ pub use feature::{
 pub use font::{
     FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
     FontSystem, HorizontalJustification, RasterizedGlyph, UiGlyphAtlasPlan, UiGlyphQuad,
-    VerticalJustification,
+    UiNativeTextStyle, VerticalJustification,
 };
 pub use frame::{
     UiBackdropFile, UiBackdropLayer, UiBackdropNode, UiBackdropPlan, UiBackdropState,

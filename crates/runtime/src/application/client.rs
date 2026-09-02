@@ -6,7 +6,9 @@ use solarity_asset::AssetError;
 use solarity_cpu::CpuError;
 use solarity_network::{AddonManifestError, RealmDirectory};
 use solarity_rendering::{BlpTextureUploadError, VulkanError, VulkanReport, WorldCameraError};
-use solarity_ui::{AddonCatalogError, GlueError, GlueStartupReport, UiEventError, UiRenderError};
+use solarity_ui::{
+    AddonCatalogError, FontError, GlueError, GlueStartupReport, UiEventError, UiRenderError,
+};
 
 use crate::application::character_directory::CharacterProjectionError;
 use crate::application::cinematic_coordinator::RuntimeCinematicError;
@@ -86,6 +88,9 @@ pub enum ApplicationError {
     /// Live UI assets or geometry could not enter the renderer boundary.
     #[error(transparent)]
     UiRender(#[from] UiRenderError),
+    /// A runtime-native archive-backed text overlay could not be prepared.
+    #[error(transparent)]
+    NativeText(#[from] FontError),
     /// A runtime-owned stock Glue event could not be delivered.
     #[error(transparent)]
     UiEvent(#[from] UiEventError),

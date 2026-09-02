@@ -879,6 +879,27 @@ impl VulkanRenderer {
         )
     }
 
+    /// Replaces one stable UI mesh after all earlier queue use has retired.
+    pub fn replace_ui_mesh(
+        &mut self,
+        handle: UiMeshHandle,
+        plan: &UiMeshPlan,
+    ) -> Result<(), VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.ui_meshes.replace(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            handle,
+            plan,
+        )
+    }
+
     /// Returns immutable diagnostics for one live UI mesh generation.
     #[must_use]
     pub fn ui_mesh_info(&self, handle: UiMeshHandle) -> Option<UiMeshResourceInfo> {

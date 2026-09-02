@@ -161,6 +161,17 @@ fn invalid_window_policy_is_rejected() -> Result<(), Box<dyn Error>> {
         Err(ConfigurationError::InvalidWindowMode { value }) if value == "exclusive"
     ));
 
+    let exclusive_alias = RuntimeConfiguration::from_arguments(arguments_with_window(
+        &fixture,
+        "1280",
+        "720",
+        "fullscreen",
+    ));
+    assert!(matches!(
+        exclusive_alias,
+        Err(ConfigurationError::InvalidWindowMode { value }) if value == "fullscreen"
+    ));
+
     let invalid_width = RuntimeConfiguration::from_arguments(arguments_with_window(
         &fixture, "0", "720", "windowed",
     ));
@@ -171,6 +182,25 @@ fn invalid_window_policy_is_rejected() -> Result<(), Box<dyn Error>> {
             value
         }) if value == "0"
     ));
+    Ok(())
+}
+
+/// The stock-default mode is represented explicitly as desktop composition,
+/// never as an exclusive SDL display mode.
+#[test]
+fn fullscreen_windowed_policy_is_explicit() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let configuration = RuntimeConfiguration::from_arguments(arguments_with_window(
+        &fixture,
+        "1280",
+        "720",
+        "fullscreen-windowed",
+    ))?;
+
+    assert_eq!(
+        configuration.window().mode(),
+        WindowMode::FullscreenWindowed
+    );
     Ok(())
 }
 

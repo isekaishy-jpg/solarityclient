@@ -38,33 +38,37 @@ impl UiMeshRegistry {
         context: MeshUploadContext<'_>,
         plan: &UiMeshPlan,
     ) -> Result<UiMeshHandle, VulkanError> {
-        if plan.vertices().is_empty() {
-            return Err(VulkanError::EmptyUiMesh {
-                buffer_kind: "vertex",
-            });
-        }
-        if plan.indices().is_empty() {
-            return Err(VulkanError::EmptyUiMesh {
-                buffer_kind: "index",
-            });
-        }
         let slot =
             u32::try_from(self.resources.len()).map_err(|_source| VulkanError::UiMeshCapacity)?;
-        let vertex_bytes = plan.vertex_bytes();
-        let index_bytes = plan.index_bytes();
-        let info = UiMeshResourceInfo::new(
-            plan.identity(),
-            plan.vertices().len(),
-            plan.indices().len(),
-            vertex_bytes.len(),
-            index_bytes.len(),
-        );
-        let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
-        self.resources.push(GpuUiMesh { buffers, info });
+        self.resources.push(upload_ui_mesh(context, plan)?);
         Ok(UiMeshHandle {
             registry_id: self.registry_id,
             slot,
         })
+    }
+
+    /// Replaces one stable mesh slot after the graphics queue retires prior use.
+    pub(in crate::device) fn replace(
+        &mut self,
+        context: MeshUploadContext<'_>,
+        handle: UiMeshHandle,
+        plan: &UiMeshPlan,
+    ) -> Result<(), VulkanError> {
+        if handle.registry_id != self.registry_id {
+            return Err(VulkanError::UnknownUiMeshHandle);
+        }
+        let slot =
+            usize::try_from(handle.slot).map_err(|_source| VulkanError::UnknownUiMeshHandle)?;
+        if slot >= self.resources.len() {
+            return Err(VulkanError::UnknownUiMeshHandle);
+        }
+        let allocator = context.allocator;
+        let replacement = upload_ui_mesh(context, plan)?;
+        // Upload uses the same graphics queue and waits for its fence, so every
+        // earlier frame referencing this stable slot has retired at this point.
+        let mut previous = std::mem::replace(&mut self.resources[slot], replacement);
+        previous.buffers.destroy(allocator);
+        Ok(())
     }
 
     /// Returns diagnostics for one renderer-local mesh generation.
@@ -97,4 +101,31 @@ impl UiMeshRegistry {
         }
         self.resources.clear();
     }
+}
+
+fn upload_ui_mesh(
+    context: MeshUploadContext<'_>,
+    plan: &UiMeshPlan,
+) -> Result<GpuUiMesh, VulkanError> {
+    if plan.vertices().is_empty() {
+        return Err(VulkanError::EmptyUiMesh {
+            buffer_kind: "vertex",
+        });
+    }
+    if plan.indices().is_empty() {
+        return Err(VulkanError::EmptyUiMesh {
+            buffer_kind: "index",
+        });
+    }
+    let vertex_bytes = plan.vertex_bytes();
+    let index_bytes = plan.index_bytes();
+    let info = UiMeshResourceInfo::new(
+        plan.identity(),
+        plan.vertices().len(),
+        plan.indices().len(),
+        vertex_bytes.len(),
+        index_bytes.len(),
+    );
+    let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
+    Ok(GpuUiMesh { buffers, info })
 }

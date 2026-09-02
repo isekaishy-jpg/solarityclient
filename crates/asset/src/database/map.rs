@@ -50,6 +50,7 @@ pub struct MapDefinition {
     flags: u32,
     name: String,
     linked_zone_id: u32,
+    loading_screen_id: u32,
     entrance_map_id: i32,
     entrance: [f32; 2],
     expansion_id: u32,
@@ -91,6 +92,12 @@ impl MapDefinition {
     #[must_use]
     pub const fn linked_zone_id(&self) -> u32 {
         self.linked_zone_id
+    }
+
+    /// Returns the `LoadingScreens.dbc` identifier selected for this map.
+    #[must_use]
+    pub const fn loading_screen_id(&self) -> u32 {
+        self.loading_screen_id
     }
 
     /// Returns the authored entrance map and coordinates when one exists.
@@ -143,6 +150,7 @@ impl MapCatalog {
                 flags: field(&table, row, 3)?,
                 name: localized_string(&table, row, LOCALIZED_NAME_FIRST_FIELD, locale)?,
                 linked_zone_id: field(&table, row, 22)?,
+                loading_screen_id: field(&table, row, 57)?,
                 entrance_map_id: field(&table, row, 59)? as i32,
                 entrance: [
                     f32::from_bits(field(&table, row, 60)?),

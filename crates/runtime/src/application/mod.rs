@@ -14,12 +14,14 @@ mod gameplay_session;
 mod login_coordinator;
 mod login_model;
 mod login_ui;
+mod performance_overlay;
 mod player_coordinator;
 mod realm_directory;
 mod run;
 mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
+pub(crate) mod ui_frame;
 mod world_coordinator;
 
 pub use character_directory::CharacterProjectionError;

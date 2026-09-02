@@ -31,6 +31,9 @@ impl SdlPlatform {
     /// initialized frame; this avoids exposing undefined startup contents.
     pub(crate) fn start(configuration: WindowConfiguration) -> Result<Self, PlatformError> {
         window_identity::establish()?;
+        // SolCL keeps desktop composition active when another application gains
+        // focus. Explicit user minimization remains available through the caption.
+        let _ = sdl3::hint::set_video_minimize_on_focus_loss(false);
         let sdl = sdl3::init().map_err(|source| PlatformError::Initialize {
             message: source.to_string(),
         })?;
@@ -38,18 +41,41 @@ impl SdlPlatform {
             message: source.to_string(),
         })?;
 
-        let mut builder = video.window(
-            CLIENT_WINDOW_TITLE,
-            configuration.width(),
-            configuration.height(),
-        );
+        let (width, height, position) = match configuration.mode() {
+            WindowMode::Windowed => (configuration.width(), configuration.height(), None),
+            WindowMode::FullscreenWindowed => {
+                let display = video.get_primary_display().map_err(|source| {
+                    PlatformError::PrimaryDisplay {
+                        message: source.to_string(),
+                    }
+                })?;
+                let bounds =
+                    display
+                        .get_bounds()
+                        .map_err(|source| PlatformError::PrimaryDisplay {
+                            message: source.to_string(),
+                        })?;
+                let width = bounds.width();
+                let height = bounds.height();
+                if width == 0 || height == 0 {
+                    return Err(PlatformError::PrimaryDisplay {
+                        message: format!("invalid logical extent {width}x{height}"),
+                    });
+                }
+                (width, height, Some((bounds.x(), bounds.y())))
+            }
+        };
+        let mut builder = video.window(CLIENT_WINDOW_TITLE, width, height);
         builder.vulkan().high_pixel_density().hidden();
         match configuration.mode() {
             WindowMode::Windowed => {
                 builder.resizable();
             }
-            WindowMode::Fullscreen => {
-                builder.fullscreen();
+            WindowMode::FullscreenWindowed => {
+                builder.borderless();
+                if let Some((x, y)) = position {
+                    builder.position(x, y);
+                }
             }
         }
         let window = builder.build().map_err(|source| PlatformError::Window {

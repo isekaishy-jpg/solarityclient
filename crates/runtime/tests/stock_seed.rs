@@ -20,6 +20,8 @@ mod legal;
 mod loading;
 #[path = "stock_seed/login.rs"]
 mod login;
+#[path = "stock_seed/performance.rs"]
+mod performance;
 #[path = "stock_seed/platform.rs"]
 mod platform;
 #[path = "stock_seed/platform/lcd.rs"]

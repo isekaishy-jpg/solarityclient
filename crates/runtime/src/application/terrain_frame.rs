@@ -9,10 +9,10 @@ use solarity_rendering::{
     M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError, M2RibbonMeshPlanError,
     M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount,
     TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
-    TerrainTileMeshPlan, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
-    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
-    WorldScreenWindow,
+    TerrainTileMeshPlan, UiPreparedDraw, VulkanError, VulkanRenderer, WorldCameraError,
+    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
+    WorldModelTextureFiltering, WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -565,6 +565,8 @@ impl TerrainFrame {
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
+        ui_extent: [f32; 2],
+        ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         if self.tile != plan.tile() {
             return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -630,7 +632,7 @@ impl TerrainFrame {
             global_animation_time_ms,
             random,
         )?;
-        Ok(renderer.present_world_frame(
+        Ok(renderer.present_world_frame_with_ui(
             scene,
             m2.bone_transforms,
             &self.visible_draws,
@@ -641,6 +643,8 @@ impl TerrainFrame {
             m2.particle_draws,
             m2.ribbon_vertices,
             m2.ribbon_draws,
+            ui_extent,
+            ui_draws,
         )?)
     }
 

@@ -143,7 +143,8 @@ impl RuntimeConfiguration {
          --cpu-capacity <count> --network-workers <count> --network-shutdown-ms <milliseconds> \
          --login-endpoint <host:port> --login-timezone-minutes <signed-minutes> \
          --login-client-ip <IPv4> \
-         --window-width <pixels> --window-height <pixels> --window-mode <windowed|fullscreen> \
+         --window-width <pixels> --window-height <pixels> \
+         --window-mode <windowed|fullscreen-windowed> \
          --gpu-index <zero-based-index>"
     }
 

@@ -4,3 +4,7 @@
 //! progress and must not mask failed asset or network phases as completion.
 
 mod loading_screen;
+
+pub(crate) use loading_screen::{
+    LoadingScreenDirectory, RuntimeLoadingScreen, RuntimeLoadingStage,
+};

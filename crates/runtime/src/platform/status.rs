@@ -29,6 +29,12 @@ pub enum PlatformError {
         /// SDL's diagnostic text.
         message: String,
     },
+    /// SDL could not report the primary desktop bounds required by borderless mode.
+    #[error("failed to query the primary SDL display: {message}")]
+    PrimaryDisplay {
+        /// SDL's diagnostic text.
+        message: String,
+    },
     /// SDL could not construct the configured Vulkan-capable window.
     #[error("failed to create SDL Vulkan window: {message}")]
     Window {

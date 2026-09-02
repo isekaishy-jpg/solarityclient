@@ -5,8 +5,8 @@
 pub enum WindowMode {
     /// A decorated desktop window that the user can resize.
     Windowed,
-    /// A desktop-sized fullscreen window managed by SDL.
-    Fullscreen,
+    /// A borderless desktop-composited window covering the primary display.
+    FullscreenWindowed,
 }
 
 impl WindowMode {
@@ -14,7 +14,7 @@ impl WindowMode {
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "windowed" => Some(Self::Windowed),
-            "fullscreen" => Some(Self::Fullscreen),
+            "fullscreen-windowed" => Some(Self::FullscreenWindowed),
             _ => None,
         }
     }
@@ -50,7 +50,7 @@ impl WindowConfiguration {
         self.height
     }
 
-    /// Returns the requested windowed or fullscreen presentation mode.
+    /// Returns the requested decorated or borderless-desktop presentation mode.
     #[must_use]
     pub const fn mode(self) -> WindowMode {
         self.mode

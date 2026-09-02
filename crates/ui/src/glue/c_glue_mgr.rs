@@ -454,6 +454,12 @@ impl GlueManager {
         self.environment.cvar_value(name)
     }
 
+    /// Applies stock's numeric truth test to one live console variable.
+    #[must_use]
+    pub fn cvar_boolean(&self, name: &str) -> bool {
+        self.environment.cvar_boolean(name)
+    }
+
     /// Resolves one localization token from the loaded Glue Lua globals.
     ///
     /// # Errors
