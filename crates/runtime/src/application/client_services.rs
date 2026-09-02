@@ -1495,6 +1495,7 @@ impl ClientServices {
             }
         }
         self.prepare_world_ui_if_ready()?;
+        self.synchronize_world_ui_zone()?;
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {
                 world_accepted: self.gameplay.world().is_some(),
@@ -1531,6 +1532,9 @@ impl ClientServices {
         let Some(clock) = self.gameplay.realm_clock() else {
             return Ok(());
         };
+        let zone = self
+            .character_metadata
+            .zone_state(self.terrain.current_area_id(active)?)?;
         let general_tab_name = self
             .glue
             .localized_text("GENERAL")
@@ -1543,6 +1547,7 @@ impl ClientServices {
             &self.addon_catalog,
             &self.character_metadata,
             active,
+            zone,
             clock,
             self.gameplay.action_buttons(),
             general_tab_name,
@@ -1550,6 +1555,18 @@ impl ClientServices {
         tracing::info!("loaded stock FrameXML and published world-entry events");
         self.world_ui = Some(world_ui);
         Ok(())
+    }
+
+    /// Keeps FrameXML's area labels synchronized with the authoritative player
+    /// position after world UI bootstrap.
+    fn synchronize_world_ui_zone(&mut self) -> Result<(), ApplicationError> {
+        let (Some(world_ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world()) else {
+            return Ok(());
+        };
+        world_ui.synchronize_zone(
+            self.character_metadata
+                .zone_state(self.terrain.current_area_id(active)?)?,
+        )
     }
 
     /// Returns synchronous login ownership for diagnostics and Glue routing.

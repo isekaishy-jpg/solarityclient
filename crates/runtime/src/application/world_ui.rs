@@ -35,6 +35,8 @@ pub enum RuntimeWorldUiError {
 pub(super) struct RuntimeWorldUi {
     manager: FrameManager,
     frame: RuntimeUiFrame,
+    world: solarity_ui::UiWorldState,
+    zone: UiZoneState,
     action_bar: UiActionBarState,
     action_slots: [u32; 144],
     dirty: bool,
@@ -52,6 +54,7 @@ impl RuntimeWorldUi {
         addon_catalog: &AddonCatalog,
         metadata: &RuntimeCharacterMetadata,
         active: &ActiveWorld,
+        zone: UiZoneState,
         realm_clock: &RealmClock,
         action_buttons: Option<&WorldActionButtons>,
         general_tab_name: String,
@@ -61,10 +64,7 @@ impl RuntimeWorldUi {
         let world = environment.world_state();
         metadata.publish_active_player(active, &world)?;
 
-        // AreaTable ownership has not yet published a coordinate-derived area
-        // transition. Stock queries are nevertheless valid during bootstrap,
-        // and expose the empty pre-zone image until that transition arrives.
-        world.set_zone(UiZoneState::new("", "", "", "", None, false, None));
+        world.set_zone(zone.clone());
         let source = realm_clock.source();
         world.set_realm_date(
             UiRealmDate::new(
@@ -114,10 +114,39 @@ impl RuntimeWorldUi {
         Ok(Self {
             manager,
             frame,
+            world,
+            zone,
             action_bar,
             action_slots: *slots,
             dirty: false,
         })
+    }
+
+    /// Publishes a changed area projection and emits the stock events consumed
+    /// by the zone banner, minimap, and zone-text owners.
+    pub(super) fn synchronize_zone(&mut self, zone: UiZoneState) -> Result<(), ApplicationError> {
+        if zone == self.zone {
+            return Ok(());
+        }
+        let top_level_changed = zone.real_zone_text() != self.zone.real_zone_text();
+        let sub_zone_changed = zone.sub_zone_text() != self.zone.sub_zone_text();
+        let minimap_changed = zone.minimap_zone_text() != self.zone.minimap_zone_text();
+        self.world.set_zone(zone.clone());
+        self.zone = zone;
+        if top_level_changed {
+            self.manager
+                .dispatch_event("ZONE_CHANGED_NEW_AREA", &UiEventPayload::empty())?;
+        }
+        if sub_zone_changed {
+            self.manager
+                .dispatch_event("ZONE_CHANGED", &UiEventPayload::empty())?;
+        }
+        if minimap_changed {
+            self.manager
+                .dispatch_event("MINIMAP_ZONE_CHANGED", &UiEventPayload::empty())?;
+        }
+        self.dirty = true;
+        Ok(())
     }
 
     /// Applies a replacement server action-bar image and emits one-based slot

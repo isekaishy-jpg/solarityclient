@@ -9,6 +9,7 @@ use super::map_chunk_liquid::TerrainLiquidTable;
 
 const TERRAIN_TILE_COUNT: usize = 4_096;
 const TILE_SIZE: f32 = 533.333_3;
+const CHUNK_SIZE: f32 = TILE_SIZE / 16.0;
 const MAP_OFFSET: f32 = 32.0 * TILE_SIZE;
 
 /// A build-12340 WDT manifest selected through normal archive precedence.
@@ -111,6 +112,25 @@ impl DecodedTerrainTile {
     #[must_use]
     pub const fn liquids(&self) -> Option<&TerrainLiquidTable> {
         self.liquids.as_ref()
+    }
+
+    /// Resolves the MCNK `AreaTableID` containing one server-space position.
+    ///
+    /// Stock `0x007A0490` reads this ID from the resident MCNK selected by the
+    /// location query. MCNK base positions are their north-east corners;
+    /// half-open bounds assign a shared edge to exactly one adjacent chunk.
+    #[must_use]
+    pub fn area_id_at_world_position(&self, world_x: f32, world_y: f32) -> Option<u32> {
+        self.chunks
+            .iter()
+            .find(|chunk| {
+                let [base_x, base_y, _height] = chunk.position();
+                world_x <= base_x
+                    && world_x > base_x - CHUNK_SIZE
+                    && world_y <= base_y
+                    && world_y > base_y - CHUNK_SIZE
+            })
+            .map(TerrainChunk::area_id)
     }
 }
 

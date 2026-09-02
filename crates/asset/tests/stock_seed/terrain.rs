@@ -177,6 +177,8 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks()[0].heights().len(), 145);
     assert_eq!(tile.chunks()[0].normals().len(), 145);
     assert_eq!(tile.chunks()[0].position(), [1_000.0, 6_000.0, 200.0]);
+    assert_eq!(tile.area_id_at_world_position(999.0, 5_999.0), Some(4395));
+    assert_eq!(tile.area_id_at_world_position(1_001.0, 6_001.0), None);
     assert_eq!(tile.chunks()[0].normals()[0], [1.0, 0.0, 0.0]);
     let alpha = tile.chunks()[0]
         .alpha_map()
@@ -344,6 +346,7 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     // MCNK already stores absolute server/ECS `[X, Y, Z]`; filenames alone
     // use their transposed terrain-grid convention.
     first.header.position = [1_000.0, 6_000.0, 200.0];
+    first.header.area_id = 4_395;
     let first_normal = first
         .normals
         .as_mut()

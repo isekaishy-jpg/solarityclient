@@ -10,7 +10,7 @@ use solarity_ui::{
     UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
     UiFactionGroup, UiPlayerClassState, UiPlayerFactionState, UiPlayerIdentityState,
     UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
-    UiPlayerVitalsState, UiUnitPowerType, UiWorldState,
+    UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZoneState,
 };
 use thiserror::Error;
 
@@ -216,6 +216,50 @@ impl RuntimeCharacterMetadata {
             UiFactionGroup::Horde => UiPlayerLanguage::new(1, "Orcish"),
         });
         Ok(())
+    }
+
+    /// Projects an optional terrain-authored area identifier into the labels
+    /// exposed by stock world and minimap Lua queries.
+    ///
+    /// AreaTable field 2 is the exact parent-zone relationship. The recovered
+    /// zone provider exposes that parent as the zone, the child as sub-zone,
+    /// and the most specific nonempty label to the minimap.
+    pub(crate) fn zone_state(
+        &self,
+        area_id: Option<u32>,
+    ) -> Result<UiZoneState, CharacterProjectionError> {
+        let Some(area_id) = area_id else {
+            return Ok(UiZoneState::new("", "", "", "", None, false, None));
+        };
+        let area = self
+            .areas
+            .area(area_id)
+            .ok_or(CharacterProjectionError::UnknownArea { id: area_id })?;
+        if area.parent_area_id() == 0 {
+            return Ok(UiZoneState::new(
+                area.name(),
+                area.name(),
+                "",
+                area.name(),
+                None,
+                false,
+                None,
+            ));
+        }
+        let parent = self.areas.area(area.parent_area_id()).ok_or(
+            CharacterProjectionError::UnknownArea {
+                id: area.parent_area_id(),
+            },
+        )?;
+        Ok(UiZoneState::new(
+            parent.name(),
+            parent.name(),
+            area.name(),
+            area.name(),
+            None,
+            false,
+            None,
+        ))
     }
 }
 

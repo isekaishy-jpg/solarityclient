@@ -273,6 +273,25 @@ impl RuntimeTerrainCoordinator {
             .map(|tile| &tile.decoded)
     }
 
+    /// Resolves the active player's terrain-authored `AreaTable` identifier.
+    ///
+    /// Stock `0x0077FA00` delegates tiled-map lookup to `0x007A0490`, which
+    /// returns the resident MCNK area ID. A zero MCNK value remains absent;
+    /// Map.dbc field 22 belongs only to the separate global-WMO map branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError`] when an active world has lost its required
+    /// local-player transform.
+    pub fn current_area_id(&self, world: &ActiveWorld) -> Result<Option<u32>, RuntimeTerrainError> {
+        let position = world.local_player_transform()?.position();
+        let area_id = self
+            .resident_tile()
+            .and_then(|tile| tile.area_id_at_world_position(position.x, position.y))
+            .unwrap_or(0);
+        Ok((area_id != 0).then_some(area_id))
+    }
+
     /// Returns the resident tile's texture table in exact MTEX index order.
     ///
     /// Each source retains the archive selected by ordinary patch precedence,
