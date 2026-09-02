@@ -1647,6 +1647,17 @@ impl ResidentGlueCharacterKey {
             && current.appearance() == preview.appearance()
             && current.equipment() == preview.equipment()
             && current.pet() == preview.pet()
+            && current.is_ghost() == preview.is_ghost()
+            && current.show_helmet() == preview.show_helmet()
+            && current.show_cloak() == preview.show_cloak()
+    }
+
+    /// Reports whether this pre-world representation selects ghost light banks.
+    fn is_ghost(&self) -> bool {
+        match self {
+            Self::Creation(_) => false,
+            Self::Selection(preview) => preview.is_ghost(),
+        }
     }
 }
 
@@ -1685,6 +1696,7 @@ pub(super) struct ResidentGlueCharacterFrameInput<'a> {
     attachments: &'a [ResidentPlayerAttachment],
     pet: Option<ResidentGluePetFrameInput<'a>>,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
+    is_ghost: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1717,6 +1729,7 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
                 particle_colors: pet.particle_colors.as_ref(),
             }),
             particle_colors: resident.particle_colors.as_ref(),
+            is_ghost: resident.key.is_ghost(),
         }
     }
 
@@ -1758,6 +1771,11 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
 
     pub(super) const fn pet(&self) -> Option<ResidentGluePetFrameInput<'a>> {
         self.pet
+    }
+
+    /// Reports whether all six ModelFFX banks select their ghost variant.
+    pub(super) const fn is_ghost(&self) -> bool {
+        self.is_ghost
     }
 }
 

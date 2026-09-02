@@ -142,6 +142,12 @@ impl UiCharacterSelectionPreview {
         self.pet
     }
 
+    /// Reports whether the selected character uses Glue's ghost presentation.
+    #[must_use]
+    pub const fn is_ghost(&self) -> bool {
+        self.flags & CHARACTER_FLAG_GHOST != 0
+    }
+
     /// Reports whether the enum-time helmet remains visible in Glue.
     #[must_use]
     pub const fn show_helmet(&self) -> bool {

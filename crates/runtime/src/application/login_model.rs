@@ -12,7 +12,7 @@ use solarity_rendering::{
     WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
     glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_camera_frame,
 };
-use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation, UiScreenRect};
+use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
 
 use crate::application::login_ui::RuntimeUiFrame;
@@ -107,6 +107,23 @@ struct ActiveGlueModel {
     frame: M2Frame,
 }
 
+/// Selected half of each ModelFFX live/ghost light pair.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GlueModelLightVariant {
+    Live,
+    Ghost,
+}
+
+impl GlueModelLightVariant {
+    /// Selects one authored four-light bank without merging the two states.
+    const fn select(self, lights: UiModelLightSets) -> [Option<UiModelLight>; 4] {
+        match self {
+            Self::Live => lights.live(),
+            Self::Ghost => lights.ghost(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GlueModelEnvironment {
     ambient: Vec3,
@@ -125,7 +142,10 @@ struct GlueModelEnvironment {
 }
 
 impl GlueModelEnvironment {
-    fn from_presentation(model: &UiModelPresentation) -> Self {
+    fn from_presentation(
+        model: &UiModelPresentation,
+        light_variant: GlueModelLightVariant,
+    ) -> Self {
         let (fog_color, fog_range) =
             model
                 .fog()
@@ -136,13 +156,16 @@ impl GlueModelEnvironment {
                         Vec4::new(near, far, 0.0, 1.0),
                     )
                 });
-        let authored_lights = model.background_lights().live();
+        // GlueParent.lua documents these as six paired background, character,
+        // and pet banks. The selected character's enum ghost flag chooses the
+        // same half of every pair before SetupSunlight merges directionals.
+        let authored_lights = light_variant.select(model.background_lights());
         let has_authored_lights = authored_lights.iter().any(Option::is_some);
         let local_lights = model_light_states(authored_lights);
-        let character_lights = model.character_lights().live();
+        let character_lights = light_variant.select(model.character_lights());
         let character_uses_camera_light = !character_lights.iter().any(Option::is_some);
         let character_local_lights = model_light_states(character_lights);
-        let pet_lights = model.pet_lights().live();
+        let pet_lights = light_variant.select(model.pet_lights());
         let pet_inherits_character_light = !pet_lights.iter().any(Option::is_some);
         let pet_local_lights = model_light_states(pet_lights);
         Self {
@@ -250,7 +273,15 @@ impl RuntimeGlueModelScene {
         }
         let presentation = &visible[0];
         let key = GlueModelKey::from_presentation(presentation);
-        let environment = GlueModelEnvironment::from_presentation(presentation);
+        let light_variant = if glue_character
+            .as_ref()
+            .is_some_and(ResidentGlueCharacterFrameInput::is_ghost)
+        {
+            GlueModelLightVariant::Ghost
+        } else {
+            GlueModelLightVariant::Live
+        };
+        let environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
         if let Some(active) = self.active.as_mut()
             && active.key == key
         {
