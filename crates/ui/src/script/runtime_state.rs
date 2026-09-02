@@ -92,6 +92,7 @@ pub(crate) struct UiRuntimeText {
     pub(crate) face: AssetPath,
     pub(crate) height: f64,
     pub(crate) rasterization: FontRasterization,
+    pub(crate) outline_width: f64,
     pub(crate) color: [f64; 4],
     pub(crate) shadow_offset: [f64; 2],
     pub(crate) shadow_color: [f64; 4],
@@ -630,6 +631,19 @@ fn snapshot_text(
             FontRasterization::Monochrome
         } else {
             FontRasterization::Antialiased
+        },
+        outline_width: if flags
+            .split(',')
+            .any(|flag| flag.trim().eq_ignore_ascii_case("THICKOUTLINE"))
+        {
+            2.0
+        } else if flags
+            .split(',')
+            .any(|flag| flag.trim().eq_ignore_ascii_case("OUTLINE"))
+        {
+            1.0
+        } else {
+            0.0
         },
         color: presentation_color
             .map_or_else(|| numeric_array::<4>(&color, lua_index, "text color"), Ok)?,

@@ -687,6 +687,7 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .into_iter()
         .filter(|glyph| glyph.object_index() == button_text)
         .map(|glyph| glyph.color())
+        .filter(|color| *color != [0.0, 0.0, 0.0, 1.0])
         .collect::<Vec<_>>();
     manager.pointer_motion(object_center(manager, login_button)?)?;
     let highlight_colors = manager
@@ -695,6 +696,7 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .into_iter()
         .filter(|glyph| glyph.object_index() == button_text)
         .map(|glyph| glyph.color())
+        .filter(|color| *color != [0.0, 0.0, 0.0, 1.0])
         .collect::<Vec<_>>();
     if normal_colors.is_empty() || normal_colors == highlight_colors {
         return Err(invalid_data(
@@ -750,6 +752,7 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .into_iter()
         .filter(|glyph| glyph.object_index() == button_text)
         .map(|glyph| glyph.color())
+        .filter(|color| *color != [0.0, 0.0, 0.0, 1.0])
         .collect::<Vec<_>>();
     if formatted_colors.len() != 2
         || formatted_colors[0] != [1.0, 0.0, 0.0, 1.0]
@@ -799,7 +802,8 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     if disabled_colors.is_empty()
         || disabled_colors
             .iter()
-            .any(|color| *color != [0.2, 0.3, 0.4, 0.5])
+            .any(|color| *color != [0.2, 0.3, 0.4, 0.5] && *color != [0.0, 0.0, 0.0, 1.0])
+        || !disabled_colors.contains(&[0.2, 0.3, 0.4, 0.5])
     {
         return Err(invalid_data(format!(
             "disabled Glue button ignored its authored text color: {disabled_colors:?}"

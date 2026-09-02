@@ -1022,6 +1022,7 @@ fn layout_live_quads(
         } else {
             nearest_live_scroll_frame(live, object.parent)
         };
+        let mut primary_quads = Vec::new();
         for (line_index, line) in lines.iter().enumerate() {
             let line_width = line.iter().try_fold(0.0, |width, presented| {
                 let character = presented.character;
@@ -1073,7 +1074,7 @@ fn layout_live_quads(
                     let v0 = placement.y as f32 / extent.1 as f32;
                     let u1 = (placement.x + glyph.width()) as f32 / extent.0 as f32;
                     let v1 = (placement.y + glyph.height()) as f32 / extent.1 as f32;
-                    quads.push(LocalGlyphQuad {
+                    primary_quads.push(LocalGlyphQuad {
                         packet_key,
                         object_index,
                         clip_object,
@@ -1085,8 +1086,50 @@ fn layout_live_quads(
                 pen_x += glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
             }
         }
+        // GxuFontString draws material passes in outline, shadow, then face
+        // order. Keeping these as separate quads restores the black edging
+        // and offset shadow that make Glue labels legible over animated M2s.
+        let outline = text.outline_width as f32;
+        if outline > 0.0 {
+            for primary in &primary_quads {
+                for offset in [
+                    [-outline, -outline],
+                    [0.0, -outline],
+                    [outline, -outline],
+                    [-outline, 0.0],
+                    [outline, 0.0],
+                    [-outline, outline],
+                    [0.0, outline],
+                    [outline, outline],
+                ] {
+                    quads.push(offset_live_quad(primary, offset, [0.0, 0.0, 0.0, 1.0]));
+                }
+            }
+        }
+        let shadow_offset = [text.shadow_offset[0] as f32, text.shadow_offset[1] as f32];
+        if shadow_offset != [0.0, 0.0] && text.shadow_color[3] > 0.0 {
+            let shadow_color = text.shadow_color.map(|component| component as f32);
+            quads.extend(
+                primary_quads
+                    .iter()
+                    .map(|primary| offset_live_quad(primary, shadow_offset, shadow_color)),
+            );
+        }
+        quads.extend(primary_quads);
     }
     Ok(quads)
+}
+
+/// Reuses one glyph's atlas coverage for an offset live-text material pass.
+fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) -> LocalGlyphQuad {
+    LocalGlyphQuad {
+        packet_key: source.packet_key,
+        object_index: source.object_index,
+        clip_object: source.clip_object,
+        bounds: offset_bounds(source.bounds, offset),
+        texture_coordinates: source.texture_coordinates,
+        color,
+    }
 }
 
 /// Finds the nearest live ScrollFrame that owns a region's ancestor chain.
