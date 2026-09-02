@@ -90,12 +90,13 @@ use crate::device::vulkan_world_model_texture_set::{
     WorldModelTextureSetRegistry,
 };
 use crate::device::{VulkanBootstrap, VulkanError};
-use crate::model::M2SceneUniform;
 use crate::model::{CharacterAtlasTexture, M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
+use crate::model::{M2EffectOrder, M2SceneUniform};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
 use crate::{
-    M2ParticleMeshPlan, M2RibbonMeshPlan, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan,
-    UiRenderBlend, UiShaderSource, WorldModelSurfacePass,
+    M2ParticleMeshPlan, M2ParticleSpirvProgram, M2RibbonMeshPlan, M2RibbonSpirvProgram,
+    M2SpirvProgram, TerrainSceneUniform, TerrainTileMeshPlan, UiMeshPlan, UiRenderBlend,
+    UiShaderSource, WorldModelSurfacePass,
 };
 use glam::{Mat4, Vec3};
 
@@ -1199,6 +1200,43 @@ impl VulkanRenderer {
         self.with_swapchain_retry(|renderer| renderer.present_ui_once(logical_extent, draws))
     }
 
+    /// Clears the current swapchain image to opaque black and presents it.
+    ///
+    /// This is the explicit handoff surface used between independently loaded
+    /// presentation domains, where retaining the previous frame would expose
+    /// stale cinematic or loading-screen contents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] for an invalid logical extent, swapchain
+    /// acquisition, command recording, submission, or presentation failure.
+    pub fn present_clear(&mut self, logical_extent: [f32; 2]) -> Result<(), VulkanError> {
+        self.with_swapchain_retry(|renderer| renderer.present_clear_once(logical_extent))
+    }
+
+    fn present_clear_once(&mut self, logical_extent: [f32; 2]) -> Result<(), VulkanError> {
+        let report = self.ui_frames.present_clear(
+            UiFrameContext {
+                device: &self.device,
+                swapchain_loader: &self.swapchain_loader,
+                swapchain: self.swapchain,
+                swapchain_images: &self.swapchain_images,
+                image_views: &self.image_views,
+                graphics_queue: self.graphics_queue,
+                present_queue: self.present_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+                extent: self.report.extent,
+                pipelines: &self.ui_pipelines,
+                meshes: &self.ui_meshes,
+                texture_sets: &self.ui_texture_sets,
+            },
+            logical_extent,
+        )?;
+        debug_assert_eq!(report.draw_count(), 0);
+        self.is_idle = false;
+        Ok(())
+    }
+
     fn present_ui_once(
         &mut self,
         logical_extent: [f32; 2],
@@ -1247,6 +1285,24 @@ impl VulkanRenderer {
         )
     }
 
+    /// Creates or retrieves an M2 pipeline from worker-compiled SPIR-V.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when module/layout or driver pipeline creation
+    /// fails for the program's validated shader identity.
+    pub fn prepare_precompiled_m2_pipeline(
+        &mut self,
+        program: &M2SpirvProgram,
+    ) -> Result<M2PipelineHandle, VulkanError> {
+        self.m2_pipelines.prepare_precompiled(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            program,
+        )
+    }
+
     /// Returns immutable diagnostics for a live renderer-owned M2 pipeline.
     #[must_use]
     pub fn m2_pipeline_info(&self, handle: M2PipelineHandle) -> Option<&M2PipelineInfo> {
@@ -1276,6 +1332,28 @@ impl VulkanRenderer {
         )
     }
 
+    /// Creates or retrieves a particle pipeline from worker-compiled SPIR-V.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when descriptor/layout or driver pipeline
+    /// creation fails for the program's material identity.
+    pub fn prepare_precompiled_m2_particle_pipeline(
+        &mut self,
+        program: &M2ParticleSpirvProgram,
+    ) -> Result<M2ParticlePipelineHandle, VulkanError> {
+        let scene_set = self.m2_pipelines.frame_set_layouts(&self.device)?[0];
+        let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
+        self.m2_particle_pipelines.prepare_precompiled(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            scene_set,
+            texture_set,
+            program,
+        )
+    }
+
     /// Returns immutable diagnostics for one live particle pipeline.
     #[must_use]
     pub fn m2_particle_pipeline_info(
@@ -1298,6 +1376,7 @@ impl VulkanRenderer {
         texture_set: M2TextureSetHandle,
         blending_type: u8,
         particle_flags: u32,
+        order: M2EffectOrder,
         first_vertex: u32,
         first_index: u32,
         mesh: &M2ParticleMeshPlan,
@@ -1309,6 +1388,7 @@ impl VulkanRenderer {
             texture_set,
             blending_type,
             particle_flags,
+            order,
             first_vertex,
             first_index,
             mesh,
@@ -1337,6 +1417,28 @@ impl VulkanRenderer {
         )
     }
 
+    /// Creates or retrieves a ribbon pipeline from worker-compiled SPIR-V.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when descriptor/layout or driver pipeline
+    /// creation fails for the program's material identity.
+    pub fn prepare_precompiled_m2_ribbon_pipeline(
+        &mut self,
+        program: &M2RibbonSpirvProgram,
+    ) -> Result<M2RibbonPipelineHandle, VulkanError> {
+        let scene_set = self.m2_pipelines.frame_set_layouts(&self.device)?[0];
+        let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
+        self.m2_ribbon_pipelines.prepare_precompiled(
+            &self.device,
+            self.color_format,
+            self.depth_format,
+            scene_set,
+            texture_set,
+            program,
+        )
+    }
+
     /// Returns immutable diagnostics for one live ribbon pipeline.
     #[must_use]
     pub fn m2_ribbon_pipeline_info(
@@ -1357,6 +1459,7 @@ impl VulkanRenderer {
         pipeline: M2RibbonPipelineHandle,
         texture_set: M2TextureSetHandle,
         material: M2Material,
+        order: M2EffectOrder,
         first_vertex: u32,
         mesh: &M2RibbonMeshPlan,
     ) -> Result<M2RibbonPreparedDraw, VulkanError> {
@@ -1366,6 +1469,7 @@ impl VulkanRenderer {
             pipeline,
             texture_set,
             material,
+            order,
             first_vertex,
             mesh,
         )

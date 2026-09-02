@@ -43,9 +43,7 @@ impl M2ParticleTwinkleTable {
         particle: &M2ParticleState,
     ) -> Result<Option<f32>, M2ParticleTwinkleError> {
         let scale = emitter.twinkle_scale();
-        if emitter.twinkle_percent() >= 1.0 && scale.y == 0.0 {
-            return Ok(Some(1.0));
-        }
+        let variation = scale.y - scale.x;
 
         let counter = (emitter.twinkle_speed() * particle.age_seconds()).round_ties_even();
         if !counter.is_finite() || counter < -2_147_483_648.0 || counter >= 2_147_483_648.0 {
@@ -61,7 +59,7 @@ impl M2ParticleTwinkleTable {
         if emitter.twinkle_percent() < phase {
             return Ok(None);
         }
-        Ok(Some(scale.x + phase * scale.y))
+        Ok(Some(scale.x + phase * variation))
     }
 
     /// Returns one generated phase for executable-vector verification.

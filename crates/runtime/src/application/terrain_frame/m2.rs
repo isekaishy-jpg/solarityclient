@@ -1,5 +1,6 @@
 //! Renderer-local resources for the shared resident placed-M2 scene.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Mat4;
@@ -8,16 +9,17 @@ use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall,
-    M2EventTimeWindow, M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform,
-    M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
+    M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose, M2MaterialState,
+    M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
     M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
-    M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
-    m2_section_distance_key, triggered_m2_event_indices,
+    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
+    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
+    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
+    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
+    m2_model_distance_key, m2_section_distance_key, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -161,6 +163,79 @@ pub(in crate::application) enum GlueM2Texture {
     StockWhite,
     /// Texture.cpp's generated opaque green texture for a failed request.
     StockFailure,
+}
+
+/// CPU-only Glue model generation prepared away from the presentation thread.
+pub(in crate::application) struct M2GlueCpuSource {
+    plan: Arc<M2MeshPlan>,
+    mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
+    particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
+    ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
+}
+
+/// Builds the immutable mesh plan and every required shader permutation.
+pub(in crate::application) fn prepare_glue_cpu_source(
+    model: &Arc<DecodedM2Model>,
+    local_light_count: M2LocalLightCount,
+) -> Result<M2GlueCpuSource, RuntimeTerrainFrameError> {
+    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
+    let mesh_compiler = M2SpirvCompiler::new()?;
+    let mut mesh_programs = HashMap::new();
+    for draw in plan.draws() {
+        let shader = M2ShaderPlan::resolve(model, draw)?;
+        let permutation = M2ShaderPermutation::resolve(
+            draw,
+            local_light_count,
+            M2ShadowPermutation::Disabled,
+            M2ShadowFiltering::Direct,
+        );
+        let material = M2MaterialState::from_material(draw.material());
+        let shaders = [
+            Some(shader),
+            (!material.blend_enabled()).then(|| shader.with_runtime_alpha_fade()),
+        ];
+        for shader in shaders.into_iter().flatten() {
+            let key = M2SpirvKey::new(shader, permutation);
+            if let std::collections::hash_map::Entry::Vacant(entry) = mesh_programs.entry(key) {
+                entry.insert(mesh_compiler.compile(shader, permutation)?);
+            }
+        }
+    }
+
+    let mut particle_programs = HashMap::new();
+    if !model.animations().particles().is_empty() {
+        let particle_compiler = M2ParticleSpirvCompiler::new()?;
+        for emitter in model.animations().particles() {
+            let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                particle_programs.entry(material)
+            {
+                entry.insert(particle_compiler.compile(material)?);
+            }
+        }
+    }
+
+    let mut ribbon_programs = HashMap::new();
+    if !model.animations().ribbons().is_empty() {
+        let ribbon_compiler = M2RibbonSpirvCompiler::new()?;
+        for emitter in model.animations().ribbons() {
+            for material_index in emitter.material_indices() {
+                let material =
+                    M2MaterialState::from_material(model.materials()[usize::from(*material_index)]);
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    ribbon_programs.entry(material)
+                {
+                    entry.insert(ribbon_compiler.compile(material)?);
+                }
+            }
+        }
+    }
+    Ok(M2GlueCpuSource {
+        plan,
+        mesh_programs,
+        particle_programs,
+        ribbon_programs,
+    })
 }
 
 /// One resident submesh-selection scheme consumed during GPU preparation.
@@ -662,6 +737,7 @@ impl M2Frame {
         renderer: &mut VulkanRenderer,
         model: Arc<DecodedM2Model>,
         textures: &[GlueM2Texture],
+        cpu_source: &M2GlueCpuSource,
         object_index: usize,
         animation_id: u16,
         model_scale: f32,
@@ -680,7 +756,14 @@ impl M2Frame {
                 GlueM2Texture::StockFailure => M2ResolvedTexture::StockFailure,
             })
             .collect::<Vec<_>>();
-        let source = prepare_gpu_source(renderer, &model, &resolved, None, local_light_count)?;
+        let source = prepare_gpu_source_from_cpu(
+            renderer,
+            &model,
+            &resolved,
+            None,
+            local_light_count,
+            cpu_source,
+        )?;
         let playback = M2Playback::new(&model, animation_id, random)?;
         let particles = model
             .animations()
@@ -1852,6 +1935,10 @@ impl M2Frame {
                     })?;
                 let first_index = u32::try_from(self.particle_indices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                let effect_order = u32::try_from(
+                    self.particle_draws.len() + self.ribbon_draws.len(),
+                )
+                .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
                 self.particle_draws.push(
                     renderer
                         .prepare_m2_particle_draw(
@@ -1859,6 +1946,7 @@ impl M2Frame {
                             resources.texture_set,
                             emitter.blending_type(),
                             emitter.flags(),
+                            M2EffectOrder::new(emitter.priority_plane(), effect_order),
                             first_vertex,
                             first_index,
                             &mesh,
@@ -1981,12 +2069,18 @@ impl M2Frame {
                 let first_vertex = u32::try_from(self.ribbon_vertices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
                 for pass in passes {
+                    let effect_order =
+                        u32::try_from(self.particle_draws.len() + self.ribbon_draws.len())
+                            .map_err(|_source| {
+                                solarity_rendering::VulkanError::M2RibbonDrawVertexRange
+                            })?;
                     self.ribbon_draws.push(
                         renderer
                             .prepare_m2_ribbon_draw(
                                 pass.pipeline,
                                 pass.texture_set,
                                 pass.material,
+                                M2EffectOrder::new(emitter.priority_plane(), effect_order),
                                 first_vertex,
                                 &mesh,
                             )?
@@ -2007,6 +2101,20 @@ impl M2Frame {
             .sort_unstable_by(|left, right| compare_m2_transparent(&left.key, &right.key));
         self.visible_draws
             .extend(self.transparent_draws.iter().map(|queued| queued.draw));
+        self.particle_draws.sort_by_key(|draw| {
+            (
+                draw.priority_plane(),
+                draw.blend_order(),
+                draw.effect_order(),
+            )
+        });
+        self.ribbon_draws.sort_by_key(|draw| {
+            (
+                draw.priority_plane(),
+                draw.blend_order(),
+                draw.effect_order(),
+            )
+        });
         Ok(M2VisibleFrame {
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
@@ -2695,6 +2803,50 @@ fn prepare_gpu_source(
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
+    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
+    prepare_gpu_source_with_plan(
+        renderer,
+        model,
+        textures,
+        geosets,
+        local_light_count,
+        plan,
+        None,
+    )
+}
+
+/// Publishes a Glue source from worker-prepared mesh and shader state.
+#[allow(clippy::too_many_arguments)]
+fn prepare_gpu_source_from_cpu(
+    renderer: &mut VulkanRenderer,
+    model: &Arc<DecodedM2Model>,
+    textures: &[M2ResolvedTexture<'_>],
+    geosets: Option<M2GeosetSelection<'_>>,
+    local_light_count: M2LocalLightCount,
+    cpu_source: &M2GlueCpuSource,
+) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
+    prepare_gpu_source_with_plan(
+        renderer,
+        model,
+        textures,
+        geosets,
+        local_light_count,
+        Arc::clone(&cpu_source.plan),
+        Some(cpu_source),
+    )
+}
+
+/// Joins one CPU plan to texture uploads and render-owner Vulkan resources.
+#[allow(clippy::too_many_arguments)]
+fn prepare_gpu_source_with_plan(
+    renderer: &mut VulkanRenderer,
+    model: &Arc<DecodedM2Model>,
+    textures: &[M2ResolvedTexture<'_>],
+    geosets: Option<M2GeosetSelection<'_>>,
+    local_light_count: M2LocalLightCount,
+    plan: Arc<M2MeshPlan>,
+    cpu_source: Option<&M2GlueCpuSource>,
+) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
             model: model.path().clone(),
@@ -2702,7 +2854,6 @@ fn prepare_gpu_source(
             model_count: model.textures().len(),
         });
     }
-    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     validate_gpu_texture_coverage(model, &plan, textures, geosets)?;
     let model_oriented_billboard_bones = match geosets {
         Some(M2GeosetSelection::Character(geosets)) => {
@@ -2784,12 +2935,37 @@ fn prepare_gpu_source(
             M2ShadowPermutation::Disabled,
             M2ShadowFiltering::Direct,
         );
-        let pipeline = renderer.prepare_m2_pipeline(shader, permutation)?;
+        let pipeline = match cpu_source {
+            Some(cpu_source) => {
+                let program = cpu_source
+                    .mesh_programs
+                    .get(&M2SpirvKey::new(shader, permutation))
+                    .ok_or_else(|| RuntimeTerrainFrameError::M2CpuProgram {
+                        model: model.path().clone(),
+                        domain: "mesh",
+                    })?;
+                renderer.prepare_precompiled_m2_pipeline(program)?
+            }
+            None => renderer.prepare_m2_pipeline(shader, permutation)?,
+        };
         let material = M2MaterialState::from_material(draw.material());
         let runtime_fade_pipeline = if material.blend_enabled() {
             None
         } else {
-            Some(renderer.prepare_m2_pipeline(shader.with_runtime_alpha_fade(), permutation)?)
+            let fade = shader.with_runtime_alpha_fade();
+            Some(match cpu_source {
+                Some(cpu_source) => {
+                    let program = cpu_source
+                        .mesh_programs
+                        .get(&M2SpirvKey::new(fade, permutation))
+                        .ok_or_else(|| RuntimeTerrainFrameError::M2CpuProgram {
+                            model: model.path().clone(),
+                            domain: "runtime-fade mesh",
+                        })?;
+                    renderer.prepare_precompiled_m2_pipeline(program)?
+                }
+                None => renderer.prepare_m2_pipeline(fade, permutation)?,
+            })
         };
         pipelines.push((draw_index, pipeline, runtime_fade_pipeline));
 
@@ -2821,8 +2997,21 @@ fn prepare_gpu_source(
         let texture_slot = usize::from(texture_index);
         let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
         let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
-        particle_pipelines
-            .push(renderer.prepare_m2_particle_pipeline(emitter.blending_type(), emitter.flags())?);
+        let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
+        particle_pipelines.push(match cpu_source {
+            Some(cpu_source) => {
+                let program = cpu_source.particle_programs.get(&material).ok_or_else(|| {
+                    RuntimeTerrainFrameError::M2CpuProgram {
+                        model: model.path().clone(),
+                        domain: "particle",
+                    }
+                })?;
+                renderer.prepare_precompiled_m2_particle_pipeline(program)?
+            }
+            None => {
+                renderer.prepare_m2_particle_pipeline(emitter.blending_type(), emitter.flags())?
+            }
+        });
         particle_texture_requests.push(M2TextureSet::One(sampled_texture(texture, sampler)));
     }
     let particle_texture_sets = renderer.prepare_m2_texture_sets(&particle_texture_requests)?;
@@ -2845,7 +3034,19 @@ fn prepare_gpu_source(
             .zip(emitter.texture_indices().iter().copied())
         {
             let material = model.materials()[usize::from(material_index)];
-            let pipeline = renderer.prepare_m2_ribbon_pipeline(material)?;
+            let pipeline = match cpu_source {
+                Some(cpu_source) => {
+                    let state = M2MaterialState::from_material(material);
+                    let program = cpu_source.ribbon_programs.get(&state).ok_or_else(|| {
+                        RuntimeTerrainFrameError::M2CpuProgram {
+                            model: model.path().clone(),
+                            domain: "ribbon",
+                        }
+                    })?;
+                    renderer.prepare_precompiled_m2_ribbon_pipeline(program)?
+                }
+                None => renderer.prepare_m2_ribbon_pipeline(material)?,
+            };
             let texture_slot = usize::from(texture_index);
             let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
             let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;

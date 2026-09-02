@@ -74,6 +74,8 @@ use crate::random::{BlizzardRand, CrtRand};
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<RuntimeUiFrame>,
+    /// Publishes first-run/legal UI before the cold model generation is ready.
+    glue_handoff_ui_pending: bool,
     ui_textures: BlpTextureCache,
     world_ui: Option<RuntimeWorldUi>,
     glue_model: RuntimeGlueModelScene,
@@ -240,11 +242,13 @@ impl ClientServices {
         let first = u32::from(crt_rand.next_u15());
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
+        let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let mut glue_model = RuntimeGlueModelScene::new();
         glue_model.synchronize(
             &mut renderer,
             &glue,
             &assets,
+            &cpu,
             &mut crt_rand,
             Arc::clone(&particle_twinkle),
             None,
@@ -270,7 +274,6 @@ impl ClientServices {
         };
         platform.set_text_input_active(glue.focused_edit_box().is_some());
         platform.show()?;
-        let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let network = Builder::new_multi_thread()
             .worker_threads(configuration.network_workers().get())
             .thread_name("solarity-network")
@@ -286,6 +289,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                glue_handoff_ui_pending: false,
                 ui_textures,
                 world_ui: None,
                 glue_model,
@@ -667,6 +671,11 @@ impl ClientServices {
                 RuntimeCinematicPoll::Finished { object_index } => {
                     self.glue.movie_finished(object_index)?;
                     self.login_ui = None;
+                    self.present_cinematic_handoff()?;
+                    return Ok(());
+                }
+                RuntimeCinematicPoll::Stopped => {
+                    self.present_cinematic_handoff()?;
                     return Ok(());
                 }
                 RuntimeCinematicPoll::Idle => {}
@@ -796,6 +805,19 @@ impl ClientServices {
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
+        if self.glue_handoff_ui_pending {
+            let overlay = if self.glue.cvar_boolean("showfps") {
+                self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
+            } else {
+                &[]
+            };
+            frame.present_with_overlay(&mut self.renderer, overlay)?;
+            self.glue_handoff_ui_pending = false;
+            if let Some(fps) = self.fps.as_mut() {
+                fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+            }
+            return Ok(());
+        }
         let current_screen = self.glue.current_screen();
         let glue_character_changed = match current_screen.as_str() {
             "charcreate" => {
@@ -815,6 +837,7 @@ impl ClientServices {
             &mut self.renderer,
             &self.glue,
             &self.assets,
+            &self.cpu,
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),
             glue_character,
@@ -836,6 +859,19 @@ impl ClientServices {
         )? {
             frame.present_with_overlay(&mut self.renderer, overlay)?;
         }
+        if let Some(fps) = self.fps.as_mut() {
+            fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
+        }
+        Ok(())
+    }
+
+    fn present_cinematic_handoff(&mut self) -> Result<(), ApplicationError> {
+        let logical_extent = self.fps.as_ref().map_or_else(
+            || overlay_extent(self.platform.pixel_extent()),
+            RuntimeFpsOverlay::logical_extent,
+        );
+        self.renderer.present_clear(logical_extent)?;
+        self.glue_handoff_ui_pending = true;
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }

@@ -24,8 +24,8 @@ pub use m2_animation::{
     M2MaterialPose, M2MaterialPoseError, sample_m2_camera_frame, triggered_m2_event_indices,
 };
 pub use m2_scene::{
-    M2DrawCall, M2DrawPushConstants, M2LocalLightState, M2MaterialUniform, M2MeshPlan,
-    M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState,
+    M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2LocalLightState, M2MaterialUniform,
+    M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix, M2ShadowState,
     M2TextureBinding, M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key,
     m2_section_distance_key,
 };

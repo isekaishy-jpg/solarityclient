@@ -156,15 +156,20 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
         record_world_model(&context, index, draw)?;
     }
+    let mut next_particle = 0;
+    let mut next_ribbon = 0;
     for (index, draw) in context.m2_draws.iter().copied().enumerate() {
+        if draw.effect_interleave() {
+            record_effects_through(
+                &context,
+                &mut next_particle,
+                &mut next_ribbon,
+                draw.priority_plane(),
+            )?;
+        }
         record_m2(&context, index, draw)?;
     }
-    for draw in context.particle_draws.iter().copied() {
-        record_particle(&context, draw)?;
-    }
-    for draw in context.ribbon_draws.iter().copied() {
-        record_ribbon(&context, draw)?;
-    }
+    record_effects_through(&context, &mut next_particle, &mut next_ribbon, i16::MAX)?;
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     if let Some((glow, settings)) = context.glow {
@@ -186,6 +191,48 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))
+}
+
+/// Records the two prepared effect streams in their shared stock order.
+fn record_effects_through(
+    context: &RecordContext<'_>,
+    next_particle: &mut usize,
+    next_ribbon: &mut usize,
+    inclusive_plane: i16,
+) -> Result<(), VulkanError> {
+    loop {
+        let particle = context.particle_draws.get(*next_particle).copied();
+        let ribbon = context.ribbon_draws.get(*next_ribbon).copied();
+        let particle_key = particle.map(|draw| {
+            (
+                draw.priority_plane(),
+                draw.blend_order(),
+                draw.effect_order(),
+            )
+        });
+        let ribbon_key = ribbon.map(|draw| {
+            (
+                draw.priority_plane(),
+                draw.blend_order(),
+                draw.effect_order(),
+            )
+        });
+        let next_plane = match (particle_key, ribbon_key) {
+            (Some(left), Some(right)) => left.min(right).0,
+            (Some(key), None) | (None, Some(key)) => key.0,
+            (None, None) => return Ok(()),
+        };
+        if next_plane > inclusive_plane {
+            return Ok(());
+        }
+        if particle_key.is_some_and(|left| ribbon_key.is_none_or(|right| left <= right)) {
+            record_particle(context, particle.ok_or(VulkanError::WorldFrameCapacity)?)?;
+            *next_particle += 1;
+        } else {
+            record_ribbon(context, ribbon.ok_or(VulkanError::WorldFrameCapacity)?)?;
+            *next_ribbon += 1;
+        }
+    }
 }
 
 /// Makes the completed world color writes available to the blending UI pass.

@@ -1,5 +1,7 @@
 //! Upload-ready ordinary particle head and tail preparation.
 
+use std::borrow::Cow;
+
 use glam::{Quat, Vec2, Vec3, Vec4};
 use solarity_asset::M2ParticleEmitter;
 use thiserror::Error;
@@ -15,6 +17,9 @@ use crate::particle::pack_bgra;
 
 /// Recovered branches shared by the ordinary head and tail preparation.
 const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0100_0000;
+
+/// Sorts live cards back-to-front inside one compatible emitter batch.
+const SORT_PARTICLES: u32 = 0x0000_0002;
 
 /// Limits a tail's history span to the particle's current age.
 const CLAMP_TAIL_TO_AGE: u32 = 0x0000_0400;
@@ -352,7 +357,26 @@ impl M2ParticleMeshPlan {
         let rows = f32::from(emitter.texture_rows());
         let cell_size = Vec2::new(1.0 / columns as f32, rows.recip());
         let normal = -camera.forward();
-        for particle in particles {
+        let ordered_particles = if emitter.flags() & SORT_PARTICLES != 0 {
+            // CM2Model's recovered render path sorts a temporary presentation
+            // list; simulation slots and their address-derived twinkle phases
+            // must remain untouched.
+            let mut sorted = particles.to_vec();
+            sorted.sort_by(|left, right| {
+                let distance = |particle: &M2ParticleState| {
+                    particle_to_world
+                        .transform_point3(particle.position())
+                        .distance_squared(camera.camera().position())
+                };
+                distance(right)
+                    .partial_cmp(&distance(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            Cow::Owned(sorted)
+        } else {
+            Cow::Borrowed(particles)
+        };
+        for particle in ordered_particles.iter() {
             let twinkle_scale = match twinkle_table {
                 Some(table) => match table.sample(emitter, particle)? {
                     Some(scale) => scale,

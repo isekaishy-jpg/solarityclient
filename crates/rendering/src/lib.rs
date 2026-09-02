@@ -56,11 +56,11 @@ pub use model::{
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTextureComposeError,
     CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
     M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraFrameError, M2DrawCall,
-    M2DrawPushConstants, M2EventTimeWindow, M2LocalLightState, M2MaterialPose, M2MaterialPoseError,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix,
-    M2ShadowState, M2TextureBinding, M2TransparentSortKey, PlacedWorldModelDrawPlan,
-    WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    M2DrawPushConstants, M2EffectOrder, M2EventTimeWindow, M2LocalLightState, M2MaterialPose,
+    M2MaterialPoseError, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex,
+    M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentSortKey,
+    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
+    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
     WorldModelSceneUniform, sample_m2_camera_frame, triggered_m2_event_indices,
 };
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};

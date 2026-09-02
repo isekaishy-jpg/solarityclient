@@ -16,17 +16,17 @@ use solarity_rendering::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterComponentTextureLevel,
     CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState,
-    CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EventTimeWindow,
-    M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform,
-    M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
-    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
-    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
-    VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame,
-    triggered_m2_event_indices,
+    CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EffectOrder,
+    M2EventTimeWindow, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
+    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
+    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
+    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler,
+    M2ParticleState, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
+    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform,
+    VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
+    sample_m2_camera_frame, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -1217,7 +1217,7 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     )?];
     let table = solarity_rendering::M2ParticleTwinkleTable::new(0x0029_4823);
     let pool_slot = (std::ptr::from_ref(&particles[0]).addr() >> 5) as u8 & 0x7f;
-    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")? * 1.5;
+    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")?;
     assert_eq!(table.sample(emitter, &particles[0])?, Some(expected_scale));
     assert_eq!(
         M2ParticleMeshPlan::prepare(
@@ -1239,6 +1239,60 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     )?;
     assert_eq!(mesh.vertices().len(), 8);
     assert_eq!(mesh.indices().len(), 12);
+    Ok(())
+}
+
+/// Flag `0x2` submits cards back-to-front without mutating simulation storage.
+#[test]
+fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_0002;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\SortedParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SortedParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\SortedParticle.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let near = M2ParticleState::new(0.5, Vec3::X, Vec3::ZERO, 0x2483)?;
+    let far = M2ParticleState::new(0.5, Vec3::X * 5.0, Vec3::ZERO, 0x2484)?;
+    let particles = [near, far];
+    let mesh = M2ParticleMeshPlan::prepare(
+        emitter,
+        pose,
+        &particles,
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
+        1.0,
+    )?;
+    let first_center = mesh.vertices()[0..4]
+        .iter()
+        .map(|vertex| Vec3::from_array(vertex.position()))
+        .sum::<Vec3>()
+        / 4.0;
+    assert!((first_center - far.position()).abs().max_element() < 0.0001);
+    assert_eq!(particles, [near, far]);
     Ok(())
 }
 
@@ -1738,7 +1792,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.vertex_byte_count(), 156);
     assert_eq!(info.index_byte_count(), 6);
     assert_eq!(info.max_bone_index(), Some(2));
-    let pipeline = renderer.prepare_m2_pipeline(specialized, lit_permutation)?;
+    let pipeline = renderer.prepare_precompiled_m2_pipeline(&spirv)?;
     assert_eq!(
         renderer.prepare_m2_pipeline(specialized, lit_permutation)?,
         pipeline
@@ -1823,8 +1877,10 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         .particles()
         .first()
         .ok_or("particle emitter is absent")?;
-    let particle_pipeline = renderer
-        .prepare_m2_particle_pipeline(particle_emitter.blending_type(), particle_emitter.flags())?;
+    let particle_material =
+        M2MaterialState::from_particle(particle_emitter.blending_type(), particle_emitter.flags());
+    let particle_program = M2ParticleSpirvCompiler::new()?.compile(particle_material)?;
+    let particle_pipeline = renderer.prepare_precompiled_m2_particle_pipeline(&particle_program)?;
     assert_eq!(
         renderer.prepare_m2_particle_pipeline(
             particle_emitter.blending_type(),
@@ -1837,7 +1893,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             .m2_particle_pipeline_info(particle_pipeline)
             .ok_or("particle pipeline did not resolve")?
             .material(),
-        M2MaterialState::from_particle(particle_emitter.blending_type(), particle_emitter.flags())
+        particle_material
     );
     let particle_pose = M2ParticlePose::sample(
         model.animations(),
@@ -1863,6 +1919,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         texture_sets[1],
         particle_emitter.blending_type(),
         particle_emitter.flags(),
+        M2EffectOrder::new(particle_emitter.priority_plane(), 0),
         0,
         0,
         &particle_mesh,
@@ -1870,6 +1927,15 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(particle_draw.vertex_offset(), 0);
     assert_eq!(particle_draw.first_index(), 0);
     assert_eq!(particle_draw.light_bank(), M2SceneLightBank::Environment);
+    assert_eq!(
+        particle_draw.priority_plane(),
+        particle_emitter.priority_plane()
+    );
+    assert_eq!(
+        particle_draw.blend_order(),
+        particle_emitter.blending_type()
+    );
+    assert_eq!(particle_draw.effect_order(), 0);
     assert_eq!(
         particle_draw.index_count() as usize,
         particle_mesh.indices().len()
@@ -1880,6 +1946,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             texture_sets[0],
             particle_emitter.blending_type(),
             particle_emitter.flags(),
+            M2EffectOrder::new(particle_emitter.priority_plane(), 0),
             0,
             0,
             &particle_mesh,
@@ -1892,7 +1959,9 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         .first()
         .ok_or("ribbon emitter is absent")?;
     let ribbon_material = model.materials()[usize::from(ribbon_emitter.material_indices()[0])];
-    let ribbon_pipeline = renderer.prepare_m2_ribbon_pipeline(ribbon_material)?;
+    let ribbon_program =
+        M2RibbonSpirvCompiler::new()?.compile(M2MaterialState::from_material(ribbon_material))?;
+    let ribbon_pipeline = renderer.prepare_precompiled_m2_ribbon_pipeline(&ribbon_program)?;
     assert_eq!(
         renderer.prepare_m2_ribbon_pipeline(ribbon_material)?,
         ribbon_pipeline
@@ -1920,11 +1989,21 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         ribbon_pipeline,
         texture_sets[1],
         ribbon_material,
+        M2EffectOrder::new(ribbon_emitter.priority_plane(), 1),
         0,
         &ribbon_mesh,
     )?;
     assert_eq!(ribbon_draw.first_vertex(), 0);
     assert_eq!(ribbon_draw.light_bank(), M2SceneLightBank::Environment);
+    assert_eq!(
+        ribbon_draw.priority_plane(),
+        ribbon_emitter.priority_plane()
+    );
+    assert_eq!(
+        ribbon_draw.blend_order(),
+        ribbon_material.blend_mode() as u8
+    );
+    assert_eq!(ribbon_draw.effect_order(), 1);
     assert_eq!(
         ribbon_draw.vertex_count() as usize,
         ribbon_mesh.vertices().len()
@@ -1948,6 +2027,14 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(prepared_draw.material(), material_uniform);
     assert_eq!(prepared_draw.push_constants(), push_constants);
     assert_eq!(prepared_draw.required_bone_transforms(), 67);
+    assert_eq!(
+        prepared_draw.priority_plane(),
+        i16::from(draw.batch().priority_plane)
+    );
+    assert_eq!(
+        prepared_draw.effect_interleave(),
+        draw.transparent_sort_unit()
+    );
     assert_eq!(prepared_draw.light_bank(), M2SceneLightBank::Environment);
     let faded_draw = renderer.prepare_m2_draw(
         handle,

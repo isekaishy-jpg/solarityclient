@@ -7,6 +7,7 @@ use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2HardcodedTextureSource,
     M2ModelCache, M2TextureKind,
 };
+use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
     M2CameraFrameError, M2DirectionalLight, M2LocalLightCount, M2LocalLightState,
     M2ParticleTwinkleTable, M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer,
@@ -19,7 +20,9 @@ use thiserror::Error;
 use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
-use crate::application::terrain_frame::m2::{GlueM2Texture, M2Frame};
+use crate::application::terrain_frame::m2::{
+    GlueM2Texture, M2Frame, M2GlueCpuSource, prepare_glue_cpu_source,
+};
 use crate::random::CrtRand;
 
 const STOCK_GLUE_AMBIENT: Vec3 = Vec3::splat(0.35);
@@ -40,6 +43,9 @@ pub enum RuntimeGlueModelError {
     /// The unified model/UI submission failed renderer validation.
     #[error(transparent)]
     Vulkan(#[from] VulkanError),
+    /// The bounded CPU preparation task could not be submitted or joined.
+    #[error(transparent)]
+    Cpu(#[from] CpuError),
     /// The selected authored camera could not form a projection.
     #[error(transparent)]
     Camera(#[from] M2CameraFrameError),
@@ -74,6 +80,9 @@ pub enum RuntimeGlueModelError {
     /// The live stock display-gamma CVar could not form a finite renderer input.
     #[error("Glue gamma CVar has invalid value {value:?}")]
     InvalidGamma { value: Option<String> },
+    /// A completed worker generation disappeared before publication.
+    #[error("Glue model CPU preparation lost its pending generation")]
+    PendingState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +115,15 @@ struct ActiveGlueModel {
     environment: GlueModelEnvironment,
     model: Arc<solarity_asset::DecodedM2Model>,
     frame: M2Frame,
+}
+
+/// One scene generation whose CPU plan and shaders are still being prepared.
+struct PendingGlueModel {
+    key: GlueModelKey,
+    environment: GlueModelEnvironment,
+    model: Arc<solarity_asset::DecodedM2Model>,
+    textures: Vec<GlueM2Texture>,
+    task: CpuTask<Result<M2GlueCpuSource, RuntimeTerrainFrameError>>,
 }
 
 /// Selected half of each ModelFFX live/ghost light pair.
@@ -238,6 +256,7 @@ pub(crate) struct RuntimeGlueModelScene {
     models: M2ModelCache,
     textures: BlpTextureCache,
     active: Option<ActiveGlueModel>,
+    pending: Option<PendingGlueModel>,
 }
 
 impl RuntimeGlueModelScene {
@@ -247,6 +266,7 @@ impl RuntimeGlueModelScene {
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
             active: None,
+            pending: None,
         }
     }
 
@@ -257,6 +277,7 @@ impl RuntimeGlueModelScene {
         renderer: &mut VulkanRenderer,
         glue: &GlueManager,
         assets: &AssetStoreHandle,
+        cpu: &CpuExecutor,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
         glue_character: Option<ResidentGlueCharacterFrameInput<'_>>,
@@ -265,6 +286,7 @@ impl RuntimeGlueModelScene {
         let visible = glue.presentation().models();
         if visible.is_empty() {
             self.active = None;
+            self.pending = None;
             return Ok(());
         }
         if visible.len() != 1 {
@@ -316,6 +338,51 @@ impl RuntimeGlueModelScene {
                 sequence: key.sequence,
             }
         })?;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.key != key)
+        {
+            self.pending = None;
+        }
+        if let Some(pending) = self.pending.as_mut() {
+            pending.environment = environment;
+            if !pending.task.is_finished() {
+                return Ok(());
+            }
+            let pending = self
+                .pending
+                .take()
+                .ok_or(RuntimeGlueModelError::PendingState)?;
+            let cpu_source = pending.task.join()??;
+            let mut frame = M2Frame::prepare_glue_model(
+                renderer,
+                Arc::clone(&pending.model),
+                &pending.textures,
+                &cpu_source,
+                pending.key.object_index,
+                animation_id,
+                pending.key.model_scale,
+                local_light_count(pending.environment.local_lights),
+                random,
+                particle_twinkle,
+            )?;
+            frame.replace_glue_character(
+                renderer,
+                glue_character,
+                pending.environment.character_light_count(),
+                pending.environment.pet_light_count(),
+                random,
+            )?;
+            frame.set_glue_opacity(pending.environment.alpha)?;
+            self.active = Some(ActiveGlueModel {
+                key: pending.key,
+                environment: pending.environment,
+                model: pending.model,
+                frame,
+            });
+            return Ok(());
+        }
         let mut store = assets.borrow_mut();
         let model = self.models.load(&mut store, &key.path)?;
         let mut texture_sources = Vec::with_capacity(model.textures().len());
@@ -360,30 +427,16 @@ impl RuntimeGlueModelScene {
             }
         }
         drop(store);
-        let mut frame = M2Frame::prepare_glue_model(
-            renderer,
-            Arc::clone(&model),
-            &texture_sources,
-            key.object_index,
-            animation_id,
-            key.model_scale,
-            local_light_count(environment.local_lights),
-            random,
-            particle_twinkle,
-        )?;
-        frame.replace_glue_character(
-            renderer,
-            glue_character,
-            environment.character_light_count(),
-            environment.pet_light_count(),
-            random,
-        )?;
-        frame.set_glue_opacity(environment.alpha)?;
-        self.active = Some(ActiveGlueModel {
+        let task_model = Arc::clone(&model);
+        let light_count = local_light_count(environment.local_lights);
+        let task = cpu.try_submit(move || prepare_glue_cpu_source(&task_model, light_count))?;
+        self.active = None;
+        self.pending = Some(PendingGlueModel {
             key,
             environment,
             model,
-            frame,
+            textures: texture_sources,
+            task,
         });
         Ok(())
     }

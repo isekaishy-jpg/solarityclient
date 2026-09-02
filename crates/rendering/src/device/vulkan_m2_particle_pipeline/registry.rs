@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
-use crate::{M2MaterialState, M2ParticleSpirvCompiler};
+use crate::{M2MaterialState, M2ParticleSpirvCompiler, M2ParticleSpirvProgram};
 
 use super::pipeline::{M2ParticlePipelineLayout, create_pipeline};
 use super::{M2ParticlePipelineHandle, M2ParticlePipelineInfo};
@@ -54,9 +54,6 @@ impl M2ParticlePipelineRegistry {
         if let Some(handle) = self.handles.get(&material) {
             return Ok(*handle);
         }
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::M2ParticlePipelineCapacity)?;
-        self.layout.ensure_created(device, scene_set, texture_set)?;
         let compiler = match self.compiler.as_ref() {
             Some(compiler) => compiler,
             None => {
@@ -70,13 +67,41 @@ impl M2ParticlePipelineRegistry {
             }
         };
         let program = compiler.compile(material).map_err(shader_error)?;
+        self.prepare_precompiled(
+            device,
+            color_format,
+            depth_format,
+            scene_set,
+            texture_set,
+            &program,
+        )
+    }
+
+    /// Creates one driver pipeline from worker-compiled particle bytecode.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::device) fn prepare_precompiled(
+        &mut self,
+        device: &Device,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+        scene_set: vk::DescriptorSetLayout,
+        texture_set: vk::DescriptorSetLayout,
+        program: &M2ParticleSpirvProgram,
+    ) -> Result<M2ParticlePipelineHandle, VulkanError> {
+        let material = program.material();
+        if let Some(handle) = self.handles.get(&material) {
+            return Ok(*handle);
+        }
+        let slot = u32::try_from(self.resources.len())
+            .map_err(|_source| VulkanError::M2ParticlePipelineCapacity)?;
+        self.layout.ensure_created(device, scene_set, texture_set)?;
         let pipeline = create_pipeline(
             device,
             self.layout.handle(),
             color_format,
             depth_format,
             material,
-            &program,
+            program,
         )?;
         let handle = M2ParticlePipelineHandle {
             registry_id: self.registry_id,

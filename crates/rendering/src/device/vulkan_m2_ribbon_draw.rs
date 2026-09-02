@@ -6,7 +6,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2SceneLightBank;
 use crate::device::vulkan_m2_ribbon_pipeline::{M2RibbonPipelineHandle, M2RibbonPipelineRegistry};
 use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
-use crate::{M2MaterialState, M2RibbonMeshPlan};
+use crate::{M2EffectOrder, M2MaterialState, M2RibbonMeshPlan};
 
 /// Renderer-local resources and vertex range for one ribbon strip.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,6 +16,8 @@ pub struct M2RibbonPreparedDraw {
     first_vertex: u32,
     vertex_count: u32,
     light_bank: M2SceneLightBank,
+    order: M2EffectOrder,
+    blend_order: u8,
 }
 
 impl M2RibbonPreparedDraw {
@@ -51,14 +53,34 @@ impl M2RibbonPreparedDraw {
     pub const fn vertex_count(self) -> u32 {
         self.vertex_count
     }
+
+    /// Returns the authored plane used for stock mesh/effect interleaving.
+    #[must_use]
+    pub const fn priority_plane(self) -> i16 {
+        self.order.priority_plane()
+    }
+
+    /// Returns the authored blend discriminator used within one effect plane.
+    #[must_use]
+    pub const fn blend_order(self) -> u8 {
+        self.blend_order
+    }
+
+    /// Returns stable producer order after plane and blend comparisons tie.
+    #[must_use]
+    pub const fn effect_order(self) -> u32 {
+        self.order.producer_order()
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::device) fn prepare_draw(
     pipelines: &M2RibbonPipelineRegistry,
     texture_sets: &M2TextureSetRegistry,
     pipeline: M2RibbonPipelineHandle,
     texture_set: M2TextureSetHandle,
     material: M2Material,
+    order: M2EffectOrder,
     first_vertex: u32,
     mesh: &M2RibbonMeshPlan,
 ) -> Result<M2RibbonPreparedDraw, VulkanError> {
@@ -85,5 +107,7 @@ pub(in crate::device) fn prepare_draw(
         first_vertex,
         vertex_count,
         light_bank: M2SceneLightBank::Environment,
+        order,
+        blend_order: material.blend_mode() as u8,
     })
 }

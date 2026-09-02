@@ -17,6 +17,8 @@ pub struct M2PreparedDraw {
     push_constants: M2DrawPushConstants,
     required_bone_transforms: usize,
     light_bank: M2SceneLightBank,
+    priority_plane: i16,
+    effect_interleave: bool,
 }
 
 impl M2PreparedDraw {
@@ -31,6 +33,8 @@ impl M2PreparedDraw {
         material: M2MaterialUniform,
         push_constants: M2DrawPushConstants,
         required_bone_transforms: usize,
+        priority_plane: i16,
+        effect_interleave: bool,
     ) -> Self {
         Self {
             mesh,
@@ -42,6 +46,8 @@ impl M2PreparedDraw {
             push_constants,
             required_bone_transforms,
             light_bank: M2SceneLightBank::Environment,
+            priority_plane,
+            effect_interleave,
         }
     }
 
@@ -104,5 +110,17 @@ impl M2PreparedDraw {
     #[must_use]
     pub const fn light_bank(self) -> M2SceneLightBank {
         self.light_bank
+    }
+
+    /// Returns the authored plane used to insert ordinary effects.
+    #[must_use]
+    pub const fn priority_plane(self) -> i16 {
+        self.priority_plane
+    }
+
+    /// Reports whether effects through this plane precede this mesh draw.
+    #[must_use]
+    pub const fn effect_interleave(self) -> bool {
+        self.effect_interleave
     }
 }

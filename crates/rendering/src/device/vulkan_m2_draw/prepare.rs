@@ -83,5 +83,7 @@ pub(in crate::device) fn prepare_draw(
         material,
         M2DrawPushConstants::new(bone_transform_offset, draw, flags),
         required_bone_transforms,
+        i16::from(draw.batch().priority_plane),
+        draw.transparent_sort_unit() || runtime_alpha_fade,
     ))
 }

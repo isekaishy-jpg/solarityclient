@@ -7,6 +7,36 @@ use glam::{Mat4, Vec3};
 /// Squared-length normalization guard at build-12340 address `0x009EA27C`.
 const STOCK_SORT_DIRECTION_EPSILON: f32 = 2.384_185_8e-7;
 
+/// Stable producer identity shared by ordinary particles and ribbons.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct M2EffectOrder {
+    priority_plane: i16,
+    producer_order: u32,
+}
+
+impl M2EffectOrder {
+    /// Captures the authored plane and placement-local production order.
+    #[must_use]
+    pub const fn new(priority_plane: i16, producer_order: u32) -> Self {
+        Self {
+            priority_plane,
+            producer_order,
+        }
+    }
+
+    /// Returns the authored plane used for mesh/effect interleaving.
+    #[must_use]
+    pub const fn priority_plane(self) -> i16 {
+        self.priority_plane
+    }
+
+    /// Returns stable production order after plane and blend comparisons tie.
+    #[must_use]
+    pub const fn producer_order(self) -> u32 {
+        self.producer_order
+    }
+}
+
 /// The stock fields shared by transparent mesh elements in passes one and two.
 ///
 /// Meshes, ribbons, particles, and callbacks ultimately share this prefix. The

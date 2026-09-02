@@ -6,7 +6,7 @@ use crate::device::vulkan_m2_particle_pipeline::{
     M2ParticlePipelineHandle, M2ParticlePipelineRegistry,
 };
 use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
-use crate::{M2MaterialState, M2ParticleMeshPlan};
+use crate::{M2EffectOrder, M2MaterialState, M2ParticleMeshPlan};
 
 /// Renderer-local resources and indexed ranges for one particle emitter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +17,8 @@ pub struct M2ParticlePreparedDraw {
     first_index: u32,
     index_count: u32,
     light_bank: M2SceneLightBank,
+    order: M2EffectOrder,
+    blend_order: u8,
 }
 
 impl M2ParticlePreparedDraw {
@@ -58,6 +60,24 @@ impl M2ParticlePreparedDraw {
     pub const fn index_count(self) -> u32 {
         self.index_count
     }
+
+    /// Returns the authored plane used for stock mesh/effect interleaving.
+    #[must_use]
+    pub const fn priority_plane(self) -> i16 {
+        self.order.priority_plane()
+    }
+
+    /// Returns the authored blend discriminator used within one effect plane.
+    #[must_use]
+    pub const fn blend_order(self) -> u8 {
+        self.blend_order
+    }
+
+    /// Returns stable producer order after plane and blend comparisons tie.
+    #[must_use]
+    pub const fn effect_order(self) -> u32 {
+        self.order.producer_order()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -68,6 +88,7 @@ pub(in crate::device) fn prepare_draw(
     texture_set: M2TextureSetHandle,
     blending_type: u8,
     particle_flags: u32,
+    order: M2EffectOrder,
     first_vertex: u32,
     first_index: u32,
     mesh: &M2ParticleMeshPlan,
@@ -103,5 +124,7 @@ pub(in crate::device) fn prepare_draw(
         first_index,
         index_count,
         light_bank: M2SceneLightBank::Environment,
+        order,
+        blend_order: blending_type,
     })
 }

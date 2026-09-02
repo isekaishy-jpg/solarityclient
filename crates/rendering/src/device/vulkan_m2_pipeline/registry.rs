@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
-use crate::shader::{M2ShaderPermutation, M2ShaderPlan, M2SpirvCompiler, M2SpirvKey};
+use crate::shader::{
+    M2ShaderPermutation, M2ShaderPlan, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram,
+};
 
 use super::pipeline::{M2PipelineLayout, create_pipeline};
 use super::types::{M2PipelineHandle, M2PipelineInfo};
@@ -103,9 +105,6 @@ impl M2PipelineRegistry {
         if let Some(handle) = self.handles.get(&key) {
             return Ok(*handle);
         }
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::M2PipelineCapacity)?;
-        self.layout.ensure_created(device)?;
         let compiler = match self.compiler.as_ref() {
             Some(compiler) => compiler,
             None => {
@@ -116,13 +115,33 @@ impl M2PipelineRegistry {
             }
         };
         let program = compiler.compile(plan, permutation).map_err(shader_error)?;
+        self.prepare_precompiled(device, color_format, depth_format, &program)
+    }
+
+    /// Creates a pipeline from worker-compiled bytecode after identity validation.
+    pub(in crate::device) fn prepare_precompiled(
+        &mut self,
+        device: &Device,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+        program: &M2SpirvProgram,
+    ) -> Result<M2PipelineHandle, VulkanError> {
+        let key = program.key();
+        if let Some(handle) = self.handles.get(&key) {
+            return Ok(*handle);
+        }
+        let plan = key.plan();
+        let permutation = key.permutation();
+        let slot = u32::try_from(self.resources.len())
+            .map_err(|_source| VulkanError::M2PipelineCapacity)?;
+        self.layout.ensure_created(device)?;
         let pipeline = create_pipeline(
             device,
             self.layout.handle(),
             color_format,
             depth_format,
             plan.material(),
-            &program,
+            program,
         )?;
         let handle = M2PipelineHandle {
             registry_id: self.registry_id,

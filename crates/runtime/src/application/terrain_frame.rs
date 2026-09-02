@@ -6,13 +6,14 @@ use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
-    M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError, M2RibbonMeshPlanError,
-    M2RibbonTrailError, M2SceneUniform, M2ShaderPlanError, TerrainLayerCount,
-    TerrainLayerCountError, TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet,
-    TerrainTileMeshPlan, UiPreparedDraw, VulkanError, VulkanRenderer, WorldCameraError,
-    WorldCameraFrame, WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelSceneUniform,
-    WorldModelTextureFiltering, WorldScreenWindow,
+    M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError, M2ParticleSpirvError,
+    M2RibbonMeshPlanError, M2RibbonSpirvError, M2RibbonTrailError, M2SceneUniform,
+    M2ShaderPlanError, M2SpirvError, TerrainLayerCount, TerrainLayerCountError,
+    TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan,
+    UiPreparedDraw, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
+    WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelSceneUniform, WorldModelTextureFiltering,
+    WorldScreenWindow,
 };
 use thiserror::Error;
 
@@ -59,6 +60,23 @@ pub enum RuntimeTerrainFrameError {
     /// One M2 material batch could not select a stock BLS effect.
     #[error(transparent)]
     M2Shader(#[from] M2ShaderPlanError),
+    /// A worker could not compile one ordinary M2 shader permutation.
+    #[error(transparent)]
+    M2Spirv(#[from] M2SpirvError),
+    /// A worker could not compile one particle material permutation.
+    #[error(transparent)]
+    M2ParticleSpirv(#[from] M2ParticleSpirvError),
+    /// A worker could not compile one ribbon material permutation.
+    #[error(transparent)]
+    M2RibbonSpirv(#[from] M2RibbonSpirvError),
+    /// Worker-prepared shader state did not cover its immutable source plan.
+    #[error("M2 model {model} is missing worker-prepared {domain} shader bytecode")]
+    M2CpuProgram {
+        /// Model whose CPU generation and GPU publication disagreed.
+        model: AssetPath,
+        /// Shader family whose exact identity was absent.
+        domain: &'static str,
+    },
     /// One visible M2 could not form its bone palette.
     #[error(transparent)]
     M2BonePose(#[from] M2BonePoseError),

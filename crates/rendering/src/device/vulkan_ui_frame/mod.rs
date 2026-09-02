@@ -54,6 +54,24 @@ impl UiFrameRenderer {
         if draws.is_empty() {
             return Err(VulkanError::EmptyUiFrame);
         }
+        self.present_inner(context, logical_extent, draws)
+    }
+
+    /// Clears and presents one swapchain image without requiring UI geometry.
+    pub(in crate::device) fn present_clear(
+        &mut self,
+        context: UiFrameContext<'_>,
+        logical_extent: [f32; 2],
+    ) -> Result<UiFrameReport, VulkanError> {
+        self.present_inner(context, logical_extent, &[])
+    }
+
+    fn present_inner(
+        &mut self,
+        context: UiFrameContext<'_>,
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+    ) -> Result<UiFrameReport, VulkanError> {
         if logical_extent
             .iter()
             .any(|extent| !extent.is_finite() || *extent <= 0.0)

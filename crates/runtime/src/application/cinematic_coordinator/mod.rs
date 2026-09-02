@@ -13,6 +13,8 @@ use super::sound_coordinator::{RuntimeSoundCoordinator, RuntimeSoundError};
 pub(super) enum RuntimeCinematicPoll {
     /// Glue currently requests no movie.
     Idle,
+    /// Glue withdrew a movie request after at least one cinematic frame.
+    Stopped,
     /// A decoded frame was presented for the active movie.
     Presented,
     /// The final frame duration elapsed and the owning widget must be notified.
@@ -58,6 +60,7 @@ impl RuntimeCinematicCoordinator {
                     generation = active.generation,
                     "stopped Glue cinematic"
                 );
+                return Ok(RuntimeCinematicPoll::Stopped);
             }
             return Ok(RuntimeCinematicPoll::Idle);
         };
