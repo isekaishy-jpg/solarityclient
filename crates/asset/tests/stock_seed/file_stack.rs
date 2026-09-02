@@ -261,6 +261,9 @@ fn cinematic_lookup_rejects_other_loose_namespaces() -> Result<(), Box<dyn Error
 fn localized_glue_document_resolves_selected_locale_file() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[])?;
     fixture.write_loose_file("Data/enUS/EULA.HTML", b"<html>selected</html>")?;
+    fixture.write_loose_file("Data/enUS/Credits.html", b"base credits")?;
+    fixture.write_loose_file("Data/enUS/Credits_BC.html", b"bc credits")?;
+    fixture.write_loose_file("Data/enUS/Credits_LK.html", b"lk credits")?;
     fixture.write_loose_file("Data/frFR/eula.html", b"<html>other locale</html>")?;
     let root = ClientDataRoot::new(fixture.data_root())?;
     let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
@@ -272,6 +275,18 @@ fn localized_glue_document_resolves_selected_locale_file() -> Result<(), Box<dyn
     assert_eq!(
         store.read_localized_document(LocalizedDocument::Termination)?,
         None
+    );
+    assert_eq!(
+        store.read_localized_document(LocalizedDocument::Credits)?,
+        Some(b"base credits".to_vec())
+    );
+    assert_eq!(
+        store.read_localized_document(LocalizedDocument::CreditsBurningCrusade)?,
+        Some(b"bc credits".to_vec())
+    );
+    assert_eq!(
+        store.read_localized_document(LocalizedDocument::CreditsWrath)?,
+        Some(b"lk credits".to_vec())
     );
     Ok(())
 }

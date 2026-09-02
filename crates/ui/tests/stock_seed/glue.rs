@@ -188,6 +188,38 @@ fn glue_manager_retains_legal_agreement_state() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Wow.exe `FUN_004DCD60` maps expansion indices to the three locale-loose
+/// credits documents consumed by the stock Credits Glue screen.
+#[test]
+fn glue_manager_loads_stock_expansion_credits_text() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Credits.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Credits.xml",
+            bytes: br#"<Ui><Frame name="Credits"><Scripts><OnLoad>
+  BASE_CREDITS = GetCreditsText(1)
+  BC_CREDITS = GetCreditsText("2")
+  LK_CREDITS = GetCreditsText(3)
+</OnLoad></Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    fixture.write_loose_file("Data/enUS/Credits.html", b"base credits")?;
+    fixture.write_loose_file("Data/enUS/Credits_BC.html", b"bc credits")?;
+    fixture.write_loose_file("Data/enUS/Credits_LK.html", b"lk credits")?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let globals = manager.bundle().lua().globals();
+
+    assert_eq!(globals.get::<String>("BASE_CREDITS")?, "base credits");
+    assert_eq!(globals.get::<String>("BC_CREDITS")?, "bc credits");
+    assert_eq!(globals.get::<String>("LK_CREDITS")?, "lk credits");
+    Ok(())
+}
+
 /// Pointer capture selects the frontmost frame and activates the stock default
 /// `LeftButtonUp` action only when release remains over the captured button.
 #[test]

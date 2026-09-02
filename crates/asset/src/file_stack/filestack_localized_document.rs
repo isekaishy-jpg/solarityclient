@@ -27,6 +27,10 @@ pub enum LocalizedDocument {
     ConnectionHelp,
     /// Base-game credits.
     Credits,
+    /// The Burning Crusade credits.
+    CreditsBurningCrusade,
+    /// Wrath of the Lich King credits.
+    CreditsWrath,
 }
 
 impl LocalizedDocument {
@@ -42,6 +46,8 @@ impl LocalizedDocument {
             Self::Survey => "survey.html",
             Self::ConnectionHelp => "connection-help.html",
             Self::Credits => "credits.html",
+            Self::CreditsBurningCrusade => "credits_BC.html",
+            Self::CreditsWrath => "credits_LK.html",
         }
     }
 }
@@ -66,6 +72,10 @@ impl FromStr for LocalizedDocument {
             Ok(Self::ConnectionHelp)
         } else if value.eq_ignore_ascii_case("credits.html") {
             Ok(Self::Credits)
+        } else if value.eq_ignore_ascii_case("credits_BC.html") {
+            Ok(Self::CreditsBurningCrusade)
+        } else if value.eq_ignore_ascii_case("credits_LK.html") {
+            Ok(Self::CreditsWrath)
         } else {
             Err(AssetError::UnsupportedLocalizedDocument {
                 name: value.to_owned(),

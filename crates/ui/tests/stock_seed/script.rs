@@ -105,6 +105,7 @@ assert(Owner:IsMovable() == nil and Owner:IsResizable() == nil and Owner:IsUserP
 local utf8Text = string.char(104, 195, 169)
 OwnerEdit:SetText(utf8Text)
 assert(OwnerEdit:GetText() == utf8Text)
+assert(OwnerEdit:GetJustifyH() == "LEFT")
 assert(OwnerEdit:GetCursorPosition() == 3 and OwnerEdit:GetUTF8CursorPosition() == 2)
 assert(OwnerEdit:GetNumLetters() == 2 and EDIT_CHANGES == 1 and not EDIT_USER_INPUT)
 OwnerEdit:SetMaxLetters(3)

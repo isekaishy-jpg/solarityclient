@@ -2662,7 +2662,14 @@ fn create_dynamic_frame(
             "edit_highlight_color",
             lua.create_sequence_from([96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0])?,
         )?;
-        record.raw_set("justify_h", "CENTER")?;
+        record.raw_set(
+            "justify_h",
+            if requested_kind == "EditBox" {
+                "LEFT"
+            } else {
+                "CENTER"
+            },
+        )?;
         record.raw_set("justify_v", "MIDDLE")?;
         record.raw_set(
             "texture_coords",
@@ -7169,6 +7176,11 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
                 return InitialFont::default();
             }
             let mut initial = InitialFont::default();
+            if node.kind() == UiObjectKind::EditBox {
+                // FontString centers by default; the sibling EditBox native
+                // begins left-justified unless XML or a Font overrides it.
+                initial.justify_h = "LEFT".to_owned();
+            }
             for layer in node.layers() {
                 apply_initial_font_element(&mut initial, fonts, layer.element());
                 if node.kind() == UiObjectKind::EditBox {

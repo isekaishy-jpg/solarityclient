@@ -580,7 +580,11 @@ fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialF
         };
     }
     let mut initial = InitialFont {
-        justify_h: "CENTER".to_owned(),
+        justify_h: if node.kind() == UiObjectKind::EditBox {
+            "LEFT".to_owned()
+        } else {
+            "CENTER".to_owned()
+        },
         justify_v: "MIDDLE".to_owned(),
         word_wrap: true,
         ..InitialFont::default()

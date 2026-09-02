@@ -13,6 +13,7 @@ use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
 use super::{portrait_unit_key, texture_file_key, texture_solid_color_key, type_key};
 
+mod credits;
 mod legal_agreement;
 mod scan_dll;
 
@@ -1404,6 +1405,7 @@ fn register_glue_globals(
     )?;
     register_glue_media_globals(lua, globals, environment)?;
     register_glue_network_globals(lua, globals, environment)?;
+    credits::register_globals(lua, globals, environment.assets())?;
     legal_agreement::register_globals(lua, globals, environment.cvars())?;
     scan_dll::register_globals(lua, globals)?;
     // A fresh build 12340 process has no renderer or sound options waiting
