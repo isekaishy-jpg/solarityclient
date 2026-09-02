@@ -5,9 +5,9 @@ use std::error::Error;
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
 use solarity_ui::{
     GlueError, GlueInitialScreen, GlueManager, UiEventArgument, UiEventError, UiEventPayload,
-    UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind, UiObjectRole,
-    UiPointerButton, UiProcessAction, UiRealmCategory, UiRealmDirectory, UiRealmFlags, UiRealmInfo,
-    UiRealmVersion,
+    UiGlueMediaAction, UiGlueNetworkAction, UiGlueNetworkStatus, UiLayoutError, UiObjectKind,
+    UiObjectRole, UiPointerButton, UiProcessAction, UiRealmCategory, UiRealmDirectory,
+    UiRealmFlags, UiRealmInfo, UiRealmVersion,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -33,8 +33,8 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
       LIFECYCLE = LIFECYCLE .. "FRAMES_LOADED;"
     elseif event == "SET_GLUE_SCREEN" then
       SetCurrentScreen(arg1)
-      PlayGlueMusic("Sound\\Music\\GlueScreenMusic\\WotLK_main_title.mp3")
-      PlayGlueAmbience("Sound\\Ambience\\GlueScreen\\Dwarf.mp3", 4.0)
+      PlayGlueMusic("GS_LichKing")
+      PlayGlueAmbience("GlueScreenIntro", 4.0)
       LIFECYCLE = LIFECYCLE .. "SET_GLUE_SCREEN:" .. arg1 .. ";"
     end
   </OnEvent>
@@ -53,14 +53,85 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
     let current_screen = globals.get::<mlua::Function>("GetCurrentScreen")?;
     assert_eq!(current_screen.call::<String>(())?, "login");
     let media = manager.media_intent();
+    assert_eq!(media.music(), Some("GS_LichKing"));
+    assert_eq!(media.ambience(), Some("GlueScreenIntro"));
     assert_eq!(
-        media.music(),
-        Some("Sound\\Music\\GlueScreenMusic\\WotLK_main_title.mp3")
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlayGlueMusic("GS_LichKing".to_owned()))
     );
     assert_eq!(
-        media.ambience(),
-        Some("Sound\\Ambience\\GlueScreen\\Dwarf.mp3")
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlayGlueAmbience {
+            name: "GlueScreenIntro".to_owned(),
+            fade_seconds: 4.0,
+        })
     );
+    assert_eq!(manager.take_media_action(), None);
+    Ok(())
+}
+
+/// Stock audio globals preserve invocation order and the two boolean-returning
+/// direct-file calls while transferring playback to the process media owner.
+#[test]
+fn glue_manager_queues_typed_stock_audio_actions() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Audio.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Audio.xml",
+            bytes: br#"<Ui><Frame name="GlueParent"/></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let globals = manager.bundle().lua().globals();
+
+    globals
+        .get::<mlua::Function>("PlaySound")?
+        .call::<()>("gsTitleOptions")?;
+    assert!(
+        globals
+            .get::<mlua::Function>("PlaySoundFile")?
+            .call::<bool>("Sound\\Interface\\Click.wav")?
+    );
+    assert!(
+        globals
+            .get::<mlua::Function>("PlayMusic")?
+            .call::<bool>("Sound\\Music\\Credits.mp3")?
+    );
+    globals.get::<mlua::Function>("StopMusic")?.call::<()>(())?;
+    globals
+        .get::<mlua::Function>("StopAllSFX")?
+        .call::<()>(1.0)?;
+
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlaySound("gsTitleOptions".to_owned()))
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlaySoundFile(
+            "Sound\\Interface\\Click.wav".to_owned()
+        ))
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlayMusic(
+            "Sound\\Music\\Credits.mp3".to_owned()
+        ))
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::StopMusic)
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::StopAllSfx { fade_seconds: 1.0 })
+    );
+    assert_eq!(manager.take_media_action(), None);
     Ok(())
 }
 

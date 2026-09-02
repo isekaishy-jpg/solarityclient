@@ -22,7 +22,7 @@ pub use network_intent::{
 };
 pub use process_intent::UiProcessAction;
 pub use simple_script::{
-    UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,
+    UiGlueMediaAction, UiGlueMediaIntent, UiGlueMovieRequest, UiScriptEnvironment, UiScriptRuntime,
     UiScriptRuntimePlan,
 };
 pub use status::UiScriptError;

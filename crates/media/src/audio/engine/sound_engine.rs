@@ -3,7 +3,7 @@
 use std::num::NonZeroU16;
 use std::time::Duration;
 
-use solarity_asset::AssetStore;
+use solarity_asset::{AssetPath, AssetStore};
 
 use crate::audio::backend::{
     SoundBackend, SoundBackendError, SoundOutput, SoundOutputInfo, SoundSpatialPosition,
@@ -31,7 +31,7 @@ const STOCK_VIRTUAL_VOICE_CAPACITY: u16 = 512;
 struct ActiveVoice {
     handle: SoundVoiceHandle,
     sound: crate::audio::codec::DecodedSoundHandle,
-    entry_id: u32,
+    entry_id: Option<u32>,
     channel: SoundChannel,
     category: SoundCategory,
     source_gain: f32,
@@ -188,6 +188,27 @@ impl<'output> SoundEngine<'output> {
         self.catalog.resolve(advanced_entry_id)
     }
 
+    /// Resolves the numeric-or-name namespace accepted by stock `PlaySound`.
+    #[must_use]
+    pub fn script_sound_entry_id(&self, name: &str) -> Option<u32> {
+        name.parse::<u32>()
+            .ok()
+            .and_then(|id| self.catalog.sound_entry(id).map(|entry| entry.id()))
+            .or_else(|| {
+                self.catalog
+                    .script_sound_entry(name)
+                    .map(|entry| entry.id())
+            })
+    }
+
+    /// Resolves named Glue music and ambience in `SoundEntries.dbc`.
+    #[must_use]
+    pub fn internal_sound_entry_id(&self, name: &str) -> Option<u32> {
+        self.catalog
+            .sound_entry_by_internal_name(name)
+            .map(|entry| entry.id())
+    }
+
     /// Selects and starts one sound through its stock shared variation state.
     ///
     /// Disabled global/category policy returns [`SoundPlayback::Suppressed`]
@@ -241,7 +262,7 @@ impl<'output> SoundEngine<'output> {
             && self
                 .active_voices
                 .iter()
-                .any(|voice| voice.entry_id == entry.id())
+                .any(|voice| voice.entry_id == Some(entry.id()))
         {
             return Err(SoundEngineError::ExclusiveEntryActive {
                 entry_id: entry.id(),
@@ -304,13 +325,91 @@ impl<'output> SoundEngine<'output> {
         self.active_voices.push(ActiveVoice {
             handle: voice,
             sound,
-            entry_id: entry.id(),
+            entry_id: Some(entry.id()),
             channel,
             category,
             source_gain,
             runtime_gain: 1.0,
             duck_gain: 1.0,
             duck_source: request.advanced_source(),
+        });
+        Ok(SoundPlayback::Started(voice))
+    }
+
+    /// Starts one exact archive path without inventing a `SoundEntries` row.
+    ///
+    /// Build 12340 routes `PlaySoundFile` through channel four and `PlayMusic`
+    /// through channel five. The caller selects that exact channel and loop
+    /// override; this boundary applies only the channel's stock gain policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] for exact asset/decode failure, channel
+    /// exhaustion, or backend admission failure.
+    pub fn play_file(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+        channel: SoundChannel,
+        loop_mode: super::SoundLoopMode,
+    ) -> Result<SoundPlayback, SoundEngineError> {
+        self.collect_stopped_unmanaged_voices()?;
+        let category = channel.category();
+        let Some(category_gain) = self.settings.category_gain(category) else {
+            return Ok(SoundPlayback::Suppressed);
+        };
+        if let Some(maximum) = channel.maximum_active_voices()
+            && self
+                .active_voices
+                .iter()
+                .filter(|voice| voice.channel == channel)
+                .count()
+                >= maximum
+        {
+            return Err(SoundEngineError::ChannelCapacity {
+                channel: channel.value(),
+                maximum,
+            });
+        }
+        let encoded = self.cache.load(store, path)?;
+        let decode_mode = self
+            .settings
+            .residency()
+            .decode_mode(encoded.path(), encoded.bytes().len());
+        let sound = self.decoder.load(&encoded, decode_mode)?;
+        let playback = match self.backend.play(
+            &self.decoder,
+            sound,
+            category_gain,
+            loop_mode.is_looping(0),
+            crate::audio::backend::SoundVoicePriority::DEFAULT,
+        ) {
+            Ok(playback) => playback,
+            Err(error) => {
+                self.decoder.release(sound);
+                return Err(error.into());
+            }
+        };
+        if let Some(stolen) = playback.stolen()
+            && let Some(index) = self
+                .active_voices
+                .iter()
+                .position(|voice| voice.handle == stolen)
+        {
+            let stolen_voice = self.active_voices.remove(index);
+            self.decoder.release(stolen_voice.sound);
+        }
+        let voice = playback.voice();
+        self.active_voices.push(ActiveVoice {
+            handle: voice,
+            sound,
+            entry_id: None,
+            channel,
+            category,
+            source_gain: 1.0,
+            runtime_gain: 1.0,
+            duck_gain: 1.0,
+            duck_source: None,
         });
         Ok(SoundPlayback::Started(voice))
     }
@@ -521,6 +620,28 @@ impl<'output> SoundEngine<'output> {
         let voice = self.active_voices.remove(index);
         self.decoder.release(voice.sound);
         Ok(())
+    }
+
+    /// Stops and retires every voice in one stock volume category.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] when the backend cannot stop an owned
+    /// voice.
+    pub fn stop_category(&mut self, category: SoundCategory) -> Result<usize, SoundEngineError> {
+        let mut stopped = 0;
+        let mut index = 0;
+        while index < self.active_voices.len() {
+            if self.active_voices[index].category != category {
+                index += 1;
+                continue;
+            }
+            self.backend.stop(self.active_voices[index].handle)?;
+            let voice = self.active_voices.remove(index);
+            self.decoder.release(voice.sound);
+            stopped += 1;
+        }
+        Ok(stopped)
     }
 
     /// Removes naturally stopped voices without changing playing or paused ones.

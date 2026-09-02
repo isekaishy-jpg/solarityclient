@@ -2,7 +2,7 @@
 
 use solarity_asset::{
     AdvancedSoundEntry, AdvancedSoundEntryCatalog, AssetError, AssetStore, SoundEntry,
-    SoundEntryCatalog,
+    SoundEntryCatalog, UiSoundLookupCatalog,
 };
 use thiserror::Error;
 
@@ -10,6 +10,7 @@ use thiserror::Error;
 pub struct SpatialSoundCatalog {
     advanced_entries: AdvancedSoundEntryCatalog,
     sound_entries: SoundEntryCatalog,
+    ui_sound_lookups: UiSoundLookupCatalog,
 }
 
 impl SpatialSoundCatalog {
@@ -23,6 +24,7 @@ impl SpatialSoundCatalog {
         Ok(Self {
             advanced_entries: AdvancedSoundEntryCatalog::load(store)?,
             sound_entries: SoundEntryCatalog::load(store)?,
+            ui_sound_lookups: UiSoundLookupCatalog::load(store)?,
         })
     }
 
@@ -60,6 +62,28 @@ impl SpatialSoundCatalog {
     /// Finds one base sound for ordinary non-advanced playback paths.
     pub(in crate::audio) fn sound_entry(&self, sound_entry_id: u32) -> Option<&SoundEntry> {
         self.sound_entries.entry(sound_entry_id)
+    }
+
+    /// Resolves the string arm of build 12340's `PlaySound` function.
+    ///
+    /// GlueXML prefixes historical UI lookup constants with `gs`, while the
+    /// related `UISoundLookups.dbc` names omit that prefix. The executable's
+    /// name map then permits an internal `SoundEntries` name as the second
+    /// exact namespace.
+    pub(in crate::audio) fn script_sound_entry(&self, name: &str) -> Option<&SoundEntry> {
+        let ui_name = name
+            .get(..2)
+            .filter(|prefix| prefix.eq_ignore_ascii_case("gs"))
+            .map_or(name, |_prefix| &name[2..]);
+        self.ui_sound_lookups
+            .entry_by_name(ui_name)
+            .and_then(|lookup| self.sound_entries.entry(lookup.sound_entry_id()))
+            .or_else(|| self.sound_entries.entry_by_internal_name(name))
+    }
+
+    /// Resolves named Glue music and ambience through `SoundEntries` only.
+    pub(in crate::audio) fn sound_entry_by_internal_name(&self, name: &str) -> Option<&SoundEntry> {
+        self.sound_entries.entry_by_internal_name(name)
     }
 }
 

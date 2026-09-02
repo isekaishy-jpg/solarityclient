@@ -13,12 +13,12 @@ use crate::script::{UiGlueNetworkBridge, UiProcessBridge};
 use crate::{
     FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
     UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan, UiFrameStatePlan,
-    UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus, UiGlyphAtlasPlan,
-    UiKeyboardModifiers, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectKind, UiObjectTree,
-    UiPointerButton, UiPointerDispatch, UiPresentationPlan, UiRealmDirectory, UiRegionGeometryPlan,
-    UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan,
-    UiScriptRuntime, UiScriptRuntimePlan, UiScrollFramePlan, UiTextureAssetBindings, UiTexturePlan,
-    UiTextureStatePlan,
+    UiGlueMediaAction, UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus,
+    UiGlyphAtlasPlan, UiKeyboardModifiers, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectKind, UiObjectTree, UiPointerButton, UiPointerDispatch, UiPresentationPlan,
+    UiRealmDirectory, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan, UiRuntimeTemplatePlan,
+    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiScrollFramePlan,
+    UiTextureAssetBindings, UiTexturePlan, UiTextureStatePlan,
 };
 
 /// Complete built-in GlueXML state retained across the pre-world lifetime.
@@ -451,6 +451,11 @@ impl GlueManager {
     #[must_use]
     pub fn media_intent(&self) -> UiGlueMediaIntent {
         self.media_intent.borrow().clone()
+    }
+
+    /// Takes the oldest GlueXML audio action for the process media owner.
+    pub fn take_media_action(&self) -> Option<UiGlueMediaAction> {
+        self.media_intent.borrow_mut().take_action()
     }
 
     /// Returns the native Glue screen name mirrored by `SetCurrentScreen`.

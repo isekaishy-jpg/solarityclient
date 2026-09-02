@@ -88,10 +88,22 @@ fn build_archive<'a>(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let files = files.collect::<Vec<_>>();
     let marker = format!("fixture:{archive_name}").into_bytes();
     let mut builder = ArchiveBuilder::new()
         .listfile_option(ListfileOption::Generate)
         .add_file_data(marker, "Solarity\\FixtureMarker.txt");
+    if archive_name == "common.MPQ"
+        && !files.iter().any(|file| {
+            file.path
+                .eq_ignore_ascii_case("DBFilesClient\\UISoundLookups.dbc")
+        })
+    {
+        builder = builder.add_file_data(
+            ui_sound_lookups_fixture(&[]),
+            "DBFilesClient\\UISoundLookups.dbc",
+        );
+    }
     for file in files {
         builder = builder.add_file_data(file.bytes.to_vec(), file.path);
     }
@@ -194,6 +206,16 @@ pub(crate) fn advanced_sound_entries_fixture(id: u32, sound_entry_id: u32) -> Ve
 /// Creates the exact empty build-12340 advanced table used by base-only tests.
 pub(crate) fn empty_advanced_sound_entries_fixture() -> Vec<u8> {
     create_wdbc(0, 24, &[], &[0])
+}
+
+/// Creates exact build-12340 `UISoundLookups.dbc` rows.
+pub(crate) fn ui_sound_lookups_fixture(rows: &[(u32, u32, &str)]) -> Vec<u8> {
+    let mut strings = vec![0];
+    let mut fields = Vec::with_capacity(rows.len() * 3);
+    for (id, sound_entry_id, name) in rows {
+        fields.extend([*id, *sound_entry_id, append_string(&mut strings, name)]);
+    }
+    create_wdbc(rows.len() as u32, 3, &fields, &strings)
 }
 
 /// Serializes one fixed-field WDBC table.

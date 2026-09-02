@@ -6,7 +6,7 @@ mod globals;
 mod tooltips;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -352,12 +352,43 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
     }
 }
 
-/// Retained stock audio requests awaiting the media backend.
+/// One ordered stock audio operation emitted by GlueXML.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UiGlueMediaAction {
+    /// `PlaySound` with a numeric identifier or script lookup name.
+    PlaySound(String),
+    /// `PlaySoundFile` with one exact archive path.
+    PlaySoundFile(String),
+    /// `PlayMusic` with one exact archive path.
+    PlayMusic(String),
+    /// `PlayGlueMusic` with one internal `SoundEntries` name.
+    PlayGlueMusic(String),
+    /// `PlayCreditsMusic` with one internal `SoundEntries` name.
+    PlayCreditsMusic(String),
+    /// `PlayGlueAmbience` with its authored fade-in duration.
+    PlayGlueAmbience {
+        /// Internal `SoundEntries` name.
+        name: String,
+        /// Requested fade-in duration in seconds.
+        fade_seconds: f64,
+    },
+    /// `StopMusic` or `StopGlueMusic`.
+    StopMusic,
+    /// `StopGlueAmbience`.
+    StopGlueAmbience,
+    /// `StopAllSFX` with its authored fade-out duration.
+    StopAllSfx {
+        /// Requested fade-out duration in seconds.
+        fade_seconds: f64,
+    },
+}
+
+/// Retained stock audio state and ordered requests awaiting the media backend.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiGlueMediaIntent {
     pub(crate) music: Option<String>,
     pub(crate) ambience: Option<String>,
-    pub(crate) sounds: Vec<String>,
+    actions: VecDeque<UiGlueMediaAction>,
     movie: Option<UiGlueMovieRequest>,
     movie_stop_completion: Option<usize>,
     next_movie_generation: u64,
@@ -418,16 +449,15 @@ impl UiGlueMediaIntent {
         self.ambience.as_deref()
     }
 
-    /// Returns queued UI sound kits and explicit sound-file requests in order.
-    #[must_use]
-    pub fn sounds(&self) -> &[String] {
-        &self.sounds
-    }
-
     /// Returns the currently active locale-loose Glue movie request.
     #[must_use]
     pub const fn movie(&self) -> Option<&UiGlueMovieRequest> {
         self.movie.as_ref()
+    }
+
+    /// Takes the oldest unconsumed audio operation.
+    pub(crate) fn take_action(&mut self) -> Option<UiGlueMediaAction> {
+        self.actions.pop_front()
     }
 
     pub(crate) fn retire_movie(&mut self, object_index: usize) {

@@ -196,6 +196,14 @@ impl SoundEntryCatalog {
             .map(|index| &self.entries[index])
     }
 
+    /// Finds the case-insensitive internal name used by stock sound-kit calls.
+    #[must_use]
+    pub fn entry_by_internal_name(&self, name: &str) -> Option<&SoundEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.internal_name.eq_ignore_ascii_case(name))
+    }
+
     /// Returns every definition in ascending identifier order.
     #[must_use]
     pub fn entries(&self) -> &[SoundEntry] {

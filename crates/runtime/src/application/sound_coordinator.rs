@@ -3,16 +3,16 @@
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
-use solarity_asset::{AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
+use solarity_asset::{AssetPath, AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
-    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundChannel,
-    SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode,
-    SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundResidencyPolicy,
-    SoundSoftwareChannelCount, SoundVariationMode,
+    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategory, SoundCategorySettings,
+    SoundChannel, SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundGain,
+    SoundLoopMode, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundPlayback,
+    SoundResidencyPolicy, SoundSoftwareChannelCount, SoundVariationMode, SoundVoiceHandle,
 };
 use solarity_rendering::WorldCameraFrame;
-use solarity_ui::GlueManager;
+use solarity_ui::{GlueManager, UiGlueMediaAction};
 use thiserror::Error;
 
 use crate::random::BlizzardRand;
@@ -81,6 +81,8 @@ pub(crate) struct RuntimeSoundCoordinator {
     assets: AssetStoreHandle,
     engine: OwnedSoundEngine,
     advanced: AdvancedSoundService,
+    glue_music: Option<RuntimeGlueVoice>,
+    glue_ambience: Option<RuntimeGlueVoice>,
     resident_tile: Option<TerrainTileIndex>,
     staged_emitters: Option<Vec<StagedTerrainEmitter>>,
     last_update: Instant,
@@ -105,6 +107,8 @@ impl RuntimeSoundCoordinator {
             assets,
             engine,
             advanced: AdvancedSoundService::new(),
+            glue_music: None,
+            glue_ambience: None,
             resident_tile: None,
             staged_emitters: None,
             last_update: Instant::now(),
@@ -158,6 +162,165 @@ impl RuntimeSoundCoordinator {
     /// Stops and releases movie audio when playback ends or is replaced.
     pub(crate) fn stop_cinematic_audio(&mut self) -> Result<(), RuntimeSoundError> {
         self.engine.stop_cinematic_audio()?;
+        Ok(())
+    }
+
+    /// Applies live Glue sound policy and every ordered Lua audio operation.
+    ///
+    /// Build 12340 functions `0x009858B0`, `0x00985950`, `0x009859B0`,
+    /// `0x009861C0`, and `0x00985FB0` separate UI kits, direct paths, music,
+    /// and ambience into their exact channel categories. Script playback
+    /// failures do not unwind Lua or terminate the client, so failed individual
+    /// actions are diagnosed and the remaining ordered actions still run.
+    pub(crate) fn synchronize_glue_media(
+        &mut self,
+        glue: &GlueManager,
+        random: &mut BlizzardRand,
+    ) -> Result<(), RuntimeSoundError> {
+        self.engine
+            .set_settings(SoundPolicy::read(glue)?.settings)?;
+        while let Some(action) = glue.take_media_action() {
+            if let Err(error) = self.apply_glue_media_action(action, random) {
+                tracing::warn!(%error, "Glue audio action was not played");
+            }
+        }
+        self.engine.collect_unused_encoded();
+        Ok(())
+    }
+
+    /// Applies one typed GlueXML audio operation without reordering neighbors.
+    fn apply_glue_media_action(
+        &mut self,
+        action: UiGlueMediaAction,
+        random: &mut BlizzardRand,
+    ) -> Result<(), RuntimeSoundError> {
+        match action {
+            UiGlueMediaAction::PlaySound(name) => {
+                let Some(entry_id) = self.engine.script_sound_entry_id(&name) else {
+                    tracing::debug!(sound = %name, "Glue UI sound name is absent from stock catalogs");
+                    return Ok(());
+                };
+                let request = SoundPlayRequest::new(
+                    entry_id,
+                    SoundChannel::SFX,
+                    SoundVariationMode::Sequential,
+                    SoundLoopMode::Entry,
+                    SoundConcurrencyMode::Entry,
+                );
+                self.engine
+                    .play(&mut self.assets.borrow_mut(), request, &mut || {
+                        random.next_u32()
+                    })?;
+            }
+            UiGlueMediaAction::PlaySoundFile(path) => {
+                let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
+                self.engine.play_file(
+                    &mut self.assets.borrow_mut(),
+                    &path,
+                    SoundChannel::SCRIPT_SOUND,
+                    SoundLoopMode::Once,
+                )?;
+            }
+            UiGlueMediaAction::PlayMusic(path) => {
+                let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
+                let identity = RuntimeGlueVoiceIdentity::File(path.clone());
+                if self
+                    .glue_music
+                    .as_ref()
+                    .is_some_and(|voice| voice.identity == identity)
+                {
+                    return Ok(());
+                }
+                self.stop_glue_music()?;
+                let playback = self.engine.play_file(
+                    &mut self.assets.borrow_mut(),
+                    &path,
+                    SoundChannel::SCRIPT_MUSIC,
+                    SoundLoopMode::Loop,
+                )?;
+                self.glue_music = RuntimeGlueVoice::started(identity, playback);
+            }
+            UiGlueMediaAction::PlayGlueMusic(name) | UiGlueMediaAction::PlayCreditsMusic(name) => {
+                let Some(entry_id) = self.engine.internal_sound_entry_id(&name) else {
+                    tracing::debug!(sound = %name, "Glue music name is absent from SoundEntries.dbc");
+                    return Ok(());
+                };
+                let identity = RuntimeGlueVoiceIdentity::SoundEntry(entry_id);
+                if self
+                    .glue_music
+                    .as_ref()
+                    .is_some_and(|voice| voice.identity == identity)
+                {
+                    return Ok(());
+                }
+                self.stop_glue_music()?;
+                let request = SoundPlayRequest::new(
+                    entry_id,
+                    SoundChannel::MUSIC,
+                    SoundVariationMode::Sequential,
+                    SoundLoopMode::Loop,
+                    SoundConcurrencyMode::Concurrent,
+                );
+                let playback =
+                    self.engine
+                        .play(&mut self.assets.borrow_mut(), request, &mut || {
+                            random.next_u32()
+                        })?;
+                self.glue_music = RuntimeGlueVoice::started(identity, playback);
+            }
+            UiGlueMediaAction::PlayGlueAmbience {
+                name,
+                fade_seconds: _fade_seconds,
+            } => {
+                let Some(entry_id) = self.engine.internal_sound_entry_id(&name) else {
+                    tracing::debug!(sound = %name, "Glue ambience name is absent from SoundEntries.dbc");
+                    return Ok(());
+                };
+                let identity = RuntimeGlueVoiceIdentity::SoundEntry(entry_id);
+                if self
+                    .glue_ambience
+                    .as_ref()
+                    .is_some_and(|voice| voice.identity == identity)
+                {
+                    return Ok(());
+                }
+                self.stop_glue_ambience()?;
+                let request = SoundPlayRequest::new(
+                    entry_id,
+                    SoundChannel::AMBIENCE,
+                    SoundVariationMode::Sequential,
+                    SoundLoopMode::Loop,
+                    SoundConcurrencyMode::Concurrent,
+                );
+                let playback =
+                    self.engine
+                        .play(&mut self.assets.borrow_mut(), request, &mut || {
+                            random.next_u32()
+                        })?;
+                self.glue_ambience = RuntimeGlueVoice::started(identity, playback);
+            }
+            UiGlueMediaAction::StopMusic => self.stop_glue_music()?,
+            UiGlueMediaAction::StopGlueAmbience => self.stop_glue_ambience()?,
+            UiGlueMediaAction::StopAllSfx {
+                fade_seconds: _fade_seconds,
+            } => {
+                self.engine.stop_category(SoundCategory::Sfx)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Stops the single process-owned Glue music generation.
+    fn stop_glue_music(&mut self) -> Result<(), RuntimeSoundError> {
+        self.engine.stop_category(SoundCategory::Music)?;
+        self.glue_music = None;
+        Ok(())
+    }
+
+    /// Stops the single process-owned Glue ambience generation.
+    fn stop_glue_ambience(&mut self) -> Result<(), RuntimeSoundError> {
+        self.engine.stop_category(SoundCategory::Ambience)?;
+        self.glue_ambience = None;
         Ok(())
     }
 
@@ -283,6 +446,34 @@ struct StagedTerrainEmitter {
     advanced_sound_entry_id: u32,
     position: Vec3,
     cone_orientation: Vec3,
+}
+
+/// Stable identity and backend generation for one continuous Glue voice.
+struct RuntimeGlueVoice {
+    identity: RuntimeGlueVoiceIdentity,
+    _handle: SoundVoiceHandle,
+}
+
+impl RuntimeGlueVoice {
+    /// Retains only playback generations actually admitted by live CVar policy.
+    fn started(identity: RuntimeGlueVoiceIdentity, playback: SoundPlayback) -> Option<Self> {
+        match playback {
+            SoundPlayback::Started(handle) => Some(Self {
+                identity,
+                _handle: handle,
+            }),
+            SoundPlayback::Suppressed => None,
+        }
+    }
+}
+
+/// Exact source namespace used for same-request suppression.
+#[derive(Eq, PartialEq)]
+enum RuntimeGlueVoiceIdentity {
+    /// DBC-backed kit identity.
+    SoundEntry(u32),
+    /// Direct archive resource identity.
+    File(AssetPath),
 }
 
 impl From<solarity_asset::TerrainSoundEmitter> for StagedTerrainEmitter {

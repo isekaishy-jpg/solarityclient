@@ -5,8 +5,8 @@ use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 use solarity_asset::{CharacterClassCatalog, Locale};
 
 use crate::{
-    UiCharacterInfo, UiGlueNetworkAction, UiLoginRequest, UiManifestKind, UiProcessAction,
-    UiRealmInfo, UiRealmSort,
+    UiCharacterInfo, UiGlueMediaAction, UiGlueNetworkAction, UiLoginRequest, UiManifestKind,
+    UiProcessAction, UiRealmInfo, UiRealmSort,
 };
 
 use super::UiScriptEnvironment;
@@ -2384,23 +2384,58 @@ fn register_glue_media_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
-    for name in ["PlayMusic", "PlayGlueMusic", "PlayCreditsMusic"] {
-        let state = environment.media_intent();
-        globals.raw_set(
-            name,
-            lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
-                let resource = required_string(lua, value, "music resource")?;
-                state.borrow_mut().music = Some(resource);
-                Ok(())
-            })?,
-        )?;
-    }
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlayMusic",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let resource = required_string(lua, value, "music resource")?;
+            let mut intent = state.borrow_mut();
+            intent.music = Some(resource.clone());
+            intent
+                .actions
+                .push_back(UiGlueMediaAction::PlayMusic(resource));
+            Ok(true)
+        })?,
+    )?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlayGlueMusic",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let resource = required_string(lua, value, "music resource")?;
+            let mut intent = state.borrow_mut();
+            intent.music = Some(resource.clone());
+            intent
+                .actions
+                .push_back(UiGlueMediaAction::PlayGlueMusic(resource));
+            Ok(())
+        })?,
+    )?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlayCreditsMusic",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let resource = required_string(lua, value, "music resource")?;
+            let mut intent = state.borrow_mut();
+            intent.music = Some(resource.clone());
+            intent
+                .actions
+                .push_back(UiGlueMediaAction::PlayCreditsMusic(resource));
+            Ok(())
+        })?,
+    )?;
     let state = environment.media_intent();
     globals.raw_set(
         "PlayGlueAmbience",
-        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+        lua.create_function(move |lua, (value, fade): (Value, Option<f64>)| {
             let resource = required_string(lua, value, "ambience resource")?;
-            state.borrow_mut().ambience = Some(resource);
+            let mut intent = state.borrow_mut();
+            intent.ambience = Some(resource.clone());
+            intent
+                .actions
+                .push_back(UiGlueMediaAction::PlayGlueAmbience {
+                    name: resource,
+                    fade_seconds: fade.unwrap_or(-1.0),
+                });
             Ok(())
         })?,
     )?;
@@ -2409,7 +2444,9 @@ fn register_glue_media_globals(
         globals.raw_set(
             name,
             lua.create_function(move |_, ()| {
-                state.borrow_mut().music = None;
+                let mut intent = state.borrow_mut();
+                intent.music = None;
+                intent.actions.push_back(UiGlueMediaAction::StopMusic);
                 Ok(())
             })?,
         )?;
@@ -2418,11 +2455,27 @@ fn register_glue_media_globals(
     globals.raw_set(
         "StopGlueAmbience",
         lua.create_function(move |_, ()| {
-            state.borrow_mut().ambience = None;
+            let mut intent = state.borrow_mut();
+            intent.ambience = None;
+            intent
+                .actions
+                .push_back(UiGlueMediaAction::StopGlueAmbience);
             Ok(())
         })?,
     )?;
-    globals.raw_set("StopAllSFX", lua.create_function(|_, ()| Ok(()))?)?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "StopAllSFX",
+        lua.create_function(move |_, fade: Option<f64>| {
+            state
+                .borrow_mut()
+                .actions
+                .push_back(UiGlueMediaAction::StopAllSfx {
+                    fade_seconds: fade.unwrap_or(0.0),
+                });
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 
@@ -2431,17 +2484,30 @@ fn register_sound_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
-    for name in ["PlaySound", "PlaySoundFile"] {
-        let state = environment.media_intent();
-        globals.raw_set(
-            name,
-            lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
-                let sound = required_string(lua, value, "sound resource")?;
-                state.borrow_mut().sounds.push(sound);
-                Ok(())
-            })?,
-        )?;
-    }
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlaySound",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let sound = required_string(lua, value, "sound resource")?;
+            state
+                .borrow_mut()
+                .actions
+                .push_back(UiGlueMediaAction::PlaySound(sound));
+            Ok(())
+        })?,
+    )?;
+    let state = environment.media_intent();
+    globals.raw_set(
+        "PlaySoundFile",
+        lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
+            let sound = required_string(lua, value, "sound resource")?;
+            state
+                .borrow_mut()
+                .actions
+                .push_back(UiGlueMediaAction::PlaySoundFile(sound));
+            Ok(true)
+        })?,
+    )?;
     Ok(())
 }
 

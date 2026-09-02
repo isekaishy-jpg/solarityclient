@@ -17,10 +17,14 @@ use crate::support::ClientFixture;
 #[test]
 fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn Error>> {
     let game_object_displays = empty_wdbc(19);
-    let fixture = ClientFixture::with_common_files(&[(
-        "DBFilesClient\\GameObjectDisplayInfo.dbc",
-        &game_object_displays,
-    )])?;
+    let ui_sound_lookups = empty_wdbc(3);
+    let fixture = ClientFixture::with_common_files(&[
+        (
+            "DBFilesClient\\GameObjectDisplayInfo.dbc",
+            &game_object_displays,
+        ),
+        ("DBFilesClient\\UISoundLookups.dbc", &ui_sound_lookups),
+    ])?;
     let runtime_configuration = configuration(&fixture, 0)?;
 
     let mut application = ClientApplication::start(runtime_configuration)?;

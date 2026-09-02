@@ -609,6 +609,10 @@ impl ClientServices {
             std::thread::sleep(std::time::Duration::from_millis(16));
             return Ok(());
         }
+        if self.gameplay.world().is_none() {
+            self.sound
+                .synchronize_glue_media(&self.glue, &mut self.blizzard_rand.borrow_mut())?;
+        }
         if self
             .loading_screen
             .as_ref()

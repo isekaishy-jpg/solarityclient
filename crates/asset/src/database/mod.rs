@@ -30,6 +30,7 @@ mod realm;
 mod sound;
 mod sound_advanced;
 mod sound_environment;
+mod ui_sound;
 mod w_data_store;
 mod wow_client_db;
 
@@ -75,4 +76,5 @@ pub use sound_advanced::{AdvancedSoundEntry, AdvancedSoundEntryCatalog};
 pub use sound_environment::{
     LiquidTypeCatalog, LiquidTypeDefinition, SoundEmitterCatalog, SoundEmitterDefinition,
 };
+pub use ui_sound::{UiSoundLookup, UiSoundLookupCatalog};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

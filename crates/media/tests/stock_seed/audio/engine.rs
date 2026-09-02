@@ -14,7 +14,7 @@ use solarity_media::{
 use crate::support::{
     Fixture, FixtureFile, advanced_sound_entries_fixture, empty_advanced_sound_entries_fixture,
     pcm_wav, sdl_test_lock, sound_entries_fixture, sound_entries_fixture_with_advanced,
-    sound_entries_fixture_with_flags,
+    sound_entries_fixture_with_flags, ui_sound_lookups_fixture,
 };
 
 /// Master and category CVar gains retain their evidenced zero-to-one domain.
@@ -93,6 +93,115 @@ fn stock_software_channel_count_uses_executable_clamp() {
     assert_eq!(SoundSoftwareChannelCount::new(128).value(), 128);
     assert_eq!(SoundSoftwareChannelCount::new(129).value(), 128);
     assert_eq!(SoundSoftwareChannelCount::new(i32::MAX).value(), 128);
+}
+
+/// Build 12340 resolves `PlaySound` names through UI lookup and internal-name
+/// namespaces while Glue music uses only the internal-name namespace.
+#[test]
+fn engine_resolves_stock_script_and_glue_sound_names() -> Result<(), Box<dyn Error>> {
+    let sound_entries =
+        sound_entries_fixture(77, [("Tone.wav", 1), ("", 0), ("", 0)], "Sound\\Test");
+    let ui_sounds = ui_sound_lookups_fixture(&[(1, 77, "TitleOptions")]);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &empty_advanced_sound_entries_fixture(),
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\UISoundLookups.dbc",
+            bytes: &ui_sounds,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let _sdl_test = sdl_test_lock();
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let engine = SoundEngine::load(
+        &mut store,
+        &output,
+        SoundSoftwareChannelCount::new(1),
+        settings(true)?,
+    )?;
+
+    assert_eq!(engine.script_sound_entry_id("gsTitleOptions"), Some(77));
+    assert_eq!(engine.script_sound_entry_id("titleoptions"), Some(77));
+    assert_eq!(engine.script_sound_entry_id("WeightedSound"), Some(77));
+    assert_eq!(engine.script_sound_entry_id("77"), Some(77));
+    assert_eq!(engine.internal_sound_entry_id("weightedsound"), Some(77));
+    assert_eq!(engine.internal_sound_entry_id("TitleOptions"), None);
+    Ok(())
+}
+
+/// Direct script sound/music paths use their exact stock channels and remain
+/// independently stoppable by category.
+#[test]
+fn engine_plays_direct_script_paths_on_stock_categories() -> Result<(), Box<dyn Error>> {
+    let wav = pcm_wav(8_000, [0, 8_000, 0, -8_000].repeat(2_000).as_slice())?;
+    let sound_entries =
+        sound_entries_fixture(77, [("Tone.wav", 1), ("", 0), ("", 0)], "Sound\\Test");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &sound_entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &empty_advanced_sound_entries_fixture(),
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Sound\\Test\\Direct.wav",
+            bytes: &wav,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let _sdl_test = sdl_test_lock();
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let mut engine = SoundEngine::load(
+        &mut store,
+        &output,
+        SoundSoftwareChannelCount::new(2),
+        settings(true)?,
+    )?;
+    let path = AssetPath::new("Sound\\Test\\Direct.wav")?;
+
+    assert!(matches!(
+        engine.play_file(
+            &mut store,
+            &path,
+            SoundChannel::SCRIPT_SOUND,
+            SoundLoopMode::Once,
+        )?,
+        SoundPlayback::Started(_)
+    ));
+    assert!(matches!(
+        engine.play_file(
+            &mut store,
+            &path,
+            SoundChannel::SCRIPT_MUSIC,
+            SoundLoopMode::Loop,
+        )?,
+        SoundPlayback::Started(_)
+    ));
+    assert_eq!(engine.active_voice_count(), 2);
+    assert_eq!(engine.stop_category(SoundCategory::ScriptSound)?, 1);
+    assert_eq!(engine.stop_category(SoundCategory::Music)?, 1);
+    assert_eq!(engine.active_voice_count(), 0);
+    Ok(())
 }
 
 /// Every streamed play owns one decoder object and retires it with its voice.

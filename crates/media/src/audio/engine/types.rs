@@ -58,6 +58,10 @@ impl SoundChannel {
     pub const MUSIC: Self = Self(1);
     /// World ambience channel.
     pub const AMBIENCE: Self = Self(2);
+    /// Direct `PlaySoundFile` script-sound channel.
+    pub const SCRIPT_SOUND: Self = Self(4);
+    /// Direct `PlayMusic` script-music channel.
+    pub const SCRIPT_MUSIC: Self = Self(5);
 
     /// Validates a caller or `VolumeSliderCategory` channel word.
     ///
