@@ -334,7 +334,13 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
     let quads = manager
         .glyphs()
         .quads_with_scroll(manager.geometry(), manager.scroll_frames());
-    for name in ["CharacterCreateRaceText", "CharacterCreateClassText"] {
+    for (name, scroll_name) in [
+        ("CharacterCreateRaceText", "CharacterCreateRaceScrollFrame"),
+        (
+            "CharacterCreateClassText",
+            "CharacterCreateClassScrollFrame",
+        ),
+    ] {
         let object = object_index(manager, name)?;
         let bounds = manager
             .geometry()
@@ -381,6 +387,23 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
         if overflow {
             return Err(invalid_data(format!(
                 "{name} emitted wrapped glyphs outside its fixed-width field"
+            ))
+            .into());
+        }
+        let viewport = manager
+            .geometry()
+            .region(object_index(manager, scroll_name)?)
+            .ok_or_else(|| invalid_data(format!("{scroll_name} has no geometry")))?
+            .presentation_bounds();
+        let viewport_overflow = glyph_bounds.iter().find(|glyph| {
+            f64::from(glyph[0]) < viewport.left() - 0.01
+                || f64::from(glyph[1]) < viewport.bottom() - 0.01
+                || f64::from(glyph[2]) > viewport.right() + 0.01
+                || f64::from(glyph[3]) > viewport.top() + 0.01
+        });
+        if let Some(glyph) = viewport_overflow {
+            return Err(invalid_data(format!(
+                "{name} emitted glyph {glyph:?} outside {scroll_name}'s stock viewport {viewport:?}"
             ))
             .into());
         }
@@ -458,6 +481,24 @@ fn validate_empty_character_selection(manager: &mut GlueManager) -> Result<(), B
         return Err(invalid_data(
             "create-character button label produced no visible glyphs".to_owned(),
         )
+        .into());
+    }
+    let label_bounds = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.bounds())
+        .fold(None, |extent: Option<[f32; 2]>, bounds| {
+            Some(extent.map_or([bounds[1], bounds[3]], |[bottom, top]| {
+                [bottom.min(bounds[1]), top.max(bounds[3])]
+            }))
+        })
+        .ok_or_else(|| invalid_data("create-character button label has no bounds".to_owned()))?;
+    if label_bounds[1] - label_bounds[0] > create_presentation_bounds.height() as f32 * 0.55 {
+        return Err(invalid_data(format!(
+            "create-character ButtonText wrapped instead of retaining stock's single line: {label_bounds:?}"
+        ))
         .into());
     }
     let mesh_objects = manager.render_plan().mesh().object_indices();

@@ -12,8 +12,8 @@ use solarity_rendering::{
 use crate::script::{UiRuntimeObjectPlan, UiRuntimeText};
 use crate::{
     FontCatalog, FontError, FontRasterization, FontSystem, RasterizedGlyph, UiObjectKind,
-    UiPresentationPacketKey, UiRegionGeometryPlan, UiScrollFramePlan, UiSimpleHtmlAlignment,
-    UiSimpleHtmlPlan,
+    UiObjectRole, UiPresentationPacketKey, UiRegionGeometryPlan, UiScrollFramePlan,
+    UiSimpleHtmlAlignment, UiSimpleHtmlPlan,
 };
 
 const ATLAS_ROW_WIDTH: u32 = 512;
@@ -972,7 +972,14 @@ fn layout_live_quads(
         let [inset_left, inset_right, inset_top, inset_bottom] = text.text_insets;
         let available_width = (owner.width() - inset_left - inset_right).max(0.0);
         let available_height = (owner.height() - inset_top - inset_bottom).max(0.0);
-        if object.kind == UiObjectKind::FontString && text.word_wrap {
+        // CSimpleButton owns a single-line label even though the nested
+        // FontString begins with CSimpleFontString's ordinary wrap default.
+        // Stock clips a long label to the button instead of creating a second
+        // line; CharSelectCreateCharacterButton exposes the distinction.
+        if object.kind == UiObjectKind::FontString
+            && object.role != UiObjectRole::ButtonText
+            && text.word_wrap
+        {
             lines = lines
                 .into_iter()
                 .flat_map(|line| {
@@ -1007,6 +1014,14 @@ fn layout_live_quads(
         };
         let ascender = metrics.ascender_26_6 as f64 / 64.0 / pixels_per_ui_unit;
         let color = text.color.map(|component| component as f32);
+        // CSimpleScrollFrame clips every region beneath its assigned child,
+        // not only SimpleHTML. CharacterCreate's race and class descriptions
+        // are ordinary FontStrings and depend on this viewport inheritance.
+        let clip_object = if object.kind == UiObjectKind::EditBox {
+            Some(object_index)
+        } else {
+            nearest_live_scroll_frame(live, object.parent)
+        };
         for (line_index, line) in lines.iter().enumerate() {
             let line_width = line.iter().try_fold(0.0, |width, presented| {
                 let character = presented.character;
@@ -1061,7 +1076,7 @@ fn layout_live_quads(
                     quads.push(LocalGlyphQuad {
                         packet_key,
                         object_index,
-                        clip_object: (object.kind == UiObjectKind::EditBox).then_some(object_index),
+                        clip_object,
                         bounds: [left as f32, bottom as f32, right as f32, top as f32],
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color: presented.color.unwrap_or(color),
@@ -1072,6 +1087,21 @@ fn layout_live_quads(
         }
     }
     Ok(quads)
+}
+
+/// Finds the nearest live ScrollFrame that owns a region's ancestor chain.
+fn nearest_live_scroll_frame(
+    live: &UiRuntimeObjectPlan,
+    mut parent: Option<usize>,
+) -> Option<usize> {
+    while let Some(index) = parent {
+        let object = live.objects().get(index)?;
+        if object.kind == UiObjectKind::ScrollFrame {
+            return Some(index);
+        }
+        parent = object.parent;
+    }
+    None
 }
 
 fn pack(
