@@ -105,6 +105,13 @@ impl M2SceneUniform {
         self
     }
 
+    /// Replaces only the local-light bank while retaining one camera sample.
+    #[must_use]
+    pub const fn with_local_lights(mut self, local_lights: [M2LocalLightState; 4]) -> Self {
+        self.local_lights = local_lights;
+        self
+    }
+
     /// Serializes without depending on Rust or glam's in-memory representation.
     #[must_use]
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {

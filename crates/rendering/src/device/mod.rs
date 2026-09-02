@@ -54,7 +54,7 @@ pub use status::VulkanError;
 pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 pub use vulkan_glow::WorldFrameGlow;
 pub use vulkan_instance::VulkanBootstrap;
-pub use vulkan_m2_draw::M2PreparedDraw;
+pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 pub use vulkan_m2_frame::M2FrameReport;
 pub use vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 pub use vulkan_m2_particle_pipeline::{M2ParticlePipelineHandle, M2ParticlePipelineInfo};

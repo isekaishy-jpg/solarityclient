@@ -13,7 +13,7 @@ use solarity_rendering::{
     M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
     M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture,
+    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
     M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
     WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_section_distance_key,
@@ -1674,6 +1674,7 @@ impl M2Frame {
 
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
+            let light_bank = placement_light_bank(placement.owner);
             if placement.particles.len() != source.model.animations().particles().len() {
                 return Err(RuntimeTerrainFrameError::M2ParticleSimulationCount {
                     model: source.model.path().clone(),
@@ -1752,15 +1753,19 @@ impl M2Frame {
                     })?;
                 let first_index = u32::try_from(self.particle_indices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
-                self.particle_draws.push(renderer.prepare_m2_particle_draw(
-                    resources.pipeline,
-                    resources.texture_set,
-                    emitter.blending_type(),
-                    emitter.flags(),
-                    first_vertex,
-                    first_index,
-                    &mesh,
-                )?);
+                self.particle_draws.push(
+                    renderer
+                        .prepare_m2_particle_draw(
+                            resources.pipeline,
+                            resources.texture_set,
+                            emitter.blending_type(),
+                            emitter.flags(),
+                            first_vertex,
+                            first_index,
+                            &mesh,
+                        )?
+                        .with_light_bank(light_bank),
+                );
                 self.particle_vertices.extend_from_slice(mesh.vertices());
                 self.particle_indices.extend_from_slice(mesh.indices());
                 tracing::trace!(
@@ -1819,17 +1824,19 @@ impl M2Frame {
                     } else {
                         resources.pipeline
                     };
-                    let prepared = renderer.prepare_m2_draw(
-                        mesh,
-                        pipeline,
-                        resources.texture_set,
-                        &source.plan,
-                        draw_index,
-                        runtime_alpha_fade,
-                        material,
-                        bone_offset,
-                        0,
-                    )?;
+                    let prepared = renderer
+                        .prepare_m2_draw(
+                            mesh,
+                            pipeline,
+                            resources.texture_set,
+                            &source.plan,
+                            draw_index,
+                            runtime_alpha_fade,
+                            material,
+                            bone_offset,
+                            0,
+                        )?
+                        .with_light_bank(light_bank);
                     if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
                     {
                         let distance = section_distance_key(draw, &bone_pose, model_view)?;
@@ -1870,13 +1877,17 @@ impl M2Frame {
                 let first_vertex = u32::try_from(self.ribbon_vertices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
                 for pass in passes {
-                    self.ribbon_draws.push(renderer.prepare_m2_ribbon_draw(
-                        pass.pipeline,
-                        pass.texture_set,
-                        pass.material,
-                        first_vertex,
-                        &mesh,
-                    )?);
+                    self.ribbon_draws.push(
+                        renderer
+                            .prepare_m2_ribbon_draw(
+                                pass.pipeline,
+                                pass.texture_set,
+                                pass.material,
+                                first_vertex,
+                                &mesh,
+                            )?
+                            .with_light_bank(light_bank),
+                    );
                 }
                 self.ribbon_vertices.extend_from_slice(mesh.vertices());
                 tracing::trace!(
@@ -2006,6 +2017,26 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
         | M2GpuPlacementOwner::Transport { guid }
         | M2GpuPlacementOwner::PlayerItem { guid, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
+    }
+}
+
+/// Maps resident ownership to the three independent banks populated by Glue Lua.
+const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
+    match owner {
+        M2GpuPlacementOwner::PlayerBody { guid: 0 }
+        | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
+        | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
+        M2GpuPlacementOwner::GluePet => M2SceneLightBank::Pet,
+        M2GpuPlacementOwner::Static(_)
+        | M2GpuPlacementOwner::GlueModel { .. }
+        | M2GpuPlacementOwner::PlayerBody { .. }
+        | M2GpuPlacementOwner::PlayerMount { .. }
+        | M2GpuPlacementOwner::RemotePlayerBody { .. }
+        | M2GpuPlacementOwner::RemotePlayerMount { .. }
+        | M2GpuPlacementOwner::CreatureBody { .. }
+        | M2GpuPlacementOwner::Transport { .. }
+        | M2GpuPlacementOwner::PlayerItem { .. }
+        | M2GpuPlacementOwner::PlayerItemVisual { .. } => M2SceneLightBank::Environment,
     }
 }
 

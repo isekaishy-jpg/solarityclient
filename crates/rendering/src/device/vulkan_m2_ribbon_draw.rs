@@ -3,6 +3,7 @@
 use solarity_asset::M2Material;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_m2_draw::M2SceneLightBank;
 use crate::device::vulkan_m2_ribbon_pipeline::{M2RibbonPipelineHandle, M2RibbonPipelineRegistry};
 use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
 use crate::{M2MaterialState, M2RibbonMeshPlan};
@@ -14,9 +15,23 @@ pub struct M2RibbonPreparedDraw {
     texture_set: M2TextureSetHandle,
     first_vertex: u32,
     vertex_count: u32,
+    light_bank: M2SceneLightBank,
 }
 
 impl M2RibbonPreparedDraw {
+    /// Assigns the stock Glue light bank used by unified-frame presentation.
+    #[must_use]
+    pub const fn with_light_bank(mut self, light_bank: M2SceneLightBank) -> Self {
+        self.light_bank = light_bank;
+        self
+    }
+
+    /// Returns the scene-light bank selected for this ribbon instance.
+    #[must_use]
+    pub const fn light_bank(self) -> M2SceneLightBank {
+        self.light_bank
+    }
+
     pub(in crate::device) const fn pipeline(self) -> M2RibbonPipelineHandle {
         self.pipeline
     }
@@ -69,5 +84,6 @@ pub(in crate::device) fn prepare_draw(
         texture_set,
         first_vertex,
         vertex_count,
+        light_bank: M2SceneLightBank::Environment,
     })
 }

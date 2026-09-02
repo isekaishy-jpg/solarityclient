@@ -370,6 +370,8 @@ impl RuntimeGlueModelScene {
             active.environment.fog_range,
             active.environment.local_lights,
         );
+        let character_model = model.with_local_lights(active.environment.character_local_lights);
+        let pet_model = model.with_local_lights(active.environment.pet_local_lights);
         let mut ui_draws = Vec::with_capacity(ui.draws().len() + overlay.len());
         ui_draws.extend_from_slice(ui.draws());
         ui_draws.extend_from_slice(overlay);
@@ -384,7 +386,8 @@ impl RuntimeGlueModelScene {
         } else {
             0.0
         };
-        let scene = WorldFrameScene::new(terrain, world_model, model);
+        let scene = WorldFrameScene::new(terrain, world_model, model)
+            .with_m2_light_banks(character_model, pet_model);
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
             renderer.present_world_frame_with_ui_and_glow(
                 scene,

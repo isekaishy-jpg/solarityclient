@@ -37,7 +37,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
     pub(super) screen_window: crate::WorldScreenWindow,
-    pub(super) frame_sets: [vk::DescriptorSet; 6],
+    pub(super) frame_sets: [vk::DescriptorSet; 8],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
@@ -231,7 +231,7 @@ fn record_particle(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let sets = [context.frame_sets[3], texture];
+    let sets = [m2_scene_set(context, draw.light_bank()), texture];
     // SAFETY: The prepared packet proves compatible renderer-local handles;
     // frame validation proves every UINT32 index addresses the PNC0T0 stream.
     unsafe {
@@ -284,7 +284,7 @@ fn record_ribbon(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let sets = [context.frame_sets[3], texture];
+    let sets = [m2_scene_set(context, draw.light_bank()), texture];
     // SAFETY: The prepared packet proves compatible renderer-local handles and
     // its range was checked against the slot's mapped PCT0 stream.
     unsafe {
@@ -448,9 +448,9 @@ fn record_m2(
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
     let dynamic_offset = dynamic_offset(draw_index, context.m2_material_stride)?;
     let sets = [
-        context.frame_sets[3],
-        context.frame_sets[4],
-        context.frame_sets[5],
+        m2_scene_set(context, draw.light_bank()),
+        context.frame_sets[6],
+        context.frame_sets[7],
         texture,
     ];
     // SAFETY: Prepared draw proves compatible resources and material range.
@@ -494,6 +494,14 @@ fn record_m2(
         );
     }
     Ok(())
+}
+
+/// Selects one of the three compatible stock Glue scene descriptors.
+fn m2_scene_set(
+    context: &RecordContext<'_>,
+    light_bank: crate::M2SceneLightBank,
+) -> vk::DescriptorSet {
+    context.frame_sets[3 + light_bank.index()]
 }
 
 fn dynamic_offset(index: usize, stride: u64) -> Result<u32, VulkanError> {

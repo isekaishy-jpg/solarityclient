@@ -1,6 +1,7 @@
 //! Validated dynamic particle draw packets for unified world recording.
 
 use crate::device::VulkanError;
+use crate::device::vulkan_m2_draw::M2SceneLightBank;
 use crate::device::vulkan_m2_particle_pipeline::{
     M2ParticlePipelineHandle, M2ParticlePipelineRegistry,
 };
@@ -15,9 +16,23 @@ pub struct M2ParticlePreparedDraw {
     vertex_offset: i32,
     first_index: u32,
     index_count: u32,
+    light_bank: M2SceneLightBank,
 }
 
 impl M2ParticlePreparedDraw {
+    /// Assigns the stock Glue light bank used by unified-frame presentation.
+    #[must_use]
+    pub const fn with_light_bank(mut self, light_bank: M2SceneLightBank) -> Self {
+        self.light_bank = light_bank;
+        self
+    }
+
+    /// Returns the scene-light bank selected for this emitter instance.
+    #[must_use]
+    pub const fn light_bank(self) -> M2SceneLightBank {
+        self.light_bank
+    }
+
     pub(in crate::device) const fn pipeline(self) -> M2ParticlePipelineHandle {
         self.pipeline
     }
@@ -87,5 +102,6 @@ pub(in crate::device) fn prepare_draw(
         vertex_offset,
         first_index,
         index_count,
+        light_bank: M2SceneLightBank::Environment,
     })
 }

@@ -3,6 +3,8 @@
 use crate::device::{M2MeshHandle, M2PipelineHandle, M2TextureSetHandle};
 use crate::model::{M2DrawPushConstants, M2MaterialUniform};
 
+use super::M2SceneLightBank;
+
 /// One fully validated M2 indexed draw and its per-draw GPU state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2PreparedDraw {
@@ -14,6 +16,7 @@ pub struct M2PreparedDraw {
     material: M2MaterialUniform,
     push_constants: M2DrawPushConstants,
     required_bone_transforms: usize,
+    light_bank: M2SceneLightBank,
 }
 
 impl M2PreparedDraw {
@@ -38,7 +41,15 @@ impl M2PreparedDraw {
             material,
             push_constants,
             required_bone_transforms,
+            light_bank: M2SceneLightBank::Environment,
         }
+    }
+
+    /// Assigns the stock Glue light bank used by unified-frame presentation.
+    #[must_use]
+    pub const fn with_light_bank(mut self, light_bank: M2SceneLightBank) -> Self {
+        self.light_bank = light_bank;
+        self
     }
 
     /// Returns the device-local vertex/index allocation identity.
@@ -87,5 +98,11 @@ impl M2PreparedDraw {
     #[must_use]
     pub const fn required_bone_transforms(self) -> usize {
         self.required_bone_transforms
+    }
+
+    /// Returns the scene-light bank selected for this model instance.
+    #[must_use]
+    pub const fn light_bank(self) -> M2SceneLightBank {
+        self.light_bank
     }
 }

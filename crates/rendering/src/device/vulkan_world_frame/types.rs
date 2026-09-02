@@ -1,13 +1,13 @@
 //! Public scene snapshot and observable unified-world submission facts.
 
-use crate::{M2SceneUniform, TerrainSceneUniform, WorldModelSceneUniform};
+use crate::{M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WorldModelSceneUniform};
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldFrameScene {
     terrain: TerrainSceneUniform,
     world_model: WorldModelSceneUniform,
-    m2: M2SceneUniform,
+    m2: [M2SceneUniform; M2SceneLightBank::COUNT],
 }
 
 impl WorldFrameScene {
@@ -21,8 +21,20 @@ impl WorldFrameScene {
         Self {
             terrain,
             world_model,
-            m2,
+            m2: [m2; M2SceneLightBank::COUNT],
         }
+    }
+
+    /// Supplies the independent character and pet banks authored by Glue Lua.
+    #[must_use]
+    pub const fn with_m2_light_banks(
+        mut self,
+        character: M2SceneUniform,
+        pet: M2SceneUniform,
+    ) -> Self {
+        self.m2[M2SceneLightBank::Character.index()] = character;
+        self.m2[M2SceneLightBank::Pet.index()] = pet;
+        self
     }
 
     pub(super) const fn terrain(self) -> TerrainSceneUniform {
@@ -33,8 +45,8 @@ impl WorldFrameScene {
         self.world_model
     }
 
-    pub(super) const fn m2(self) -> M2SceneUniform {
-        self.m2
+    pub(super) const fn m2(self, light_bank: M2SceneLightBank) -> M2SceneUniform {
+        self.m2[light_bank.index()]
     }
 }
 

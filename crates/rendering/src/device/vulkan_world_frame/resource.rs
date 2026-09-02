@@ -7,14 +7,14 @@ use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
-use crate::device::vulkan_m2_draw::M2PreparedDraw;
+use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
     M2MaterialUniform, M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform,
     TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
-const DESCRIPTOR_SET_COUNT: usize = 6;
+const DESCRIPTOR_SET_COUNT: usize = 8;
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;
 
 pub(super) struct FrameCreateContext<'a> {
@@ -42,6 +42,7 @@ struct FrameBufferLayout {
     world_model_material_offset: vk::DeviceSize,
     world_model_material_stride: vk::DeviceSize,
     m2_scene_offset: vk::DeviceSize,
+    m2_scene_stride: vk::DeviceSize,
     bone_offset: vk::DeviceSize,
     bone_bytes: vk::DeviceSize,
     m2_material_offset: vk::DeviceSize,
@@ -79,8 +80,14 @@ impl FrameBufferLayout {
                 .ok_or(VulkanError::WorldFrameCapacity)?,
             uniform_alignment,
         )?;
+        let m2_scene_stride = align_up(M2SceneUniform::BYTE_SIZE as u64, uniform_alignment)?;
+        let m2_scene_bytes = (M2SceneLightBank::COUNT as u64)
+            .checked_mul(m2_scene_stride)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
         let bone_offset = align_up(
-            m2_scene_offset + M2SceneUniform::BYTE_SIZE as u64,
+            m2_scene_offset
+                .checked_add(m2_scene_bytes)
+                .ok_or(VulkanError::WorldFrameCapacity)?,
             context.storage_alignment.max(16),
         )?;
         let bone_bytes = (context.bone_capacity.max(1) as u64)
@@ -131,6 +138,7 @@ impl FrameBufferLayout {
             world_model_material_offset,
             world_model_material_stride,
             m2_scene_offset,
+            m2_scene_stride,
             bone_offset,
             bone_bytes,
             m2_material_offset,
@@ -286,12 +294,22 @@ impl WorldFrameSlot {
                 &scene.world_model().to_bytes(),
                 self.layout.total_bytes,
             )?;
-            copy_bytes(
-                destination,
-                self.layout.m2_scene_offset,
-                &scene.m2().to_bytes(),
-                self.layout.total_bytes,
-            )?;
+            for light_bank in [
+                M2SceneLightBank::Environment,
+                M2SceneLightBank::Character,
+                M2SceneLightBank::Pet,
+            ] {
+                copy_bytes(
+                    destination,
+                    indexed_offset(
+                        self.layout.m2_scene_offset,
+                        self.layout.m2_scene_stride,
+                        light_bank.index(),
+                    )?,
+                    &scene.m2(light_bank).to_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
             if bone_transforms.is_empty() {
                 copy_bytes(
                     destination,
@@ -407,7 +425,7 @@ impl WorldFrameSlot {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(3),
+                .descriptor_count(5),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                 .descriptor_count(2),
@@ -454,6 +472,16 @@ impl WorldFrameSlot {
                 self.layout.m2_scene_offset,
                 M2SceneUniform::BYTE_SIZE,
             ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride,
+                M2SceneUniform::BYTE_SIZE,
+            ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 2,
+                M2SceneUniform::BYTE_SIZE,
+            ),
             vk::DescriptorBufferInfo::default()
                 .buffer(self.buffer)
                 .offset(self.layout.bone_offset)
@@ -468,6 +496,8 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::STORAGE_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,

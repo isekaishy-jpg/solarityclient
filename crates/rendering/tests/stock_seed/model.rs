@@ -22,10 +22,11 @@ use solarity_rendering::{
     M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
     M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
-    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
-    M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera,
-    WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame, triggered_m2_event_indices,
+    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2SceneUniform,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
+    VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame,
+    triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -1728,6 +1729,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     )?;
     assert_eq!(particle_draw.vertex_offset(), 0);
     assert_eq!(particle_draw.first_index(), 0);
+    assert_eq!(particle_draw.light_bank(), M2SceneLightBank::Environment);
     assert_eq!(
         particle_draw.index_count() as usize,
         particle_mesh.indices().len()
@@ -1782,6 +1784,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         &ribbon_mesh,
     )?;
     assert_eq!(ribbon_draw.first_vertex(), 0);
+    assert_eq!(ribbon_draw.light_bank(), M2SceneLightBank::Environment);
     assert_eq!(
         ribbon_draw.vertex_count() as usize,
         ribbon_mesh.vertices().len()
@@ -1805,6 +1808,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(prepared_draw.material(), material_uniform);
     assert_eq!(prepared_draw.push_constants(), push_constants);
     assert_eq!(prepared_draw.required_bone_transforms(), 67);
+    assert_eq!(prepared_draw.light_bank(), M2SceneLightBank::Environment);
     let faded_draw = renderer.prepare_m2_draw(
         handle,
         fade_pipeline,
@@ -1840,6 +1844,14 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             prepared_draw.required_bone_transforms()
         );
     }
+    let character_scene = scene_uniform.with_local_lights(
+        [M2LocalLightState::directional(Vec3::X, Vec3::splat(0.2), Vec3::splat(0.7)); 4],
+    );
+    let pet_scene = scene_uniform.with_local_lights(
+        [M2LocalLightState::directional(Vec3::Y, Vec3::splat(0.3), Vec3::splat(0.6)); 4],
+    );
+    assert_ne!(character_scene.to_bytes(), scene_uniform.to_bytes());
+    assert_ne!(pet_scene.to_bytes(), character_scene.to_bytes());
     let world_scene = WorldFrameScene::new(
         TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::Z),
         WorldModelSceneUniform::new(
@@ -1851,19 +1863,30 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             Vec4::ZERO,
         ),
         scene_uniform,
+    )
+    .with_m2_light_banks(character_scene, pet_scene);
+    let character_draw = prepared_draw.with_light_bank(M2SceneLightBank::Character);
+    let pet_particle_draw = particle_draw.with_light_bank(M2SceneLightBank::Pet);
+    let character_ribbon_draw = ribbon_draw.with_light_bank(M2SceneLightBank::Character);
+    assert_eq!(character_draw.light_bank(), M2SceneLightBank::Character);
+    assert_eq!(pet_particle_draw.light_bank(), M2SceneLightBank::Pet);
+    assert_eq!(
+        character_ribbon_draw.light_bank(),
+        M2SceneLightBank::Character
     );
     let ribbon_frame = renderer.present_world_frame(
         world_scene,
+        &bone_transforms,
         &[],
         &[],
-        &[],
-        &[],
+        &[character_draw],
         particle_mesh.vertices(),
         particle_mesh.indices(),
-        &[particle_draw],
+        &[pet_particle_draw],
         ribbon_mesh.vertices(),
-        &[ribbon_draw],
+        &[character_ribbon_draw],
     )?;
+    assert_eq!(ribbon_frame.m2_draw_count(), 1);
     assert_eq!(ribbon_frame.ribbon_draw_count(), 1);
     assert_eq!(ribbon_frame.particle_draw_count(), 1);
     assert_eq!(
