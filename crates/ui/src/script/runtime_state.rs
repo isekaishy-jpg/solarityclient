@@ -24,6 +24,7 @@ use super::simple_script::{
     texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
     vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
+use crate::animation::owner_animation_transform;
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
     UiObjectKind, UiObjectRole, UiPoint, UiScriptError, VerticalJustification,
@@ -51,6 +52,8 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) shown: bool,
     pub(crate) alpha: f64,
     pub(crate) scale: f64,
+    pub(crate) animation_alpha_delta: f64,
+    pub(crate) animation_offset: (f64, f64),
     pub(crate) first_anchor: usize,
     pub(crate) anchor_count: usize,
     pub(crate) texture: Option<UiRuntimeTexture>,
@@ -286,6 +289,9 @@ pub(super) fn snapshot_runtime_objects(
             })
             .transpose()?
             .flatten();
+        let (animation_alpha_delta, animation_offset) =
+            owner_animation_transform(lua, stored_index - 1)
+                .map_err(|error| snapshot_error(format!("object {lua_index} animation"), error))?;
         objects.push(UiRuntimeObject {
             name: table
                 .raw_get(name_key())
@@ -300,6 +306,8 @@ pub(super) fn snapshot_runtime_objects(
                 .map_err(|error| snapshot_error(format!("object {lua_index} visibility"), error))?,
             alpha: finite_region_number(&table, alpha_key(), lua_index, "alpha")?,
             scale: positive_region_number(&table, scale_key(), lua_index, "scale")?,
+            animation_alpha_delta,
+            animation_offset,
             first_anchor,
             anchor_count: anchors.len() - first_anchor,
             texture,

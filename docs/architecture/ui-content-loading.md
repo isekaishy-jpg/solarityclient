@@ -381,9 +381,21 @@ behavior. GlueXML contains no animation declarations in the installed corpus.
 
 Lua animation objects have their own metatables and retained playback state.
 They do not enter the frame layout arena, renderer batches, or frame event
-subscriber count. A renderer-clock update stage will advance their progress;
-construction-time `Play`, `Pause`, `Stop`, and `Finish` calls already preserve
-the stock script-visible lifecycle and group callback ownership.
+subscriber count. The rendered-frame clock advances equal-order primitives as
+a parallel band and later orders serially. This follows the recovered
+`CSimpleAnimGroup` tick at `0x0049C350` and primitive clock at `0x004985F0`:
+start and end delays contribute to the complete duration, active progress is
+smoothed only inside the duration, and `REPEAT`/`BOUNCE` restart or reverse the
+same ordered timeline. The smoothing curves at `0x00497BA0` are retained as
+linear, cosine-in, sine-out, and cosine-in-out interpolation.
+
+Active `Alpha` and `Translation` primitives contribute temporary presentation
+state to their owning frame. The alpha delta is applied before the ordinary
+parent alpha chain; translation enters the owner's affine transform so every descendant
+moves with it without rewriting authored anchors. Pause retains those
+contributions, while stop and natural completion release them after the stock
+group callback boundary. `GetProgress` and `GetProgressWithDelay` expose the
+active and complete-interval values from the same tick.
 
 ## Typed texture plan
 

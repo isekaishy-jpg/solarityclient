@@ -8,7 +8,9 @@ use mlua::{Function, LightUserData, Lua, MultiValue, RegistryKey, Table, Value};
 use super::c_simple_anim::{
     UiAnimationHandler, UiAnimationKind, UiAnimationPlan, UiAnimationValue,
 };
-use crate::script::OBJECT_REGISTRY;
+use crate::script::{OBJECT_REGISTRY, mark_live_state_changed};
+
+const ANIMATION_GROUP_REGISTRY: &str = "solarity.ui.animation_groups";
 
 static NAME_TOKEN: u8 = 1;
 static TYPE_TOKEN: u8 = 2;
@@ -29,6 +31,12 @@ static OFFSET_X_TOKEN: u8 = 16;
 static OFFSET_Y_TOKEN: u8 = 17;
 static ON_FINISHED_TOKEN: u8 = 18;
 static ON_LOAD_TOKEN: u8 = 19;
+static OWNER_INDEX_TOKEN: u8 = 20;
+static ELAPSED_TOKEN: u8 = 21;
+static PROGRESS_WITH_DELAY_TOKEN: u8 = 22;
+static ALPHA_DELTA_TOKEN: u8 = 23;
+static TRANSLATION_X_TOKEN: u8 = 24;
+static TRANSLATION_Y_TOKEN: u8 = 25;
 
 /// Lua metatables shared by all retained animation objects.
 pub(crate) struct UiAnimationMetatables {
@@ -40,6 +48,7 @@ pub(crate) struct UiAnimationMetatables {
 
 /// Builds the stock script method families once per Lua state.
 pub(crate) fn create_animation_metatables(lua: &Lua) -> mlua::Result<UiAnimationMetatables> {
+    lua.set_named_registry_value(ANIMATION_GROUP_REGISTRY, lua.create_table()?)?;
     Ok(UiAnimationMetatables {
         group: lua.create_registry_value(create_group_metatable(lua)?)?,
         animation: lua
@@ -78,6 +87,9 @@ pub(crate) fn register_owner_animations(
         group_table.raw_set(progress_key(), 0.0)?;
         group_table.raw_set(looping_key(), group.looping().as_str())?;
         group_table.raw_set(animations_key(), lua.create_table()?)?;
+        group_table.raw_set(owner_index_key(), owner)?;
+        group_table.raw_set(elapsed_key(), 0.0)?;
+        clear_group_contribution(&group_table)?;
         if let Some(handler) = group.on_load() {
             group_table.raw_set(on_load_key(), animation_handler(lua, handler)?)?;
         }
@@ -106,6 +118,7 @@ pub(crate) fn register_owner_animations(
             animation_table.raw_set(paused_key(), false)?;
             animation_table.raw_set(done_key(), false)?;
             animation_table.raw_set(progress_key(), 0.0)?;
+            animation_table.raw_set(progress_with_delay_key(), 0.0)?;
             animation_table.raw_set(duration_key(), animation.duration())?;
             animation_table.raw_set(start_delay_key(), animation.start_delay())?;
             animation_table.raw_set(end_delay_key(), animation.end_delay())?;
@@ -136,6 +149,8 @@ pub(crate) fn register_owner_animations(
                 animation.parent_key(),
             )?;
         }
+        let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
+        groups.raw_set(groups.raw_len() + 1, group_table.clone())?;
         call_handler(lua, &group_table, on_load_key())?;
     }
     Ok(())
@@ -172,17 +187,28 @@ fn create_group_metatable(lua: &Lua) -> mlua::Result<Table> {
     add_identity_methods(lua, &methods)?;
     methods.raw_set(
         "Play",
-        lua.create_function(|_, group: Table| {
-            set_playback_state(&group, true, false, false, 0.0)?;
-            for animation in animation_tables(&group)? {
-                set_playback_state(&animation, true, false, false, 0.0)?;
+        lua.create_function(|lua, group: Table| {
+            if group.raw_get::<bool>(paused_key())? {
+                group.raw_set(playing_key(), true)?;
+                group.raw_set(paused_key(), false)?;
+                for animation in animation_tables(&group)? {
+                    if animation.raw_get::<bool>(paused_key())? {
+                        animation.raw_set(playing_key(), true)?;
+                        animation.raw_set(paused_key(), false)?;
+                    }
+                }
+                return mark_live_state_changed(lua);
             }
-            Ok(())
+            set_playback_state(&group, true, false, false, 0.0)?;
+            group.raw_set(elapsed_key(), 0.0)?;
+            reset_group_animations(&group, true)?;
+            clear_group_contribution(&group)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
         "Pause",
-        lua.create_function(|_, group: Table| {
+        lua.create_function(|lua, group: Table| {
             let playing = group.raw_get::<bool>(playing_key())?;
             if playing {
                 group.raw_set(playing_key(), false)?;
@@ -191,18 +217,19 @@ fn create_group_metatable(lua: &Lua) -> mlua::Result<Table> {
                     animation.raw_set(playing_key(), false)?;
                     animation.raw_set(paused_key(), true)?;
                 }
+                mark_live_state_changed(lua)?;
             }
             Ok(())
         })?,
     )?;
     methods.raw_set(
         "Stop",
-        lua.create_function(|_, group: Table| {
+        lua.create_function(|lua, group: Table| {
             set_playback_state(&group, false, false, false, 0.0)?;
-            for animation in animation_tables(&group)? {
-                set_playback_state(&animation, false, false, false, 0.0)?;
-            }
-            Ok(())
+            group.raw_set(elapsed_key(), 0.0)?;
+            reset_group_animations(&group, false)?;
+            clear_group_contribution(&group)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -211,8 +238,11 @@ fn create_group_metatable(lua: &Lua) -> mlua::Result<Table> {
             set_playback_state(&group, false, false, true, 1.0)?;
             for animation in animation_tables(&group)? {
                 set_playback_state(&animation, false, false, true, 1.0)?;
+                animation.raw_set(progress_with_delay_key(), 1.0)?;
             }
-            call_handler(lua, &group, on_finished_key())
+            call_handler(lua, &group, on_finished_key())?;
+            clear_group_contribution(&group)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     add_playback_queries(lua, &methods)?;
@@ -346,30 +376,42 @@ fn add_identity_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
 fn add_playback_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "Play",
-        lua.create_function(|_, animation: Table| {
-            set_playback_state(&animation, true, false, false, 0.0)
+        lua.create_function(|lua, animation: Table| {
+            if animation.raw_get::<bool>(paused_key())? {
+                animation.raw_set(playing_key(), true)?;
+                animation.raw_set(paused_key(), false)?;
+                return mark_live_state_changed(lua);
+            }
+            set_playback_state(&animation, true, false, false, 0.0)?;
+            animation.raw_set(progress_with_delay_key(), 0.0)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
         "Pause",
-        lua.create_function(|_, animation: Table| {
+        lua.create_function(|lua, animation: Table| {
             if animation.raw_get::<bool>(playing_key())? {
                 animation.raw_set(playing_key(), false)?;
                 animation.raw_set(paused_key(), true)?;
+                mark_live_state_changed(lua)?;
             }
             Ok(())
         })?,
     )?;
     methods.raw_set(
         "Stop",
-        lua.create_function(|_, animation: Table| {
-            set_playback_state(&animation, false, false, false, 0.0)
+        lua.create_function(|lua, animation: Table| {
+            set_playback_state(&animation, false, false, false, 0.0)?;
+            animation.raw_set(progress_with_delay_key(), 0.0)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
         "Finish",
-        lua.create_function(|_, animation: Table| {
-            set_playback_state(&animation, false, false, true, 1.0)
+        lua.create_function(|lua, animation: Table| {
+            set_playback_state(&animation, false, false, true, 1.0)?;
+            animation.raw_set(progress_with_delay_key(), 1.0)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     Ok(())
@@ -391,6 +433,16 @@ fn add_playback_queries(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "GetProgress",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(progress_key()))?,
+    )?;
+    methods.raw_set(
+        "GetProgressWithDelay",
+        lua.create_function(|_, object: Table| {
+            if let Some(progress) = object.raw_get::<Option<f64>>(progress_with_delay_key())? {
+                Ok(progress)
+            } else {
+                object.raw_get(progress_key())
+            }
+        })?,
     )?;
     Ok(())
 }
@@ -432,6 +484,203 @@ fn set_playback_state(
 fn animation_tables(group: &Table) -> mlua::Result<Vec<Table>> {
     let animations: Table = group.raw_get(animations_key())?;
     animations.sequence_values::<Table>().collect()
+}
+
+/// Advances every retained group from the rendered-frame clock.
+///
+/// Build 12340's `CSimpleAnimGroup` tick at `0x0049C350` advances one order
+/// band at a time, while `CSimpleAnim` at `0x004985F0` swaps delays in reverse
+/// playback and applies smoothing only to the active interval.
+pub(crate) fn advance_animations(lua: &Lua, elapsed_seconds: f64) -> mlua::Result<bool> {
+    if elapsed_seconds == 0.0 {
+        return Ok(false);
+    }
+    let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
+    let retained = groups
+        .sequence_values::<Table>()
+        .collect::<mlua::Result<Vec<_>>>()?;
+    let mut changed = false;
+    for group in retained {
+        if !group.raw_get::<bool>(playing_key())? {
+            continue;
+        }
+        changed = true;
+        let total = group_duration(&group)?;
+        if total <= f64::EPSILON {
+            finish_naturally(lua, &group)?;
+            continue;
+        }
+
+        let elapsed = group.raw_get::<f64>(elapsed_key())? + elapsed_seconds;
+        let looping = group.raw_get::<String>(looping_key())?;
+        let (timeline_time, group_progress, finished) = match looping.as_str() {
+            "NONE" if elapsed >= total => (total, 1.0, true),
+            "NONE" => (elapsed, elapsed / total, false),
+            "REPEAT" => {
+                let cycle = elapsed.rem_euclid(total);
+                (cycle, cycle / total, false)
+            }
+            "BOUNCE" => {
+                let cycle = elapsed.rem_euclid(total * 2.0);
+                if cycle <= total {
+                    (cycle, cycle / total, false)
+                } else {
+                    (total * 2.0 - cycle, (cycle - total) / total, false)
+                }
+            }
+            value => {
+                return Err(mlua::Error::runtime(format!(
+                    "invalid animation looping mode {value}"
+                )));
+            }
+        };
+        group.raw_set(elapsed_key(), elapsed)?;
+        group.raw_set(progress_key(), group_progress.clamp(0.0, 1.0))?;
+        update_group_contribution(&group, timeline_time)?;
+        if finished {
+            finish_naturally(lua, &group)?;
+        }
+    }
+    Ok(changed)
+}
+
+/// Returns the temporary alpha delta and translation for one owner.
+pub(crate) fn owner_animation_transform(
+    lua: &Lua,
+    owner_index: usize,
+) -> mlua::Result<(f64, (f64, f64))> {
+    let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
+    let mut alpha_delta = 0.0;
+    let mut translation = (0.0, 0.0);
+    for group in groups.sequence_values::<Table>() {
+        let group = group?;
+        if group.raw_get::<usize>(owner_index_key())? != owner_index {
+            continue;
+        }
+        alpha_delta += group.raw_get::<f64>(alpha_delta_key())?;
+        translation.0 += group.raw_get::<f64>(translation_x_key())?;
+        translation.1 += group.raw_get::<f64>(translation_y_key())?;
+    }
+    Ok((alpha_delta, translation))
+}
+
+fn update_group_contribution(group: &Table, timeline_time: f64) -> mlua::Result<()> {
+    let animations = animation_tables(group)?;
+    let mut order_durations = BTreeMap::<u32, f64>::new();
+    for animation in &animations {
+        let order = animation.raw_get::<u32>(order_key())?;
+        let duration = animation.raw_get::<f64>(start_delay_key())?
+            + animation.raw_get::<f64>(duration_key())?
+            + animation.raw_get::<f64>(end_delay_key())?;
+        order_durations
+            .entry(order)
+            .and_modify(|longest| *longest = longest.max(duration))
+            .or_insert(duration);
+    }
+    let mut order_starts = BTreeMap::new();
+    let mut cursor = 0.0;
+    for (order, duration) in order_durations {
+        order_starts.insert(order, cursor);
+        cursor += duration;
+    }
+
+    let mut alpha_delta = 0.0;
+    let mut translation = (0.0, 0.0);
+    for animation in animations {
+        let order = animation.raw_get::<u32>(order_key())?;
+        let order_start = order_starts[&order];
+        let start_delay = animation.raw_get::<f64>(start_delay_key())?;
+        let duration = animation.raw_get::<f64>(duration_key())?;
+        let end_delay = animation.raw_get::<f64>(end_delay_key())?;
+        let complete_duration = start_delay + duration + end_delay;
+        let local_time = timeline_time - order_start;
+        let progress_with_delay = if complete_duration <= f64::EPSILON {
+            f64::from(local_time >= 0.0)
+        } else {
+            (local_time / complete_duration).clamp(0.0, 1.0)
+        };
+        let linear_progress = if duration <= f64::EPSILON {
+            f64::from(local_time >= start_delay)
+        } else {
+            ((local_time - start_delay) / duration).clamp(0.0, 1.0)
+        };
+        let progress = smooth_progress(
+            animation.raw_get::<String>(smoothing_key())?.as_str(),
+            linear_progress,
+        )?;
+        let active = local_time >= 0.0 && local_time < complete_duration;
+        set_playback_state(
+            &animation,
+            active,
+            false,
+            local_time >= complete_duration,
+            progress,
+        )?;
+        animation.raw_set(progress_with_delay_key(), progress_with_delay)?;
+
+        match animation.raw_get::<String>(type_key())?.as_str() {
+            "Animation" => {}
+            "Alpha" => alpha_delta += animation.raw_get::<f64>(change_key())? * progress,
+            "Translation" => {
+                translation.0 += animation.raw_get::<f64>(offset_x_key())? * progress;
+                translation.1 += animation.raw_get::<f64>(offset_y_key())? * progress;
+            }
+            kind => {
+                return Err(mlua::Error::runtime(format!(
+                    "unsupported animation primitive {kind}"
+                )));
+            }
+        }
+    }
+    group.raw_set(alpha_delta_key(), alpha_delta)?;
+    group.raw_set(translation_x_key(), translation.0)?;
+    group.raw_set(translation_y_key(), translation.1)
+}
+
+fn smooth_progress(smoothing: &str, progress: f64) -> mlua::Result<f64> {
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    match smoothing {
+        "NONE" => Ok(progress),
+        "IN" => Ok(1.0 - (progress * half_pi).cos()),
+        "OUT" => Ok((progress * half_pi).sin()),
+        "IN_OUT" => Ok(0.5 - 0.5 * (progress * std::f64::consts::PI).cos()),
+        value => Err(mlua::Error::runtime(format!(
+            "invalid animation smoothing mode {value}"
+        ))),
+    }
+}
+
+fn finish_naturally(lua: &Lua, group: &Table) -> mlua::Result<()> {
+    set_playback_state(group, false, false, true, 1.0)?;
+    for animation in animation_tables(group)? {
+        set_playback_state(&animation, false, false, true, 1.0)?;
+        animation.raw_set(progress_with_delay_key(), 1.0)?;
+    }
+    call_handler(lua, group, on_finished_key())?;
+    clear_group_contribution(group)
+}
+
+fn reset_group_animations(group: &Table, play_first_order: bool) -> mlua::Result<()> {
+    let animations = animation_tables(group)?;
+    let first_order = animations
+        .iter()
+        .map(|animation| animation.raw_get::<u32>(order_key()))
+        .collect::<mlua::Result<Vec<_>>>()?
+        .into_iter()
+        .min();
+    for animation in animations {
+        let order = animation.raw_get::<u32>(order_key())?;
+        let playing = play_first_order && first_order == Some(order);
+        set_playback_state(&animation, playing, false, false, 0.0)?;
+        animation.raw_set(progress_with_delay_key(), 0.0)?;
+    }
+    Ok(())
+}
+
+fn clear_group_contribution(group: &Table) -> mlua::Result<()> {
+    group.raw_set(alpha_delta_key(), 0.0)?;
+    group.raw_set(translation_x_key(), 0.0)?;
+    group.raw_set(translation_y_key(), 0.0)
 }
 
 fn group_duration(group: &Table) -> mlua::Result<f64> {
@@ -499,3 +748,9 @@ token_key!(offset_x_key, OFFSET_X_TOKEN);
 token_key!(offset_y_key, OFFSET_Y_TOKEN);
 token_key!(on_finished_key, ON_FINISHED_TOKEN);
 token_key!(on_load_key, ON_LOAD_TOKEN);
+token_key!(owner_index_key, OWNER_INDEX_TOKEN);
+token_key!(elapsed_key, ELAPSED_TOKEN);
+token_key!(progress_with_delay_key, PROGRESS_WITH_DELAY_TOKEN);
+token_key!(alpha_delta_key, ALPHA_DELTA_TOKEN);
+token_key!(translation_x_key, TRANSLATION_X_TOKEN);
+token_key!(translation_y_key, TRANSLATION_Y_TOKEN);

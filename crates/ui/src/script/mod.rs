@@ -36,4 +36,4 @@ pub(crate) use runtime_state::{
     UiRuntimeAnchor, UiRuntimeModelLight, UiRuntimeModelLightSets, UiRuntimeObject,
     UiRuntimeObjectPlan, UiRuntimeText,
 };
-pub(crate) use simple_script::OBJECT_REGISTRY;
+pub(crate) use simple_script::{OBJECT_REGISTRY, mark_live_state_changed};

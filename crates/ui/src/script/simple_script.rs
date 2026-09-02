@@ -25,7 +25,8 @@ use crate::{
 };
 
 use crate::animation::{
-    UiAnimationMetatables, create_animation_metatables, register_owner_animations,
+    UiAnimationMetatables, advance_animations, create_animation_metatables,
+    register_owner_animations,
 };
 
 use self::cvars::UiCVarRegistry;
@@ -1387,6 +1388,8 @@ impl UiScriptRuntime {
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let object_count = self.registered_object_count();
+        let animation_changed = advance_animations(lua, elapsed_seconds)
+            .map_err(|error| execution_error("FrameXML animation update", error))?;
         advance_edit_box_carets(lua, &objects, object_count, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
         let mut dispatched = 0;
@@ -1415,9 +1418,10 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("Glue OnUpdate", error))?;
             dispatched += 1;
         }
-        let changed = live_state_generation(lua)
-            .map_err(|error| execution_error("Glue OnUpdate", error))?
-            != generation;
+        let changed = animation_changed
+            || live_state_generation(lua)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?
+                != generation;
         Ok((dispatched, changed))
     }
 
@@ -8146,7 +8150,7 @@ fn live_state_generation(lua: &Lua) -> mlua::Result<u64> {
     lua.named_registry_value(LIVE_STATE_GENERATION_REGISTRY)
 }
 
-fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
+pub(crate) fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
     let generation = live_state_generation(lua)?;
     lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))
 }

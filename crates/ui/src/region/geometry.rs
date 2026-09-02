@@ -213,7 +213,7 @@ impl GeometryResolver<'_> {
         let parent_index = object.parent;
         let authored = (object.width, object.height);
         let shown = object.shown;
-        let alpha = object.alpha;
+        let alpha = (object.alpha + object.animation_alpha_delta).clamp(0.0, 1.0);
         let scale = object.scale;
         let role = object.role;
         let mut anchors = self.live.anchors_for(object).to_vec();
@@ -359,11 +359,13 @@ impl GeometryResolver<'_> {
             right: horizontal.0 + horizontal.1,
             top: vertical.0 + vertical.1,
         };
-        let local = Affine2::scale_about(
+        let scale_transform = Affine2::scale_about(
             scale,
             (logical_bounds.left + logical_bounds.right) * 0.5,
             (logical_bounds.bottom + logical_bounds.top) * 0.5,
         );
+        let local = Affine2::translation(object.animation_offset.0, object.animation_offset.1)
+            .compose(scale_transform);
         let parent_transform = parent.map_or(Affine2::IDENTITY, |region| region.presentation);
         let presentation = parent_transform.compose(local);
         let presentation_bounds = presentation.bounds(logical_bounds);
@@ -518,6 +520,14 @@ impl Affine2 {
             yy: scale,
             tx: center_x * (1.0 - scale),
             ty: center_y * (1.0 - scale),
+        }
+    }
+
+    const fn translation(x: f64, y: f64) -> Self {
+        Self {
+            tx: x,
+            ty: y,
+            ..Self::IDENTITY
         }
     }
 

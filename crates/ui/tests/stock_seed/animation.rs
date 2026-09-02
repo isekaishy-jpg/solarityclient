@@ -4,10 +4,10 @@ use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
-    FontCatalog, UiAnimationKind, UiAnimationLooping, UiAnimationPlan, UiAnimationValue, UiBundle,
-    UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog, UiObjectTree, UiRegionStatePlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiTexturePlan, UiTextureStatePlan,
+    FontCatalog, GlueManager, UiAnimationKind, UiAnimationLooping, UiAnimationPlan,
+    UiAnimationValue, UiBundle, UiFramePlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
+    UiObjectTree, UiRegionStatePlan, UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan,
+    UiScriptRuntime, UiScriptRuntimePlan, UiTexturePlan, UiTextureStatePlan,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -146,6 +146,117 @@ fn animation_plan_rejects_unimplemented_primitive_types() -> Result<(), Box<dyn 
 
     assert!(error.to_string().contains("<Scale>"));
     Ok(())
+}
+
+/// Frame-clock animation output reaches the owner and its complete child tree.
+#[test]
+fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Animations.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Animations.xml",
+            bytes: br#"<Ui><Frame name="Root">
+  <Size x="100" y="100"/><Anchors><Anchor point="BOTTOMLEFT" x="100" y="100"/></Anchors>
+  <Animations><AnimationGroup parentKey="motion">
+    <Alpha change="-.5" duration=".5" smoothing="IN"/>
+    <Translation offsetX="40" offsetY="20" duration=".5" order="2"/>
+    <Scripts>
+      <OnLoad>self:Play()</OnLoad>
+      <OnFinished>ANIMATION_FINISHED = true</OnFinished>
+    </Scripts>
+  </AnimationGroup></Animations>
+  <Scripts><OnLoad>self:SetAlpha(.8)</OnLoad></Scripts>
+  <Frames><Frame name="$parentChild"><Size x="20" y="20"/>
+    <Anchors><Anchor point="CENTER"/></Anchors>
+  </Frame></Frames>
+</Frame></Ui>"#,
+        },
+    ])?;
+    let mut manager = GlueManager::start(mount(&fixture)?, (1024, 768), false)?;
+    let root = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("Root"))
+        .ok_or("Root fixture frame is absent")?;
+    let child = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("RootChild"))
+        .ok_or("RootChild fixture frame is absent")?;
+
+    assert!(manager.update(0.25)?);
+    let root_geometry = manager
+        .geometry()
+        .region(root)
+        .ok_or("Root geometry is absent")?;
+    assert_close(root_geometry.effective_alpha(), 0.653_553_390_593_273_7);
+    assert_bounds(
+        root_geometry.presentation_bounds(),
+        [100.0, 100.0, 200.0, 200.0],
+    );
+
+    assert!(manager.update(0.5)?);
+    let root_geometry = manager
+        .geometry()
+        .region(root)
+        .ok_or("Root geometry is absent")?;
+    let child_geometry = manager
+        .geometry()
+        .region(child)
+        .ok_or("RootChild geometry is absent")?;
+    assert_close(root_geometry.effective_alpha(), 0.3);
+    assert_bounds(
+        root_geometry.presentation_bounds(),
+        [120.0, 110.0, 220.0, 210.0],
+    );
+    assert_close(child_geometry.effective_alpha(), 0.3);
+    assert_bounds(
+        child_geometry.presentation_bounds(),
+        [160.0, 150.0, 180.0, 170.0],
+    );
+
+    assert!(manager.update(0.25)?);
+    let root_geometry = manager
+        .geometry()
+        .region(root)
+        .ok_or("Root geometry is absent")?;
+    assert_close(root_geometry.effective_alpha(), 0.8);
+    assert_bounds(
+        root_geometry.presentation_bounds(),
+        [100.0, 100.0, 200.0, 200.0],
+    );
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("ANIMATION_FINISHED")?
+    );
+    manager
+        .bundle()
+        .lua()
+        .load("assert(Root.motion:IsDone())")
+        .exec()?;
+    Ok(())
+}
+
+fn assert_bounds(bounds: solarity_ui::UiScreenRect, expected: [f64; 4]) {
+    for (actual, expected) in [bounds.left(), bounds.bottom(), bounds.right(), bounds.top()]
+        .into_iter()
+        .zip(expected)
+    {
+        assert_close(actual, expected);
+    }
+}
+
+fn assert_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 0.000_01,
+        "actual={actual} expected={expected}"
+    );
 }
 
 fn mount(fixture: &Fixture) -> Result<AssetStore, Box<dyn Error>> {
