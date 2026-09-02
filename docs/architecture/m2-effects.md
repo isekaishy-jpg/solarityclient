@@ -196,9 +196,9 @@ emitter X/Y basis and applies authored spin about transformed local Z instead
 of substituting the camera billboard basis.
 
 Particle render state is synthesized through the executable's dedicated blend
-mapper rather than treating the authored byte as a root-material blend id.
+table rather than treating the authored byte as a root-material blend id.
 Selectors `0`, `1`, `2`, `3`, `4`, `5`, and `10` map to opaque, alpha-key,
-alpha, additive, modulate, modulate-2x, and no-alpha-add respectively; the
+alpha, no-alpha-add, alpha-add, modulate, and no-alpha-add respectively; the
 stock default branch is opaque. Every particle is two-sided and depth-tested.
 Low emitter flags independently enable lighting, fog, and depth writes.
 

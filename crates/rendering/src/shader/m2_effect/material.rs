@@ -57,18 +57,19 @@ impl M2MaterialState {
 
     /// Synthesizes the material that build 12340 assigns to one particle.
     ///
-    /// The particle byte is not a direct `M2BLEND`: executable `0x0081CA20`
-    /// maps selectors `0..=5` and `10`, with its default branch selecting
-    /// opaque. Executable `0x008214E0` then creates a two-sided material and
-    /// derives lighting, fog, and depth-write state from the low three flags.
+    /// The particle byte uses its own blend table. Its numeric selectors do
+    /// not name the root `M2BLEND` entries even though the resulting states can
+    /// share the same backend representation. Executable `0x008214E0` also
+    /// creates a two-sided material and derives lighting, fog, and depth-write
+    /// state from the low three flags.
     #[must_use]
     pub const fn from_particle(blending_type: u8, particle_flags: u32) -> Self {
         let blend_mode = match blending_type {
             1 => M2BlendMode::AlphaKey,
             2 => M2BlendMode::Alpha,
-            3 => M2BlendMode::Add,
-            4 => M2BlendMode::Mod,
-            5 => M2BlendMode::Mod2x,
+            3 => M2BlendMode::NoAlphaAdd,
+            4 => M2BlendMode::Add,
+            5 => M2BlendMode::Mod,
             10 => M2BlendMode::NoAlphaAdd,
             _ => M2BlendMode::Opaque,
         };

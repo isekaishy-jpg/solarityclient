@@ -9,16 +9,16 @@ use solarity_rendering::{
     WorldModelSpirvKey,
 };
 
-/// Particle blend bytes and low flags synthesize stock's root material state.
+/// Particle blend bytes and low flags synthesize stock's dedicated material state.
 #[test]
-fn particle_material_uses_executable_mapping() {
+fn particle_material_uses_authored_particle_mapping() {
     let mappings = [
         (0, M2BlendMode::Opaque),
         (1, M2BlendMode::AlphaKey),
         (2, M2BlendMode::Alpha),
-        (3, M2BlendMode::Add),
-        (4, M2BlendMode::Mod),
-        (5, M2BlendMode::Mod2x),
+        (3, M2BlendMode::NoAlphaAdd),
+        (4, M2BlendMode::Add),
+        (5, M2BlendMode::Mod),
         (10, M2BlendMode::NoAlphaAdd),
         (u8::MAX, M2BlendMode::Opaque),
     ];
@@ -29,7 +29,7 @@ fn particle_material_uses_executable_mapping() {
         );
     }
 
-    let material = M2MaterialState::from_particle(3, 0x7);
+    let material = M2MaterialState::from_particle(4, 0x7);
     assert!(material.blend_enabled());
     assert_eq!(material.source_blend(), M2BlendFactor::SourceAlpha);
     assert_eq!(material.destination_blend(), M2BlendFactor::One);
@@ -39,7 +39,7 @@ fn particle_material_uses_executable_mapping() {
     assert!(!material.is_unlit());
     assert!(!material.is_unfogged());
 
-    let material = M2MaterialState::from_particle(4, 0);
+    let material = M2MaterialState::from_particle(5, 0);
     assert!(material.is_unlit());
     assert!(material.is_unfogged());
     assert!(!material.depth_write_enabled());

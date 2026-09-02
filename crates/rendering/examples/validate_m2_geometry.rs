@@ -170,6 +170,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             attachment.position()
         );
     }
+    for (particle_index, particle) in model.animations().particles().iter().enumerate() {
+        let textures = particle
+            .texture_indices()
+            .into_iter()
+            .flatten()
+            .map(|texture_index| {
+                model
+                    .textures()
+                    .get(usize::from(texture_index))
+                    .and_then(|texture| texture.filename())
+                    .map_or_else(|| format!("#{texture_index}"), ToString::to_string)
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "particle={particle_index} id={} blend={} flags={:#010X} priority={} textures={textures:?}",
+            particle.id(),
+            particle.blending_type(),
+            particle.flags(),
+            particle.priority_plane(),
+        );
+    }
     Ok(())
 }
 
