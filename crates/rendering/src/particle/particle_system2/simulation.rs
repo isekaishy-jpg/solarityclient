@@ -133,7 +133,10 @@ impl M2ParticleSimulation {
         let mut emitted = 0;
         if pose.enabled() {
             self.emission_remainder += varied_rate * elapsed_seconds;
-            let requested = (self.emission_remainder + 0.5).round_ties_even() as usize;
+            // Build-12340 CParticleEmitter::Update adds one half and truncates
+            // the accumulated count. This can leave a negative residual after
+            // a birth and deliberately centers the first low-rate birth.
+            let requested = (self.emission_remainder + 0.5).floor().max(0.0) as usize;
             let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
             for _ in 0..admitted {
                 let particle = match shape {
@@ -156,6 +159,11 @@ impl M2ParticleSimulation {
                 emitted += 1;
             }
             self.emission_remainder -= emitted as f32;
+            // Stock discards a backlog larger than two particles when the
+            // fixed-capacity pool cannot admit the requested births.
+            if self.emission_remainder > 2.0 {
+                self.emission_remainder = 0.0;
+            }
         }
 
         let mut deaths = 0;
@@ -250,15 +258,17 @@ fn spawn_planar(
 ) -> Result<M2ParticleState, M2ParticleSimulationError> {
     let age = random.next_unit() * elapsed_seconds;
     let random_word = random.next_u32() as u16;
-    let mut position = Vec3::new(
-        random.next_signed() * pose.emission_area_length() * 0.5,
-        random.next_signed() * pose.emission_area_width() * 0.5,
-        0.0,
-    );
+    // CPlaneParticleEmitter::CreateParticle evaluates the Y coordinate before
+    // X, then consumes speed and the two spread angles in that order.
+    let position_y = random.next_signed() * pose.emission_area_width() * 0.5;
+    let position_x = random.next_signed() * pose.emission_area_length() * 0.5;
+    let mut position = Vec3::new(position_x, position_y, 0.0);
     let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
+    // Both spread samples are consumed even when z-source replaces the
+    // resulting direction. Later particles therefore retain stock PRNG phase.
+    let polar = random.next_signed() * pose.vertical_range();
+    let azimuth = random.next_signed() * pose.horizontal_range();
     let mut velocity = if pose.z_source() == 0.0 {
-        let polar = random.next_signed() * pose.vertical_range();
-        let azimuth = random.next_signed() * pose.horizontal_range();
         Vec3::new(
             azimuth.cos() * polar.sin(),
             azimuth.sin() * polar.sin(),

@@ -917,12 +917,54 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         1.0,
     )?;
 
-    assert_eq!(report.emitted(), 4);
+    // Build 12340 truncates accumulator + 0.5. The varied rate accumulates to
+    // exactly 3.0 here, so a ties-to-even round must not manufacture a fourth
+    // birth from the intermediate 3.5 value.
+    assert_eq!(report.emitted(), 3);
     assert_eq!(report.deaths(), 0);
-    assert_eq!(report.live(), 4);
+    assert_eq!(report.live(), 3);
     assert_eq!(simulation.capacity(), 34);
-    assert_eq!(simulation.particles().len(), 4);
-    assert_eq!(simulation.emission_remainder(), -1.0);
+    assert_eq!(simulation.particles().len(), 3);
+    assert_eq!(simulation.emission_remainder(), 0.0);
+    let first_particle = simulation
+        .particles()
+        .first()
+        .ok_or("first emitted particle is absent")?;
+    let mut stock_random = M2ParticleRandom::new(0x0029_4823);
+    let _initial_rate_variation = stock_random.next_signed();
+    let _rate_variation = stock_random.next_signed();
+    let initial_age = stock_random.next_unit() * 0.2;
+    let random_word = stock_random.next_u32() as u16;
+    // Build-12340 CPlaneParticleEmitter::CreateParticle evaluates Y before X.
+    // Reconstruct the observable first birth independently of production.
+    let local_y = stock_random.next_signed() * pose.emission_area_width() * 0.5;
+    let local_x = stock_random.next_signed() * pose.emission_area_length() * 0.5;
+    let speed = (stock_random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
+    let _polar = stock_random.next_signed() * pose.vertical_range();
+    let _azimuth = stock_random.next_signed() * pose.horizontal_range();
+    let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed;
+    if initial_age < emitter.wind_time() {
+        expected_velocity += emitter.wind_vector() * 0.2;
+    }
+    let mut expected_position =
+        Vec3::new(local_x + 10.0, local_y + 20.0, 30.0) + expected_velocity * 0.2;
+    expected_position.z -= pose.gravity() * 0.2 * 0.2 * 0.5;
+    expected_velocity.z -= pose.gravity() * 0.2;
+    expected_velocity -= expected_velocity * (0.2 * emitter.drag()).min(1.0);
+    assert_eq!(first_particle.random_word(), random_word);
+    assert!((first_particle.age_seconds() - (initial_age + 0.2)).abs() < f32::EPSILON);
+    assert!(
+        (first_particle.position() - expected_position)
+            .abs()
+            .max_element()
+            < 0.0001
+    );
+    assert!(
+        (first_particle.velocity() - expected_velocity)
+            .abs()
+            .max_element()
+            < 0.0001
+    );
     assert!(
         simulation.particles().iter().all(|particle| {
             particle.position().is_finite()
@@ -937,15 +979,20 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     );
     let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
     let mesh = M2ParticleMeshPlan::prepare(emitter, pose, simulation.particles(), camera, 1.0)?;
-    assert_eq!(mesh.vertices().len(), 32);
-    assert_eq!(mesh.indices().len(), 48);
+    assert_eq!(mesh.vertices().len(), 24);
+    assert_eq!(mesh.indices().len(), 36);
     assert_eq!(&mesh.indices()[..6], &[0, 1, 2, 2, 1, 3]);
     assert!(
         mesh.vertices()
             .iter()
             .all(|vertex| vertex.normal() == Vec3::NEG_X.to_array())
     );
-    assert_eq!(mesh.vertex_bytes().len(), 32 * 36);
+    assert_eq!(mesh.vertex_bytes().len(), 24 * 36);
+
+    let mut saturated = M2ParticleSimulation::new(0x0029_4823);
+    let saturated_report = saturated.advance_planar(emitter, pose, 0.2, Mat4::IDENTITY, 100.0)?;
+    assert_eq!(saturated_report.emitted(), saturated.capacity());
+    assert_eq!(saturated.emission_remainder(), 0.0);
 
     let particle = M2ParticleState::new(
         0.5,
@@ -1019,7 +1066,7 @@ fn m2_tail_style_particle_reaches_simulation_and_mesh() -> Result<(), Box<dyn Er
         1.0,
     )?;
 
-    assert_eq!(report.live(), 4);
+    assert_eq!(report.live(), 3);
     assert_eq!(mesh.vertices().len(), report.live() * 4);
     assert_eq!(mesh.indices().len(), report.live() * 6);
     let (vertex_quads, remainder) = mesh.vertices().as_chunks::<4>();
