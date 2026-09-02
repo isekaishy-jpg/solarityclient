@@ -172,6 +172,36 @@ function Set-Utf8NoBomContent([string] $LiteralPath, [string[]] $Value) {
     [IO.File]::WriteAllLines($LiteralPath, $Value, $encoding)
 }
 
+function Reset-TestingFirstRunProfile([string] $ProfileRoot) {
+    # Every installed testing build deliberately begins at the complete stock
+    # first-run path. Preserve unrelated tester preferences and credentials.
+    $wtfDirectory = Join-Path $ProfileRoot "WTF"
+    $configPath = Join-Path $wtfDirectory "Config.wtf"
+    New-Item -ItemType Directory -Path $wtfDirectory -Force | Out-Null
+    $resetNames = @("playIntroMovie", "readEULA", "readTOS", "gxVSync", "showfps")
+    $preserved = [Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        foreach ($line in Get-Content -LiteralPath $configPath) {
+            $matchesReset = $false
+            foreach ($name in $resetNames) {
+                if ($line -match ('^\s*SET\s+' + [Regex]::Escape($name) + '\s+')) {
+                    $matchesReset = $true
+                    break
+                }
+            }
+            if (-not $matchesReset) {
+                $preserved.Add($line)
+            }
+        }
+    }
+    $preserved.Add('SET playIntroMovie "1"')
+    $preserved.Add('SET readEULA "-1"')
+    $preserved.Add('SET readTOS "-1"')
+    $preserved.Add('SET gxVSync "0"')
+    $preserved.Add('SET showfps "1"')
+    Set-Utf8NoBomContent -LiteralPath $configPath -Value $preserved
+}
+
 $launcher = $launcherTemplate
 $launcher = $launcher.Replace("__DATA_ROOT__", (ConvertTo-SingleQuotedPowerShellLiteral $resolvedDataRoot))
 $launcher = $launcher.Replace("__LOCALE__", (ConvertTo-SingleQuotedPowerShellLiteral $Locale))
@@ -186,6 +216,7 @@ $launcher = $launcher.Replace("__WINDOW_HEIGHT__", $WindowHeight.ToString([Globa
 $launcher = $launcher.Replace("__WINDOW_MODE__", $WindowMode)
 $launcher = $launcher.Replace("__GPU_INDEX__", $GpuIndex.ToString([Globalization.CultureInfo]::InvariantCulture))
 Set-Utf8NoBomContent -LiteralPath $launcherPath -Value $launcher
+Reset-TestingFirstRunProfile -ProfileRoot $resolvedInstallRoot
 
 $commit = (& git -C $resolvedRepositoryRoot rev-parse --verify HEAD).Trim()
 if ($LASTEXITCODE -ne 0) {
