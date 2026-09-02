@@ -256,10 +256,10 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
     })
 }
 
-/// A rejected selected character restores the authenticated character-screen state.
+/// Stock login-failure reasons restore selection and retain exact dialog tokens.
 #[test]
-fn character_login_rejection_restores_character_screen() -> Result<(), Box<dyn Error + Send + Sync>>
-{
+fn character_login_rejections_restore_character_screen_and_stock_messages()
+-> Result<(), Box<dyn Error + Send + Sync>> {
     runtime()?.block_on(async {
         let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
         let (client, server) = tokio::io::duplex(4_096);
@@ -283,19 +283,72 @@ fn character_login_rejection_restores_character_screen() -> Result<(), Box<dyn E
         let character = directory
             .entries()
             .first()
+            .cloned()
             .ok_or("fixture character was not returned")?;
-        let login = session.login_character(character).await?;
-        match login.advance().await? {
-            CharacterLoginProgress::Rejected { session, rejection } => {
-                assert_eq!(rejection.result_code(), 0x54);
-                assert_eq!(
-                    rejection.reason(),
-                    Some(CharacterLoginRejectionReason::LockedForTransfer)
-                );
-                assert_eq!(session.account_name(), "TESTACCOUNT");
-                assert_eq!(session.realm_id(), realm.id());
+        let cases = [
+            (
+                0,
+                Some(CharacterLoginRejectionReason::Failed),
+                "CHAR_LOGIN_FAILED",
+            ),
+            (
+                1,
+                Some(CharacterLoginRejectionReason::NoWorld),
+                "CHAR_LOGIN_NO_WORLD",
+            ),
+            (
+                2,
+                Some(CharacterLoginRejectionReason::DuplicateCharacter),
+                "CHAR_LOGIN_DUPLICATE_CHARACTER",
+            ),
+            (
+                3,
+                Some(CharacterLoginRejectionReason::NoInstances),
+                "CHAR_LOGIN_NO_INSTANCES",
+            ),
+            (
+                4,
+                Some(CharacterLoginRejectionReason::Disabled),
+                "CHAR_LOGIN_DISABLED",
+            ),
+            (
+                5,
+                Some(CharacterLoginRejectionReason::NoCharacter),
+                "CHAR_LOGIN_NO_CHARACTER",
+            ),
+            (
+                6,
+                Some(CharacterLoginRejectionReason::LockedForTransfer),
+                "CHAR_LOGIN_LOCKED_FOR_TRANSFER",
+            ),
+            (
+                7,
+                Some(CharacterLoginRejectionReason::LockedByBilling),
+                "CHAR_LOGIN_LOCKED_BY_BILLING",
+            ),
+            (
+                8,
+                Some(CharacterLoginRejectionReason::LockedByMobileAuctionHouse),
+                "CHAR_LOGIN_LOCKED_BY_MOBILE_AH",
+            ),
+            (9, None, "CHAR_LOGIN_FAILED"),
+        ];
+        for (reason_code, reason, token) in cases {
+            let login = session.login_character(&character).await?;
+            match login.advance().await? {
+                CharacterLoginProgress::Rejected {
+                    session: restored,
+                    rejection,
+                } => {
+                    assert_eq!(rejection.reason_code(), reason_code);
+                    assert_eq!(rejection.reason(), reason);
+                    assert_eq!(rejection.message_token(), token);
+                    assert_eq!(restored.account_name(), "TESTACCOUNT");
+                    assert_eq!(restored.realm_id(), realm.id());
+                    session = restored;
+                }
+                _ => return Err("character login rejection did not restore selection".into()),
             }
-            _ => return Err("character login rejection did not restore selection".into()),
         }
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
@@ -670,9 +723,14 @@ async fn emulate_rejected_character_login(
     })
     .tokio_write_encrypted_server(&mut stream, crypto.encrypter())
     .await?;
-    let login = ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
-    assert!(matches!(login, ClientOpcodeMessage::CMSG_PLAYER_LOGIN(_)));
-    write_encrypted_raw(&mut stream, &mut crypto, 0x0041, &[0x54]).await?;
+    // Stock `0x00464460 -> 0x006B2070` converts reasons one through eight to
+    // response-table codes `0x4E..=0x56`; zero and unknown reasons use `0x51`.
+    for reason in 0_u8..=9 {
+        let login =
+            ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+        assert!(matches!(login, ClientOpcodeMessage::CMSG_PLAYER_LOGIN(_)));
+        write_encrypted_raw(&mut stream, &mut crypto, 0x0041, &[reason]).await?;
+    }
     Ok(())
 }
 

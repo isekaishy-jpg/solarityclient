@@ -125,7 +125,7 @@ impl WorldServerPacket {
     ///
     /// # Errors
     ///
-    /// Returns [`WorldEntryPacketError`] unless the result body is exactly one byte.
+    /// Returns [`WorldEntryPacketError`] unless the reason body is exactly one byte.
     pub fn character_login_rejection(
         &self,
     ) -> Result<Option<CharacterLoginRejection>, WorldEntryPacketError> {

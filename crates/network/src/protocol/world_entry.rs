@@ -60,7 +60,7 @@ impl WorldLocation {
     }
 }
 
-/// Known build-12340 rejection codes for `SMSG_CHARACTER_LOGIN_FAILED`.
+/// Known build-12340 reason bytes for `SMSG_CHARACTER_LOGIN_FAILED`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CharacterLoginRejectionReason {
     /// No world server can accept the character.
@@ -83,46 +83,67 @@ pub enum CharacterLoginRejectionReason {
     LockedByMobileAuctionHouse,
 }
 
-/// Exact one-byte result returned when selected-character login fails.
+/// Exact one-byte reason returned when selected-character login fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CharacterLoginRejection {
-    result_code: u8,
+    reason_code: u8,
 }
 
 impl CharacterLoginRejection {
     pub(crate) fn decode(payload: &[u8]) -> Result<Self, WorldEntryPacketError> {
-        let [result_code] = payload else {
+        let [reason_code] = payload else {
             return Err(WorldEntryPacketError::new(
                 payload.len(),
                 "character login rejection must contain exactly one byte",
             ));
         };
         Ok(Self {
-            result_code: *result_code,
+            reason_code: *reason_code,
         })
     }
 
-    /// Returns the exact build-12340 `WorldResult` byte.
+    /// Returns the exact build-12340 `LoginFailureReason` byte.
     #[must_use]
-    pub const fn result_code(self) -> u8 {
-        self.result_code
+    pub const fn reason_code(self) -> u8 {
+        self.reason_code
     }
 
     /// Returns a typed reason for character-login result codes.
     #[must_use]
     pub const fn reason(self) -> Option<CharacterLoginRejectionReason> {
-        Some(match self.result_code {
-            0x4E => CharacterLoginRejectionReason::NoWorld,
-            0x4F => CharacterLoginRejectionReason::DuplicateCharacter,
-            0x50 => CharacterLoginRejectionReason::NoInstances,
-            0x51 => CharacterLoginRejectionReason::Failed,
-            0x52 => CharacterLoginRejectionReason::Disabled,
-            0x53 => CharacterLoginRejectionReason::NoCharacter,
-            0x54 => CharacterLoginRejectionReason::LockedForTransfer,
-            0x55 => CharacterLoginRejectionReason::LockedByBilling,
-            0x56 => CharacterLoginRejectionReason::LockedByMobileAuctionHouse,
+        Some(match self.reason_code {
+            0 => CharacterLoginRejectionReason::Failed,
+            1 => CharacterLoginRejectionReason::NoWorld,
+            2 => CharacterLoginRejectionReason::DuplicateCharacter,
+            3 => CharacterLoginRejectionReason::NoInstances,
+            4 => CharacterLoginRejectionReason::Disabled,
+            5 => CharacterLoginRejectionReason::NoCharacter,
+            6 => CharacterLoginRejectionReason::LockedForTransfer,
+            7 => CharacterLoginRejectionReason::LockedByBilling,
+            8 => CharacterLoginRejectionReason::LockedByMobileAuctionHouse,
             _ => return None,
         })
+    }
+
+    /// Returns the build-12340 localization token associated with this result.
+    ///
+    /// Stock callback `0x006B2070` converts wire reasons one through eight to
+    /// `WorldResult` values `0x4E..=0x56`. Reason zero and unknown values use
+    /// the same generic token as stock's default callback arm (`0x51`). The
+    /// response-token table consumed by Glue starts at `0x00AD91F0`.
+    #[must_use]
+    pub const fn message_token(self) -> &'static str {
+        match self.reason_code {
+            1 => "CHAR_LOGIN_NO_WORLD",
+            2 => "CHAR_LOGIN_DUPLICATE_CHARACTER",
+            3 => "CHAR_LOGIN_NO_INSTANCES",
+            4 => "CHAR_LOGIN_DISABLED",
+            5 => "CHAR_LOGIN_NO_CHARACTER",
+            6 => "CHAR_LOGIN_LOCKED_FOR_TRANSFER",
+            7 => "CHAR_LOGIN_LOCKED_BY_BILLING",
+            8 => "CHAR_LOGIN_LOCKED_BY_MOBILE_AH",
+            _ => "CHAR_LOGIN_FAILED",
+        }
     }
 }
 

@@ -992,7 +992,7 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::CharacterRejected(rejection)) => {
                 self.loading_screen = None;
                 tracing::warn!(
-                    result_code = rejection.result_code(),
+                    reason_code = rejection.reason_code(),
                     reason = ?rejection.reason(),
                     "character login rejected"
                 );
@@ -1011,6 +1011,21 @@ impl ClientServices {
                     )?;
                     self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
                 }
+                // Stock `0x006B2070` tears the optimistic world load back to
+                // character selection, then `0x004DAB40` state 11 presents
+                // the response-table token through an OKAY status dialog.
+                let message = self
+                    .glue
+                    .localized_text(rejection.message_token())
+                    .map_err(GlueError::from)?;
+                self.glue.dispatch_event(
+                    "OPEN_STATUS_DIALOG",
+                    &UiEventPayload::new([
+                        UiEventArgument::String("OKAY".to_owned()),
+                        UiEventArgument::String(message),
+                    ])?,
+                )?;
+                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
             }
             Err(error) => self.publish_world_failure(error),
         }
