@@ -160,6 +160,7 @@ static MODEL_PET_LIGHT_LIVE_TOKEN: u8 = 119;
 static MODEL_PET_LIGHT_GHOST_TOKEN: u8 = 120;
 static BUTTON_STATE_LOCKED_TOKEN: u8 = 121;
 static SLIDER_ORIENTATION_TOKEN: u8 = 122;
+static HOVERED_TOKEN: u8 = 123;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -443,6 +444,7 @@ pub struct UiScriptEnvironment {
     process: Rc<RefCell<crate::script::UiProcessBridge>>,
     current_screen: Rc<RefCell<String>>,
     cursor_visible: Rc<Cell<bool>>,
+    cursor_position: Rc<Cell<(f64, f64)>>,
     mouse_focus: Rc<Cell<Option<usize>>>,
     modifiers: crate::UiModifierKeyState,
     world: crate::UiWorldState,
@@ -508,6 +510,7 @@ impl UiScriptEnvironment {
             process: Rc::new(RefCell::new(crate::script::UiProcessBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
             cursor_visible: Rc::new(Cell::new(true)),
+            cursor_position: Rc::new(Cell::new((0.0, 0.0))),
             mouse_focus: Rc::new(Cell::new(None)),
             modifiers: crate::UiModifierKeyState::new(),
             world: crate::UiWorldState::new(),
@@ -696,6 +699,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn cursor_visible(&self) -> Rc<Cell<bool>> {
         self.cursor_visible.clone()
+    }
+
+    pub(crate) fn cursor_position(&self) -> Rc<Cell<(f64, f64)>> {
+        self.cursor_position.clone()
     }
 
     pub(crate) fn mouse_focus(&self) -> Rc<Cell<Option<usize>>> {
@@ -1463,6 +1470,7 @@ impl UiScriptRuntime {
         mouse_button: &str,
         pressed: bool,
         activate_click: bool,
+        activate_double_click: bool,
     ) -> Result<(), UiScriptError> {
         let phase = if pressed { "down" } else { "up" };
         let label = format!("Button object {object_index}:pointer-{phase}");
@@ -1504,6 +1512,14 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error(&label, error))?;
         }
         if enabled && activate_click {
+            if object
+                .raw_get::<String>(type_key())
+                .map_err(|error| execution_error(&label, error))?
+                == "CheckButton"
+            {
+                apply_check_button_click(lua, &object)
+                    .map_err(|error| execution_error(&label, error))?;
+            }
             for handler in [
                 UiScriptHandler::PreClick,
                 UiScriptHandler::Click,
@@ -1522,8 +1538,49 @@ impl UiScriptRuntime {
                     .map_err(|error| execution_error(&label, error))?;
                 }
             }
+            if activate_double_click
+                && let Some(function) =
+                    object_script_function(lua, &object, UiScriptHandler::DoubleClick)
+                        .map_err(|error| execution_error(&label, error))?
+            {
+                call_legacy_string_handler(lua, &function, object, mouse_button)
+                    .map_err(|error| execution_error(&label, error))?;
+            }
         }
         Ok(())
+    }
+
+    /// Applies one native pointer-boundary transition before running the
+    /// frame's authored `OnEnter` or `OnLeave` handler.
+    pub(crate) fn dispatch_pointer_hover(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        entered: bool,
+    ) -> Result<(), UiScriptError> {
+        let phase = if entered { "enter" } else { "leave" };
+        let label = format!("UI object {object_index}:pointer-{phase}");
+        let lua = bundle.lua();
+        let object = self.runtime_object(lua, object_index, &label)?;
+        let kind = object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?;
+        if matches!(kind.as_str(), "Button" | "CheckButton") {
+            object
+                .raw_set(hovered_key(), entered)
+                .map_err(|error| execution_error(&label, error))?;
+        }
+        let handler = if entered {
+            UiScriptHandler::Enter
+        } else {
+            UiScriptHandler::Leave
+        };
+        let Some(function) = object_script_function(lua, &object, handler)
+            .map_err(|error| execution_error(&label, error))?
+        else {
+            return Ok(());
+        };
+        call_object_handler(lua, &function, object).map_err(|error| execution_error(&label, error))
     }
 
     /// Delivers one normalized wheel delta to a live ScrollFrame handler.
@@ -2083,6 +2140,7 @@ impl UiScriptRuntime {
                 })?;
             table
                 .raw_set(highlight_locked_key(), false)
+                .and_then(|()| table.raw_set(hovered_key(), false))
                 .and_then(|()| table.raw_set(click_action_key(), 0x8000_0000_u64))
                 .and_then(|()| table.raw_set(button_pressed_key(), false))
                 .and_then(|()| table.raw_set(button_state_locked_key(), false))
@@ -2726,6 +2784,7 @@ fn create_dynamic_object(
     }
     if matches!(kind, "Button" | "CheckButton") {
         object.raw_set(highlight_locked_key(), false)?;
+        object.raw_set(hovered_key(), false)?;
         object.raw_set(click_action_key(), 0x8000_0000_u64)?;
         object.raw_set(button_pressed_key(), false)?;
         object.raw_set(button_state_locked_key(), false)?;
@@ -3021,6 +3080,55 @@ fn call_object_handler(lua: &Lua, function: &mlua::Function, object: Table) -> m
             let _ = restore;
             Err(error)
         }
+    }
+}
+
+/// Applies CheckButton's native state mutation before `OnClick`. Character
+/// creation's three authored choice families are mutually exclusive; ordinary
+/// check buttons toggle independently.
+fn apply_check_button_click(lua: &Lua, object: &Table) -> mlua::Result<()> {
+    let name = object.raw_get::<Option<String>>(name_key())?;
+    let group = name.as_deref().map_or(0, character_create_choice_group);
+    if group == 0 {
+        let checked = object.raw_get::<bool>(checked_key())?;
+        return object.raw_set(checked_key(), !checked);
+    }
+    let parent = object.raw_get::<Option<usize>>(parent_key())?;
+    let clicked_index = object.raw_get::<usize>(index_key())?;
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    for index in 1..=objects.raw_len() {
+        let candidate: Table = objects.raw_get(index)?;
+        if candidate.raw_get::<String>(type_key())? != "CheckButton"
+            || candidate.raw_get::<Option<usize>>(parent_key())? != parent
+        {
+            continue;
+        }
+        let candidate_name = candidate.raw_get::<Option<String>>(name_key())?;
+        if candidate_name
+            .as_deref()
+            .is_some_and(|name| character_create_choice_group(name) == group)
+        {
+            candidate.raw_set(
+                checked_key(),
+                candidate.raw_get::<usize>(index_key())? == clicked_index,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn character_create_choice_group(name: &str) -> u8 {
+    if name.starts_with("CharacterCreateRaceButton") {
+        1
+    } else if name.starts_with("CharacterCreateClassButton") {
+        2
+    } else if matches!(
+        name,
+        "CharacterCreateGenderButtonMale" | "CharacterCreateGenderButtonFemale"
+    ) {
+        3
+    } else {
+        0
     }
 }
 
@@ -3972,7 +4080,6 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
         ("SetHorizTile", "GetHorizTile", horizontal_tiling_key()),
         ("SetVertTile", "GetVertTile", vertical_tiling_key()),
         ("SetNonBlocking", "GetNonBlocking", non_blocking_key()),
-        ("SetDesaturated", "IsDesaturated", desaturated_key()),
     ] {
         methods.raw_set(
             set_name,
@@ -3987,6 +4094,29 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
             })?,
         )?;
     }
+    methods.raw_set(
+        "SetDesaturated",
+        lua.create_function(|_, (texture, arguments): (Table, Variadic<Value>)| {
+            // Stock treats an omitted value as true, but an explicit nil as false.
+            // CharacterCreate.lua relies on that distinction when it re-enables
+            // race and class buttons, and on the numeric success result.
+            let enabled = match arguments.first() {
+                None => true,
+                Some(Value::Nil | Value::Boolean(false)) => false,
+                Some(_) => true,
+            };
+            texture.raw_set(desaturated_key(), enabled)?;
+            Ok(1.0)
+        })?,
+    )?;
+    methods.raw_set(
+        "IsDesaturated",
+        lua.create_function(|_, texture: Table| {
+            Ok(texture
+                .raw_get::<bool>(desaturated_key())?
+                .then_some(Value::Number(1.0)))
+        })?,
+    )?;
     Ok(())
 }
 
@@ -4111,6 +4241,15 @@ fn register_model_methods(
             })?;
             model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
             model.raw_set(model_sequence_time_key(), time as i32)
+        })?,
+    )?;
+    methods.raw_set(
+        "AdvanceTime",
+        lua.create_function(|_, _model: Table| {
+            // WoW 3.3.5a's Model:AdvanceTime wrapper reaches a native method
+            // which returns true without accepting a Lua elapsed-time value.
+            // Animation time is advanced by the renderer's frame clock.
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5764,11 +5903,23 @@ fn register_status_bar_methods(
 fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> mlua::Result<()> {
     methods.raw_set(
         "Enable",
-        lua.create_function(|_, object: Table| object.raw_set(enabled_key(), true))?,
+        lua.create_function(|lua, object: Table| {
+            if !object.raw_get::<bool>(enabled_key())? {
+                object.raw_set(enabled_key(), true)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "Disable",
-        lua.create_function(|_, object: Table| object.raw_set(enabled_key(), false))?,
+        lua.create_function(|lua, object: Table| {
+            if object.raw_get::<bool>(enabled_key())? {
+                object.raw_set(enabled_key(), false)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "IsEnabled",
@@ -7361,15 +7512,15 @@ fn id_key() -> LightUserData {
     hidden_key(&ID_TOKEN)
 }
 
-fn normal_font_key() -> LightUserData {
+pub(super) fn normal_font_key() -> LightUserData {
     hidden_key(&NORMAL_FONT_TOKEN)
 }
 
-fn disabled_font_key() -> LightUserData {
+pub(super) fn disabled_font_key() -> LightUserData {
     hidden_key(&DISABLED_FONT_TOKEN)
 }
 
-fn highlight_font_key() -> LightUserData {
+pub(super) fn highlight_font_key() -> LightUserData {
     hidden_key(&HIGHLIGHT_FONT_TOKEN)
 }
 
@@ -7379,6 +7530,10 @@ pub(super) fn text_key() -> LightUserData {
 
 pub(super) fn highlight_locked_key() -> LightUserData {
     hidden_key(&HIGHLIGHT_LOCKED_TOKEN)
+}
+
+pub(super) fn hovered_key() -> LightUserData {
+    hidden_key(&HOVERED_TOKEN)
 }
 
 pub(super) fn font_set_key() -> LightUserData {

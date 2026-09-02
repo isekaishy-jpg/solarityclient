@@ -216,7 +216,9 @@ fn glue_manager_routes_captured_button_clicks() -> Result<(), Box<dyn Error>> {
   </OnMouseUp><OnClick>
     POINTER_LOG = POINTER_LOG .. "click:" .. arg1 .. ";"
     AcceptEULA()
-  </OnClick></Scripts>
+  </OnClick><OnDoubleClick>
+    POINTER_LOG = POINTER_LOG .. "double:" .. arg1 .. ";"
+  </OnDoubleClick></Scripts>
 </Button>
 </Ui>"#,
         },
@@ -245,10 +247,24 @@ fn glue_manager_routes_captured_button_clicks() -> Result<(), Box<dyn Error>> {
     assert_eq!(up.object_index(), Some(high_index));
     assert!(up.click_activated());
 
+    manager.pointer_button_with_click_count(
+        (1920.0 / 1080.0 * 384.0, 384.0),
+        UiPointerButton::Left,
+        true,
+        2,
+    )?;
+    let double_up = manager.pointer_button_with_click_count(
+        (1920.0 / 1080.0 * 384.0, 384.0),
+        UiPointerButton::Left,
+        false,
+        2,
+    )?;
+    assert!(double_up.click_activated());
+
     let globals = manager.bundle().lua().globals();
     assert_eq!(
         globals.get::<String>("POINTER_LOG")?,
-        "down:LeftButton;up:LeftButton;click:LeftButton;"
+        "down:LeftButton;up:LeftButton;click:LeftButton;down:LeftButton;up:LeftButton;click:LeftButton;double:LeftButton;"
     );
     assert_eq!(manager.cvar_value("readEULA").as_deref(), Some("1"));
     Ok(())
@@ -318,6 +334,180 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
             .get::<f64>("SCROLL_OFFSET")?,
         50.0
     );
+    Ok(())
+}
+
+/// Native hover boundaries drive authored enter/leave handlers, button
+/// highlight presentation, and pointer handlers on non-button model frames.
+#[test]
+fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Hover.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Hover.xml",
+            bytes: br#"<Ui>
+<Button name="HoverButton" enableMouse="true" frameStrata="DIALOG" frameLevel="2">
+  <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <HighlightTexture name="$parentHighlight" file="Interface\Glues\Hover"/>
+  <Scripts><OnLoad>POINTER_LOG = ""</OnLoad>
+    <OnEnter>POINTER_LOG = POINTER_LOG .. "button-enter;"</OnEnter>
+    <OnLeave>POINTER_LOG = POINTER_LOG .. "button-leave;"</OnLeave>
+  </Scripts>
+</Button>
+<ModelFFX name="CharacterModel" enableMouse="true" frameStrata="DIALOG" frameLevel="1">
+  <Size x="100" y="100"/><Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="50" y="50"/></Offset></Anchor></Anchors>
+  <Scripts>
+    <OnEnter>POINTER_LOG = POINTER_LOG .. "model-enter;"</OnEnter>
+    <OnLeave>POINTER_LOG = POINTER_LOG .. "model-leave;"</OnLeave>
+    <OnMouseDown>
+      CURSOR_X, CURSOR_Y = GetCursorPosition()
+      POINTER_LOG = POINTER_LOG .. "model-down:" .. arg1 .. ";"
+    </OnMouseDown>
+    <OnMouseUp>POINTER_LOG = POINTER_LOG .. "model-up:" .. arg1 .. ";"</OnMouseUp>
+  </Scripts>
+</ModelFFX>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let button_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HoverButton"))
+        .ok_or("missing hover button")?;
+    let highlight_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HoverButtonHighlight"))
+        .ok_or("missing highlight texture")?;
+    let model_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("CharacterModel"))
+        .ok_or("missing model pointer target")?;
+    let is_presented = |manager: &GlueManager, object_index| {
+        manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .any(|member| member.object_index() == object_index)
+    };
+
+    assert!(!is_presented(&manager, highlight_index));
+    let button_bounds = manager
+        .geometry()
+        .region(button_index)
+        .ok_or("missing button geometry")?
+        .presentation_bounds();
+    assert_eq!(
+        manager.pointer_motion((
+            (button_bounds.left() + button_bounds.right()) * 0.5,
+            (button_bounds.bottom() + button_bounds.top()) * 0.5,
+        ))?,
+        Some(button_index)
+    );
+    assert!(is_presented(&manager, highlight_index));
+
+    let model_bounds = manager
+        .geometry()
+        .region(model_index)
+        .ok_or("missing model geometry")?
+        .presentation_bounds();
+    let model_center = (
+        (model_bounds.left() + model_bounds.right()) * 0.5,
+        (model_bounds.bottom() + model_bounds.top()) * 0.5,
+    );
+    let down = manager.pointer_button(model_center, UiPointerButton::Left, true)?;
+    assert_eq!(manager.pointer_motion(model_center)?, Some(model_index));
+    let up = manager.pointer_button(model_center, UiPointerButton::Left, false)?;
+    assert_eq!(down.object_index(), Some(model_index));
+    assert_eq!(up.object_index(), Some(model_index));
+    assert!(!is_presented(&manager, highlight_index));
+    let globals = manager.bundle().lua().globals();
+    let cursor_scale = 1080.0 / 768.0;
+    assert!((globals.get::<f64>("CURSOR_X")? - model_center.0 * cursor_scale).abs() < 0.000_01);
+    assert!((globals.get::<f64>("CURSOR_Y")? - model_center.1 * cursor_scale).abs() < 0.000_01);
+    assert_eq!(
+        globals.get::<String>("POINTER_LOG")?,
+        "button-enter;button-leave;model-enter;model-down:LeftButton;model-up:LeftButton;"
+    );
+    Ok(())
+}
+
+/// CheckButton mutates its native checked state before `OnClick`, including
+/// character creation's mutually exclusive race/class/gender groups.
+#[test]
+fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Checks.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Checks.xml",
+            bytes: br#"<Ui><Frame name="Choices">
+<CheckButton name="CharacterCreateRaceButton1" enableMouse="true">
+  <Size x="80" y="40"/><Anchors><Anchor point="CENTER"><Offset><AbsDimension x="-60" y="0"/></Offset></Anchor></Anchors>
+  <Scripts><OnLoad>self:SetChecked(1)</OnLoad></Scripts>
+</CheckButton>
+<CheckButton name="CharacterCreateRaceButton2" enableMouse="true">
+  <Size x="80" y="40"/><Anchors><Anchor point="CENTER"><Offset><AbsDimension x="60" y="0"/></Offset></Anchor></Anchors>
+  <Scripts><OnLoad>self:SetChecked(nil)</OnLoad><OnClick>
+    CLICK_SAW_CHECKED = self:GetChecked()
+    CLICK_SAW_FIRST = CharacterCreateRaceButton1:GetChecked()
+  </OnClick></Scripts>
+</CheckButton>
+<CheckButton name="IndependentCheck" enableMouse="true">
+  <Size x="80" y="40"/><Anchors><Anchor point="CENTER"><Offset><AbsDimension x="0" y="-80"/></Offset></Anchor></Anchors>
+</CheckButton>
+</Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let click = |manager: &mut GlueManager, name| -> Result<(), Box<dyn Error>> {
+        let index = manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))
+            .ok_or_else(|| format!("missing check button {name}"))?;
+        let bounds = manager
+            .geometry()
+            .region(index)
+            .ok_or_else(|| format!("missing check button geometry {name}"))?
+            .presentation_bounds();
+        let center = (
+            (bounds.left() + bounds.right()) * 0.5,
+            (bounds.bottom() + bounds.top()) * 0.5,
+        );
+        let down = manager.pointer_button(center, UiPointerButton::Left, true)?;
+        let up = manager.pointer_button(center, UiPointerButton::Left, false)?;
+        if down.object_index() != Some(index) || up.object_index() != Some(index) {
+            return Err(
+                format!("check button {name} was not the pointer target: {down:?} {up:?}").into(),
+            );
+        }
+        Ok(())
+    };
+
+    click(&mut manager, "CharacterCreateRaceButton2")?;
+    let globals = manager.bundle().lua().globals();
+    assert!(globals.get::<bool>("CLICK_SAW_CHECKED")?);
+    assert!(!globals.get::<bool>("CLICK_SAW_FIRST")?);
+    click(&mut manager, "CharacterCreateRaceButton2")?;
+    assert!(globals.get::<bool>("CLICK_SAW_CHECKED")?);
+    click(&mut manager, "IndependentCheck")?;
+    let independent = globals.get::<mlua::Table>("IndependentCheck")?;
+    let get_checked = independent.get::<mlua::Function>("GetChecked")?;
+    assert!(get_checked.call::<bool>(independent.clone())?);
+    click(&mut manager, "IndependentCheck")?;
+    assert!(!get_checked.call::<bool>(independent)?);
     Ok(())
 }
 
@@ -975,7 +1165,14 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
   <OnLoad>UPDATE_CALLS = 0 self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
   <OnEvent>if arg1 == "charselect" then self:Hide() end</OnEvent>
   <OnUpdate>UPDATE_CALLS = UPDATE_CALLS + 1 self:SetAlpha(self:GetAlpha() - elapsed)</OnUpdate>
-</Scripts></Frame></Ui>"#,
+</Scripts></Frame>
+<Button name="StateButton"><Size x="80" y="30"/><Anchors><Anchor point="TOP"/></Anchors>
+  <NormalTexture name="$parentNormal" file="Interface\Glues\Normal"/>
+  <DisabledTexture name="$parentDisabled" file="Interface\Glues\Disabled"/>
+  <Scripts><OnLoad>DISABLE_NEXT = false</OnLoad><OnUpdate>
+    if DISABLE_NEXT then DISABLE_NEXT = false self:Disable() end
+  </OnUpdate></Scripts>
+</Button></Ui>"#,
         },
     ])?;
     let catalog =
@@ -986,6 +1183,16 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
         .iter()
         .position(|object| object.name() == Some("Animated"))
         .ok_or("Animated fixture frame is absent")?;
+    let normal = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("StateButtonNormal"))
+        .ok_or("StateButton normal texture is absent")?;
+    let disabled = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("StateButtonDisabled"))
+        .ok_or("StateButton disabled texture is absent")?;
 
     assert!(manager.update(0.25)?);
     assert_close(
@@ -1004,6 +1211,16 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .get::<u32>("UPDATE_CALLS")?,
         1
     );
+    manager.bundle().lua().globals().set("DISABLE_NEXT", true)?;
+    assert!(manager.update(0.0)?);
+    let presented = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .map(|member| member.object_index())
+        .collect::<Vec<_>>();
+    assert!(!presented.contains(&normal));
+    assert!(presented.contains(&disabled));
 
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
@@ -1016,7 +1233,7 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .lua()
             .globals()
             .get::<u32>("UPDATE_CALLS")?,
-        1
+        2
     );
     assert!(matches!(
         manager.update(-0.01),

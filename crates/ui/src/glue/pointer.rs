@@ -57,13 +57,7 @@ impl UiPointerPlan {
             .filter_map(|(index, target)| {
                 let target = target.as_ref()?;
                 let region = geometry.region(index)?;
-                if !matches!(
-                    target.kind,
-                    UiObjectKind::Button
-                        | UiObjectKind::CheckButton
-                        | UiObjectKind::EditBox
-                        | UiObjectKind::Slider
-                ) || !target.mouse_enabled
+                if !target.mouse_enabled
                     || !target.enabled
                     || !region.effectively_shown()
                     || region.effective_alpha() <= 0.0

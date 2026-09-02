@@ -45,6 +45,7 @@ pub struct GlueManager {
     child_indices: Vec<usize>,
     pointer: UiPointerPlan,
     pointer_capture: Option<(usize, UiPointerButton)>,
+    pointer_hover: Option<usize>,
     glyph_logical_height: u32,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
@@ -338,6 +339,7 @@ impl GlueManager {
             child_indices,
             pointer,
             pointer_capture: None,
+            pointer_hover: None,
             glyph_logical_height: logical_extent.1,
             report,
             environment,
@@ -689,8 +691,28 @@ impl GlueManager {
         button: UiPointerButton,
         pressed: bool,
     ) -> Result<UiPointerDispatch, UiEventError> {
+        self.pointer_button_with_click_count(position, button, pressed, 1)
+    }
+
+    /// Routes a pointer transition with the platform aggregate click count.
+    /// A successful second release invokes `OnDoubleClick` after the normal
+    /// registered click callbacks, matching build 12340's retained ordering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] under the same conditions as
+    /// [`Self::pointer_button`].
+    pub fn pointer_button_with_click_count(
+        &mut self,
+        position: (f64, f64),
+        button: UiPointerButton,
+        pressed: bool,
+        click_count: u8,
+    ) -> Result<UiPointerDispatch, UiEventError> {
         let hit = self.pointer.hit_test(&self.geometry, position);
+        self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
+        let hover_changed = self.update_pointer_hover(hit)?;
         let object_index = if pressed {
             hit
         } else {
@@ -700,6 +722,9 @@ impl GlueManager {
                 .map(|(index, _)| index)
         };
         let Some(object_index) = object_index else {
+            if hover_changed {
+                self.refresh_live_state()?;
+            }
             return Ok(UiPointerDispatch::new(None, false));
         };
         if pressed {
@@ -721,6 +746,7 @@ impl GlueManager {
                     button.script_name(),
                     pressed,
                     activate,
+                    !pressed && activate && click_count >= 2,
                 )?;
                 activate
             }
@@ -753,38 +779,84 @@ impl GlueManager {
                 )?;
                 false
             }
-            _ => false,
+            _ => {
+                self.runtime.dispatch_frame_pointer(
+                    &self.bundle,
+                    object_index,
+                    button.script_name(),
+                    pressed,
+                )?;
+                false
+            }
         };
         self.refresh_live_state()?;
         Ok(UiPointerDispatch::new(Some(object_index), click_activated))
     }
 
-    /// Updates a captured Slider from one bottom-left-origin pointer position.
+    /// Updates hover presentation or a captured drag from one logical pointer
+    /// position, returning the object whose renderer-facing state changed.
     ///
     /// # Errors
     ///
     /// Returns [`UiEventError`] when the slider's `OnValueChanged` handler
     /// fails or the resulting live presentation cannot be resolved.
     pub fn pointer_motion(&mut self, position: (f64, f64)) -> Result<Option<usize>, UiEventError> {
-        self.environment
-            .mouse_focus()
-            .set(self.pointer.hit_test(&self.geometry, position));
+        let hit = self.pointer.hit_test(&self.geometry, position);
+        self.update_cursor_position(position);
+        self.environment.mouse_focus().set(hit);
+        let previous_hover = self.pointer_hover;
+        let hover_changed = self.update_pointer_hover(hit)?;
         let Some((object_index, UiPointerButton::Left)) = self.pointer_capture else {
+            if hover_changed {
+                self.refresh_live_state()?;
+                return Ok(hit.or(previous_hover));
+            }
             return Ok(None);
         };
         if self.pointer.kind(object_index) != Some(UiObjectKind::Slider) {
-            return Ok(None);
+            if hover_changed {
+                self.refresh_live_state()?;
+            }
+            return Ok(Some(object_index));
         }
         let Some(value) = self
             .pointer
             .slider_value_at(&self.geometry, object_index, position)
         else {
-            return Ok(None);
+            if hover_changed {
+                self.refresh_live_state()?;
+            }
+            return Ok(Some(object_index));
         };
         self.runtime
             .dispatch_slider_value(&self.bundle, object_index, value)?;
         self.refresh_live_state()?;
         Ok(Some(object_index))
+    }
+
+    fn update_pointer_hover(&mut self, hit: Option<usize>) -> Result<bool, UiEventError> {
+        if self.pointer_hover == hit {
+            return Ok(false);
+        }
+        if let Some(previous) = self.pointer_hover {
+            self.runtime
+                .dispatch_pointer_hover(&self.bundle, previous, false)?;
+        }
+        self.pointer_hover = hit;
+        if let Some(current) = hit {
+            self.runtime
+                .dispatch_pointer_hover(&self.bundle, current, true)?;
+        }
+        Ok(true)
+    }
+
+    fn update_cursor_position(&self, position: (f64, f64)) {
+        let (logical_width, logical_height) = self.environment.logical_extent();
+        let (ui_width, ui_height) = self.environment.ui_extent();
+        self.environment.cursor_position().set((
+            position.0 / ui_width * f64::from(logical_width),
+            position.1 / ui_height * f64::from(logical_height),
+        ));
     }
 
     /// Returns the live object index of the focused visible EditBox.
@@ -859,6 +931,7 @@ impl GlueManager {
         position: (f64, f64),
         delta: f64,
     ) -> Result<Option<usize>, UiEventError> {
+        self.update_cursor_position(position);
         let Some(object_index) = self.pointer.wheel_hit_test(&self.geometry, position) else {
             return Ok(None);
         };

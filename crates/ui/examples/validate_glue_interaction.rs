@@ -125,7 +125,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
-    validate_login_presentation(&later)?;
+    validate_login_presentation(&mut later)?;
     let mut texture_cache = BlpTextureCache::new();
     let texture_bindings = later.load_blocking_render_textures(&mut texture_cache)?;
     if texture_bindings.pending_count() != 0 {
@@ -268,6 +268,36 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .call::<String>(())?;
     if background.is_empty() {
         return Err(invalid_data("creation selected no stock background".to_owned()).into());
+    }
+    let create_model = manager
+        .presentation()
+        .models()
+        .iter()
+        .find(|model| manager.objects()[model.object_index()].name() == Some("CharacterCreate"))
+        .ok_or_else(|| invalid_data("character creation has no visible ModelFFX".to_owned()))?;
+    let create_bounds = create_model.bounds();
+    let create_input_index = object_index(manager, "CharacterCreateFrame")?;
+    let drag_start = (
+        (create_bounds.left() + create_bounds.right()) * 0.5,
+        (create_bounds.bottom() + create_bounds.top()) * 0.5,
+    );
+    let drag_finish = (drag_start.0 + 64.0, drag_start.1);
+    let get_facing = globals.get::<mlua::Function>("GetCharacterCreateFacing")?;
+    let initial_facing = get_facing.call::<f64>(())?;
+    let down = manager.pointer_button(drag_start, UiPointerButton::Left, true)?;
+    manager.pointer_motion(drag_finish)?;
+    manager.update(0.016)?;
+    let up = manager.pointer_button(drag_finish, UiPointerButton::Left, false)?;
+    let dragged_facing = get_facing.call::<f64>(())?;
+    let expected_facing = initial_facing + 64.0 * (720.0 / 768.0) * 0.6;
+    if down.object_index() != Some(create_input_index)
+        || up.object_index() != Some(create_input_index)
+        || (dragged_facing - expected_facing).abs() > 0.001
+    {
+        return Err(invalid_data(format!(
+            "character-creation model drag failed: down={down:?} up={up:?} facing={dragged_facing} expected={expected_facing}"
+        ))
+        .into());
     }
     globals
         .get::<mlua::Function>("RandomizeCharCustomization")?
@@ -441,7 +471,7 @@ fn report_login_presentation(manager: &GlueManager, resident_textures: usize) {
     }
 }
 
-fn validate_login_presentation(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
+fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     let background_path = AssetPath::new("Interface\\Tooltips\\UI-Tooltip-Background.blp")?;
     let edge_path = AssetPath::new("Interface\\Glues\\Common\\Glue-Tooltip-Border.blp")?;
     for name in ["AccountLoginAccountEdit", "AccountLoginPasswordEdit"] {
@@ -534,6 +564,28 @@ fn validate_login_presentation(manager: &GlueManager) -> Result<(), Box<dyn Erro
             invalid_data("login button label is drawn behind its state skin".to_owned()).into(),
         );
     }
+    let normal_colors = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.color())
+        .collect::<Vec<_>>();
+    manager.pointer_motion(object_center(manager, login_button)?)?;
+    let highlight_colors = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.color())
+        .collect::<Vec<_>>();
+    if normal_colors.is_empty() || normal_colors == highlight_colors {
+        return Err(invalid_data(
+            "login button hover did not select its authored HighlightFont".to_owned(),
+        )
+        .into());
+    }
+    manager.pointer_motion((-1.0, -1.0))?;
 
     let changed_options = object_index(manager, "ChangedOptionsDialogBackground")?;
     if manager
@@ -659,6 +711,34 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
             .into());
         }
     }
+    let select_input_index = object_index(manager, "CharacterSelectUI")?;
+    let select_bounds = model.bounds();
+    let drag_start = (
+        (select_bounds.left() + select_bounds.right()) * 0.5,
+        (select_bounds.bottom() + select_bounds.top()) * 0.5,
+    );
+    let drag_finish = (drag_start.0 + 64.0, drag_start.1);
+    let get_facing = manager
+        .bundle()
+        .lua()
+        .globals()
+        .get::<mlua::Function>("GetCharacterSelectFacing")?;
+    let initial_facing = get_facing.call::<f64>(())?;
+    let down = manager.pointer_button(drag_start, UiPointerButton::Left, true)?;
+    manager.pointer_motion(drag_finish)?;
+    manager.update(0.016)?;
+    let up = manager.pointer_button(drag_finish, UiPointerButton::Left, false)?;
+    let dragged_facing = get_facing.call::<f64>(())?;
+    let expected_facing = initial_facing + 64.0 * (720.0 / 768.0) * 0.6;
+    if down.object_index() != Some(select_input_index)
+        || up.object_index() != Some(select_input_index)
+        || (dragged_facing - expected_facing).abs() > 0.001
+    {
+        return Err(invalid_data(format!(
+            "character-selection model drag failed: down={down:?} up={up:?} facing={dragged_facing} expected={expected_facing}"
+        ))
+        .into());
+    }
     let Some(UiGlueNetworkAction::SelectCharacter { index }) = manager.take_network_action() else {
         return Err(invalid_data(
             "stock character-selection refresh did not select the first row".to_owned(),
@@ -692,6 +772,36 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
     if manager.take_network_action().is_some() {
         return Err(invalid_data(
             "character-selection validation left an unexpected network action".to_owned(),
+        )
+        .into());
+    }
+    let row = object_index(manager, "CharSelectCharacterButton1")?;
+    let row_position = object_center(manager, row)?;
+    let double_down =
+        manager.pointer_button_with_click_count(row_position, UiPointerButton::Left, true, 2)?;
+    let double_up =
+        manager.pointer_button_with_click_count(row_position, UiPointerButton::Left, false, 2)?;
+    if double_down.object_index() != Some(row)
+        || double_up.object_index() != Some(row)
+        || !double_up.click_activated()
+    {
+        return Err(invalid_data(format!(
+            "character row did not accept a native double click: down={double_down:?} up={double_up:?}"
+        ))
+        .into());
+    }
+    let Some(UiGlueNetworkAction::EnterWorld {
+        guid: CHARACTER_GUID,
+    }) = manager.take_network_action()
+    else {
+        return Err(invalid_data(
+            "character-row double click did not run OnDoubleClick world entry".to_owned(),
+        )
+        .into());
+    };
+    if manager.take_network_action().is_some() {
+        return Err(invalid_data(
+            "character-row double click emitted an unexpected second action".to_owned(),
         )
         .into());
     }

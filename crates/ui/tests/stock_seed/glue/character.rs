@@ -89,11 +89,11 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
 
     let get_facing = globals.get::<mlua::Function>("GetCharacterSelectFacing")?;
     assert_eq!(get_facing.call::<f64>(())?, 0.0);
-    assert_eq!(
+    assert!(
         globals
             .get::<mlua::Function>("SetCharacterSelectFacing")?
-            .call::<f64>(45.0)?,
-        45.0
+            .call::<mlua::MultiValue>(45.0)?
+            .is_empty()
     );
     globals
         .get::<mlua::Function>("UpdateSelectionCustomizationScene")?

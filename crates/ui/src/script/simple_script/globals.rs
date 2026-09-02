@@ -1100,6 +1100,11 @@ fn register_client_runtime_globals(
             objects.raw_get::<Option<Table>>(object_index + 1)
         })?,
     )?;
+    let cursor_position = environment.cursor_position();
+    globals.raw_set(
+        "GetCursorPosition",
+        lua.create_function(move |_, ()| Ok(cursor_position.get()))?,
+    )?;
     let client_clock = environment.client_clock();
     globals.raw_set(
         "GetTime",
@@ -1748,9 +1753,10 @@ end
     let set_facing = state.clone();
     globals.raw_set(
         "SetCharacterCreateFacing",
-        lua.create_function(move |_, facing: f64| {
+        lua.create_function(move |_, facing: Option<f64>| {
+            let facing = facing.unwrap_or(0.0);
             set_facing.set_facing_degrees(facing);
-            Ok(facing)
+            Ok(())
         })?,
     )?;
     let valid_pair = state.clone();
@@ -1815,9 +1821,10 @@ fn register_character_list_globals(
     let network = environment.network();
     globals.raw_set(
         "SetCharacterSelectFacing",
-        lua.create_function(move |_, facing: f64| {
+        lua.create_function(move |_, facing: Option<f64>| {
+            let facing = facing.unwrap_or(0.0);
             network.borrow_mut().set_character_select_facing(facing);
-            Ok(facing)
+            Ok(())
         })?,
     )?;
     // Wow.exe 0x004E2FD0 reapplies the selected enumeration row to the

@@ -459,7 +459,7 @@ impl UiPresentationPlan {
             let (Some(strata), Some(frame_level)) = (owner.frame_strata, owner.frame_level) else {
                 continue;
             };
-            if !widget_role_is_presented(object.role, owner) {
+            if !widget_role_is_presented(object.role, owner_index, owner, live) {
                 continue;
             }
             let source = if let Some(path) = &texture.file {
@@ -909,20 +909,33 @@ fn nearest_owning_frame(live: &UiRuntimeObjectPlan, object: &UiRuntimeObject) ->
     None
 }
 
-fn widget_role_is_presented(role: UiObjectRole, owner: &UiRuntimeObject) -> bool {
+fn widget_role_is_presented(
+    role: UiObjectRole,
+    owner_index: usize,
+    owner: &UiRuntimeObject,
+    live: &UiRuntimeObjectPlan,
+) -> bool {
+    let enabled = owner.enabled != Some(false);
+    let checked = owner.checked == Some(true);
+    let pushed = owner.pushed == Some(true);
     match role {
         UiObjectRole::Object
         | UiObjectRole::ScrollChild
         | UiObjectRole::ButtonText
         | UiObjectRole::ThumbTexture => true,
-        UiObjectRole::NormalTexture => owner.enabled != Some(false),
-        UiObjectRole::PushedTexture => owner.enabled != Some(false) && owner.pushed == Some(true),
-        UiObjectRole::DisabledTexture => owner.enabled == Some(false),
-        UiObjectRole::HighlightTexture => owner.highlighted == Some(true),
-        UiObjectRole::CheckedTexture => owner.enabled != Some(false) && owner.checked == Some(true),
-        UiObjectRole::DisabledCheckedTexture => {
-            owner.enabled == Some(false) && owner.checked == Some(true)
+        UiObjectRole::NormalTexture => {
+            !pushed
+                && (enabled
+                    || !live.objects().iter().any(|candidate| {
+                        candidate.parent == Some(owner_index)
+                            && candidate.role == UiObjectRole::DisabledTexture
+                    }))
         }
+        UiObjectRole::PushedTexture => enabled && pushed,
+        UiObjectRole::DisabledTexture => !enabled && !checked,
+        UiObjectRole::HighlightTexture => owner.highlighted == Some(true),
+        UiObjectRole::CheckedTexture => enabled && checked,
+        UiObjectRole::DisabledCheckedTexture => !enabled && checked,
     }
 }
 

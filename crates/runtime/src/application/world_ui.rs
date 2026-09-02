@@ -201,8 +201,11 @@ impl RuntimeWorldUi {
         position: (f64, f64),
         button: UiPointerButton,
         pressed: bool,
+        click_count: u8,
     ) -> Result<UiPointerDispatch, ApplicationError> {
-        let dispatch = self.manager.pointer_button(position, button, pressed)?;
+        let dispatch =
+            self.manager
+                .pointer_button_with_click_count(position, button, pressed, click_count)?;
         self.dirty |= dispatch.object_index().is_some();
         Ok(dispatch)
     }

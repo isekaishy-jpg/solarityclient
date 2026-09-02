@@ -114,7 +114,19 @@ impl FrameManager {
         self.owner.pointer_button(position, button, pressed)
     }
 
-    /// Updates pointer focus and any captured slider.
+    /// Routes a pointer transition with the platform aggregate click count.
+    pub fn pointer_button_with_click_count(
+        &mut self,
+        position: (f64, f64),
+        button: UiPointerButton,
+        pressed: bool,
+        click_count: u8,
+    ) -> Result<UiPointerDispatch, UiEventError> {
+        self.owner
+            .pointer_button_with_click_count(position, button, pressed, click_count)
+    }
+
+    /// Updates pointer focus and any captured pointer drag.
     ///
     /// # Errors
     ///

@@ -430,10 +430,11 @@ impl ClientServices {
                     f64::from(pointer.x) / f64::from(window_width) * ui_width,
                     ui_height - f64::from(pointer.y) / f64::from(window_height) * ui_height,
                 );
-                let dispatch = self.glue.pointer_button(
+                let dispatch = self.glue.pointer_button_with_click_count(
                     position,
                     button,
                     pointer.state == ButtonState::Pressed,
+                    pointer.click_count,
                 )?;
                 if dispatch.object_index().is_some() {
                     self.login_ui = None;
@@ -533,6 +534,7 @@ impl ClientServices {
                     project_pointer(pointer.x, pointer.y),
                     button,
                     pointer.state == ButtonState::Pressed,
+                    pointer.click_count,
                 )?;
             }
             PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {

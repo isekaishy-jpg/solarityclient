@@ -157,6 +157,70 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Button skins follow stock's mutually exclusive pushed, disabled, and
+/// checked role predicates, including the missing-disabled-skin fallback.
+#[test]
+fn glue_presentation_selects_stock_button_state_textures() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Buttons.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Buttons.xml",
+            bytes: br#"<Ui>
+<CheckButton name="ButtonTemplate" virtual="true"><Size x="20" y="20"/>
+  <NormalTexture name="$parentNormal" file="Interface\Glues\Normal"/>
+  <PushedTexture name="$parentPushed" file="Interface\Glues\Pushed"/>
+  <DisabledTexture name="$parentDisabled" file="Interface\Glues\Disabled"/>
+  <CheckedTexture name="$parentChecked" file="Interface\Glues\Checked"/>
+  <DisabledCheckedTexture name="$parentDisabledChecked" file="Interface\Glues\DisabledChecked"/>
+</CheckButton>
+<CheckButton name="NormalButton" inherits="ButtonTemplate"/>
+<CheckButton name="PushedButton" inherits="ButtonTemplate">
+  <Scripts><OnLoad>self:SetButtonState("PUSHED")</OnLoad></Scripts>
+</CheckButton>
+<CheckButton name="DisabledButton" inherits="ButtonTemplate">
+  <Scripts><OnLoad>self:Disable()</OnLoad></Scripts>
+</CheckButton>
+<CheckButton name="FallbackButton"><Size x="20" y="20"/>
+  <NormalTexture name="$parentNormal" file="Interface\Glues\Normal"/>
+  <Scripts><OnLoad>self:Disable()</OnLoad></Scripts>
+</CheckButton>
+<CheckButton name="CheckedButton" inherits="ButtonTemplate">
+  <Scripts><OnLoad>self:SetChecked(1)</OnLoad></Scripts>
+</CheckButton>
+<CheckButton name="DisabledCheckedButton" inherits="ButtonTemplate">
+  <Scripts><OnLoad>self:SetChecked(1) self:Disable()</OnLoad></Scripts>
+</CheckButton>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let names = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .filter_map(|member| manager.objects()[member.object_index()].name())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert!(names.contains("NormalButtonNormal"));
+    assert!(!names.contains("NormalButtonPushed"));
+    assert!(names.contains("PushedButtonPushed"));
+    assert!(!names.contains("PushedButtonNormal"));
+    assert!(names.contains("DisabledButtonDisabled"));
+    assert!(!names.contains("DisabledButtonNormal"));
+    assert!(names.contains("FallbackButtonNormal"));
+    assert!(names.contains("CheckedButtonNormal"));
+    assert!(names.contains("CheckedButtonChecked"));
+    assert!(names.contains("DisabledCheckedButtonDisabledChecked"));
+    assert!(!names.contains("DisabledCheckedButtonDisabled"));
+    assert!(!names.contains("DisabledCheckedButtonNormal"));
+    Ok(())
+}
+
 /// Visible ModelFFX state crosses the retained Lua-to-render boundary exactly.
 #[test]
 fn glue_presentation_retains_stock_model_ffx_state() -> Result<(), Box<dyn Error>> {

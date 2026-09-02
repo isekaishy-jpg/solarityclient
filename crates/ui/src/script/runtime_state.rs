@@ -4,23 +4,24 @@ use mlua::{Lua, Table};
 
 use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key, backdrop_color_key,
-    button_pressed_key, checked_key, click_action_key, desaturated_key, draw_layer_key,
-    draw_sub_level_key, edit_cursor_key, edit_focused_key, edit_multi_line_key, edit_password_key,
-    edit_selection_end_key, edit_selection_start_key, edit_text_insets_key, enabled_key,
-    font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
+    button_pressed_key, checked_key, click_action_key, desaturated_key, disabled_font_key,
+    draw_layer_key, draw_sub_level_key, edit_cursor_key, edit_focused_key, edit_multi_line_key,
+    edit_password_key, edit_selection_end_key, edit_selection_start_key, edit_text_insets_key,
+    enabled_key, font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
     font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
-    highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key, horizontal_scroll_range_key,
-    horizontal_tiling_key, index_key, justify_h_key, justify_v_key, keyboard_enabled_key,
-    model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
-    model_character_light_ghost_key, model_character_light_live_key, model_file_key,
-    model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
-    model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
-    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
-    mouse_wheel_enabled_key, name_key, non_blocking_key, parent_key, parse_point, role_key,
-    scale_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key, slider_step_key,
-    slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
-    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key,
+    highlight_font_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
+    horizontal_scroll_range_key, horizontal_tiling_key, hovered_key, index_key, justify_h_key,
+    justify_v_key, keyboard_enabled_key, model_background_light_ghost_key,
+    model_background_light_live_key, model_camera_key, model_character_light_ghost_key,
+    model_character_light_live_key, model_file_key, model_fog_color_key, model_fog_far_key,
+    model_fog_near_key, model_glow_key, model_pet_light_ghost_key, model_pet_light_live_key,
+    model_scale_key, model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key,
+    mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, normal_font_key,
+    parent_key, parse_point, role_key, scale_key, shown_key, slider_max_key, slider_min_key,
+    slider_orientation_key, slider_step_key, slider_value_key, spacing_key, tex_coord_key,
+    text_color_key, text_key, texture_blend_mode_key, texture_color_key, texture_file_key,
+    texture_solid_color_key, type_key, vertical_scroll_key, vertical_scroll_range_key,
+    vertical_tiling_key, width_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -222,7 +223,8 @@ pub(super) fn snapshot_runtime_objects(
             .then(|| snapshot_texture(lua_index, &table))
             .transpose()?;
         let text = if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
-            snapshot_text(lua_index, kind, &table)?
+            let presentation_font = button_presentation_font(&registry, role, parent)?;
+            snapshot_text(lua_index, kind, &table, presentation_font.as_ref())?
         } else {
             None
         };
@@ -368,7 +370,12 @@ pub(super) fn snapshot_runtime_objects(
                 .transpose()
                 .map_err(|error| snapshot_error(format!("object {lua_index} checked"), error))?,
             highlighted: matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton)
-                .then(|| table.raw_get(highlight_locked_key()))
+                .then(|| {
+                    Ok::<bool, mlua::Error>(
+                        table.raw_get::<bool>(highlight_locked_key())?
+                            || table.raw_get::<bool>(hovered_key())?,
+                    )
+                })
                 .transpose()
                 .map_err(|error| snapshot_error(format!("object {lua_index} highlight"), error))?,
             pushed: is_button
@@ -431,10 +438,67 @@ fn snapshot_optional_color(
         .transpose()
 }
 
+/// Selects the stock Button font role used to present its owned label. The
+/// FontString keeps its layout policy, while this object supplies the face,
+/// size, color, shadow, rasterization flags, and spacing.
+fn button_presentation_font(
+    registry: &Table,
+    role: UiObjectRole,
+    parent: Option<usize>,
+) -> Result<Option<Table>, UiScriptError> {
+    if role != UiObjectRole::ButtonText {
+        return Ok(None);
+    }
+    let Some(parent) = parent else {
+        return Ok(None);
+    };
+    let lua_index = parent + 1;
+    let button: Table = registry
+        .raw_get(lua_index)
+        .map_err(|error| snapshot_error(format!("button owner {lua_index}"), error))?;
+    let kind = button
+        .raw_get::<String>(type_key())
+        .map_err(|error| snapshot_error(format!("button owner {lua_index} type"), error))?;
+    if !matches!(kind.as_str(), "Button" | "CheckButton") {
+        return Ok(None);
+    }
+    let enabled = button
+        .raw_get::<bool>(enabled_key())
+        .map_err(|error| snapshot_error(format!("button owner {lua_index} enabled"), error))?;
+    let highlighted = button
+        .raw_get::<bool>(hovered_key())
+        .and_then(|hovered| {
+            button
+                .raw_get::<bool>(highlight_locked_key())
+                .map(|locked| hovered || locked)
+        })
+        .map_err(|error| snapshot_error(format!("button owner {lua_index} highlight"), error))?;
+    if !enabled {
+        let disabled = button
+            .raw_get::<Option<Table>>(disabled_font_key())
+            .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))?;
+        if disabled.is_some() {
+            return Ok(disabled);
+        }
+    }
+    if highlighted {
+        let highlight = button
+            .raw_get::<Option<Table>>(highlight_font_key())
+            .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))?;
+        if highlight.is_some() {
+            return Ok(highlight);
+        }
+    }
+    button
+        .raw_get::<Option<Table>>(normal_font_key())
+        .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))
+}
+
 fn snapshot_text(
     lua_index: usize,
     kind: UiObjectKind,
     table: &Table,
+    presentation_font: Option<&Table>,
 ) -> Result<Option<UiRuntimeText>, UiScriptError> {
     let font_set = table
         .raw_get::<bool>(font_set_key())
@@ -442,12 +506,13 @@ fn snapshot_text(
     if !font_set {
         return Ok(None);
     }
-    let Some(font) = table
+    let Some(local_font) = table
         .raw_get::<Option<Table>>(font_object_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} font object"), error))?
     else {
         return Ok(None);
     };
+    let font = presentation_font.unwrap_or(&local_font);
     let Some(face) = font
         .raw_get::<Option<String>>(font_face_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} font face"), error))?
@@ -485,13 +550,13 @@ fn snapshot_text(
     let draw_layer = table
         .raw_get::<String>(draw_layer_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} text draw layer"), error))?;
-    let color: Table = table
+    let color: Table = font
         .raw_get(text_color_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} text color"), error))?;
-    let shadow_offset: Table = table
+    let shadow_offset: Table = font
         .raw_get(font_shadow_offset_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} shadow offset"), error))?;
-    let shadow_color: Table = table
+    let shadow_color: Table = font
         .raw_get(font_shadow_color_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} shadow color"), error))?;
     let is_edit_box = kind == UiObjectKind::EditBox;
@@ -542,7 +607,7 @@ fn snapshot_text(
         color: numeric_array::<4>(&color, lua_index, "text color")?,
         shadow_offset: numeric_array::<2>(&shadow_offset, lua_index, "shadow offset")?,
         shadow_color: numeric_array::<4>(&shadow_color, lua_index, "shadow color")?,
-        spacing: finite_region_number(table, spacing_key(), lua_index, "font spacing")?,
+        spacing: finite_region_number(font, spacing_key(), lua_index, "font spacing")?,
         horizontal: parse_horizontal_justification(&horizontal).ok_or_else(|| {
             UiScriptError::Plan {
                 message: format!(

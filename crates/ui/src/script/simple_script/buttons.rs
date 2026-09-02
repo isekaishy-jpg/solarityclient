@@ -14,9 +14,9 @@ use super::{
     DynamicArenaState, button_pressed_key, button_state_locked_key, button_text_key, checked_key,
     click_action_key, create_dynamic_region, disabled_font_key, disabled_texture_key,
     drag_button_key, enabled_key, font_object_key, font_set_key, highlight_font_key,
-    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, name_key, normal_font_key,
-    normal_texture_key, object_script_function, pushed_texture_key, resolve_font_object, text_key,
-    texture_file_key, texture_solid_color_key, type_key,
+    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, mark_live_state_changed,
+    name_key, normal_font_key, normal_texture_key, object_script_function, pushed_texture_key,
+    resolve_font_object, text_key, texture_file_key, texture_solid_color_key, type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
@@ -245,7 +245,7 @@ pub(super) fn register_button_methods(
     methods.raw_set(
         "SetButtonState",
         lua.create_function(
-            |_, (button, state, locked): (Table, String, Option<Value>)| {
+            |lua, (button, state, locked): (Table, String, Option<Value>)| {
                 let pushed = match state.as_str() {
                     "NORMAL" => false,
                     "PUSHED" => true,
@@ -255,21 +255,37 @@ pub(super) fn register_button_methods(
                         ));
                     }
                 };
+                let state_locked = locked.as_ref().is_some_and(|value| lua_bool(value, false));
+                let changed = button.raw_get::<bool>(button_pressed_key())? != pushed
+                    || button.raw_get::<bool>(button_state_locked_key())? != state_locked;
                 button.raw_set(button_pressed_key(), pushed)?;
-                button.raw_set(
-                    button_state_locked_key(),
-                    locked.as_ref().is_some_and(|value| lua_bool(value, false)),
-                )
+                button.raw_set(button_state_locked_key(), state_locked)?;
+                if changed {
+                    mark_live_state_changed(lua)?;
+                }
+                Ok(())
             },
         )?,
     )?;
     methods.raw_set(
         "LockHighlight",
-        lua.create_function(|_, button: Table| button.raw_set(highlight_locked_key(), true))?,
+        lua.create_function(|lua, button: Table| {
+            if !button.raw_get::<bool>(highlight_locked_key())? {
+                button.raw_set(highlight_locked_key(), true)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "UnlockHighlight",
-        lua.create_function(|_, button: Table| button.raw_set(highlight_locked_key(), false))?,
+        lua.create_function(|lua, button: Table| {
+            if button.raw_get::<bool>(highlight_locked_key())? {
+                button.raw_set(highlight_locked_key(), false)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
+        })?,
     )?;
     methods.raw_set(
         "RegisterForClicks",
@@ -391,18 +407,26 @@ pub(super) fn register_drag_methods(lua: &Lua, methods: &Table) -> mlua::Result<
 pub(super) fn register_check_button_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "SetChecked",
-        lua.create_function(|_, (button, arguments): (Table, Variadic<Value>)| {
-            let checked = arguments.first().is_none_or(|value| lua_bool(value, true));
-            button.raw_set(checked_key(), checked)
+        lua.create_function(|lua, (button, arguments): (Table, Variadic<Value>)| {
+            // Build 12340 clears the state for an omitted value, explicit nil,
+            // false, or any numeric value coercing to zero. Every other Lua
+            // value selects the checked state.
+            let checked = match arguments.first() {
+                None | Some(Value::Nil | Value::Boolean(false)) => false,
+                Some(value) => !lua
+                    .coerce_number(value.clone())?
+                    .is_some_and(|number| number == 0.0),
+            };
+            if button.raw_get::<bool>(checked_key())? != checked {
+                button.raw_set(checked_key(), checked)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "GetChecked",
-        lua.create_function(|_, button: Table| {
-            Ok(button
-                .raw_get::<bool>(checked_key())?
-                .then_some(Value::Number(1.0)))
-        })?,
+        lua.create_function(|_, button: Table| button.raw_get::<bool>(checked_key()))?,
     )
 }
 
