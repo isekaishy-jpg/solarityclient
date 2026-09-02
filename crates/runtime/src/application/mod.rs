@@ -24,6 +24,7 @@ mod terrain_frame;
 mod transport_coordinator;
 pub(crate) mod ui_frame;
 mod world_coordinator;
+mod world_ui;
 
 pub use character_directory::CharacterProjectionError;
 pub use client::{ApplicationError, ClientApplication, StartupReport};
@@ -56,3 +57,4 @@ pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,
 };
+pub use world_ui::RuntimeWorldUiError;

@@ -443,6 +443,7 @@ pub struct UiScriptEnvironment {
     process: Rc<RefCell<crate::script::UiProcessBridge>>,
     current_screen: Rc<RefCell<String>>,
     cursor_visible: Rc<Cell<bool>>,
+    mouse_focus: Rc<Cell<Option<usize>>>,
     modifiers: crate::UiModifierKeyState,
     world: crate::UiWorldState,
     account: crate::UiAccountState,
@@ -507,6 +508,7 @@ impl UiScriptEnvironment {
             process: Rc::new(RefCell::new(crate::script::UiProcessBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
             cursor_visible: Rc::new(Cell::new(true)),
+            mouse_focus: Rc::new(Cell::new(None)),
             modifiers: crate::UiModifierKeyState::new(),
             world: crate::UiWorldState::new(),
             account: crate::UiAccountState::new(),
@@ -694,6 +696,10 @@ impl UiScriptEnvironment {
 
     pub(crate) fn cursor_visible(&self) -> Rc<Cell<bool>> {
         self.cursor_visible.clone()
+    }
+
+    pub(crate) fn mouse_focus(&self) -> Rc<Cell<Option<usize>>> {
+        self.mouse_focus.clone()
     }
 
     /// Returns the shared main-thread projection consumed by FrameXML globals.

@@ -193,6 +193,21 @@ fn register_frame_globals(
         lua.create_function(|_, ()| Ok(Option::<u8>::None))?,
     )?;
     globals.raw_set(
+        "GetTotemInfo",
+        lua.create_function(|_, _slot: u32| {
+            // FUN_0051d330 returns five values. Before SMSG_TOTEM_CREATED
+            // publishes a slot, stock exposes the inactive image consumed by
+            // TotemFrame_Update during synchronous FrameXML construction.
+            Ok((
+                false,
+                String::new(),
+                0.0_f64,
+                0.0_f64,
+                Option::<String>::None,
+            ))
+        })?,
+    )?;
+    globals.raw_set(
         "IsThreatWarningEnabled",
         lua.create_function(move |_, _unit: Option<String>| {
             let enabled = threat_warnings
@@ -1072,6 +1087,17 @@ fn register_client_runtime_globals(
         lua.create_function(move |_, _: Variadic<Value>| {
             process.borrow_mut().push(UiProcessAction::Quit);
             Ok(())
+        })?,
+    )?;
+    let mouse_focus = environment.mouse_focus();
+    globals.raw_set(
+        "GetMouseFocus",
+        lua.create_function(move |lua, ()| {
+            let Some(object_index) = mouse_focus.get() else {
+                return Ok(Option::<Table>::None);
+            };
+            let objects: Table = lua.named_registry_value(super::OBJECT_REGISTRY)?;
+            objects.raw_get::<Option<Table>>(object_index + 1)
         })?,
     )?;
     let client_clock = environment.client_clock();

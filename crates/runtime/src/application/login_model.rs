@@ -14,7 +14,7 @@ use solarity_rendering::{
 use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation};
 use thiserror::Error;
 
-use crate::application::login_ui::LoginUiFrame;
+use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::M2Frame;
@@ -283,7 +283,7 @@ impl RuntimeGlueModelScene {
     pub(crate) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
-        ui: &LoginUiFrame,
+        ui: &RuntimeUiFrame,
         pixel_extent: (u32, u32),
         global_time_ms: f32,
         random: &mut CrtRand,

@@ -1,11 +1,16 @@
 //! Projection of protocol character rows through client-authored DBC metadata.
 
 use solarity_asset::{
-    AreaTableCatalog, AssetError, AssetStore, CharacterClassCatalog, CharacterRaceCatalog,
+    AreaTableCatalog, AssetError, AssetStore, CharacterClassCatalog, CharacterFactionCatalog,
+    CharacterRaceCatalog,
 };
+use solarity_ecs::{ActiveWorld, UnitIdentity};
 use solarity_network::{CharacterDirectory, CharacterGender};
 use solarity_ui::{
     UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
+    UiFactionGroup, UiPlayerClassState, UiPlayerFactionState, UiPlayerIdentityState,
+    UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
+    UiPlayerVitalsState, UiUnitPowerType, UiWorldState,
 };
 use thiserror::Error;
 
@@ -13,6 +18,7 @@ use thiserror::Error;
 pub(crate) struct RuntimeCharacterMetadata {
     races: CharacterRaceCatalog,
     classes: CharacterClassCatalog,
+    factions: CharacterFactionCatalog,
     areas: AreaTableCatalog,
 }
 
@@ -22,6 +28,7 @@ impl RuntimeCharacterMetadata {
         Ok(Self {
             races: CharacterRaceCatalog::load(store)?,
             classes: CharacterClassCatalog::load(store)?,
+            factions: CharacterFactionCatalog::load(store)?,
             areas: AreaTableCatalog::load(store)?,
         })
     }
@@ -119,10 +126,115 @@ impl RuntimeCharacterMetadata {
             default_background_model,
         ))
     }
+
+    /// Publishes the authoritative local-player image required before stock
+    /// FrameXML executes its synchronous `OnLoad` queries.
+    pub(crate) fn publish_active_player(
+        &self,
+        active: &ActiveWorld,
+        target: &UiWorldState,
+    ) -> Result<(), CharacterProjectionError> {
+        let identity = active
+            .local_player_unit_identity()
+            .ok_or(CharacterProjectionError::MissingActiveIdentity)?;
+        let player = active
+            .local_player_identity()
+            .ok_or(CharacterProjectionError::MissingActiveName)?;
+        let money = active
+            .local_player_money()
+            .ok_or(CharacterProjectionError::MissingActiveMoney)?;
+        let progression = active
+            .local_player_progression()
+            .ok_or(CharacterProjectionError::MissingActiveProgression)?;
+        let vitals = active
+            .local_player_vitals()
+            .ok_or(CharacterProjectionError::MissingActiveVitals)?;
+        let race = self.races.race(u32::from(identity.race_id())).ok_or(
+            CharacterProjectionError::UnknownRace {
+                id: u32::from(identity.race_id()),
+            },
+        )?;
+        let class = self.classes.class(u32::from(identity.class_id())).ok_or(
+            CharacterProjectionError::UnknownClass {
+                id: identity.class_id(),
+            },
+        )?;
+        let faction = self
+            .factions
+            .group_for_template(identity.faction_template_id())
+            .ok_or(CharacterProjectionError::UnknownFactionTemplate {
+                id: identity.faction_template_id(),
+            })?;
+        let faction_group = match faction.internal_name() {
+            "Alliance" => UiFactionGroup::Alliance,
+            "Horde" => UiFactionGroup::Horde,
+            name => {
+                return Err(CharacterProjectionError::UnsupportedPlayerFaction {
+                    name: name.to_owned(),
+                });
+            }
+        };
+        let level = u8::try_from(identity.level()).map_err(|_source| {
+            CharacterProjectionError::InvalidPlayerLevel {
+                level: identity.level(),
+            }
+        })?;
+        let power_type = ui_power_type(identity)?;
+        let power_index = usize::from(identity.power_type_id());
+        let powers = vitals.powers();
+        let max_powers = vitals.max_powers();
+
+        target.enter_player(UiPlayerState::new(money.copper()));
+        target.set_player_identity(UiPlayerIdentityState::new(player.name(), level));
+        target.set_player_class(UiPlayerClassState::new(
+            class.display_name(identity.gender_id()),
+            class.file_string().to_ascii_uppercase(),
+            identity.class_id(),
+        ));
+        target.set_player_race(UiPlayerRaceState::new(
+            race.display_name(identity.gender_id()),
+            race.client_file_string(),
+            identity.race_id(),
+        ));
+        target.set_player_progression(UiPlayerProgressionState::new(
+            progression.experience(),
+            progression.next_level_experience(),
+        ));
+        target.set_player_vitals(UiPlayerVitalsState::new(
+            vitals.health(),
+            vitals.max_health(),
+            powers[power_index],
+            max_powers[power_index],
+            power_type,
+        ));
+        target.set_player_faction(UiPlayerFactionState::new(faction_group, faction.name()));
+        // FUN_00500910 selects the active player's default language from the
+        // learned-language table. Every stock player starts with its faction's
+        // common language; later spell initialization can extend that table.
+        target.set_player_default_language(match faction_group {
+            UiFactionGroup::Alliance => UiPlayerLanguage::new(7, "Common"),
+            UiFactionGroup::Horde => UiPlayerLanguage::new(1, "Orcish"),
+        });
+        Ok(())
+    }
+}
+
+/// Converts `UNIT_FIELD_BYTES_0`'s closed build-12340 power vocabulary.
+fn ui_power_type(identity: UnitIdentity) -> Result<UiUnitPowerType, CharacterProjectionError> {
+    match identity.power_type_id() {
+        0 => Ok(UiUnitPowerType::Mana),
+        1 => Ok(UiUnitPowerType::Rage),
+        2 => Ok(UiUnitPowerType::Focus),
+        3 => Ok(UiUnitPowerType::Energy),
+        4 => Ok(UiUnitPowerType::Happiness),
+        5 => Ok(UiUnitPowerType::Runes),
+        6 => Ok(UiUnitPowerType::RunicPower),
+        id => Err(CharacterProjectionError::UnknownPowerType { id }),
+    }
 }
 
 /// A server character references metadata absent from the mounted client.
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CharacterProjectionError {
     /// The character's race has no client DBC row.
     #[error("character directory references unknown ChrRaces identifier {id}")]
@@ -141,6 +253,45 @@ pub enum CharacterProjectionError {
     UnknownArea {
         /// Missing protocol identifier.
         id: u32,
+    },
+    /// FrameXML started before the local create update published unit identity.
+    #[error("active player has no projected unit identity")]
+    MissingActiveIdentity,
+    /// World bootstrap lost the selected character name.
+    #[error("active player has no server-validated name")]
+    MissingActiveName,
+    /// FrameXML started before private coinage arrived.
+    #[error("active player has no projected coinage")]
+    MissingActiveMoney,
+    /// FrameXML started before the adjacent XP words arrived.
+    #[error("active player has no projected progression")]
+    MissingActiveProgression,
+    /// FrameXML started before health and power fields arrived.
+    #[error("active player has no projected vitals")]
+    MissingActiveVitals,
+    /// The local unit references a faction template absent from client DBCs.
+    #[error("active player references unknown FactionTemplate identifier {id}")]
+    UnknownFactionTemplate {
+        /// Missing DBC identifier.
+        id: u32,
+    },
+    /// A player faction resolved outside the two stock playable groups.
+    #[error("active player belongs to unsupported faction group {name}")]
+    UnsupportedPlayerFaction {
+        /// Unexpected stable group token.
+        name: String,
+    },
+    /// The server level does not fit build 12340's byte-sized UI result.
+    #[error("active player level {level} exceeds the FrameXML representation")]
+    InvalidPlayerLevel {
+        /// Server-provided level.
+        level: u32,
+    },
+    /// The local unit uses an unknown build-12340 power identifier.
+    #[error("active player references unknown power type {id}")]
+    UnknownPowerType {
+        /// Byte from `UNIT_FIELD_BYTES_0`.
+        id: u8,
     },
 }
 

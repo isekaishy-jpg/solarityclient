@@ -26,7 +26,7 @@ impl UiEventDispatch {
 #[derive(Debug, Error)]
 pub enum UiEventError {
     /// The name is not present in the selected stock event registry.
-    #[error("unknown GlueXML event {name}")]
+    #[error("unknown built-in UI event {name}")]
     Unknown {
         /// Caller-supplied event name.
         name: String,

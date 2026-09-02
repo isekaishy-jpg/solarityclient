@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_network::{
-    InWorldSession, WorldLivenessPacketError, WorldPacketReader, WorldPacketWriter,
-    WorldServerPacket, WorldSessionError, WorldTimePacketError,
+    InWorldSession, WorldActionButtonPacketError, WorldActionButtons, WorldLivenessPacketError,
+    WorldPacketReader, WorldPacketWriter, WorldServerPacket, WorldSessionError,
+    WorldTimePacketError,
 };
 use solarity_systems::{WorldEntryGroundContact, WorldEntryGroundContactError};
 use thiserror::Error;
@@ -55,6 +56,9 @@ pub enum RuntimeGameplayError {
     /// A realm clock packet was malformed.
     #[error(transparent)]
     WorldTime(#[from] WorldTimePacketError),
+    /// An authoritative action-button image was malformed.
+    #[error(transparent)]
+    ActionButtons(#[from] WorldActionButtonPacketError),
     /// The network task ended without publishing its terminal result.
     #[error("active-world network task ended unexpectedly")]
     TaskEnded,
@@ -71,6 +75,7 @@ pub struct RuntimeGameplayCoordinator {
     active: Option<ActiveGameplayNetwork>,
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
+    action_buttons: Option<WorldActionButtons>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     world_entry_grounded: bool,
 }
@@ -83,6 +88,7 @@ impl RuntimeGameplayCoordinator {
             active: None,
             world: None,
             realm_clock: None,
+            action_buttons: None,
             unhandled_packets: VecDeque::new(),
             world_entry_grounded: false,
         }
@@ -107,8 +113,15 @@ impl RuntimeGameplayCoordinator {
         let mut gameplay = GameplaySession::enter(network);
         let mut retained = VecDeque::new();
         let mut realm_clock = None;
+        let mut action_buttons = None;
         for packet in setup_packets {
-            dispatch_setup_packet(&mut gameplay, packet, &mut realm_clock, &mut retained)?;
+            dispatch_setup_packet(
+                &mut gameplay,
+                packet,
+                &mut realm_clock,
+                &mut action_buttons,
+                &mut retained,
+            )?;
         }
         let (network, world) = gameplay.into_parts();
         let map_id = world.map_id().value();
@@ -117,6 +130,7 @@ impl RuntimeGameplayCoordinator {
         self.active = Some(ActiveGameplayNetwork { receiver, task });
         self.world = Some(world);
         self.realm_clock = realm_clock;
+        self.action_buttons = action_buttons;
         self.unhandled_packets = retained;
         self.world_entry_grounded = false;
         tracing::info!(
@@ -150,6 +164,7 @@ impl RuntimeGameplayCoordinator {
                         world,
                         packet,
                         &mut self.realm_clock,
+                        &mut self.action_buttons,
                         &mut self.unhandled_packets,
                     ) {
                         Ok(true) => applied += 1,
@@ -158,6 +173,7 @@ impl RuntimeGameplayCoordinator {
                             active.task.abort();
                             self.world = None;
                             self.realm_clock = None;
+                            self.action_buttons = None;
                             self.unhandled_packets.clear();
                             return Err(error);
                         }
@@ -167,6 +183,7 @@ impl RuntimeGameplayCoordinator {
                     active.task.abort();
                     self.world = None;
                     self.realm_clock = None;
+                    self.action_buttons = None;
                     self.unhandled_packets.clear();
                     return Err(error);
                 }
@@ -177,6 +194,7 @@ impl RuntimeGameplayCoordinator {
                 Err(TryRecvError::Disconnected) => {
                     self.world = None;
                     self.realm_clock = None;
+                    self.action_buttons = None;
                     self.unhandled_packets.clear();
                     return Err(RuntimeGameplayError::TaskEnded);
                 }
@@ -233,6 +251,12 @@ impl RuntimeGameplayCoordinator {
         self.realm_clock.as_ref().map(RealmClock::half_minutes)
     }
 
+    /// Returns the latest complete server-authored action-button image.
+    #[must_use]
+    pub const fn action_buttons(&self) -> Option<&WorldActionButtons> {
+        self.action_buttons.as_ref()
+    }
+
     /// Returns unsupported packets retained for their future owning subsystem.
     #[must_use]
     pub fn unhandled_packets(&self) -> &VecDeque<WorldServerPacket> {
@@ -246,6 +270,7 @@ impl RuntimeGameplayCoordinator {
         }
         self.world = None;
         self.realm_clock = None;
+        self.action_buttons = None;
         self.unhandled_packets.clear();
         self.world_entry_grounded = false;
     }
@@ -381,6 +406,7 @@ fn dispatch_setup_packet<S>(
     gameplay: &mut GameplaySession<S>,
     packet: WorldServerPacket,
     realm_clock: &mut Option<RealmClock>,
+    action_buttons: &mut Option<WorldActionButtons>,
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<(), RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
@@ -396,6 +422,12 @@ fn dispatch_setup_packet<S>(
         gameplay.apply_object_updates(&updates)?;
         return Ok(());
     }
+    if let Some(buttons) = packet.action_buttons()? {
+        if buttons.slots().is_some() {
+            *action_buttons = Some(buttons);
+        }
+        return Ok(());
+    }
     retain_unhandled(unhandled, packet)
 }
 
@@ -403,6 +435,7 @@ fn dispatch_world_packet(
     world: &mut ActiveWorld,
     packet: WorldServerPacket,
     realm_clock: &mut Option<RealmClock>,
+    action_buttons: &mut Option<WorldActionButtons>,
     unhandled: &mut VecDeque<WorldServerPacket>,
 ) -> Result<bool, RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
@@ -417,6 +450,12 @@ fn dispatch_world_packet(
     if let Some(updates) = packet.object_updates()? {
         apply_object_updates(world, &updates)?;
         return Ok(true);
+    }
+    if let Some(buttons) = packet.action_buttons()? {
+        if buttons.slots().is_some() {
+            *action_buttons = Some(buttons);
+        }
+        return Ok(false);
     }
     retain_unhandled(unhandled, packet)?;
     Ok(false)

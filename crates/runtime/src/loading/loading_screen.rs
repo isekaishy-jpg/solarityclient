@@ -53,6 +53,7 @@ impl LoadingScreenDirectory {
 pub(crate) struct RuntimeLoadingScreen {
     stage: RuntimeLoadingStage,
     frames: Vec<PreparedUiFrame>,
+    presented: bool,
     final_frame_presented: bool,
 }
 
@@ -85,6 +86,7 @@ impl RuntimeLoadingScreen {
         Ok(Self {
             stage: RuntimeLoadingStage::AwaitingWorld,
             frames,
+            presented: false,
             final_frame_presented: false,
         })
     }
@@ -101,6 +103,7 @@ impl RuntimeLoadingScreen {
         overlay: &[UiPreparedDraw],
     ) -> Result<(), ApplicationError> {
         self.frames[self.stage.index()].present_with_overlay(renderer, overlay)?;
+        self.presented = true;
         if self.stage == RuntimeLoadingStage::SceneReady {
             self.final_frame_presented = true;
         }
@@ -110,6 +113,11 @@ impl RuntimeLoadingScreen {
     /// Reports that a complete card was presented after all first-world inputs.
     pub(crate) fn ready_to_complete(&self) -> bool {
         self.stage == RuntimeLoadingStage::SceneReady && self.final_frame_presented
+    }
+
+    /// Reports whether the transition surface has owned at least one present.
+    pub(crate) const fn has_presented(&self) -> bool {
+        self.presented
     }
 }
 

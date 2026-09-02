@@ -33,7 +33,7 @@ pub use application::{
     RuntimeTransportPresentation, RuntimeTransportResourceKind, RuntimeWorldCoordinator,
     RuntimeWorldEntry, RuntimeWorldEnvironment, RuntimeWorldEnvironmentError,
     RuntimeWorldEnvironmentFrame, RuntimeWorldError, RuntimeWorldPoll, RuntimeWorldState,
-    StartupReport, world_model_environment_emissive,
+    RuntimeWorldUiError, StartupReport, world_model_environment_emissive,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, StartupProfile,

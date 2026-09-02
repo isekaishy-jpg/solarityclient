@@ -50,6 +50,8 @@ pub(crate) struct RuntimeLoadingReadiness {
     pub(crate) player_ready: bool,
     /// Terrain and its complete GPU generation are resident.
     pub(crate) scene_ready: bool,
+    /// Stock FrameXML has executed and entered renderer-owned resources.
+    pub(crate) ui_ready: bool,
     /// The local movement parent's object/resource dependency has completed.
     pub(crate) transport_resource_ready: bool,
 }
@@ -68,7 +70,7 @@ impl RuntimeLoadingReadiness {
         }
         // Stock `0x006E7F50 -> 0x00409800` retains the card when the local
         // movement state names a transport until that game object resolves.
-        if !self.scene_ready || !self.transport_resource_ready {
+        if !self.scene_ready || !self.transport_resource_ready || !self.ui_ready {
             return RuntimeLoadingStage::PlayerReady;
         }
         RuntimeLoadingStage::SceneReady

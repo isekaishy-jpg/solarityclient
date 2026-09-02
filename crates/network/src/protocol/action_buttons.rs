@@ -12,15 +12,15 @@ pub enum WorldActionButtonUpdate {
     Initial,
     /// Complete replacement image, including specialization changes.
     Replace,
-    /// Clear every client-side action button without a following slot body.
-    Clear,
+    /// Toggle the player's state-two flag without replacing retained slots.
+    StateTwo,
 }
 
 /// One complete decoded `SMSG_ACTION_BUTTONS` message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldActionButtons {
     update: WorldActionButtonUpdate,
-    slots: Box<[u32; WORLD_ACTION_BUTTON_COUNT]>,
+    slots: Option<Box<[u32; WORLD_ACTION_BUTTON_COUNT]>>,
 }
 
 impl WorldActionButtons {
@@ -40,7 +40,7 @@ impl WorldActionButtons {
         let update = match state {
             0 => WorldActionButtonUpdate::Initial,
             1 => WorldActionButtonUpdate::Replace,
-            2 => WorldActionButtonUpdate::Clear,
+            2 => WorldActionButtonUpdate::StateTwo,
             _ => {
                 return Err(WorldActionButtonPacketError::new(
                     0,
@@ -48,16 +48,16 @@ impl WorldActionButtons {
                 ));
             }
         };
-        if update == WorldActionButtonUpdate::Clear {
+        if update == WorldActionButtonUpdate::StateTwo {
             if !body.is_empty() {
                 return Err(WorldActionButtonPacketError::new(
                     1,
-                    "action-button clear packet contains an unexpected slot body",
+                    "action-button state-two packet contains an unexpected slot body",
                 ));
             }
             return Ok(Self {
                 update,
-                slots: Box::new([0; WORLD_ACTION_BUTTON_COUNT]),
+                slots: None,
             });
         }
         let expected = WORLD_ACTION_BUTTON_COUNT * size_of::<u32>();
@@ -73,7 +73,10 @@ impl WorldActionButtons {
         for (slot, bytes) in slots.iter_mut().zip(words) {
             *slot = u32::from_le_bytes(*bytes);
         }
-        Ok(Self { update, slots })
+        Ok(Self {
+            update,
+            slots: Some(slots),
+        })
     }
 
     /// Returns whether the packet initializes, replaces, or clears the image.
@@ -84,14 +87,14 @@ impl WorldActionButtons {
 
     /// Returns all zero-based packed slots in server order.
     #[must_use]
-    pub fn slots(&self) -> &[u32; WORLD_ACTION_BUTTON_COUNT] {
-        &self.slots
+    pub fn slots(&self) -> Option<&[u32; WORLD_ACTION_BUTTON_COUNT]> {
+        self.slots.as_deref()
     }
 
     /// Returns one packed zero-based slot when it is in the stock range.
     #[must_use]
     pub fn slot(&self, index: usize) -> Option<u32> {
-        self.slots.get(index).copied()
+        self.slots.as_ref()?.get(index).copied()
     }
 }
 

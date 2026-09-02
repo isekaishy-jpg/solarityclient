@@ -5,8 +5,8 @@ use thiserror::Error;
 use solarity_asset::AssetError;
 
 use crate::{
-    FontError, UiAnimationError, UiFrameError, UiLayoutError, UiLoadError, UiObjectError,
-    UiRenderError, UiScriptError, UiTextureError,
+    FontError, UiAnimationError, UiBindingAssignmentError, UiBindingError, UiFrameError,
+    UiLayoutError, UiLoadError, UiObjectError, UiRenderError, UiScriptError, UiTextureError,
 };
 
 /// A stock built-in login UI could not be constructed or executed.
@@ -15,6 +15,12 @@ pub enum GlueError {
     /// Character-creation metadata could not be loaded from the client stack.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// Built-in binding declarations could not be loaded or validated.
+    #[error(transparent)]
+    Binding(#[from] UiBindingError),
+    /// The executable-authored default binding image could not be loaded.
+    #[error(transparent)]
+    BindingAssignment(#[from] UiBindingAssignmentError),
     /// Manifest, archive resource, XML, or Lua compilation failed.
     #[error(transparent)]
     Load(#[from] UiLoadError),

@@ -45,7 +45,7 @@ use crate::application::login_coordinator::{
     RuntimeLoginState,
 };
 use crate::application::login_model::RuntimeGlueModelScene;
-use crate::application::login_ui::LoginUiFrame;
+use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::performance_overlay::{RuntimeFpsOverlay, overlay_extent};
 use crate::application::player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
@@ -63,6 +63,7 @@ use crate::application::world_coordinator::{
     RuntimeCharacterScreenRequests, RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll,
     RuntimeWorldState,
 };
+use crate::application::world_ui::RuntimeWorldUi;
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
 use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoadingScreen};
@@ -72,7 +73,8 @@ use crate::random::{BlizzardRand, CrtRand};
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
-    login_ui: Option<LoginUiFrame>,
+    login_ui: Option<RuntimeUiFrame>,
+    world_ui: Option<RuntimeWorldUi>,
     glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
     sound: RuntimeSoundCoordinator,
@@ -102,6 +104,7 @@ pub(crate) struct ClientServices {
     realm_metadata: RuntimeRealmMetadata,
     character_metadata: RuntimeCharacterMetadata,
     addon_manifest: WorldAddonManifest,
+    addon_catalog: AddonCatalog,
     realm_directory_published: bool,
     character_screen_published: bool,
     character_directory_published: bool,
@@ -233,7 +236,7 @@ impl ClientServices {
         let login_ui = if glue.media_intent().movie().is_some() {
             None
         } else {
-            let frame = LoginUiFrame::prepare(&mut renderer, &glue)?;
+            let frame = RuntimeUiFrame::prepare_glue(&mut renderer, &glue)?;
             let overlay = if glue.cvar_boolean("showfps") {
                 fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
             } else {
@@ -272,6 +275,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                world_ui: None,
                 glue_model,
                 cinematic: RuntimeCinematicCoordinator::default(),
                 sound,
@@ -318,6 +322,7 @@ impl ClientServices {
                 realm_metadata,
                 character_metadata,
                 addon_manifest,
+                addon_catalog,
                 realm_directory_published: false,
                 character_screen_published: false,
                 character_directory_published: false,
@@ -365,8 +370,11 @@ impl ClientServices {
         &mut self,
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
-        if self.loading_screen.is_some() || self.gameplay.world().is_some() {
+        if self.loading_screen.is_some() {
             return Ok(());
+        }
+        if self.gameplay.world().is_some() {
+            return self.service_world_platform_event(event);
         }
         match event {
             PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
@@ -484,9 +492,85 @@ impl ClientServices {
         Ok(())
     }
 
+    /// Routes one admitted platform event to the active FrameXML owner.
+    fn service_world_platform_event(
+        &mut self,
+        event: &PlatformEvent,
+    ) -> Result<(), ApplicationError> {
+        let window_id = self.platform.window_id();
+        let logical_extent = self.platform.logical_extent();
+        let pointer_position = self.input.pointer_position();
+        let Some(world_ui) = self.world_ui.as_mut() else {
+            return Ok(());
+        };
+        let ui_extent = world_ui.logical_extent();
+        let project_pointer = |x: f32, y: f32| {
+            (
+                f64::from(x) / f64::from(logical_extent.0) * f64::from(ui_extent[0]),
+                f64::from(ui_extent[1])
+                    - f64::from(y) / f64::from(logical_extent.1) * f64::from(ui_extent[1]),
+            )
+        };
+        match event {
+            PlatformEvent::Key(key_event) if key_event.window_id == window_id => {
+                let Some(scan_code) = key_event.scan_code else {
+                    return Ok(());
+                };
+                let Some(key) = stock_keyboard_name(scan_code) else {
+                    return Ok(());
+                };
+                let modifiers = UiKeyboardModifiers::new(
+                    key_event.modifiers.has_shift(),
+                    key_event.modifiers.has_control(),
+                    key_event.modifiers.has_alt(),
+                );
+                world_ui.keyboard_key(key, key_event.state == ButtonState::Pressed, modifiers)?;
+            }
+            PlatformEvent::TextInput(input) if input.window_id == window_id => {
+                world_ui.text_input(&input.text)?;
+            }
+            PlatformEvent::TextEditing(composition) if composition.window_id == window_id => {
+                world_ui.text_composition(&composition.text)?;
+            }
+            PlatformEvent::MouseButton(pointer) if pointer.window_id == window_id => {
+                let Some(button) = glue_pointer_button(pointer.button) else {
+                    return Ok(());
+                };
+                world_ui.pointer_button(
+                    project_pointer(pointer.x, pointer.y),
+                    button,
+                    pointer.state == ButtonState::Pressed,
+                )?;
+            }
+            PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {
+                world_ui.pointer_motion(project_pointer(pointer.x, pointer.y))?;
+            }
+            PlatformEvent::MouseWheel(wheel) if wheel.window_id == window_id => {
+                let delta = match wheel.direction {
+                    MouseWheelDirection::Normal => wheel.y,
+                    MouseWheelDirection::Flipped => -wheel.y,
+                    MouseWheelDirection::Unknown => return Ok(()),
+                };
+                if let Some(pointer) = pointer_position {
+                    world_ui.pointer_wheel(
+                        project_pointer(pointer.x(), pointer.y()),
+                        f64::from(delta),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        self.platform
+            .set_text_input_active(world_ui.has_focused_edit_box());
+        Ok(())
+    }
+
     /// Takes one process-level action emitted by the currently owned built-in UI.
     pub(crate) fn take_process_action(&mut self) -> Option<UiProcessAction> {
-        self.glue.take_process_action()
+        self.world_ui
+            .as_ref()
+            .and_then(RuntimeWorldUi::take_process_action)
+            .or_else(|| self.glue.take_process_action())
     }
 
     /// Presents one FIFO-paced Glue or resident-world frame.
@@ -562,7 +646,18 @@ impl ClientServices {
             // The stock client transfers event and update ownership from GlueXML
             // to FrameXML after world entry. Keeping Glue alive for disconnect
             // does not permit its hidden edit boxes or buttons to remain active.
-            self.platform.set_text_input_active(false);
+            let ui_elapsed = update_time
+                .duration_since(self.glue_update_clock)
+                .as_secs_f64();
+            self.glue_update_clock = update_time;
+            if let Some(world_ui) = self.world_ui.as_mut() {
+                world_ui.update(ui_elapsed)?;
+                world_ui.refresh(&mut self.renderer)?;
+                self.platform
+                    .set_text_input_active(world_ui.has_focused_edit_box());
+            } else {
+                self.platform.set_text_input_active(false);
+            }
         }
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
@@ -606,15 +701,27 @@ impl ClientServices {
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2FrameInput)?;
         let creatures = self.player.resident_creature_frame_inputs();
         let remote_players = self.player.resident_remote_player_frame_inputs();
-        let ui_extent = self.fps.as_ref().map_or_else(
-            || overlay_extent((width, height)),
-            RuntimeFpsOverlay::logical_extent,
+        let ui_extent = self.world_ui.as_ref().map_or_else(
+            || {
+                self.fps.as_ref().map_or_else(
+                    || overlay_extent((width, height)),
+                    RuntimeFpsOverlay::logical_extent,
+                )
+            },
+            RuntimeWorldUi::logical_extent,
         );
-        let ui_draws = if self.glue.cvar_boolean("showfps") {
+        let frame_draws = self
+            .world_ui
+            .as_ref()
+            .map_or(&[][..], RuntimeWorldUi::draws);
+        let fps_draws = if self.glue.cvar_boolean("showfps") {
             self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
         } else {
             &[]
         };
+        let mut ui_draws = Vec::with_capacity(frame_draws.len() + fps_draws.len());
+        ui_draws.extend_from_slice(frame_draws);
+        ui_draws.extend_from_slice(fps_draws);
         frame.present(
             &mut self.renderer,
             plan,
@@ -627,7 +734,7 @@ impl ClientServices {
             &remote_players,
             self.transport.resident(),
             ui_extent,
-            ui_draws,
+            &ui_draws,
         )?;
         let mount_camera_sample = frame.take_mount_camera_sample();
         let camera_time_ms = mount_camera_sample
@@ -648,7 +755,10 @@ impl ClientServices {
 
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
         if self.login_ui.is_none() {
-            self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+            self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                &mut self.renderer,
+                &self.glue,
+            )?);
         }
         let frame = self
             .login_ui
@@ -808,7 +918,10 @@ impl ClientServices {
                     self.glue.sort_realm_directory(sort);
                     self.glue
                         .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
-                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                        &mut self.renderer,
+                        &self.glue,
+                    )?);
                 }
                 UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen } => {
                     if from_login_screen {
@@ -939,6 +1052,7 @@ impl ClientServices {
                         .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)?;
                 }
                 UiGlueNetworkAction::EnterWorld { guid } => {
+                    self.world_ui = None;
                     let map_id = self
                         .world
                         .character_selection()
@@ -1052,7 +1166,10 @@ impl ClientServices {
                     "SET_GLUE_SCREEN",
                     &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
                 )?;
-                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                )?);
             }
             Ok(RuntimeWorldPoll::CharacterScreenReady) => {}
             Ok(RuntimeWorldPoll::CharacterDirectoryReady)
@@ -1072,7 +1189,10 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                        &mut self.renderer,
+                        &self.glue,
+                    )?);
                 }
             }
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
@@ -1100,7 +1220,10 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                )?);
             }
             Ok(RuntimeWorldPoll::CharacterDeletionFinished(result)) => {
                 if result.is_success() {
@@ -1124,7 +1247,10 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                )?);
             }
             Ok(RuntimeWorldPoll::CharacterRenameFinished(result)) => {
                 if result.is_success() {
@@ -1146,7 +1272,10 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                )?);
             }
             Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
@@ -1175,7 +1304,10 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                        &mut self.renderer,
+                        &self.glue,
+                    )?);
                 }
                 // Stock `0x006B2070` tears the optimistic world load back to
                 // character selection, then `0x004DAB40` state 11 presents
@@ -1191,11 +1323,19 @@ impl ClientServices {
                         UiEventArgument::String(message),
                     ])?,
                 )?;
-                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                )?);
             }
             Err(error) => self.publish_world_failure(error),
         }
         self.gameplay.service()?;
+        if let (Some(world_ui), Some(buttons)) =
+            (self.world_ui.as_mut(), self.gameplay.action_buttons())
+        {
+            world_ui.synchronize_action_buttons(buttons)?;
+        }
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         match self.player.synchronize(self.gameplay.world())? {
@@ -1361,16 +1501,61 @@ impl ClientServices {
                 }
             }
         }
+        self.prepare_world_ui_if_ready()?;
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {
                 world_accepted: self.gameplay.world().is_some(),
                 environment_ready: self.environment.current().is_some(),
                 player_ready: self.player.resident_frame_input().is_some(),
                 scene_ready: self.terrain_frame.is_some(),
+                ui_ready: self.world_ui.is_some(),
                 transport_resource_ready: self.transport.is_ready(),
             };
             loading.advance(readiness.stage());
         }
+        Ok(())
+    }
+
+    /// Builds the independently retained FrameXML owner only after the loading
+    /// surface has presented and every synchronous world fact is authoritative.
+    fn prepare_world_ui_if_ready(&mut self) -> Result<(), ApplicationError> {
+        if self.world_ui.is_some()
+            || !self
+                .loading_screen
+                .as_ref()
+                .is_some_and(RuntimeLoadingScreen::has_presented)
+            || self.environment.current().is_none()
+            || self.player.resident_frame_input().is_none()
+            || self.terrain_frame.is_none()
+            || !self.transport.is_ready()
+            || self.gameplay.action_buttons().is_none()
+        {
+            return Ok(());
+        }
+        let Some(active) = self.gameplay.world() else {
+            return Ok(());
+        };
+        let Some(clock) = self.gameplay.realm_clock() else {
+            return Ok(());
+        };
+        let general_tab_name = self
+            .glue
+            .localized_text("GENERAL")
+            .map_err(GlueError::from)?;
+        let world_ui = RuntimeWorldUi::prepare(
+            &mut self.renderer,
+            self.assets.clone(),
+            self.platform.logical_extent(),
+            self.startup_profile.cvar_values(),
+            &self.addon_catalog,
+            &self.character_metadata,
+            active,
+            clock,
+            self.gameplay.action_buttons(),
+            general_tab_name,
+        )?;
+        tracing::info!("loaded stock FrameXML and published world-entry events");
+        self.world_ui = Some(world_ui);
         Ok(())
     }
 
@@ -1435,6 +1620,7 @@ impl ClientServices {
         self.terrain.disconnect();
         self.sound.disconnect()?;
         self.terrain_frame = None;
+        self.world_ui = None;
         self.loading_screen = None;
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
@@ -1479,6 +1665,7 @@ impl ClientServices {
 
     fn publish_world_failure(&mut self, error: RuntimeWorldError) {
         self.loading_screen = None;
+        self.world_ui = None;
         self.character_screen_published = false;
         self.character_directory_published = false;
         if let Some(selected) = &self.selected_realm {
@@ -1539,7 +1726,10 @@ impl ClientServices {
         );
         self.glue.set_realm_directory(realms);
         self.glue.dispatch_event(event, &payload)?;
-        self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+        self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+            &mut self.renderer,
+            &self.glue,
+        )?);
         Ok(())
     }
 
@@ -1568,7 +1758,10 @@ impl ClientServices {
             self.glue
                 .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
         }
-        self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+        self.login_ui = Some(RuntimeUiFrame::prepare_glue(
+            &mut self.renderer,
+            &self.glue,
+        )?);
         Ok(())
     }
 }

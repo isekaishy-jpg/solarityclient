@@ -70,7 +70,7 @@ fn world_time_rejects_invalid_packed_calendar() {
     assert!(WorldTimeSpeed::new(leap_february_twenty_ninth, 0.0, 0).is_ok());
 }
 
-/// Action-button packets retain all 144 packed values and the clear variant.
+/// Action-button packets retain all 144 values and state two retains that image.
 #[test]
 fn action_button_packet_decodes_complete_images() -> Result<(), Box<dyn Error>> {
     let mut payload = vec![1];
@@ -79,18 +79,18 @@ fn action_button_packet_decodes_complete_images() -> Result<(), Box<dyn Error>> 
     }
     let buttons = WorldActionButtons::decode(&payload)?;
     assert_eq!(buttons.update(), WorldActionButtonUpdate::Replace);
-    assert_eq!(buttons.slots().len(), 144);
+    assert_eq!(buttons.slots().map(|slots| slots.len()), Some(144));
     assert_eq!(buttons.slot(0), Some(0x8000_0000));
     assert_eq!(buttons.slot(143), Some(0x8000_008F));
     assert_eq!(buttons.slot(144), None);
 
-    let clear = WorldActionButtons::decode(&[2])?;
-    assert_eq!(clear.update(), WorldActionButtonUpdate::Clear);
-    assert!(clear.slots().iter().all(|slot| *slot == 0));
+    let state_two = WorldActionButtons::decode(&[2])?;
+    assert_eq!(state_two.update(), WorldActionButtonUpdate::StateTwo);
+    assert_eq!(state_two.slots(), None);
     Ok(())
 }
 
-/// Action-button framing rejects partial images, unknown states, and padded clears.
+/// Action-button framing rejects partial images, unknown states, and padded state two.
 #[test]
 fn action_button_packet_rejects_non_stock_framing() {
     assert!(WorldActionButtons::decode(&[]).is_err());

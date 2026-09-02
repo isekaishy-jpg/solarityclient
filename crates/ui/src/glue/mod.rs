@@ -6,6 +6,7 @@
 
 mod character;
 
+mod c_frame_mgr;
 mod c_glue_mgr;
 mod patch_download_glue;
 mod pointer;
@@ -14,6 +15,7 @@ mod status;
 mod survey_download_glue;
 mod types;
 
+pub use c_frame_mgr::FrameManager;
 pub use c_glue_mgr::GlueManager;
 pub use character::{
     UiCharacterCreationError, UiCharacterCreationPreview, UiCharacterCreationRequest,

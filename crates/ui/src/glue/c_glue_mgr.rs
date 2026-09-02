@@ -210,7 +210,39 @@ impl GlueManager {
         addon_catalog: &crate::AddonCatalog,
         character_creation: Option<crate::UiCharacterCreationState>,
     ) -> Result<Self, GlueError> {
-        let bundle = UiBundle::load(&mut assets.borrow_mut(), UiManifestKind::Glue)?;
+        let mut environment =
+            UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
+                .with_shared_asset_store(assets.clone())
+                .with_cvar_values(cvar_values)
+                .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog));
+        if let Some(character_creation) = character_creation {
+            environment = environment.with_character_creation_state(character_creation);
+        }
+        Self::start_shared_owner(
+            assets,
+            environment,
+            UiManifestKind::Glue,
+            Some(initial_screen),
+        )
+    }
+
+    /// Constructs one independently owned active-world FrameXML runtime.
+    pub(super) fn start_shared_frame(
+        assets: AssetStoreHandle,
+        environment: UiScriptEnvironment,
+    ) -> Result<Self, GlueError> {
+        Self::start_shared_owner(assets, environment, UiManifestKind::Frame, None)
+    }
+
+    /// Builds common retained script, object, layout, and rendering state.
+    fn start_shared_owner(
+        assets: AssetStoreHandle,
+        environment: UiScriptEnvironment,
+        manifest_kind: UiManifestKind,
+        initial_screen: Option<super::GlueInitialScreen>,
+    ) -> Result<Self, GlueError> {
+        let logical_extent = environment.logical_extent();
+        let bundle = UiBundle::load(&mut assets.borrow_mut(), manifest_kind)?;
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
         let tree = UiObjectTree::from_catalog(&catalog, &fonts)?;
@@ -225,14 +257,6 @@ impl GlueManager {
         let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
         let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
         let animations = UiAnimationPlan::from_tree(&tree)?;
-        let mut environment =
-            UiScriptEnvironment::new(logical_extent.0, logical_extent.1, streaming_trial)?
-                .with_shared_asset_store(assets.clone())
-                .with_cvar_values(cvar_values)
-                .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog));
-        if let Some(character_creation) = character_creation {
-            environment = environment.with_character_creation_state(character_creation);
-        }
         let media_intent = environment.media_intent();
         let network = environment.network();
         let process = environment.process();
@@ -248,14 +272,16 @@ impl GlueManager {
         );
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
         runtime.execute_all(&bundle, &tree, &scripts)?;
-        runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
-        let initial_payload = UiEventPayload::new([UiEventArgument::String(
-            initial_screen.script_name().to_owned(),
-        )])
-        .map_err(|error| crate::UiScriptError::Plan {
-            message: format!("could not construct stock initial-screen event: {error}"),
-        })?;
-        runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
+        if let Some(initial_screen) = initial_screen {
+            runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
+            let initial_payload = UiEventPayload::new([UiEventArgument::String(
+                initial_screen.script_name().to_owned(),
+            )])
+            .map_err(|error| crate::UiScriptError::Plan {
+                message: format!("could not construct stock initial-screen event: {error}"),
+            })?;
+            runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
+        }
 
         let live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
@@ -582,6 +608,23 @@ impl GlueManager {
         Ok(UiEventDispatch::new(subscriber_count))
     }
 
+    /// Delivers a stock FrameXML event to registered frames in creation order.
+    pub(super) fn dispatch_frame_event(
+        &mut self,
+        name: &str,
+        payload: &UiEventPayload,
+    ) -> Result<UiEventDispatch, UiEventError> {
+        let event =
+            crate::event::canonical_frame_event(name).ok_or_else(|| UiEventError::Unknown {
+                name: name.to_owned(),
+            })?;
+        let subscriber_count = self
+            .runtime
+            .dispatch_glue_event(&self.bundle, event, payload)?;
+        self.refresh_live_state()?;
+        Ok(UiEventDispatch::new(subscriber_count))
+    }
+
     /// Advances visible Glue `OnUpdate` handlers by one rendered-frame interval.
     ///
     /// Live geometry and renderer packets rebuild only when a handler mutates
@@ -647,6 +690,7 @@ impl GlueManager {
         pressed: bool,
     ) -> Result<UiPointerDispatch, UiEventError> {
         let hit = self.pointer.hit_test(&self.geometry, position);
+        self.environment.mouse_focus().set(hit);
         let object_index = if pressed {
             hit
         } else {
@@ -722,6 +766,9 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the slider's `OnValueChanged` handler
     /// fails or the resulting live presentation cannot be resolved.
     pub fn pointer_motion(&mut self, position: (f64, f64)) -> Result<Option<usize>, UiEventError> {
+        self.environment
+            .mouse_focus()
+            .set(self.pointer.hit_test(&self.geometry, position));
         let Some((object_index, UiPointerButton::Left)) = self.pointer_capture else {
             return Ok(None);
         };

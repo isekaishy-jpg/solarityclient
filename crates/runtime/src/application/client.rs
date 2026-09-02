@@ -24,6 +24,7 @@ use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrain
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::transport_coordinator::RuntimeTransportError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
+use crate::application::world_ui::RuntimeWorldUiError;
 use crate::configuration::ConfigurationError;
 use crate::configuration::RuntimeConfiguration;
 use crate::input::{InputControl, InputFrameMotion};
@@ -50,6 +51,9 @@ pub enum ApplicationError {
     /// A world character references metadata absent from the mounted client.
     #[error(transparent)]
     CharacterProjection(#[from] CharacterProjectionError),
+    /// Active-world UI facts could not enter their stock representation.
+    #[error(transparent)]
+    WorldUi(#[from] RuntimeWorldUiError),
     /// Active-world packet I/O, decoding, or ECS projection failed.
     #[error(transparent)]
     Gameplay(#[from] RuntimeGameplayError),

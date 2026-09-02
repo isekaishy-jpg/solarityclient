@@ -31,6 +31,9 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
 </Button>
 <Frame name="Root"><Scripts><OnLoad>
   assert(GetAccountExpansionLevel() == 2 and GetExpansionLevel() == 2)
+  local haveTotem, name, startTime, duration, icon = GetTotemInfo(1)
+  assert(not haveTotem and name == "" and startTime == 0 and duration == 0 and icon == nil)
+  assert(GetMouseFocus() == nil)
   assert(GetSendMailPrice() == 60 and GetTabardCreationCost() == 100000)
   assert(PetHasActionBar() == 1)
   local petName, petSubtext, petTexture, petToken, petActive = GetPetActionInfo(1)

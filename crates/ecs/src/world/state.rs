@@ -7,7 +7,7 @@ use crate::game_object::GameObjectPresentation;
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression};
-use crate::unit::{UnitIdentity, UnitPresentation};
+use crate::unit::{UnitIdentity, UnitPresentation, UnitVitals};
 use crate::view::PlayerViewState;
 
 use super::{WorldMapId, registry::ObjectRegistry, types::WorldBootstrap};
@@ -144,6 +144,24 @@ impl ActiveWorld {
         self.storage
             .get::<&ObjectKind>(entity)
             .map(|kind| **kind)
+            .ok()
+    }
+
+    /// Returns the server-validated local character name seeded at world entry.
+    #[must_use]
+    pub fn local_player_identity(&self) -> Option<PlayerIdentity> {
+        self.storage
+            .get::<&PlayerIdentity>(self.local_player)
+            .map(|identity| identity.clone())
+            .ok()
+    }
+
+    /// Returns current and maximum local-player health and power values.
+    #[must_use]
+    pub fn local_player_vitals(&self) -> Option<UnitVitals> {
+        self.storage
+            .get::<&UnitVitals>(self.local_player)
+            .map(|vitals| **vitals)
             .ok()
     }
 

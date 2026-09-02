@@ -64,7 +64,7 @@ pub use frame::{
     UiObjectTree,
 };
 pub use glue::{
-    GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport,
+    FrameManager, GlueError, GlueInitialScreen, GlueManager, GlueObject, GlueStartupReport,
     UiCharacterCreationError, UiCharacterCreationPreview, UiCharacterCreationRequest,
     UiCharacterCreationState, UiCharacterExpansion, UiCreationClassRoles, UiKeyboardModifiers,
     UiPointerButton, UiPointerDispatch,
