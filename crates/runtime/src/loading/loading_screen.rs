@@ -17,48 +17,11 @@ use solarity_ui::UiRenderError;
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
 
+use super::RuntimeLoadingStage;
+
 const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
 const LOADING_BAR_BORDER: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBorder.blp";
-
-/// Real transition milestones represented by retained loading-card generations.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum RuntimeLoadingStage {
-    /// `CMSG_PLAYER_LOGIN` is in flight.
-    AwaitingWorld,
-    /// The server accepted the character and published world coordinates.
-    WorldAccepted,
-    /// Map lighting and environment state are available.
-    EnvironmentReady,
-    /// The controlled player model is resident.
-    PlayerReady,
-    /// Terrain and all first-frame inputs are resident.
-    SceneReady,
-}
-
-impl RuntimeLoadingStage {
-    const ALL: [Self; 5] = [
-        Self::AwaitingWorld,
-        Self::WorldAccepted,
-        Self::EnvironmentReady,
-        Self::PlayerReady,
-        Self::SceneReady,
-    ];
-
-    const fn progress(self) -> f32 {
-        match self {
-            Self::AwaitingWorld => 0.05,
-            Self::WorldAccepted => 0.30,
-            Self::EnvironmentReady => 0.64,
-            Self::PlayerReady => 0.82,
-            Self::SceneReady => 1.00,
-        }
-    }
-
-    const fn index(self) -> usize {
-        self as usize
-    }
-}
 
 /// Map-indexed loading-card metadata retained before `MapCatalog` changes owner.
 pub(crate) struct LoadingScreenDirectory {

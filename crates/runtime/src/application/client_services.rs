@@ -62,7 +62,7 @@ use crate::application::world_coordinator::{
 };
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
-use crate::loading::{LoadingScreenDirectory, RuntimeLoadingScreen, RuntimeLoadingStage};
+use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoadingScreen};
 use crate::platform::{ButtonState, MouseButton, MouseWheelDirection, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
@@ -1133,9 +1133,6 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     self.gameplay.begin(&handle, entry)?;
-                    if let Some(loading) = self.loading_screen.as_mut() {
-                        loading.advance(RuntimeLoadingStage::WorldAccepted);
-                    }
                     tracing::info!("selected character entered the active world");
                 }
             }
@@ -1182,16 +1179,8 @@ impl ClientServices {
         self.gameplay.service()?;
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
-        if self.environment.current().is_some()
-            && let Some(loading) = self.loading_screen.as_mut()
-        {
-            loading.advance(RuntimeLoadingStage::EnvironmentReady);
-        }
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
-                if let Some(loading) = self.loading_screen.as_mut() {
-                    loading.advance(RuntimeLoadingStage::PlayerReady);
-                }
                 if let (Some(model), Some(height)) = (
                     self.player.resident_model(),
                     self.player.camera_subject_height(),
@@ -1217,11 +1206,6 @@ impl ClientServices {
                 }
             }
             RuntimePlayerPoll::Current => {}
-        }
-        if self.player.resident_frame_input().is_some()
-            && let Some(loading) = self.loading_screen.as_mut()
-        {
-            loading.advance(RuntimeLoadingStage::PlayerReady);
         }
         match self.player.synchronize_creatures(self.gameplay.world())? {
             RuntimeCreaturePoll::ModelsChanged => {
@@ -1318,9 +1302,6 @@ impl ClientServices {
                     "resident terrain entered renderer resources"
                 );
                 self.terrain_frame = Some(frame);
-                if let Some(loading) = self.loading_screen.as_mut() {
-                    loading.advance(RuntimeLoadingStage::SceneReady);
-                }
             }
             RuntimeTerrainPoll::Idle | RuntimeTerrainPoll::GlobalWorldModel { .. } => {
                 self.sound.disconnect()?;
@@ -1336,10 +1317,14 @@ impl ClientServices {
                 }
             }
         }
-        if self.terrain_frame.is_some()
-            && let Some(loading) = self.loading_screen.as_mut()
-        {
-            loading.advance(RuntimeLoadingStage::SceneReady);
+        if let Some(loading) = self.loading_screen.as_mut() {
+            let readiness = RuntimeLoadingReadiness {
+                world_accepted: self.gameplay.world().is_some(),
+                environment_ready: self.environment.current().is_some(),
+                player_ready: self.player.resident_frame_input().is_some(),
+                scene_ready: self.terrain_frame.is_some(),
+            };
+            loading.advance(readiness.stage());
         }
         Ok(())
     }
