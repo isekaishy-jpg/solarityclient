@@ -377,15 +377,19 @@ impl RuntimePlayerPresentation {
         let Some(preview) = preview else {
             return Ok(self.glue_character.take().is_some());
         };
-        if self.glue_character.as_ref().is_some_and(|resident| {
-            resident.key == ResidentGlueCharacterKey::Creation(preview.clone())
-        }) {
-            return Ok(false);
-        }
         if !preview.facing_degrees().is_finite() {
             return Err(RuntimePlayerError::InvalidCreationFacing {
                 facing_degrees: preview.facing_degrees(),
             });
+        }
+        if let Some(resident) = self.glue_character.as_mut()
+            && resident.key.matches_creation(preview)
+        {
+            // Wow.exe's SetCharacterCreateFacing path mutates the registered
+            // model transform; it does not recreate appearance GPU resources.
+            resident.key = ResidentGlueCharacterKey::Creation(preview.clone());
+            resident.facing_radians = preview.facing_degrees().to_radians() as f32;
+            return Ok(false);
         }
         let race = self.races.race(u32::from(preview.race_id())).ok_or(
             RuntimePlayerError::MissingCharacterRace {
@@ -414,12 +418,16 @@ impl RuntimePlayerPresentation {
             u32::from(preview.gender_id()),
             customization,
         )?;
-        let equipment_items = resolve_creation_equipment(
+        let mut equipment_items = resolve_creation_equipment(
             preview,
             &self.start_outfits,
             &self.item_definitions,
             &self.item_displays,
         )?;
+        // CCharacterCreation presents starter clothing with showHelmet false.
+        // Excluding head inventory here keeps both the helmet child model and
+        // its hair/ear visibility masks out of the creation representation.
+        equipment_items.retain(|item| item.inventory_type() != Some(InventoryType::Head));
         let texture_plan = CharacterTexturePlan::equipped(
             &appearance,
             &self.assets.borrow(),
@@ -505,15 +513,19 @@ impl RuntimePlayerPresentation {
         let Some(preview) = preview else {
             return Ok(self.glue_character.take().is_some());
         };
-        if self.glue_character.as_ref().is_some_and(|resident| {
-            resident.key == ResidentGlueCharacterKey::Selection(Box::new(preview.clone()))
-        }) {
-            return Ok(false);
-        }
         if !preview.facing_degrees().is_finite() {
             return Err(RuntimePlayerError::InvalidSelectionFacing {
                 facing_degrees: preview.facing_degrees(),
             });
+        }
+        if let Some(resident) = self.glue_character.as_mut()
+            && resident.key.matches_selection(preview)
+        {
+            // Wow.exe 0x004E3030 stores the narrowed facing directly on the
+            // selected model, leaving its body and equipment residency intact.
+            resident.key = ResidentGlueCharacterKey::Selection(Box::new(preview.clone()));
+            resident.facing_radians = preview.facing_degrees().to_radians() as f32;
+            return Ok(false);
         }
         let race = self.races.race(u32::from(preview.race_id())).ok_or(
             RuntimePlayerError::MissingCharacterRace {
@@ -1605,6 +1617,33 @@ impl RuntimePlayerPresentation {
 enum ResidentGlueCharacterKey {
     Creation(UiCharacterCreationPreview),
     Selection(Box<UiCharacterSelectionPreview>),
+}
+
+impl ResidentGlueCharacterKey {
+    /// Compares creation inputs that require body, texture, or equipment residency.
+    fn matches_creation(&self, preview: &UiCharacterCreationPreview) -> bool {
+        let Self::Creation(current) = self else {
+            return false;
+        };
+        current.race_id() == preview.race_id()
+            && current.class_id() == preview.class_id()
+            && current.gender_id() == preview.gender_id()
+            && current.appearance() == preview.appearance()
+    }
+
+    /// Compares roster inputs while deliberately excluding transform-only facing.
+    fn matches_selection(&self, preview: &UiCharacterSelectionPreview) -> bool {
+        let Self::Selection(current) = self else {
+            return false;
+        };
+        current.guid() == preview.guid()
+            && current.race_id() == preview.race_id()
+            && current.class_id() == preview.class_id()
+            && current.gender_id() == preview.gender_id()
+            && current.appearance() == preview.appearance()
+            && current.equipment() == preview.equipment()
+            && current.pet() == preview.pet()
+    }
 }
 
 struct ResidentGlueCharacterModel {

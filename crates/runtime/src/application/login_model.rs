@@ -226,6 +226,11 @@ impl RuntimeGlueModelScene {
                     local_light_count(active.environment.pet_local_lights),
                     random,
                 )?;
+            } else if let Some(character) = glue_character {
+                active.frame.update_glue_character_transform(
+                    character.model_scale(),
+                    character.facing_radians(),
+                )?;
             }
             active.frame.set_glue_opacity(active.environment.alpha)?;
             return Ok(());

@@ -911,6 +911,27 @@ impl M2Frame {
         Ok(())
     }
 
+    /// Updates rotation without rebuilding the retained Glue character generation.
+    pub(in crate::application) fn update_glue_character_transform(
+        &mut self,
+        model_scale: f32,
+        facing_radians: f32,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if !model_scale.is_finite() || model_scale <= 0.0 || !facing_radians.is_finite() {
+            return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
+        }
+        let placement = self
+            .placements
+            .iter_mut()
+            .find(|placement| {
+                matches!(placement.owner, M2GpuPlacementOwner::PlayerBody { guid: 0 })
+            })
+            .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
+        placement.local_transform = Mat4::from_rotation_z(facing_radians)
+            * Mat4::from_scale(glam::Vec3::splat(model_scale));
+        Ok(())
+    }
+
     /// Replaces the one player-owned source and placement transactionally.
     pub(super) fn replace_player(
         &mut self,
