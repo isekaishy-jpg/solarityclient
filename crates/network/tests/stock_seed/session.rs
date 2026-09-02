@@ -6,9 +6,10 @@ use std::io::Write;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use solarity_network::{
-    CharacterClass, CharacterCreation, CharacterCreationResult, CharacterGender,
-    CharacterLoginProgress, CharacterLoginRejectionReason, CharacterRace, WorldAddon,
-    WorldAddonManifest, WorldAuthProgress, WorldConnection, WorldObjectKind, WorldObjectUpdate,
+    CharacterClass, CharacterCreation, CharacterCreationResult, CharacterDeletionResult,
+    CharacterGender, CharacterLoginProgress, CharacterLoginRejectionReason, CharacterRace,
+    CharacterRename, WorldAddon, WorldAddonManifest, WorldAuthProgress, WorldConnection,
+    WorldObjectKind, WorldObjectUpdate,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -56,6 +57,143 @@ fn encrypted_session_creates_character_with_exact_wire_fields()
         assert_eq!(result, CharacterCreationResult::SUCCESS);
         assert!(result.is_success());
         assert_eq!(result.message_token(), "CHAR_CREATE_SUCCESS");
+
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
+
+/// Character deletion writes the exact GUID and decodes every stock terminal
+/// result while retaining unrelated packets.
+#[test]
+fn encrypted_session_deletes_character_with_exact_wire_fields()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, server) = tokio::io::duplex(4_096);
+        let server_task = tokio::spawn(emulate_character_deletion(server, session_key));
+        let mut session = match WorldConnection::authenticate(
+            client,
+            identity,
+            &realm,
+            WorldAddonManifest::empty(),
+        )
+        .await?
+        {
+            WorldAuthProgress::Authenticated(session) => session,
+            WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
+        };
+
+        let cases = [
+            (70, "CHAR_DELETE_IN_PROGRESS"),
+            (71, "CHAR_DELETE_SUCCESS"),
+            (72, "CHAR_DELETE_FAILED"),
+            (73, "CHAR_DELETE_FAILED_LOCKED_FOR_TRANSFER"),
+            (74, "CHAR_DELETE_FAILED_GUILD_LEADER"),
+            (75, "CHAR_DELETE_FAILED_ARENA_CAPTAIN"),
+        ];
+        for (offset, (result_code, token)) in cases.into_iter().enumerate() {
+            let guid = 0xF130_0000_0000_0042 + offset as u64;
+            session.delete_character(guid).await?;
+            if offset == 0 {
+                let retained = session.receive_packet().await?;
+                assert_eq!(retained.opcode(), 0x0123);
+                assert!(retained.character_deletion_result()?.is_none());
+            }
+            let response = session.receive_packet().await?;
+            assert_eq!(response.name(), Some("SMSG_CHAR_DELETE"));
+            let result = response
+                .character_deletion_result()?
+                .ok_or("deletion response did not decode")?;
+            assert_eq!(result.result_code(), result_code);
+            assert_eq!(result.message_token(), token);
+            assert_eq!(
+                result.is_success(),
+                result == CharacterDeletionResult::SUCCESS
+            );
+        }
+
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
+
+/// Character rename writes GUID plus C string and preserves the response's
+/// success-only identity fields and stock failure tokens.
+#[test]
+fn encrypted_session_renames_character_with_exact_wire_fields()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, server) = tokio::io::duplex(8_192);
+        let server_task = tokio::spawn(emulate_character_rename(server, session_key));
+        let mut session = match WorldConnection::authenticate(
+            client,
+            identity,
+            &realm,
+            WorldAddonManifest::empty(),
+        )
+        .await?
+        {
+            WorldAuthProgress::Authenticated(session) => session,
+            WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
+        };
+
+        let success_request = CharacterRename::new("Renamed0".to_owned())?;
+        session
+            .rename_character(0xF130_0000_0000_0042, &success_request)
+            .await?;
+        let retained = session.receive_packet().await?;
+        assert_eq!(retained.opcode(), 0x0123);
+        assert!(retained.character_rename_result()?.is_none());
+        let success = session
+            .receive_packet()
+            .await?
+            .character_rename_result()?
+            .ok_or("rename success did not decode")?;
+        assert!(success.is_success());
+        assert_eq!(success.result_code(), 0);
+        assert_eq!(success.guid(), Some(0xF130_0000_0000_0042));
+        assert_eq!(success.name(), Some("Renamed0"));
+
+        let failures = [
+            (0x32, "CHAR_CREATE_NAME_IN_USE"),
+            (0x58, "CHAR_NAME_FAILURE"),
+            (0x59, "CHAR_NAME_NO_NAME"),
+            (0x5A, "CHAR_NAME_TOO_SHORT"),
+            (0x5B, "CHAR_NAME_TOO_LONG"),
+            (0x5C, "CHAR_NAME_INVALID_CHARACTER"),
+            (0x5D, "CHAR_NAME_MIXED_LANGUAGES"),
+            (0x5E, "CHAR_NAME_PROFANE"),
+            (0x5F, "CHAR_NAME_RESERVED"),
+            (0x60, "CHAR_NAME_INVALID_APOSTROPHE"),
+            (0x61, "CHAR_NAME_MULTIPLE_APOSTROPHES"),
+            (0x62, "CHAR_NAME_THREE_CONSECUTIVE"),
+            (0x63, "CHAR_NAME_INVALID_SPACE"),
+            (0x64, "CHAR_NAME_CONSECUTIVE_SPACES"),
+            (0x65, "CHAR_NAME_RUSSIAN_CONSECUTIVE_SILENT_CHARACTERS"),
+            (
+                0x66,
+                "CHAR_NAME_RUSSIAN_SILENT_CHARACTER_AT_BEGINNING_OR_END",
+            ),
+            (0x67, "CHAR_NAME_DECLENSION_DOESNT_MATCH_BASE_NAME"),
+        ];
+        for (offset, (result_code, token)) in failures.into_iter().enumerate() {
+            let request = CharacterRename::new(format!("Renamed{}", offset + 1))?;
+            session
+                .rename_character(0xF130_0000_0000_0043 + offset as u64, &request)
+                .await?;
+            let result = session
+                .receive_packet()
+                .await?
+                .character_rename_result()?
+                .ok_or("rename failure did not decode")?;
+            assert!(!result.is_success());
+            assert_eq!(result.result_code(), result_code);
+            assert_eq!(result.guid(), None);
+            assert_eq!(result.name(), None);
+            assert_eq!(result.message_token(), token);
+        }
 
         server_task.await??;
         Ok::<(), Box<dyn Error + Send + Sync>>(())
@@ -522,6 +660,66 @@ async fn emulate_character_creation(
     assert_eq!(request.facial_hair, 6);
     write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0xA5]).await?;
     write_encrypted_raw(&mut stream, &mut crypto, 0x003A, &[47]).await?;
+    Ok(())
+}
+
+async fn emulate_character_deletion(
+    mut stream: DuplexStream,
+    session_key: [u8; 40],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
+    for (offset, result_code) in (70_u8..=75).enumerate() {
+        let request =
+            ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+        let ClientOpcodeMessage::CMSG_CHAR_DELETE(request) = request else {
+            return Err("fixture expected CMSG_CHAR_DELETE".into());
+        };
+        assert_eq!(request.guid.guid(), 0xF130_0000_0000_0042 + offset as u64);
+        if offset == 0 {
+            write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0x5A]).await?;
+        }
+        write_encrypted_raw(&mut stream, &mut crypto, 0x003C, &[result_code]).await?;
+    }
+    Ok(())
+}
+
+async fn emulate_character_rename(
+    mut stream: DuplexStream,
+    session_key: [u8; 40],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut crypto = authenticate_worldserver(&mut stream, session_key).await?;
+    let failure_codes = [
+        0x32, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65,
+        0x66, 0x67,
+    ];
+    for offset in 0..=failure_codes.len() {
+        let request =
+            ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+        let ClientOpcodeMessage::CMSG_CHAR_RENAME(request) = request else {
+            return Err("fixture expected CMSG_CHAR_RENAME".into());
+        };
+        assert_eq!(
+            request.character.guid(),
+            0xF130_0000_0000_0042 + offset as u64
+        );
+        assert_eq!(request.new_name, format!("Renamed{offset}"));
+        if offset == 0 {
+            write_encrypted_raw(&mut stream, &mut crypto, 0x0123, &[0xA5]).await?;
+            let mut payload = vec![0];
+            payload.extend_from_slice(&request.character.guid().to_le_bytes());
+            payload.extend_from_slice(request.new_name.as_bytes());
+            payload.push(0);
+            write_encrypted_raw(&mut stream, &mut crypto, 0x02C8, &payload).await?;
+        } else {
+            write_encrypted_raw(
+                &mut stream,
+                &mut crypto,
+                0x02C8,
+                &[failure_codes[offset - 1]],
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 

@@ -18,7 +18,8 @@ use solarity_asset::{
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
 use solarity_network::{
-    AccountExpansion, CharacterCreation, RealmEntry, WorldAddon, WorldAddonManifest,
+    AccountExpansion, CharacterCreation, CharacterRename, CharacterRenameError, RealmEntry,
+    WorldAddon, WorldAddonManifest,
 };
 use solarity_rendering::{
     M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer, VulkanReport, WorldCamera,
@@ -825,6 +826,84 @@ impl ClientServices {
                         Err(error) => self.publish_world_failure(error),
                     }
                 }
+                UiGlueNetworkAction::DeleteCharacter { guid } => {
+                    match self.world.delete_character(&handle, guid) {
+                        Ok(()) => {
+                            let message = self
+                                .glue
+                                .localized_text("CHAR_DELETE_IN_PROGRESS")
+                                .map_err(GlueError::from)?;
+                            self.glue.dispatch_event(
+                                "OPEN_STATUS_DIALOG",
+                                &UiEventPayload::new([
+                                    UiEventArgument::String("CANCEL".to_owned()),
+                                    UiEventArgument::String(message),
+                                ])?,
+                            )?;
+                        }
+                        Err(RuntimeWorldError::AlreadyActive) => {}
+                        Err(error) => self.publish_world_failure(error),
+                    }
+                }
+                UiGlueNetworkAction::RenameCharacter { guid, name } => {
+                    let request = match CharacterRename::new(name) {
+                        Ok(request) => request,
+                        Err(CharacterRenameError::InvalidName { result }) => {
+                            let message = self
+                                .glue
+                                .localized_text(result.message_token())
+                                .map_err(GlueError::from)?;
+                            self.glue.dispatch_event(
+                                "OPEN_STATUS_DIALOG",
+                                &UiEventPayload::new([
+                                    UiEventArgument::String("OKAY".to_owned()),
+                                    UiEventArgument::String(message),
+                                ])?,
+                            )?;
+                            continue;
+                        }
+                        Err(error) => {
+                            self.publish_world_failure(RuntimeWorldError::from(error));
+                            continue;
+                        }
+                    };
+                    match self.world.rename_character(&handle, guid, request) {
+                        Ok(()) => {
+                            let message = self
+                                .glue
+                                .localized_text("CHAR_RENAME_IN_PROGRESS")
+                                .map_err(GlueError::from)?;
+                            self.glue.dispatch_event(
+                                "OPEN_STATUS_DIALOG",
+                                &UiEventPayload::new([
+                                    UiEventArgument::String("CANCEL".to_owned()),
+                                    UiEventArgument::String(message),
+                                ])?,
+                            )?;
+                        }
+                        Err(RuntimeWorldError::AlreadyActive) => {}
+                        Err(error) => self.publish_world_failure(error),
+                    }
+                }
+                UiGlueNetworkAction::CharacterRenameValidationFailed { message_token } => {
+                    let message = self
+                        .glue
+                        .localized_text(message_token)
+                        .map_err(GlueError::from)?;
+                    self.glue.dispatch_event(
+                        "OPEN_STATUS_DIALOG",
+                        &UiEventPayload::new([
+                            UiEventArgument::String("OKAY".to_owned()),
+                            UiEventArgument::String(message),
+                        ])?,
+                    )?;
+                }
+                UiGlueNetworkAction::ForceCharacterRename { message_token } => {
+                    self.glue.dispatch_event(
+                        "FORCE_RENAME_CHARACTER",
+                        &UiEventPayload::new([UiEventArgument::String(message_token.to_owned())])?,
+                    )?;
+                }
                 UiGlueNetworkAction::SelectCharacter { guid } => {
                     let payload = UiEventPayload::new([UiEventArgument::Number(guid as f64)])?;
                     self.glue
@@ -979,6 +1058,52 @@ impl ClientServices {
                         "SET_GLUE_SCREEN",
                         &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
                     )?;
+                } else {
+                    let message = self
+                        .glue
+                        .localized_text(result.message_token())
+                        .map_err(GlueError::from)?;
+                    self.glue.dispatch_event(
+                        "OPEN_STATUS_DIALOG",
+                        &UiEventPayload::new([
+                            UiEventArgument::String("OKAY".to_owned()),
+                            UiEventArgument::String(message),
+                        ])?,
+                    )?;
+                }
+                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+            }
+            Ok(RuntimeWorldPoll::CharacterDeletionFinished(result)) => {
+                if result.is_success() {
+                    self.character_directory_published = false;
+                    self.pending_character_screen_requests
+                        .refresh_character_directory = true;
+                    self.glue
+                        .dispatch_event("CLOSE_STATUS_DIALOG", &UiEventPayload::empty())?;
+                    self.glue
+                        .dispatch_event("SELECT_FIRST_CHARACTER", &UiEventPayload::empty())?;
+                } else {
+                    let message = self
+                        .glue
+                        .localized_text(result.message_token())
+                        .map_err(GlueError::from)?;
+                    self.glue.dispatch_event(
+                        "OPEN_STATUS_DIALOG",
+                        &UiEventPayload::new([
+                            UiEventArgument::String("OKAY".to_owned()),
+                            UiEventArgument::String(message),
+                        ])?,
+                    )?;
+                }
+                self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
+            }
+            Ok(RuntimeWorldPoll::CharacterRenameFinished(result)) => {
+                if result.is_success() {
+                    self.character_directory_published = false;
+                    self.pending_character_screen_requests
+                        .refresh_character_directory = true;
+                    self.glue
+                        .dispatch_event("CLOSE_STATUS_DIALOG", &UiEventPayload::empty())?;
                 } else {
                     let message = self
                         .glue

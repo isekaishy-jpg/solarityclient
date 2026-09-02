@@ -51,7 +51,7 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
                 80,
                 Some("Dalaran".to_owned()),
                 3,
-                0x2000,
+                0x6000,
                 1,
             ),
             UiCharacterInfo::new(
@@ -161,6 +161,18 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     globals
         .get::<mlua::Function>("EnterWorld")?
         .call::<()>(())?;
+    globals
+        .get::<mlua::Function>("DeleteCharacter")?
+        .call::<()>(1_u32)?;
+    globals
+        .get::<mlua::Function>("DeleteCharacter")?
+        .call::<()>(0_u32)?;
+    let rename = globals.get::<mlua::Function>("RenameCharacter")?;
+    assert!(!rename.call::<bool>((1_u32, "First"))?);
+    assert!(rename.call::<bool>((1_u32, "Renamed"))?);
+    assert!(!rename.call::<bool>((2_u32, "Blocked"))?);
+    assert!(!rename.call::<bool>((1_u32, "Bad1"))?);
+    assert!(!rename.call::<bool>((1_u32, "Booo"))?);
     assert!(matches!(
         manager.take_network_action(),
         Some(UiGlueNetworkAction::SelectCharacter { guid: 200 })
@@ -168,6 +180,49 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     assert!(matches!(
         manager.take_network_action(),
         Some(UiGlueNetworkAction::EnterWorld { guid: 200 })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::DeleteCharacter { guid: 100 })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::CharacterRenameValidationFailed {
+            message_token: "CHAR_CREATE_NAME_IN_USE"
+        })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::RenameCharacter { guid: 100, name }) if name == "Renamed"
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::CharacterRenameValidationFailed {
+            message_token: "CHAR_NAME_INVALID_CHARACTER"
+        })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::CharacterRenameValidationFailed {
+            message_token: "CHAR_NAME_THREE_CONSECUTIVE"
+        })
+    ));
+    assert!(manager.take_network_action().is_none());
+    globals
+        .get::<mlua::Function>("SelectCharacter")?
+        .call::<()>(1_u32)?;
+    globals
+        .get::<mlua::Function>("EnterWorld")?
+        .call::<()>(())?;
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::SelectCharacter { guid: 100 })
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::ForceCharacterRename {
+            message_token: "CHAR_RENAME_DESCRIPTION"
+        })
     ));
     Ok(())
 }

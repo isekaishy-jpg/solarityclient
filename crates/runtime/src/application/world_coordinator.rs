@@ -8,10 +8,11 @@ use tokio::task::JoinHandle;
 
 use solarity_network::{
     AddonPolicyError, CharacterCreation, CharacterCreationError, CharacterCreationResult,
-    CharacterDirectory, CharacterDirectoryError, CharacterLoginProgress, CharacterLoginRejection,
-    InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError, WorldAddonManifest,
-    WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection, WorldServerPacket,
-    WorldSession, WorldSessionError,
+    CharacterDeletionError, CharacterDeletionResult, CharacterDirectory, CharacterDirectoryError,
+    CharacterLoginProgress, CharacterLoginRejection, CharacterRename, CharacterRenameError,
+    CharacterRenameResult, InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError,
+    WorldAddonManifest, WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection,
+    WorldServerPacket, WorldSession, WorldSessionError,
 };
 
 use crate::application::RuntimeAuthenticatedLogin;
@@ -32,7 +33,7 @@ pub enum RuntimeWorldState {
 }
 
 /// Result of polling one asynchronous world transition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeWorldPoll {
     /// No task or world session is owned.
     Idle,
@@ -44,6 +45,10 @@ pub enum RuntimeWorldPoll {
     CharacterDirectoryReady,
     /// The world returned the terminal result for one creation request.
     CharacterCreationFinished(CharacterCreationResult),
+    /// The world returned the terminal result for one deletion request.
+    CharacterDeletionFinished(CharacterDeletionResult),
+    /// The world returned the terminal result for one rename request.
+    CharacterRenameFinished(CharacterRenameResult),
     /// A locally canceled character operation settled without another Glue result.
     CharacterOperationCancelled,
     /// The selected character entered its authoritative initial map.
@@ -70,6 +75,12 @@ pub enum RuntimeWorldError {
     /// Character-creation fields or the authoritative response were malformed.
     #[error(transparent)]
     CharacterCreation(#[from] CharacterCreationError),
+    /// The authoritative character-deletion response was malformed.
+    #[error(transparent)]
+    CharacterDeletion(#[from] CharacterDeletionError),
+    /// Character-rename input or the authoritative response was malformed.
+    #[error(transparent)]
+    CharacterRename(#[from] CharacterRenameError),
     /// The selected GUID is absent from the authoritative character directory.
     #[error("character directory does not contain GUID {guid}")]
     UnknownCharacter {
@@ -369,6 +380,79 @@ impl RuntimeWorldCoordinator {
         Ok(())
     }
 
+    /// Starts one character-deletion exchange against the retained world session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeWorldError`] when another transition is active, no
+    /// authoritative directory is retained, or `guid` was not enumerated.
+    pub fn delete_character(
+        &mut self,
+        runtime: &Handle,
+        guid: u64,
+    ) -> Result<(), RuntimeWorldError> {
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        let selection = self
+            .character_selection
+            .take()
+            .ok_or(RuntimeWorldError::NoCharacterDirectory)?;
+        if selection.directory.by_guid(guid).is_none() {
+            self.character_selection = Some(selection);
+            return Err(RuntimeWorldError::UnknownCharacter { guid });
+        }
+        let (sender, receiver) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = delete_character(selection, guid).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::DeletingCharacter,
+            cancelled: false,
+        });
+        Ok(())
+    }
+
+    /// Starts one character-rename exchange against the retained world session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeWorldError`] when another transition is active, no
+    /// authoritative directory is retained, or `guid` was not enumerated.
+    pub fn rename_character(
+        &mut self,
+        runtime: &Handle,
+        guid: u64,
+        request: CharacterRename,
+    ) -> Result<(), RuntimeWorldError> {
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        let selection = self
+            .character_selection
+            .take()
+            .ok_or(RuntimeWorldError::NoCharacterDirectory)?;
+        if selection.directory.by_guid(guid).is_none() {
+            self.character_selection = Some(selection);
+            return Err(RuntimeWorldError::UnknownCharacter { guid });
+        }
+        let (sender, receiver) = oneshot::channel();
+        let task = runtime.spawn(async move {
+            let result = rename_character(selection, guid, request).await;
+            let _send_result = sender.send(result);
+        });
+        self.active = Some(ActiveWorld {
+            receiver,
+            task,
+            phase: ActiveWorldPhase::RenamingCharacter,
+            cancelled: false,
+        });
+        Ok(())
+    }
+
     /// Cancels Glue ownership of an active character operation.
     ///
     /// The encrypted receive remains owned by its worker until a complete
@@ -381,7 +465,10 @@ impl RuntimeWorldCoordinator {
         };
         if !matches!(
             active.phase,
-            ActiveWorldPhase::CreatingCharacter | ActiveWorldPhase::EnteringWorld
+            ActiveWorldPhase::CreatingCharacter
+                | ActiveWorldPhase::DeletingCharacter
+                | ActiveWorldPhase::RenamingCharacter
+                | ActiveWorldPhase::EnteringWorld
         ) || active.cancelled
         {
             return false;
@@ -430,6 +517,22 @@ impl RuntimeWorldCoordinator {
                     Ok(RuntimeWorldPoll::CharacterOperationCancelled)
                 } else {
                     Ok(RuntimeWorldPoll::CharacterCreationFinished(result))
+                }
+            }
+            Ok(ActiveWorldResult::CharacterDeleted { selection, result }) => {
+                self.character_selection = Some(selection);
+                if cancelled {
+                    Ok(RuntimeWorldPoll::CharacterOperationCancelled)
+                } else {
+                    Ok(RuntimeWorldPoll::CharacterDeletionFinished(result))
+                }
+            }
+            Ok(ActiveWorldResult::CharacterRenamed { selection, result }) => {
+                self.character_selection = Some(selection);
+                if cancelled {
+                    Ok(RuntimeWorldPoll::CharacterOperationCancelled)
+                } else {
+                    Ok(RuntimeWorldPoll::CharacterRenameFinished(result))
                 }
             }
             Ok(ActiveWorldResult::Entered(entry)) => {
@@ -508,6 +611,8 @@ enum ActiveWorldPhase {
     Connecting,
     RefreshingCharacters,
     CreatingCharacter,
+    DeletingCharacter,
+    RenamingCharacter,
     EnteringWorld,
 }
 
@@ -517,6 +622,8 @@ impl ActiveWorldPhase {
             Self::Connecting => RuntimeWorldState::Connecting,
             Self::RefreshingCharacters => RuntimeWorldState::CharacterSelection,
             Self::CreatingCharacter => RuntimeWorldState::CharacterSelection,
+            Self::DeletingCharacter => RuntimeWorldState::CharacterSelection,
+            Self::RenamingCharacter => RuntimeWorldState::CharacterSelection,
             Self::EnteringWorld => RuntimeWorldState::EnteringWorld,
         }
     }
@@ -528,6 +635,14 @@ enum ActiveWorldResult {
     CharacterCreated {
         selection: RuntimeCharacterSelection,
         result: CharacterCreationResult,
+    },
+    CharacterDeleted {
+        selection: RuntimeCharacterSelection,
+        result: CharacterDeletionResult,
+    },
+    CharacterRenamed {
+        selection: RuntimeCharacterSelection,
+        result: CharacterRenameResult,
     },
     Entered(RuntimeWorldEntry),
     Rejected {
@@ -547,6 +662,49 @@ async fn create_character(
         let packet = selection.session.receive_packet().await?;
         if let Some(result) = packet.character_creation_result()? {
             return Ok(ActiveWorldResult::CharacterCreated { selection, result });
+        }
+        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+            return Err(RuntimeWorldError::SetupPacketLimit {
+                maximum: MAX_SETUP_PACKETS,
+            });
+        }
+        selection.setup_packets.push(packet);
+    }
+}
+
+async fn delete_character(
+    mut selection: RuntimeCharacterSelection,
+    guid: u64,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    const MAX_SETUP_PACKETS: usize = 256;
+
+    selection.session.delete_character(guid).await?;
+    loop {
+        let packet = selection.session.receive_packet().await?;
+        if let Some(result) = packet.character_deletion_result()? {
+            return Ok(ActiveWorldResult::CharacterDeleted { selection, result });
+        }
+        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+            return Err(RuntimeWorldError::SetupPacketLimit {
+                maximum: MAX_SETUP_PACKETS,
+            });
+        }
+        selection.setup_packets.push(packet);
+    }
+}
+
+async fn rename_character(
+    mut selection: RuntimeCharacterSelection,
+    guid: u64,
+    request: CharacterRename,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    const MAX_SETUP_PACKETS: usize = 256;
+
+    selection.session.rename_character(guid, &request).await?;
+    loop {
+        let packet = selection.session.receive_packet().await?;
+        if let Some(result) = packet.character_rename_result()? {
+            return Ok(ActiveWorldResult::CharacterRenamed { selection, result });
         }
         if selection.setup_packets.len() == MAX_SETUP_PACKETS {
             return Err(RuntimeWorldError::SetupPacketLimit {

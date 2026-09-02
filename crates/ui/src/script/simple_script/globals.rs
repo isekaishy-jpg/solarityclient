@@ -1848,16 +1848,116 @@ fn register_character_list_globals(
     )?;
     let network = environment.network();
     globals.raw_set(
+        "DeleteCharacter",
+        lua.create_function(move |_, index: u32| {
+            let mut network = network.borrow_mut();
+            if let Some(guid) = network
+                .characters()
+                .by_index(index)
+                .map(UiCharacterInfo::guid)
+            {
+                network.push(UiGlueNetworkAction::DeleteCharacter { guid });
+            }
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    let locale = environment.locale();
+    globals.raw_set(
+        "RenameCharacter",
+        lua.create_function(move |_, (index, name): (u32, LuaString)| {
+            let mut network = network.borrow_mut();
+            let Some(character) = network.characters().by_index(index) else {
+                return Ok(false);
+            };
+            if !character.requires_rename() {
+                return Ok(false);
+            }
+            let name = name.to_str()?.to_owned();
+            if name == character.name() {
+                network.push(UiGlueNetworkAction::CharacterRenameValidationFailed {
+                    message_token: "CHAR_CREATE_NAME_IN_USE",
+                });
+                return Ok(false);
+            }
+            if let Some(message_token) = validate_local_character_name(locale, &name) {
+                network
+                    .push(UiGlueNetworkAction::CharacterRenameValidationFailed { message_token });
+                return Ok(false);
+            }
+            let guid = character.guid();
+            network.push(UiGlueNetworkAction::RenameCharacter { guid, name });
+            Ok(true)
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
         "EnterWorld",
         lua.create_function(move |_, ()| {
             let mut network = network.borrow_mut();
-            if let Some(guid) = network.characters().selected_guid() {
-                network.push(UiGlueNetworkAction::EnterWorld { guid });
+            let selected = network
+                .characters()
+                .selected_guid()
+                .and_then(|guid| {
+                    network
+                        .characters()
+                        .characters()
+                        .iter()
+                        .find(|item| item.guid() == guid)
+                })
+                .map(|character| (character.guid(), character.requires_rename()));
+            if let Some((guid, requires_rename)) = selected {
+                if requires_rename {
+                    network.push(UiGlueNetworkAction::ForceCharacterRename {
+                        message_token: "CHAR_RENAME_DESCRIPTION",
+                    });
+                } else {
+                    network.push(UiGlueNetworkAction::EnterWorld { guid });
+                }
             }
             Ok(())
         })?,
     )?;
     Ok(())
+}
+
+fn validate_local_character_name(locale: Option<Locale>, name: &str) -> Option<&'static str> {
+    let character_count = name.chars().count();
+    if character_count == 0 {
+        return Some("CHAR_NAME_NO_NAME");
+    }
+    if character_count < 2 {
+        return Some("CHAR_NAME_TOO_SHORT");
+    }
+    let maximum = match locale {
+        Some(Locale::KoKr) => 8,
+        Some(Locale::ZhCn | Locale::ZhTw) => 6,
+        _ => 12,
+    };
+    if character_count > maximum {
+        return Some("CHAR_NAME_TOO_LONG");
+    }
+
+    // Wow.exe 0x006B0F90 -> 0x007E1E90 -> 0x007E18C0 rejects
+    // nonletters and three equal consecutive letters before the request is
+    // sent. The pinned enUS path's 0x007E0F90 classifier is exactly ASCII
+    // A-Z/a-z. Other locale scripts remain server-authoritative here because
+    // their installed profanity/reserved tables are not exposed to Glue.
+    if matches!(
+        locale,
+        Some(Locale::EnGb | Locale::EnUs | Locale::EnCn | Locale::EnTw)
+    ) {
+        if !name.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            return Some("CHAR_NAME_INVALID_CHARACTER");
+        }
+        if name.as_bytes().windows(3).any(|letters| {
+            letters[0].eq_ignore_ascii_case(&letters[1])
+                && letters[0].eq_ignore_ascii_case(&letters[2])
+        }) {
+            return Some("CHAR_NAME_THREE_CONSECUTIVE");
+        }
+    }
+    None
 }
 
 fn character_info_values(

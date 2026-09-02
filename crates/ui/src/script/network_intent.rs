@@ -108,6 +108,28 @@ pub enum UiGlueNetworkAction {
     RequestRealmSplitInfo,
     /// Submit the current stock character-creation selections.
     CreateCharacter(crate::UiCharacterCreationRequest),
+    /// Delete one character from the authoritative directory.
+    DeleteCharacter {
+        /// World object GUID returned by enumeration.
+        guid: u64,
+    },
+    /// Submit a required rename for one enumerated character.
+    RenameCharacter {
+        /// World object GUID returned by enumeration.
+        guid: u64,
+        /// Authored replacement name.
+        name: String,
+    },
+    /// Present a stock-local character-rename validation failure.
+    CharacterRenameValidationFailed {
+        /// Build-12340 localization token selected by the native wrapper.
+        message_token: &'static str,
+    },
+    /// Ask stock Glue to present its forced-rename prompt before world entry.
+    ForceCharacterRename {
+        /// Build-12340 description token consumed by `CharacterSelect.lua`.
+        message_token: &'static str,
+    },
     /// Select one character identity for character-screen presentation.
     SelectCharacter {
         /// World object GUID returned by enumeration.

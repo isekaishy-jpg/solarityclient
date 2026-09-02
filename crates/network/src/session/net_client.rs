@@ -5,8 +5,8 @@ use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 use wow_world_messages::wrath::{
-    CMSG_CHAR_CREATE, CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES,
-    CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
+    CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_PING, CMSG_PLAYER_LOGIN,
+    CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
 };
 
 use crate::connection::{
@@ -72,6 +72,38 @@ where
             hair_style,
             hair_color,
             facial_hair,
+        }))
+        .await
+    }
+
+    /// Sends one exact `CMSG_CHAR_DELETE` for an enumerated character GUID.
+    ///
+    /// The authoritative result is obtained with [`Self::receive_packet`] so
+    /// unrelated setup packets remain available to the character-screen owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn delete_character(&mut self, guid: u64) -> Result<(), WorldSessionError> {
+        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_DELETE {
+            guid: Guid::new(guid),
+        }))
+        .await
+    }
+
+    /// Sends one exact `CMSG_CHAR_RENAME` for an enumerated character GUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn rename_character(
+        &mut self,
+        guid: u64,
+        request: &crate::CharacterRename,
+    ) -> Result<(), WorldSessionError> {
+        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_RENAME {
+            character: Guid::new(guid),
+            new_name: request.name().to_owned(),
         }))
         .await
     }

@@ -1,18 +1,21 @@
 //! Owned wrapper around one decrypted server packet.
 
 use super::{
-    AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDirectory,
-    CharacterDirectoryError, CharacterLoginRejection, ObjectUpdateError,
-    WorldActionButtonPacketError, WorldActionButtons, WorldAddonManifest, WorldAddonPolicy,
-    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch,
-    WorldTimePacketError, WorldTimeSpeed,
+    AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDeletionError,
+    CharacterDeletionResult, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
+    CharacterRenameError, CharacterRenameResult, ObjectUpdateError, WorldActionButtonPacketError,
+    WorldActionButtons, WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError,
+    WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch, WorldTimePacketError,
+    WorldTimeSpeed,
 };
 
 const SMSG_CHAR_CREATE: u16 = 0x003A;
 const SMSG_CHAR_ENUM: u16 = 0x003B;
+const SMSG_CHAR_DELETE: u16 = 0x003C;
 const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
 const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
 const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
+const SMSG_CHAR_RENAME: u16 = 0x02C8;
 const SMSG_ACTION_BUTTONS: u16 = 0x0129;
 const SMSG_ADDON_INFO: u16 = 0x02EF;
 const SMSG_TIME_SYNC_REQ: u16 = 0x0390;
@@ -41,6 +44,7 @@ impl WorldServerPacket {
         match self.opcode {
             SMSG_CHAR_CREATE => Some("SMSG_CHAR_CREATE"),
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
+            SMSG_CHAR_DELETE => Some("SMSG_CHAR_DELETE"),
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
             SMSG_LOGIN_SETTIMESPEED => Some("SMSG_LOGIN_SETTIMESPEED"),
             0x00A9 => Some("SMSG_UPDATE_OBJECT"),
@@ -48,6 +52,7 @@ impl WorldServerPacket {
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
+            SMSG_CHAR_RENAME => Some("SMSG_CHAR_RENAME"),
             SMSG_ACTION_BUTTONS => Some("SMSG_ACTION_BUTTONS"),
             SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
             SMSG_TIME_SYNC_REQ => Some("SMSG_TIME_SYNC_REQ"),
@@ -88,6 +93,36 @@ impl WorldServerPacket {
             return Ok(None);
         }
         CharacterCreationResult::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_CHAR_DELETE`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterDeletionError`] unless the response contains exactly
+    /// one known build-12340 deletion result.
+    pub fn character_deletion_result(
+        &self,
+    ) -> Result<Option<CharacterDeletionResult>, CharacterDeletionError> {
+        if self.opcode != SMSG_CHAR_DELETE {
+            return Ok(None);
+        }
+        CharacterDeletionResult::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes `SMSG_CHAR_RENAME`, or returns `None` for another opcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterRenameError`] when the result byte or success-only
+    /// GUID and C string do not have the exact build-12340 representation.
+    pub fn character_rename_result(
+        &self,
+    ) -> Result<Option<CharacterRenameResult>, CharacterRenameError> {
+        if self.opcode != SMSG_CHAR_RENAME {
+            return Ok(None);
+        }
+        CharacterRenameResult::decode(&self.payload).map(Some)
     }
 
     /// Decodes positional `SMSG_ADDON_INFO` policy against the sent manifest.

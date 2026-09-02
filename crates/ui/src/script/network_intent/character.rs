@@ -1,6 +1,7 @@
 //! UI-owned character directory values exposed synchronously to Glue Lua.
 
 const CHARACTER_FLAG_GHOST: u32 = 0x0000_2000;
+const CHARACTER_FLAG_RENAME: u32 = 0x0000_4000;
 const CUSTOMIZE_CHARACTER: u32 = 0x0000_0001;
 const CHANGE_FACTION: u32 = 0x0001_0000;
 const CHANGE_RACE: u32 = 0x0010_0000;
@@ -111,6 +112,12 @@ impl UiCharacterInfo {
     #[must_use]
     pub const fn is_ghost(&self) -> bool {
         self.flags & CHARACTER_FLAG_GHOST != 0
+    }
+
+    /// Reports whether the world requires a rename before login.
+    #[must_use]
+    pub const fn requires_rename(&self) -> bool {
+        self.flags & CHARACTER_FLAG_RENAME != 0
     }
 
     /// Reports the paid-character-customization branch.
