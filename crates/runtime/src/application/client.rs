@@ -277,7 +277,7 @@ impl ClientApplication {
 
     /// Keeps the process alive on the main thread until stock termination.
     ///
-    /// FIFO swapchain presentation paces the loop without a guessed timer. SDL
+    /// Swapchain presentation applies the configured VSync policy. SDL
     /// events are drained in source order before each service/frame boundary.
     ///
     /// # Errors

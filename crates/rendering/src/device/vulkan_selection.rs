@@ -4,7 +4,7 @@
 
 use ash::vk;
 
-use crate::device::{VulkanBootstrap, VulkanError};
+use crate::device::{VulkanBootstrap, VulkanError, VulkanPresentMode};
 
 /// Queue and surface facts fixed for logical-device and swapchain creation.
 pub(super) struct SelectedAdapter {
@@ -20,6 +20,7 @@ pub(super) struct SelectedAdapter {
     pub(super) sampler_anisotropy: bool,
     pub(super) maximum_sampler_anisotropy: f32,
     pub(super) surface_capabilities: vk::SurfaceCapabilitiesKHR,
+    pub(super) present_mode: vk::PresentModeKHR,
 }
 
 impl SelectedAdapter {
@@ -27,6 +28,7 @@ impl SelectedAdapter {
     pub(super) fn select(
         bootstrap: &VulkanBootstrap,
         adapter_index: usize,
+        requested_present_mode: VulkanPresentMode,
     ) -> Result<Self, VulkanError> {
         // SAFETY: The bootstrap owns a live instance for the entire query.
         let adapters = unsafe { bootstrap.instance.enumerate_physical_devices() }
@@ -67,7 +69,7 @@ impl SelectedAdapter {
         let surface_format = select_surface_format(bootstrap, physical_device)?;
         validate_cinematic_blit(bootstrap, physical_device, surface_format.format)?;
         let depth_format = select_depth_format(bootstrap, physical_device)?;
-        validate_present_mode(bootstrap, physical_device)?;
+        let present_mode = select_present_mode(bootstrap, physical_device, requested_present_mode)?;
         // SAFETY: The physical device and surface belong to the live bootstrap.
         let surface_capabilities = unsafe {
             bootstrap
@@ -117,6 +119,7 @@ impl SelectedAdapter {
             sampler_anisotropy: features.sampler_anisotropy == vk::TRUE,
             maximum_sampler_anisotropy: properties.limits.max_sampler_anisotropy,
             surface_capabilities,
+            present_mode,
         })
     }
 }
@@ -311,11 +314,12 @@ fn select_surface_format(
         .ok_or(VulkanError::SurfaceFormat)
 }
 
-/// Requires Vulkan's deterministic v-synchronized FIFO mode.
-fn validate_present_mode(
+/// Applies SolCL's Vulkan mapping for the stock `gxVSync` setting.
+fn select_present_mode(
     bootstrap: &VulkanBootstrap,
     physical_device: vk::PhysicalDevice,
-) -> Result<(), VulkanError> {
+    requested: VulkanPresentMode,
+) -> Result<vk::PresentModeKHR, VulkanError> {
     // SAFETY: The physical device and surface belong to the live bootstrap.
     let modes = unsafe {
         bootstrap
@@ -323,8 +327,15 @@ fn validate_present_mode(
             .get_physical_device_surface_present_modes(physical_device, bootstrap.surface)
     }
     .map_err(|source| VulkanError::operation("query present modes", source))?;
-    if !modes.contains(&vk::PresentModeKHR::FIFO) {
-        return Err(VulkanError::PresentMode);
+    if requested == VulkanPresentMode::Uncapped {
+        for preferred in [vk::PresentModeKHR::IMMEDIATE, vk::PresentModeKHR::MAILBOX] {
+            if modes.contains(&preferred) {
+                return Ok(preferred);
+            }
+        }
     }
-    Ok(())
+    modes
+        .contains(&vk::PresentModeKHR::FIFO)
+        .then_some(vk::PresentModeKHR::FIFO)
+        .ok_or(VulkanError::PresentMode)
 }

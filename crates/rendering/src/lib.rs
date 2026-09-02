@@ -37,12 +37,12 @@ pub use device::{
     UiGlyphTextureHandle, UiGlyphTextureResourceInfo, UiMeshHandle, UiMeshResourceInfo,
     UiPipelineHandle, UiPipelineInfo, UiPreparedDraw, UiSampledTexture, UiSamplerHandle,
     UiSamplerInfo, UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap,
-    VulkanError, VulkanRenderer, VulkanReport, WorldFrameGlow, WorldFrameReport, WorldFrameScene,
-    WorldModelBaseMip, WorldModelMeshHandle, WorldModelMeshResourceInfo, WorldModelPipelineHandle,
-    WorldModelPipelineInfo, WorldModelPreparedDraw, WorldModelSampledTexture,
-    WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelTextureAddressMode,
-    WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
-    WorldModelTextureSetInfo,
+    VulkanError, VulkanPresentMode, VulkanRenderer, VulkanReport, WorldFrameGlow, WorldFrameReport,
+    WorldFrameScene, WorldModelBaseMip, WorldModelMeshHandle, WorldModelMeshResourceInfo,
+    WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPreparedDraw,
+    WorldModelSampledTexture, WorldModelSamplerHandle, WorldModelSamplerInfo,
+    WorldModelTextureAddressMode, WorldModelTextureFiltering, WorldModelTextureSet,
+    WorldModelTextureSetHandle, WorldModelTextureSetInfo,
 };
 pub use lighting::{
     M2DirectionalLight, M2Sunlight, glue_character_sunlight, merge_wotlk_directional_lights,

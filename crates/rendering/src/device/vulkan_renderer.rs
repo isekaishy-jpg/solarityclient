@@ -175,6 +175,7 @@ pub struct VulkanRenderer {
     // allocator, device, then the bootstrap's surface, instance, and loader.
     bootstrap: VulkanBootstrap,
     adapter_index: usize,
+    present_mode: VulkanPresentMode,
     device: Device,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
@@ -220,14 +221,24 @@ pub struct VulkanRenderer {
     maximum_sampler_anisotropy: f32,
 }
 
+/// Stock `gxVSync` presentation policy requested at device startup.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VulkanPresentMode {
+    /// Present at the display cadence through Vulkan's required FIFO mode.
+    Synchronized,
+    /// Prefer immediate or mailbox presentation, falling back to FIFO.
+    Uncapped,
+}
+
 impl VulkanRenderer {
     /// Completes device and swapchain initialization for the attached surface.
     pub(super) fn start(
         bootstrap: VulkanBootstrap,
         requested_extent: (u32, u32),
         adapter_index: usize,
+        present_mode: VulkanPresentMode,
     ) -> Result<Self, VulkanError> {
-        let selected = SelectedAdapter::select(&bootstrap, adapter_index)?;
+        let selected = SelectedAdapter::select(&bootstrap, adapter_index, present_mode)?;
         let device = create_device(&bootstrap, &selected)?;
         // SAFETY: Both family indices were queried from this physical device,
         // and queue zero was requested during logical-device creation.
@@ -240,6 +251,7 @@ impl VulkanRenderer {
         let mut renderer = Self {
             bootstrap,
             adapter_index,
+            present_mode,
             device,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
@@ -507,7 +519,8 @@ impl VulkanRenderer {
             }
         }
         self.swapchain_images.clear();
-        let selected = SelectedAdapter::select(&self.bootstrap, self.adapter_index)?;
+        let selected =
+            SelectedAdapter::select(&self.bootstrap, self.adapter_index, self.present_mode)?;
         if selected.surface_format.format != self.color_format
             || selected.depth_format != self.depth_format
             || selected.graphics_family != self.report.graphics_queue_family
@@ -1890,7 +1903,7 @@ impl VulkanRenderer {
             )
             .pre_transform(selected.surface_capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(vk::PresentModeKHR::FIFO)
+            .present_mode(selected.present_mode)
             .clipped(true);
         if selected.graphics_family == selected.present_family {
             create_info = create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);

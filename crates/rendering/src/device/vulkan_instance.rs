@@ -6,7 +6,7 @@ use std::ffi::CString;
 
 use ash::{Entry, Instance, vk};
 
-use crate::device::{VulkanError, VulkanRenderer};
+use crate::device::{VulkanError, VulkanPresentMode, VulkanRenderer};
 
 /// Instance owner used during the SDL/Vulkan two-stage initialization seam.
 pub struct VulkanBootstrap {
@@ -102,7 +102,34 @@ impl VulkanBootstrap {
         adapter_index: usize,
     ) -> Result<VulkanRenderer, VulkanError> {
         self.surface = surface;
-        VulkanRenderer::start(self, requested_extent, adapter_index)
+        VulkanRenderer::start(
+            self,
+            requested_extent,
+            adapter_index,
+            VulkanPresentMode::Synchronized,
+        )
+    }
+
+    /// Transfers a surface and selects the requested stock VSync policy.
+    ///
+    /// # Safety
+    ///
+    /// `surface` must be a live `VkSurfaceKHR` created from
+    /// [`Self::instance_handle`], and ownership must not be retained elsewhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same adapter and surface failures as
+    /// [`Self::attach_surface`].
+    pub unsafe fn attach_surface_with_present_mode(
+        mut self,
+        surface: vk::SurfaceKHR,
+        requested_extent: (u32, u32),
+        adapter_index: usize,
+        present_mode: VulkanPresentMode,
+    ) -> Result<VulkanRenderer, VulkanError> {
+        self.surface = surface;
+        VulkanRenderer::start(self, requested_extent, adapter_index, present_mode)
     }
 }
 

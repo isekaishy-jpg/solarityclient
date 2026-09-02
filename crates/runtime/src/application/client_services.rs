@@ -23,8 +23,8 @@ use solarity_network::{
     WorldAddon, WorldAddonManifest,
 };
 use solarity_rendering::{
-    CharacterComponentTextureLevel, M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer,
-    VulkanReport, WorldCamera, WorldModelBaseMip, WorldModelTextureFiltering,
+    CharacterComponentTextureLevel, M2ParticleTwinkleTable, VulkanBootstrap, VulkanPresentMode,
+    VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip, WorldModelTextureFiltering,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
@@ -186,8 +186,24 @@ impl ClientServices {
         let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
         // SAFETY: SDL created `surface` from this bootstrap's instance, and
         // ownership transfers immediately to the rendering owner.
+        let vsync = startup_profile
+            .cvar_values()
+            .iter()
+            .rev()
+            .find(|(name, _value)| name.eq_ignore_ascii_case("gxVSync"))
+            .is_none_or(|(_name, value)| value.parse::<f64>().is_ok_and(|value| value != 0.0));
+        let present_mode = if vsync {
+            VulkanPresentMode::Synchronized
+        } else {
+            VulkanPresentMode::Uncapped
+        };
         let mut renderer = unsafe {
-            bootstrap.attach_surface(surface, platform.pixel_extent(), configuration.gpu_index())
+            bootstrap.attach_surface_with_present_mode(
+                surface,
+                platform.pixel_extent(),
+                configuration.gpu_index(),
+                present_mode,
+            )
         }?;
         let assets = AssetStoreHandle::new(assets);
         let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
@@ -582,13 +598,13 @@ impl ClientServices {
             .or_else(|| self.glue.take_process_action())
     }
 
-    /// Presents one FIFO-paced Glue or resident-world frame.
+    /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
         let update_time = std::time::Instant::now();
         if self.platform.presentation_suspended() {
-            // FIFO presentation normally paces the main loop. A minimized Vulkan
-            // surface cannot do that reliably, so keep animation time bounded and
-            // yield briefly while the event pump remains responsive to restoration.
+            // A minimized Vulkan surface cannot pace the main loop reliably,
+            // so keep animation time bounded and yield briefly while the event
+            // pump remains responsive to restoration.
             self.glue_update_clock = update_time;
             std::thread::sleep(std::time::Duration::from_millis(16));
             return Ok(());

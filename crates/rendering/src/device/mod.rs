@@ -66,7 +66,7 @@ pub use vulkan_m2_texture_set::{
     M2SampledTexture, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
-pub use vulkan_renderer::{VulkanRenderer, VulkanReport};
+pub use vulkan_renderer::{VulkanPresentMode, VulkanRenderer, VulkanReport};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_terrain_draw::TerrainPreparedDraw;
 pub use vulkan_terrain_frame::TerrainFrameReport;

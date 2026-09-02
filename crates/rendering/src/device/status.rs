@@ -76,8 +76,8 @@ pub enum VulkanError {
     /// The surface does not expose the stock-compatible BGRA8 format.
     #[error("surface does not expose B8G8R8A8_UNORM with SRGB_NONLINEAR color space")]
     SurfaceFormat,
-    /// FIFO presentation, required by this deterministic bootstrap, is absent.
-    #[error("surface does not expose FIFO presentation")]
+    /// No compatible synchronized presentation mode exists for the surface.
+    #[error("surface does not expose a compatible presentation mode")]
     PresentMode,
     /// The surface cannot be presented as an opaque desktop window.
     #[error("surface does not support opaque composition")]
