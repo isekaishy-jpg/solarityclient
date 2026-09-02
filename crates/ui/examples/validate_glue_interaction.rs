@@ -474,6 +474,20 @@ fn report_login_presentation(manager: &GlueManager, resident_textures: usize) {
 fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     let background_path = AssetPath::new("Interface\\Tooltips\\UI-Tooltip-Background.blp")?;
     let edge_path = AssetPath::new("Interface\\Glues\\Common\\Glue-Tooltip-Border.blp")?;
+    let dialog_html = manager
+        .bundle()
+        .lua()
+        .globals()
+        .get::<mlua::Table>("GlueDialogHTML")?;
+    let (_, _, _, dialog_text_height) = dialog_html
+        .get::<mlua::Function>("GetBoundsRect")?
+        .call::<(f64, f64, f64, f64)>(dialog_html)?;
+    if !dialog_text_height.is_finite() || dialog_text_height <= 0.0 {
+        return Err(invalid_data(format!(
+            "GlueDialogHTML returned invalid content bounds height {dialog_text_height}"
+        ))
+        .into());
+    }
     for name in ["AccountLoginAccountEdit", "AccountLoginPasswordEdit"] {
         let object_index = object_index(manager, name)?;
         let backdrop = manager
@@ -584,6 +598,118 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
             "login button hover did not select its authored HighlightFont".to_owned(),
         )
         .into());
+    }
+    manager.pointer_motion((-1.0, -1.0))?;
+
+    let (original_text, original_width, formatted_width, plain_width) = {
+        let button = manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<mlua::Table>("AccountLoginLoginButton")?;
+        let label = button
+            .get::<mlua::Function>("GetFontString")?
+            .call::<mlua::Table>(button)?;
+        let original = label
+            .get::<mlua::Function>("GetText")?
+            .call::<Option<String>>(label.clone())?;
+        let width = label
+            .get::<mlua::Function>("GetStringWidth")?
+            .call::<f64>(label.clone())?;
+        let set_text = label.get::<mlua::Function>("SetText")?;
+        set_text.call::<()>((label.clone(), "|cffff0000R|rW"))?;
+        let formatted_width = label
+            .get::<mlua::Function>("GetStringWidth")?
+            .call::<f64>(label.clone())?;
+        set_text.call::<()>((label.clone(), "RW"))?;
+        let plain_width = label
+            .get::<mlua::Function>("GetStringWidth")?
+            .call::<f64>(label.clone())?;
+        set_text.call::<()>((label, "|cffff0000R|rW"))?;
+        (original, width, formatted_width, plain_width)
+    };
+    if !original_width.is_finite() || original_width <= 0.0 {
+        return Err(invalid_data(format!(
+            "login button FontString returned invalid stock width {original_width}"
+        ))
+        .into());
+    }
+    if (formatted_width - plain_width).abs() > 0.000_01 {
+        return Err(invalid_data(format!(
+            "FontString width included inline color controls: formatted={formatted_width} plain={plain_width}"
+        ))
+        .into());
+    }
+    manager.pointer_motion(object_center(manager, login_button)?)?;
+    let formatted_colors = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.color())
+        .collect::<Vec<_>>();
+    if formatted_colors.len() != 2
+        || formatted_colors[0] != [1.0, 0.0, 0.0, 1.0]
+        || formatted_colors[1] != highlight_colors[0]
+    {
+        return Err(invalid_data(format!(
+            "inline Glue color markup reached glyphs incorrectly: {formatted_colors:?}"
+        ))
+        .into());
+    }
+    {
+        let button = manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<mlua::Table>("AccountLoginLoginButton")?;
+        let label = button
+            .get::<mlua::Function>("GetFontString")?
+            .call::<mlua::Table>(button)?;
+        label
+            .get::<mlua::Function>("SetText")?
+            .call::<()>((label, original_text))?;
+    }
+    manager.pointer_motion((-1.0, -1.0))?;
+
+    {
+        let button = manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<mlua::Table>("AccountLoginLoginButton")?;
+        button
+            .get::<mlua::Function>("SetDisabledTextColor")?
+            .call::<()>((button.clone(), 0.2, 0.3, 0.4, 0.5))?;
+        button
+            .get::<mlua::Function>("Disable")?
+            .call::<()>(button)?;
+    }
+    manager.pointer_motion(object_center(manager, login_button)?)?;
+    let disabled_colors = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.color())
+        .collect::<Vec<_>>();
+    if disabled_colors.is_empty()
+        || disabled_colors
+            .iter()
+            .any(|color| *color != [0.2, 0.3, 0.4, 0.5])
+    {
+        return Err(invalid_data(format!(
+            "disabled Glue button ignored its authored text color: {disabled_colors:?}"
+        ))
+        .into());
+    }
+    {
+        let button = manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<mlua::Table>("AccountLoginLoginButton")?;
+        button.get::<mlua::Function>("Enable")?.call::<()>(button)?;
     }
     manager.pointer_motion((-1.0, -1.0))?;
 

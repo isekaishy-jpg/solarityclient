@@ -161,6 +161,7 @@ static MODEL_PET_LIGHT_GHOST_TOKEN: u8 = 120;
 static BUTTON_STATE_LOCKED_TOKEN: u8 = 121;
 static SLIDER_ORIENTATION_TOKEN: u8 = 122;
 static HOVERED_TOKEN: u8 = 123;
+static DISABLED_TEXT_COLOR_TOKEN: u8 = 124;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -904,8 +905,8 @@ impl UiScriptRuntime {
                 .map(|definition| (definition.name().to_owned(), definition))
                 .collect::<HashMap<_, _>>(),
         );
-        let button_measurement = Some(
-            buttons::ButtonTextMeasurement::new(
+        let text_measurement = Some(
+            buttons::TextMeasurement::new(
                 environment.assets(),
                 font_definitions.clone(),
                 environment.logical_extent().1,
@@ -927,7 +928,7 @@ impl UiScriptRuntime {
                     environment.ui_extent(),
                     environment.assets(),
                     environment.media_intent(),
-                    button_measurement.clone(),
+                    text_measurement.clone(),
                     dynamic_arena.clone(),
                 )
                 .map_err(|error| execution_error("object metatable", error))?;
@@ -2141,6 +2142,7 @@ impl UiScriptRuntime {
             table
                 .raw_set(highlight_locked_key(), false)
                 .and_then(|()| table.raw_set(hovered_key(), false))
+                .and_then(|()| table.raw_set(disabled_text_color_key(), Option::<Table>::None))
                 .and_then(|()| table.raw_set(click_action_key(), 0x8000_0000_u64))
                 .and_then(|()| table.raw_set(button_pressed_key(), false))
                 .and_then(|()| table.raw_set(button_state_locked_key(), false))
@@ -2785,6 +2787,7 @@ fn create_dynamic_object(
     if matches!(kind, "Button" | "CheckButton") {
         object.raw_set(highlight_locked_key(), false)?;
         object.raw_set(hovered_key(), false)?;
+        object.raw_set(disabled_text_color_key(), Option::<Table>::None)?;
         object.raw_set(click_action_key(), 0x8000_0000_u64)?;
         object.raw_set(button_pressed_key(), false)?;
         object.raw_set(button_state_locked_key(), false)?;
@@ -3382,7 +3385,7 @@ fn create_object_metatable(
     ui_extent: (f64, f64),
     assets: Option<AssetStoreHandle>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
-    button_measurement: Option<buttons::ButtonTextMeasurement>,
+    text_measurement: Option<buttons::TextMeasurement>,
     dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
@@ -3425,7 +3428,12 @@ fn create_object_metatable(
         register_enabled_methods(lua, &methods, kind)?;
     }
     if matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton) {
-        buttons::register_button_methods(lua, &methods, button_measurement, dynamic_arena.clone())?;
+        buttons::register_button_methods(
+            lua,
+            &methods,
+            text_measurement.clone(),
+            dynamic_arena.clone(),
+        )?;
     }
     if kind == UiObjectKind::CheckButton {
         buttons::register_check_button_methods(lua, &methods)?;
@@ -3434,7 +3442,7 @@ fn create_object_metatable(
         register_edit_box_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::FontString {
-        register_font_string_methods(lua, &methods)?;
+        register_font_string_methods(lua, &methods, text_measurement)?;
     }
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
@@ -3717,7 +3725,11 @@ fn object_script_function(
     }
 }
 
-fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+fn register_font_string_methods(
+    lua: &Lua,
+    methods: &Table,
+    measurement: Option<buttons::TextMeasurement>,
+) -> mlua::Result<()> {
     methods.raw_set(
         "SetFontObject",
         lua.create_function(|lua, (font_string, value): (Table, Value)| {
@@ -3797,6 +3809,17 @@ fn register_font_string_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
                 color.raw_get::<f64>(3)?,
                 color.raw_get::<f64>(4)?,
             ))
+        })?,
+    )?;
+    methods.raw_set(
+        "GetStringWidth",
+        lua.create_function(move |_, font_string: Table| {
+            let Some(measurement) = &measurement else {
+                return Err(mlua::Error::runtime(
+                    "FontString:GetStringWidth requires a mounted stock asset store",
+                ));
+            };
+            measurement.font_string_width(&font_string)
         })?,
     )?;
     register_font_string_justification_methods(lua, methods)?;
@@ -6141,6 +6164,21 @@ fn register_region_bounds_methods(
                 None => (None, None),
             })
         })?,
+    )?;
+    methods.raw_set(
+        "GetBoundsRect",
+        lua.create_function(move |lua, object: Table| {
+            let bounds = resolve_live_region_bounds(lua, object, ui_extent)?;
+            Ok(match bounds {
+                Some(bounds) => (
+                    Some(bounds.left),
+                    Some(bounds.bottom),
+                    Some(bounds.right - bounds.left),
+                    Some(bounds.top - bounds.bottom),
+                ),
+                None => (None, None, None, None),
+            })
+        })?,
     )
 }
 
@@ -6835,7 +6873,7 @@ fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
     Ok(())
 }
 
-fn clamped_color(red: f64, green: f64, blue: f64, alpha: Option<f64>) -> [f64; 4] {
+pub(super) fn clamped_color(red: f64, green: f64, blue: f64, alpha: Option<f64>) -> [f64; 4] {
     [
         red.clamp(0.0, 1.0),
         green.clamp(0.0, 1.0),
@@ -7518,6 +7556,10 @@ pub(super) fn normal_font_key() -> LightUserData {
 
 pub(super) fn disabled_font_key() -> LightUserData {
     hidden_key(&DISABLED_FONT_TOKEN)
+}
+
+pub(super) fn disabled_text_color_key() -> LightUserData {
+    hidden_key(&DISABLED_TEXT_COLOR_TOKEN)
 }
 
 pub(super) fn highlight_font_key() -> LightUserData {

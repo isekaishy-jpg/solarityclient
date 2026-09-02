@@ -12,23 +12,24 @@ use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
     DynamicArenaState, button_pressed_key, button_state_locked_key, button_text_key, checked_key,
-    click_action_key, create_dynamic_region, disabled_font_key, disabled_texture_key,
-    drag_button_key, enabled_key, font_object_key, font_set_key, highlight_font_key,
-    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, mark_live_state_changed,
-    name_key, normal_font_key, normal_texture_key, object_script_function, pushed_texture_key,
-    resolve_font_object, text_key, texture_file_key, texture_solid_color_key, type_key,
+    clamped_color, click_action_key, create_dynamic_region, disabled_font_key,
+    disabled_text_color_key, disabled_texture_key, drag_button_key, enabled_key, font_object_key,
+    font_set_key, highlight_font_key, highlight_locked_key, highlight_texture_key, lua_bool,
+    lua_text, mark_live_state_changed, name_key, normal_font_key, normal_texture_key,
+    object_script_function, pushed_texture_key, resolve_font_object, text_key, texture_file_key,
+    texture_solid_color_key, type_key,
 };
 
 /// Archive-backed state required by the stock text-extent methods.
 #[derive(Clone)]
-pub(super) struct ButtonTextMeasurement {
+pub(super) struct TextMeasurement {
     assets: Option<AssetStoreHandle>,
     fonts: Rc<HashMap<String, FontDefinition>>,
     system: Rc<RefCell<FontSystem>>,
     pixels_per_ui_unit: f64,
 }
 
-impl ButtonTextMeasurement {
+impl TextMeasurement {
     pub(super) fn new(
         assets: Option<AssetStoreHandle>,
         fonts: Rc<HashMap<String, FontDefinition>>,
@@ -43,19 +44,33 @@ impl ButtonTextMeasurement {
     }
 
     fn width(&self, button: &Table) -> mlua::Result<f64> {
-        let Some(text) = button.raw_get::<Option<String>>(text_key())? else {
+        self.width_with_font(button, normal_font_key(), "Button:GetTextWidth")
+    }
+
+    pub(super) fn font_string_width(&self, font_string: &Table) -> mlua::Result<f64> {
+        self.width_with_font(font_string, font_object_key(), "FontString:GetStringWidth")
+    }
+
+    fn width_with_font(
+        &self,
+        object: &Table,
+        font_key: LightUserData,
+        operation: &str,
+    ) -> mlua::Result<f64> {
+        let Some(text) = object.raw_get::<Option<String>>(text_key())? else {
             return Ok(0.0);
         };
+        let text = visible_text(&text);
         if text.is_empty() {
             return Ok(0.0);
         }
-        let Some(font) = button.raw_get::<Option<Table>>(normal_font_key())? else {
+        let Some(font) = object.raw_get::<Option<Table>>(font_key)? else {
             return Ok(self.one_pixel());
         };
         let name = font.raw_get::<String>(name_key())?;
         let Some(definition) = self.fonts.get(&name) else {
             return Err(mlua::Error::runtime(format!(
-                "Button:GetTextWidth font object {name} has no stock definition"
+                "{operation} font object {name} has no stock definition"
             )));
         };
         let Some(path) = definition.face() else {
@@ -79,9 +94,9 @@ impl ButtonTextMeasurement {
             .map_or(0.0, |offset| f64::from(offset.0).max(0.0));
         let mut widest = 0.0_f64;
         let Some(assets) = &self.assets else {
-            return Err(mlua::Error::runtime(
-                "Button:GetTextWidth requires a mounted stock asset store",
-            ));
+            return Err(mlua::Error::runtime(format!(
+                "{operation} requires a mounted stock asset store"
+            )));
         };
         let mut assets = assets.borrow_mut();
         let mut system = self.system.borrow_mut();
@@ -127,10 +142,40 @@ impl ButtonTextMeasurement {
     }
 }
 
+/// Removes build-12340 inline color controls before native text measurement.
+fn visible_text(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0_usize;
+    while cursor < source.len() {
+        let remaining = &source[cursor..];
+        if let Some(hex) = remaining.strip_prefix("|c").and_then(|tail| tail.get(..8))
+            && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            cursor += 10;
+            continue;
+        }
+        if remaining.starts_with("|r") {
+            cursor += 2;
+            continue;
+        }
+        if remaining.starts_with("||") {
+            output.push('|');
+            cursor += 2;
+            continue;
+        }
+        let Some(character) = remaining.chars().next() else {
+            break;
+        };
+        output.push(character);
+        cursor += character.len_utf8();
+    }
+    output
+}
+
 pub(super) fn register_button_methods(
     lua: &Lua,
     methods: &Table,
-    measurement: Option<ButtonTextMeasurement>,
+    measurement: Option<TextMeasurement>,
     dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<()> {
     let width_measurement = measurement.clone();
@@ -141,6 +186,18 @@ pub(super) fn register_button_methods(
         "GetNormalFontObject",
         normal_font_key(),
         true,
+    )?;
+    methods.raw_set(
+        "SetDisabledTextColor",
+        lua.create_function(
+            |lua, (button, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
+                button.raw_set(
+                    disabled_text_color_key(),
+                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
+                )?;
+                mark_live_state_changed(lua)
+            },
+        )?,
     )?;
     methods.raw_set(
         "GetFontString",

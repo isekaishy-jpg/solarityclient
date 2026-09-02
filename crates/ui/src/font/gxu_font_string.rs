@@ -461,8 +461,12 @@ impl UiGlyphAtlasPlan {
             object.text.as_ref().is_none_or(|text| {
                 runtime_font_key(text, pixels_per_ui_unit).is_ok_and(|font| {
                     presented_characters(text)
-                        .filter(|character| !character.is_control())
-                        .all(|character| self.glyphs.contains_key(&GlyphKey::new(&font, character)))
+                        .into_iter()
+                        .filter(|presented| !presented.character.is_control())
+                        .all(|presented| {
+                            self.glyphs
+                                .contains_key(&GlyphKey::new(&font, presented.character))
+                        })
                 })
             })
         })
@@ -748,7 +752,11 @@ fn request_live_glyphs(
                 requested.insert(GlyphKey::new(&font, character));
             }
         }
-        for character in presented_characters(text).filter(|character| !character.is_control()) {
+        for presented in presented_characters(text)
+            .into_iter()
+            .filter(|presented| !presented.character.is_control())
+        {
+            let character = presented.character;
             let key = GlyphKey::new(&font, character);
             requested.insert(key.clone());
             required.insert(key);
@@ -757,18 +765,67 @@ fn request_live_glyphs(
     Ok(())
 }
 
-fn presented_characters(text: &UiRuntimeText) -> impl Iterator<Item = char> + '_ {
-    text.content.chars().map(|character| {
-        if text.password && !matches!(character, ' ' | '\t' | '\r' | '\n') {
-            '*'
-        } else {
-            character
-        }
-    })
+#[derive(Clone, Copy)]
+struct PresentedCharacter {
+    character: char,
+    color: Option<[f32; 4]>,
 }
 
-fn presented_text(text: &UiRuntimeText) -> String {
-    presented_characters(text).collect()
+/// Removes the inline formatting vocabulary consumed by build-12340
+/// FontStrings while retaining the active color on each visible scalar.
+fn presented_characters(text: &UiRuntimeText) -> Vec<PresentedCharacter> {
+    let mut output = Vec::with_capacity(text.content.chars().count());
+    let mut cursor = 0_usize;
+    let mut color = None;
+    while cursor < text.content.len() {
+        let remaining = &text.content[cursor..];
+        if let Some(hex) = remaining.strip_prefix("|c").and_then(|tail| tail.get(..8))
+            && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            let bytes = hex.as_bytes();
+            let component = |offset: usize| {
+                f32::from(hex_nibble(bytes[offset]) * 16 + hex_nibble(bytes[offset + 1])) / 255.0
+            };
+            color = Some([component(2), component(4), component(6), component(0)]);
+            cursor += 10;
+            continue;
+        }
+        if remaining.starts_with("|r") {
+            color = None;
+            cursor += 2;
+            continue;
+        }
+        if remaining.starts_with("||") {
+            output.push(PresentedCharacter {
+                character: if text.password { '*' } else { '|' },
+                color,
+            });
+            cursor += 2;
+            continue;
+        }
+        let Some(character) = remaining.chars().next() else {
+            break;
+        };
+        cursor += character.len_utf8();
+        output.push(PresentedCharacter {
+            character: if text.password && !matches!(character, ' ' | '\t' | '\r' | '\n') {
+                '*'
+            } else {
+                character
+            },
+            color,
+        });
+    }
+    output
+}
+
+const fn hex_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 0,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -800,17 +857,35 @@ fn layout_live_quads(
                 font.face, font.pixel_height
             ),
         })?;
-        let displayed = presented_text(text);
+        let displayed = presented_characters(text);
         let lines = if object.kind == UiObjectKind::EditBox && !text.multiline {
-            vec![displayed.replace(['\r', '\n'], "")]
+            vec![
+                displayed
+                    .into_iter()
+                    .filter(|presented| !matches!(presented.character, '\r' | '\n'))
+                    .collect::<Vec<_>>(),
+            ]
         } else {
-            displayed
-                .split(['\r', '\n'])
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
+            let mut lines = vec![Vec::new()];
+            let mut previous_was_carriage_return = false;
+            for presented in displayed {
+                if presented.character == '\r' {
+                    lines.push(Vec::new());
+                    previous_was_carriage_return = true;
+                } else if presented.character == '\n' {
+                    if !previous_was_carriage_return {
+                        lines.push(Vec::new());
+                    }
+                    previous_was_carriage_return = false;
+                } else if let Some(line) = lines.last_mut() {
+                    line.push(presented);
+                    previous_was_carriage_return = false;
+                }
+            }
+            lines
         };
         let lines = if lines.is_empty() {
-            vec![String::new()]
+            vec![Vec::new()]
         } else {
             lines
         };
@@ -831,7 +906,8 @@ fn layout_live_quads(
         let ascender = metrics.ascender_26_6 as f64 / 64.0 / pixels_per_ui_unit;
         let color = text.color.map(|component| component as f32);
         for (line_index, line) in lines.iter().enumerate() {
-            let line_width = line.chars().try_fold(0.0, |width, character| {
+            let line_width = line.iter().try_fold(0.0, |width, presented| {
+                let character = presented.character;
                 let key = GlyphKey::new(&font, character);
                 glyphs.get(&key).map_or_else(
                     || {
@@ -856,7 +932,8 @@ fn layout_live_quads(
             };
             let line_top = block_top - line_index as f64 * (line_height + text.spacing);
             let baseline = line_top - ascender;
-            for character in line.chars() {
+            for presented in line {
+                let character = presented.character;
                 let key = GlyphKey::new(&font, character);
                 let glyph = glyphs.get(&key).ok_or_else(|| FontError::Presentation {
                     message: format!(
@@ -885,7 +962,7 @@ fn layout_live_quads(
                         clip_object: (object.kind == UiObjectKind::EditBox).then_some(object_index),
                         bounds: [left as f32, bottom as f32, right as f32, top as f32],
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
-                        color,
+                        color: presented.color.unwrap_or(color),
                     });
                 }
                 pen_x += glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;

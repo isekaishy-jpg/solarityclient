@@ -5,23 +5,23 @@ use mlua::{Lua, Table};
 use super::simple_script::{
     OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key, backdrop_color_key,
     button_pressed_key, checked_key, click_action_key, desaturated_key, disabled_font_key,
-    draw_layer_key, draw_sub_level_key, edit_cursor_key, edit_focused_key, edit_multi_line_key,
-    edit_password_key, edit_selection_end_key, edit_selection_start_key, edit_text_insets_key,
-    enabled_key, font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
-    font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
-    highlight_font_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
-    horizontal_scroll_range_key, horizontal_tiling_key, hovered_key, index_key, justify_h_key,
-    justify_v_key, keyboard_enabled_key, model_background_light_ghost_key,
-    model_background_light_live_key, model_camera_key, model_character_light_ghost_key,
-    model_character_light_live_key, model_file_key, model_fog_color_key, model_fog_far_key,
-    model_fog_near_key, model_glow_key, model_pet_light_ghost_key, model_pet_light_live_key,
-    model_scale_key, model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key,
-    mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, normal_font_key,
-    parent_key, parse_point, role_key, scale_key, shown_key, slider_max_key, slider_min_key,
-    slider_orientation_key, slider_step_key, slider_value_key, spacing_key, tex_coord_key,
-    text_color_key, text_key, texture_blend_mode_key, texture_color_key, texture_file_key,
-    texture_solid_color_key, type_key, vertical_scroll_key, vertical_scroll_range_key,
-    vertical_tiling_key, width_key,
+    disabled_text_color_key, draw_layer_key, draw_sub_level_key, edit_cursor_key, edit_focused_key,
+    edit_multi_line_key, edit_password_key, edit_selection_end_key, edit_selection_start_key,
+    edit_text_insets_key, enabled_key, font_face_key, font_flags_key, font_height_key,
+    font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key, frame_level_key,
+    frame_strata_key, height_key, highlight_font_key, highlight_locked_key, hit_rect_insets_key,
+    horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key, hovered_key,
+    index_key, justify_h_key, justify_v_key, keyboard_enabled_key,
+    model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
+    model_character_light_ghost_key, model_character_light_live_key, model_file_key,
+    model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
+    model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
+    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
+    mouse_wheel_enabled_key, name_key, non_blocking_key, normal_font_key, parent_key, parse_point,
+    role_key, scale_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key,
+    slider_step_key, slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key,
 };
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
@@ -223,8 +223,15 @@ pub(super) fn snapshot_runtime_objects(
             .then(|| snapshot_texture(lua_index, &table))
             .transpose()?;
         let text = if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
-            let presentation_font = button_presentation_font(&registry, role, parent)?;
-            snapshot_text(lua_index, kind, &table, presentation_font.as_ref())?
+            let (presentation_font, presentation_color) =
+                button_presentation_font(&registry, role, parent)?;
+            snapshot_text(
+                lua_index,
+                kind,
+                &table,
+                presentation_font.as_ref(),
+                presentation_color,
+            )?
         } else {
             None
         };
@@ -445,12 +452,12 @@ fn button_presentation_font(
     registry: &Table,
     role: UiObjectRole,
     parent: Option<usize>,
-) -> Result<Option<Table>, UiScriptError> {
+) -> Result<(Option<Table>, Option<[f64; 4]>), UiScriptError> {
     if role != UiObjectRole::ButtonText {
-        return Ok(None);
+        return Ok((None, None));
     }
     let Some(parent) = parent else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let lua_index = parent + 1;
     let button: Table = registry
@@ -460,7 +467,7 @@ fn button_presentation_font(
         .raw_get::<String>(type_key())
         .map_err(|error| snapshot_error(format!("button owner {lua_index} type"), error))?;
     if !matches!(kind.as_str(), "Button" | "CheckButton") {
-        return Ok(None);
+        return Ok((None, None));
     }
     let enabled = button
         .raw_get::<bool>(enabled_key())
@@ -473,12 +480,26 @@ fn button_presentation_font(
                 .map(|locked| hovered || locked)
         })
         .map_err(|error| snapshot_error(format!("button owner {lua_index} highlight"), error))?;
+    let disabled_color = if !enabled {
+        button
+            .raw_get::<Option<Table>>(disabled_text_color_key())
+            .map_err(|error| {
+                snapshot_error(
+                    format!("button owner {lua_index} disabled text color"),
+                    error,
+                )
+            })?
+            .map(|values| numeric_array::<4>(&values, lua_index, "disabled text color"))
+            .transpose()?
+    } else {
+        None
+    };
     if !enabled {
         let disabled = button
             .raw_get::<Option<Table>>(disabled_font_key())
             .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))?;
         if disabled.is_some() {
-            return Ok(disabled);
+            return Ok((disabled, disabled_color));
         }
     }
     if highlighted {
@@ -486,12 +507,13 @@ fn button_presentation_font(
             .raw_get::<Option<Table>>(highlight_font_key())
             .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))?;
         if highlight.is_some() {
-            return Ok(highlight);
+            return Ok((highlight, None));
         }
     }
-    button
+    let font = button
         .raw_get::<Option<Table>>(normal_font_key())
-        .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))
+        .map_err(|error| snapshot_error(format!("button owner {lua_index} font"), error))?;
+    Ok((font, disabled_color))
 }
 
 fn snapshot_text(
@@ -499,6 +521,7 @@ fn snapshot_text(
     kind: UiObjectKind,
     table: &Table,
     presentation_font: Option<&Table>,
+    presentation_color: Option<[f64; 4]>,
 ) -> Result<Option<UiRuntimeText>, UiScriptError> {
     let font_set = table
         .raw_get::<bool>(font_set_key())
@@ -604,7 +627,8 @@ fn snapshot_text(
         } else {
             FontRasterization::Antialiased
         },
-        color: numeric_array::<4>(&color, lua_index, "text color")?,
+        color: presentation_color
+            .map_or_else(|| numeric_array::<4>(&color, lua_index, "text color"), Ok)?,
         shadow_offset: numeric_array::<2>(&shadow_offset, lua_index, "shadow offset")?,
         shadow_color: numeric_array::<4>(&shadow_color, lua_index, "shadow color")?,
         spacing: finite_region_number(font, spacing_key(), lua_index, "font spacing")?,
