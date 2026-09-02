@@ -34,6 +34,13 @@ fn loading_screen_catalog_decodes_stock_layout() -> Result<(), Box<dyn Error>> {
         "INTERFACE\\GLUES\\LOADINGSCREENS\\LOADSCREENNORTHREND.BLP"
     );
     assert!(screen.has_widescreen());
+    assert_eq!(
+        screen
+            .widescreen_texture()?
+            .ok_or("wide loading screen is absent")?
+            .as_str(),
+        "INTERFACE\\GLUES\\LOADINGSCREENS\\LOADSCREENNORTHRENDWIDE.BLP"
+    );
     assert!(catalog.screen(8).is_none());
     Ok(())
 }

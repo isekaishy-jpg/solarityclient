@@ -41,6 +41,28 @@ impl LoadingScreenDefinition {
     pub const fn has_widescreen(&self) -> bool {
         self.has_widescreen
     }
+
+    /// Returns the stock widescreen archive identity when this record authors one.
+    ///
+    /// Build 12340 inserts `Wide` immediately before the canonical texture
+    /// extension. Presence remains an archive-stack decision because stock
+    /// falls back to the narrow card when the derived asset is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError`] if the derived archive path is invalid.
+    pub fn widescreen_texture(&self) -> Result<Option<AssetPath>, AssetError> {
+        if !self.has_widescreen {
+            return Ok(None);
+        }
+        let value = self.texture.as_str();
+        let extension = value.rfind('.').unwrap_or(value.len());
+        let mut wide = String::with_capacity(value.len() + 4);
+        wide.push_str(&value[..extension]);
+        wide.push_str("Wide");
+        wide.push_str(&value[extension..]);
+        AssetPath::new(wide).map(Some)
+    }
 }
 
 /// Identifier-indexed build-12340 loading-card definitions.

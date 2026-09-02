@@ -159,11 +159,12 @@ fn resolve_background(
         return Ok(None);
     };
     let aspect = logical_extent.0 as f32 / logical_extent.1 as f32;
-    if screen.has_widescreen() && aspect > 4.0 / 3.0 {
-        let wide = widescreen_path(screen.texture())?;
-        if assets.borrow().contains(&wide)? {
-            return Ok(Some(wide));
-        }
+    if screen.has_widescreen()
+        && aspect > 4.0 / 3.0
+        && let Some(wide) = screen.widescreen_texture()?
+        && assets.borrow().contains(&wide)?
+    {
+        return Ok(Some(wide));
     }
     if assets.borrow().contains(screen.texture())? {
         return Ok(Some(screen.texture().clone()));
@@ -174,16 +175,6 @@ fn resolve_background(
         "selected map loading art is absent; retaining the stock generic card"
     );
     Ok(None)
-}
-
-fn widescreen_path(path: &AssetPath) -> Result<AssetPath, ApplicationError> {
-    let value = path.as_str();
-    let extension = value.rfind('.').unwrap_or(value.len());
-    let mut wide = String::with_capacity(value.len() + 4);
-    wide.push_str(&value[..extension]);
-    wide.push_str("Wide");
-    wide.push_str(&value[extension..]);
-    Ok(AssetPath::new(wide)?)
 }
 
 fn upload_textures(
