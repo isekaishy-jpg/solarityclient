@@ -15,10 +15,12 @@ mod types;
 pub use atlas::CharacterTexturePlan;
 pub use attachment::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterItemAttachment,
-    CharacterWeaponState,
+    CharacterSelectionQuiver, CharacterWeaponState,
 };
 pub use equipment::CharacterEquipmentItem;
-pub use geoset::{CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode};
+pub use geoset::{
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode, CreatureGeosetPlan,
+};
 pub use item_visual::{CharacterItemVisualEffect, CharacterItemVisualPlan};
 pub use status::{
     CharacterAttachmentPlanError, CharacterGeosetPlanError, CharacterTextureComposeError,

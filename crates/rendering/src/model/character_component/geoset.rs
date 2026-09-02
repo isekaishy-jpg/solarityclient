@@ -60,6 +60,32 @@ pub struct CharacterGeosetPlan {
     visible_geosets: Vec<u32>,
 }
 
+/// Packed creature-display submesh selection for groups one through eight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CreatureGeosetPlan {
+    selector: u32,
+}
+
+impl CreatureGeosetPlan {
+    /// Creates the exact eight-nibble selector stored by `CreatureDisplayInfo`.
+    #[must_use]
+    pub const fn new(selector: u32) -> Self {
+        Self { selector }
+    }
+
+    /// Tests one M2 submesh using stock's nonzero-nibble override rule.
+    #[must_use]
+    pub const fn is_visible(self, geoset_id: u16) -> bool {
+        let geoset_id = geoset_id as u32;
+        let group = geoset_id / 100;
+        if group < 1 || group > 8 {
+            return true;
+        }
+        let selected = (self.selector >> ((group - 1) * 4)) & 0x0f;
+        selected == 0 || geoset_id == group * 100 + selected
+    }
+}
+
 impl CharacterGeosetPlan {
     /// Selects customization, helmet masks, and equipped-item body geosets.
     ///

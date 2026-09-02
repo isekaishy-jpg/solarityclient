@@ -7,8 +7,9 @@ use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
     CharacterRaceCatalog, CharacterStartOutfitCatalog, ClientDataRoot, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    Locale, MapCatalog, ParticleColorCatalog, TerrainTileIndex,
+    CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog, ParticleColorCatalog,
+    TerrainTileIndex,
 };
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{WorldCamera, WorldFrustum, WorldScreenWindow};
@@ -73,6 +74,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         RuntimePlayerCatalogs::new(
             animations,
             creatures,
+            CreatureFamilyCatalog::default(),
             characters,
             races,
             helmet_visibility,
@@ -226,6 +228,7 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
         RuntimePlayerCatalogs::new(
             animations,
             creatures,
+            CreatureFamilyCatalog::default(),
             characters,
             races,
             helmet_visibility,
@@ -323,6 +326,7 @@ fn remote_player_residency_tracks_authoritative_world_lifecycle() -> Result<(), 
         RuntimePlayerCatalogs::new(
             animations,
             creatures,
+            CreatureFamilyCatalog::default(),
             characters,
             races,
             helmet_visibility,

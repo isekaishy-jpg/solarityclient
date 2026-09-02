@@ -12,8 +12,9 @@ use tokio::runtime::{Builder, Runtime};
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle,
     CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
+    CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, LightCatalog, LoadingScreenCatalog, MapCatalog,
+    ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -127,6 +128,7 @@ impl ClientServices {
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
+        let creature_families = CreatureFamilyCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let races = CharacterRaceCatalog::load(&mut assets)?;
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
@@ -284,6 +286,7 @@ impl ClientServices {
                     RuntimePlayerCatalogs::new(
                         animations,
                         creatures,
+                        creature_families,
                         characters,
                         races,
                         helmet_visibility,
@@ -648,7 +651,7 @@ impl ClientServices {
             }
             _ => self.player.synchronize_character_creation(None)?,
         };
-        let glue_character = self.player.creation_frame_input();
+        let glue_character = self.player.glue_character_frame_input();
         self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,

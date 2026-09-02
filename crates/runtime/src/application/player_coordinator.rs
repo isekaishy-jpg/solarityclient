@@ -5,9 +5,9 @@ use std::sync::Arc;
 use solarity_asset::{
     AnimationDataCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
     BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog,
-    CharacterStartOutfitCatalog, CreatureCatalog, CreatureModelAppearance, DecodedM2Model,
-    HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog,
-    ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
+    CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog, CreatureModelAppearance,
+    DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, M2ModelCache, M2TextureKind, ParticleColorCatalog,
 };
 use solarity_ecs::{
     ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
@@ -16,9 +16,10 @@ use solarity_ecs::{
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
     CharacterAttachmentPoint, CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan,
-    CharacterGeosetPlanError, CharacterItemVisualPlan, CharacterTabardMode,
-    CharacterTextureComposeError, CharacterTexturePlan, CharacterTexturePlanError,
-    CharacterWeaponState, M2ParticleColorReplacement, WorldCamera,
+    CharacterGeosetPlanError, CharacterItemVisualPlan, CharacterSelectionQuiver,
+    CharacterTabardMode, CharacterTextureComposeError, CharacterTexturePlan,
+    CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
+    M2ParticleColorReplacement, WorldCamera,
 };
 use solarity_systems::{
     CameraSubjectHeight, CameraSubjectHeightError, MountCameraGeometry, MountCameraHeightError,
@@ -254,6 +255,7 @@ pub enum RuntimeRemotePlayerPoll {
 pub struct RuntimePlayerCatalogs {
     animations: AnimationDataCatalog,
     creatures: CreatureCatalog,
+    creature_families: CreatureFamilyCatalog,
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
@@ -292,6 +294,7 @@ impl RuntimePlayerCatalogs {
     pub fn new(
         animations: AnimationDataCatalog,
         creatures: CreatureCatalog,
+        creature_families: CreatureFamilyCatalog,
         characters: CharacterAppearanceCatalog,
         races: CharacterRaceCatalog,
         helmet_visibility: HelmetGeosetVisibilityCatalog,
@@ -302,6 +305,7 @@ impl RuntimePlayerCatalogs {
         Self {
             animations,
             creatures,
+            creature_families,
             characters,
             races,
             helmet_visibility,
@@ -317,6 +321,7 @@ pub struct RuntimePlayerPresentation {
     assets: AssetStoreHandle,
     animations: AnimationDataCatalog,
     creatures: CreatureCatalog,
+    creature_families: CreatureFamilyCatalog,
     characters: CharacterAppearanceCatalog,
     races: CharacterRaceCatalog,
     helmet_visibility: HelmetGeosetVisibilityCatalog,
@@ -341,6 +346,7 @@ impl RuntimePlayerPresentation {
             assets,
             animations: catalogs.animations,
             creatures: catalogs.creatures,
+            creature_families: catalogs.creature_families,
             characters: catalogs.characters,
             races: catalogs.races,
             helmet_visibility: catalogs.helmet_visibility,
@@ -394,6 +400,7 @@ impl RuntimePlayerPresentation {
             }
         };
         let body = self.creatures.resolve_model(display_id)?;
+        let body_particle_color_id = body.display().particle_color_id();
         let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
         let customization = solarity_asset::CharacterCustomization::new(
             skin,
@@ -476,9 +483,10 @@ impl RuntimePlayerPresentation {
             model_scale,
             facing_radians: preview.facing_degrees().to_radians() as f32,
             attachments,
+            pet: None,
             particle_colors: M2ParticleColorReplacement::resolve(
                 &self.particle_colors,
-                body.display().particle_color_id(),
+                body_particle_color_id,
             ),
         });
         Ok(true)
@@ -520,6 +528,7 @@ impl RuntimePlayerPresentation {
             }
         };
         let body = self.creatures.resolve_model(display_id)?;
+        let body_particle_color_id = body.display().particle_color_id();
         let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
         let customization =
             CharacterCustomization::new(skin, face, hair_style, hair_color, facial_hair);
@@ -542,6 +551,7 @@ impl RuntimePlayerPresentation {
         )?;
         let attachment_plan = CharacterAttachmentPlan::character_selection(
             equipment_items.iter().copied(),
+            resolve_selection_quiver(preview, &self.item_displays)?,
             race,
             u32::from(preview.gender_id()),
             preview.class_id(),
@@ -576,6 +586,7 @@ impl RuntimePlayerPresentation {
             &mut assets,
         )?;
         drop(assets);
+        let pet = self.load_glue_pet(preview.pet())?;
         let animation = resolve_resident_animation(
             &self.animations,
             &model,
@@ -592,19 +603,102 @@ impl RuntimePlayerPresentation {
             model_scale,
             facing_radians: preview.facing_degrees().to_radians() as f32,
             attachments,
+            pet,
             particle_colors: M2ParticleColorReplacement::resolve(
                 &self.particle_colors,
-                body.display().particle_color_id(),
+                body_particle_color_id,
             ),
         });
         Ok(true)
     }
 
-    /// Returns renderer inputs for the current character-creation body.
-    pub(super) fn creation_frame_input(&self) -> Option<ResidentCreationFrameInput<'_>> {
+    /// Resolves the optional character-selection pet through creature DBCs.
+    fn load_glue_pet(
+        &mut self,
+        pet: solarity_ui::UiCharacterPetPreview,
+    ) -> Result<Option<ResidentGluePetModel>, RuntimePlayerError> {
+        if pet.display_id() == 0 {
+            return Ok(None);
+        }
+        let appearance = self.creatures.resolve_model(pet.display_id())?;
+        let authored_model_scale = {
+            let authored = appearance.display().model_scale() * appearance.model().model_scale();
+            if authored > 0.0 { authored } else { 1.0 }
+        };
+        // The selection scene's CCharacterSelection pet path replaces authored
+        // display/model scale with CreatureFamily.dbc interpolation when the
+        // enumeration row supplies a family and a nondegenerate level range.
+        let model_scale = self
+            .creature_families
+            .family(u32::from(pet.family_id()))
+            .and_then(|family| family.scale_for_level(u32::from(pet.level())))
+            .unwrap_or(authored_model_scale);
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, appearance.model_path())?;
+        let (textures, geosets) = if let Some(extra) = appearance.extra() {
+            let character = self.characters.resolve_player(
+                extra.race_id(),
+                extra.gender_id(),
+                CharacterCustomization::from_ids(
+                    extra.skin_id(),
+                    extra.face_id(),
+                    extra.hair_style_id(),
+                    extra.hair_color_id(),
+                    extra.facial_hair_style_id(),
+                ),
+            )?;
+            let equipment = resolve_npc_equipment(
+                appearance.display().id(),
+                extra.npc_item_display_ids(),
+                &self.item_displays,
+            )?;
+            let texture_plan =
+                CharacterTexturePlan::equipped(&character, &assets, equipment.iter().copied())?;
+            let textures = prepare_npc_character_textures(
+                &model,
+                &appearance,
+                &texture_plan,
+                &mut assets,
+                &mut self.textures,
+            )?;
+            let geosets = CharacterGeosetPlan::equipped(
+                &character,
+                CharacterGeosetContext::new(0, CharacterTabardMode::Equipment),
+                &self.helmet_visibility,
+                equipment.iter().copied(),
+            )?;
+            (textures, Some(ResidentCreatureGeosets::Character(geosets)))
+        } else {
+            (
+                prepare_creature_textures(&model, &appearance, &mut assets, &mut self.textures)?,
+                ResidentCreatureGeosets::from_packed_selector(appearance.display().geoset_data()),
+            )
+        };
+        drop(assets);
+        let animation = resolve_resident_animation(
+            &self.animations,
+            &model,
+            UnitLocomotionAnimation::STAND,
+            UnitAnimationTier::Ground,
+        )?;
+        Ok(Some(ResidentGluePetModel {
+            model,
+            textures,
+            geosets,
+            model_scale,
+            animation,
+            particle_colors: M2ParticleColorReplacement::resolve(
+                &self.particle_colors,
+                appearance.display().particle_color_id(),
+            ),
+        }))
+    }
+
+    /// Returns renderer inputs for the current Glue character presentation.
+    pub(super) fn glue_character_frame_input(&self) -> Option<ResidentGlueCharacterFrameInput<'_>> {
         self.glue_character
             .as_ref()
-            .map(ResidentCreationFrameInput::from_resident)
+            .map(ResidentGlueCharacterFrameInput::from_resident)
     }
 
     /// Synchronizes the local player's exact body M2 and stable camera height.
@@ -978,7 +1072,7 @@ impl RuntimePlayerPresentation {
                     &self.helmet_visibility,
                     equipment.iter().copied(),
                 )?;
-                (textures, Some(geosets))
+                (textures, Some(ResidentCreatureGeosets::Character(geosets)))
             } else {
                 (
                     prepare_creature_textures(
@@ -987,7 +1081,9 @@ impl RuntimePlayerPresentation {
                         &mut assets,
                         &mut self.textures,
                     )?,
-                    None,
+                    ResidentCreatureGeosets::from_packed_selector(
+                        appearance.display().geoset_data(),
+                    ),
                 )
             };
             let animation = resolve_resident_animation(
@@ -1521,11 +1617,21 @@ struct ResidentGlueCharacterModel {
     model_scale: f32,
     facing_radians: f32,
     attachments: Vec<ResidentPlayerAttachment>,
+    pet: Option<ResidentGluePetModel>,
     particle_colors: Option<M2ParticleColorReplacement>,
 }
 
-/// Borrowed character-creation body passed into the Glue M2 compositor.
-pub(super) struct ResidentCreationFrameInput<'a> {
+struct ResidentGluePetModel {
+    model: Arc<DecodedM2Model>,
+    textures: Vec<ResidentCreatureTexture>,
+    geosets: Option<ResidentCreatureGeosets>,
+    model_scale: f32,
+    animation: UnitModelAnimation,
+    particle_colors: Option<M2ParticleColorReplacement>,
+}
+
+/// Borrowed character body passed into the Glue selection and creation compositor.
+pub(super) struct ResidentGlueCharacterFrameInput<'a> {
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentPlayerTexture],
     atlas: &'a CharacterAtlasTexture,
@@ -1534,10 +1640,21 @@ pub(super) struct ResidentCreationFrameInput<'a> {
     model_scale: f32,
     facing_radians: f32,
     attachments: &'a [ResidentPlayerAttachment],
+    pet: Option<ResidentGluePetFrameInput<'a>>,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
 }
 
-impl<'a> ResidentCreationFrameInput<'a> {
+#[derive(Clone, Copy)]
+pub(super) struct ResidentGluePetFrameInput<'a> {
+    model: &'a Arc<DecodedM2Model>,
+    textures: &'a [ResidentCreatureTexture],
+    geosets: Option<&'a ResidentCreatureGeosets>,
+    model_scale: f32,
+    animation: UnitModelAnimation,
+    particle_colors: Option<&'a M2ParticleColorReplacement>,
+}
+
+impl<'a> ResidentGlueCharacterFrameInput<'a> {
     fn from_resident(resident: &'a ResidentGlueCharacterModel) -> Self {
         Self {
             model: &resident.model,
@@ -1548,6 +1665,14 @@ impl<'a> ResidentCreationFrameInput<'a> {
             model_scale: resident.model_scale,
             facing_radians: resident.facing_radians,
             attachments: &resident.attachments,
+            pet: resident.pet.as_ref().map(|pet| ResidentGluePetFrameInput {
+                model: &pet.model,
+                textures: &pet.textures,
+                geosets: pet.geosets.as_ref(),
+                model_scale: pet.model_scale,
+                animation: pet.animation,
+                particle_colors: pet.particle_colors.as_ref(),
+            }),
             particle_colors: resident.particle_colors.as_ref(),
         }
     }
@@ -1586,6 +1711,36 @@ impl<'a> ResidentCreationFrameInput<'a> {
 
     pub(super) const fn attachments(&self) -> &[ResidentPlayerAttachment] {
         self.attachments
+    }
+
+    pub(super) const fn pet(&self) -> Option<ResidentGluePetFrameInput<'a>> {
+        self.pet
+    }
+}
+
+impl<'a> ResidentGluePetFrameInput<'a> {
+    pub(super) const fn model(self) -> &'a Arc<DecodedM2Model> {
+        self.model
+    }
+
+    pub(super) const fn textures(self) -> &'a [ResidentCreatureTexture] {
+        self.textures
+    }
+
+    pub(super) const fn geosets(self) -> Option<&'a ResidentCreatureGeosets> {
+        self.geosets
+    }
+
+    pub(super) const fn model_scale(self) -> f32 {
+        self.model_scale
+    }
+
+    pub(super) const fn animation(self) -> UnitModelAnimation {
+        self.animation
+    }
+
+    pub(super) const fn particle_colors(self) -> Option<&'a M2ParticleColorReplacement> {
+        self.particle_colors
     }
 }
 
@@ -1673,10 +1828,29 @@ struct ResidentCreatureModel {
     key: CreatureModelKey,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
-    geosets: Option<CharacterGeosetPlan>,
+    geosets: Option<ResidentCreatureGeosets>,
     particle_colors: Option<M2ParticleColorReplacement>,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
+}
+
+/// Creature submesh selection from player-style or packed display metadata.
+pub(super) enum ResidentCreatureGeosets {
+    /// A `CreatureDisplayInfoExtra` row selected player-character components.
+    Character(CharacterGeosetPlan),
+    /// Eight four-bit group selectors packed into `CreatureDisplayInfo`.
+    Packed(CreatureGeosetPlan),
+}
+
+impl ResidentCreatureGeosets {
+    /// Retains only a nonzero packed selector; zero leaves authored meshes visible.
+    const fn from_packed_selector(selector: u32) -> Option<Self> {
+        if selector == 0 {
+            None
+        } else {
+            Some(Self::Packed(CreatureGeosetPlan::new(selector)))
+        }
+    }
 }
 
 /// One creature texture after display replacement resolution.
@@ -1876,7 +2050,7 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     guid: u64,
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
-    geosets: Option<&'a CharacterGeosetPlan>,
+    geosets: Option<&'a ResidentCreatureGeosets>,
     world_transform: WorldTransform,
     object_scale: f32,
     animation: UnitModelAnimation,
@@ -1909,7 +2083,7 @@ impl<'a> ResidentCreatureFrameInput<'a> {
         self.textures
     }
 
-    pub(super) const fn geosets(&self) -> Option<&CharacterGeosetPlan> {
+    pub(super) const fn geosets(&self) -> Option<&ResidentCreatureGeosets> {
         self.geosets
     }
 
@@ -2023,6 +2197,27 @@ fn resolve_selection_equipment<'catalog>(
             ))
         })
         .collect()
+}
+
+/// Resolves the last modeled trailing enum bag as stock's single quiver component.
+fn resolve_selection_quiver<'catalog>(
+    preview: &UiCharacterSelectionPreview,
+    displays: &'catalog ItemDisplayCatalog,
+) -> Result<Option<CharacterSelectionQuiver<'catalog>>, RuntimePlayerError> {
+    preview
+        .equipment()
+        .iter()
+        .enumerate()
+        .skip(PLAYER_EQUIPMENT_SLOT_COUNT)
+        .filter_map(|(slot, item)| {
+            let display = displays.display(item.display_id())?;
+            (!display.model_names()[0].is_empty()).then_some((slot, display))
+        })
+        .next_back()
+        .map(|(slot, display)| {
+            CharacterSelectionQuiver::new(slot as u8, display).map_err(RuntimePlayerError::from)
+        })
+        .transpose()
 }
 
 /// Maps an inventory type to the first compatible public equipment slot.

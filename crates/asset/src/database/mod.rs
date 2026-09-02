@@ -47,7 +47,8 @@ pub use character_outfit::{
     CharacterStartOutfit, CharacterStartOutfitCatalog, CharacterStartOutfitItem,
 };
 pub use creature::{
-    CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureModelData,
+    CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureFamilyCatalog,
+    CreatureFamilyDefinition, CreatureModelData,
 };
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,

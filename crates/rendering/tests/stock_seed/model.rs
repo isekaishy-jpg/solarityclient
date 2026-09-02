@@ -14,12 +14,13 @@ use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState, VisibleEquipmentItem};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureStorage, CharacterAtlasLayerKind, CharacterAtlasRegion,
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterEquipmentItem,
-    CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan, CharacterTabardMode,
-    CharacterTexturePlan, CharacterWeaponState, M2AnimationClock, M2BonePose, M2DrawPushConstants,
-    M2EventTimeWindow, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
-    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan, CharacterSelectionQuiver,
+    CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState, CreatureGeosetPlan,
+    M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EventTimeWindow, M2LocalLightCount,
+    M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan,
+    M2MeshPlanError, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleState, M2PixelShader,
     M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
     M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneUniform, M2ShaderPermutation,
     M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode,
@@ -2365,7 +2366,7 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
         melee_values,
         [
             (
-                PlayerEquipmentSlot::MainHand,
+                Some(PlayerEquipmentSlot::MainHand),
                 CharacterAttachmentPoint::HandRight,
                 "ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORD.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\WEAPON\\SWORDRED.BLP"),
@@ -2373,7 +2374,7 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
                 801,
             ),
             (
-                PlayerEquipmentSlot::OffHand,
+                Some(PlayerEquipmentSlot::OffHand),
                 CharacterAttachmentPoint::Shield,
                 "ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELD.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\SHIELD\\SHIELDBLUE.BLP"),
@@ -2381,7 +2382,7 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
                 802,
             ),
             (
-                PlayerEquipmentSlot::Ranged,
+                Some(PlayerEquipmentSlot::Ranged),
                 CharacterAttachmentPoint::LargeWeaponRight,
                 "ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOW.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\WEAPON\\BOWGREEN.BLP"),
@@ -2479,7 +2480,17 @@ fn character_selection_plan_uses_stock_held_equipment_rules() -> Result<(), Box<
         0,
     );
 
-    let ordinary = CharacterAttachmentPlan::character_selection([main, off, ranged], race, 0, 1)?;
+    let quiver = CharacterSelectionQuiver::new(
+        22,
+        displays.display(61_003).ok_or("quiver display is absent")?,
+    )?;
+    let ordinary = CharacterAttachmentPlan::character_selection(
+        [main, off, ranged],
+        Some(quiver),
+        race,
+        0,
+        1,
+    )?;
     assert_eq!(
         ordinary
             .attachments()
@@ -2491,20 +2502,28 @@ fn character_selection_plan_uses_stock_held_equipment_rules() -> Result<(), Box<
             ))
             .collect::<Vec<_>>(),
         [
+            (None, CharacterAttachmentPoint::SheathMainHand, 0,),
             (
-                PlayerEquipmentSlot::MainHand,
+                Some(PlayerEquipmentSlot::MainHand),
                 CharacterAttachmentPoint::HandRight,
                 9_001,
             ),
             (
-                PlayerEquipmentSlot::OffHand,
+                Some(PlayerEquipmentSlot::OffHand),
                 CharacterAttachmentPoint::Shield,
                 702,
             ),
         ]
     );
+    let quiver_attachment = &ordinary.attachments()[0];
+    assert_eq!(quiver_attachment.character_enumeration_bag_slot(), Some(22));
+    assert_eq!(
+        quiver_attachment.model().as_str(),
+        "ITEM\\OBJECTCOMPONENTS\\QUIVER\\BOW.MDX"
+    );
 
-    let hunter = CharacterAttachmentPlan::character_selection([main, off, ranged], race, 0, 3)?;
+    let hunter =
+        CharacterAttachmentPlan::character_selection([main, off, ranged], None, race, 0, 3)?;
     assert_eq!(
         hunter
             .attachments()
@@ -2512,11 +2531,25 @@ fn character_selection_plan_uses_stock_held_equipment_rules() -> Result<(), Box<
             .map(|attachment| (attachment.slot(), attachment.point()))
             .collect::<Vec<_>>(),
         [(
-            PlayerEquipmentSlot::Ranged,
+            Some(PlayerEquipmentSlot::Ranged),
             CharacterAttachmentPoint::HandLeft,
         )]
     );
     Ok(())
+}
+
+/// Creature display nibbles replace only their corresponding M2 geoset group.
+#[test]
+fn creature_geoset_plan_applies_stock_packed_group_selectors() {
+    let plan = CreatureGeosetPlan::new(0x0000_0032);
+
+    assert!(plan.is_visible(0));
+    assert!(!plan.is_visible(101));
+    assert!(plan.is_visible(102));
+    assert!(!plan.is_visible(202));
+    assert!(plan.is_visible(203));
+    assert!(plan.is_visible(301));
+    assert!(plan.is_visible(901));
 }
 
 /// Built-in item visuals win; otherwise permanent enchants win over temporary ones.

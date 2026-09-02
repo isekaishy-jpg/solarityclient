@@ -19,6 +19,12 @@ pub enum CharacterGeosetPlanError {
 /// A failure while translating stock item display names into attachment paths.
 #[derive(Debug, Error)]
 pub enum CharacterAttachmentPlanError {
+    /// A caller supplied a record outside the four trailing enumeration bags.
+    #[error("character-enumeration bag slot {bag_slot} is outside 19 through 22")]
+    InvalidCharacterEnumerationBagSlot {
+        /// Rejected wire-order slot.
+        bag_slot: u8,
+    },
     /// A held slot was constructed from display-only NPC armor data.
     #[error("held equipment slot {slot:?} has no Item.dbc definition")]
     MissingItemDefinition {

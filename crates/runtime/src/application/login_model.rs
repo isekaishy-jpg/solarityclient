@@ -15,7 +15,7 @@ use solarity_ui::{GlueManager, UiModelLight, UiModelPresentation};
 use thiserror::Error;
 
 use crate::application::login_ui::LoginUiFrame;
-use crate::application::player_coordinator::ResidentCreationFrameInput;
+use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::M2Frame;
 use crate::random::CrtRand;
@@ -106,6 +106,7 @@ struct GlueModelEnvironment {
     fog_range: Vec4,
     local_lights: [M2LocalLightState; 4],
     character_local_lights: [M2LocalLightState; 4],
+    pet_local_lights: [M2LocalLightState; 4],
 }
 
 impl GlueModelEnvironment {
@@ -128,6 +129,10 @@ impl GlueModelEnvironment {
             .character_lights()
             .live()
             .map(|light| light.map_or_else(M2LocalLightState::disabled, model_light_state));
+        let pet_local_lights = model
+            .pet_lights()
+            .live()
+            .map(|light| light.map_or_else(M2LocalLightState::disabled, model_light_state));
         Self {
             ambient: if has_authored_lights {
                 Vec3::ZERO
@@ -144,6 +149,7 @@ impl GlueModelEnvironment {
             fog_range,
             local_lights,
             character_local_lights,
+            pet_local_lights,
         }
     }
 }
@@ -182,8 +188,8 @@ impl RuntimeGlueModelScene {
         assets: &AssetStoreHandle,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
-        creation: Option<ResidentCreationFrameInput<'_>>,
-        creation_changed: bool,
+        glue_character: Option<ResidentGlueCharacterFrameInput<'_>>,
+        glue_character_changed: bool,
     ) -> Result<(), RuntimeGlueModelError> {
         let visible = glue.presentation().models();
         if visible.is_empty() {
@@ -202,11 +208,12 @@ impl RuntimeGlueModelScene {
             && active.key == key
         {
             active.environment = environment;
-            if creation_changed {
+            if glue_character_changed {
                 active.frame.replace_glue_character(
                     renderer,
-                    creation,
+                    glue_character,
                     local_light_count(active.environment.character_local_lights),
+                    local_light_count(active.environment.pet_local_lights),
                     random,
                 )?;
             }
@@ -258,8 +265,9 @@ impl RuntimeGlueModelScene {
         )?;
         frame.replace_glue_character(
             renderer,
-            creation,
+            glue_character,
             local_light_count(environment.character_local_lights),
+            local_light_count(environment.pet_local_lights),
             random,
         )?;
         self.active = Some(ActiveGlueModel {

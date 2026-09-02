@@ -8,9 +8,88 @@ use super::wow_client_db::WdbcTable;
 const DISPLAY_INFO_PATH: &str = "DBFilesClient\\CreatureDisplayInfo.dbc";
 const DISPLAY_INFO_EXTRA_PATH: &str = "DBFilesClient\\CreatureDisplayInfoExtra.dbc";
 const MODEL_DATA_PATH: &str = "DBFilesClient\\CreatureModelData.dbc";
+const FAMILY_PATH: &str = "DBFilesClient\\CreatureFamily.dbc";
 const DISPLAY_FIELD_COUNT: u32 = 16;
 const DISPLAY_EXTRA_FIELD_COUNT: u32 = 21;
 const MODEL_FIELD_COUNT: u32 = 28;
+const FAMILY_FIELD_COUNT: u32 = 28;
+
+/// One exact build-12340 `CreatureFamily.dbc` scale interval.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CreatureFamilyDefinition {
+    id: u32,
+    minimum_scale: f32,
+    minimum_scale_level: u32,
+    maximum_scale: f32,
+    maximum_scale_level: u32,
+}
+
+impl CreatureFamilyDefinition {
+    /// Returns the creature-family identifier carried by character enumeration.
+    #[must_use]
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Returns the authored minimum scale and its level.
+    #[must_use]
+    pub const fn minimum_scale(&self) -> (f32, u32) {
+        (self.minimum_scale, self.minimum_scale_level)
+    }
+
+    /// Returns the authored maximum scale and its level.
+    #[must_use]
+    pub const fn maximum_scale(&self) -> (f32, u32) {
+        (self.maximum_scale, self.maximum_scale_level)
+    }
+
+    /// Interpolates the stock pet scale after clamping level to the authored interval.
+    #[must_use]
+    pub fn scale_for_level(&self, level: u32) -> Option<f32> {
+        if self.maximum_scale_level <= self.minimum_scale_level {
+            return None;
+        }
+        let level = level.clamp(self.minimum_scale_level, self.maximum_scale_level);
+        let progress = (level - self.minimum_scale_level) as f32
+            / (self.maximum_scale_level - self.minimum_scale_level) as f32;
+        let scale = self.minimum_scale + (self.maximum_scale - self.minimum_scale) * progress;
+        scale
+            .is_finite()
+            .then_some(scale)
+            .filter(|scale| *scale > 0.0)
+    }
+}
+
+/// Sorted creature-family scale rows used by stock character-selection pets.
+#[derive(Default)]
+pub struct CreatureFamilyCatalog {
+    families: Vec<CreatureFamilyDefinition>,
+}
+
+impl CreatureFamilyCatalog {
+    /// Loads the exact five-field build-12340 creature-family table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError`] when the table is absent, has another layout,
+    /// contains a non-finite scale, or repeats a primary key.
+    pub fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
+        let path = AssetPath::new(FAMILY_PATH)?;
+        let table = WdbcTable::load(store, &path)?;
+        Ok(Self {
+            families: decode_families(&table)?,
+        })
+    }
+
+    /// Finds a family row in logarithmic time by its exact identifier.
+    #[must_use]
+    pub fn family(&self, id: u32) -> Option<CreatureFamilyDefinition> {
+        self.families
+            .binary_search_by_key(&id, CreatureFamilyDefinition::id)
+            .ok()
+            .map(|index| self.families[index])
+    }
+}
 
 /// One exact build-12340 `CreatureDisplayInfo.dbc` row.
 #[derive(Clone, Debug, PartialEq)]
@@ -544,6 +623,23 @@ fn decode_models(table: &WdbcTable) -> Result<Vec<CreatureModelData>, AssetError
         });
     }
     sort_unique(table, records, CreatureModelData::id)
+}
+
+/// Decodes stock's compact family-level pet scale intervals.
+fn decode_families(table: &WdbcTable) -> Result<Vec<CreatureFamilyDefinition>, AssetError> {
+    require_layout(table, FAMILY_FIELD_COUNT, "CreatureFamily.dbc")?;
+    let mut records = Vec::with_capacity(table.header().record_count() as usize);
+    for row in 0..table.header().record_count() {
+        let values = read_fields::<5>(table, row)?;
+        records.push(CreatureFamilyDefinition {
+            id: values[0],
+            minimum_scale: finite_f32(table, row, 1, values[1])?,
+            minimum_scale_level: values[2],
+            maximum_scale: finite_f32(table, row, 3, values[3])?,
+            maximum_scale_level: values[4],
+        });
+    }
+    sort_unique(table, records, CreatureFamilyDefinition::id)
 }
 
 /// Rejects another client's schema instead of guessing compatible offsets.

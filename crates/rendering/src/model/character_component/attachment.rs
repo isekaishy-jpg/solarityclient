@@ -68,7 +68,7 @@ impl CharacterWeaponState {
 /// One separate item M2 attached to the player model.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CharacterItemAttachment {
-    slot: PlayerEquipmentSlot,
+    source: CharacterItemAttachmentSource,
     point: CharacterAttachmentPoint,
     model: AssetPath,
     texture: Option<AssetPath>,
@@ -78,10 +78,22 @@ pub struct CharacterItemAttachment {
 }
 
 impl CharacterItemAttachment {
-    /// Returns the public equipment slot that produced this child model.
+    /// Returns the public equipment slot that produced this child model, if any.
     #[must_use]
-    pub const fn slot(&self) -> PlayerEquipmentSlot {
-        self.slot
+    pub const fn slot(&self) -> Option<PlayerEquipmentSlot> {
+        match self.source {
+            CharacterItemAttachmentSource::EquipmentSlot(slot) => Some(slot),
+            CharacterItemAttachmentSource::CharacterEnumerationBag(_) => None,
+        }
+    }
+
+    /// Returns the character-enumeration bag index that produced this model.
+    #[must_use]
+    pub const fn character_enumeration_bag_slot(&self) -> Option<u8> {
+        match self.source {
+            CharacterItemAttachmentSource::EquipmentSlot(_) => None,
+            CharacterItemAttachmentSource::CharacterEnumerationBag(slot) => Some(slot),
+        }
     }
 
     /// Returns the parent M2 attachment point.
@@ -118,6 +130,42 @@ impl CharacterItemAttachment {
     #[must_use]
     pub const fn particle_color_id(&self) -> u32 {
         self.particle_color_id
+    }
+}
+
+/// Domain source of one child attachment in world or Glue presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CharacterItemAttachmentSource {
+    /// One of the nineteen public equipment slots.
+    EquipmentSlot(PlayerEquipmentSlot),
+    /// One of the four trailing `SMSG_CHAR_ENUM` bag records.
+    CharacterEnumerationBag(u8),
+}
+
+/// One modeled trailing bag record selected for stock's Glue quiver component.
+#[derive(Clone, Copy, Debug)]
+pub struct CharacterSelectionQuiver<'catalog> {
+    bag_slot: u8,
+    display: &'catalog solarity_asset::ItemDisplayInfo,
+}
+
+impl<'catalog> CharacterSelectionQuiver<'catalog> {
+    /// Creates a quiver input from an exact character-enumeration bag index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CharacterAttachmentPlanError`] unless `bag_slot` is in the
+    /// stock trailing range `19..=22`.
+    pub fn new(
+        bag_slot: u8,
+        display: &'catalog solarity_asset::ItemDisplayInfo,
+    ) -> Result<Self, CharacterAttachmentPlanError> {
+        if !(19..=22).contains(&bag_slot) {
+            return Err(
+                CharacterAttachmentPlanError::InvalidCharacterEnumerationBagSlot { bag_slot },
+            );
+        }
+        Ok(Self { bag_slot, display })
     }
 }
 
@@ -188,6 +236,7 @@ impl CharacterAttachmentPlan {
     /// as a shield attachment.
     pub fn character_selection<'catalog, I>(
         equipment: I,
+        quiver: Option<CharacterSelectionQuiver<'catalog>>,
         race: &CharacterRace,
         gender_id: u32,
         class_id: u8,
@@ -207,6 +256,9 @@ impl CharacterAttachmentPlan {
                 }
                 _ => {}
             }
+        }
+        if let Some(quiver) = quiver {
+            push_selection_quiver(&mut attachments, quiver)?;
         }
 
         let at_slot = |slot| equipment.iter().copied().find(|item| item.slot() == slot);
@@ -296,7 +348,7 @@ fn push_helmet(
         .map_or(model_name, |extension| &model_name[..extension]);
     let [texture_name, _] = display.model_textures();
     attachments.push(CharacterItemAttachment {
-        slot: item.slot(),
+        source: CharacterItemAttachmentSource::EquipmentSlot(item.slot()),
         point: CharacterAttachmentPoint::Helmet,
         model: AssetPath::new(format!(
             "Item\\ObjectComponents\\Head\\{model_stem}_{}{gender_suffix}.mdx",
@@ -329,7 +381,7 @@ fn push_shoulders(
             continue;
         }
         attachments.push(CharacterItemAttachment {
-            slot: item.slot(),
+            source: CharacterItemAttachmentSource::EquipmentSlot(item.slot()),
             point: points[channel],
             model: AssetPath::new(format!(
                 "Item\\ObjectComponents\\Shoulder\\{}",
@@ -369,7 +421,7 @@ fn push_held_item(
         "Item\\ObjectComponents\\Weapon"
     };
     attachments.push(CharacterItemAttachment {
-        slot: item.slot(),
+        source: CharacterItemAttachmentSource::EquipmentSlot(item.slot()),
         point,
         model: AssetPath::new(format!("{folder}\\{model_name}"))?,
         texture: attachment_texture(folder, texture_name)?,
@@ -400,7 +452,7 @@ fn push_selection_held_item(
         "Item\\ObjectComponents\\Weapon"
     };
     attachments.push(CharacterItemAttachment {
-        slot: item.slot(),
+        source: CharacterItemAttachmentSource::EquipmentSlot(item.slot()),
         point,
         model: AssetPath::new(format!("{folder}\\{model_name}"))?,
         texture: attachment_texture(folder, texture_name)?,
@@ -409,6 +461,28 @@ fn push_selection_held_item(
             .unwrap_or(display.item_visual_id()),
         enchantment_word: 0,
         particle_color_id: display.particle_color_id(),
+    });
+    Ok(())
+}
+
+/// Adds the last modeled enumeration bag through stock's quiver component.
+fn push_selection_quiver(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    quiver: CharacterSelectionQuiver<'_>,
+) -> Result<(), CharacterAttachmentPlanError> {
+    let [model_name, _] = quiver.display.model_names();
+    if model_name.is_empty() {
+        return Ok(());
+    }
+    let [texture_name, _] = quiver.display.model_textures();
+    attachments.push(CharacterItemAttachment {
+        source: CharacterItemAttachmentSource::CharacterEnumerationBag(quiver.bag_slot),
+        point: CharacterAttachmentPoint::SheathMainHand,
+        model: AssetPath::new(format!("Item\\ObjectComponents\\Quiver\\{model_name}"))?,
+        texture: attachment_texture("Item\\ObjectComponents\\Quiver", texture_name)?,
+        item_visual_id: 0,
+        enchantment_word: 0,
+        particle_color_id: quiver.display.particle_color_id(),
     });
     Ok(())
 }
