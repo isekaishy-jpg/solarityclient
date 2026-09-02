@@ -1462,8 +1462,8 @@ mod tests {
     }
 
     #[test]
-    fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() {
-        let face = AssetPath::new("Fonts\\FRIZQT__.TTF").expect("valid stock font path");
+    fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() -> Result<(), FontError> {
+        let face = AssetPath::new("Fonts\\FRIZQT__.TTF")?;
         let font = LineFontKey {
             face: face.clone(),
             pixel_height: 12,
@@ -1500,12 +1500,13 @@ mod tests {
             edit_box_caret_metrics(&text, &font, &glyphs, 1.0, 100.0),
             (7.0, 7.0)
         );
+        Ok(())
     }
 
     #[test]
-    fn atlas_reserves_opaque_padding_texel_for_text_primitives() {
-        let pixels =
-            compose_atlas((1, 1), &[], &HashMap::new(), &HashMap::new()).expect("one-pixel atlas");
+    fn atlas_reserves_opaque_padding_texel_for_text_primitives() -> Result<(), FontError> {
+        let pixels = compose_atlas((1, 1), &[], &HashMap::new(), &HashMap::new())?;
         assert_eq!(pixels, [255; 4]);
+        Ok(())
     }
 }
