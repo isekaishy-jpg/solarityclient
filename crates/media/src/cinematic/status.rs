@@ -31,6 +31,16 @@ pub enum CinematicError {
         /// Concrete locale-loose AVI.
         path: PathBuf,
     },
+    /// The AVI stream omitted a usable constant frame cadence.
+    #[error("client cinematic {path} has invalid video frame rate {numerator}/{denominator}")]
+    InvalidFrameRate {
+        /// Concrete locale-loose AVI.
+        path: PathBuf,
+        /// Stream-rate numerator.
+        numerator: i32,
+        /// Stream-rate denominator.
+        denominator: i32,
+    },
     /// A decoded timestamp cannot form a monotonic process duration.
     #[error("client cinematic {path} produced invalid video timestamp {timestamp}")]
     InvalidTimestamp {
@@ -38,6 +48,18 @@ pub enum CinematicError {
         path: PathBuf,
         /// Unscaled FFmpeg presentation timestamp.
         timestamp: i64,
+    },
+    /// A decoded timestamp moved backward relative to the prior video frame.
+    #[error(
+        "client cinematic {path} produced non-monotonic video times {previous:?} then {current:?}"
+    )]
+    NonMonotonicTimestamp {
+        /// Concrete locale-loose AVI.
+        path: PathBuf,
+        /// Previous accepted presentation time.
+        previous: std::time::Duration,
+        /// Rejected presentation time.
+        current: std::time::Duration,
     },
     /// Decoded dimensions overflowed the tightly packed RGBA representation.
     #[error("client cinematic {path} has invalid decoded frame extent {width}x{height}")]

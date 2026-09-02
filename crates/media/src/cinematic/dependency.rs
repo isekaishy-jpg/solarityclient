@@ -18,6 +18,77 @@ use super::{CinematicAudioFrame, CinematicError, CinematicVideoFrame};
 
 const CINEMATIC_SAMPLE_RATE_HZ: u32 = 44_100;
 
+/// Constant-rate stock AVI clock used when packed B-frame drain output loses PTS.
+struct CinematicFrameClock {
+    time_base: ffmpeg::Rational,
+    frame_interval: Duration,
+    last_presentation_time: Option<Duration>,
+}
+
+impl CinematicFrameClock {
+    fn new(
+        path: &Path,
+        time_base: ffmpeg::Rational,
+        frame_rate: ffmpeg::Rational,
+    ) -> Result<Self, CinematicError> {
+        let numerator = frame_rate.numerator();
+        let denominator = frame_rate.denominator();
+        if numerator <= 0 || denominator <= 0 {
+            return Err(CinematicError::InvalidFrameRate {
+                path: path.to_path_buf(),
+                numerator,
+                denominator,
+            });
+        }
+        let seconds = f64::from(denominator) / f64::from(numerator);
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return Err(CinematicError::InvalidFrameRate {
+                path: path.to_path_buf(),
+                numerator,
+                denominator,
+            });
+        }
+        Ok(Self {
+            time_base,
+            frame_interval: Duration::from_secs_f64(seconds),
+            last_presentation_time: None,
+        })
+    }
+
+    fn resolve(&mut self, path: &Path, timestamp: Option<i64>) -> Result<Duration, CinematicError> {
+        let presentation_time = if let Some(timestamp) = timestamp {
+            let seconds = timestamp as f64 * f64::from(self.time_base);
+            if !seconds.is_finite() || seconds < 0.0 {
+                return Err(CinematicError::InvalidTimestamp {
+                    path: path.to_path_buf(),
+                    timestamp,
+                });
+            }
+            Duration::from_secs_f64(seconds)
+        } else {
+            // The build-12340 locale AVI is constant-rate (`strh` scale/rate)
+            // and its packed DivX B-frame tail can drain without FFmpeg PTS.
+            // Stock advances that stream by its authored frame cadence.
+            self.last_presentation_time
+                .and_then(|time| time.checked_add(self.frame_interval))
+                .ok_or_else(|| CinematicError::MissingTimestamp {
+                    path: path.to_path_buf(),
+                })?
+        };
+        if let Some(previous) = self.last_presentation_time
+            && presentation_time < previous
+        {
+            return Err(CinematicError::NonMonotonicTimestamp {
+                path: path.to_path_buf(),
+                previous,
+                current: presentation_time,
+            });
+        }
+        self.last_presentation_time = Some(presentation_time);
+        Ok(presentation_time)
+    }
+}
+
 struct AudioDecoder {
     stream_index: usize,
     decoder: ffmpeg::decoder::Audio,
@@ -30,7 +101,7 @@ pub struct CinematicDecoder {
     path: PathBuf,
     input: ffmpeg::format::context::Input,
     video_stream_index: usize,
-    video_time_base: ffmpeg::Rational,
+    video_clock: CinematicFrameClock,
     video: ffmpeg::decoder::Video,
     scaler: ScalingContext,
     audio: Option<AudioDecoder>,
@@ -56,6 +127,7 @@ impl CinematicDecoder {
             .ok_or_else(|| CinematicError::MissingVideo { path: path.clone() })?;
         let video_stream_index = stream.index();
         let video_time_base = stream.time_base();
+        let video_clock = CinematicFrameClock::new(&path, video_time_base, stream.rate())?;
         let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
             .map_err(|source| CinematicError::adapter(&path, "read video parameters", source))?;
         let video = context
@@ -112,7 +184,7 @@ impl CinematicDecoder {
             path,
             input,
             video_stream_index,
-            video_time_base,
+            video_clock,
             video,
             scaler,
             audio,
@@ -129,7 +201,7 @@ impl CinematicDecoder {
         std::mem::take(&mut self.audio_frames)
     }
 
-    /// Decodes the next timestamped tightly packed RGBA8 frame.
+    /// Decodes the next clocked tightly packed RGBA8 frame.
     ///
     /// # Errors
     ///
@@ -268,18 +340,7 @@ impl CinematicDecoder {
     }
 
     fn convert_frame(&mut self, decoded: &Video) -> Result<CinematicVideoFrame, CinematicError> {
-        let timestamp = decoded
-            .timestamp()
-            .ok_or_else(|| CinematicError::MissingTimestamp {
-                path: self.path.clone(),
-            })?;
-        let seconds = timestamp as f64 * f64::from(self.video_time_base);
-        if !seconds.is_finite() || seconds < 0.0 {
-            return Err(CinematicError::InvalidTimestamp {
-                path: self.path.clone(),
-                timestamp,
-            });
-        }
+        let presentation_time = self.video_clock.resolve(&self.path, decoded.timestamp())?;
         let mut rgba = Video::empty();
         self.scaler
             .run(decoded, &mut rgba)
@@ -315,13 +376,13 @@ impl CinematicDecoder {
             let end = start + row_bytes;
             pixels.extend_from_slice(&rgba.data(0)[start..end]);
         }
-        CinematicVideoFrame::new(width, height, Duration::from_secs_f64(seconds), pixels).map_err(
-            |()| CinematicError::FrameSize {
+        CinematicVideoFrame::new(width, height, presentation_time, pixels).map_err(|()| {
+            CinematicError::FrameSize {
                 path: self.path.clone(),
                 width,
                 height,
-            },
-        )
+            }
+        })
     }
 }
 
@@ -332,5 +393,38 @@ fn initialize_ffmpeg() -> Result<(), CinematicError> {
         Err(message) => Err(CinematicError::Initialization {
             message: message.clone(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CinematicFrameClock;
+    use ffmpeg_next::Rational;
+    use std::path::Path;
+    use std::time::Duration;
+
+    #[test]
+    fn constant_rate_clock_advances_an_untimestamped_drain_frame()
+    -> Result<(), super::CinematicError> {
+        let path = Path::new("stock.avi");
+        let mut clock = CinematicFrameClock::new(path, Rational(1, 24), Rational(24, 1))?;
+        assert_eq!(
+            clock.resolve(path, Some(4_755))?,
+            Duration::from_secs_f64(4_755.0 / 24.0)
+        );
+        assert_eq!(
+            clock.resolve(path, None)?,
+            Duration::from_secs_f64(4_756.0 / 24.0)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn constant_rate_clock_rejects_a_missing_initial_timestamp() -> Result<(), super::CinematicError>
+    {
+        let path = Path::new("stock.avi");
+        let mut clock = CinematicFrameClock::new(path, Rational(1, 24), Rational(24, 1))?;
+        assert!(clock.resolve(path, None).is_err());
+        Ok(())
     }
 }

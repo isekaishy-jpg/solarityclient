@@ -1,6 +1,7 @@
-//! Decodes a bounded number of frames from one installed stock AVI.
+//! Decodes a bounded number of frames or one complete installed stock AVI.
 
 use std::error::Error;
+use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,16 +11,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
-        .ok_or("usage: validate_cinematic <movie.avi> [frame-count]")?;
+        .ok_or("usage: validate_cinematic <movie.avi> [frame-count|all]")?;
     let requested = std::env::args().nth(2).unwrap_or_else(|| "3".to_owned());
     let mut decoder = CinematicDecoder::open(&path)?;
     let mut audio_samples = 0_usize;
     if requested == "all" {
-        let mut frame_count = 0_usize;
+        let mut frame_count = 0_u64;
         let mut final_pts = Duration::ZERO;
         while let Some(frame) = decoder.next_video_frame()? {
-            frame_count += 1;
+            if frame.presentation_time() < final_pts {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cinematic video clock moved backward",
+                )
+                .into());
+            }
             final_pts = frame.presentation_time();
+            frame_count = frame_count.checked_add(1).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cinematic frame count overflowed",
+                )
+            })?;
             audio_samples += decoder
                 .take_audio_frames()
                 .iter()
