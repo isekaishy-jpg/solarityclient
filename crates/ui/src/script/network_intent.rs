@@ -63,6 +63,8 @@ pub enum UiGlueNetworkAction {
     Login(UiLoginRequest),
     /// Cancel the currently active login exchange.
     CancelLogin,
+    /// Dispatch the stock status-dialog action for the active Glue operation.
+    StatusDialogClick,
     /// Close an authenticated login or world-server connection.
     Disconnect,
     /// Refresh the authenticated login server's realm directory.

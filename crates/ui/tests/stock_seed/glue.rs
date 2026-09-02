@@ -408,6 +408,7 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
             bytes: br#"<Ui><Frame name="Network"><Scripts><OnLoad>
   DefaultServerLogin("Account", "Secret")
   CancelLogin()
+  StatusDialogClick()
   DisconnectFromServer()
 </OnLoad></Scripts></Frame></Ui>"#,
         },
@@ -435,6 +436,10 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
     assert!(matches!(
         manager.take_network_action(),
         Some(UiGlueNetworkAction::CancelLogin)
+    ));
+    assert!(matches!(
+        manager.take_network_action(),
+        Some(UiGlueNetworkAction::StatusDialogClick)
     ));
     assert!(matches!(
         manager.take_network_action(),

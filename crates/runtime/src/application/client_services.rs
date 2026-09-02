@@ -702,6 +702,20 @@ impl ClientServices {
                     self.realm_directory_published = false;
                     self.glue.set_network_status(UiGlueNetworkStatus::default());
                 }
+                UiGlueNetworkAction::StatusDialogClick => {
+                    // Stock's raw `StatusDialogClick` thunk at `0x004DC500`
+                    // reaches the general `0x004D98D0` dispatcher. Its create
+                    // and character-entry arms publish local cancellation but
+                    // send no world opcode, so the worker must finish any
+                    // partially consumed encrypted frame before reuse.
+                    let character_operation_cancelled = self.world.cancel_character_operation();
+                    if character_operation_cancelled {
+                        self.loading_screen = None;
+                    } else if !self.login.cancel_realm_refresh() && self.login.cancel() {
+                        self.realm_directory_published = false;
+                        self.glue.set_network_status(UiGlueNetworkStatus::default());
+                    }
+                }
                 UiGlueNetworkAction::Disconnect => {
                     self.login.disconnect();
                     self.world.disconnect();
@@ -980,6 +994,7 @@ impl ClientServices {
                 }
                 self.login_ui = Some(LoginUiFrame::prepare(&mut self.renderer, &self.glue)?);
             }
+            Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     self.gameplay.begin(&handle, entry)?;

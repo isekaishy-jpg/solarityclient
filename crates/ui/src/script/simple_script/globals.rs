@@ -1501,6 +1501,16 @@ fn register_glue_network_globals(
     )?;
     let network = environment.network();
     globals.raw_set(
+        "StatusDialogClick",
+        lua.create_function(move |_, ()| {
+            network
+                .borrow_mut()
+                .push(UiGlueNetworkAction::StatusDialogClick);
+            Ok(())
+        })?,
+    )?;
+    let network = environment.network();
+    globals.raw_set(
         "DisconnectFromServer",
         lua.create_function(move |_, ()| {
             network.borrow_mut().push(UiGlueNetworkAction::Disconnect);

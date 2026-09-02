@@ -44,6 +44,8 @@ pub enum RuntimeWorldPoll {
     CharacterDirectoryReady,
     /// The world returned the terminal result for one creation request.
     CharacterCreationFinished(CharacterCreationResult),
+    /// A locally canceled character operation settled without another Glue result.
+    CharacterOperationCancelled,
     /// The selected character entered its authoritative initial map.
     EnteredWorld,
     /// The selected character was rejected and selection state was restored.
@@ -255,6 +257,7 @@ impl RuntimeWorldCoordinator {
             receiver,
             task,
             phase: ActiveWorldPhase::Connecting,
+            cancelled: false,
         });
         Ok(())
     }
@@ -296,6 +299,7 @@ impl RuntimeWorldCoordinator {
             receiver,
             task,
             phase: ActiveWorldPhase::RefreshingCharacters,
+            cancelled: false,
         });
         Ok(())
     }
@@ -328,6 +332,7 @@ impl RuntimeWorldCoordinator {
             receiver,
             task,
             phase: ActiveWorldPhase::EnteringWorld,
+            cancelled: false,
         });
         Ok(())
     }
@@ -359,8 +364,30 @@ impl RuntimeWorldCoordinator {
             receiver,
             task,
             phase: ActiveWorldPhase::CreatingCharacter,
+            cancelled: false,
         });
         Ok(())
+    }
+
+    /// Cancels Glue ownership of an active character operation.
+    ///
+    /// The encrypted receive remains owned by its worker until a complete
+    /// packet arrives because dropping a partially consumed frame would lose
+    /// cipher and stream alignment. Stock `0x004D98D0` similarly publishes
+    /// `RESPONSE_CANCELLED` locally and sends no world opcode.
+    pub fn cancel_character_operation(&mut self) -> bool {
+        let Some(active) = self.active.as_mut() else {
+            return false;
+        };
+        if !matches!(
+            active.phase,
+            ActiveWorldPhase::CreatingCharacter | ActiveWorldPhase::EnteringWorld
+        ) || active.cancelled
+        {
+            return false;
+        }
+        active.cancelled = true;
+        true
     }
 
     /// Polls the selected world transition without blocking the main thread.
@@ -386,6 +413,7 @@ impl RuntimeWorldCoordinator {
             Err(TryRecvError::Empty) => return Ok(RuntimeWorldPoll::Pending),
             Err(TryRecvError::Closed) => Err(RuntimeWorldError::TaskEnded),
         };
+        let cancelled = active.cancelled;
         self.active = None;
         match result {
             Ok(ActiveWorldResult::CharacterScreen(screen)) => {
@@ -398,7 +426,11 @@ impl RuntimeWorldCoordinator {
             }
             Ok(ActiveWorldResult::CharacterCreated { selection, result }) => {
                 self.character_selection = Some(selection);
-                Ok(RuntimeWorldPoll::CharacterCreationFinished(result))
+                if cancelled {
+                    Ok(RuntimeWorldPoll::CharacterOperationCancelled)
+                } else {
+                    Ok(RuntimeWorldPoll::CharacterCreationFinished(result))
+                }
             }
             Ok(ActiveWorldResult::Entered(entry)) => {
                 self.world_entry = Some(entry);
@@ -409,7 +441,11 @@ impl RuntimeWorldCoordinator {
                 rejection,
             }) => {
                 self.character_selection = Some(selection);
-                Ok(RuntimeWorldPoll::CharacterRejected(rejection))
+                if cancelled {
+                    Ok(RuntimeWorldPoll::CharacterOperationCancelled)
+                } else {
+                    Ok(RuntimeWorldPoll::CharacterRejected(rejection))
+                }
             }
             Err(error) => Err(error),
         }
@@ -463,6 +499,8 @@ struct ActiveWorld {
     receiver: Receiver<Result<ActiveWorldResult, RuntimeWorldError>>,
     task: JoinHandle<()>,
     phase: ActiveWorldPhase,
+    /// Whether Glue discarded the operation while its packet read settled.
+    cancelled: bool,
 }
 
 #[derive(Clone, Copy)]
