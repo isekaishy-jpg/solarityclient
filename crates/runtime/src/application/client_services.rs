@@ -433,11 +433,17 @@ impl ClientServices {
                     f64::from(pointer.x) / f64::from(window_width) * ui_width,
                     ui_height - f64::from(pointer.y) / f64::from(window_height) * ui_height,
                 );
-                let dispatch = self.glue.pointer_button_with_click_count(
+                let modifiers = self.input.modifiers();
+                let dispatch = self.glue.pointer_button_with_modifiers(
                     position,
                     button,
                     pointer.state == ButtonState::Pressed,
                     pointer.click_count,
+                    UiKeyboardModifiers::new(
+                        modifiers.has_shift(),
+                        modifiers.has_control(),
+                        modifiers.has_alt(),
+                    ),
                 )?;
                 if dispatch.object_index().is_some() {
                     self.login_ui = None;
@@ -538,6 +544,11 @@ impl ClientServices {
                     button,
                     pointer.state == ButtonState::Pressed,
                     pointer.click_count,
+                    UiKeyboardModifiers::new(
+                        self.input.modifiers().has_shift(),
+                        self.input.modifiers().has_control(),
+                        self.input.modifiers().has_alt(),
+                    ),
                 )?;
             }
             PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {

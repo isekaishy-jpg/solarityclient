@@ -1184,18 +1184,71 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
             invalid_data(format!("account EditBox produced {account_glyphs} glyphs")).into(),
         );
     }
-    if manager.keyboard_key("HOME", true, UiKeyboardModifiers::new(true, false, false))?
-        != Some(account_index)
-    {
+    manager.keyboard_key("A", true, UiKeyboardModifiers::new(false, true, false))?;
+    manager.text_input("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW")?;
+    let visible_caret_bounds = text_quad_bounds(manager, account_index);
+    manager.update(0.5)?;
+    let hidden_caret_bounds = text_quad_bounds(manager, account_index);
+    if visible_caret_bounds != hidden_caret_bounds {
         return Err(invalid_data(
-            "account EditBox did not receive shifted selection key".to_owned(),
+            "long account text moved when its insertion caret blinked".to_owned(),
         )
         .into());
     }
+    manager.keyboard_key("A", true, UiKeyboardModifiers::new(false, true, false))?;
+    manager.text_input("VALIDATION_ACCOUNT")?;
+    let bounds = manager
+        .geometry()
+        .region(account_index)
+        .ok_or_else(|| invalid_data("account EditBox has no pointer geometry".to_owned()))?
+        .presentation_bounds();
+    let left = (bounds.left() + 1.0, bounds.bottom() + bounds.height() * 0.5);
+    let right = (bounds.right() - 1.0, left.1);
+    manager.pointer_button_with_modifiers(
+        left,
+        UiPointerButton::Left,
+        true,
+        1,
+        UiKeyboardModifiers::default(),
+    )?;
+    manager.pointer_button_with_modifiers(
+        left,
+        UiPointerButton::Left,
+        false,
+        1,
+        UiKeyboardModifiers::default(),
+    )?;
+    let account = manager
+        .bundle()
+        .lua()
+        .globals()
+        .get::<mlua::Table>("AccountLoginAccountEdit")?;
+    let get_cursor = account.get::<mlua::Function>("GetCursorPosition")?;
+    if get_cursor.call::<u32>(account.clone())? != 0 {
+        return Err(invalid_data(
+            "left account click did not place the EditBox cursor at byte zero".to_owned(),
+        )
+        .into());
+    }
+    manager.pointer_button_with_modifiers(
+        left,
+        UiPointerButton::Left,
+        true,
+        1,
+        UiKeyboardModifiers::default(),
+    )?;
+    manager.pointer_motion(right)?;
+    manager.pointer_button_with_modifiers(
+        right,
+        UiPointerButton::Left,
+        false,
+        1,
+        UiKeyboardModifiers::default(),
+    )?;
     let solid_account_quads = solid_quad_count(manager, account_index);
     if solid_account_quads != "VALIDATION_ACCOUNT".chars().count() + 1 {
         return Err(invalid_data(format!(
-            "account EditBox produced {solid_account_quads} solid selection/caret quads"
+            "account pointer drag produced {solid_account_quads} solid selection/caret quads"
         ))
         .into());
     }
@@ -1269,6 +1322,22 @@ fn solid_quad_count(manager: &GlueManager, object_index: usize) -> usize {
                 .all(|coordinate| *coordinate == coordinates[0])
         })
         .count()
+}
+
+fn text_quad_bounds(manager: &GlueManager, object_index: usize) -> Vec<[f32; 4]> {
+    manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|quad| quad.object_index() == object_index)
+        .filter(|quad| {
+            let coordinates = quad.texture_coordinates();
+            coordinates[1..]
+                .iter()
+                .any(|coordinate| *coordinate != coordinates[0])
+        })
+        .map(|quad| quad.bounds())
+        .collect()
 }
 
 fn contains_change(changes: &[(String, String)], name: &str, value: &str) -> bool {

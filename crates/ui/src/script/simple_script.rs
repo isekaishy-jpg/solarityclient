@@ -1652,6 +1652,41 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error(&label, error))
     }
 
+    /// Applies one pointer-derived cursor or selection endpoint to an EditBox.
+    ///
+    /// `CSimpleEditBox` stores byte offsets, so both inputs are clamped to UTF-8
+    /// boundaries before the ordered anchor/cursor pair enters live state.
+    pub(crate) fn set_edit_box_pointer_selection(
+        &mut self,
+        bundle: &UiBundle,
+        object_index: usize,
+        anchor: usize,
+        cursor: usize,
+    ) -> Result<(), UiScriptError> {
+        let label = format!("EditBox object {object_index}:pointer-selection");
+        let object = self.runtime_object(bundle.lua(), object_index, &label)?;
+        if object
+            .raw_get::<String>(type_key())
+            .map_err(|error| execution_error(&label, error))?
+            != "EditBox"
+        {
+            return Err(UiScriptError::Plan {
+                message: format!("pointer-selection target {object_index} is not an EditBox"),
+            });
+        }
+        let text = object
+            .raw_get::<String>(text_key())
+            .map_err(|error| execution_error(&label, error))?;
+        let anchor = clamp_utf8_boundary(&text, anchor) as u32;
+        let cursor = clamp_utf8_boundary(&text, cursor) as u32;
+        object
+            .raw_set(edit_cursor_key(), cursor)
+            .and_then(|()| object.raw_set(edit_selection_start_key(), anchor))
+            .and_then(|()| object.raw_set(edit_selection_end_key(), cursor))
+            .and_then(|()| reset_edit_box_caret(&object))
+            .map_err(|error| execution_error(&label, error))
+    }
+
     /// Delivers committed UTF-8 text to the currently focused EditBox.
     pub(crate) fn dispatch_edit_text(
         &mut self,

@@ -45,6 +45,7 @@ pub struct GlueManager {
     child_indices: Vec<usize>,
     pointer: UiPointerPlan,
     pointer_capture: Option<(usize, UiPointerButton)>,
+    edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
     glyph_logical_height: u32,
     report: GlueStartupReport,
@@ -339,6 +340,7 @@ impl GlueManager {
             child_indices,
             pointer,
             pointer_capture: None,
+            edit_box_pointer_anchor: None,
             pointer_hover: None,
             glyph_logical_height: logical_extent.1,
             report,
@@ -709,10 +711,39 @@ impl GlueManager {
         pressed: bool,
         click_count: u8,
     ) -> Result<UiPointerDispatch, UiEventError> {
+        self.pointer_button_with_modifiers(
+            position,
+            button,
+            pressed,
+            click_count,
+            UiKeyboardModifiers::default(),
+        )
+    }
+
+    /// Routes a pointer transition with its platform click and modifier state.
+    ///
+    /// Shift extends an EditBox selection from its retained anchor. Ordinary
+    /// left press establishes a new anchor used by captured pointer motion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] under the same conditions as
+    /// [`Self::pointer_button`].
+    pub fn pointer_button_with_modifiers(
+        &mut self,
+        position: (f64, f64),
+        button: UiPointerButton,
+        pressed: bool,
+        click_count: u8,
+        modifiers: UiKeyboardModifiers,
+    ) -> Result<UiPointerDispatch, UiEventError> {
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
         let hover_changed = self.update_pointer_hover(hit)?;
+        if !pressed || button == UiPointerButton::Left {
+            self.edit_box_pointer_anchor = None;
+        }
         let object_index = if pressed {
             hit
         } else {
@@ -751,7 +782,26 @@ impl GlueManager {
                 activate
             }
             UiObjectKind::EditBox => {
-                if pressed {
+                if pressed && button == UiPointerButton::Left {
+                    if let Some(cursor) =
+                        self.glyphs
+                            .edit_box_cursor_at(&self.geometry, object_index, position)
+                    {
+                        let anchor = if modifiers.shift() {
+                            self.glyphs
+                                .edit_box_selection_anchor(object_index)
+                                .unwrap_or(cursor)
+                        } else {
+                            cursor
+                        };
+                        self.runtime.set_edit_box_pointer_selection(
+                            &self.bundle,
+                            object_index,
+                            anchor,
+                            cursor,
+                        )?;
+                        self.edit_box_pointer_anchor = Some(anchor);
+                    }
                     self.runtime.focus_edit_box(&self.bundle, object_index)?;
                 }
                 self.runtime.dispatch_frame_pointer(
@@ -813,11 +863,32 @@ impl GlueManager {
             }
             return Ok(None);
         };
-        if self.pointer.kind(object_index) != Some(UiObjectKind::Slider) {
-            if hover_changed {
-                self.refresh_live_state()?;
+        match self.pointer.kind(object_index) {
+            Some(UiObjectKind::EditBox) => {
+                if let Some(anchor) = self.edit_box_pointer_anchor
+                    && let Some(cursor) =
+                        self.glyphs
+                            .edit_box_cursor_at(&self.geometry, object_index, position)
+                {
+                    self.runtime.set_edit_box_pointer_selection(
+                        &self.bundle,
+                        object_index,
+                        anchor,
+                        cursor,
+                    )?;
+                    self.refresh_live_state()?;
+                } else if hover_changed {
+                    self.refresh_live_state()?;
+                }
+                return Ok(Some(object_index));
             }
-            return Ok(Some(object_index));
+            Some(UiObjectKind::Slider) => {}
+            _ => {
+                if hover_changed {
+                    self.refresh_live_state()?;
+                }
+                return Ok(Some(object_index));
+            }
         }
         let Some(value) = self
             .pointer

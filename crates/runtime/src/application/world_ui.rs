@@ -206,10 +206,15 @@ impl RuntimeWorldUi {
         button: UiPointerButton,
         pressed: bool,
         click_count: u8,
+        modifiers: UiKeyboardModifiers,
     ) -> Result<UiPointerDispatch, ApplicationError> {
-        let dispatch =
-            self.manager
-                .pointer_button_with_click_count(position, button, pressed, click_count)?;
+        let dispatch = self.manager.pointer_button_with_modifiers(
+            position,
+            button,
+            pressed,
+            click_count,
+            modifiers,
+        )?;
         self.dirty |= dispatch.object_index().is_some();
         Ok(dispatch)
     }

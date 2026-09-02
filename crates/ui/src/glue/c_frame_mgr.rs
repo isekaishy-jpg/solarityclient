@@ -126,6 +126,24 @@ impl FrameManager {
             .pointer_button_with_click_count(position, button, pressed, click_count)
     }
 
+    /// Routes a pointer transition with its aggregate clicks and modifiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiEventError`] when authored input Lua fails or leaves invalid
+    /// presentation state.
+    pub fn pointer_button_with_modifiers(
+        &mut self,
+        position: (f64, f64),
+        button: UiPointerButton,
+        pressed: bool,
+        click_count: u8,
+        modifiers: UiKeyboardModifiers,
+    ) -> Result<UiPointerDispatch, UiEventError> {
+        self.owner
+            .pointer_button_with_modifiers(position, button, pressed, click_count, modifiers)
+    }
+
     /// Updates pointer focus and any captured pointer drag.
     ///
     /// # Errors

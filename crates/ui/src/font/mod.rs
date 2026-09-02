@@ -5,6 +5,7 @@
 //! glyphs; UI retains stock font-object and layout semantics.
 
 mod c_simple_font;
+mod edit_box_layout;
 mod gxu_font_misc_classes;
 mod gxu_font_string;
 mod gxu_font_util;
@@ -15,6 +16,7 @@ pub use c_simple_font::{
     FontCatalog, FontColor, FontDefinition, FontOutline, FontShadow, HorizontalJustification,
     VerticalJustification,
 };
+pub(crate) use edit_box_layout::EditBoxTextLayout;
 pub(crate) use gxu_font_string::wrap_line;
 pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
 pub use gxu_font_util::{FontRasterization, FontSystem};

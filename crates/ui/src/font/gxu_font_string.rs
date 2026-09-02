@@ -9,6 +9,7 @@ use solarity_rendering::{
     UiTextureResidency,
 };
 
+use super::EditBoxTextLayout;
 use crate::script::{UiRuntimeObjectPlan, UiRuntimeText};
 use crate::{
     FontCatalog, FontError, FontRasterization, FontSystem, RasterizedGlyph, UiObjectKind,
@@ -67,6 +68,7 @@ pub struct UiGlyphAtlasPlan {
     rgba8: Vec<u8>,
     html_quads: Vec<LocalGlyphQuad>,
     live_quads: Vec<LocalGlyphQuad>,
+    edit_box_layouts: Vec<Option<EditBoxTextLayout>>,
     glyphs: HashMap<GlyphKey, RasterizedGlyph>,
     placements: HashMap<GlyphKey, AtlasPlacement>,
     metrics: HashMap<LineFontKey, FontMetrics>,
@@ -191,6 +193,7 @@ impl UiGlyphAtlasPlan {
             rgba8,
             html_quads: Vec::new(),
             live_quads: Vec::new(),
+            edit_box_layouts: Vec::new(),
             glyphs,
             placements,
             metrics,
@@ -425,7 +428,7 @@ impl UiGlyphAtlasPlan {
             let ascender_26_6 = system.ascender_26_6(assets, &key.face, key.pixel_height)?;
             metrics.insert(key, FontMetrics { ascender_26_6 });
         }
-        let live_quads = live.map_or(Ok(Vec::new()), |live| {
+        let live_layout = live.map_or(Ok(LiveTextLayout::default()), |live| {
             layout_live_quads(
                 live,
                 geometry,
@@ -441,7 +444,8 @@ impl UiGlyphAtlasPlan {
             extent,
             rgba8,
             html_quads,
-            live_quads,
+            live_quads: live_layout.quads,
+            edit_box_layouts: live_layout.edit_boxes,
             glyphs,
             placements,
             metrics,
@@ -479,7 +483,7 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         logical_height: u32,
     ) -> Result<(), FontError> {
-        self.live_quads = layout_live_quads(
+        let layout = layout_live_quads(
             live,
             geometry,
             f64::from(logical_height) / 768.0,
@@ -488,7 +492,40 @@ impl UiGlyphAtlasPlan {
             &self.metrics,
             self.extent,
         )?;
+        self.live_quads = layout.quads;
+        self.edit_box_layouts = layout.edit_boxes;
         Ok(())
+    }
+
+    /// Maps one presentation-space pointer to the nearest UTF-8 insertion boundary.
+    ///
+    /// The retained cluster advances are the same values used to draw the
+    /// EditBox. This keeps pointer placement exact for proportional and password
+    /// text without reconstructing font metrics in the input owner.
+    pub(crate) fn edit_box_cursor_at(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+        point: (f64, f64),
+    ) -> Option<usize> {
+        let layout = self.edit_box_layouts.get(object_index)?.as_ref()?;
+        let region = geometry.region(object_index)?;
+        let owner = region.presentation_bounds();
+        let scale = region.effective_scale();
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let local_x = (point.0 - owner.left()) / scale;
+        let local_y = (point.1 - owner.top()) / scale;
+        layout.cursor_at((local_x, local_y))
+    }
+
+    /// Returns the stable selection anchor represented by one live EditBox.
+    pub(crate) fn edit_box_selection_anchor(&self, object_index: usize) -> Option<usize> {
+        self.edit_box_layouts
+            .get(object_index)?
+            .as_ref()
+            .map(EditBoxTextLayout::selection_anchor)
     }
 
     /// Returns the process-local immutable atlas identity.
@@ -579,6 +616,13 @@ struct LocalGlyphQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
+}
+
+/// Text geometry retained for EditBox pointer placement and drag selection.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LiveTextLayout {
+    quads: Vec<LocalGlyphQuad>,
+    edit_boxes: Vec<Option<EditBoxTextLayout>>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -925,8 +969,9 @@ fn layout_live_quads(
     placements: &HashMap<GlyphKey, AtlasPlacement>,
     metrics: &HashMap<LineFontKey, FontMetrics>,
     extent: (u32, u32),
-) -> Result<Vec<LocalGlyphQuad>, FontError> {
+) -> Result<LiveTextLayout, FontError> {
     let mut quads = Vec::new();
+    let mut edit_boxes = vec![None; live.objects().len()];
     for (object_index, object) in live.objects().iter().enumerate() {
         let Some(text) = &object.text else {
             continue;
@@ -1036,6 +1081,11 @@ fn layout_live_quads(
         let mut primary_quads = Vec::new();
         let mut selection_quads = Vec::new();
         let mut caret_quads = Vec::new();
+        let mut edit_box_layout = (object.kind == UiObjectKind::EditBox)
+            .then(|| EditBoxTextLayout::new(text.content.len(), text.cursor, text.selection));
+        if let Some(layout) = edit_box_layout.as_mut() {
+            layout.reserve_lines(lines.len());
+        }
         for (line_index, line) in lines.iter().enumerate() {
             let line_width = line.iter().try_fold(0.0, |width, presented| {
                 let character = presented.character;
@@ -1065,7 +1115,6 @@ fn layout_live_quads(
             let baseline = line_top - ascender;
             let caret = (object.kind == UiObjectKind::EditBox
                 && object.edit_focused.unwrap_or(false)
-                && text.caret_visible
                 && !text.multiline
                 && line_index == 0)
                 .then(|| {
@@ -1083,6 +1132,9 @@ fn layout_live_quads(
                 }
             }
             let line_start_x = pen_x;
+            if let Some(layout) = edit_box_layout.as_mut() {
+                layout.push_line(baseline);
+            }
             let selection_begin = text.selection[0].min(text.selection[1]);
             let selection_end = text.selection[0].max(text.selection[1]);
             for presented in line {
@@ -1094,6 +1146,15 @@ fn layout_live_quads(
                     ),
                 })?;
                 let advance = glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
+                if let Some(layout) = edit_box_layout.as_mut() {
+                    layout.push_cluster(
+                        presented.source_begin,
+                        presented.source_end,
+                        line_index,
+                        pen_x,
+                        pen_x + advance,
+                    );
+                }
                 if selection_begin != selection_end
                     && presented.source_end > selection_begin
                     && presented.source_begin < selection_end
@@ -1140,7 +1201,9 @@ fn layout_live_quads(
                 }
                 pen_x += advance;
             }
-            if let Some((caret_offset, caret_width)) = caret {
+            if text.caret_visible
+                && let Some((caret_offset, caret_width)) = caret
+            {
                 // Build 12340 presents the insertion point as a full
                 // character-cell block. Pixel (0, 0) is the atlas-owned solid
                 // coverage sample reserved by `compose_atlas`.
@@ -1191,8 +1254,9 @@ fn layout_live_quads(
         }
         quads.extend(primary_quads);
         quads.extend(caret_quads);
+        edit_boxes[object_index] = edit_box_layout;
     }
-    Ok(quads)
+    Ok(LiveTextLayout { quads, edit_boxes })
 }
 
 fn solid_coordinates(extent: (u32, u32)) -> [[f32; 2]; 4] {

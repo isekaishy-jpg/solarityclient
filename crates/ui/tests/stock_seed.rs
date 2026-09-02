@@ -91,6 +91,8 @@ mod widget_check_box;
 mod widget_color_select;
 #[path = "stock_seed/widget/edit_box.rs"]
 mod widget_edit_box;
+#[path = "stock_seed/widget/edit_box_layout.rs"]
+mod widget_edit_box_layout;
 #[path = "stock_seed/widget/html.rs"]
 mod widget_html;
 #[path = "stock_seed/widget/hyperlink.rs"]
