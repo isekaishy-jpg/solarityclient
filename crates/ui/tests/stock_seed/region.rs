@@ -73,6 +73,59 @@ fn layout_plan_preserves_inherited_geometry_layers() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// Shipped GlueXML commonly writes offsets on the Anchor itself.
+#[test]
+fn layout_plan_preserves_compact_anchor_offsets() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layout.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layout.xml",
+            bytes: br#"<Ui><Frame name="Root" setAllPoints="true"><Frames>
+  <Frame name="Compact"><Size x="20" y="10"/><Anchors>
+    <Anchor point="TOPLEFT" relativeTo="Root" x="9" y="-5"/>
+  </Anchors></Frame>
+  <Frame name="SingleAxis"><Size x="20" y="10"/><Anchors>
+    <Anchor point="BOTTOM" relativeTo="Root" y="12"/>
+  </Anchors></Frame>
+</Frames></Frame></Ui>"#,
+        },
+    ])?;
+    let mut store = mount(&fixture)?;
+    let bundle = UiBundle::load(&mut store, UiManifestKind::Glue)?;
+    let fonts = FontCatalog::from_bundle(&bundle)?;
+    let objects = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
+    let tree = UiObjectTree::from_catalog(&objects, &fonts)?;
+    let layout = UiLayoutPlan::from_tree(&tree)?;
+
+    let compact = tree.node_index("Compact").ok_or("missing Compact")?;
+    let compact_layer = layout
+        .layers_for(layout.node(compact).ok_or("missing Compact layout")?)
+        .last()
+        .ok_or("missing Compact layout layer")?;
+    assert_eq!(
+        layout.anchors_for(*compact_layer)[0].offset(),
+        Some((9.0, -5.0))
+    );
+
+    let single_axis = tree.node_index("SingleAxis").ok_or("missing SingleAxis")?;
+    let single_axis_layer = layout
+        .layers_for(
+            layout
+                .node(single_axis)
+                .ok_or("missing SingleAxis layout")?,
+        )
+        .last()
+        .ok_or("missing SingleAxis layout layer")?;
+    assert_eq!(
+        layout.anchors_for(*single_axis_layer)[0].offset(),
+        Some((0.0, 12.0))
+    );
+    Ok(())
+}
+
 /// Startup resolution replaces anchors by point and inherits effective state.
 #[test]
 fn region_state_resolves_stock_layout_application_order() -> Result<(), Box<dyn Error>> {

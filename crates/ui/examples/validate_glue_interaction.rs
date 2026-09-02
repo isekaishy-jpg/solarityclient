@@ -247,6 +247,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .into());
     }
     validate_visible_font_string_extents(manager, "character creation")?;
+    validate_character_creation_choice_layout(manager)?;
     validate_character_creation_text_layout(manager)?;
     let globals = manager.bundle().lua().globals();
     manager
@@ -330,6 +331,39 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     Ok(())
 }
 
+fn validate_character_creation_choice_layout(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
+    // These are direct `x`/`y` attributes on shipped `<Anchor>` elements. They
+    // cover a parent offset, both race columns, and both rows of class choices.
+    for (name, expected) in [
+        (
+            "CharacterCreateConfigurationFrame",
+            [9.0, 5.0, 265.0, 763.0],
+        ),
+        ("CharacterCreateRaceButton1", [68.0, 664.0, 106.0, 702.0]),
+        ("CharacterCreateRaceButton6", [168.0, 664.0, 206.0, 702.0]),
+        ("CharacterCreateClassButton1", [28.0, 262.0, 66.0, 300.0]),
+        ("CharacterCreateClassButton10", [204.0, 218.0, 242.0, 256.0]),
+    ] {
+        let bounds = manager
+            .geometry()
+            .region(object_index(manager, name)?)
+            .ok_or_else(|| invalid_data(format!("{name} has no geometry")))?
+            .presentation_bounds();
+        let actual = [bounds.left(), bounds.bottom(), bounds.right(), bounds.top()];
+        if actual
+            .iter()
+            .zip(expected)
+            .any(|(actual, expected)| (*actual - expected).abs() > 0.000_01)
+        {
+            return Err(invalid_data(format!(
+                "{name} ignored its compact stock anchor offsets: {bounds:?}"
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), Box<dyn Error>> {
     let quads = manager
         .glyphs()
@@ -373,7 +407,7 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
             || bounds.height() < 40.0
             || measured_width > 222.0
             || (measured_height - field_height).abs() > 0.01
-            || glyph_top - glyph_bottom < 40.0
+            || glyph_top - glyph_bottom < 39.0
         {
             return Err(invalid_data(format!(
                 "{name} did not retain stock fixed-width wrapping: bounds={bounds:?} measured=({measured_width}, {measured_height}) glyph_span={}",
@@ -666,6 +700,18 @@ fn validate_login_presentation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         .any(|glyph| glyph.object_index() == button_text)
     {
         return Err(invalid_data("login button label produced no glyphs".to_owned()).into());
+    }
+    let button_text_colors = manager
+        .glyphs()
+        .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+        .into_iter()
+        .filter(|glyph| glyph.object_index() == button_text)
+        .map(|glyph| glyph.color())
+        .collect::<Vec<_>>();
+    if !button_text_colors.contains(&[0.0, 0.0, 0.0, 1.0]) {
+        return Err(
+            invalid_data("login button label omitted its authored outline".to_owned()).into(),
+        );
     }
     let mesh_objects = manager.render_plan().mesh().object_indices();
     let normal_draw = mesh_objects

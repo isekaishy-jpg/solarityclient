@@ -335,9 +335,10 @@ fn parse_anchors(
             .filter(|value| !value.is_empty())
             .map(|value| parse_point(path, value))
             .transpose()?;
-        let offset = child_named(document, anchor, "Offset")
-            .map(|offset| parse_offset(path, document, offset))
-            .transpose()?;
+        let offset = match child_named(document, anchor, "Offset") {
+            Some(offset) => Some(parse_offset(path, document, offset)?),
+            None => parse_direct_offset(path, anchor)?,
+        };
         output.push(UiAnchor {
             point,
             relative_to,
@@ -358,6 +359,23 @@ fn parse_offset(
         parse_required_number(path, absolute, "x")?,
         parse_required_number(path, absolute, "y")?,
     ))
+}
+
+/// Reads the compact anchor coordinates used throughout shipped GlueXML.
+///
+/// Build 12340 accepts `x` and `y` directly on `<Anchor>` in addition to the
+/// older nested `<Offset>` spelling. Either coordinate may be omitted and the
+/// schema supplies zero for that axis.
+fn parse_direct_offset(
+    path: &AssetPath,
+    element: &XmlElement,
+) -> Result<Option<(f32, f32)>, UiLayoutError> {
+    let x = parse_optional_number(path, element, "x")?;
+    let y = parse_optional_number(path, element, "y")?;
+    Ok(match (x, y) {
+        (None, None) => None,
+        (x, y) => Some((x.unwrap_or(0.0), y.unwrap_or(0.0))),
+    })
 }
 
 fn parse_point(path: &AssetPath, value: &str) -> Result<UiPoint, UiLayoutError> {
