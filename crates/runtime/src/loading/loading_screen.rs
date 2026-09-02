@@ -12,7 +12,7 @@ use solarity_rendering::{
     UiRenderBlend, UiRenderQuad, UiRenderSource, UiTextureAddressMode, UiTextureResidency,
     VulkanRenderer,
 };
-use solarity_ui::UiRenderError;
+use solarity_ui::{FontRasterization, UiGlyphAtlasPlan, UiNativeTextStyle, UiRenderError};
 
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
@@ -22,6 +22,8 @@ use super::RuntimeLoadingStage;
 const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
 const LOADING_BAR_BORDER: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBorder.blp";
+const LOADING_FONT: &str = "Fonts\\FRIZQT__.TTF";
+const LOADING_LABEL: &str = "Loading";
 
 /// Map-indexed loading-card metadata retained before `MapCatalog` changes owner.
 pub(crate) struct LoadingScreenDirectory {
@@ -53,6 +55,7 @@ impl LoadingScreenDirectory {
 pub(crate) struct RuntimeLoadingScreen {
     stage: RuntimeLoadingStage,
     frames: Vec<PreparedUiFrame>,
+    label: PreparedUiFrame,
     presented: bool,
     final_frame_presented: bool,
 }
@@ -64,10 +67,14 @@ impl RuntimeLoadingScreen {
         assets: &AssetStoreHandle,
         directory: &LoadingScreenDirectory,
         map_id: u32,
-        logical_extent: (u32, u32),
+        display_extent: (u32, u32),
     ) -> Result<Self, ApplicationError> {
         let screen = directory.screen(map_id);
-        let background = resolve_background(assets, screen, logical_extent)?;
+        let background = resolve_background(assets, screen, display_extent)?;
+        let logical_extent = [
+            display_extent.0 as f32 / display_extent.1 as f32 * 768.0,
+            768.0,
+        ];
         let bar_background = AssetPath::new(LOADING_BAR_BACKGROUND)?;
         let bar_fill = AssetPath::new(LOADING_BAR_FILL)?;
         let bar_border = AssetPath::new(LOADING_BAR_BORDER)?;
@@ -83,9 +90,11 @@ impl RuntimeLoadingScreen {
                 PreparedUiFrame::prepare(renderer, &plan, &textures, None)
             })
             .collect::<Result<Vec<_>, ApplicationError>>()?;
+        let label = prepare_loading_label(renderer, assets, logical_extent)?;
         Ok(Self {
             stage: RuntimeLoadingStage::AwaitingWorld,
             frames,
+            label,
             presented: false,
             final_frame_presented: false,
         })
@@ -102,7 +111,10 @@ impl RuntimeLoadingScreen {
         renderer: &mut VulkanRenderer,
         overlay: &[UiPreparedDraw],
     ) -> Result<(), ApplicationError> {
-        self.frames[self.stage.index()].present_with_overlay(renderer, overlay)?;
+        let mut draws = Vec::with_capacity(self.label.draws().len() + overlay.len());
+        draws.extend_from_slice(self.label.draws());
+        draws.extend_from_slice(overlay);
+        self.frames[self.stage.index()].present_with_overlay(renderer, &draws)?;
         self.presented = true;
         if self.stage == RuntimeLoadingStage::SceneReady {
             self.final_frame_presented = true;
@@ -119,6 +131,52 @@ impl RuntimeLoadingScreen {
     pub(crate) const fn has_presented(&self) -> bool {
         self.presented
     }
+}
+
+/// Builds SolCL's archive-font loading label as an independent overlay packet.
+fn prepare_loading_label(
+    renderer: &mut VulkanRenderer,
+    assets: &AssetStoreHandle,
+    logical_extent: [f32; 2],
+) -> Result<PreparedUiFrame, ApplicationError> {
+    let display_height = renderer.report().extent().1;
+    let style = UiNativeTextStyle::new(
+        AssetPath::new(LOADING_FONT)?,
+        (logical_extent[1] / 48.0).max(12.0),
+        FontRasterization::Antialiased,
+    )
+    .with_color([1.0, 0.82, 0.0, 1.0])
+    .with_outline([0.0, 0.0, 0.0, 1.0], 1.0);
+    let mut store = assets.borrow_mut();
+    let atlas =
+        UiGlyphAtlasPlan::from_native_text(&style, LOADING_LABEL, &mut store, display_height)?;
+    drop(store);
+    let glyph_texture =
+        renderer.upload_ui_glyph_texture(atlas.identity(), atlas.extent(), atlas.rgba8())?;
+    let width = logical_extent[0];
+    let height = logical_extent[1];
+    let border_height = height * 0.050;
+    let center_y = height * 0.075;
+    let region_height = height * 0.040;
+    let region_bottom = center_y + border_height * 0.5;
+    let text_width = atlas.native_text_width(LOADING_LABEL, &style, display_height)?;
+    let plan = atlas.native_text_mesh(
+        LOADING_LABEL,
+        &style,
+        [width, height],
+        [
+            (width - text_width) * 0.5,
+            height - region_bottom - region_height,
+        ],
+        region_height,
+        display_height,
+    )?;
+    PreparedUiFrame::prepare(
+        renderer,
+        &plan,
+        &HashMap::new(),
+        Some((atlas.identity(), glyph_texture)),
+    )
 }
 
 fn resolve_background(
@@ -169,12 +227,12 @@ fn upload_textures(
 }
 
 fn loading_mesh(
-    logical_extent: (u32, u32),
+    logical_extent: [f32; 2],
     background: Option<&AssetPath>,
     progress: f32,
 ) -> Result<UiMeshPlan, ApplicationError> {
-    let width = logical_extent.0 as f32;
-    let height = logical_extent.1 as f32;
+    let width = logical_extent[0];
+    let height = logical_extent[1];
     let border_width = width * 0.600;
     let inner_width = width * 0.525;
     let border_height = height * 0.050;

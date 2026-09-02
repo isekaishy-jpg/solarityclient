@@ -303,6 +303,38 @@ impl UiGlyphAtlasPlan {
         })
     }
 
+    /// Measures one line using the exact advances retained by a native atlas.
+    ///
+    /// Native loading and diagnostic surfaces use this to center text without
+    /// substituting operating-system font metrics.
+    pub fn native_text_width(
+        &self,
+        text: &str,
+        style: &UiNativeTextStyle,
+        display_height: u32,
+    ) -> Result<f32, FontError> {
+        let pixels_per_ui_unit = f64::from(display_height) / 768.0;
+        let font = native_font_key(style, pixels_per_ui_unit)?;
+        if self.native_font.as_ref() != Some(&font) {
+            return Err(FontError::Presentation {
+                message: "native text style does not match its retained atlas".to_owned(),
+            });
+        }
+        text.chars()
+            .filter(|character| !character.is_control())
+            .try_fold(0.0_f64, |width, character| {
+                let key = GlyphKey::new(&font, character);
+                let glyph = self
+                    .glyphs
+                    .get(&key)
+                    .ok_or_else(|| FontError::Presentation {
+                        message: format!("native text uses unavailable glyph {character:?}"),
+                    })?;
+                Ok(width + glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit)
+            })
+            .map(|width| width as f32)
+    }
+
     /// Rasterizes static documents and the live ordinary text-object arena.
     pub(crate) fn from_live_ui(
         html: &UiSimpleHtmlPlan,
