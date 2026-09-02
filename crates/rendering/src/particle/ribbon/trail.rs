@@ -178,6 +178,17 @@ impl M2RibbonTrail {
         })
     }
 
+    /// Discards edge history after a presentation clock discontinuity while
+    /// retaining the emitter's validated fixed-capacity allocation.
+    pub fn reset(&mut self) {
+        self.sections.clear();
+        self.previous = None;
+        self.emission_fraction = 0.0;
+        self.texture_slot = 0;
+        self.has_live_head = false;
+        self.has_advanced = false;
+    }
+
     /// Advances expiry, gravity, and edge emission for one presentation frame.
     ///
     /// # Errors

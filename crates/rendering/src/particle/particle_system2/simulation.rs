@@ -9,6 +9,9 @@ use super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateEr
 /// Executable constant at `0x009F23CC` used to overprovision emitter storage.
 const STOCK_CAPACITY_HEADROOM: f64 = f32::from_bits(0x3F93_3333) as f64;
 
+/// `CM2ParticleEmitter::Update` consumes at most 100 ms per simulation step.
+const STOCK_MAXIMUM_STEP_SECONDS: f32 = 0.1;
+
 /// Particles stay in emitter-local space instead of receiving the bone matrix.
 const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0200;
 
@@ -24,6 +27,7 @@ pub struct M2ParticleSimulation {
     particles: Vec<M2ParticleState>,
     capacity: usize,
     emission_remainder: f32,
+    seed: u32,
     random: M2ParticleRandom,
 }
 
@@ -35,8 +39,18 @@ impl M2ParticleSimulation {
             particles: Vec::new(),
             capacity: 0,
             emission_remainder: 0.0,
+            seed,
             random: M2ParticleRandom::new(seed),
         }
+    }
+
+    /// Clears one presentation-discontinuous emitter back to its construction
+    /// seed without changing placement ownership.
+    pub fn reset(&mut self) {
+        self.particles.clear();
+        self.capacity = 0;
+        self.emission_remainder = 0.0;
+        self.random = M2ParticleRandom::new(self.seed);
     }
 
     /// Emits planar particles, advances all live particles, and removes deaths.
@@ -58,6 +72,29 @@ impl M2ParticleSimulation {
         density: f32,
     ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
         self.advance(
+            emitter,
+            pose,
+            elapsed_seconds,
+            emitter_transform,
+            density,
+            EmitterShape::Plane,
+        )
+    }
+
+    /// Advances a planar emitter through build-12340's bounded update slices.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::advance_planar`].
+    pub fn advance_planar_bounded(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        self.advance_bounded(
             emitter,
             pose,
             elapsed_seconds,
@@ -89,6 +126,62 @@ impl M2ParticleSimulation {
             density,
             EmitterShape::Sphere,
         )
+    }
+
+    /// Advances a spherical emitter through build-12340's bounded slices.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::advance_sphere`].
+    pub fn advance_sphere_bounded(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        self.advance_bounded(
+            emitter,
+            pose,
+            elapsed_seconds,
+            emitter_transform,
+            density,
+            EmitterShape::Sphere,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_bounded(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+        shape: EmitterShape,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
+            return Err(M2ParticleSimulationError::ElapsedTime);
+        }
+        if elapsed_seconds == 0.0 {
+            return self.advance(emitter, pose, 0.0, emitter_transform, density, shape);
+        }
+        let mut remaining = elapsed_seconds;
+        let mut report = M2ParticleSimulationReport {
+            emitted: 0,
+            deaths: 0,
+            live: self.particles.len(),
+        };
+        while remaining > 0.0 {
+            let step = remaining.min(STOCK_MAXIMUM_STEP_SECONDS);
+            let current = self.advance(emitter, pose, step, emitter_transform, density, shape)?;
+            report.emitted += current.emitted;
+            report.deaths += current.deaths;
+            report.live = current.live;
+            remaining = (remaining - step).max(0.0);
+        }
+        Ok(report)
     }
 
     /// Runs emission and live-particle advancement shared by stock shapes.

@@ -994,6 +994,35 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     assert_eq!(saturated_report.emitted(), saturated.capacity());
     assert_eq!(saturated.emission_remainder(), 0.0);
 
+    let mut bounded = M2ParticleSimulation::new(0x0029_4823);
+    let bounded_report = bounded.advance_planar_bounded(emitter, pose, 0.2, Mat4::IDENTITY, 1.0)?;
+    let mut explicit_slices = M2ParticleSimulation::new(0x0029_4823);
+    let first_slice = explicit_slices.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+    let second_slice = explicit_slices.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+    assert_eq!(
+        bounded_report.emitted(),
+        first_slice.emitted() + second_slice.emitted()
+    );
+    assert_eq!(
+        bounded_report.deaths(),
+        first_slice.deaths() + second_slice.deaths()
+    );
+    assert_eq!(bounded_report.live(), second_slice.live());
+    assert_eq!(bounded.particles(), explicit_slices.particles());
+    assert_eq!(
+        bounded.emission_remainder(),
+        explicit_slices.emission_remainder()
+    );
+
+    bounded.reset();
+    let reset_report = bounded.advance_planar(emitter, pose, 0.2, Mat4::IDENTITY, 1.0)?;
+    let mut fresh = M2ParticleSimulation::new(0x0029_4823);
+    let fresh_report = fresh.advance_planar(emitter, pose, 0.2, Mat4::IDENTITY, 1.0)?;
+    assert_eq!(reset_report, fresh_report);
+    assert_eq!(bounded.particles(), fresh.particles());
+    assert_eq!(bounded.emission_remainder(), fresh.emission_remainder());
+    assert_eq!(bounded.capacity(), fresh.capacity());
+
     let particle = M2ParticleState::new(
         0.5,
         Vec3::new(10.0, 20.0, 30.0),

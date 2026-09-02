@@ -46,6 +46,9 @@ const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 /// Initial `particleDensity` CVar registered by the stock UI environment.
 const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 
+/// A larger gap is a presentation discontinuity rather than effect history.
+const STOCK_EFFECT_CLOCK_DISCONTINUITY_SECONDS: f32 = 2.0;
+
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
@@ -1431,10 +1434,28 @@ impl M2Frame {
         self.ribbon_draws.clear();
         self.triggered_events.clear();
         self.mount_camera_sample = None;
-        let effect_delta_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
+        let elapsed_effect_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
         self.last_effect_time_ms = Some(animation_time_ms);
+        let effect_clock_discontinuity =
+            elapsed_effect_seconds > STOCK_EFFECT_CLOCK_DISCONTINUITY_SECONDS;
+        let effect_delta_seconds = if effect_clock_discontinuity {
+            // Stock repopulates only one bounded current-pose tick after a
+            // suspended presentation instead of replaying the entire gap.
+            0.1
+        } else {
+            elapsed_effect_seconds
+        };
+        if effect_clock_discontinuity {
+            for placement in &mut self.placements {
+                placement
+                    .particles
+                    .iter_mut()
+                    .for_each(M2ParticleSimulation::reset);
+                placement.ribbons.iter_mut().for_each(M2RibbonTrail::reset);
+            }
+        }
         let requested_items = self
             .placements
             .iter()
@@ -1757,14 +1778,14 @@ impl M2Frame {
                     emitter,
                 )?;
                 match emitter.emitter_type() {
-                    1 => simulation.advance_planar(
+                    1 => simulation.advance_planar_bounded(
                         emitter,
                         pose,
                         effect_delta_seconds,
                         emitter_transform,
                         STOCK_DEFAULT_PARTICLE_DENSITY,
                     )?,
-                    2 => simulation.advance_sphere(
+                    2 => simulation.advance_sphere_bounded(
                         emitter,
                         pose,
                         effect_delta_seconds,
