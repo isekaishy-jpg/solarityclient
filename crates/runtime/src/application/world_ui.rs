@@ -1,6 +1,6 @@
 //! Active-world FrameXML composition and renderer ownership.
 
-use solarity_asset::AssetStoreHandle;
+use solarity_asset::{AssetStoreHandle, BlpTextureCache};
 use solarity_ecs::ActiveWorld;
 use solarity_network::WorldActionButtons;
 use solarity_rendering::{UiPreparedDraw, VulkanRenderer};
@@ -35,6 +35,7 @@ pub enum RuntimeWorldUiError {
 pub(super) struct RuntimeWorldUi {
     manager: FrameManager,
     frame: RuntimeUiFrame,
+    texture_cache: BlpTextureCache,
     world: solarity_ui::UiWorldState,
     zone: UiZoneState,
     action_bar: UiActionBarState,
@@ -110,10 +111,12 @@ impl RuntimeWorldUi {
         ] {
             manager.dispatch_event(event, &UiEventPayload::empty())?;
         }
-        let frame = RuntimeUiFrame::prepare_frame(renderer, &manager)?;
+        let mut texture_cache = BlpTextureCache::new();
+        let frame = RuntimeUiFrame::prepare_frame(renderer, &manager, &mut texture_cache)?;
         Ok(Self {
             manager,
             frame,
+            texture_cache,
             world,
             zone,
             action_bar,
@@ -189,7 +192,8 @@ impl RuntimeWorldUi {
         renderer: &mut VulkanRenderer,
     ) -> Result<(), ApplicationError> {
         if self.dirty {
-            self.frame = RuntimeUiFrame::prepare_frame(renderer, &self.manager)?;
+            self.frame =
+                RuntimeUiFrame::prepare_frame(renderer, &self.manager, &mut self.texture_cache)?;
             self.dirty = false;
         }
         Ok(())

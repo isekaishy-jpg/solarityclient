@@ -11,10 +11,10 @@ use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle,
-    CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog,
-    CreatureFamilyCatalog, GameObjectDisplayCatalog, HelmetGeosetVisibilityCatalog,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, LightCatalog,
-    LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
+    BlpTextureCache, CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
+    CreatureCatalog, CreatureFamilyCatalog, GameObjectDisplayCatalog,
+    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
+    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
 };
 use solarity_cpu::CpuExecutor;
 use solarity_media::SoundOutputTarget;
@@ -74,6 +74,7 @@ use crate::random::{BlizzardRand, CrtRand};
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<RuntimeUiFrame>,
+    ui_textures: BlpTextureCache,
     world_ui: Option<RuntimeWorldUi>,
     glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
@@ -233,10 +234,11 @@ impl ClientServices {
             None,
             false,
         )?;
+        let mut ui_textures = BlpTextureCache::new();
         let login_ui = if glue.media_intent().movie().is_some() {
             None
         } else {
-            let frame = RuntimeUiFrame::prepare_glue(&mut renderer, &glue)?;
+            let frame = RuntimeUiFrame::prepare_glue(&mut renderer, &glue, &mut ui_textures)?;
             let overlay = if glue.cvar_boolean("showfps") {
                 fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
             } else {
@@ -268,6 +270,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                ui_textures,
                 world_ui: None,
                 glue_model,
                 cinematic: RuntimeCinematicCoordinator::default(),
@@ -751,6 +754,7 @@ impl ClientServices {
             self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                 &mut self.renderer,
                 &self.glue,
+                &mut self.ui_textures,
             )?);
         }
         let frame = self
@@ -914,6 +918,7 @@ impl ClientServices {
                     self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                         &mut self.renderer,
                         &self.glue,
+                        &mut self.ui_textures,
                     )?);
                 }
                 UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen } => {
@@ -1162,6 +1167,7 @@ impl ClientServices {
                 self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                     &mut self.renderer,
                     &self.glue,
+                    &mut self.ui_textures,
                 )?);
             }
             Ok(RuntimeWorldPoll::CharacterScreenReady) => {}
@@ -1185,6 +1191,7 @@ impl ClientServices {
                     self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                         &mut self.renderer,
                         &self.glue,
+                        &mut self.ui_textures,
                     )?);
                 }
             }
@@ -1216,6 +1223,7 @@ impl ClientServices {
                 self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                     &mut self.renderer,
                     &self.glue,
+                    &mut self.ui_textures,
                 )?);
             }
             Ok(RuntimeWorldPoll::CharacterDeletionFinished(result)) => {
@@ -1243,6 +1251,7 @@ impl ClientServices {
                 self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                     &mut self.renderer,
                     &self.glue,
+                    &mut self.ui_textures,
                 )?);
             }
             Ok(RuntimeWorldPoll::CharacterRenameFinished(result)) => {
@@ -1268,6 +1277,7 @@ impl ClientServices {
                 self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                     &mut self.renderer,
                     &self.glue,
+                    &mut self.ui_textures,
                 )?);
             }
             Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
@@ -1300,6 +1310,7 @@ impl ClientServices {
                     self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                         &mut self.renderer,
                         &self.glue,
+                        &mut self.ui_textures,
                     )?);
                 }
                 // Stock `0x006B2070` tears the optimistic world load back to
@@ -1319,6 +1330,7 @@ impl ClientServices {
                 self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                     &mut self.renderer,
                     &self.glue,
+                    &mut self.ui_textures,
                 )?);
             }
             Err(error) => self.publish_world_failure(error),
@@ -1782,6 +1794,7 @@ impl ClientServices {
         self.login_ui = Some(RuntimeUiFrame::prepare_glue(
             &mut self.renderer,
             &self.glue,
+            &mut self.ui_textures,
         )?);
         Ok(())
     }
@@ -1814,6 +1827,7 @@ impl ClientServices {
         self.login_ui = Some(RuntimeUiFrame::prepare_glue(
             &mut self.renderer,
             &self.glue,
+            &mut self.ui_textures,
         )?);
         Ok(())
     }

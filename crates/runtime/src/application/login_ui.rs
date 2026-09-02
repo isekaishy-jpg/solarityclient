@@ -24,27 +24,29 @@ impl RuntimeUiFrame {
     pub(super) fn prepare_glue(
         renderer: &mut VulkanRenderer,
         glue: &GlueManager,
+        cache: &mut BlpTextureCache,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_source(renderer, glue)
+        Self::prepare_source(renderer, glue, cache)
     }
 
     /// Uploads the current FrameXML generation into renderer-owned resources.
     pub(super) fn prepare_frame(
         renderer: &mut VulkanRenderer,
         frame: &FrameManager,
+        cache: &mut BlpTextureCache,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_source(renderer, frame)
+        Self::prepare_source(renderer, frame, cache)
     }
 
     /// Joins one built-in UI owner to renderer-resident mesh and textures.
     fn prepare_source(
         renderer: &mut VulkanRenderer,
         source: &impl RuntimeUiSource,
+        cache: &mut BlpTextureCache,
     ) -> Result<Self, ApplicationError> {
         let render_plan = source.render_plan();
         let mesh_plan = render_plan.mesh();
-        let mut cache = BlpTextureCache::new();
-        let bindings = source.load_blocking_render_textures(&mut cache)?;
+        let bindings = source.load_blocking_render_textures(cache)?;
         let mut textures = HashMap::<AssetPath, BlpTextureHandle>::new();
         let mut texture_paths = Vec::new();
         let mut texture_uploads = Vec::new();
