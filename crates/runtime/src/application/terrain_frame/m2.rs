@@ -931,8 +931,13 @@ impl M2Frame {
                 matches!(placement.owner, M2GpuPlacementOwner::PlayerBody { guid: 0 })
             })
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        placement.local_transform = Mat4::from_rotation_z(facing_radians)
+        let transform = Mat4::from_rotation_z(facing_radians)
             * Mat4::from_scale(glam::Vec3::splat(model_scale));
+        // Glue bodies have no placement parent. Keep the submitted transform
+        // synchronized immediately; the same frame samples body attachments
+        // from it before positioning equipment and item visual effects.
+        placement.local_transform = transform;
+        placement.transform = transform;
         Ok(())
     }
 
