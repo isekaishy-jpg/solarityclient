@@ -19,6 +19,7 @@ use crate::application::ui_frame::PreparedUiFrame;
 
 use super::RuntimeLoadingStage;
 
+const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
 const LOADING_BAR_BORDER: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBorder.blp";
 
@@ -71,12 +72,13 @@ impl RuntimeLoadingScreen {
             display_extent.0 as f32 / display_extent.1 as f32 * 768.0,
             768.0,
         ];
+        let bar_background = AssetPath::new(LOADING_BAR_BACKGROUND)?;
         let bar_fill = AssetPath::new(LOADING_BAR_FILL)?;
         let bar_border = AssetPath::new(LOADING_BAR_BORDER)?;
-        // LoadingScreen.cpp 0x0040A990 admits exactly these two normal-card
-        // textures. Its separate 0x0040AB70 text path exists only when
+        // LoadingScreen.cpp 0x0040A990 owns the normal-card bar textures. Its
+        // separate 0x0040AB70 text path exists only when
         // 0x00407E40 publishes TRIAL_LOADING_MESSAGE for a trial account.
-        let mut paths = vec![bar_fill, bar_border];
+        let mut paths = vec![bar_background, bar_fill, bar_border];
         if let Some(background) = &background {
             paths.push(background.clone());
         }
@@ -199,6 +201,16 @@ fn loading_mesh(
     quads.extend([
         texture_quad(
             2,
+            AssetPath::new(LOADING_BAR_BACKGROUND)?,
+            [
+                inner_x,
+                inner_y,
+                inner_x + inner_width,
+                inner_y + inner_height,
+            ],
+        ),
+        texture_quad(
+            3,
             AssetPath::new(LOADING_BAR_FILL)?,
             [
                 inner_x + 1.0,
@@ -208,7 +220,7 @@ fn loading_mesh(
             ],
         ),
         texture_quad(
-            3,
+            4,
             AssetPath::new(LOADING_BAR_BORDER)?,
             [
                 (width - border_width) * 0.5,
