@@ -77,12 +77,14 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     let get_account_text: mlua::Function = account.get("GetText")?;
     let get_max_letters: mlua::Function = account.get("GetMaxLetters")?;
     let get_text_insets: mlua::Function = account.get("GetTextInsets")?;
+    let get_justify_h: mlua::Function = account.get("GetJustifyH")?;
     assert_eq!(get_max_letters.call::<u32>(account.clone())?, 16);
     assert_eq!(
         get_text_insets.call::<(f64, f64, f64, f64)>(account.clone())?,
         (12.0, 5.0, 0.0, 5.0)
     );
     assert_eq!(get_account_text.call::<String>(account.clone())?, "Alice");
+    assert_eq!(get_justify_h.call::<String>(account.clone())?, "LEFT");
     assert_eq!(manager.text_composition("候補")?, Some(account_index));
 
     assert_eq!(
