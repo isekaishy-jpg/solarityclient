@@ -95,6 +95,13 @@ environment availability, player-model residency, and first terrain-frame
 residency. Input remains with the transition until one complete final card has
 been presented.
 
+WDT content selects either an ADT-backed terrain generation or the sole global
+MODF placement. The global branch retains that placement's transform, doodad
+and name sets, root/group WMO resources, selected embedded M2s, collision and
+liquid providers, and Map.dbc field-22 base area. It prepares the same world
+frame without fabricating an empty ADT, allowing instance loading readiness to
+complete on maps such as Stormwind Stockade and the Nexus.
+
 The native top-left performance display uses the archive-backed
 `Fonts\FRIZQT__.TTF` face and stock `showfps` default. It samples completed
 presentations in quarter-second windows, replaces one stable device mesh when

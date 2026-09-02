@@ -18,7 +18,8 @@ pub struct TerrainMap {
     directory: String,
     source: ArchiveDescriptor,
     flags: u32,
-    global_world_model: Option<AssetPath>,
+    linked_zone_id: u32,
+    global_world_model: Option<TerrainWorldModelPlacement>,
     tiles: Vec<TerrainTile>,
 }
 
@@ -139,7 +140,7 @@ impl TerrainMap {
         definition: &MapDefinition,
         source: ArchiveDescriptor,
         flags: u32,
-        global_world_model: Option<AssetPath>,
+        global_world_model: Option<TerrainWorldModelPlacement>,
         tiles: Vec<TerrainTile>,
     ) -> Result<Self, AssetError> {
         if tiles.len() != TERRAIN_TILE_COUNT {
@@ -156,6 +157,7 @@ impl TerrainMap {
             directory: definition.directory().to_owned(),
             source,
             flags,
+            linked_zone_id: definition.linked_zone_id(),
             global_world_model,
             tiles,
         })
@@ -185,10 +187,20 @@ impl TerrainMap {
         self.flags
     }
 
-    /// Returns the global WMO path for a WMO-only map.
+    /// Returns the sole WDT-authored placement for a WMO-only map.
     #[must_use]
-    pub const fn global_world_model(&self) -> Option<&AssetPath> {
+    pub const fn global_world_model(&self) -> Option<&TerrainWorldModelPlacement> {
         self.global_world_model.as_ref()
+    }
+
+    /// Returns Map.dbc's base area only for the stock global-WMO branch.
+    #[must_use]
+    pub const fn global_area_id(&self) -> Option<u32> {
+        if self.global_world_model.is_some() && self.linked_zone_id != 0 {
+            Some(self.linked_zone_id)
+        } else {
+            None
+        }
     }
 
     /// Returns one exact WDT tile entry.

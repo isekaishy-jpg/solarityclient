@@ -749,7 +749,10 @@ fn validate_build_layout(path: &AssetPath, wdt: &WdtFile) -> Result<(), AssetErr
     Ok(())
 }
 
-fn global_world_model(path: &AssetPath, wdt: &WdtFile) -> Result<Option<AssetPath>, AssetError> {
+fn global_world_model(
+    path: &AssetPath,
+    wdt: &WdtFile,
+) -> Result<Option<TerrainWorldModelPlacement>, AssetError> {
     if !wdt.is_wmo_only() {
         return Ok(None);
     }
@@ -761,12 +764,37 @@ fn global_world_model(path: &AssetPath, wdt: &WdtFile) -> Result<Option<AssetPat
             message: "global-WMO WDT omits MWMO".to_owned(),
         })?
         .filenames[0];
-    AssetPath::new(filename)
-        .map(Some)
-        .map_err(|error| AssetError::TerrainDecode {
+    let model = AssetPath::new(filename).map_err(|error| AssetError::TerrainDecode {
+        path: path.clone(),
+        message: format!("invalid global WMO path {filename:?}: {error}"),
+    })?;
+    let placement = wdt
+        .modf
+        .as_ref()
+        .and_then(|chunk| chunk.entries.first())
+        .ok_or_else(|| AssetError::TerrainDecode {
             path: path.clone(),
-            message: format!("invalid global WMO path {filename:?}: {error}"),
-        })
+            message: "global-WMO WDT omits MODF".to_owned(),
+        })?;
+    if placement.id != 0 {
+        return Err(AssetError::TerrainDecode {
+            path: path.clone(),
+            message: format!(
+                "global MODF references MWMO name {} instead of the sole name 0",
+                placement.id
+            ),
+        });
+    }
+    Ok(Some(TerrainWorldModelPlacement::new(
+        model,
+        placement.unique_id,
+        placement_position(placement.position),
+        placement.rotation,
+        placement_bounds(placement.lower_bounds, placement.upper_bounds),
+        placement.flags,
+        placement.doodad_set,
+        placement.name_set,
+    )))
 }
 
 fn terrain_error(path: &AssetPath, error: impl std::fmt::Display) -> AssetError {

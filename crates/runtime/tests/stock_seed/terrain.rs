@@ -31,7 +31,7 @@ use wow_m2::common::{C2Vector, C3Vector, FixedString, M2Array, M2ArrayString};
 use wow_m2::header::M2Header;
 use wow_m2::skin::{OldSkinHeader, SkinSubmesh};
 use wow_m2::{M2Model, M2Version, OldSkin};
-use wow_wdt::chunks::MwmoChunk;
+use wow_wdt::chunks::{ModfChunk, ModfEntry, MphdFlags, MwmoChunk};
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
@@ -509,6 +509,70 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// WDT-level MODF state reaches rendering, queries, and area publication.
+#[test]
+fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Error>> {
+    let root_wmo = root_wmo_fixture();
+    let group_wmo = group_wmo_fixture();
+    let m2 = m2_collision_fixture()?;
+    let skin = skin_fixture()?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &map_table()),
+        ("World\\Maps\\Northrend\\Northrend.wdt", &global_wmo_wdt()?),
+        ("World\\Wmo\\Fixture.wmo", &root_wmo),
+        ("World\\Wmo\\Fixture_000.wmo", &group_wmo),
+        ("World\\Fixture\\Collision.m2", &m2),
+        ("World\\Fixture\\Collision00.skin", &skin),
+        ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let assets = AssetStoreHandle::new(store);
+    let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        0xF130_0000_0000_0001,
+        "GlobalWorldModelFixture",
+        Vec3::ZERO,
+        0.0,
+    ));
+
+    assert_eq!(
+        terrain.synchronize(Some(&world))?,
+        RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id: 571 }
+    );
+    assert!(terrain.resident_tile().is_none());
+    assert!(terrain.resident_mesh_plan().is_none());
+    assert_eq!(terrain.current_area_id(&world)?, Some(571));
+    assert_eq!(terrain.resident_world_model_count(), 1);
+    assert_eq!(terrain.resident_world_model_source_count(), 1);
+    assert_eq!(terrain.resident_m2_count(), 1);
+    assert_eq!(terrain.resident_m2_source_count(), 1);
+    assert_eq!(terrain.resident_m2_collision_count(), 1);
+    assert!(
+        terrain
+            .trace_world_model_camera(
+                Vec3::new(-0.25, -0.25, 1.0),
+                Vec3::new(-0.25, -0.25, -1.0),
+                1.0,
+            )?
+            .is_some()
+    );
+    assert!(
+        terrain
+            .sample_world_model_liquid(-1.0, -1.0, Some(1.0))?
+            .is_some()
+    );
+    assert_eq!(
+        terrain.synchronize(Some(&world))?,
+        RuntimeTerrainPoll::GlobalWorldModelCurrent { map_id: 571 }
+    );
+    assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
+    assert_eq!(terrain.resident_world_model_count(), 0);
+    Ok(())
+}
+
 fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mwmo = Some(MwmoChunk::new());
@@ -517,6 +581,32 @@ fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
         .get_mut(21, 30)
         .ok_or("fixture WDT tile is invalid")?;
     entry.set_has_adt(true);
+    let mut bytes = Vec::new();
+    WdtWriter::new(&mut bytes).write(&wdt)?;
+    Ok(bytes)
+}
+
+fn global_wmo_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
+    const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
+    let mut wdt = WdtFile::new(WowVersion::WotLK);
+    wdt.mphd.flags |= MphdFlags::WDT_USES_GLOBAL_MAP_OBJ;
+    wdt.mwmo = Some(MwmoChunk {
+        filenames: vec!["World\\Wmo\\Fixture.wmo".to_owned()],
+    });
+    wdt.modf = Some(ModfChunk {
+        entries: vec![ModfEntry {
+            id: 0,
+            unique_id: 7,
+            position: [CLIENT_MAP_ORIGIN, 0.0, CLIENT_MAP_ORIGIN],
+            rotation: [0.0; 3],
+            lower_bounds: [CLIENT_MAP_ORIGIN - 5.0, -1.0, CLIENT_MAP_ORIGIN - 5.0],
+            upper_bounds: [CLIENT_MAP_ORIGIN + 5.0, 3.0, CLIENT_MAP_ORIGIN + 5.0],
+            flags: 0,
+            doodad_set: 0,
+            name_set: 0,
+            scale: 0,
+        }],
+    });
     let mut bytes = Vec::new();
     WdtWriter::new(&mut bytes).write(&wdt)?;
     Ok(bytes)

@@ -25,7 +25,9 @@ pub(in crate::application) mod m2_residency;
 pub(in crate::application) mod world_model_residency;
 
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
-use world_model_residency::{ResidentWorldModelScene, prepare_world_models};
+use world_model_residency::{
+    ResidentWorldModelScene, prepare_global_world_model, prepare_world_models,
+};
 
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
@@ -132,8 +134,13 @@ pub enum RuntimeCameraError {
 pub enum RuntimeTerrainPoll {
     /// No active world exists and no terrain is resident.
     Idle,
-    /// The map is a global-WMO map with no ADT tile at the player position.
-    GlobalWorldModel {
+    /// The WDT-level WMO and its nested doodads became resident.
+    GlobalWorldModelLoaded {
+        /// Active client map identifier.
+        map_id: u32,
+    },
+    /// The already-resident WDT-level WMO remains current.
+    GlobalWorldModelCurrent {
         /// Active client map identifier.
         map_id: u32,
     },
@@ -208,6 +215,7 @@ impl RuntimeTerrainCoordinator {
             self.active = Some(ResidentTerrainMap {
                 terrain,
                 tile: None,
+                global_world_model: None,
             });
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
@@ -219,10 +227,24 @@ impl RuntimeTerrainCoordinator {
             .active
             .as_mut()
             .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
-        if active.terrain.global_world_model().is_some() {
+        if let Some(placement) = active.terrain.global_world_model() {
             active.tile = None;
-            return Ok(RuntimeTerrainPoll::GlobalWorldModel { map_id });
+            if active.global_world_model.is_some() {
+                return Ok(RuntimeTerrainPoll::GlobalWorldModelCurrent { map_id });
+            }
+            active.global_world_model = Some(ResidentGlobalWorldModel::prepare(
+                placement,
+                &mut self.textures,
+                &mut self.models,
+                &mut self.world_models,
+                &mut self.assets.borrow_mut(),
+            )?);
+            self.textures.collect_unused();
+            self.models.collect_unused();
+            self.world_models.collect_unused();
+            return Ok(RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id });
         }
+        active.global_world_model = None;
         let position = world.local_player_transform()?.position();
         let tile_index = TerrainMap::tile_at_world_position(position.x, position.y);
         if active.tile.as_ref().map(ResidentTerrainTile::index) == Some(tile_index) {
@@ -275,15 +297,20 @@ impl RuntimeTerrainCoordinator {
 
     /// Resolves the active player's terrain-authored `AreaTable` identifier.
     ///
-    /// Stock `0x0077FA00` delegates tiled-map lookup to `0x007A0490`, which
-    /// returns the resident MCNK area ID. A zero MCNK value remains absent;
-    /// Map.dbc field 22 belongs only to the separate global-WMO map branch.
+    /// Stock `0x0077FA00` selects Map.dbc field 22 for global-WMO maps and
+    /// delegates tiled-map lookup to `0x007A0490` for the resident MCNK area.
+    /// Either branch preserves an authored zero as absence.
     ///
     /// # Errors
     ///
     /// Returns [`WorldStateError`] when an active world has lost its required
     /// local-player transform.
     pub fn current_area_id(&self, world: &ActiveWorld) -> Result<Option<u32>, RuntimeTerrainError> {
+        if let Some(map) = self.active_map()
+            && map.global_world_model().is_some()
+        {
+            return Ok(map.global_area_id());
+        }
         let position = world.local_player_transform()?.position();
         let area_id = self
             .resident_tile()
@@ -326,19 +353,29 @@ impl RuntimeTerrainCoordinator {
     /// Returns the resident WMO presentation scene for renderer publication.
     #[must_use]
     pub(super) fn resident_world_models(&self) -> Option<&ResidentWorldModelScene> {
-        self.active
+        let active = self.active.as_ref()?;
+        active
+            .tile
             .as_ref()
-            .and_then(|active| active.tile.as_ref())
             .map(|tile| &tile.world_models)
+            .or_else(|| {
+                active
+                    .global_world_model
+                    .as_ref()
+                    .map(|global| &global.world_models)
+            })
     }
 
     /// Returns the resident MDDF/MODD presentation scene for GPU publication.
     #[must_use]
     pub(super) fn resident_m2_scene(&self) -> Option<&ResidentM2Scene> {
-        self.active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map(|tile| &tile.m2_scene)
+        let active = self.active.as_ref()?;
+        active.tile.as_ref().map(|tile| &tile.m2_scene).or_else(|| {
+            active
+                .global_world_model
+                .as_ref()
+                .map(|global| &global.m2_scene)
+        })
     }
 
     /// Returns concrete BLP sources retained by resident M2 declarations.
@@ -456,28 +493,33 @@ impl RuntimeTerrainCoordinator {
     /// Returns the number of unique, chunk-referenced MDDF placements resident.
     #[must_use]
     pub fn resident_m2_collision_count(&self) -> usize {
-        self.active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map_or(0, |tile| tile.m2_collision.instance_count())
+        self.active.as_ref().map_or(0, |active| {
+            active
+                .tile
+                .as_ref()
+                .map(|tile| &tile.m2_collision)
+                .or_else(|| {
+                    active
+                        .global_world_model
+                        .as_ref()
+                        .map(|global| &global.m2_collision)
+                })
+                .map_or(0, M2CollisionScene::instance_count)
+        })
     }
 
     /// Returns all resident MDDF and nested MODD presentation instances.
     #[must_use]
     pub fn resident_m2_count(&self) -> usize {
-        self.active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map_or(0, |tile| tile.m2_scene.placement_count())
+        self.resident_m2_scene()
+            .map_or(0, ResidentM2Scene::placement_count)
     }
 
     /// Returns distinct M2/SKIN generations shared by all placed instances.
     #[must_use]
     pub fn resident_m2_source_count(&self) -> usize {
-        self.active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map_or(0, |tile| tile.m2_scene.source_count())
+        self.resident_m2_scene()
+            .map_or(0, ResidentM2Scene::source_count)
     }
 
     /// Traces dedicated collision triangles in resident placed M2s.
@@ -491,11 +533,19 @@ impl RuntimeTerrainCoordinator {
         end: glam::Vec3,
         maximum_fraction: f32,
     ) -> Result<Option<f32>, M2CollisionError> {
-        let Some(collision) = self
-            .active
+        let Some(active) = self.active.as_ref() else {
+            return Ok(None);
+        };
+        let Some(collision) = active
+            .tile
             .as_ref()
-            .and_then(|active| active.tile.as_ref())
             .map(|tile| &tile.m2_collision)
+            .or_else(|| {
+                active
+                    .global_world_model
+                    .as_ref()
+                    .map(|global| &global.m2_collision)
+            })
         else {
             return Ok(None);
         };
@@ -514,11 +564,19 @@ impl RuntimeTerrainCoordinator {
         end: glam::Vec3,
         maximum_fraction: f32,
     ) -> Result<Option<f32>, WorldModelCollisionError> {
-        let Some(collision) = self
-            .active
+        let Some(active) = self.active.as_mut() else {
+            return Ok(None);
+        };
+        let Some(collision) = active
+            .tile
             .as_mut()
-            .and_then(|active| active.tile.as_mut())
             .map(|tile| &mut tile.world_model_collision)
+            .or_else(|| {
+                active
+                    .global_world_model
+                    .as_mut()
+                    .map(|global| &mut global.world_model_collision)
+            })
         else {
             return Ok(None);
         };
@@ -537,11 +595,19 @@ impl RuntimeTerrainCoordinator {
         world_y: f32,
         reference_height: Option<f32>,
     ) -> Result<Option<WorldModelLiquidSample>, WorldModelLiquidError> {
-        let Some(liquid) = self
-            .active
+        let Some(active) = self.active.as_ref() else {
+            return Ok(None);
+        };
+        let Some(liquid) = active
+            .tile
             .as_ref()
-            .and_then(|active| active.tile.as_ref())
             .map(|tile| &tile.world_model_liquid)
+            .or_else(|| {
+                active
+                    .global_world_model
+                    .as_ref()
+                    .map(|global| &global.world_model_liquid)
+            })
         else {
             return Ok(None);
         };
@@ -612,11 +678,50 @@ impl RuntimeTerrainCoordinator {
 struct ResidentTerrainMap {
     terrain: TerrainMap,
     tile: Option<ResidentTerrainTile>,
+    global_world_model: Option<ResidentGlobalWorldModel>,
 }
 
 impl ResidentTerrainMap {
     const fn map_id(&self) -> u32 {
         self.terrain.map_id()
+    }
+}
+
+/// Complete non-ADT scene owned by one WDT-level MODF placement.
+struct ResidentGlobalWorldModel {
+    m2_scene: ResidentM2Scene,
+    m2_collision: M2CollisionScene,
+    world_model_collision: WorldModelCollisionScene,
+    world_model_liquid: WorldModelLiquidScene,
+    world_models: ResidentWorldModelScene,
+}
+
+impl ResidentGlobalWorldModel {
+    /// Loads the root WMO, its selected MODD set, and every query provider.
+    fn prepare(
+        placement: &solarity_asset::TerrainWorldModelPlacement,
+        texture_cache: &mut BlpTextureCache,
+        model_cache: &mut M2ModelCache,
+        world_model_cache: &mut WmoModelCache,
+        store: &mut AssetStore,
+    ) -> Result<Self, RuntimeTerrainError> {
+        let mut m2_builder = ResidentM2SceneBuilder::new();
+        let (world_models, world_model_collision, world_model_liquid) = prepare_global_world_model(
+            placement,
+            world_model_cache,
+            model_cache,
+            texture_cache,
+            &mut m2_builder,
+            store,
+        )?;
+        let (m2_scene, m2_collision) = m2_builder.finish();
+        Ok(Self {
+            m2_scene,
+            m2_collision,
+            world_model_collision,
+            world_model_liquid,
+            world_models,
+        })
     }
 }
 

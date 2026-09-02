@@ -169,6 +169,9 @@ pub enum RuntimeTerrainFrameError {
         /// Submitted CPU plan Y coordinate.
         plan_y: u8,
     },
+    /// A tiled and global-WMO renderer generation were paired together.
+    #[error("terrain GPU generation and resident scene kind do not match")]
+    SceneKindMismatch,
     /// One retained MODF references no resident source-table slot.
     #[error(
         "resident WMO placement references source {source_index}, but only {source_count} sources exist"
@@ -440,7 +443,7 @@ pub enum RuntimeTerrainFrameError {
 
 /// One immutable resident ADT generation ready for camera selection.
 pub(super) struct TerrainFrame {
-    tile: TerrainTileIndex,
+    tile: Option<TerrainTileIndex>,
     draws: Vec<TerrainPreparedDraw>,
     visible_draws: Vec<TerrainPreparedDraw>,
     m2: M2Frame,
@@ -541,22 +544,60 @@ impl TerrainFrame {
             )?);
         }
 
-        let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
-        m2.replace_player(renderer, player, random)?;
-        m2.replace_creatures(renderer, creatures, random)?;
-        m2.replace_remote_players(renderer, remote_players, random)?;
-        m2.replace_transport(renderer, transport, random)?;
-        let mut world_models = WorldModelFrame::prepare(
+        let (m2, world_models) = prepare_scene_models(
             renderer,
+            m2_scene,
             world_models,
             world_model_filtering,
             world_model_base_mip,
+            random,
+            particle_twinkle,
+            player,
+            creatures,
+            remote_players,
+            transport,
         )?;
-        world_models.replace_transport(renderer, transport)?;
         Ok(Self {
-            tile: plan.tile(),
+            tile: Some(plan.tile()),
             draws,
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            m2,
+            world_models,
+        })
+    }
+
+    /// Uploads one global-WMO scene without fabricating an ADT generation.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_global_world_model(
+        renderer: &mut VulkanRenderer,
+        m2_scene: &ResidentM2Scene,
+        world_models: &ResidentWorldModelScene,
+        world_model_filtering: WorldModelTextureFiltering,
+        world_model_base_mip: WorldModelBaseMip,
+        random: &mut CrtRand,
+        particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
+        player: Option<ResidentPlayerFrameInput<'_>>,
+        creatures: &[ResidentCreatureFrameInput<'_>],
+        remote_players: &[ResidentPlayerFrameInput<'_>],
+        transport: Option<&ResidentTransport>,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
+        let (m2, world_models) = prepare_scene_models(
+            renderer,
+            m2_scene,
+            world_models,
+            world_model_filtering,
+            world_model_base_mip,
+            random,
+            particle_twinkle,
+            player,
+            creatures,
+            remote_players,
+            transport,
+        )?;
+        Ok(Self {
+            tile: None,
+            draws: Vec::new(),
+            visible_draws: Vec::new(),
             m2,
             world_models,
         })
@@ -571,7 +612,7 @@ impl TerrainFrame {
     pub(super) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
-        plan: &TerrainTileMeshPlan,
+        plan: Option<&TerrainTileMeshPlan>,
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
         global_animation_time_ms: f32,
@@ -583,13 +624,19 @@ impl TerrainFrame {
         ui_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
-        if self.tile != plan.tile() {
-            return Err(RuntimeTerrainFrameError::TileMismatch {
-                frame_x: self.tile.x(),
-                frame_y: self.tile.y(),
-                plan_x: plan.tile().x(),
-                plan_y: plan.tile().y(),
-            });
+        match (self.tile, plan.map(TerrainTileMeshPlan::tile)) {
+            (Some(frame), Some(plan)) if frame != plan => {
+                return Err(RuntimeTerrainFrameError::TileMismatch {
+                    frame_x: frame.x(),
+                    frame_y: frame.y(),
+                    plan_x: plan.x(),
+                    plan_y: plan.y(),
+                });
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(RuntimeTerrainFrameError::SceneKindMismatch);
+            }
+            (Some(_), Some(_)) | (None, None) => {}
         }
         let local_animation_time_ms = self.m2.animation_time_ms();
         self.m2
@@ -597,9 +644,11 @@ impl TerrainFrame {
         self.world_models.update_transport_state(transport)?;
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         self.visible_draws.clear();
-        for (chunk, draw) in plan.chunks().iter().zip(&self.draws) {
-            if chunk.is_visible(frustum)? {
-                self.visible_draws.push(*draw);
+        if let Some(plan) = plan {
+            for (chunk, draw) in plan.chunks().iter().zip(&self.draws) {
+                if chunk.is_visible(frustum)? {
+                    self.visible_draws.push(*draw);
+                }
             }
         }
         let light = environment.light();
@@ -724,7 +773,7 @@ impl TerrainFrame {
     }
 
     /// Returns the ADT whose renderer resources this generation represents.
-    pub(super) const fn tile(&self) -> TerrainTileIndex {
+    pub(super) const fn tile(&self) -> Option<TerrainTileIndex> {
         self.tile
     }
 
@@ -747,6 +796,36 @@ impl TerrainFrame {
     pub(super) fn m2_placement_count(&self) -> usize {
         self.m2.placement_count()
     }
+}
+
+/// Prepares scene-wide M2 and WMO state shared by tiled and global maps.
+#[allow(clippy::too_many_arguments)]
+fn prepare_scene_models(
+    renderer: &mut VulkanRenderer,
+    m2_scene: &ResidentM2Scene,
+    world_models: &ResidentWorldModelScene,
+    world_model_filtering: WorldModelTextureFiltering,
+    world_model_base_mip: WorldModelBaseMip,
+    random: &mut CrtRand,
+    particle_twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
+    player: Option<ResidentPlayerFrameInput<'_>>,
+    creatures: &[ResidentCreatureFrameInput<'_>],
+    remote_players: &[ResidentPlayerFrameInput<'_>],
+    transport: Option<&ResidentTransport>,
+) -> Result<(M2Frame, WorldModelFrame), RuntimeTerrainFrameError> {
+    let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
+    m2.replace_player(renderer, player, random)?;
+    m2.replace_creatures(renderer, creatures, random)?;
+    m2.replace_remote_players(renderer, remote_players, random)?;
+    m2.replace_transport(renderer, transport, random)?;
+    let mut world_models = WorldModelFrame::prepare(
+        renderer,
+        world_models,
+        world_model_filtering,
+        world_model_base_mip,
+    )?;
+    world_models.replace_transport(renderer, transport)?;
+    Ok((m2, world_models))
 }
 
 /// Proves that mesh and source tables describe one exact MTEX generation.

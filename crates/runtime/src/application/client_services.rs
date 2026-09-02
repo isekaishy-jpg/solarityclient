@@ -681,9 +681,7 @@ impl ClientServices {
                 &mut self.blizzard_rand.borrow_mut(),
             )?;
         }
-        let Some(plan) = self.terrain.resident_mesh_plan() else {
-            return self.present_glue_frame();
-        };
+        let plan = self.terrain.resident_mesh_plan();
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let Some(frame) = self.terrain_frame.as_mut() else {
             return self.present_glue_frame();
@@ -1480,17 +1478,60 @@ impl ClientServices {
                 );
                 self.terrain_frame = Some(frame);
             }
-            RuntimeTerrainPoll::Idle | RuntimeTerrainPoll::GlobalWorldModel { .. } => {
+            RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id } => {
+                // Global-WMO maps have no MCSE/MH2O tile generation. Release
+                // any prior tiled-map audio before publishing their scene.
+                self.sound.disconnect()?;
+                let world_models = self
+                    .terrain
+                    .resident_world_models()
+                    .ok_or(RuntimeTerrainFrameError::SceneKindMismatch)?;
+                let m2_scene = self
+                    .terrain
+                    .resident_m2_scene()
+                    .ok_or(RuntimeTerrainFrameError::SceneKindMismatch)?;
+                let frame = TerrainFrame::prepare_global_world_model(
+                    &mut self.renderer,
+                    m2_scene,
+                    world_models,
+                    WorldModelTextureFiltering::Anisotropic4x,
+                    WorldModelBaseMip::Zero,
+                    &mut self.crt_rand,
+                    Arc::clone(&self.particle_twinkle),
+                    self.player.resident_frame_input(),
+                    &self.player.resident_creature_frame_inputs(),
+                    &self.player.resident_remote_player_frame_inputs(),
+                    self.transport.resident(),
+                )?;
+                tracing::info!(
+                    map_id,
+                    m2_mesh_count = frame.m2_mesh_count(),
+                    m2_placement_count = frame.m2_placement_count(),
+                    world_model_placement_count = frame.world_model_placement_count(),
+                    "global WMO entered renderer resources"
+                );
+                self.terrain_frame = Some(frame);
+            }
+            RuntimeTerrainPoll::Idle => {
                 self.sound.disconnect()?;
                 self.terrain_frame = None;
             }
             RuntimeTerrainPoll::Current { tile, .. } => {
-                if self.terrain_frame.as_ref().map(TerrainFrame::tile) != Some(tile) {
+                if self.terrain_frame.as_ref().and_then(TerrainFrame::tile) != Some(tile) {
                     return Err(RuntimeTerrainFrameError::MissingGpuGeneration {
                         tile_x: tile.x(),
                         tile_y: tile.y(),
                     }
                     .into());
+                }
+            }
+            RuntimeTerrainPoll::GlobalWorldModelCurrent { .. } => {
+                if self
+                    .terrain_frame
+                    .as_ref()
+                    .is_none_or(|frame| frame.tile().is_some())
+                {
+                    return Err(RuntimeTerrainFrameError::SceneKindMismatch.into());
                 }
             }
         }

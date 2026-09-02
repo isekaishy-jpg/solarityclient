@@ -142,17 +142,69 @@ pub(super) fn prepare_world_models(
         referenced[*reference as usize] = true;
     }
 
+    prepare_world_model_placements(
+        tile.world_models()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, placement)| referenced[index].then_some(placement)),
+        model_cache,
+        m2_cache,
+        texture_cache,
+        m2_builder,
+        store,
+    )
+}
+
+/// Admits the sole WDT-level MODF owner used by a global-WMO map.
+pub(super) fn prepare_global_world_model(
+    placement: &TerrainWorldModelPlacement,
+    model_cache: &mut WmoModelCache,
+    m2_cache: &mut M2ModelCache,
+    texture_cache: &mut BlpTextureCache,
+    m2_builder: &mut ResidentM2SceneBuilder,
+    store: &mut AssetStore,
+) -> Result<
+    (
+        ResidentWorldModelScene,
+        WorldModelCollisionScene,
+        WorldModelLiquidScene,
+    ),
+    RuntimeTerrainError,
+> {
+    prepare_world_model_placements(
+        std::iter::once(placement),
+        model_cache,
+        m2_cache,
+        texture_cache,
+        m2_builder,
+        store,
+    )
+}
+
+/// Joins selected MODF owners to their shared WMO, collision, and MODD state.
+fn prepare_world_model_placements<'placement>(
+    placements: impl IntoIterator<Item = &'placement TerrainWorldModelPlacement>,
+    model_cache: &mut WmoModelCache,
+    m2_cache: &mut M2ModelCache,
+    texture_cache: &mut BlpTextureCache,
+    m2_builder: &mut ResidentM2SceneBuilder,
+    store: &mut AssetStore,
+) -> Result<
+    (
+        ResidentWorldModelScene,
+        WorldModelCollisionScene,
+        WorldModelLiquidScene,
+    ),
+    RuntimeTerrainError,
+> {
     let mut result = ResidentWorldModelScene::default();
     let mut collision = WorldModelCollisionScene::new();
     let mut liquids = WorldModelLiquidScene::new();
     let mut source_indices = HashMap::<AssetPath, usize>::new();
-    let mut placement_indices = HashMap::<u32, usize>::new();
-    for (index, placement) in tile.world_models().iter().enumerate() {
-        if !referenced[index] {
-            continue;
-        }
-        if let Some(previous_index) = placement_indices.insert(placement.unique_id(), index) {
-            if !same_world_model_placement(&tile.world_models()[previous_index], placement) {
+    let mut placement_owners = HashMap::<u32, &TerrainWorldModelPlacement>::new();
+    for placement in placements {
+        if let Some(previous) = placement_owners.insert(placement.unique_id(), placement) {
+            if !same_world_model_placement(previous, placement) {
                 return Err(RuntimeTerrainError::ConflictingWorldModelPlacement {
                     unique_id: placement.unique_id(),
                 });

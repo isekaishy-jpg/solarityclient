@@ -14,8 +14,7 @@ use wow_adt::{
     AdtVersion, DoodadPlacement, McalChunk, MclyChunk, MclyFlags, MclyLayer, McseChunk, ParsedAdt,
     SoundEmitter, WmoPlacement, parse_adt,
 };
-use wow_wdt::chunks::MphdFlags;
-use wow_wdt::chunks::MwmoChunk;
+use wow_wdt::chunks::{ModfChunk, ModfEntry, MphdFlags, MwmoChunk};
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
@@ -73,6 +72,67 @@ fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {
         TerrainMap::tile_at_world_position(1_000.0, 5_800.0),
         TerrainTileIndex::new(21, 30).ok_or("fixture world tile is invalid")?
     );
+    Ok(())
+}
+
+/// WMO-only WDTs retain the sole MODF transform and Map.dbc base area.
+#[test]
+fn terrain_map_retains_global_world_model_placement() -> Result<(), Box<dyn Error>> {
+    const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
+    let map_table = map_table();
+    let mut wdt = WdtFile::new(WowVersion::WotLK);
+    wdt.mphd.flags |= MphdFlags::WDT_USES_GLOBAL_MAP_OBJ;
+    wdt.mwmo = Some(MwmoChunk {
+        filenames: vec!["World\\Wmo\\Global.wmo".to_owned()],
+    });
+    wdt.modf = Some(ModfChunk {
+        entries: vec![ModfEntry {
+            id: 0,
+            unique_id: 77,
+            position: [CLIENT_MAP_ORIGIN - 20.0, 30.0, CLIENT_MAP_ORIGIN - 10.0],
+            rotation: [1.0, 2.0, 3.0],
+            lower_bounds: [CLIENT_MAP_ORIGIN - 22.0, 28.0, CLIENT_MAP_ORIGIN - 12.0],
+            upper_bounds: [CLIENT_MAP_ORIGIN - 18.0, 32.0, CLIENT_MAP_ORIGIN - 8.0],
+            flags: 4,
+            doodad_set: 5,
+            name_set: 6,
+            scale: 0,
+        }],
+    });
+    let mut wdt_bytes = Vec::new();
+    WdtWriter::new(&mut wdt_bytes).write(&wdt)?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Map.dbc",
+            bytes: &map_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend.wdt",
+            bytes: &wdt_bytes,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let definition = maps.map(571).ok_or("Northrend map is absent")?;
+
+    let terrain = TerrainMap::load(&mut store, definition)?;
+    let placement = terrain
+        .global_world_model()
+        .ok_or("global WMO placement is absent")?;
+    assert_eq!(placement.path().as_str(), "WORLD\\WMO\\GLOBAL.WMO");
+    assert_eq!(placement.unique_id(), 77);
+    assert_position(placement.position(), [10.0, 20.0, 30.0]);
+    assert_eq!(placement.rotation(), [1.0, 2.0, 3.0]);
+    assert_position(placement.bounds()[0], [8.0, 18.0, 28.0]);
+    assert_position(placement.bounds()[1], [12.0, 22.0, 32.0]);
+    assert_eq!(placement.flags(), 4);
+    assert_eq!(placement.doodad_set(), 5);
+    assert_eq!(placement.name_set(), 6);
+    assert_eq!(terrain.global_area_id(), Some(571));
+    assert_eq!(terrain.existing_tiles().count(), 0);
     Ok(())
 }
 
