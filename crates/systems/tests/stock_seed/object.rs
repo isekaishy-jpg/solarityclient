@@ -144,6 +144,50 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     Ok(())
 }
 
+/// A create mask omits zero words while the stock dense player table still
+/// makes those private values authoritative to synchronous FrameXML queries.
+#[test]
+fn local_player_create_materializes_omitted_zero_progression_and_money()
+-> Result<(), Box<dyn Error>> {
+    let guid = 0x0000_0000_0000_0042;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(1),
+        guid,
+        "MaxLevel",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let create_fields = [
+        (4, 1.0_f32.to_bits()),
+        (23, u32::from_le_bytes([1, 1, 0, 0])),
+        (24, 1_000),
+        (32, 1_000),
+        (54, 80),
+        (55, 1),
+        (67, 49),
+        (68, 49),
+    ];
+    world.create_object(guid, ObjectKind::Player, None, create_fields)?;
+    project_object_fields(&mut world, guid, create_fields)?;
+
+    assert_eq!(world.local_player_money(), Some(PlayerMoney::new(0)));
+    assert_eq!(
+        world.local_player_progression(),
+        Some(PlayerProgression::new(0, 0))
+    );
+
+    // An unrelated sparse values update must retain both zero-valued views.
+    let values_fields = [(24, 999)];
+    world.update_fields(guid, values_fields)?;
+    project_object_fields(&mut world, guid, values_fields)?;
+    assert_eq!(world.local_player_money(), Some(PlayerMoney::new(0)));
+    assert_eq!(
+        world.local_player_progression(),
+        Some(PlayerProgression::new(0, 0))
+    );
+    Ok(())
+}
+
 /// Game-object display identity survives sparse field projection for residency.
 #[test]
 fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<dyn Error>> {

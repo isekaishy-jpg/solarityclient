@@ -200,7 +200,12 @@ where
         .ok();
     let mut equipment_changed = false;
     let mut equipment_items = player_equipment.unwrap_or_default().items();
-    let mut player_money = None;
+    let player_money = world
+        .storage()
+        .get::<&PlayerMoney>(entity)
+        .map(|component| **component)
+        .ok();
+    let mut player_money_update = None;
     let player_progression = world
         .storage()
         .get::<&PlayerProgression>(entity)
@@ -322,7 +327,7 @@ where
                 progression_changed = true;
             }
             PLAYER_FIELD_COINAGE if kind == ObjectKind::Player => {
-                player_money = Some(PlayerMoney::new(value));
+                player_money_update = Some(PlayerMoney::new(value));
             }
             _ => {}
         }
@@ -405,18 +410,28 @@ where
             .storage_mut()
             .add_component(entity, (PlayerEquipment::new(equipment_items),));
     }
-    // Unlike public appearance fields, private coinage is not present for
-    // remote players. Materialize it only when that exact word is observed.
-    if let Some(player_money) = player_money {
+    // The create mask omits zero-valued words, but the stock dense player
+    // field array is already initialized to zero. Materialize the controlled
+    // player's private zero values on its first typed projection so a max-level
+    // character (zero XP and next-level XP) and a character carrying no money
+    // remain authoritative inputs to synchronous FrameXML bootstrap.
+    if kind == ObjectKind::Player && entity == world.local_player() {
+        if player_money.is_none() || player_money_update.is_some() {
+            world.storage_mut().add_component(
+                entity,
+                (player_money_update.unwrap_or(PlayerMoney::new(0)),),
+            );
+        }
+        if player_progression.is_none() || progression_changed {
+            world.storage_mut().add_component(
+                entity,
+                (PlayerProgression::new(experience, next_level_experience),),
+            );
+        }
+    } else if let Some(player_money) = player_money_update {
+        // Remote-player updates do not normally contain private coinage, but
+        // preserve an explicitly supplied protocol word without inventing it.
         world.storage_mut().add_component(entity, (player_money,));
-    }
-    // XP is private to the controlled player. Preserve explicit absence until
-    // at least one of the two authoritative update words has been received.
-    if progression_changed {
-        world.storage_mut().add_component(
-            entity,
-            (PlayerProgression::new(experience, next_level_experience),),
-        );
     }
     Ok(())
 }
