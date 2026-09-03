@@ -530,7 +530,7 @@ impl ClientServices {
                         .keyboard_key(key, key_event.state == ButtonState::Pressed, modifiers)?
                         .is_some()
                     {
-                        self.login_ui = None;
+                        self.glue_ui_dirty = true;
                     }
                 }
             }
@@ -539,7 +539,7 @@ impl ClientServices {
                     && self.glue.media_intent().movie().is_none() =>
             {
                 if self.glue.text_input(&input.text)?.is_some() {
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
             }
             PlatformEvent::TextEditing(composition)
@@ -547,7 +547,7 @@ impl ClientServices {
                     && self.glue.media_intent().movie().is_none() =>
             {
                 if self.glue.text_composition(&composition.text)?.is_some() {
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
             }
             PlatformEvent::MouseButton(pointer)
@@ -576,7 +576,7 @@ impl ClientServices {
                     ),
                 )?;
                 if dispatch.object_index().is_some() {
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
             }
             PlatformEvent::MouseMotion(pointer)
@@ -620,7 +620,7 @@ impl ClientServices {
                     .pointer_wheel(position, f64::from(delta))?
                     .is_some()
                 {
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
             }
             _ => {}
