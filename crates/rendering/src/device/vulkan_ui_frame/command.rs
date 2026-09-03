@@ -213,21 +213,23 @@ fn record_mesh_updates(
             continue;
         }
         let updates = meshes.take_pending_updates(mesh)?;
-        if let Some((buffer, bytes)) = updates.vertex {
+        if let Some((buffer, offset, bytes)) = updates.vertex {
             record_buffer_update(
                 device,
                 command_buffer,
                 buffer,
+                offset,
                 bytes,
                 vk::PipelineStageFlags2::VERTEX_INPUT,
                 vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
             );
         }
-        if let Some((buffer, bytes)) = updates.index {
+        if let Some((buffer, offset, bytes)) = updates.index {
             record_buffer_update(
                 device,
                 command_buffer,
                 buffer,
+                offset,
                 bytes,
                 vk::PipelineStageFlags2::INDEX_INPUT,
                 vk::AccessFlags2::INDEX_READ,
@@ -243,6 +245,7 @@ fn record_buffer_update(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     buffer: vk::Buffer,
+    buffer_offset: vk::DeviceSize,
     bytes: &[u8],
     destination_stage: vk::PipelineStageFlags2,
     destination_access: vk::AccessFlags2,
@@ -253,7 +256,7 @@ fn record_buffer_update(
         .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
         .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
         .buffer(buffer)
-        .offset(0)
+        .offset(buffer_offset)
         .size(bytes.len() as vk::DeviceSize)];
     let prior_read_dependency =
         vk::DependencyInfo::default().buffer_memory_barriers(&prior_read_barriers);
@@ -261,7 +264,7 @@ fn record_buffer_update(
     // synchronization scope, preventing this write from racing its UI reads.
     unsafe { device.cmd_pipeline_barrier2(command_buffer, &prior_read_dependency) };
     for (chunk_index, chunk) in bytes.chunks(UPDATE_CHUNK_SIZE).enumerate() {
-        let offset = (chunk_index * UPDATE_CHUNK_SIZE) as vk::DeviceSize;
+        let offset = buffer_offset + (chunk_index * UPDATE_CHUNK_SIZE) as vk::DeviceSize;
         // SAFETY: Retained allocations cover every four-byte-aligned chunk and
         // Vulkan copies the supplied bytes into command-buffer-owned storage.
         unsafe { device.cmd_update_buffer(command_buffer, buffer, offset, chunk) };
@@ -272,7 +275,7 @@ fn record_buffer_update(
         .dst_stage_mask(destination_stage)
         .dst_access_mask(destination_access)
         .buffer(buffer)
-        .offset(0)
+        .offset(buffer_offset)
         .size(bytes.len() as vk::DeviceSize)];
     let current_read_dependency =
         vk::DependencyInfo::default().buffer_memory_barriers(&current_read_barriers);

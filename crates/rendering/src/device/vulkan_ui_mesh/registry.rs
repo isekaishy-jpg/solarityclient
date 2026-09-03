@@ -19,17 +19,15 @@ struct GpuUiMesh {
     vertex_bytes: Vec<u8>,
     /// Four-byte-aligned logical payload within the retained index capacity.
     index_bytes: Vec<u8>,
-    /// Buffer-kind mask awaiting insertion into the next graphics submission.
-    pending_updates: Cell<u8>,
+    /// Byte ranges awaiting insertion into the next graphics submission.
+    pending_vertex_update: Cell<Option<(usize, usize)>>,
+    pending_index_update: Cell<Option<(usize, usize)>>,
 }
-
-const VERTEX_UPDATE: u8 = 1;
-const INDEX_UPDATE: u8 = 2;
 
 /// Borrowed changed payloads consumed by the next graphics command buffer.
 pub(in crate::device) struct UiMeshUpdates<'a> {
-    pub(in crate::device) vertex: Option<(vk::Buffer, &'a [u8])>,
-    pub(in crate::device) index: Option<(vk::Buffer, &'a [u8])>,
+    pub(in crate::device) vertex: Option<(vk::Buffer, vk::DeviceSize, &'a [u8])>,
+    pub(in crate::device) index: Option<(vk::Buffer, vk::DeviceSize, &'a [u8])>,
 }
 
 /// Owns immutable UI mesh generations until renderer teardown.
@@ -99,21 +97,17 @@ impl UiMeshRegistry {
             return Ok(());
         }
 
-        let mut pending_updates = 0;
-        if resource.vertex_bytes.as_slice() != vertex_bytes {
-            resource.vertex_bytes.clear();
-            resource.vertex_bytes.extend_from_slice(vertex_bytes);
-            pending_updates |= VERTEX_UPDATE;
+        if let Some(range) = replace_payload(&mut resource.vertex_bytes, vertex_bytes) {
+            resource
+                .pending_vertex_update
+                .set(merge_update(resource.pending_vertex_update.get(), range));
         }
-        if resource.index_bytes.as_slice() != index_bytes {
-            resource.index_bytes.clear();
-            resource.index_bytes.extend_from_slice(index_bytes);
-            pending_updates |= INDEX_UPDATE;
+        if let Some(range) = replace_payload(&mut resource.index_bytes, index_bytes) {
+            resource
+                .pending_index_update
+                .set(merge_update(resource.pending_index_update.get(), range));
         }
         resource.info = mesh_info(plan);
-        resource
-            .pending_updates
-            .set(resource.pending_updates.get() | pending_updates);
         Ok(())
     }
 
@@ -133,13 +127,17 @@ impl UiMeshRegistry {
             .resources
             .get(handle.slot as usize)
             .ok_or(VulkanError::UnknownUiMeshHandle)?;
-        let pending = resource.pending_updates.get();
         let (vertex_buffer, index_buffer) = resource.buffers.buffers();
-        let vertex = (pending & VERTEX_UPDATE != 0)
-            .then_some((vertex_buffer, resource.vertex_bytes.as_slice()));
-        let index = (pending & INDEX_UPDATE != 0)
-            .then_some((index_buffer, resource.index_bytes.as_slice()));
-        resource.pending_updates.set(0);
+        let vertex = take_update(
+            &resource.pending_vertex_update,
+            vertex_buffer,
+            &resource.vertex_bytes,
+        );
+        let index = take_update(
+            &resource.pending_index_update,
+            index_buffer,
+            &resource.index_bytes,
+        );
         Ok(UiMeshUpdates { vertex, index })
     }
 
@@ -210,8 +208,55 @@ fn upload_ui_mesh(
         info,
         vertex_bytes,
         index_bytes,
-        pending_updates: Cell::new(0),
+        pending_vertex_update: Cell::new(None),
+        pending_index_update: Cell::new(None),
     })
+}
+
+/// Copies only the aligned changed span into retained command-source bytes.
+fn replace_payload(current: &mut Vec<u8>, candidate: &[u8]) -> Option<(usize, usize)> {
+    let common_length = current.len().min(candidate.len());
+    let first_difference = current[..common_length]
+        .iter()
+        .zip(&candidate[..common_length])
+        .position(|(left, right)| left != right)
+        .or((current.len() != candidate.len()).then_some(common_length));
+    let first_difference = first_difference?;
+    let final_difference = current[..common_length]
+        .iter()
+        .zip(&candidate[..common_length])
+        .rposition(|(left, right)| left != right)
+        .map_or(candidate.len(), |index| index + 1)
+        .max(candidate.len().min(current.len()).min(first_difference));
+    let start = first_difference & !3;
+    let end = final_difference.checked_add(3).map(|end| end & !3)?;
+    current.resize(candidate.len(), 0);
+    let end = end.min(candidate.len());
+    if start < end {
+        current[start..end].copy_from_slice(&candidate[start..end]);
+        Some((start, end))
+    } else {
+        None
+    }
+}
+
+fn merge_update(
+    pending: Option<(usize, usize)>,
+    current: (usize, usize),
+) -> Option<(usize, usize)> {
+    Some(pending.map_or(current, |pending| {
+        (pending.0.min(current.0), pending.1.max(current.1))
+    }))
+}
+
+fn take_update<'a>(
+    pending: &Cell<Option<(usize, usize)>>,
+    buffer: vk::Buffer,
+    bytes: &'a [u8],
+) -> Option<(vk::Buffer, vk::DeviceSize, &'a [u8])> {
+    let (start, end) = pending.take()?;
+    let end = end.min(bytes.len());
+    (start < end).then_some((buffer, start as vk::DeviceSize, &bytes[start..end]))
 }
 
 fn mesh_info(plan: &UiMeshPlan) -> UiMeshResourceInfo {
@@ -258,4 +303,32 @@ fn validated_update_bytes(bytes: &[u8]) -> Result<&[u8], VulkanError> {
         ));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_payload;
+
+    #[test]
+    fn retained_payload_limits_updates_to_aligned_changed_bytes() {
+        let mut retained = (0_u8..32).collect::<Vec<_>>();
+        let mut candidate = retained.clone();
+        candidate[10] = 200;
+        candidate[13] = 201;
+
+        assert_eq!(replace_payload(&mut retained, &candidate), Some((8, 16)));
+        assert_eq!(retained, candidate);
+        assert_eq!(replace_payload(&mut retained, &candidate), None);
+    }
+
+    #[test]
+    fn retained_payload_handles_growth_and_logical_shrink() {
+        let mut retained = vec![1_u8; 8];
+        let candidate = vec![1_u8; 16];
+        assert_eq!(replace_payload(&mut retained, &candidate), Some((8, 16)));
+        assert_eq!(retained, candidate);
+
+        assert_eq!(replace_payload(&mut retained, &[1_u8; 4]), None);
+        assert_eq!(retained, [1_u8; 4]);
+    }
 }
