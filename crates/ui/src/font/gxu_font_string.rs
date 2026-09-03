@@ -68,6 +68,7 @@ pub struct UiGlyphAtlasPlan {
     extent: (u32, u32),
     rgba8: Vec<u8>,
     html_quads: Vec<LocalGlyphQuad>,
+    html_runs: Vec<LocalGlyphRun>,
     live_quads: Vec<LocalGlyphQuad>,
     edit_box_layouts: Vec<Option<EditBoxTextLayout>>,
     glyphs: HashMap<GlyphKey, RasterizedGlyph>,
@@ -193,6 +194,7 @@ impl UiGlyphAtlasPlan {
             extent,
             rgba8,
             html_quads: Vec::new(),
+            html_runs: Vec::new(),
             live_quads: Vec::new(),
             edit_box_layouts: Vec::new(),
             glyphs,
@@ -412,7 +414,7 @@ impl UiGlyphAtlasPlan {
         }
         let (extent, placements) = pack(&keys, &glyphs)?;
         let rgba8 = compose_atlas(extent, &keys, &glyphs, &placements)?;
-        let html_quads = layout_quads(
+        let html_layout = layout_quads(
             html,
             live,
             geometry,
@@ -444,7 +446,8 @@ impl UiGlyphAtlasPlan {
             identity: next_identity(),
             extent,
             rgba8,
-            html_quads,
+            html_quads: html_layout.quads,
+            html_runs: html_layout.runs,
             live_quads: live_layout.quads,
             edit_box_layouts: live_layout.edit_boxes,
             glyphs,
@@ -573,38 +576,23 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         scroll_frames: Option<&UiScrollFramePlan>,
     ) -> Vec<UiGlyphQuad> {
-        self.html_quads
-            .iter()
-            .chain(&self.live_quads)
-            .filter_map(|quad| {
-                let region = geometry.region(quad.object_index)?;
-                if !region.effectively_shown() || region.effective_alpha() <= 0.0 {
-                    return None;
-                }
-                let owner = region.presentation_bounds();
-                let scale = region.effective_scale();
-                let scroll = quad
-                    .clip_object
-                    .and_then(|index| scroll_frames?.state(index))
-                    .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
-                let [left, bottom, right, top] = quad.bounds;
-                let mut color = quad.color;
-                color[3] *= region.effective_alpha() as f32;
-                let resolved = UiGlyphQuad {
-                    packet_key: quad.packet_key,
-                    object_index: quad.object_index,
-                    bounds: [
-                        (owner.left() + (f64::from(left) - scroll.0) * scale) as f32,
-                        (owner.top() + (f64::from(bottom) + scroll.1) * scale) as f32,
-                        (owner.left() + (f64::from(right) - scroll.0) * scale) as f32,
-                        (owner.top() + (f64::from(top) + scroll.1) * scale) as f32,
-                    ],
-                    texture_coordinates: quad.texture_coordinates,
-                    color,
-                };
-                clip_quad(resolved, quad.clip_object, geometry)
-            })
-            .collect()
+        let mut resolved = Vec::new();
+        for run in &self.html_runs {
+            if !run.is_visible(&self.html_quads, geometry, scroll_frames) {
+                continue;
+            }
+            resolved.extend(
+                self.html_quads[run.first_quad..run.first_quad + run.quad_count]
+                    .iter()
+                    .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
+            );
+        }
+        resolved.extend(
+            self.live_quads
+                .iter()
+                .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
+        );
+        resolved
     }
 }
 
@@ -617,6 +605,67 @@ struct LocalGlyphQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
+}
+
+/// Contiguous glyphs from one immutable `SimpleHTML` line.
+///
+/// The line envelope lets scrolling reject almost the entire legal document
+/// before touching individual glyphs. Glyphs in the few intersecting lines
+/// still take the exact per-quad clipping path, including partial edge rows.
+#[derive(Clone, Debug, PartialEq)]
+struct LocalGlyphRun {
+    first_quad: usize,
+    quad_count: usize,
+    bounds: [f32; 4],
+}
+
+impl LocalGlyphRun {
+    fn is_visible(
+        &self,
+        quads: &[LocalGlyphQuad],
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: Option<&UiScrollFramePlan>,
+    ) -> bool {
+        let Some(quad) = quads.get(self.first_quad) else {
+            return false;
+        };
+        let Some(region) = geometry.region(quad.object_index) else {
+            return false;
+        };
+        if !region.effectively_shown() || region.effective_alpha() <= 0.0 {
+            return false;
+        }
+        let Some(clip_object) = quad.clip_object else {
+            return true;
+        };
+        let Some(clip) = geometry.region(clip_object) else {
+            return false;
+        };
+        if !clip.effectively_shown() || clip.effective_alpha() <= 0.0 {
+            return false;
+        }
+        let owner = region.presentation_bounds();
+        let viewport = clip.presentation_bounds();
+        let scale = region.effective_scale();
+        let scroll = scroll_frames
+            .and_then(|frames| frames.state(clip_object))
+            .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
+        let [left, bottom, right, top] = self.bounds.map(f64::from);
+        let resolved_left = owner.left() + (left - scroll.0) * scale;
+        let resolved_bottom = owner.top() + (bottom + scroll.1) * scale;
+        let resolved_right = owner.left() + (right - scroll.0) * scale;
+        let resolved_top = owner.top() + (top + scroll.1) * scale;
+        resolved_left < viewport.right()
+            && resolved_right > viewport.left()
+            && resolved_bottom < viewport.top()
+            && resolved_top > viewport.bottom()
+    }
+}
+
+#[derive(Default)]
+struct HtmlGlyphLayout {
+    quads: Vec<LocalGlyphQuad>,
+    runs: Vec<LocalGlyphRun>,
 }
 
 /// Text geometry retained for EditBox pointer placement and drag selection.
@@ -1403,8 +1452,8 @@ fn layout_quads(
     glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
     placements: &HashMap<GlyphKey, AtlasPlacement>,
     extent: (u32, u32),
-) -> Result<Vec<LocalGlyphQuad>, FontError> {
-    let mut quads = Vec::new();
+) -> Result<HtmlGlyphLayout, FontError> {
+    let mut layout = HtmlGlyphLayout::default();
     for object_index in 0..geometry.region_count() {
         let Some(region) = geometry.region(object_index) else {
             continue;
@@ -1414,6 +1463,13 @@ fn layout_quads(
         };
         let width = region.logical_bounds().width();
         for line in node.lines() {
+            let first_quad = layout.quads.len();
+            let mut run_bounds = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
             let definition = font_definition(fonts, line.font_object())?;
             let font = font_key(definition, pixels_per_ui_unit)?;
             let line_width = f64::from(line.width());
@@ -1455,21 +1511,67 @@ fn layout_quads(
                     let v0 = placement.y as f32 / extent.1 as f32;
                     let u1 = (placement.x + glyph.width()) as f32 / extent.0 as f32;
                     let v1 = (placement.y + glyph.height()) as f32 / extent.1 as f32;
-                    quads.push(LocalGlyphQuad {
+                    let bounds = [left as f32, bottom as f32, right as f32, top as f32];
+                    run_bounds[0] = run_bounds[0].min(bounds[0]);
+                    run_bounds[1] = run_bounds[1].min(bounds[1]);
+                    run_bounds[2] = run_bounds[2].max(bounds[2]);
+                    run_bounds[3] = run_bounds[3].max(bounds[3]);
+                    layout.quads.push(LocalGlyphQuad {
                         packet_key: live
                             .and_then(|live| UiPresentationPacketKey::for_text(live, object_index)),
                         object_index,
                         clip_object: node.clip_object(),
-                        bounds: [left as f32, bottom as f32, right as f32, top as f32],
+                        bounds,
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color,
                     });
                 }
                 pen_x_26_6 += glyph.advance_x_26_6();
             }
+            let quad_count = layout.quads.len() - first_quad;
+            if quad_count > 0 {
+                layout.runs.push(LocalGlyphRun {
+                    first_quad,
+                    quad_count,
+                    bounds: run_bounds,
+                });
+            }
         }
     }
-    Ok(quads)
+    Ok(layout)
+}
+
+fn resolve_quad(
+    quad: &LocalGlyphQuad,
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: Option<&UiScrollFramePlan>,
+) -> Option<UiGlyphQuad> {
+    let region = geometry.region(quad.object_index)?;
+    if !region.effectively_shown() || region.effective_alpha() <= 0.0 {
+        return None;
+    }
+    let owner = region.presentation_bounds();
+    let scale = region.effective_scale();
+    let scroll = quad
+        .clip_object
+        .and_then(|index| scroll_frames?.state(index))
+        .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
+    let [left, bottom, right, top] = quad.bounds;
+    let mut color = quad.color;
+    color[3] *= region.effective_alpha() as f32;
+    let resolved = UiGlyphQuad {
+        packet_key: quad.packet_key,
+        object_index: quad.object_index,
+        bounds: [
+            (owner.left() + (f64::from(left) - scroll.0) * scale) as f32,
+            (owner.top() + (f64::from(bottom) + scroll.1) * scale) as f32,
+            (owner.left() + (f64::from(right) - scroll.0) * scale) as f32,
+            (owner.top() + (f64::from(top) + scroll.1) * scale) as f32,
+        ],
+        texture_coordinates: quad.texture_coordinates,
+        color,
+    };
+    clip_quad(resolved, quad.clip_object, geometry)
 }
 
 /// Clips a glyph to its scroll viewport and retains texel-to-edge alignment.

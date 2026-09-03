@@ -33,6 +33,7 @@ pub struct GlueManager {
     fonts: FontCatalog,
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
+    live: UiRuntimeObjectPlan,
     geometry: UiRegionGeometryPlan,
     scroll_frames: UiScrollFramePlan,
     glyphs: UiGlyphAtlasPlan,
@@ -47,6 +48,7 @@ pub struct GlueManager {
     pointer_capture: Option<(usize, UiPointerButton)>,
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
+    live_refresh_deferred: bool,
     glyph_logical_height: u32,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
@@ -328,6 +330,7 @@ impl GlueManager {
             fonts,
             frames,
             regions,
+            live,
             geometry,
             scroll_frames,
             glyphs,
@@ -342,6 +345,7 @@ impl GlueManager {
             pointer_capture: None,
             edit_box_pointer_anchor: None,
             pointer_hover: None,
+            live_refresh_deferred: false,
             glyph_logical_height: logical_extent.1,
             report,
             environment,
@@ -912,6 +916,28 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the slider's `OnValueChanged` handler
     /// fails or the resulting live presentation cannot be resolved.
     pub fn pointer_motion(&mut self, position: (f64, f64)) -> Result<Option<usize>, UiEventError> {
+        self.pointer_motion_internal(position, false)
+    }
+
+    /// Routes motion while deferring only a captured Slider's retained-plan
+    /// refresh until [`Self::flush_deferred_refresh`].
+    ///
+    /// Authored `OnValueChanged` callbacks still run for every native motion
+    /// event. The runtime event pump uses this boundary to coalesce only their
+    /// visual product, preserving event order while avoiding several complete
+    /// mesh generations before a single frame can be presented.
+    pub fn pointer_motion_deferred_refresh(
+        &mut self,
+        position: (f64, f64),
+    ) -> Result<Option<usize>, UiEventError> {
+        self.pointer_motion_internal(position, true)
+    }
+
+    fn pointer_motion_internal(
+        &mut self,
+        position: (f64, f64),
+        defer_slider_refresh: bool,
+    ) -> Result<Option<usize>, UiEventError> {
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
@@ -962,8 +988,25 @@ impl GlueManager {
         };
         self.runtime
             .dispatch_slider_value(&self.bundle, object_index, value)?;
-        self.refresh_live_state()?;
+        if defer_slider_refresh {
+            self.live_refresh_deferred = true;
+        } else {
+            self.refresh_live_state()?;
+        }
         Ok(Some(object_index))
+    }
+
+    /// Commits one retained UI generation after a burst of Slider motion.
+    ///
+    /// Returns whether a deferred generation existed. Calling this without a
+    /// pending drag is intentionally free so non-motion event boundaries can
+    /// use it unconditionally.
+    pub fn flush_deferred_refresh(&mut self) -> Result<bool, UiEventError> {
+        if !self.live_refresh_deferred {
+            return Ok(false);
+        }
+        self.refresh_live_state()?;
+        Ok(true)
     }
 
     fn update_pointer_hover(&mut self, hit: Option<usize>) -> Result<bool, UiEventError> {
@@ -1079,7 +1122,14 @@ impl GlueManager {
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
+        self.live_refresh_deferred = false;
         let mut live = self.runtime.snapshot_objects(&self.bundle)?;
+        if live == self.live {
+            return Ok(());
+        }
+        if live.is_scroll_only_update_from(&self.live) {
+            return self.refresh_scroll_state(live);
+        }
         let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let html_changed = self.runtime.refresh_simple_html_layout(
             &self.bundle,
@@ -1123,6 +1173,7 @@ impl GlueManager {
         )?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
+        self.live = live;
         self.geometry = geometry;
         self.scroll_frames = scroll_frames;
         self.presentation = presentation;
@@ -1130,6 +1181,33 @@ impl GlueManager {
         self.objects = objects;
         self.child_indices = child_indices;
         self.pointer = pointer;
+        Ok(())
+    }
+
+    /// Updates the two retained products affected by a stock scrollbar drag.
+    ///
+    /// Slider values can move an unanchored thumb and ScrollFrame offsets move
+    /// and clip their assigned child. The complete snapshot comparison above
+    /// proves that text, HTML, hierarchy, material state, and pointer admission
+    /// are otherwise unchanged, so none of those expensive plans need rebuilt.
+    fn refresh_scroll_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
+        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        self.runtime
+            .publish_resolved_geometry(&self.bundle, &geometry)?;
+        let scroll_frames = UiScrollFramePlan::from_live(&live);
+        let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
+        let render_plan = UiRenderPlan::prepare_with_glyphs(
+            &presentation,
+            &self.glyphs,
+            &geometry,
+            &scroll_frames,
+            geometry.ui_extent(),
+        )?;
+        self.live = live;
+        self.geometry = geometry;
+        self.scroll_frames = scroll_frames;
+        self.presentation = presentation;
+        self.render_plan = render_plan;
         Ok(())
     }
 }

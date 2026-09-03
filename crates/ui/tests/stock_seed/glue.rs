@@ -721,7 +721,20 @@ fn glue_manager_routes_vertical_slider_click_and_drag() -> Result<(), Box<dyn Er
     let bottom = ((track.left() + track.right()) * 0.5, track.bottom());
     let down = manager.pointer_button(top, UiPointerButton::Left, true)?;
     assert_eq!(down.object_index(), Some(slider_index));
-    assert_eq!(manager.pointer_motion(bottom)?, Some(slider_index));
+    assert_eq!(
+        manager.pointer_motion_deferred_refresh(bottom)?,
+        Some(slider_index)
+    );
+    assert_eq!(
+        manager
+            .geometry()
+            .region(thumb_index)
+            .ok_or("missing retained thumb geometry")?
+            .presentation_bounds(),
+        initial_thumb
+    );
+    assert!(manager.flush_deferred_refresh()?);
+    assert!(!manager.flush_deferred_refresh()?);
     let up = manager.pointer_button(bottom, UiPointerButton::Left, false)?;
     assert_eq!(up.object_index(), Some(slider_index));
     assert!(!up.click_activated());

@@ -472,6 +472,9 @@ impl ClientServices {
         if self.gameplay.world().is_some() {
             return self.service_world_platform_event(event);
         }
+        if !matches!(event, PlatformEvent::MouseMotion(_)) && self.glue.flush_deferred_refresh()? {
+            self.login_ui = None;
+        }
         match event {
             PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
                 let Some(scan_code) = key_event.scan_code else {
@@ -559,7 +562,11 @@ impl ClientServices {
                     f64::from(pointer.x) / f64::from(window_width) * ui_width,
                     ui_height - f64::from(pointer.y) / f64::from(window_height) * ui_height,
                 );
-                if self.glue.pointer_motion(position)?.is_some() {
+                if self
+                    .glue
+                    .pointer_motion_deferred_refresh(position)?
+                    .is_some()
+                {
                     self.login_ui = None;
                 }
             }
@@ -709,6 +716,9 @@ impl ClientServices {
             self.glue_update_clock = update_time;
             std::thread::sleep(std::time::Duration::from_millis(16));
             return Ok(());
+        }
+        if self.gameplay.world().is_none() && self.glue.flush_deferred_refresh()? {
+            self.login_ui = None;
         }
         if self.gameplay.world().is_none() {
             self.sound

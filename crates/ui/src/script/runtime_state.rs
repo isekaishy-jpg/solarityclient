@@ -166,6 +166,7 @@ pub(crate) struct UiRuntimeTexture {
 }
 
 /// Flat post-bootstrap object arena and its anchor records.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiRuntimeObjectPlan {
     objects: Vec<UiRuntimeObject>,
     anchors: Vec<UiRuntimeAnchor>,
@@ -178,6 +179,38 @@ impl UiRuntimeObjectPlan {
 
     pub(crate) fn anchors_for(&self, object: &UiRuntimeObject) -> &[UiRuntimeAnchor] {
         &self.anchors[object.first_anchor..object.first_anchor + object.anchor_count]
+    }
+
+    /// Returns whether the only live presentation mutations are scroll offsets
+    /// and Slider values. Those values move clipped content and native thumb
+    /// geometry, but cannot invalidate text layout, object ownership, or input
+    /// admission. Keeping that distinction here beside the complete snapshot
+    /// prevents the interactive scroll path from accidentally overlooking a
+    /// newly added runtime field.
+    pub(crate) fn is_scroll_only_update_from(&self, previous: &Self) -> bool {
+        if self.anchors != previous.anchors || self.objects.len() != previous.objects.len() {
+            return false;
+        }
+
+        let mut changed = false;
+        for (current, previous) in self.objects.iter().zip(&previous.objects) {
+            if current == previous {
+                continue;
+            }
+
+            let mut normalized = current.clone();
+            normalized.scroll_offset = previous.scroll_offset;
+            if let (Some(current_slider), Some(previous_slider)) =
+                (normalized.slider.as_mut(), previous.slider)
+            {
+                current_slider.value = previous_slider.value;
+            }
+            if normalized != *previous {
+                return false;
+            }
+            changed = true;
+        }
+        changed
     }
 }
 
