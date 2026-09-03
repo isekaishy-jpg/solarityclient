@@ -114,6 +114,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         model.animations().attachments().len(),
         model.animations().cameras().len(),
     );
+    for (sequence_index, sequence) in model.animations().sequences().iter().enumerate() {
+        println!(
+            "sequence={sequence_index} animation={} duration_ms={}",
+            sequence.animation_id(),
+            sequence.duration_ms(),
+        );
+    }
     println!(
         "authored_bounds={:?}..{:?} radius={}",
         bounds.minimum(),
@@ -251,6 +258,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     for (particle_index, particle) in model.animations().particles().iter().enumerate() {
+        let animated_position = particle
+            .bone_index()
+            .map_or(particle.position(), |bone_index| {
+                pose.transforms()[usize::from(bone_index)].transform_point3(particle.position())
+            });
         let particle_pose = M2ParticlePose::sample(
             model.animations(),
             particle,
@@ -269,7 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         println!(
-            "particle={particle_index} id={} type={} blend={} flags={:#010X} priority={} position={:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} textures={textures:?}",
+            "particle={particle_index} id={} type={} blend={} flags={:#010X} priority={} position={:?} animated_position={animated_position:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} wind={:?} drag={} spin={}+/-{} textures={textures:?}",
             particle.id(),
             particle.emitter_type(),
             particle.blending_type(),
@@ -284,6 +296,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             particle_pose.emission_rate(),
             particle_pose.emission_area_length(),
             particle_pose.emission_area_width(),
+            particle.wind_vector(),
+            particle.drag(),
+            particle.spin_speed(),
+            particle.spin_speed_variation(),
         );
     }
     Ok(())
