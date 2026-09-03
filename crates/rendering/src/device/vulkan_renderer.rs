@@ -1260,6 +1260,25 @@ impl VulkanRenderer {
         self.with_swapchain_retry(|renderer| renderer.present_ui_once(logical_extent, draws))
     }
 
+    /// Presents one UI generation followed by an independently retained overlay.
+    ///
+    /// Both slices remain borrowed through command recording, avoiding a
+    /// per-frame concatenation allocation while preserving their exact order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same conditions as [`Self::present_ui`].
+    pub fn present_ui_with_overlay(
+        &mut self,
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+        overlay: &[UiPreparedDraw],
+    ) -> Result<UiFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_ui_with_overlay_once(logical_extent, draws, overlay)
+        })
+    }
+
     /// Clears the current swapchain image to opaque black and presents it.
     ///
     /// This is the explicit handoff surface used between independently loaded
@@ -1302,7 +1321,16 @@ impl VulkanRenderer {
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, VulkanError> {
-        let report = self.ui_frames.present(
+        self.present_ui_with_overlay_once(logical_extent, draws, &[])
+    }
+
+    fn present_ui_with_overlay_once(
+        &mut self,
+        logical_extent: [f32; 2],
+        draws: &[UiPreparedDraw],
+        overlay: &[UiPreparedDraw],
+    ) -> Result<UiFrameReport, VulkanError> {
+        let report = self.ui_frames.present_composite(
             UiFrameContext {
                 device: &self.device,
                 swapchain_loader: &self.swapchain_loader,
@@ -1319,6 +1347,7 @@ impl VulkanRenderer {
             },
             logical_extent,
             draws,
+            overlay,
         )?;
         self.is_idle = false;
         self.report.presented_ui_draw_count = Some(report.draw_count());

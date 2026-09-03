@@ -136,11 +136,8 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         overlay: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, ApplicationError> {
-        let mut draws = Vec::with_capacity(self.draws.len() + overlay.len());
-        draws.extend_from_slice(&self.draws);
-        draws.extend_from_slice(overlay);
         renderer
-            .present_ui(self.logical_extent, &draws)
+            .present_ui_with_overlay(self.logical_extent, &self.draws, overlay)
             .map_err(ApplicationError::from)
     }
 

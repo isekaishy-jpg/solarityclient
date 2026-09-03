@@ -44,17 +44,18 @@ pub(in crate::device) struct UiFrameRenderer {
 }
 
 impl UiFrameRenderer {
-    /// Records ordered UI batches and queues one acquired image for presentation.
-    pub(in crate::device) fn present(
+    /// Records two already ordered UI draw layers without joining their storage.
+    pub(in crate::device) fn present_composite(
         &mut self,
         context: UiFrameContext<'_>,
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
+        overlay: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, VulkanError> {
-        if draws.is_empty() {
+        if draws.is_empty() && overlay.is_empty() {
             return Err(VulkanError::EmptyUiFrame);
         }
-        self.present_inner(context, logical_extent, draws)
+        self.present_inner(context, logical_extent, draws, overlay)
     }
 
     /// Clears and presents one swapchain image without requiring UI geometry.
@@ -63,7 +64,7 @@ impl UiFrameRenderer {
         context: UiFrameContext<'_>,
         logical_extent: [f32; 2],
     ) -> Result<UiFrameReport, VulkanError> {
-        self.present_inner(context, logical_extent, &[])
+        self.present_inner(context, logical_extent, &[], &[])
     }
 
     fn present_inner(
@@ -71,6 +72,7 @@ impl UiFrameRenderer {
         context: UiFrameContext<'_>,
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
+        overlay: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, VulkanError> {
         if logical_extent
             .iter()
@@ -122,9 +124,10 @@ impl UiFrameRenderer {
             meshes: context.meshes,
             texture_sets: context.texture_sets,
             draws,
+            overlay,
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
-        Ok(UiFrameReport::new(draws.len()))
+        Ok(UiFrameReport::new(draws.len() + overlay.len()))
     }
 
     /// Releases all persistent command and synchronization children.

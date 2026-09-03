@@ -28,6 +28,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) meshes: &'a UiMeshRegistry,
     pub(super) texture_sets: &'a UiTextureSetRegistry,
     pub(super) draws: &'a [UiPreparedDraw],
+    pub(super) overlay: &'a [UiPreparedDraw],
 }
 
 /// UI state appended after another pass left the swapchain color attachment live.
@@ -60,6 +61,12 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
         context.command_buffer,
         context.meshes,
         context.draws,
+    )?;
+    record_mesh_updates(
+        context.device,
+        context.command_buffer,
+        context.meshes,
+        context.overlay,
     )?;
     transition_to_color(&context);
     let clear = vk::ClearValue {
@@ -109,6 +116,18 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
     for draw in context.draws.iter().copied() {
+        record_draw(
+            context.device,
+            context.command_buffer,
+            context.pipelines,
+            context.meshes,
+            context.texture_sets,
+            draw,
+            context.logical_extent,
+            context.extent,
+        )?;
+    }
+    for draw in context.overlay.iter().copied() {
         record_draw(
             context.device,
             context.command_buffer,
@@ -206,12 +225,8 @@ fn record_mesh_updates(
     meshes: &UiMeshRegistry,
     draws: &[UiPreparedDraw],
 ) -> Result<(), VulkanError> {
-    let mut recorded = Vec::with_capacity(draws.len());
     for draw in draws {
         let mesh = draw.mesh();
-        if recorded.contains(&mesh) {
-            continue;
-        }
         let updates = meshes.take_pending_updates(mesh)?;
         if let Some((buffer, offset, bytes)) = updates.vertex {
             record_buffer_update(
@@ -235,7 +250,6 @@ fn record_mesh_updates(
                 vk::AccessFlags2::INDEX_READ,
             );
         }
-        recorded.push(mesh);
     }
     Ok(())
 }
