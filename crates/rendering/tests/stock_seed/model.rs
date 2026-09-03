@@ -27,7 +27,7 @@ use solarity_rendering::{
     M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
     TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
     WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    triggered_m2_event_indices,
+    sample_m2_lights_into, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -149,9 +149,31 @@ fn m2_point_lights_sample_animated_scene_state() -> Result<(), Box<dyn Error>> {
         * Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2);
 
     let lights = sample_m2_lights(model.animations(), &pose, clock, transform)?;
+    let mut retained_directional = Vec::with_capacity(1);
+    let mut retained_points = Vec::with_capacity(1);
+    sample_m2_lights_into(
+        model.animations(),
+        &pose,
+        clock,
+        transform,
+        &mut retained_directional,
+        &mut retained_points,
+    )?;
+    let retained_point_storage = retained_points.as_ptr();
+    sample_m2_lights_into(
+        model.animations(),
+        &pose,
+        clock,
+        transform,
+        &mut retained_directional,
+        &mut retained_points,
+    )?;
 
     assert!(lights.directional.is_empty());
     assert_eq!(lights.points.len(), 1);
+    assert_eq!(retained_directional, lights.directional);
+    assert_eq!(retained_points, lights.points);
+    assert_eq!(retained_points.as_ptr(), retained_point_storage);
     assert!(
         (lights.points[0].position() - Vec3::new(5.0, 10.0, 11.0))
             .abs()

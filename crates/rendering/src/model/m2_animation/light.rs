@@ -52,8 +52,40 @@ pub fn sample_m2_lights(
     clock: M2AnimationClock,
     model_transform: Mat4,
 ) -> Result<M2SampledLights, M2BonePoseError> {
-    let sequence = clock.resolve(animations)?;
     let mut sampled = M2SampledLights::default();
+    sample_m2_lights_into(
+        animations,
+        pose,
+        clock,
+        model_transform,
+        &mut sampled.directional,
+        &mut sampled.points,
+    )?;
+    Ok(sampled)
+}
+
+/// Samples visible M2 lights directly into retained caller-owned storage.
+///
+/// Both destinations are cleared before use. Their allocations are retained,
+/// and point lights receive the same stable distance ordering as
+/// [`sample_m2_lights`].
+///
+/// # Errors
+///
+/// Returns the same failures as [`sample_m2_lights`].
+pub fn sample_m2_lights_into(
+    animations: &M2AnimationSet,
+    pose: &M2BonePose,
+    clock: M2AnimationClock,
+    model_transform: Mat4,
+    directional: &mut Vec<M2DirectionalLight>,
+    points: &mut Vec<M2PointLight>,
+) -> Result<(), M2BonePoseError> {
+    let sequence = clock.resolve(animations)?;
+    directional.clear();
+    points.clear();
+    directional.reserve(animations.lights().len());
+    points.reserve(animations.lights().len());
     for light in animations.lights() {
         let visible = sample_discrete(
             animations,
@@ -87,26 +119,22 @@ pub fn sample_m2_lights(
         }
         position = model_transform * position;
         if light.kind() == M2LightKind::Point {
-            sampled
-                .points
-                .push(M2PointLight::new(position.truncate(), ambient, diffuse));
+            points.push(M2PointLight::new(position.truncate(), ambient, diffuse));
         } else {
             let mut direction = position.truncate();
             if direction.length() > f32::EPSILON {
                 direction = direction.normalize();
             }
-            sampled
-                .directional
-                .push(M2DirectionalLight::new(direction, ambient, diffuse));
+            directional.push(M2DirectionalLight::new(direction, ambient, diffuse));
         }
     }
     let origin = model_transform.transform_point3(Vec3::ZERO);
-    sampled.points.sort_by(|left, right| {
+    points.sort_by(|left, right| {
         left.position()
             .distance_squared(origin)
             .total_cmp(&right.position().distance_squared(origin))
     });
-    Ok(sampled)
+    Ok(())
 }
 
 fn sample_light_colors(

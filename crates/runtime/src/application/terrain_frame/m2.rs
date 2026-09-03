@@ -20,7 +20,7 @@ use solarity_rendering::{
     M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
     M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
     WorldFrustum, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
-    sample_m2_lights, triggered_m2_event_indices,
+    sample_m2_lights_into, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -1958,15 +1958,14 @@ impl M2Frame {
                 event_window,
             )?;
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                let sampled_lights = sample_m2_lights(
+                sample_m2_lights_into(
                     source.model.animations(),
                     bone_pose,
                     clock,
                     placement.transform,
+                    &mut self.glue_directional_lights,
+                    &mut self.glue_point_lights,
                 )?;
-                self.glue_directional_lights
-                    .extend(sampled_lights.directional);
-                self.glue_point_lights.extend(sampled_lights.points);
                 for attachment_id in &self.glue_attachment_ids {
                     let attachment = source.model.attachment(*attachment_id).ok_or_else(|| {
                         RuntimeTerrainFrameError::MissingGlueM2Attachment {

@@ -63,7 +63,7 @@ pub use model::{
     M2TransparentSortKey, PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange,
     WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
     WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
-    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
     triggered_m2_event_indices,
 };
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};
