@@ -417,7 +417,7 @@ impl UiPresentationPlan {
                 object.frame_strata,
                 object.frame_level,
             ) && region.effectively_shown()
-                && region.effective_alpha() > 0.0
+                && (region.effective_alpha() > 0.0 || region.animation_active())
             {
                 append_backdrop(
                     &mut keyed,
@@ -436,7 +436,8 @@ impl UiPresentationPlan {
             }
             if let Some(model) = Self::configured_model(live, geometry, object_index)
                 && geometry.region(object_index).is_some_and(|region| {
-                    region.effectively_shown() && region.effective_alpha() > 0.0
+                    region.effectively_shown()
+                        && (region.effective_alpha() > 0.0 || region.animation_active())
                 })
             {
                 models.push(model);
@@ -447,7 +448,9 @@ impl UiPresentationPlan {
             let Some(region) = geometry.region(object_index) else {
                 continue;
             };
-            if !region.effectively_shown() || region.effective_alpha() <= 0.0 {
+            if !region.effectively_shown()
+                || region.effective_alpha() <= 0.0 && !region.animation_active()
+            {
                 continue;
             }
             let Some(owner_index) = nearest_owning_frame(live, object) else {

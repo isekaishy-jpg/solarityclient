@@ -172,6 +172,12 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
   <Frames><Frame name="$parentChild"><Size x="20" y="20"/>
     <Anchors><Anchor point="CENTER"/></Anchors>
   </Frame></Frames>
+</Frame>
+<Frame name="Fade" alpha="0"><Size x="20" y="20"/>
+  <Layers><Layer><Texture name="$parentTexture" file="Interface\Glues\Fade"/></Layer></Layers>
+  <Animations><AnimationGroup parentKey="fade"><Alpha change=".5" duration="1"/>
+    <Scripts><OnLoad>self:Play()</OnLoad></Scripts>
+  </AnimationGroup></Animations>
 </Frame></Ui>"#,
         },
     ])?;
@@ -186,8 +192,22 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
         .iter()
         .position(|object| object.name() == Some("RootChild"))
         .ok_or("RootChild fixture frame is absent")?;
+    let fade_texture = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("FadeTexture"))
+        .ok_or("FadeTexture fixture texture is absent")?;
+    let initial_member_count = manager.presentation().member_count();
+    assert!(
+        manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .any(|member| member.object_index() == fade_texture)
+    );
 
     assert!(manager.update(0.25)?);
+    assert_eq!(manager.presentation().member_count(), initial_member_count);
     let root_geometry = manager
         .geometry()
         .region(root)

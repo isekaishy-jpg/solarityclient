@@ -54,6 +54,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) scale: f64,
     pub(crate) animation_alpha_delta: f64,
     pub(crate) animation_offset: (f64, f64),
+    pub(crate) animation_active: bool,
     pub(crate) first_anchor: usize,
     pub(crate) anchor_count: usize,
     pub(crate) texture: Option<UiRuntimeTexture>,
@@ -341,7 +342,7 @@ pub(super) fn snapshot_runtime_objects(
             })
             .transpose()?
             .flatten();
-        let (animation_alpha_delta, animation_offset) =
+        let (animation_alpha_delta, animation_offset, animation_active) =
             owner_animation_transform(lua, stored_index - 1)
                 .map_err(|error| snapshot_error(format!("object {lua_index} animation"), error))?;
         objects.push(UiRuntimeObject {
@@ -360,6 +361,7 @@ pub(super) fn snapshot_runtime_objects(
             scale: positive_region_number(&table, scale_key(), lua_index, "scale")?,
             animation_alpha_delta,
             animation_offset,
+            animation_active,
             first_anchor,
             anchor_count: anchors.len() - first_anchor,
             texture,

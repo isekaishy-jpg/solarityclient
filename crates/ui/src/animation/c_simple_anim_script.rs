@@ -548,20 +548,22 @@ pub(crate) fn advance_animations(lua: &Lua, elapsed_seconds: f64) -> mlua::Resul
 pub(crate) fn owner_animation_transform(
     lua: &Lua,
     owner_index: usize,
-) -> mlua::Result<(f64, (f64, f64))> {
+) -> mlua::Result<(f64, (f64, f64), bool)> {
     let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
     let mut alpha_delta = 0.0;
     let mut translation = (0.0, 0.0);
+    let mut active = false;
     for group in groups.sequence_values::<Table>() {
         let group = group?;
         if group.raw_get::<usize>(owner_index_key())? != owner_index {
             continue;
         }
+        active |= group.raw_get::<bool>(playing_key())?;
         alpha_delta += group.raw_get::<f64>(alpha_delta_key())?;
         translation.0 += group.raw_get::<f64>(translation_x_key())?;
         translation.1 += group.raw_get::<f64>(translation_y_key())?;
     }
-    Ok((alpha_delta, translation))
+    Ok((alpha_delta, translation, active))
 }
 
 fn update_group_contribution(group: &Table, timeline_time: f64) -> mlua::Result<()> {

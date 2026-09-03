@@ -78,6 +78,7 @@ pub struct UiRegionGeometry {
     effectively_shown: bool,
     effective_alpha: f64,
     effective_scale: f64,
+    animation_active: bool,
 }
 
 impl UiRegionGeometry {
@@ -109,6 +110,12 @@ impl UiRegionGeometry {
     #[must_use]
     pub const fn effective_scale(self) -> f64 {
         self.effective_scale
+    }
+
+    /// Returns whether this region or an ancestor owns a playing animation.
+    #[must_use]
+    pub const fn animation_active(self) -> bool {
+        self.animation_active
     }
 }
 
@@ -392,6 +399,8 @@ impl GeometryResolver<'_> {
             shown && parent.is_none_or(|region| region.public.effectively_shown);
         let effective_alpha = alpha * parent.map_or(1.0, |region| region.public.effective_alpha);
         let effective_scale = scale * parent.map_or(1.0, |region| region.public.effective_scale);
+        let animation_active =
+            object.animation_active || parent.is_some_and(|region| region.public.animation_active);
         Ok(ResolvedRegion {
             public: UiRegionGeometry {
                 logical_bounds,
@@ -399,6 +408,7 @@ impl GeometryResolver<'_> {
                 effectively_shown,
                 effective_alpha,
                 effective_scale,
+                animation_active,
             },
             presentation,
         })
