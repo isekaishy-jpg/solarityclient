@@ -21,6 +21,9 @@ const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0100_0000;
 /// Sorts live cards back-to-front inside one compatible emitter batch.
 const SORT_PARTICLES: u32 = 0x0000_0002;
 
+/// Multiplies authored card size by the complete emitter/view scale.
+const INHERIT_SCALE: u32 = 0x0000_0020;
+
 /// Limits a tail's history span to the particle's current age.
 const CLAMP_TAIL_TO_AGE: u32 = 0x0000_0400;
 
@@ -142,6 +145,7 @@ impl M2ParticleMeshPlan {
             particles,
             camera,
             glam::Mat4::IDENTITY,
+            1.0,
             alpha_multiplier,
             None,
             None,
@@ -167,6 +171,7 @@ impl M2ParticleMeshPlan {
             particles,
             camera,
             glam::Mat4::IDENTITY,
+            1.0,
             alpha_multiplier,
             Some(twinkle_table),
             None,
@@ -187,6 +192,7 @@ impl M2ParticleMeshPlan {
         particles: &[M2ParticleState],
         camera: WorldCameraFrame,
         particle_to_world: glam::Mat4,
+        inherited_scale: f32,
         alpha_multiplier: f32,
     ) -> Result<Self, M2ParticleMeshPlanError> {
         Self::prepare_internal(
@@ -195,6 +201,7 @@ impl M2ParticleMeshPlan {
             particles,
             camera,
             particle_to_world,
+            inherited_scale,
             alpha_multiplier,
             None,
             None,
@@ -213,6 +220,7 @@ impl M2ParticleMeshPlan {
         particles: &[M2ParticleState],
         camera: WorldCameraFrame,
         particle_to_world: glam::Mat4,
+        inherited_scale: f32,
         alpha_multiplier: f32,
         twinkle_table: &M2ParticleTwinkleTable,
     ) -> Result<Self, M2ParticleMeshPlanError> {
@@ -222,6 +230,7 @@ impl M2ParticleMeshPlan {
             particles,
             camera,
             particle_to_world,
+            inherited_scale,
             alpha_multiplier,
             Some(twinkle_table),
             None,
@@ -244,6 +253,7 @@ impl M2ParticleMeshPlan {
         particles: &[M2ParticleState],
         camera: WorldCameraFrame,
         particle_to_world: glam::Mat4,
+        inherited_scale: f32,
         alpha_multiplier: f32,
         twinkle_table: &M2ParticleTwinkleTable,
         replacement: Option<&M2ParticleColorReplacement>,
@@ -254,6 +264,7 @@ impl M2ParticleMeshPlan {
             particles,
             camera,
             particle_to_world,
+            inherited_scale,
             alpha_multiplier,
             Some(twinkle_table),
             replacement,
@@ -268,12 +279,18 @@ impl M2ParticleMeshPlan {
         particles: &[M2ParticleState],
         camera: WorldCameraFrame,
         particle_to_world: glam::Mat4,
+        inherited_scale: f32,
         alpha_multiplier: f32,
         twinkle_table: Option<&M2ParticleTwinkleTable>,
         replacement: Option<&M2ParticleColorReplacement>,
     ) -> Result<Self, M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
+        }
+        if emitter.flags() & INHERIT_SCALE != 0
+            && (!inherited_scale.is_finite() || inherited_scale < 0.0)
+        {
+            return Err(M2ParticleMeshPlanError::InheritedScale);
         }
         let determinant = particle_to_world.determinant();
         if !particle_to_world.is_finite()
@@ -329,6 +346,15 @@ impl M2ParticleMeshPlan {
         if emit_tail && !emitter.tail_length().is_finite() {
             return Err(M2ParticleMeshPlanError::TailLength);
         }
+        // Build 12340 maps file flag 0x20 to runtime flag 0x400 at
+        // 0x00833D24 and applies the complete view-model/bone X-axis length
+        // to the lifetime scale. The caller supplies that recovered scalar
+        // because world-space particles intentionally draw through identity.
+        let inherited_scale = if emitter.flags() & INHERIT_SCALE != 0 {
+            inherited_scale
+        } else {
+            1.0
+        };
 
         let quads_per_particle = usize::from(emit_head) + usize::from(emit_tail);
         let quad_count = particles
@@ -395,7 +421,7 @@ impl M2ParticleMeshPlan {
             let mut color = appearance.color();
             color.w *= alpha_multiplier;
             if emit_head {
-                let scale = appearance.scale() * twinkle_scale;
+                let scale = appearance.scale() * twinkle_scale * inherited_scale;
                 let positions = if emitter.flags() & VELOCITY_ALIGNED_HEAD != 0
                     && particle.velocity().length_squared() > DIRECTION_THRESHOLD_SQUARED
                 {
@@ -459,10 +485,15 @@ impl M2ParticleMeshPlan {
                 let positions = if projected.length_squared() > TAIL_PROJECTION_THRESHOLD_SQUARED {
                     let reciprocal_length = projected.length_recip();
                     let side = -billboard_right
-                        * (appearance.scale().y * twinkle_scale * projected.y * reciprocal_length)
+                        * (appearance.scale().y
+                            * twinkle_scale
+                            * inherited_scale
+                            * projected.y
+                            * reciprocal_length)
                         + billboard_up
                             * (appearance.scale().x
                                 * twinkle_scale
+                                * inherited_scale
                                 * projected.x
                                 * reciprocal_length);
                     let endpoint = position + tail_vector;
@@ -475,7 +506,7 @@ impl M2ParticleMeshPlan {
                 } else {
                     billboard_positions(
                         position,
-                        appearance.scale() * twinkle_scale,
+                        appearance.scale() * twinkle_scale * inherited_scale,
                         0.0,
                         billboard_right,
                         billboard_up,
@@ -648,6 +679,9 @@ pub enum M2ParticleMeshPlanError {
     /// Placement/model opacity must remain finite before color packing.
     #[error("M2 particle alpha multiplier must be finite")]
     AlphaMultiplier,
+    /// Flag `0x20` requires a finite, nonnegative complete emitter/view scale.
+    #[error("M2 particle inherited scale must be finite and nonnegative")]
+    InheritedScale,
     /// Model-space particles require one finite current emitter transform.
     #[error("M2 particle transform must be finite")]
     Transform,

@@ -21,12 +21,13 @@ use solarity_rendering::{
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
     M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
     M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler,
-    M2ParticleState, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
-    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform,
-    VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
-    sample_m2_camera_frame, sample_m2_directional_lights, triggered_m2_event_indices,
+    M2ParticleState, M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture,
+    M2SceneLightBank, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
+    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
+    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights,
+    triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -923,6 +924,7 @@ fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Err
         camera,
         Mat4::IDENTITY,
         1.0,
+        1.0,
         &twinkle,
         Some(&replacement),
     )?;
@@ -1232,6 +1234,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         &[particle],
         camera,
         Mat4::from_translation(Vec3::new(100.0, 200.0, 300.0)),
+        1.0,
         1.0,
     )?;
     let translated_endpoint = Vec3::from_array(translated.vertices()[6].position())
@@ -1679,6 +1682,7 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
         camera,
         particle_to_world,
         1.0,
+        1.0,
     )?;
     let appearance = M2ParticleLifetimePose::sample(
         emitter,
@@ -1690,6 +1694,75 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
         + particle_to_world.transform_vector3(Vec3::Y) * appearance.scale().y;
     let actual = Vec3::from_array(mesh.vertices()[0].position());
     assert!((actual - expected).abs().max_element() < 0.0001);
+    Ok(())
+}
+
+/// Flag `0x20` inherits the complete emitter/view scale for stock card size.
+#[test]
+fn m2_particle_mesh_inherits_emitter_view_scale() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_0020;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\InheritedScaleParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\InheritedScaleParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\InheritedScaleParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particle = M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Y, 0x2483)?;
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let twinkle = M2ParticleTwinkleTable::new(0x0029_4823);
+    let unit = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
+        emitter,
+        pose,
+        &[particle],
+        camera,
+        Mat4::IDENTITY,
+        1.0,
+        1.0,
+        &twinkle,
+        None,
+    )?;
+    let doubled = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
+        emitter,
+        pose,
+        &[particle],
+        camera,
+        Mat4::IDENTITY,
+        2.0,
+        1.0,
+        &twinkle,
+        None,
+    )?;
+    for (unit, doubled) in unit.vertices()[..4].iter().zip(&doubled.vertices()[..4]) {
+        let unit = Vec3::from_array(unit.position());
+        let doubled = Vec3::from_array(doubled.position());
+        assert!((doubled - unit * 2.0).abs().max_element() < 0.0001);
+    }
     Ok(())
 }
 

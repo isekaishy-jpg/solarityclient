@@ -1556,6 +1556,7 @@ impl M2Frame {
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         fog_color: glam::Vec3,
+        particle_view_scale: f32,
         animation_time_ms: f32,
         global_time_ms: f32,
         random: &mut CrtRand,
@@ -1952,12 +1953,15 @@ impl M2Frame {
                 } else {
                     Mat4::IDENTITY
                 };
+                let inherited_scale =
+                    emitter_transform.x_axis.truncate().length() * particle_view_scale;
                 let mesh = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
                     emitter,
                     pose,
                     simulation.particles(),
                     camera,
                     particle_to_world,
+                    inherited_scale,
                     placement_color(placement.color).w * placement.opacity,
                     &self.particle_twinkle,
                     placement.particle_colors.as_ref(),

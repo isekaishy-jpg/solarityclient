@@ -30,6 +30,7 @@ const STOCK_GLUE_DIFFUSE: Vec3 = Vec3::splat(0.65);
 const STOCK_GLUE_LIGHT_DIRECTION: Vec3 = Vec3::new(-0.35, 0.45, 0.82);
 const STOCK_LOGIN_FOG_COLOR: Vec3 = Vec3::new(0.25, 0.06, 0.015);
 const STOCK_LOGIN_FOG_RANGE: Vec4 = Vec4::new(0.0, 1200.0, 0.0, 1.0);
+const STOCK_M2_CAMERA_ASPECT_RATIO: f32 = 4.0 / 3.0;
 
 /// A visible Glue model cannot enter the retained M2 compositor callback.
 #[derive(Debug, Error)]
@@ -675,6 +676,11 @@ impl RuntimeGlueModelScene {
         })?;
         let camera =
             sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        // Build 12340 carries its 4:3-authored diagonal-camera correction in
+        // the view-model matrix. Particle flag 0x20 inherits that scale even
+        // though our camera path converts the FOV directly.
+        let particle_view_scale =
+            1.0_f32.hypot(STOCK_M2_CAMERA_ASPECT_RATIO) / 1.0_f32.hypot(aspect_ratio);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
         let visible = active.frame.prepare_visible_draws(
@@ -682,6 +688,7 @@ impl RuntimeGlueModelScene {
             frustum,
             camera,
             active.environment.fog_color,
+            particle_view_scale,
             animation_time_ms,
             global_time_ms,
             random,
