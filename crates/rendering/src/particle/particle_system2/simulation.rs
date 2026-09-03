@@ -43,7 +43,9 @@ const DYNAMIC_WIND: u32 = 0x8000_0000;
 /// Recovered simulation behaviors which must not be silently replaced by basic motion.
 /// Raw `0x1000` is intentionally absent: build-12340 `0x00832EA0` maps it to
 /// the render-only local-orientation bit and does not change particle motion.
-const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_2000 | 0x0080_0000;
+/// Raw `0x0008_0000` is likewise handled by lifetime appearance sampling; its
+/// mapped runtime bit is `0x0080_0000`, which is not an authored flag here.
+const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_2000;
 
 /// Placement-local stock particle storage, emission remainder, and PRNG.
 #[derive(Clone, Debug)]

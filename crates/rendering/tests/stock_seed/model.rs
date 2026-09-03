@@ -1421,6 +1421,52 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// An unmapped authored high bit does not reject otherwise ordinary emission.
+///
+/// Build 12340 maps authored `0x0008_0000`, not `0x0080_0000`, to runtime
+/// `0x0080_0000` for independent X/Y lifetime-scale variation. The latter raw
+/// bit has no simulation branch in the constructor and must not be confused
+/// with the mapped runtime bit.
+#[test]
+fn m2_particle_simulation_accepts_unmapped_authored_high_bit() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = m2_array_offset(&bytes, 0x128)?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0080_0000_u32.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\UnmappedHighBitParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\UnmappedHighBitParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\UnmappedHighBitParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 0.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0);
+
+    simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 1.0)?;
+
+    Ok(())
+}
+
 /// Prewarming includes spline overshoot instead of only stored key values.
 #[test]
 fn m2_particle_prewarm_bounds_hermite_emission_rate() -> Result<(), Box<dyn Error>> {
