@@ -30,6 +30,24 @@ impl M2DirectionalLight {
             diffuse,
         }
     }
+
+    /// Returns the transformed D3D ray direction before sunlight merging.
+    #[must_use]
+    pub const fn direction(self) -> Vec3 {
+        self.direction
+    }
+
+    /// Returns this source's animated ambient contribution.
+    #[must_use]
+    pub const fn ambient(self) -> Vec3 {
+        self.ambient
+    }
+
+    /// Returns this source's animated diffuse contribution.
+    #[must_use]
+    pub const fn diffuse(self) -> Vec3 {
+        self.diffuse
+    }
 }
 
 /// One finalized directional slot in the renderer's surface-to-light form.

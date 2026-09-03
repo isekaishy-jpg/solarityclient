@@ -26,7 +26,7 @@ use solarity_rendering::{
     M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
     M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform,
     VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
-    sample_m2_camera_frame, triggered_m2_event_indices,
+    sample_m2_camera_frame, sample_m2_directional_lights, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -77,6 +77,45 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
     assert!((frame.up() - Vec3::Z).abs().max_element() < 0.000_01);
     let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
     assert!((frame.camera().vertical_field_of_view_radians() - expected_fov).abs() < 0.0001);
+    Ok(())
+}
+
+/// Authored directional lights share the model clock and bone/placement pose.
+#[test]
+fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("DirectionalLight", 1)?;
+    append_render_directional_light(&mut bytes)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Light.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Light00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\Light.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let clock = M2AnimationClock::new(0, 500.0, 0.0);
+    let pose = M2BonePose::compose(model.animations(), clock)?;
+    let transform = Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2);
+
+    let lights = sample_m2_directional_lights(model.animations(), &pose, clock, transform)?;
+
+    assert_eq!(lights.len(), 1);
+    assert!((lights[0].direction() - Vec3::Y).abs().max_element() < 0.000_01);
+    assert!((lights[0].ambient() - Vec3::splat(0.3)).abs().max_element() < 0.000_01);
+    assert!(
+        (lights[0].diffuse() - Vec3::splat(1.05))
+            .abs()
+            .max_element()
+            < 0.000_01
+    );
     Ok(())
 }
 
@@ -3531,6 +3570,51 @@ fn append_render_camera(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
         4,
     )?;
     set_render_header_array(bytes, 0x110, 1, camera_offset)?;
+    Ok(())
+}
+
+/// Adds one bone-relative directional light with animated color/intensity.
+fn append_render_directional_light(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let light_offset = bytes.len();
+    bytes.resize(light_offset + 156, 0);
+    bytes[light_offset..light_offset + 2].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[light_offset + 2..light_offset + 4].copy_from_slice(&0_i16.to_le_bytes());
+    bytes[light_offset + 4..light_offset + 16]
+        .copy_from_slice(&render_f32_values(&[1.0, 0.0, 0.0]));
+    append_render_track(
+        bytes,
+        light_offset + 0x10,
+        &[0, 1_000],
+        &render_f32_values(&[0.2, 0.2, 0.2, 0.4, 0.4, 0.4]),
+        12,
+    )?;
+    append_render_track(
+        bytes,
+        light_offset + 0x24,
+        &[0, 1_000],
+        &render_f32_values(&[0.5, 1.5]),
+        4,
+    )?;
+    append_render_track(
+        bytes,
+        light_offset + 0x38,
+        &[0, 1_000],
+        &render_f32_values(&[0.6, 0.6, 0.6, 0.8, 0.8, 0.8]),
+        12,
+    )?;
+    append_render_track(
+        bytes,
+        light_offset + 0x4c,
+        &[0, 1_000],
+        &render_f32_values(&[1.0, 2.0]),
+        4,
+    )?;
+    for track_offset in [0x60, 0x74] {
+        bytes[light_offset + track_offset + 2..light_offset + track_offset + 4]
+            .copy_from_slice(&u16::MAX.to_le_bytes());
+    }
+    append_render_track(bytes, light_offset + 0x88, &[0, 1_000], &[1, 1], 1)?;
+    set_render_header_array(bytes, 0x108, 1, light_offset)?;
     Ok(())
 }
 

@@ -19,7 +19,8 @@ use solarity_rendering::{
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
     M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
     M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_model_distance_key, m2_section_distance_key, triggered_m2_event_indices,
+    m2_model_distance_key, m2_section_distance_key, sample_m2_directional_lights,
+    triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -528,6 +529,7 @@ pub(in crate::application) struct M2Frame {
     ribbon_draws: Vec<M2RibbonPreparedDraw>,
     triggered_events: Vec<RuntimeM2Event>,
     mount_camera_sample: Option<RuntimeMountCameraSample>,
+    glue_directional_lights: Vec<solarity_rendering::M2DirectionalLight>,
     last_effect_time_ms: Option<f32>,
 }
 
@@ -540,6 +542,8 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) particle_draws: &'frame [M2ParticlePreparedDraw],
     pub(in crate::application) ribbon_vertices: &'frame [M2RibbonRenderVertex],
     pub(in crate::application) ribbon_draws: &'frame [M2RibbonPreparedDraw],
+    pub(in crate::application) glue_directional_lights:
+        &'frame [solarity_rendering::M2DirectionalLight],
 }
 
 impl M2Frame {
@@ -619,6 +623,7 @@ impl M2Frame {
             ribbon_draws: Vec::new(),
             triggered_events: Vec::new(),
             mount_camera_sample: None,
+            glue_directional_lights: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -810,6 +815,7 @@ impl M2Frame {
             ribbon_draws: Vec::new(),
             triggered_events: Vec::new(),
             mount_camera_sample: None,
+            glue_directional_lights: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -1545,6 +1551,7 @@ impl M2Frame {
         self.ribbon_draws.clear();
         self.triggered_events.clear();
         self.mount_camera_sample = None;
+        self.glue_directional_lights.clear();
         let elapsed_effect_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
             (animation_time_ms - previous).max(0.0) * 0.001
         });
@@ -1753,6 +1760,13 @@ impl M2Frame {
                 event_window,
             )?;
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                self.glue_directional_lights
+                    .extend(sample_m2_directional_lights(
+                        source.model.animations(),
+                        &bone_pose,
+                        clock,
+                        placement.transform,
+                    )?);
                 for attachment_id in &glue_attachment_ids {
                     let attachment = source.model.attachment(*attachment_id).ok_or_else(|| {
                         RuntimeTerrainFrameError::MissingGlueM2Attachment {
@@ -2123,6 +2137,7 @@ impl M2Frame {
             particle_draws: &self.particle_draws,
             ribbon_vertices: &self.ribbon_vertices,
             ribbon_draws: &self.ribbon_draws,
+            glue_directional_lights: &self.glue_directional_lights,
         })
     }
 

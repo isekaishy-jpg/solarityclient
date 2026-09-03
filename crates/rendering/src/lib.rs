@@ -61,7 +61,8 @@ pub use model::{
     M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentSortKey,
     PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
     WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
-    WorldModelSceneUniform, sample_m2_camera_frame, triggered_m2_event_indices,
+    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights,
+    triggered_m2_event_indices,
 };
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};
 pub use particle::{

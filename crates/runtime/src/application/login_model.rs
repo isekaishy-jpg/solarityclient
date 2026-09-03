@@ -5,7 +5,7 @@ use std::sync::Arc;
 use glam::{Vec3, Vec4};
 use solarity_asset::{
     AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2HardcodedTextureSource,
-    M2ModelCache, M2TextureKind,
+    M2LightKind, M2ModelCache, M2TextureKind,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
@@ -113,6 +113,7 @@ impl GlueModelKey {
 struct ActiveGlueModel {
     key: GlueModelKey,
     environment: GlueModelEnvironment,
+    local_light_count: M2LocalLightCount,
     model: Arc<solarity_asset::DecodedM2Model>,
     frame: M2Frame,
 }
@@ -120,6 +121,7 @@ struct ActiveGlueModel {
 /// One scene generation whose CPU plan and shaders are still being prepared.
 struct PendingGlueModel {
     path: AssetPath,
+    external_directional_light: bool,
     local_light_count: M2LocalLightCount,
     request: Option<PendingGlueModelRequest>,
     model: Arc<solarity_asset::DecodedM2Model>,
@@ -157,7 +159,7 @@ struct GlueModelEnvironment {
     light_direction: Vec3,
     fog_color: Vec3,
     fog_range: Vec4,
-    local_lights: [M2LocalLightState; 4],
+    background_directional_lights: [Option<M2DirectionalLight>; 4],
     character_local_lights: [M2LocalLightState; 4],
     pet_local_lights: [M2LocalLightState; 4],
     character_uses_camera_light: bool,
@@ -185,30 +187,21 @@ impl GlueModelEnvironment {
         // GlueParent.lua documents these as six paired background, character,
         // and pet banks. The selected character's enum ghost flag chooses the
         // same half of every pair before SetupSunlight merges directionals.
-        let authored_lights = light_variant.select(model.background_lights());
-        let has_authored_lights = authored_lights.iter().any(Option::is_some);
-        let local_lights = model_light_states(authored_lights);
+        let background_directional_lights =
+            model_directional_lights(light_variant.select(model.background_lights()));
         let character_lights = light_variant.select(model.character_lights());
         let character_uses_camera_light = !character_lights.iter().any(Option::is_some);
-        let character_local_lights = model_light_states(character_lights);
+        let character_local_lights = model_light_states(model_directional_lights(character_lights));
         let pet_lights = light_variant.select(model.pet_lights());
         let pet_inherits_character_light = !pet_lights.iter().any(Option::is_some);
-        let pet_local_lights = model_light_states(pet_lights);
+        let pet_local_lights = model_light_states(model_directional_lights(pet_lights));
         Self {
-            ambient: if has_authored_lights {
-                Vec3::ZERO
-            } else {
-                STOCK_GLUE_AMBIENT
-            },
-            diffuse: if has_authored_lights {
-                Vec3::ZERO
-            } else {
-                STOCK_GLUE_DIFFUSE
-            },
+            ambient: STOCK_GLUE_AMBIENT,
+            diffuse: STOCK_GLUE_DIFFUSE,
             light_direction: STOCK_GLUE_LIGHT_DIRECTION,
             fog_color,
             fog_range,
-            local_lights,
+            background_directional_lights,
             character_local_lights,
             pet_local_lights,
             character_uses_camera_light,
@@ -239,18 +232,20 @@ impl GlueModelEnvironment {
 }
 
 /// Merges one ModelFFX bank through build 12340's SetupSunlight boundary.
-fn model_light_states(lights: [Option<UiModelLight>; 4]) -> [M2LocalLightState; 4] {
-    let directional_lights = lights
-        .into_iter()
-        .flatten()
-        .map(|light| {
+fn model_directional_lights(lights: [Option<UiModelLight>; 4]) -> [Option<M2DirectionalLight>; 4] {
+    lights.map(|light| {
+        light.map(|light| {
             M2DirectionalLight::new(
                 Vec3::from_array(light.direction()),
                 Vec3::from_array(light.ambient()),
                 Vec3::from_array(light.diffuse()),
             )
         })
-        .collect::<Vec<_>>();
+    })
+}
+
+fn model_light_states(lights: [Option<M2DirectionalLight>; 4]) -> [M2LocalLightState; 4] {
+    let directional_lights = lights.into_iter().flatten().collect::<Vec<_>>();
     let mut merged = [M2LocalLightState::disabled(); 4];
     if let Some(sunlight) = merge_wotlk_directional_lights(&directional_lights) {
         merged[0] = sunlight.local_light_state();
@@ -287,23 +282,26 @@ impl RuntimeGlueModelScene {
         assets: &AssetStoreHandle,
         cpu: &CpuExecutor,
     ) -> Result<(), RuntimeGlueModelError> {
-        let local_light_count = local_light_count_from_len(background_light_count);
+        let external_directional_light = background_light_count != 0;
         if self
             .active
             .as_ref()
             .is_some_and(|active| active.key.path == path)
             || self.pending.as_ref().is_some_and(|pending| {
-                pending.path == path && pending.local_light_count == local_light_count
+                pending.path == path
+                    && pending.external_directional_light == external_directional_light
             })
         {
             return Ok(());
         }
         let (model, textures) = self.load_model_generation(assets, &path)?;
+        let local_light_count = maximum_glue_light_count(&model, external_directional_light);
         let task_model = Arc::clone(&model);
         let task =
             cpu.try_submit(move || prepare_glue_cpu_source(&task_model, local_light_count))?;
         self.pending = Some(PendingGlueModel {
             path,
+            external_directional_light,
             local_light_count,
             request: None,
             model,
@@ -355,8 +353,14 @@ impl RuntimeGlueModelScene {
             GlueModelLightVariant::Live
         };
         let environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
+        let external_directional_light = environment
+            .background_directional_lights
+            .iter()
+            .any(Option::is_some);
         if let Some(active) = self.active.as_mut()
             && active.key == key
+            && active.local_light_count
+                == maximum_glue_light_count(&active.model, external_directional_light)
         {
             active.environment = environment;
             if glue_character_changed {
@@ -388,9 +392,9 @@ impl RuntimeGlueModelScene {
                 sequence: key.sequence,
             }
         })?;
-        let environment_light_count = local_light_count(environment.local_lights);
         if self.pending.as_ref().is_some_and(|pending| {
-            pending.path != key.path || pending.local_light_count != environment_light_count
+            pending.path != key.path
+                || pending.external_directional_light != external_directional_light
         }) {
             self.pending = None;
         }
@@ -441,18 +445,21 @@ impl RuntimeGlueModelScene {
             self.active = Some(ActiveGlueModel {
                 key: request.key,
                 environment: request.environment,
+                local_light_count: pending.local_light_count,
                 model: pending.model,
                 frame,
             });
             return Ok(());
         }
         let (model, texture_sources) = self.load_model_generation(assets, &key.path)?;
+        let environment_light_count = maximum_glue_light_count(&model, external_directional_light);
         let task_model = Arc::clone(&model);
         let task =
             cpu.try_submit(move || prepare_glue_cpu_source(&task_model, environment_light_count))?;
         self.active = None;
         self.pending = Some(PendingGlueModel {
             path: key.path.clone(),
+            external_directional_light,
             local_light_count: environment_light_count,
             request: Some(PendingGlueModelRequest { key, environment }),
             model,
@@ -514,9 +521,23 @@ impl RuntimeGlueModelScene {
             }
         }
         drop(store);
+        let authored_directional_lights = model
+            .animations()
+            .lights()
+            .iter()
+            .filter(|light| light.kind() == M2LightKind::Directional)
+            .count();
+        let authored_point_lights = model
+            .animations()
+            .lights()
+            .iter()
+            .filter(|light| light.kind() == M2LightKind::Point)
+            .count();
         tracing::info!(
             model = %model.path(),
             texture_count = texture_sources.len(),
+            authored_directional_lights,
+            authored_point_lights,
             asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
             "loaded Glue model archive generation"
         );
@@ -568,28 +589,44 @@ impl RuntimeGlueModelScene {
             global_time_ms,
             random,
         )?;
+        let directional_lights = active
+            .environment
+            .background_directional_lights
+            .into_iter()
+            .flatten()
+            .chain(visible.glue_directional_lights.iter().copied())
+            .collect::<Vec<_>>();
+        let mut environment_local_lights = [M2LocalLightState::disabled(); 4];
+        if let Some(sunlight) = merge_wotlk_directional_lights(&directional_lights) {
+            environment_local_lights[0] = sunlight.local_light_state();
+        }
+        let (environment_ambient, environment_diffuse) = if directional_lights.is_empty() {
+            (active.environment.ambient, active.environment.diffuse)
+        } else {
+            (Vec3::ZERO, Vec3::ZERO)
+        };
         let terrain = TerrainSceneUniform::new(
             camera.view_projection(),
-            active.environment.ambient,
-            active.environment.diffuse,
+            environment_ambient,
+            environment_diffuse,
             active.environment.light_direction,
         );
         let world_model = WorldModelSceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
-            active.environment.ambient,
-            active.environment.diffuse,
+            environment_ambient,
+            environment_diffuse,
             active.environment.light_direction,
             active.environment.fog_range,
         );
         let model = M2SceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
-            active.environment.ambient,
-            active.environment.diffuse,
+            environment_ambient,
+            environment_diffuse,
             active.environment.light_direction,
             active.environment.fog_range,
-            active.environment.local_lights,
+            environment_local_lights,
         );
         let character_local_lights = if active.environment.character_uses_camera_light {
             let mut lights = [M2LocalLightState::disabled(); 4];
@@ -709,6 +746,25 @@ fn local_light_count(lights: [M2LocalLightState; 4]) -> M2LocalLightCount {
         .filter(|light| **light != M2LocalLightState::disabled())
         .count();
     local_light_count_from_len(count)
+}
+
+/// Reserves stock's slot-zero directional aggregate and at most three point
+/// slots for every light that may become visible over the model's lifetime.
+fn maximum_glue_light_count(
+    model: &solarity_asset::DecodedM2Model,
+    external_directional_light: bool,
+) -> M2LocalLightCount {
+    let authored = model.animations().lights();
+    let has_directional = external_directional_light
+        || authored
+            .iter()
+            .any(|light| light.kind() == M2LightKind::Directional);
+    let point_count = authored
+        .iter()
+        .filter(|light| light.kind() == M2LightKind::Point)
+        .count()
+        .min(3);
+    local_light_count_from_len(usize::from(has_directional) + point_count)
 }
 
 fn local_light_count_from_len(count: usize) -> M2LocalLightCount {
