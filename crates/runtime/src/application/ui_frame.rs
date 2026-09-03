@@ -15,7 +15,10 @@ use crate::application::ApplicationError;
 pub(crate) struct PreparedUiFrame {
     logical_extent: [f32; 2],
     draws: Vec<UiPreparedDraw>,
-    prepared_batches: Vec<(usize, UiRenderBatch)>,
+    /// Source batch index parallel to each resident renderer draw.
+    draw_batches: Vec<usize>,
+    /// Complete material topology, including non-blocking unresolved sources.
+    materials: Vec<UiRenderBatch>,
 }
 
 impl PreparedUiFrame {
@@ -28,7 +31,6 @@ impl PreparedUiFrame {
     ) -> Result<Self, ApplicationError> {
         let mesh = renderer.upload_ui_mesh(plan)?;
         let mut batch_resources = Vec::with_capacity(plan.batches().len());
-        let mut prepared_batches = Vec::with_capacity(plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
             let source = match batch.source() {
@@ -71,9 +73,12 @@ impl PreparedUiFrame {
                 UiRenderSource::VertexColor => None,
             };
             batch_resources.push((batch_index, pipeline, sampled_index));
-            prepared_batches.push((batch_index, batch.clone()));
         }
         let texture_sets = renderer.prepare_ui_texture_sets(&sampled_textures)?;
+        let draw_batches = batch_resources
+            .iter()
+            .map(|(batch_index, _pipeline, _sampled)| *batch_index)
+            .collect();
         let draws = batch_resources
             .into_iter()
             .map(|(batch_index, pipeline, sampled_index)| {
@@ -89,7 +94,8 @@ impl PreparedUiFrame {
         Ok(Self {
             logical_extent: plan.logical_extent(),
             draws,
-            prepared_batches,
+            draw_batches,
+            materials: plan.batches().to_vec(),
         })
     }
 
@@ -116,7 +122,7 @@ impl PreparedUiFrame {
         if !self.can_replace_mesh(plan) {
             return Err(VulkanError::UiDrawIndex {
                 requested: plan.batches().len(),
-                available: self.draws.len(),
+                available: self.materials.len(),
             }
             .into());
         }
@@ -126,7 +132,7 @@ impl PreparedUiFrame {
             .map(|draw| draw.mesh())
             .ok_or(VulkanError::EmptyUiFrame)?;
         renderer.replace_ui_mesh(mesh, plan)?;
-        for (draw, (batch_index, _retained)) in self.draws.iter_mut().zip(&self.prepared_batches) {
+        for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
             *draw = renderer.prepare_ui_draw(
                 mesh,
                 draw.pipeline(),
@@ -155,15 +161,12 @@ impl PreparedUiFrame {
     }
 
     fn can_replace_mesh(&self, plan: &UiMeshPlan) -> bool {
-        self.prepared_batches.len() == plan.batches().len()
+        self.materials.len() == plan.batches().len()
             && self
-                .prepared_batches
+                .materials
                 .iter()
                 .zip(plan.batches())
-                .enumerate()
-                .all(|(expected_index, ((batch_index, retained), candidate))| {
-                    *batch_index == expected_index && same_ui_material(retained, candidate)
-                })
+                .all(|(retained, candidate)| same_ui_material(retained, candidate))
     }
 
     pub(crate) const fn logical_extent(&self) -> [f32; 2] {
