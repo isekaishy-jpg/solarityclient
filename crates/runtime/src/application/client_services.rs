@@ -74,8 +74,6 @@ use crate::random::{BlizzardRand, CrtRand};
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<RuntimeUiFrame>,
-    /// Publishes first-run/legal UI before the cold model generation is ready.
-    glue_handoff_ui_pending: bool,
     /// Last Glue screen actually submitted to the swapchain.
     ///
     /// Input may select a different screen while SDL still has events queued
@@ -303,7 +301,6 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
-                glue_handoff_ui_pending: false,
                 presented_glue_screen,
                 ui_textures,
                 world_ui: None,
@@ -717,12 +714,10 @@ impl ClientServices {
                 RuntimeCinematicPoll::Finished { object_index } => {
                     self.glue.movie_finished(object_index)?;
                     self.login_ui = None;
-                    self.present_cinematic_handoff()?;
-                    return Ok(());
+                    return self.present_glue_frame();
                 }
                 RuntimeCinematicPoll::Stopped => {
-                    self.present_cinematic_handoff()?;
-                    return Ok(());
+                    return self.present_glue_frame();
                 }
                 RuntimeCinematicPoll::Idle => {}
             }
@@ -851,20 +846,6 @@ impl ClientServices {
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
-        if self.glue_handoff_ui_pending {
-            let overlay = if self.glue.cvar_boolean("showfps") {
-                self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
-            } else {
-                &[]
-            };
-            frame.present_with_overlay(&mut self.renderer, overlay)?;
-            self.glue_handoff_ui_pending = false;
-            if let Some(fps) = self.fps.as_mut() {
-                fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
-            }
-            self.presented_glue_screen = Some(self.glue.current_screen());
-            return Ok(());
-        }
         let current_screen = self.glue.current_screen();
         let glue_character_changed = match current_screen.as_str() {
             "charcreate" => {
@@ -910,19 +891,6 @@ impl ClientServices {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
         self.presented_glue_screen = Some(current_screen);
-        Ok(())
-    }
-
-    fn present_cinematic_handoff(&mut self) -> Result<(), ApplicationError> {
-        let logical_extent = self.fps.as_ref().map_or_else(
-            || overlay_extent(self.platform.pixel_extent()),
-            RuntimeFpsOverlay::logical_extent,
-        );
-        self.renderer.present_clear(logical_extent)?;
-        self.glue_handoff_ui_pending = true;
-        if let Some(fps) = self.fps.as_mut() {
-            fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
-        }
         Ok(())
     }
 
