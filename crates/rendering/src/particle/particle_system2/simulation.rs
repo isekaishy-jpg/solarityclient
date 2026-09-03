@@ -19,7 +19,7 @@ const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0010;
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
 
 /// Recovered behaviors which must not be silently replaced by basic motion.
-const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_1000 | 0x0000_2000 | 0x0008_0000;
+const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_1000 | 0x0000_2000 | 0x0080_0000;
 
 /// Placement-local stock particle storage, emission remainder, and PRNG.
 #[derive(Clone, Debug)]

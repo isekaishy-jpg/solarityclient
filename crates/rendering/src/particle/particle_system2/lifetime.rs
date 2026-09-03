@@ -10,10 +10,13 @@ use super::{M2ParticleColorReplacement, M2ParticleRandom};
 const LIFETIME_KEY_MAXIMUM: f32 = i16::MAX as f32;
 
 /// Uses independent random multipliers for the two authored scale axes.
-const INDEPENDENT_SCALE_VARIATION: u32 = 0x0080_0000;
+const INDEPENDENT_SCALE_VARIATION: u32 = 0x0008_0000;
 
-/// Selects a random head atlas cell when the lifetime ramp has no keys.
-const RANDOM_HEAD_TEXTURE_CELL: u32 = 0x0010_0000;
+/// Selects one random atlas image when the lifetime ramp has no keys.
+const CHOOSE_RANDOM_TEXTURE: u32 = 0x0001_0000;
+
+/// Starts flipbook animation from one random atlas image.
+const RANDOM_FLIPBOOK_START: u32 = 0x0020_0000;
 
 /// Executable lower bound at `0x009E8CD0` for a random scale multiplier.
 const MINIMUM_SCALE_MULTIPLIER: f32 = f32::from_bits(0x38d1_b717);
@@ -85,7 +88,7 @@ impl M2ParticleLifetimePose {
         let mut random = M2ParticleRandom::new(u32::from(random_word));
         let head_texture_cell = sample_held(emitter.head_uv_animation(), key, 0).map_or_else(
             || {
-                if emitter.flags() & RANDOM_HEAD_TEXTURE_CELL == 0 {
+                if emitter.flags() & (CHOOSE_RANDOM_TEXTURE | RANDOM_FLIPBOOK_START) == 0 {
                     0
                 } else {
                     random_atlas_cell(emitter, &mut random)
@@ -95,14 +98,17 @@ impl M2ParticleLifetimePose {
         );
         let mut scale = sample_linear(emitter.scale(), key, Vec2::ONE, Vec2::lerp);
         let variation = emitter.scale_variation();
-        if emitter.flags() & INDEPENDENT_SCALE_VARIATION != 0 {
-            scale.x *= (1.0 + random.next_signed() * variation.x).max(MINIMUM_SCALE_MULTIPLIER);
-            scale.y *= (1.0 + random.next_signed() * variation.y).max(MINIMUM_SCALE_MULTIPLIER);
+        let scale_random = if emitter.flags() & INDEPENDENT_SCALE_VARIATION != 0 {
+            // Build 12340 samples Y before X for independent variation.
+            let y = random.next_signed();
+            let x = random.next_signed();
+            Vec2::new(x, y)
         } else {
-            let multiplier =
-                (1.0 + random.next_signed() * variation.x).max(MINIMUM_SCALE_MULTIPLIER);
-            scale *= multiplier;
-        }
+            Vec2::splat(random.next_signed())
+        };
+        let scale_multiplier =
+            (Vec2::ONE + variation * scale_random).max(Vec2::splat(MINIMUM_SCALE_MULTIPLIER));
+        scale *= scale_multiplier;
         Ok(Self {
             color: color.extend(alpha),
             scale,

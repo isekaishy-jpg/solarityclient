@@ -815,10 +815,10 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     assert!(
         {
             let mut random = M2ParticleRandom::new(u32::from(random_word));
-            let expected = glam::Vec2::new(
-                2.0 * (1.0 + random.next_signed() * 0.5),
-                3.0 * (1.0 + random.next_signed() * 0.25),
-            );
+            let random_y = random.next_signed();
+            let random_x = random.next_signed();
+            let expected =
+                glam::Vec2::new(2.0 * (1.0 + random_x * 0.5), 3.0 * (1.0 + random_y * 0.25));
             lifetime.scale() - expected
         }
         .abs()
@@ -935,7 +935,7 @@ fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Err
 fn m2_particle_pose_selects_random_head_cell_in_stock_order() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
-    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0010_0000_u32.to_le_bytes());
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0001_0000_u32.to_le_bytes());
     bytes[particle_offset + 0x13c..particle_offset + 0x140].copy_from_slice(&0_u32.to_le_bytes());
     bytes[particle_offset + 0x144..particle_offset + 0x148].copy_from_slice(&0_u32.to_le_bytes());
     let skin = render_skin_bytes()?;
@@ -963,10 +963,101 @@ fn m2_particle_pose_selects_random_head_cell_in_stock_order() -> Result<(), Box<
     let pose = M2ParticleLifetimePose::sample(emitter, 0.5, random_word)?;
     let mut random = M2ParticleRandom::new(u32::from(random_word));
     let expected_cell = ((u64::from(random.next_u32()) * 8) >> 32) as u32;
-    let expected_scale = glam::Vec2::new(2.0, 3.0) * (1.0 + random.next_signed() * 0.5);
+    let shared = random.next_signed();
+    let expected_scale = glam::Vec2::new(2.0 * (1.0 + shared * 0.5), 3.0 * (1.0 + shared * 0.25));
 
     assert_eq!(pose.head_texture_cell(), expected_cell);
-    assert!((pose.scale() - expected_scale).abs().max_element() < 0.0001);
+    assert!(
+        (pose.scale() - expected_scale).abs().max_element() < 0.0001,
+        "actual={:?}, expected={expected_scale:?}",
+        pose.scale()
+    );
+    Ok(())
+}
+
+/// Shared scale randomness retains each authored axis variation magnitude.
+#[test]
+fn m2_particle_pose_shares_random_sample_between_scale_axes() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0_u32.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\SharedScaleParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SharedScaleParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\SharedScaleParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let random_word = 0x1234;
+    let pose = M2ParticleLifetimePose::sample(emitter, 0.5, random_word)?;
+    let mut random = M2ParticleRandom::new(u32::from(random_word));
+    let shared = random.next_signed();
+    let expected = glam::Vec2::new(2.0 * (1.0 + shared * 0.5), 3.0 * (1.0 + shared * 0.25));
+
+    assert!((pose.scale() - expected).abs().max_element() < 0.0001);
+    Ok(())
+}
+
+/// Flag `0x200` consumes the stock spin stream and may negate angular speed.
+#[test]
+fn m2_particle_rotation_randomly_negates_angular_speed() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_0200;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\NegatedSpinParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\NegatedSpinParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\NegatedSpinParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let random_word = 0x1234;
+    let rotation = M2ParticleRotationPose::sample(emitter, random_word);
+    let mut random = M2ParticleRandom::new(u32::from(random_word));
+    let expected_initial = 0.8 + random.next_signed() * 0.9;
+    let varied_speed = 1.1 + random.next_signed() * 1.2;
+    let expected_speed = if random.next_unit() < 0.5 {
+        -varied_speed
+    } else {
+        varied_speed
+    };
+
+    assert_eq!(rotation.initial_radians(), expected_initial);
+    assert_eq!(rotation.radians_per_second(), expected_speed);
     Ok(())
 }
 
@@ -3731,7 +3822,7 @@ fn append_render_particle(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     let particle_offset = bytes.len();
     bytes.resize(particle_offset + 476, 0);
     bytes[particle_offset..particle_offset + 4].copy_from_slice(&0x5041_5254_u32.to_le_bytes());
-    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0080_0000_u32.to_le_bytes());
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0008_0000_u32.to_le_bytes());
     bytes[particle_offset + 20..particle_offset + 22].copy_from_slice(&0_u16.to_le_bytes());
     bytes[particle_offset + 22..particle_offset + 24].copy_from_slice(&0_u16.to_le_bytes());
     bytes[particle_offset + 40] = 2;

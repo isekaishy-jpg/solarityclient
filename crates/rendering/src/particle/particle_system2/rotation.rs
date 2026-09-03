@@ -4,6 +4,9 @@ use solarity_asset::M2ParticleEmitter;
 
 use super::M2ParticleRandom;
 
+/// Gives each particle an independent chance to reverse angular velocity.
+const NEGATE_SPIN_RANDOM: u32 = 0x0000_0200;
+
 /// Rotation parameters selected once from a particle's stored random word.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2ParticleRotationPose {
@@ -25,11 +28,14 @@ impl M2ParticleRotationPose {
             emitter.base_spin_variation(),
             &mut random,
         );
-        let radians_per_second = varied(
+        let mut radians_per_second = varied(
             emitter.spin_speed(),
             emitter.spin_speed_variation(),
             &mut random,
         );
+        if emitter.flags() & NEGATE_SPIN_RANDOM != 0 && random.next_unit() < 0.5 {
+            radians_per_second = -radians_per_second;
+        }
         Self {
             initial_radians,
             radians_per_second,
