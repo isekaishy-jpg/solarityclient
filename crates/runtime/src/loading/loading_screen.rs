@@ -17,7 +17,10 @@ use solarity_ui::UiRenderError;
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
 
-use super::{RuntimeLoadingStage, layout::centered_aspect_fill_uv};
+use super::{
+    RuntimeLoadingStage,
+    layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fill_uv},
+};
 
 const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
@@ -159,13 +162,13 @@ fn resolve_background(
     {
         return Ok(Some(ResolvedLoadingBackground {
             path: wide,
-            authored_aspect: 16.0 / 9.0,
+            authored_aspect: STOCK_WIDE_LOADING_ART_ASPECT,
         }));
     }
     if assets.borrow().contains(screen.texture())? {
         return Ok(Some(ResolvedLoadingBackground {
             path: screen.texture().clone(),
-            authored_aspect: 4.0 / 3.0,
+            authored_aspect: STOCK_LOADING_ART_ASPECT,
         }));
     }
     tracing::warn!(

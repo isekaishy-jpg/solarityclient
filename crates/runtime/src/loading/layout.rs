@@ -1,5 +1,15 @@
 //! Stock loading-card texture coordinate policy.
 
+/// Native aspect of ordinary build-12340 loading artwork.
+pub(crate) const STOCK_LOADING_ART_ASPECT: f32 = 4.0 / 3.0;
+
+/// Native aspect of build-12340's `Wide` loading artwork.
+///
+/// `LoadingScreen.cpp` divides the normalized display aspect by
+/// `0x00AB63B8 / 0x00AB63B4`. Those executable constants are `1.6` and
+/// `1.3333334`, respectively, making the wide artwork 16:10 rather than 16:9.
+pub(crate) const STOCK_WIDE_LOADING_ART_ASPECT: f32 = 8.0 / 5.0;
+
 /// Returns centered texture coordinates which fill the viewport without
 /// changing the loading artwork's authored aspect ratio.
 ///

@@ -5,29 +5,30 @@ mod layout;
 #[path = "../../src/loading/readiness.rs"]
 mod readiness;
 
-use layout::centered_aspect_fill_uv;
+use layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fill_uv};
 use readiness::{RuntimeLoadingReadiness, RuntimeLoadingStage};
 
 /// Loading art retains its authored aspect ratio and crops around the center.
 #[test]
 fn loading_art_uses_stock_centered_aspect_fill_coordinates() {
     assert_eq!(
-        centered_aspect_fill_uv([1_024.0, 768.0], 4.0 / 3.0),
+        centered_aspect_fill_uv([1_024.0, 768.0], STOCK_LOADING_ART_ASPECT),
         [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
     );
 
-    let widescreen_viewport = centered_aspect_fill_uv([1_366.0, 768.0], 4.0 / 3.0);
+    let widescreen_viewport = centered_aspect_fill_uv([1_366.0, 768.0], STOCK_LOADING_ART_ASPECT);
     assert_uv_close(widescreen_viewport[0], [0.0, 0.125_183_02]);
     assert_uv_close(widescreen_viewport[3], [1.0, 0.874_816_95]);
 
-    let standard_viewport = centered_aspect_fill_uv([1_024.0, 768.0], 16.0 / 9.0);
-    assert_uv_close(standard_viewport[0], [0.125, 0.0]);
-    assert_uv_close(standard_viewport[3], [0.875, 1.0]);
+    let standard_viewport =
+        centered_aspect_fill_uv([1_024.0, 768.0], STOCK_WIDE_LOADING_ART_ASPECT);
+    assert_uv_close(standard_viewport[0], [0.083_333_31, 0.0]);
+    assert_uv_close(standard_viewport[3], [0.916_666_7, 1.0]);
 
-    assert_eq!(
-        centered_aspect_fill_uv([1_920.0, 1_080.0], 16.0 / 9.0),
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
-    );
+    let wide_art_on_sixteen_nine =
+        centered_aspect_fill_uv([1_920.0, 1_080.0], STOCK_WIDE_LOADING_ART_ASPECT);
+    assert_uv_close(wide_art_on_sixteen_nine[0], [0.0, 0.05]);
+    assert_uv_close(wide_art_on_sixteen_nine[3], [1.0, 0.95]);
 }
 
 fn assert_uv_close(actual: [f32; 2], expected: [f32; 2]) {
