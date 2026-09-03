@@ -1243,27 +1243,34 @@ impl ClientServices {
                         .world
                         .character_selection()
                         .and_then(|selection| selection.directory().by_guid(guid))
-                        .map(|character| character.location().map_id());
-                    let loading = map_id
-                        .map(|map_id| {
-                            self.loading_screen_cache
-                                .remove(&(map_id, display_extent))
-                                .map_or_else(
-                                    || {
-                                        RuntimeLoadingScreen::prepare(
-                                            &mut self.renderer,
-                                            &self.assets,
-                                            &self.loading_directory,
-                                            map_id,
-                                            display_extent,
-                                        )
-                                    },
-                                    Ok,
+                        .map_or(u32::MAX, |character| character.location().map_id());
+                    if map_id == u32::MAX {
+                        tracing::warn!(
+                            character_guid = format_args!("{guid:#018X}"),
+                            "selected character has no directory map; using generic loading card"
+                        );
+                    }
+                    // World UI bootstrap intentionally waits for one loading
+                    // present. Always retain a generic card when a malformed
+                    // or racing Glue action omits directory metadata; leaving
+                    // this as None strands an accepted world behind Glue.
+                    let loading = self
+                        .loading_screen_cache
+                        .remove(&(map_id, display_extent))
+                        .map_or_else(
+                            || {
+                                RuntimeLoadingScreen::prepare(
+                                    &mut self.renderer,
+                                    &self.assets,
+                                    &self.loading_directory,
+                                    map_id,
+                                    display_extent,
                                 )
-                        })
-                        .transpose()?;
+                            },
+                            Ok,
+                        )?;
                     match self.world.enter_world(&handle, guid) {
-                        Ok(()) => self.loading_screen = loading,
+                        Ok(()) => self.loading_screen = Some(loading),
                         Err(RuntimeWorldError::AlreadyActive) => {}
                         Err(error) => self.publish_world_failure(error),
                     }
