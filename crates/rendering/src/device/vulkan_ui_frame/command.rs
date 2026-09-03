@@ -14,6 +14,8 @@ use crate::device::vulkan_ui_texture_set::UiTextureSetRegistry;
 use super::UiFrameContext;
 use super::resource::UiFrameSlot;
 
+const UPDATE_CHUNK_SIZE: usize = 65_536;
+
 /// Borrowed objects needed to record one acquired swapchain image.
 pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
@@ -53,6 +55,12 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin UI frame command buffer", source))?;
+    record_mesh_updates(
+        context.device,
+        context.command_buffer,
+        context.meshes,
+        context.draws,
+    )?;
     transition_to_color(&context);
     let clear = vk::ClearValue {
         color: vk::ClearColorValue {
@@ -127,6 +135,12 @@ pub(in crate::device) fn record_loaded_overlay(
     if context.draws.is_empty() {
         return Ok(());
     }
+    record_mesh_updates(
+        context.device,
+        context.command_buffer,
+        context.meshes,
+        context.draws,
+    )?;
     let attachment = vk::RenderingAttachmentInfo::default()
         .image_view(context.image_view)
         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -183,6 +197,87 @@ pub(in crate::device) fn record_loaded_overlay(
     // SAFETY: A matching color-only dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     Ok(())
+}
+
+/// Embeds each changed retained mesh once before the rendering scope begins.
+fn record_mesh_updates(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    meshes: &UiMeshRegistry,
+    draws: &[UiPreparedDraw],
+) -> Result<(), VulkanError> {
+    let mut recorded = Vec::with_capacity(draws.len());
+    for draw in draws {
+        let mesh = draw.mesh();
+        if recorded.contains(&mesh) {
+            continue;
+        }
+        let updates = meshes.take_pending_updates(mesh)?;
+        if let Some((buffer, bytes)) = updates.vertex {
+            record_buffer_update(
+                device,
+                command_buffer,
+                buffer,
+                bytes,
+                vk::PipelineStageFlags2::VERTEX_INPUT,
+                vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+            );
+        }
+        if let Some((buffer, bytes)) = updates.index {
+            record_buffer_update(
+                device,
+                command_buffer,
+                buffer,
+                bytes,
+                vk::PipelineStageFlags2::INDEX_INPUT,
+                vk::AccessFlags2::INDEX_READ,
+            );
+        }
+        recorded.push(mesh);
+    }
+    Ok(())
+}
+
+/// Writes one retained payload in Vulkan's bounded inline-update chunks.
+fn record_buffer_update(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    buffer: vk::Buffer,
+    bytes: &[u8],
+    destination_stage: vk::PipelineStageFlags2,
+    destination_access: vk::AccessFlags2,
+) {
+    let prior_read_barriers = [vk::BufferMemoryBarrier2::default()
+        .src_stage_mask(destination_stage)
+        .src_access_mask(destination_access)
+        .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+        .buffer(buffer)
+        .offset(0)
+        .size(bytes.len() as vk::DeviceSize)];
+    let prior_read_dependency =
+        vk::DependencyInfo::default().buffer_memory_barriers(&prior_read_barriers);
+    // SAFETY: Queue submission order puts every prior frame in the first
+    // synchronization scope, preventing this write from racing its UI reads.
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &prior_read_dependency) };
+    for (chunk_index, chunk) in bytes.chunks(UPDATE_CHUNK_SIZE).enumerate() {
+        let offset = (chunk_index * UPDATE_CHUNK_SIZE) as vk::DeviceSize;
+        // SAFETY: Retained allocations cover every four-byte-aligned chunk and
+        // Vulkan copies the supplied bytes into command-buffer-owned storage.
+        unsafe { device.cmd_update_buffer(command_buffer, buffer, offset, chunk) };
+    }
+    let current_read_barriers = [vk::BufferMemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+        .dst_stage_mask(destination_stage)
+        .dst_access_mask(destination_access)
+        .buffer(buffer)
+        .offset(0)
+        .size(bytes.len() as vk::DeviceSize)];
+    let current_read_dependency =
+        vk::DependencyInfo::default().buffer_memory_barriers(&current_read_barriers);
+    // SAFETY: The transfer commands precede all UI input reads in this buffer.
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &current_read_dependency) };
 }
 
 /// Binds one validated packet and records its unsigned-32 indexed range.

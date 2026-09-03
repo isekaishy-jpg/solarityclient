@@ -247,6 +247,11 @@ fn clip_textured_quad(
     viewport: [f32; 4],
 ) -> Option<ClippedTexturedQuad> {
     let [left, bottom, right, top] = bounds;
+    let width = right - left;
+    let height = top - bottom;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
     let clipped = [
         left.max(viewport[0]),
         bottom.max(viewport[1]),
@@ -254,12 +259,18 @@ fn clip_textured_quad(
         top.min(viewport[3]),
     ];
     if clipped[0] >= clipped[2] || clipped[1] >= clipped[3] {
-        return None;
-    }
-    let width = right - left;
-    let height = top - bottom;
-    if width <= 0.0 || height <= 0.0 {
-        return None;
+        // Keep the source quad's material packet and mesh slot stable while it
+        // is outside the viewport. A zero-area quad emits no fragments but
+        // prevents scrolling from rebuilding pipelines and texture sets.
+        let x = left.clamp(viewport[0], viewport[2]);
+        let y = bottom.clamp(viewport[1], viewport[3]);
+        let sample_x = ((x - left) / width).clamp(0.0, 1.0);
+        let sample_y = ((top - y) / height).clamp(0.0, 1.0);
+        return Some(ClippedTexturedQuad {
+            bounds: [x, y, x, y],
+            coordinates: [interpolate_quad(coordinates, sample_x, sample_y); 4],
+            colors: [interpolate_quad(colors, sample_x, sample_y); 4],
+        });
     }
     let left_fraction = (clipped[0] - left) / width;
     let right_fraction = (clipped[2] - left) / width;

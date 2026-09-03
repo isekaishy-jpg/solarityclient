@@ -126,22 +126,14 @@ impl PreparedUiFrame {
             .map(|draw| draw.mesh())
             .ok_or(VulkanError::EmptyUiFrame)?;
         renderer.replace_ui_mesh(mesh, plan)?;
-        self.draws = self
-            .draws
-            .iter()
-            .zip(&self.prepared_batches)
-            .map(|(draw, (batch_index, _batch))| {
-                renderer.prepare_ui_draw(
-                    mesh,
-                    draw.pipeline(),
-                    draw.texture_set(),
-                    plan,
-                    *batch_index,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for ((_, retained), candidate) in self.prepared_batches.iter_mut().zip(plan.batches()) {
-            *retained = candidate.clone();
+        for (draw, (batch_index, _retained)) in self.draws.iter_mut().zip(&self.prepared_batches) {
+            *draw = renderer.prepare_ui_draw(
+                mesh,
+                draw.pipeline(),
+                draw.texture_set(),
+                plan,
+                *batch_index,
+            )?;
         }
         self.logical_extent = plan.logical_extent();
         Ok(())

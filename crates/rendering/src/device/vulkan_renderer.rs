@@ -1102,7 +1102,7 @@ impl VulkanRenderer {
         )
     }
 
-    /// Replaces one stable UI mesh after all earlier queue use has retired.
+    /// Replaces one stable UI mesh through the next ordered frame submission.
     pub fn replace_ui_mesh(
         &mut self,
         handle: UiMeshHandle,

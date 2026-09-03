@@ -435,6 +435,11 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
   <ScrollChild><Frame name="Content"><Size x="100" y="100"/>
     <Layers><Layer level="ARTWORK">
       <Texture name="ContentTexture" file="Interface\Glues\Content" setAllPoints="true"/>
+      <Texture name="OffscreenTexture" file="Interface\Glues\Offscreen">
+        <Size x="10" y="10"/><Anchors><Anchor point="BOTTOMLEFT" relativeTo="Content" relativePoint="TOPLEFT">
+          <Offset><AbsDimension x="0" y="100"/></Offset>
+        </Anchor></Anchors>
+      </Texture>
     </Layer></Layers>
   </Frame></ScrollChild>
   <Frames><Frame name="Chrome"><Size x="20" y="20"/>
@@ -466,6 +471,11 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
         .iter()
         .position(|object| object.name() == Some("ChromeTexture"))
         .ok_or("missing ScrollFrame chrome texture")?;
+    let offscreen_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("OffscreenTexture"))
+        .ok_or("missing offscreen texture")?;
     let mesh = manager.render_plan().mesh();
     let content_quad = mesh
         .object_indices()
@@ -502,6 +512,25 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
         chrome
             .iter()
             .any(|vertex| (vertex.position()[1] - 429.0).abs() < 0.000_1)
+    );
+    let offscreen_quad = mesh
+        .object_indices()
+        .iter()
+        .position(|index| *index == offscreen_index)
+        .ok_or("fully clipped texture lost its retained mesh slot")?;
+    let offscreen = &mesh.vertices()[offscreen_quad * 4..offscreen_quad * 4 + 4];
+    assert!(
+        offscreen
+            .iter()
+            .all(|vertex| vertex.position() == offscreen[0].position())
+    );
+    assert!(
+        manager
+            .render_plan()
+            .texture_assets()
+            .requests()
+            .iter()
+            .any(|request| request.path().as_str() == "INTERFACE\\GLUES\\OFFSCREEN.BLP")
     );
     Ok(())
 }
