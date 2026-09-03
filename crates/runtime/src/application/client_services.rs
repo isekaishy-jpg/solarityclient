@@ -3,7 +3,7 @@
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -122,6 +122,8 @@ pub(crate) struct ClientServices {
     runtime_overlay_draws: Vec<UiPreparedDraw>,
     loading_directory: LoadingScreenDirectory,
     loading_screen: Option<RuntimeLoadingScreen>,
+    loading_screen_cache: HashMap<(u32, (u32, u32)), RuntimeLoadingScreen>,
+    loading_screen_prewarm_queue: VecDeque<u32>,
     glue_update_clock: std::time::Instant,
     m2_global_clock: std::time::Instant,
     crt_rand: CrtRand,
@@ -420,6 +422,8 @@ impl ClientServices {
                 runtime_overlay_draws: Vec::new(),
                 loading_directory,
                 loading_screen: None,
+                loading_screen_cache: HashMap::new(),
+                loading_screen_prewarm_queue: VecDeque::new(),
                 glue_update_clock: std::time::Instant::now(),
                 m2_global_clock: std::time::Instant::now(),
                 crt_rand,
@@ -1051,6 +1055,8 @@ impl ClientServices {
                     self.terrain.disconnect();
                     self.sound.disconnect()?;
                     self.terrain_frame = None;
+                    self.loading_screen_cache.clear();
+                    self.loading_screen_prewarm_queue.clear();
                     self.authentication_prewarm_active = false;
                     self.realm_directory_published = false;
                     self.character_screen_published = false;
@@ -1238,6 +1244,7 @@ impl ClientServices {
                 }
                 UiGlueNetworkAction::EnterWorld { guid } => {
                     self.world_ui = None;
+                    let display_extent = self.platform.logical_extent();
                     let map_id = self
                         .world
                         .character_selection()
@@ -1245,13 +1252,20 @@ impl ClientServices {
                         .map(|character| character.location().map_id());
                     let loading = map_id
                         .map(|map_id| {
-                            RuntimeLoadingScreen::prepare(
-                                &mut self.renderer,
-                                &self.assets,
-                                &self.loading_directory,
-                                map_id,
-                                self.platform.logical_extent(),
-                            )
+                            self.loading_screen_cache
+                                .remove(&(map_id, display_extent))
+                                .map_or_else(
+                                    || {
+                                        RuntimeLoadingScreen::prepare(
+                                            &mut self.renderer,
+                                            &self.assets,
+                                            &self.loading_directory,
+                                            map_id,
+                                            display_extent,
+                                        )
+                                    },
+                                    Ok,
+                                )
                         })
                         .transpose()?;
                     match self.world.enter_world(&handle, guid) {
@@ -1384,6 +1398,7 @@ impl ClientServices {
                     )?;
                     self.login_ui = None;
                 }
+                self.queue_loading_screen_prewarms();
             }
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
             Ok(RuntimeWorldPoll::CharacterCreationFinished(result)) => {
@@ -1505,6 +1520,7 @@ impl ClientServices {
             }
             Err(error) => self.publish_world_failure(error),
         }
+        self.service_loading_screen_prewarm()?;
         self.gameplay.service()?;
         if let (Some(world_ui), Some(buttons)) =
             (self.world_ui.as_mut(), self.gameplay.action_buttons())
@@ -1901,6 +1917,66 @@ impl ClientServices {
                 "applied character component texture level"
             );
         }
+    }
+
+    /// Queues each distinct character map for hidden loading-card residency.
+    fn queue_loading_screen_prewarms(&mut self) {
+        let display_extent = self.platform.logical_extent();
+        let map_ids = self
+            .world
+            .character_selection()
+            .map(|selection| {
+                selection
+                    .directory()
+                    .entries()
+                    .iter()
+                    .map(|character| character.location().map_id())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for map_id in map_ids {
+            let key = (map_id, display_extent);
+            if !self.loading_screen_cache.contains_key(&key)
+                && !self.loading_screen_prewarm_queue.contains(&map_id)
+            {
+                self.loading_screen_prewarm_queue.push_back(map_id);
+            }
+        }
+    }
+
+    /// Makes one queued card renderer-resident behind an established scene.
+    fn service_loading_screen_prewarm(&mut self) -> Result<(), ApplicationError> {
+        if self.loading_screen.is_some()
+            || self.gameplay.world().is_some()
+            || !self
+                .glue
+                .current_screen()
+                .eq_ignore_ascii_case("charselect")
+            || !self
+                .presented_glue_screen
+                .as_deref()
+                .is_some_and(|screen| screen.eq_ignore_ascii_case("charselect"))
+        {
+            return Ok(());
+        }
+        let display_extent = self.platform.logical_extent();
+        while let Some(map_id) = self.loading_screen_prewarm_queue.pop_front() {
+            let key = (map_id, display_extent);
+            if self.loading_screen_cache.contains_key(&key) {
+                continue;
+            }
+            let loading = RuntimeLoadingScreen::prepare(
+                &mut self.renderer,
+                &self.assets,
+                &self.loading_directory,
+                map_id,
+                display_extent,
+            )?;
+            self.loading_screen_cache.insert(key, loading);
+            tracing::info!(map_id, ?display_extent, "prewarmed resident loading card");
+            break;
+        }
+        Ok(())
     }
 
     fn sync_platform_text_input(&mut self) {
