@@ -49,6 +49,9 @@ const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 /// Initial `particleDensity` CVar registered by the stock UI environment.
 const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 
+/// Disables build-12340's camera-distance emission reduction.
+const PARTICLE_IGNORE_DISTANCE_LOD: u32 = 0x0040_0000;
+
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 #[derive(Clone)]
 struct M2GpuSource {
@@ -2096,27 +2099,32 @@ impl M2Frame {
                 .enumerate()
             {
                 let pose = M2ParticlePose::sample(source.model.animations(), emitter, clock)?;
-                let emitter_transform = particle_emitter_transform(
+                let (emitter_transform, emitter_lod_position) = particle_emitter_transform(
                     &source.model,
                     placement.transform,
                     bone_pose,
                     particle_index,
                     emitter,
                 )?;
+                let particle_density = particle_emission_density(
+                    emitter.flags(),
+                    emitter_lod_position,
+                    camera.camera().position(),
+                );
                 match emitter.emitter_type() {
                     1 => simulation.advance_planar_bounded(
                         emitter,
                         pose,
                         effect_delta_seconds,
                         emitter_transform,
-                        STOCK_DEFAULT_PARTICLE_DENSITY,
+                        particle_density,
                     )?,
                     2 => simulation.advance_sphere_bounded(
                         emitter,
                         pose,
                         effect_delta_seconds,
                         emitter_transform,
-                        STOCK_DEFAULT_PARTICLE_DENSITY,
+                        particle_density,
                     )?,
                     emitter_type => {
                         return Err(RuntimeTerrainFrameError::M2ParticleEmitterType {
@@ -2806,7 +2814,7 @@ fn particle_emitter_transform(
     bone_pose: &M2BonePose,
     particle_index: usize,
     emitter: &M2ParticleEmitter,
-) -> Result<Mat4, RuntimeTerrainFrameError> {
+) -> Result<(Mat4, glam::Vec3), RuntimeTerrainFrameError> {
     let bone = match emitter.bone_index() {
         Some(bone_index) => bone_pose
             .transforms()
@@ -2819,7 +2827,23 @@ fn particle_emitter_transform(
             })?,
         None => Mat4::IDENTITY,
     };
-    Ok(placement_transform * bone * Mat4::from_translation(emitter.position()))
+    let bone_transform = placement_transform * bone;
+    Ok((
+        bone_transform * Mat4::from_translation(emitter.position()),
+        bone_transform.transform_point3(glam::Vec3::ZERO),
+    ))
+}
+
+/// Applies stock's camera-distance multiplier to the global particle density.
+fn particle_emission_density(flags: u32, emitter_origin: glam::Vec3, camera: glam::Vec3) -> f32 {
+    if flags & PARTICLE_IGNORE_DISTANCE_LOD != 0 {
+        return STOCK_DEFAULT_PARTICLE_DENSITY;
+    }
+    let distance = emitter_origin.distance(camera);
+    if !distance.is_finite() {
+        return STOCK_DEFAULT_PARTICLE_DENSITY;
+    }
+    STOCK_DEFAULT_PARTICLE_DENSITY * (1.0 - (distance - 50.0) * 0.02).clamp(0.25, 1.0)
 }
 
 /// Advances every shared declaration through its placement-owned edge history.
@@ -3501,4 +3525,23 @@ fn ordinary_particle_texture_index(
         particle_index,
         texture_count,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use glam::Vec3;
+
+    use super::{PARTICLE_IGNORE_DISTANCE_LOD, particle_emission_density};
+
+    #[test]
+    fn particle_distance_lod_matches_stock_threshold_and_floor() {
+        let camera = Vec3::ZERO;
+        assert_eq!(particle_emission_density(0, Vec3::X * 50.0, camera), 1.0);
+        assert_eq!(particle_emission_density(0, Vec3::X * 75.0, camera), 0.5);
+        assert_eq!(particle_emission_density(0, Vec3::X * 100.0, camera), 0.25);
+        assert_eq!(
+            particle_emission_density(PARTICLE_IGNORE_DISTANCE_LOD, Vec3::X * 100.0, camera),
+            1.0
+        );
+    }
 }
