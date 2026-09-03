@@ -30,6 +30,7 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     vec4 diffuse_light;
     vec4 light_direction;
     vec4 fog_parameters;
+    vec4 fog_color;
     M2LocalLight local_lights[4];
     vec4 shadow_matrix_rows[12];
     vec4 shadow_fade_plane;

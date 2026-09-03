@@ -26,6 +26,7 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     vec4 diffuse_light;
     vec4 light_direction;
     vec4 fog_parameters;
+    vec4 fog_color;
     M2LocalLight local_lights[4];
     vec4 shadow_matrix_rows[12];
     vec4 shadow_fade_plane;
@@ -186,7 +187,7 @@ void main() {
     float fog_start = scene.fog_parameters.x;
     float fog_end = scene.fog_parameters.y;
     float fog_range = max(fog_end - fog_start, 0.001);
-    float eye_distance = distance(scene.camera_position.xyz, world_position);
+    float eye_distance = max(gl_Position.w, 0.0);
     float linear_visibility = clamp((fog_end - eye_distance) / fog_range, 0.0, 1.0);
     fragment_fog_visibility = pow(
         linear_visibility, max(scene.fog_parameters.w, 0.0));

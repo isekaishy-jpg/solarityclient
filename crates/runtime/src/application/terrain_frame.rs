@@ -693,6 +693,7 @@ impl TerrainFrame {
             light.diffuse_color(),
             environment.light_direction(),
             fog_parameters,
+            light.fog_color(),
             [M2LocalLightState::disabled(); 4],
         );
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene);

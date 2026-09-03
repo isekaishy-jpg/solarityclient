@@ -72,6 +72,20 @@ impl M2ParticleSpirvCompiler {
         options.set_warnings_as_errors();
         let alpha_reference = material.alpha_reference(1.0).to_string();
         options.add_macro_definition("PARTICLE_ALPHA_REFERENCE", Some(&alpha_reference));
+        options.add_macro_definition(
+            "PARTICLE_SHADED",
+            Some(if material.is_unlit() { "0" } else { "1" }),
+        );
+        let fog_mode = if material.is_unfogged() {
+            "0"
+        } else {
+            match material.blend_mode() {
+                solarity_asset::M2BlendMode::NoAlphaAdd | solarity_asset::M2BlendMode::Add => "2",
+                solarity_asset::M2BlendMode::Mod => "3",
+                _ => "1",
+            }
+        };
+        options.add_macro_definition("PARTICLE_FOG_MODE", Some(fog_mode));
         self.compiler
             .compile_into_spirv(shader, kind, name, "main", Some(&options))
             .map(|artifact| artifact.as_binary().to_vec())

@@ -1884,6 +1884,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         Vec3::splat(0.8),
         Vec3::Z,
         Vec4::new(10.0, 100.0, 1.0, 1.0),
+        Vec3::new(0.2, 0.3, 0.4),
         [M2LocalLightState::disabled(); 4],
     );
     assert_eq!(scene_uniform.to_bytes().len(), M2SceneUniform::BYTE_SIZE);

@@ -626,6 +626,7 @@ impl RuntimeGlueModelScene {
             environment_diffuse,
             active.environment.light_direction,
             active.environment.fog_range,
+            active.environment.fog_color,
             environment_local_lights,
         );
         let character_local_lights = if active.environment.character_uses_camera_light {
@@ -647,6 +648,7 @@ impl RuntimeGlueModelScene {
             Vec3::ZERO,
             active.environment.light_direction,
             active.environment.fog_range,
+            active.environment.fog_color,
             character_local_lights,
         );
         let pet_model = character_model.with_local_lights(pet_local_lights);

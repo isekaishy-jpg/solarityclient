@@ -66,13 +66,14 @@ pub struct M2SceneUniform {
     diffuse_light: Vec3,
     light_direction: Vec3,
     fog_parameters: Vec4,
+    fog_color: Vec3,
     local_lights: [M2LocalLightState; 4],
     shadow: M2ShadowState,
 }
 
 impl M2SceneUniform {
     /// Byte size of the exact std140 scene descriptor block.
-    pub const BYTE_SIZE: usize = 752;
+    pub const BYTE_SIZE: usize = 768;
 
     /// Creates one bounded scene-lighting and fog snapshot.
     #[allow(clippy::too_many_arguments)]
@@ -84,6 +85,7 @@ impl M2SceneUniform {
         diffuse_light: Vec3,
         light_direction: Vec3,
         fog_parameters: Vec4,
+        fog_color: Vec3,
         local_lights: [M2LocalLightState; 4],
     ) -> Self {
         Self {
@@ -93,6 +95,7 @@ impl M2SceneUniform {
             diffuse_light,
             light_direction,
             fog_parameters,
+            fog_color,
             local_lights,
             shadow: M2ShadowState::disabled(),
         }
@@ -123,6 +126,7 @@ impl M2SceneUniform {
         write_vec4(&mut bytes, &mut offset, self.diffuse_light.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.light_direction.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.fog_parameters);
+        write_vec4(&mut bytes, &mut offset, self.fog_color.extend(0.0));
         for light in self.local_lights {
             light.write_bytes(&mut bytes, &mut offset);
         }

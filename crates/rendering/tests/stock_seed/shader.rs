@@ -9,7 +9,7 @@ use solarity_rendering::{
     WorldModelSpirvCompiler, WorldModelSpirvKey,
 };
 
-/// Particle blend bytes and low flags synthesize stock's dedicated material state.
+/// Particle blend bytes and authored flags synthesize stock's dedicated material state.
 #[test]
 fn particle_material_uses_authored_particle_mapping() {
     let mappings = [
@@ -35,14 +35,21 @@ fn particle_material_uses_authored_particle_mapping() {
     assert_eq!(material.destination_blend(), M2BlendFactor::One);
     assert!(!material.cull_enabled());
     assert!(material.depth_test_enabled());
-    assert!(material.depth_write_enabled());
-    assert!(!material.is_unlit());
+    assert!(!material.depth_write_enabled());
+    assert!(material.is_unlit());
     assert!(!material.is_unfogged());
 
-    let material = M2MaterialState::from_particle(5, 0);
-    assert!(material.is_unlit());
+    let material = M2MaterialState::from_particle(5, 0x8);
+    assert!(!material.is_unlit());
     assert!(material.is_unfogged());
     assert!(!material.depth_write_enabled());
+
+    let opaque = M2MaterialState::from_particle(0, 0x4);
+    assert!(opaque.depth_write_enabled());
+    assert!(!opaque.is_unfogged());
+
+    let later_unfogged = M2MaterialState::from_particle(2, 0x0010_0000);
+    assert!(later_unfogged.is_unfogged());
 }
 
 /// Every stock particle blend mapping compiles for the pinned SPIR-V target.

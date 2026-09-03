@@ -60,8 +60,9 @@ impl M2MaterialState {
     /// The particle byte uses its own blend table. Its numeric selectors do
     /// not name the root `M2BLEND` entries even though the resulting states can
     /// share the same backend representation. Executable `0x008214E0` also
-    /// creates a two-sided material and derives lighting, fog, and depth-write
-    /// state from the low three flags.
+    /// creates a two-sided material. Lighting and fog retain the authored
+    /// particle meanings, while depth-write is derived from the particle
+    /// blend table rather than from an emitter-orientation flag.
     #[must_use]
     pub const fn from_particle(blending_type: u8, particle_flags: u32) -> Self {
         let blend_mode = match blending_type {
@@ -81,10 +82,9 @@ impl M2MaterialState {
             destination_blend,
             cull_enabled: false,
             depth_test_enabled: true,
-            depth_write_enabled: particle_flags & 0x4 != 0,
-            is_unlit: particle_flags & 0x1 == 0
-                || matches!(blend_mode, M2BlendMode::Mod | M2BlendMode::Mod2x),
-            is_unfogged: particle_flags & 0x2 == 0,
+            depth_write_enabled: matches!(blend_mode, M2BlendMode::Opaque | M2BlendMode::AlphaKey),
+            is_unlit: particle_flags & 0x1 != 0,
+            is_unfogged: particle_flags & (0x8 | 0x0010_0000) != 0,
         }
     }
 

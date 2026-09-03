@@ -315,6 +315,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             Vec3::new(0.75, 0.7, 0.65),
             Vec3::Z,
             fog,
+            Vec3::new(0.2, 0.3, 0.4),
             [M2LocalLightState::disabled(); 4],
         ),
     );
