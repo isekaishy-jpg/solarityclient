@@ -96,6 +96,7 @@ impl M2PipelineRegistry {
     pub(in crate::device) fn prepare(
         &mut self,
         device: &Device,
+        pipeline_cache: vk::PipelineCache,
         color_format: vk::Format,
         depth_format: vk::Format,
         plan: M2ShaderPlan,
@@ -115,13 +116,14 @@ impl M2PipelineRegistry {
             }
         };
         let program = compiler.compile(plan, permutation).map_err(shader_error)?;
-        self.prepare_precompiled(device, color_format, depth_format, &program)
+        self.prepare_precompiled(device, pipeline_cache, color_format, depth_format, &program)
     }
 
     /// Creates a pipeline from worker-compiled bytecode after identity validation.
     pub(in crate::device) fn prepare_precompiled(
         &mut self,
         device: &Device,
+        pipeline_cache: vk::PipelineCache,
         color_format: vk::Format,
         depth_format: vk::Format,
         program: &M2SpirvProgram,
@@ -137,6 +139,7 @@ impl M2PipelineRegistry {
         self.layout.ensure_created(device)?;
         let pipeline = create_pipeline(
             device,
+            pipeline_cache,
             self.layout.handle(),
             color_format,
             depth_format,

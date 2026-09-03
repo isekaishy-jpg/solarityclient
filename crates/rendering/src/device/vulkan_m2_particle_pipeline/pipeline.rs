@@ -59,6 +59,7 @@ impl M2ParticlePipelineLayout {
 
 pub(super) fn create_pipeline(
     device: &Device,
+    pipeline_cache: vk::PipelineCache,
     layout: vk::PipelineLayout,
     color_format: vk::Format,
     depth_format: vk::Format,
@@ -142,7 +143,7 @@ pub(super) fn create_pipeline(
         .layout(layout)
         .push_next(&mut rendering);
     // SAFETY: Every create-info pointer and module/layout handle remains live.
-    unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }
+    unsafe { device.create_graphics_pipelines(pipeline_cache, &[info], None) }
         .map_err(|(_partial, source)| {
             VulkanError::operation("create M2 particle graphics pipeline", source)
         })?

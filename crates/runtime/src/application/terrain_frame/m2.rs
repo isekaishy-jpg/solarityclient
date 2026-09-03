@@ -1,7 +1,7 @@
 //! Renderer-local resources for the shared resident placed-M2 scene.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::Mat4;
 use solarity_asset::{BlpTextureSource, DecodedM2Model, M2ParticleEmitter};
@@ -50,6 +50,7 @@ const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 
 /// One selected M2/SKIN generation uploaded once for all of its placements.
+#[derive(Clone)]
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
@@ -65,12 +66,24 @@ struct M2GpuSource {
 ///
 /// Keeping this separate from [`M2Frame`] lets startup upload AccountLogin
 /// before constructing the hidden live owner that the cinematic advances.
+#[derive(Clone)]
 pub(in crate::application) struct M2GlueGpuSource {
     source: M2GpuSource,
     animation_started_at: std::time::Instant,
 }
 
+impl M2GlueGpuSource {
+    /// Clones immutable renderer handles for a new live placement generation.
+    pub(in crate::application) fn instantiate(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            animation_started_at: std::time::Instant::now(),
+        }
+    }
+}
+
 /// Fixed renderer objects paired with one exact SKIN material batch.
+#[derive(Clone)]
 struct M2GpuDraw {
     pipeline: M2PipelineHandle,
     runtime_fade_pipeline: Option<M2PipelineHandle>,
@@ -78,12 +91,14 @@ struct M2GpuDraw {
 }
 
 /// Shared renderer objects for one ordinary particle declaration.
+#[derive(Clone)]
 struct M2GpuParticle {
     pipeline: M2ParticlePipelineHandle,
     texture_set: M2TextureSetHandle,
 }
 
 /// One stock ribbon pass pairing parallel material and texture entries.
+#[derive(Clone)]
 struct M2GpuRibbonPass {
     pipeline: M2RibbonPipelineHandle,
     texture_set: M2TextureSetHandle,
@@ -180,13 +195,29 @@ pub(in crate::application) struct M2GlueCpuSource {
     ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
 }
 
+/// Process-wide worker bytecode indexed by complete stock shader identity.
+#[derive(Default)]
+struct M2GlueProgramCache {
+    mesh: HashMap<M2SpirvKey, M2SpirvProgram>,
+    particles: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
+    ribbons: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
+}
+
+/// Shares immutable worker results across every finite Glue backdrop.
+static GLUE_PROGRAMS: OnceLock<Mutex<M2GlueProgramCache>> = OnceLock::new();
+
 /// Builds the immutable mesh plan and every required shader permutation.
 pub(in crate::application) fn prepare_glue_cpu_source(
     model: &Arc<DecodedM2Model>,
     local_light_count: M2LocalLightCount,
 ) -> Result<M2GlueCpuSource, RuntimeTerrainFrameError> {
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
-    let mesh_compiler = M2SpirvCompiler::new()?;
+    let cache_lock = GLUE_PROGRAMS.get_or_init(|| Mutex::new(M2GlueProgramCache::default()));
+    let mut cache = match cache_lock.lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut mesh_compiler = None;
     let mut mesh_programs = HashMap::new();
     for draw in plan.draws() {
         let shader = M2ShaderPlan::resolve(model, draw)?;
@@ -204,27 +235,49 @@ pub(in crate::application) fn prepare_glue_cpu_source(
         for shader in shaders.into_iter().flatten() {
             let key = M2SpirvKey::new(shader, permutation);
             if let std::collections::hash_map::Entry::Vacant(entry) = mesh_programs.entry(key) {
-                entry.insert(mesh_compiler.compile(shader, permutation)?);
+                let program = if let Some(program) = cache.mesh.get(&key) {
+                    program.clone()
+                } else {
+                    let compiler = match mesh_compiler.as_ref() {
+                        Some(compiler) => compiler,
+                        None => mesh_compiler.insert(M2SpirvCompiler::new()?),
+                    };
+                    let program = compiler.compile(shader, permutation)?;
+                    cache.mesh.insert(key, program.clone());
+                    program
+                };
+                entry.insert(program);
             }
         }
     }
 
     let mut particle_programs = HashMap::new();
     if !model.animations().particles().is_empty() {
-        let particle_compiler = M2ParticleSpirvCompiler::new()?;
+        let mut particle_compiler = None;
         for emitter in model.animations().particles() {
             let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
             if let std::collections::hash_map::Entry::Vacant(entry) =
                 particle_programs.entry(material)
             {
-                entry.insert(particle_compiler.compile(material)?);
+                let program = if let Some(program) = cache.particles.get(&material) {
+                    program.clone()
+                } else {
+                    let compiler = match particle_compiler.as_ref() {
+                        Some(compiler) => compiler,
+                        None => particle_compiler.insert(M2ParticleSpirvCompiler::new()?),
+                    };
+                    let program = compiler.compile(material)?;
+                    cache.particles.insert(material, program.clone());
+                    program
+                };
+                entry.insert(program);
             }
         }
     }
 
     let mut ribbon_programs = HashMap::new();
     if !model.animations().ribbons().is_empty() {
-        let ribbon_compiler = M2RibbonSpirvCompiler::new()?;
+        let mut ribbon_compiler = None;
         for emitter in model.animations().ribbons() {
             for material_index in emitter.material_indices() {
                 let material =
@@ -232,7 +285,18 @@ pub(in crate::application) fn prepare_glue_cpu_source(
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     ribbon_programs.entry(material)
                 {
-                    entry.insert(ribbon_compiler.compile(material)?);
+                    let program = if let Some(program) = cache.ribbons.get(&material) {
+                        program.clone()
+                    } else {
+                        let compiler = match ribbon_compiler.as_ref() {
+                            Some(compiler) => compiler,
+                            None => ribbon_compiler.insert(M2RibbonSpirvCompiler::new()?),
+                        };
+                        let program = compiler.compile(material)?;
+                        cache.ribbons.insert(material, program.clone());
+                        program
+                    };
+                    entry.insert(program);
                 }
             }
         }

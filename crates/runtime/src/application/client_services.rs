@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use solarity_asset::{
-    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
     BlpTextureCache, CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
     CreatureCatalog, CreatureFamilyCatalog, GameObjectDisplayCatalog,
     HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
@@ -69,6 +69,19 @@ use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
 use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoadingScreen};
 use crate::platform::{ButtonState, MouseButton, MouseWheelDirection, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
+
+const STOCK_CHARACTER_BACKDROPS: [&str; 10] = [
+    "Interface\\Glues\\Models\\UI_Human\\UI_Human.m2",
+    "Interface\\Glues\\Models\\UI_Orc\\UI_Orc.m2",
+    "Interface\\Glues\\Models\\UI_Dwarf\\UI_Dwarf.m2",
+    "Interface\\Glues\\Models\\UI_NightElf\\UI_NightElf.m2",
+    "Interface\\Glues\\Models\\UI_Scourge\\UI_Scourge.m2",
+    "Interface\\Glues\\Models\\UI_Tauren\\UI_Tauren.m2",
+    "Interface\\Glues\\Models\\UI_Gnome\\UI_Gnome.m2",
+    "Interface\\Glues\\Models\\UI_Troll\\UI_Troll.m2",
+    "Interface\\Glues\\Models\\UI_BloodElf\\UI_BloodElf.m2",
+    "Interface\\Glues\\Models\\UI_Draenei\\UI_Draenei.m2",
+];
 
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
@@ -211,6 +224,12 @@ impl ClientServices {
                 present_mode,
             )
         }?;
+        renderer.configure_pipeline_cache(
+            &configuration
+                .profile_root()
+                .join("Cache")
+                .join("vulkan-pipelines.bin"),
+        )?;
         let assets = AssetStoreHandle::new(assets);
         let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
         // The stock process owns one Blizzard RNG stream. Character creation
@@ -248,17 +267,23 @@ impl ClientServices {
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let mut glue_model = RuntimeGlueModelScene::new();
+        let login_model = glue
+            .configured_model_presentation("AccountLogin")
+            .map_err(GlueError::from)?;
+        let background_light_count = login_model
+            .as_ref()
+            .map(|login_model| {
+                login_model
+                    .background_lights()
+                    .live()
+                    .iter()
+                    .filter(|light| light.is_some())
+                    .count()
+            })
+            .unwrap_or(0);
         if initial_screen == GlueInitialScreen::Movie
-            && let Some(login_model) = glue
-                .configured_model_presentation("AccountLogin")
-                .map_err(GlueError::from)?
+            && let Some(login_model) = login_model.as_ref()
         {
-            let background_light_count = login_model
-                .background_lights()
-                .live()
-                .iter()
-                .filter(|light| light.is_some())
-                .count();
             glue_model.prewarm(
                 login_model.path().clone(),
                 background_light_count,
@@ -270,7 +295,7 @@ impl ClientServices {
             // hidden owner until EULA reveals the already-current scene.
             glue_model.finish_prewarm(
                 &mut renderer,
-                &login_model,
+                login_model,
                 &mut crt_rand,
                 Arc::clone(&particle_twinkle),
             )?;
@@ -286,6 +311,18 @@ impl ClientServices {
                 None,
                 false,
             )?;
+        }
+        // The stock racial backdrop set is finite. Submit all immutable CPU
+        // generations after the currently visible/login generation so worker
+        // FIFO priority preserves startup while later screen swaps are warm.
+        for path in STOCK_CHARACTER_BACKDROPS {
+            let path = AssetPath::new(path)?;
+            // Prewarming is optional residency work. Minimal archive fixtures
+            // and partial diagnostic installs may omit screens they never
+            // select; an actual selection still follows the strict load path.
+            if assets.borrow().contains(&path)? {
+                glue_model.prewarm(path, background_light_count, &assets, &cpu)?;
+            }
         }
         let mut ui_textures = BlpTextureCache::new();
         let login_ui = if glue.media_intent().movie().is_some() {

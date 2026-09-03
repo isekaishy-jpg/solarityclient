@@ -45,6 +45,7 @@ impl M2RibbonPipelineRegistry {
     pub(in crate::device) fn prepare(
         &mut self,
         device: &Device,
+        pipeline_cache: vk::PipelineCache,
         color_format: vk::Format,
         depth_format: vk::Format,
         scene_set: vk::DescriptorSetLayout,
@@ -69,6 +70,7 @@ impl M2RibbonPipelineRegistry {
         let program = compiler.compile(material).map_err(shader_error)?;
         self.prepare_precompiled(
             device,
+            pipeline_cache,
             color_format,
             depth_format,
             scene_set,
@@ -82,6 +84,7 @@ impl M2RibbonPipelineRegistry {
     pub(in crate::device) fn prepare_precompiled(
         &mut self,
         device: &Device,
+        pipeline_cache: vk::PipelineCache,
         color_format: vk::Format,
         depth_format: vk::Format,
         scene_set: vk::DescriptorSetLayout,
@@ -97,6 +100,7 @@ impl M2RibbonPipelineRegistry {
         self.layout.ensure_created(device, scene_set, texture_set)?;
         let pipeline = create_pipeline(
             device,
+            pipeline_cache,
             self.layout.handle(),
             color_format,
             depth_format,

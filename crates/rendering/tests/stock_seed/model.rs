@@ -1669,13 +1669,13 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Flag `0x10000` reverses head spin on alternating 32-byte pool slots.
+/// Flag `0x200` gives each head a stable random chance to negate spin.
 #[test]
 fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
-        | 0x0001_0000;
+        | 0x0000_0200;
     bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
@@ -1707,10 +1707,6 @@ fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Er
         M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?,
         M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?,
     ];
-    assert_ne!(
-        std::ptr::from_ref(&particles[0]).addr() & 0x20,
-        std::ptr::from_ref(&particles[1]).addr() & 0x20
-    );
     let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
     let mesh = M2ParticleMeshPlan::prepare(emitter, pose, &particles, camera, 1.0)?;
     let appearance = M2ParticleLifetimePose::sample(
@@ -1721,7 +1717,7 @@ fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Er
     let authored_angle = M2ParticleRotationPose::sample(emitter, particles[0].random_word())
         .angle_radians(particles[0].age_seconds());
     for (particle_index, particle) in particles.iter().enumerate() {
-        let angle = if std::ptr::from_ref(particle).addr() & 0x20 != 0 {
+        let angle = if particle.random_word() & 1 != 0 {
             -authored_angle
         } else {
             authored_angle
@@ -1738,13 +1734,13 @@ fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Er
     Ok(())
 }
 
-/// Flag `0x200000` aligns and foreshortens heads by camera-space velocity.
+/// Flag `0x4` aligns and foreshortens heads by camera-space velocity.
 #[test]
 fn m2_particle_mesh_aligns_heads_to_projected_velocity() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
-        | 0x0020_0000;
+        | 0x0000_0004;
     bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
@@ -1796,13 +1792,13 @@ fn m2_particle_mesh_aligns_heads_to_projected_velocity() -> Result<(), Box<dyn E
     Ok(())
 }
 
-/// Flag `0x4000` keeps head offsets in the transformed emitter X/Y plane.
+/// Flag `0x1000` keeps head offsets in the transformed emitter X/Y plane.
 #[test]
 fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
-        | 0x0000_4000;
+        | 0x0000_1000;
     bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
     for relative in [0x178, 0x17c, 0x180, 0x184] {
         bytes[particle_offset + relative..particle_offset + relative + 4]
@@ -1834,6 +1830,10 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
         emitter,
         M2AnimationClock::new(0, 500.0, 0.0),
     )?;
+    // Local orientation is a draw-space behavior and must not reject the
+    // emitter at the independent simulation boundary.
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 1.0)?;
     let particles = [M2ParticleState::new(0.5, Vec3::ZERO, Vec3::Z, 0x2483)?];
     let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
     let particle_to_world = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0))

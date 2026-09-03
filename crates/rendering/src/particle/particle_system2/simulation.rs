@@ -30,8 +30,10 @@ const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
 /// Sphere particles launch along local +Z rather than away from the center.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
 
-/// Recovered behaviors which must not be silently replaced by basic motion.
-const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_1000 | 0x0000_2000 | 0x0080_0000;
+/// Recovered simulation behaviors which must not be silently replaced by basic motion.
+/// Raw `0x1000` is intentionally absent: build-12340 `0x00832EA0` maps it to
+/// the render-only local-orientation bit and does not change particle motion.
+const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_2000 | 0x0080_0000;
 
 /// Placement-local stock particle storage, emission remainder, and PRNG.
 #[derive(Clone, Debug)]

@@ -151,6 +151,7 @@ fn descriptor_binding(
 /// Translates compiled modules and immutable stock material state to Vulkan.
 pub(super) fn create_pipeline(
     device: &Device,
+    pipeline_cache: vk::PipelineCache,
     layout: vk::PipelineLayout,
     color_format: vk::Format,
     depth_format: vk::Format,
@@ -231,7 +232,7 @@ pub(super) fn create_pipeline(
         .push_next(&mut rendering);
     // SAFETY: Every create-info pointer and module/layout handle remains live
     // for the call. Dynamic rendering intentionally supplies no render pass.
-    unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None) }
+    unsafe { device.create_graphics_pipelines(pipeline_cache, &[create_info], None) }
         .map_err(|(_partial, source)| {
             VulkanError::operation("create M2 graphics pipeline", source)
         })?

@@ -33,14 +33,17 @@ const HEAD_STYLE: u32 = 0x0002_0000;
 /// Emits the velocity-history tail geometry.
 const TAIL_STYLE: u32 = 0x0004_0000;
 
-/// Keeps head offsets in the transformed emitter X/Y basis.
-const FIXED_EMITTER_BASIS_HEAD: u32 = 0x0000_4000;
+/// Raw `0x1000`, mapped to runtime `0x4000` at build-12340 `0x00832EA0`,
+/// keeps head offsets in the transformed emitter X/Y basis.
+const LOCAL_ORIENTATION_HEAD: u32 = 0x0000_1000;
 
-/// Alternates the authored head spin direction between adjacent pool slots.
-const ALTERNATING_HEAD_ROTATION: u32 = 0x0001_0000;
+/// Raw `0x200`, mapped to runtime `0x10000` at build-12340 `0x00832EA0`,
+/// gives each billboard a stable 50% chance to negate authored spin.
+const NEGATE_SPIN_RANDOMLY: u32 = 0x0000_0200;
 
-/// Aligns the head to its camera-projected velocity with foreshortening.
-const VELOCITY_ALIGNED_HEAD: u32 = 0x0020_0000;
+/// Raw `0x4`, mapped to runtime `0x200000` at build-12340 `0x00832EA0`,
+/// aligns the head to its camera-projected velocity with foreshortening.
+const VELOCITY_ALIGNED_HEAD: u32 = 0x0000_0004;
 
 /// Exact direction threshold loaded at executable address `0x009EA27C`.
 const DIRECTION_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3480_0000);
@@ -437,12 +440,12 @@ impl M2ParticleMeshPlan {
                     let mut rotation =
                         M2ParticleRotationPose::sample(emitter, particle.random_word())
                             .angle_radians(particle.age_seconds());
-                    if emitter.flags() & ALTERNATING_HEAD_ROTATION != 0
-                        && std::ptr::from_ref(particle).addr() & 0x20 != 0
+                    if emitter.flags() & NEGATE_SPIN_RANDOMLY != 0
+                        && particle.random_word() & 1 != 0
                     {
                         rotation = -rotation;
                     }
-                    if emitter.flags() & FIXED_EMITTER_BASIS_HEAD != 0 {
+                    if emitter.flags() & LOCAL_ORIENTATION_HEAD != 0 {
                         fixed_basis_positions(
                             position,
                             scale,

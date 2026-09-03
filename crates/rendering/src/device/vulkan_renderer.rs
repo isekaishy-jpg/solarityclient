@@ -2,6 +2,8 @@
 
 #![allow(unsafe_code)]
 
+use std::path::{Path, PathBuf};
+
 use ash::{Device, vk};
 use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture};
 
@@ -178,6 +180,8 @@ pub struct VulkanRenderer {
     adapter_index: usize,
     present_mode: VulkanPresentMode,
     device: Device,
+    pipeline_cache: vk::PipelineCache,
+    pipeline_cache_path: Option<PathBuf>,
     allocator: Option<vk_mem::Allocator>,
     m2_pipelines: M2PipelineRegistry,
     m2_particle_pipelines: M2ParticlePipelineRegistry,
@@ -254,6 +258,8 @@ impl VulkanRenderer {
             adapter_index,
             present_mode,
             device,
+            pipeline_cache: vk::PipelineCache::null(),
+            pipeline_cache_path: None,
             allocator: None,
             m2_pipelines: M2PipelineRegistry::default(),
             m2_particle_pipelines: M2ParticlePipelineRegistry::default(),
@@ -309,6 +315,7 @@ impl VulkanRenderer {
             sampler_anisotropy: selected.sampler_anisotropy,
             maximum_sampler_anisotropy: selected.maximum_sampler_anisotropy,
         };
+        renderer.replace_pipeline_cache(&[])?;
         renderer.create_allocator(selected.physical_device)?;
         renderer.create_swapchain(&selected, extent)?;
         Ok(renderer)
@@ -327,7 +334,60 @@ impl VulkanRenderer {
     /// Returns [`VulkanError`] if the driver reports device loss or another
     /// failure while waiting. Drop still attempts safe handle destruction.
     pub fn shutdown(&mut self) -> Result<(), VulkanError> {
-        self.wait_idle()
+        self.wait_idle()?;
+        self.save_pipeline_cache()
+    }
+
+    /// Loads driver pipeline data and selects its persistence destination.
+    ///
+    /// Callers configure this before preparing graphics pipelines. Invalid or
+    /// incompatible driver data is discarded and replaced by an empty cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] if the cache directory cannot be created, its
+    /// data cannot be read, or Vulkan cannot create an empty cache.
+    pub fn configure_pipeline_cache(&mut self, path: &Path) -> Result<(), VulkanError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| {
+                VulkanError::operation("create Vulkan pipeline-cache directory", source)
+            })?;
+        }
+        let initial_data = match std::fs::read(path) {
+            Ok(data) => data,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(source) => {
+                return Err(VulkanError::operation("read Vulkan pipeline cache", source));
+            }
+        };
+        if let Err(source) = self.replace_pipeline_cache(&initial_data) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %source,
+                "discarding incompatible Vulkan pipeline cache"
+            );
+            self.replace_pipeline_cache(&[])?;
+        }
+        self.pipeline_cache_path = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// Persists all driver data learned since the previous save.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when the driver cannot export its cache or the
+    /// configured destination cannot be written.
+    pub fn save_pipeline_cache(&self) -> Result<(), VulkanError> {
+        let Some(path) = self.pipeline_cache_path.as_ref() else {
+            return Ok(());
+        };
+        // SAFETY: The cache is live, externally synchronized by this renderer,
+        // and the returned bytes are copied into Rust-owned storage.
+        let data = unsafe { self.device.get_pipeline_cache_data(self.pipeline_cache) }
+            .map_err(|source| VulkanError::operation("read Vulkan pipeline-cache data", source))?;
+        std::fs::write(path, data)
+            .map_err(|source| VulkanError::operation("write Vulkan pipeline cache", source))
     }
 
     /// Uploads and presents one decoded stock BLP before the window is revealed.
@@ -1278,6 +1338,7 @@ impl VulkanRenderer {
     ) -> Result<M2PipelineHandle, VulkanError> {
         self.m2_pipelines.prepare(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             plan,
@@ -1297,6 +1358,7 @@ impl VulkanRenderer {
     ) -> Result<M2PipelineHandle, VulkanError> {
         self.m2_pipelines.prepare_precompiled(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             program,
@@ -1324,6 +1386,7 @@ impl VulkanRenderer {
         let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
         self.m2_particle_pipelines.prepare(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             scene_set,
@@ -1346,6 +1409,7 @@ impl VulkanRenderer {
         let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
         self.m2_particle_pipelines.prepare_precompiled(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             scene_set,
@@ -1409,6 +1473,7 @@ impl VulkanRenderer {
         let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
         self.m2_ribbon_pipelines.prepare(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             scene_set,
@@ -1431,6 +1496,7 @@ impl VulkanRenderer {
         let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
         self.m2_ribbon_pipelines.prepare_precompiled(
             &self.device,
+            self.pipeline_cache,
             self.color_format,
             self.depth_format,
             scene_set,
@@ -2064,6 +2130,24 @@ impl VulkanRenderer {
         Ok(())
     }
 
+    fn replace_pipeline_cache(&mut self, initial_data: &[u8]) -> Result<(), VulkanError> {
+        let info = vk::PipelineCacheCreateInfo::default().initial_data(initial_data);
+        // SAFETY: The initial byte slice remains live for the duration of the
+        // call and Vulkan validates its implementation-specific cache header.
+        let replacement = unsafe { self.device.create_pipeline_cache(&info, None) }
+            .map_err(|source| VulkanError::operation("create Vulkan pipeline cache", source))?;
+        // SAFETY: The old cache belongs to this device and no pipeline-create
+        // call can overlap this exclusive renderer mutation.
+        unsafe {
+            if self.pipeline_cache != vk::PipelineCache::null() {
+                self.device
+                    .destroy_pipeline_cache(self.pipeline_cache, None);
+            }
+        }
+        self.pipeline_cache = replacement;
+        Ok(())
+    }
+
     /// Performs the one fallible teardown synchronization step idempotently.
     fn wait_idle(&mut self) -> Result<(), VulkanError> {
         if self.is_idle {
@@ -2082,6 +2166,7 @@ impl Drop for VulkanRenderer {
     /// Releases Vulkan children in reverse dependency order.
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
+        let _pipeline_cache_result = self.save_pipeline_cache();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
             self.cinematic_frames.destroy(&self.device, allocator);
@@ -2126,6 +2211,11 @@ impl Drop for VulkanRenderer {
             // VMA owns no Vulkan handles after all future allocated resources
             // have been destroyed; dropping it before the device is mandatory.
             drop(self.allocator.take());
+            if self.pipeline_cache != vk::PipelineCache::null() {
+                self.device
+                    .destroy_pipeline_cache(self.pipeline_cache, None);
+                self.pipeline_cache = vk::PipelineCache::null();
+            }
             self.device.destroy_device(None);
         }
     }
