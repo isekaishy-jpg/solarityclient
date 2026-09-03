@@ -11,9 +11,10 @@ use solarity_asset::{
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
     M2CameraFrameError, M2DirectionalLight, M2LocalLightCount, M2LocalLightState,
-    M2ParticleTwinkleTable, M2SceneUniform, TerrainSceneUniform, VulkanError, VulkanRenderer,
-    WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
-    glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_camera_frame,
+    M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight, TerrainSceneUniform, VulkanError,
+    VulkanRenderer, WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform,
+    WorldScreenWindow, glue_character_sunlight, merge_wotlk_directional_lights,
+    sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
@@ -221,7 +222,7 @@ struct GlueModelEnvironment {
     light_direction: Vec3,
     fog_color: Vec3,
     fog_range: Vec4,
-    background_directional_lights: [Option<M2DirectionalLight>; 4],
+    background_sunlight: Option<M2Sunlight>,
     character_local_lights: [M2LocalLightState; 4],
     pet_local_lights: [M2LocalLightState; 4],
     shared_point_light_count: usize,
@@ -252,6 +253,7 @@ impl GlueModelEnvironment {
         // same half of every pair before SetupSunlight merges directionals.
         let background_directional_lights =
             model_directional_lights(light_variant.select(model.background_lights()));
+        let background_sunlight = model_sunlight(background_directional_lights);
         let character_lights = light_variant.select(model.character_lights());
         let character_uses_camera_light = !character_lights.iter().any(Option::is_some);
         let character_local_lights = model_light_states(model_directional_lights(character_lights));
@@ -264,7 +266,7 @@ impl GlueModelEnvironment {
             light_direction: STOCK_GLUE_LIGHT_DIRECTION,
             fog_color,
             fog_range,
-            background_directional_lights,
+            background_sunlight,
             character_local_lights,
             pet_local_lights,
             shared_point_light_count: 0,
@@ -311,12 +313,23 @@ fn model_directional_lights(lights: [Option<UiModelLight>; 4]) -> [Option<M2Dire
 }
 
 fn model_light_states(lights: [Option<M2DirectionalLight>; 4]) -> [M2LocalLightState; 4] {
-    let directional_lights = lights.into_iter().flatten().collect::<Vec<_>>();
     let mut merged = [M2LocalLightState::disabled(); 4];
-    if let Some(sunlight) = merge_wotlk_directional_lights(&directional_lights) {
+    if let Some(sunlight) = model_sunlight(lights) {
         merged[0] = sunlight.local_light_state();
     }
     merged
+}
+
+fn model_sunlight(lights: [Option<M2DirectionalLight>; 4]) -> Option<M2Sunlight> {
+    let mut source = lights.into_iter().flatten();
+    let first = source.next()?;
+    let mut contiguous = [first; 4];
+    let mut count = 1_usize;
+    for light in source {
+        contiguous[count] = light;
+        count += 1;
+    }
+    merge_wotlk_directional_lights(&contiguous[..count])
 }
 
 /// Process-long model and texture caches plus the current Glue M2 generation.
@@ -406,10 +419,7 @@ impl RuntimeGlueModelScene {
             GlueModelEnvironment::from_presentation(presentation, GlueModelLightVariant::Live);
         let generation = GlueModelGenerationKey {
             path: key.path.clone(),
-            external_directional_light: environment
-                .background_directional_lights
-                .iter()
-                .any(Option::is_some),
+            external_directional_light: environment.background_sunlight.is_some(),
         };
         if !self.prepared.contains_key(&generation) {
             let pending_index = self
@@ -569,10 +579,7 @@ impl RuntimeGlueModelScene {
             GlueModelLightVariant::Live
         };
         let mut environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
-        let external_directional_light = environment
-            .background_directional_lights
-            .iter()
-            .any(Option::is_some);
+        let external_directional_light = environment.background_sunlight.is_some();
         let generation = GlueModelGenerationKey {
             path: key.path.clone(),
             external_directional_light,
@@ -1023,20 +1030,13 @@ impl RuntimeGlueModelScene {
             global_time_ms,
             random,
         )?;
-        let external_directional_lights = active
+        let sunlight = active
             .environment
-            .background_directional_lights
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let directional_lights = if external_directional_lights.is_empty() {
-            visible.glue_directional_lights
-        } else {
-            &external_directional_lights
-        };
+            .background_sunlight
+            .or_else(|| merge_wotlk_directional_lights(visible.glue_directional_lights));
         let mut environment_local_lights = [M2LocalLightState::disabled(); 4];
         let mut environment_light_count = 0_usize;
-        if let Some(sunlight) = merge_wotlk_directional_lights(directional_lights) {
+        if let Some(sunlight) = sunlight {
             environment_local_lights[0] = sunlight.local_light_state();
             environment_light_count = 1;
         }
@@ -1048,7 +1048,7 @@ impl RuntimeGlueModelScene {
             environment_local_lights[environment_light_count] = point.local_light_state();
             environment_light_count += 1;
         }
-        let (environment_ambient, environment_diffuse) = if directional_lights.is_empty() {
+        let (environment_ambient, environment_diffuse) = if sunlight.is_none() {
             (active.environment.ambient, active.environment.diffuse)
         } else {
             (Vec3::ZERO, Vec3::ZERO)
