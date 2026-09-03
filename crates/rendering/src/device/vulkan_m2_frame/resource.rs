@@ -7,6 +7,7 @@ use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::model::{M2MaterialUniform, M2SceneUniform};
 
@@ -345,7 +346,7 @@ impl M2FrameSlot {
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1),
             vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                .ty(M2_MATERIAL_DESCRIPTOR_TYPE)
                 .descriptor_count(1),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
@@ -398,7 +399,7 @@ impl M2FrameSlot {
             ),
             descriptor_write(
                 self.descriptor_sets[2],
-                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                M2_MATERIAL_DESCRIPTOR_TYPE,
                 &material_infos,
             ),
         ];

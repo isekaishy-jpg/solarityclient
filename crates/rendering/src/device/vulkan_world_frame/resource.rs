@@ -8,6 +8,7 @@ use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
+use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
     M2MaterialUniform, M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform,
@@ -500,7 +501,7 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::STORAGE_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            M2_MATERIAL_DESCRIPTOR_TYPE,
         ];
         for index in 0..DESCRIPTOR_SET_COUNT {
             let buffer_infos = [infos[index]];

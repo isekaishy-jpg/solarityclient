@@ -8,6 +8,8 @@ use crate::device::VulkanError;
 use crate::model::M2RenderVertex;
 use crate::shader::{M2BlendFactor, M2MaterialState, M2SpirvProgram};
 
+use super::M2_MATERIAL_DESCRIPTOR_TYPE;
+
 const DESCRIPTOR_SET_COUNT: usize = 5;
 const DRAW_PUSH_CONSTANT_BYTES: u32 = 16;
 
@@ -37,7 +39,7 @@ impl M2PipelineLayout {
             )],
             vec![descriptor_binding(
                 0,
-                vk::DescriptorType::UNIFORM_BUFFER,
+                M2_MATERIAL_DESCRIPTOR_TYPE,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             )],
             vec![
