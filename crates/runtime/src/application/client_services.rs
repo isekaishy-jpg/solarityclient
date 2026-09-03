@@ -254,6 +254,10 @@ impl ClientServices {
                 .map_err(GlueError::from)?
         {
             glue_model.prewarm(login_model, background_light_count, &assets, &cpu)?;
+            // AccountLogin must be fully resident before the movie starts. The
+            // immutable Vulkan generation is safe to prepare while hidden; its
+            // animation and effect clocks begin only when EULA/Login shows it.
+            glue_model.finish_prewarm(&mut renderer)?;
         }
         glue_model.synchronize(
             &mut renderer,

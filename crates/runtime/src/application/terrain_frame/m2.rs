@@ -64,6 +64,15 @@ struct M2GpuSource {
     ribbons: Vec<Vec<M2GpuRibbonPass>>,
 }
 
+/// Immutable renderer resources for one Glue model prepared before activation.
+///
+/// Keeping this separate from [`M2Frame`] lets startup upload AccountLogin while
+/// it is hidden without starting its animation, particle, ribbon, or event
+/// clocks. The source is moved into the live frame when Glue first shows it.
+pub(in crate::application) struct M2GlueGpuSource {
+    source: M2GpuSource,
+}
+
 /// Fixed renderer objects paired with one exact SKIN material batch.
 struct M2GpuDraw {
     pipeline: M2PipelineHandle,
@@ -736,23 +745,15 @@ impl M2Frame {
         }
     }
 
-    /// Publishes one fully authored Glue model without terrain-owner aliases.
+    /// Uploads one immutable Glue model generation without starting playback.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::application) fn prepare_glue_model(
+    pub(in crate::application) fn prepare_glue_gpu_source(
         renderer: &mut VulkanRenderer,
         model: Arc<DecodedM2Model>,
         textures: &[GlueM2Texture],
         cpu_source: &M2GlueCpuSource,
-        object_index: usize,
-        animation_id: u16,
-        model_scale: f32,
         local_light_count: M2LocalLightCount,
-        random: &mut CrtRand,
-        particle_twinkle: Arc<M2ParticleTwinkleTable>,
-    ) -> Result<Self, RuntimeTerrainFrameError> {
-        if !model_scale.is_finite() || model_scale <= 0.0 {
-            return Err(RuntimeTerrainFrameError::InvalidGlueM2Scale);
-        }
+    ) -> Result<M2GlueGpuSource, RuntimeTerrainFrameError> {
         let resolved = textures
             .iter()
             .map(|texture| match texture {
@@ -769,6 +770,24 @@ impl M2Frame {
             local_light_count,
             cpu_source,
         )?;
+        Ok(M2GlueGpuSource { source })
+    }
+
+    /// Activates a pre-uploaded Glue source and starts all of its local clocks.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application) fn activate_glue_gpu_source(
+        gpu_source: M2GlueGpuSource,
+        object_index: usize,
+        animation_id: u16,
+        model_scale: f32,
+        random: &mut CrtRand,
+        particle_twinkle: Arc<M2ParticleTwinkleTable>,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
+        if !model_scale.is_finite() || model_scale <= 0.0 {
+            return Err(RuntimeTerrainFrameError::InvalidGlueM2Scale);
+        }
+        let source = gpu_source.source;
+        let model = Arc::clone(&source.model);
         let playback = M2Playback::new(&model, animation_id, random)?;
         let particles = model
             .animations()

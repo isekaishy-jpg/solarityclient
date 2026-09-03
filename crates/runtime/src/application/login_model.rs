@@ -21,7 +21,7 @@ use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::{
-    GlueM2Texture, M2Frame, M2GlueCpuSource, prepare_glue_cpu_source,
+    GlueM2Texture, M2Frame, M2GlueCpuSource, M2GlueGpuSource, prepare_glue_cpu_source,
 };
 use crate::random::CrtRand;
 
@@ -133,6 +133,15 @@ struct PendingGlueModel {
 struct PendingGlueModelRequest {
     key: GlueModelKey,
     environment: GlueModelEnvironment,
+}
+
+/// One hidden environment generation whose immutable Vulkan state is resident.
+struct PreparedGlueModel {
+    path: AssetPath,
+    external_directional_light: bool,
+    local_light_count: M2LocalLightCount,
+    model: Arc<solarity_asset::DecodedM2Model>,
+    source: M2GlueGpuSource,
 }
 
 /// Selected half of each ModelFFX live/ghost light pair.
@@ -259,6 +268,7 @@ pub(crate) struct RuntimeGlueModelScene {
     textures: BlpTextureCache,
     active: Option<ActiveGlueModel>,
     pending: Option<PendingGlueModel>,
+    prepared: Option<PreparedGlueModel>,
 }
 
 impl RuntimeGlueModelScene {
@@ -269,6 +279,7 @@ impl RuntimeGlueModelScene {
             textures: BlpTextureCache::new(),
             active: None,
             pending: None,
+            prepared: None,
         }
     }
 
@@ -291,6 +302,10 @@ impl RuntimeGlueModelScene {
                 pending.path == path
                     && pending.external_directional_light == external_directional_light
             })
+            || self.prepared.as_ref().is_some_and(|prepared| {
+                prepared.path == path
+                    && prepared.external_directional_light == external_directional_light
+            })
         {
             return Ok(());
         }
@@ -308,6 +323,49 @@ impl RuntimeGlueModelScene {
             textures,
             submitted_at: std::time::Instant::now(),
             task,
+        });
+        Ok(())
+    }
+
+    /// Completes a hidden prewarm before the cinematic begins presenting.
+    ///
+    /// Vulkan resource ownership stays on the presentation thread, while the
+    /// mesh plan and shader compilation are joined from the bounded CPU pool.
+    /// Playback is deliberately not constructed until the model becomes visible.
+    pub(crate) fn finish_prewarm(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<(), RuntimeGlueModelError> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        if pending.request.is_some() {
+            self.pending = Some(pending);
+            return Ok(());
+        }
+        let worker_elapsed = pending.submitted_at.elapsed();
+        let cpu_source = pending.task.join()??;
+        let gpu_started = std::time::Instant::now();
+        let source = M2Frame::prepare_glue_gpu_source(
+            renderer,
+            Arc::clone(&pending.model),
+            &pending.textures,
+            &cpu_source,
+            pending.local_light_count,
+        )?;
+        tracing::info!(
+            model = %pending.model.path(),
+            texture_count = pending.textures.len(),
+            worker_elapsed_ms = worker_elapsed.as_secs_f64() * 1_000.0,
+            gpu_prepare_ms = gpu_started.elapsed().as_secs_f64() * 1_000.0,
+            "prepared hidden Glue model generation"
+        );
+        self.prepared = Some(PreparedGlueModel {
+            path: pending.path,
+            external_directional_light: pending.external_directional_light,
+            local_light_count: pending.local_light_count,
+            model: pending.model,
+            source,
         });
         Ok(())
     }
@@ -398,6 +456,42 @@ impl RuntimeGlueModelScene {
         }) {
             self.pending = None;
         }
+        if self.prepared.as_ref().is_some_and(|prepared| {
+            prepared.path != key.path
+                || prepared.external_directional_light != external_directional_light
+        }) {
+            self.prepared = None;
+        }
+        if let Some(prepared) = self.prepared.take() {
+            let mut frame = M2Frame::activate_glue_gpu_source(
+                prepared.source,
+                key.object_index,
+                animation_id,
+                key.model_scale,
+                random,
+                particle_twinkle,
+            )?;
+            frame.replace_glue_character(
+                renderer,
+                glue_character,
+                environment.character_light_count(),
+                environment.pet_light_count(),
+                random,
+            )?;
+            frame.set_glue_opacity(environment.alpha)?;
+            tracing::info!(
+                model = %prepared.model.path(),
+                "activated resident Glue model generation"
+            );
+            self.active = Some(ActiveGlueModel {
+                key,
+                environment,
+                local_light_count: prepared.local_light_count,
+                model: prepared.model,
+                frame,
+            });
+            return Ok(());
+        }
         if let Some(pending) = self.pending.as_mut() {
             let consumed_prewarm = pending.request.is_none();
             pending.request = Some(PendingGlueModelRequest {
@@ -415,15 +509,18 @@ impl RuntimeGlueModelScene {
             let cpu_source = pending.task.join()??;
             let request = pending.request.ok_or(RuntimeGlueModelError::PendingState)?;
             let gpu_started = std::time::Instant::now();
-            let mut frame = M2Frame::prepare_glue_model(
+            let gpu_source = M2Frame::prepare_glue_gpu_source(
                 renderer,
                 Arc::clone(&pending.model),
                 &pending.textures,
                 &cpu_source,
+                pending.local_light_count,
+            )?;
+            let mut frame = M2Frame::activate_glue_gpu_source(
+                gpu_source,
                 request.key.object_index,
                 animation_id,
                 request.key.model_scale,
-                pending.local_light_count,
                 random,
                 particle_twinkle,
             )?;
