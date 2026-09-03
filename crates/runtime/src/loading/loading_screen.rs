@@ -59,7 +59,11 @@ pub(crate) struct RuntimeLoadingScreen {
 
 struct UploadedLoadingTextures {
     handles: HashMap<AssetPath, BlpTextureHandle>,
-    extents: HashMap<AssetPath, (u32, u32)>,
+}
+
+struct ResolvedLoadingBackground {
+    path: AssetPath,
+    authored_aspect: f32,
 }
 
 impl RuntimeLoadingScreen {
@@ -85,12 +89,14 @@ impl RuntimeLoadingScreen {
         // 0x00407E40 publishes TRIAL_LOADING_MESSAGE for a trial account.
         let mut paths = vec![bar_background, bar_fill, bar_border];
         if let Some(background) = &background {
-            paths.push(background.clone());
+            paths.push(background.path.clone());
         }
         let uploaded = upload_textures(renderer, assets, &paths)?;
-        let background = background.as_ref().map(|path| {
-            let extent = uploaded.extents[path];
-            (path, centered_aspect_fill_uv(logical_extent, extent))
+        let background = background.as_ref().map(|background| {
+            (
+                &background.path,
+                centered_aspect_fill_uv(logical_extent, background.authored_aspect),
+            )
         });
         let frames = RuntimeLoadingStage::ALL
             .into_iter()
@@ -141,7 +147,7 @@ fn resolve_background(
     assets: &AssetStoreHandle,
     screen: Option<&LoadingScreenDefinition>,
     logical_extent: (u32, u32),
-) -> Result<Option<AssetPath>, ApplicationError> {
+) -> Result<Option<ResolvedLoadingBackground>, ApplicationError> {
     let Some(screen) = screen else {
         return Ok(None);
     };
@@ -151,10 +157,16 @@ fn resolve_background(
         && let Some(wide) = screen.widescreen_texture()?
         && assets.borrow().contains(&wide)?
     {
-        return Ok(Some(wide));
+        return Ok(Some(ResolvedLoadingBackground {
+            path: wide,
+            authored_aspect: 16.0 / 9.0,
+        }));
     }
     if assets.borrow().contains(screen.texture())? {
-        return Ok(Some(screen.texture().clone()));
+        return Ok(Some(ResolvedLoadingBackground {
+            path: screen.texture().clone(),
+            authored_aspect: 4.0 / 3.0,
+        }));
     }
     tracing::warn!(
         loading_screen_id = screen.id(),
@@ -181,18 +193,8 @@ fn upload_textures(
         .map(|source| BlpTextureUploadRequest::new(source, BlpColorSpace::Linear))
         .collect::<Vec<_>>();
     let handles = renderer.upload_blp_textures(&requests)?;
-    let extents = paths
-        .iter()
-        .cloned()
-        .zip(
-            sources
-                .iter()
-                .map(|source| (source.width(), source.height())),
-        )
-        .collect();
     Ok(UploadedLoadingTextures {
         handles: paths.iter().cloned().zip(handles).collect(),
-        extents,
     })
 }
 
