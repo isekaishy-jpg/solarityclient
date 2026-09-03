@@ -30,6 +30,9 @@ const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
 /// Sphere particles launch along local +Z rather than away from the center.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
 
+/// Selects scene-provided dynamic wind instead of the emitter's static vector.
+const DYNAMIC_WIND: u32 = 0x8000_0000;
+
 /// Recovered simulation behaviors which must not be silently replaced by basic motion.
 /// Raw `0x1000` is intentionally absent: build-12340 `0x00832EA0` maps it to
 /// the render-only local-orientation bit and does not change particle motion.
@@ -455,7 +458,7 @@ impl M2ParticleSimulation {
         let mut index = 0;
         while index < self.particles.len() {
             let particle = &mut self.particles[index];
-            if particle.age_seconds() < emitter.wind_time() {
+            if emitter.flags() & DYNAMIC_WIND == 0 {
                 particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
             }
             particle.advance(elapsed_seconds, pose.gravity(), emitter.drag())?;

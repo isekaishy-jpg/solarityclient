@@ -1143,7 +1143,12 @@ fn m2_particle_rotation_randomly_negates_angular_speed() -> Result<(), Box<dyn E
 /// Planar emission grows its placement-local pool from the stock estimate.
 #[test]
 fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Error>> {
-    let bytes = render_m2_bytes("Particle.blp", 1)?;
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = m2_array_offset(&bytes, 0x128)?;
+    bytes[particle_offset + 0x1a0..particle_offset + 0x1ac]
+        .copy_from_slice(&render_f32_values(&[1.0, 2.0, 3.0]));
+    // This field does not limit static wind duration in build 12340.
+    bytes[particle_offset + 0x1ac..particle_offset + 0x1b0].copy_from_slice(&0.0_f32.to_le_bytes());
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -1215,9 +1220,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let _polar = stock_random.next_signed() * pose.vertical_range();
     let _azimuth = stock_random.next_signed() * pose.horizontal_range();
     let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed;
-    if initial_age < emitter.wind_time() {
-        expected_velocity += emitter.wind_vector() * 0.2;
-    }
+    expected_velocity += emitter.wind_vector() * 0.2;
     let mut expected_position =
         Vec3::new(local_x + 10.0, local_y + 20.0, 30.0) + expected_velocity * 0.2;
     expected_position.z -= pose.gravity() * 0.2 * 0.2 * 0.5;
