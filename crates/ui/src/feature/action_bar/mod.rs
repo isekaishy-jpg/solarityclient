@@ -61,7 +61,7 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetActionTexture",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&action_texture, slot, "GetActionTexture")?;
+            require_available(&action_texture, slot, "GetActionTexture")?;
             Ok(None::<String>)
         })?,
     )?;
@@ -71,7 +71,7 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetActionText",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&action_text, slot, "GetActionText")?;
+            require_available(&action_text, slot, "GetActionText")?;
             Ok(None::<String>)
         })?,
     )?;
@@ -81,28 +81,28 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "IsUsableAction",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&usable_action, slot, "IsUsableAction")?;
-            Ok((false, false))
+            let occupied = packed(&usable_action, slot, "IsUsableAction")? != 0;
+            Ok((occupied, false))
         })?,
     )?;
     globals.raw_set(
         "IsActionInRange",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&action_range, slot, "IsActionInRange")?;
+            require_available(&action_range, slot, "IsActionInRange")?;
             Ok(None::<u8>)
         })?,
     )?;
     globals.raw_set(
         "GetActionCount",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&action_count, slot, "GetActionCount")?;
+            require_available(&action_count, slot, "GetActionCount")?;
             Ok(0_u32)
         })?,
     )?;
     globals.raw_set(
         "GetActionCooldown",
         lua.create_function(move |_, slot: i32| {
-            require_empty(&action_cooldown, slot, "GetActionCooldown")?;
+            require_available(&action_cooldown, slot, "GetActionCooldown")?;
             Ok((0.0_f64, 0.0_f64, 0_u8))
         })?,
     )
@@ -117,7 +117,7 @@ fn register_empty_boolean(
     globals.raw_set(
         name,
         lua.create_function(move |_, slot: i32| {
-            require_empty(&state, slot, name)?;
+            require_available(&state, slot, name)?;
             Ok(false)
         })?,
     )
@@ -129,11 +129,11 @@ fn packed(state: &UiActionBarState, slot: i32, api: &'static str) -> mlua::Resul
         .map_err(|error| mlua::Error::runtime(format!("{api}: {error}")))
 }
 
-fn require_empty(state: &UiActionBarState, slot: i32, api: &'static str) -> mlua::Result<()> {
-    if packed(state, slot, api)? == 0 {
-        return Ok(());
-    }
-    Err(mlua::Error::runtime(format!(
-        "{api} requires resolved metadata for occupied action slot {slot}"
-    )))
+/// Validates server-image availability while permitting unresolved metadata.
+///
+/// SolCL's recovered action-bar controller and stock's nil-tolerant FrameXML
+/// contract leave unavailable texture/text metadata empty for occupied slots;
+/// slot presence alone must never abort world UI construction.
+fn require_available(state: &UiActionBarState, slot: i32, api: &'static str) -> mlua::Result<()> {
+    packed(state, slot, api).map(|_packed| ())
 }

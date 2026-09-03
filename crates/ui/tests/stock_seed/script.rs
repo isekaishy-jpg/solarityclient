@@ -1553,12 +1553,18 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     occupied_slots[0] = 0x8000_1234;
     action_bar.set_slots(occupied_slots);
     assert!(bundle.lua().load("return HasAction(1)").eval::<bool>()?);
-    let (available, message) = bundle
+    let (texture, usable, insufficient_resource, equipped, count, cooldown_duration) = bundle
         .lua()
-        .load("local ok, value = pcall(GetActionTexture, 1); return ok, tostring(value)")
-        .eval::<(bool, String)>()?;
-    assert!(!available);
-    assert!(message.contains("resolved metadata for occupied action slot 1"));
+        .load(
+            "local usable, resource = IsUsableAction(1); local _, duration = GetActionCooldown(1); return GetActionTexture(1), usable, resource, IsEquippedAction(1), GetActionCount(1), duration",
+        )
+        .eval::<(Option<String>, bool, bool, bool, u32, f64)>()?;
+    assert_eq!(texture, None);
+    assert!(usable);
+    assert!(!insufficient_resource);
+    assert!(!equipped);
+    assert_eq!(count, 0);
+    assert_eq!(cooldown_duration, 0.0);
 
     world.enter_player(UiPlayerState::new(u32::MAX));
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
