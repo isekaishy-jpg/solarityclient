@@ -126,7 +126,11 @@ impl RuntimeUiFrame {
             PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?
         };
         let frame_elapsed = frame_started.elapsed();
-        tracing::info!(
+        // Animated GlueXML can replace this mesh every presentation frame.
+        // Keep the phase timings available for an explicit debug subscriber;
+        // formatting and writing them at INFO otherwise introduces visible
+        // main-thread frame-time spikes in the ordinary file-log profile.
+        tracing::debug!(
             texture_count,
             batch_count = mesh_plan.batches().len(),
             vertex_count = mesh_plan.vertices().len(),
