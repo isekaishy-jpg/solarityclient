@@ -926,8 +926,13 @@ impl ClientServices {
         self.player
             .apply_mount_camera_sample(mount_camera, camera_time_ms)?;
         let m2_events = frame.drain_m2_events();
+        let frame_errors = frame.drain_recoverable_errors();
         self.sound
             .play_m2_events(&m2_events, camera, &mut self.blizzard_rand.borrow_mut())?;
+        for message in frame_errors {
+            tracing::error!(error = %message, "contained recoverable M2 presentation error");
+            self.developer_console.record_error(&message);
+        }
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }

@@ -793,6 +793,11 @@ impl TerrainFrame {
         self.m2.drain_triggered_events()
     }
 
+    /// Transfers nonfatal M2 presentation diagnostics accumulated this frame.
+    pub(super) fn drain_recoverable_errors(&mut self) -> Vec<String> {
+        self.m2.drain_recoverable_errors()
+    }
+
     /// Takes camera markers sampled from the latest controlled mount pose.
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.m2.take_mount_camera_sample()

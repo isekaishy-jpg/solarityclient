@@ -1462,6 +1462,7 @@ fn m2_particle_simulation_accepts_unmapped_authored_high_bit() -> Result<(), Box
     )?;
     let mut simulation = M2ParticleSimulation::new(0);
 
+    assert_eq!(M2ParticleSimulation::unsupported_behavior_flags(emitter), 0);
     simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 1.0)?;
 
     Ok(())

@@ -118,6 +118,16 @@ impl M2ParticleSimulation {
         }
     }
 
+    /// Returns authored behavior bits whose recovered update path is not yet
+    /// available to the ordinary planar or spherical simulator.
+    ///
+    /// Presentation owners use this admission query to contain one unsupported
+    /// emitter without discarding the rest of a valid M2 generation.
+    #[must_use]
+    pub fn unsupported_behavior_flags(emitter: &M2ParticleEmitter) -> u32 {
+        emitter.flags() & UNSUPPORTED_SIMULATION_FLAGS
+    }
+
     /// Clears one presentation-discontinuous emitter back to its construction
     /// seed without changing placement ownership.
     pub fn reset(&mut self) {
@@ -421,7 +431,7 @@ impl M2ParticleSimulation {
                 actual: emitter.emitter_type(),
             });
         }
-        let unsupported = emitter.flags() & UNSUPPORTED_SIMULATION_FLAGS;
+        let unsupported = Self::unsupported_behavior_flags(emitter);
         if unsupported != 0 {
             return Err(M2ParticleSimulationError::BehaviorFlags(unsupported));
         }
