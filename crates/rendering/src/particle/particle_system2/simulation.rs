@@ -433,52 +433,13 @@ impl M2ParticleSimulation {
         if !varied_rate.is_finite() || varied_rate < 0.0 {
             return Err(M2ParticleSimulationError::EmissionRate);
         }
-        let mut emitted = 0;
-        if pose.enabled() {
-            self.emission_remainder += varied_rate * elapsed_seconds;
-            // Build-12340 CParticleEmitter::Update adds one half and truncates
-            // the accumulated count. This can leave a negative residual after
-            // a birth and deliberately centers the first low-rate birth.
-            let requested = (self.emission_remainder + 0.5).floor().max(0.0) as usize;
-            let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
-            for _ in 0..admitted {
-                let particle = match shape {
-                    EmitterShape::Plane => spawn_planar(
-                        emitter,
-                        pose,
-                        elapsed_seconds,
-                        emitter_transform,
-                        &mut self.random,
-                        inherited_velocity,
-                    )?,
-                    EmitterShape::Sphere => spawn_sphere(
-                        emitter,
-                        pose,
-                        elapsed_seconds,
-                        emitter_transform,
-                        &mut self.random,
-                        inherited_velocity,
-                    )?,
-                };
-                self.particles.push(particle);
-                emitted += 1;
-            }
-            self.emission_remainder -= emitted as f32;
-            // Stock discards a backlog larger than two particles when the
-            // fixed-capacity pool cannot admit the requested births.
-            if self.emission_remainder > 2.0 {
-                self.emission_remainder = 0.0;
-            }
-        }
-
         if follow_delta != Vec3::ZERO {
             let displacement = if emitter.flags() & PARTICLES_IN_MODEL_SPACE != 0 {
                 emitter_transform.inverse().transform_vector3(follow_delta)
             } else {
                 follow_delta
             };
-            let existing_count = self.particles.len().saturating_sub(emitted);
-            for particle in &mut self.particles[..existing_count] {
+            for particle in &mut self.particles {
                 if particle.age_seconds() + elapsed_seconds > 2.0 * elapsed_seconds {
                     particle.translate(displacement);
                 }
@@ -512,6 +473,50 @@ impl M2ParticleSimulation {
             } else {
                 self.particles.swap_remove(index);
                 deaths += 1;
+            }
+        }
+        // Stock's existing-particle update and death pass finishes before
+        // this emitter admits births. A newborn receives current-slice motion
+        // but its randomized within-slice age is not incremented again.
+        let mut emitted = 0;
+        if pose.enabled() {
+            self.emission_remainder += varied_rate * elapsed_seconds;
+            // Build-12340 CParticleEmitter::Update adds one half and truncates
+            // the accumulated count. This can leave a negative residual after
+            // a birth and deliberately centers the first low-rate birth.
+            let requested = (self.emission_remainder + 0.5).floor().max(0.0) as usize;
+            let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
+            for _ in 0..admitted {
+                let mut particle = match shape {
+                    EmitterShape::Plane => spawn_planar(
+                        emitter,
+                        pose,
+                        elapsed_seconds,
+                        emitter_transform,
+                        &mut self.random,
+                        inherited_velocity,
+                    )?,
+                    EmitterShape::Sphere => spawn_sphere(
+                        emitter,
+                        pose,
+                        elapsed_seconds,
+                        emitter_transform,
+                        &mut self.random,
+                        inherited_velocity,
+                    )?,
+                };
+                if emitter.flags() & DYNAMIC_WIND == 0 {
+                    particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
+                }
+                particle.advance_newborn_motion(elapsed_seconds, pose.gravity(), emitter.drag());
+                self.particles.push(particle);
+                emitted += 1;
+            }
+            self.emission_remainder -= emitted as f32;
+            // Stock discards a backlog larger than two particles when the
+            // fixed-capacity pool cannot admit the requested births.
+            if self.emission_remainder > 2.0 {
+                self.emission_remainder = 0.0;
             }
         }
         Ok(M2ParticleSimulationReport {

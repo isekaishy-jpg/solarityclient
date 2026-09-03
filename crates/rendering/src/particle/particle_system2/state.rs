@@ -83,6 +83,21 @@ impl M2ParticleState {
             return Err(M2ParticleStateError::Forces);
         }
         self.age_seconds += elapsed_seconds;
+        self.advance_motion(elapsed_seconds, gravity, drag);
+        Ok(())
+    }
+
+    /// Applies one birth-frame ballistic step without aging the newborn.
+    ///
+    /// Stock scatters the initial age inside the current slice, then applies
+    /// that slice's motion after emission. The ordinary old-particle pass has
+    /// already run, so adding the full slice to age here would age every
+    /// newborn twice.
+    pub(super) fn advance_newborn_motion(&mut self, elapsed_seconds: f32, gravity: f32, drag: f32) {
+        self.advance_motion(elapsed_seconds, gravity, drag);
+    }
+
+    fn advance_motion(&mut self, elapsed_seconds: f32, gravity: f32, drag: f32) {
         self.position += self.velocity * elapsed_seconds;
         self.position.z -= gravity * elapsed_seconds * elapsed_seconds * 0.5;
         self.velocity.z -= gravity * elapsed_seconds;
@@ -97,7 +112,6 @@ impl M2ParticleState {
                 component
             }
         });
-        Ok(())
     }
 
     /// Returns the stock lifetime selected by this particle's random word.

@@ -1292,7 +1292,9 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     expected_velocity.z -= pose.gravity() * 0.2;
     expected_velocity -= expected_velocity * (0.2 * emitter.drag()).min(1.0);
     assert_eq!(first_particle.random_word(), random_word);
-    assert!((first_particle.age_seconds() - (initial_age + 0.2)).abs() < f32::EPSILON);
+    // The existing-particle pass precedes emission. A newborn keeps only its
+    // randomized within-slice age even though it receives the slice's motion.
+    assert!((first_particle.age_seconds() - initial_age).abs() < f32::EPSILON);
     assert!(
         (first_particle.position() - expected_position)
             .abs()
@@ -2174,9 +2176,11 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
     let (_, implosion) = simulate(
         &mut store,
         "Creature\\Solarity\\ImplosionSphereParticle.m2",
-        2,
+        0,
     )?;
-    assert!(implosion.particles().is_empty());
+    // Implosion rejection belongs to the old-particle pass, which has already
+    // completed when these particles are born.
+    assert_eq!(implosion.particles().len(), 2);
     assert!(vertical.particles().iter().all(|particle| {
         particle.velocity().truncate().length_squared() < f32::EPSILON
             && particle.velocity().z.is_finite()
