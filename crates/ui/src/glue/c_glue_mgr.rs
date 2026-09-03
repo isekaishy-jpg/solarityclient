@@ -1199,8 +1199,10 @@ impl GlueManager {
 
     fn rebuild_scroll_products(&mut self) -> Result<(), UiEventError> {
         let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
-        self.runtime
-            .publish_resolved_geometry(&self.bundle, &geometry)?;
+        // Scroll offsets do not change region dimensions, and Slider values
+        // only translate the native thumb. Lua's published GetWidth/GetHeight
+        // cache therefore remains exact; rewriting those two fields on every
+        // one of ~1,800 object tables was the last large drag-time Lua cost.
         let scroll_frames = UiScrollFramePlan::from_live(&self.live);
         let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
