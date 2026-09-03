@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::AssetPath;
 use solarity_rendering::{
-    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform, UiRenderVertex,
-    UiTextureAddressMode, UiTextureResidency,
+    UiMeshPlan, UiMeshPlanError, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform,
+    UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };
 
 /// Adjacent equal materials merge without changing quad or index order.
@@ -102,6 +102,54 @@ fn ui_mesh_retains_geometry_across_scroll_transforms() -> Result<(), Box<dyn Err
     assert_eq!(mesh.batches().len(), 2);
     assert_eq!(mesh.batches()[0].translation(), [0.0, 18.0]);
     assert_eq!(mesh.batches()[1].translation(), [0.0, 0.0]);
+    Ok(())
+}
+
+/// Developer tooling may retain native triangle meshes without quad expansion.
+#[test]
+fn ui_mesh_retains_single_material_indexed_triangles() -> Result<(), Box<dyn Error>> {
+    let vertices = vec![
+        UiRenderVertex::new([10.0, 20.0], [0.0, 0.0], [1.0; 4]),
+        UiRenderVertex::new([30.0, 20.0], [1.0, 0.0], [1.0; 4]),
+        UiRenderVertex::new([20.0, 40.0], [0.5, 1.0], [1.0; 4]),
+    ];
+    let mesh = UiMeshPlan::prepare_indexed(
+        [800.0, 600.0],
+        vertices.clone(),
+        vec![0, 1, 2],
+        UiRenderSource::GlyphAtlas(91),
+        Some([8.0, 18.0, 32.0, 42.0]),
+    )?;
+
+    assert_eq!(mesh.vertices(), vertices);
+    assert_eq!(mesh.indices(), [0, 1, 2]);
+    assert!(mesh.object_indices().is_empty());
+    assert_eq!(mesh.batches().len(), 1);
+    assert_eq!(mesh.batches()[0].source(), &UiRenderSource::GlyphAtlas(91));
+    assert_eq!(mesh.batches()[0].index_count(), 3);
+    assert_eq!(mesh.batches()[0].quad_count(), 0);
+    assert_eq!(mesh.batches()[0].clip(), Some([8.0, 18.0, 32.0, 42.0]));
+    assert_eq!(
+        mesh.vertex_bytes().len(),
+        vertices.len() * UiRenderVertex::BYTE_SIZE
+    );
+    assert_eq!(mesh.index_bytes().len(), 3 * size_of::<u32>());
+
+    let error = UiMeshPlan::prepare_indexed(
+        [800.0, 600.0],
+        vertices,
+        vec![3],
+        UiRenderSource::GlyphAtlas(91),
+        None,
+    )
+    .expect_err("an index outside the vertex array must be rejected");
+    assert_eq!(
+        error,
+        UiMeshPlanError::IndexOutOfRange {
+            index: 3,
+            vertex_count: 3,
+        }
+    );
     Ok(())
 }
 

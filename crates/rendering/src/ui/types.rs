@@ -187,11 +187,9 @@ impl UiRenderVertex {
     /// Size of one explicitly serialized vertex in the Vulkan vertex buffer.
     pub const BYTE_SIZE: usize = 32;
 
-    pub(super) const fn new(
-        position: [f32; 2],
-        texture_coordinates: [f32; 2],
-        color: [f32; 4],
-    ) -> Self {
+    /// Creates one renderer vertex in bottom-left logical coordinates.
+    #[must_use]
+    pub const fn new(position: [f32; 2], texture_coordinates: [f32; 2], color: [f32; 4]) -> Self {
         Self {
             position,
             texture_coordinates,
@@ -342,6 +340,28 @@ impl UiRenderBatch {
     #[must_use]
     pub const fn quad_count(&self) -> u32 {
         self.quad_count
+    }
+
+    pub(super) const fn from_indexed(
+        source: UiRenderSource,
+        index_count: u32,
+        clip: Option<[f32; 4]>,
+    ) -> Self {
+        Self {
+            source,
+            blend: UiRenderBlend::Alpha,
+            horizontal_address: UiTextureAddressMode::Clamp,
+            vertical_address: UiTextureAddressMode::Clamp,
+            residency: UiTextureResidency::Blocking,
+            desaturated: false,
+            first_index: 0,
+            index_count,
+            first_quad: 0,
+            quad_count: 0,
+            transform: None,
+            translation: [0.0, 0.0],
+            clip,
+        }
     }
 
     /// Returns the retained state slot controlling this batch.

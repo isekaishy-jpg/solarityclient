@@ -23,8 +23,9 @@ use solarity_network::{
     WorldAddon, WorldAddonManifest,
 };
 use solarity_rendering::{
-    CharacterComponentTextureLevel, M2ParticleTwinkleTable, VulkanBootstrap, VulkanPresentMode,
-    VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip, WorldModelTextureFiltering,
+    CharacterComponentTextureLevel, M2ParticleTwinkleTable, UiPreparedDraw, VulkanBootstrap,
+    VulkanPresentMode, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
+    WorldModelTextureFiltering,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
@@ -38,13 +39,14 @@ use crate::application::character_directory::RuntimeCharacterMetadata;
 use crate::application::cinematic_coordinator::{
     RuntimeCinematicCoordinator, RuntimeCinematicPoll,
 };
+use crate::application::developer_console::RuntimeDeveloperConsole;
 use crate::application::environment_coordinator::RuntimeWorldEnvironment;
 use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
 };
-use crate::application::login_model::RuntimeGlueModelScene;
+use crate::application::login_model::{RuntimeGlueModelError, RuntimeGlueModelScene};
 use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::performance_overlay::{RuntimeFpsOverlay, overlay_extent};
 use crate::application::player_coordinator::{
@@ -116,6 +118,8 @@ pub(crate) struct ClientServices {
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
+    developer_console: RuntimeDeveloperConsole,
+    runtime_overlay_draws: Vec<UiPreparedDraw>,
     loading_directory: LoadingScreenDirectory,
     loading_screen: Option<RuntimeLoadingScreen>,
     glue_update_clock: std::time::Instant,
@@ -237,6 +241,8 @@ impl ClientServices {
         )?;
         let assets = AssetStoreHandle::new(assets);
         let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
+        let developer_console =
+            RuntimeDeveloperConsole::new(overlay_extent(platform.pixel_extent()));
         // The stock process owns one Blizzard RNG stream. Character creation
         // and sound variation consume it in actual main-thread call order.
         let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
@@ -410,6 +416,8 @@ impl ClientServices {
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
                 fps,
+                developer_console,
+                runtime_overlay_draws: Vec::new(),
                 loading_directory,
                 loading_screen: None,
                 glue_update_clock: std::time::Instant::now(),
@@ -464,11 +472,31 @@ impl ClientServices {
         self.input.take_frame_motion()
     }
 
+    /// Captures a live UI fault without weakening renderer or protocol failures.
+    pub(crate) fn record_recoverable_error(&mut self, error: &ApplicationError) -> bool {
+        if !is_recoverable_presentation_error(error) {
+            return false;
+        }
+        let message = error.to_string();
+        tracing::error!(error = %error, "contained recoverable runtime UI error");
+        self.developer_console.record_error(&message);
+        true
+    }
+
     /// Routes one already-admitted platform event to the active Glue owner.
     pub(crate) fn service_platform_event(
         &mut self,
         event: &PlatformEvent,
     ) -> Result<(), ApplicationError> {
+        if self.developer_console.service_event(
+            event,
+            self.platform.window_id(),
+            self.platform.logical_extent(),
+        ) {
+            self.platform
+                .set_text_input_active(self.developer_console.is_visible());
+            return Ok(());
+        }
         if self.loading_screen.is_some() {
             return Ok(());
         }
@@ -720,6 +748,12 @@ impl ClientServices {
             std::thread::sleep(std::time::Duration::from_millis(16));
             return Ok(());
         }
+        let developer_elapsed = update_time
+            .duration_since(self.glue_update_clock)
+            .as_secs_f32();
+        self.developer_console
+            .prepare_frame(&mut self.renderer, developer_elapsed)?;
+        self.refresh_runtime_overlay_draws();
         if self.gameplay.world().is_none() && self.glue.flush_deferred_refresh()? {
             self.glue_ui_dirty = true;
         }
@@ -735,12 +769,7 @@ impl ClientServices {
             self.loading_screen = None;
         } else if let Some(loading) = self.loading_screen.as_mut() {
             self.glue_update_clock = update_time;
-            let overlay = if self.glue.cvar_boolean("showfps") {
-                self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
-            } else {
-                &[]
-            };
-            loading.present(&mut self.renderer, overlay)?;
+            loading.present(&mut self.renderer, &self.runtime_overlay_draws)?;
             if let Some(fps) = self.fps.as_mut() {
                 fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
             }
@@ -763,15 +792,10 @@ impl ClientServices {
             self.sync_platform_text_input();
             self.persist_active_cvars()?;
             let movie = self.glue.media_intent().movie().cloned();
-            let cinematic_overlay = self
-                .glue
-                .cvar_boolean("showfps")
-                .then(|| {
-                    self.fps
-                        .as_ref()
-                        .map(|fps| (fps.logical_extent(), fps.draws()))
-                })
-                .flatten();
+            let cinematic_overlay = (!self.runtime_overlay_draws.is_empty()).then_some((
+                self.developer_console.logical_extent(),
+                self.runtime_overlay_draws.as_slice(),
+            ));
             match self.cinematic.synchronize(
                 movie.as_ref(),
                 &mut self.renderer,
@@ -871,26 +895,16 @@ impl ClientServices {
         let creatures = self.player.resident_creature_frame_inputs();
         let remote_players = self.player.resident_remote_player_frame_inputs();
         let ui_extent = self.world_ui.as_ref().map_or_else(
-            || {
-                self.fps.as_ref().map_or_else(
-                    || overlay_extent((width, height)),
-                    RuntimeFpsOverlay::logical_extent,
-                )
-            },
+            || self.developer_console.logical_extent(),
             RuntimeWorldUi::logical_extent,
         );
         let frame_draws = self
             .world_ui
             .as_ref()
             .map_or(&[][..], RuntimeWorldUi::draws);
-        let fps_draws = if self.glue.cvar_boolean("showfps") {
-            self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
-        } else {
-            &[]
-        };
-        let mut ui_draws = Vec::with_capacity(frame_draws.len() + fps_draws.len());
+        let mut ui_draws = Vec::with_capacity(frame_draws.len() + self.runtime_overlay_draws.len());
         ui_draws.extend_from_slice(frame_draws);
-        ui_draws.extend_from_slice(fps_draws);
+        ui_draws.extend_from_slice(&self.runtime_overlay_draws);
         frame.present(
             &mut self.renderer,
             plan,
@@ -964,20 +978,15 @@ impl ClientServices {
             glue_character_changed,
         )?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
-        let overlay = if self.glue.cvar_boolean("showfps") {
-            self.fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
-        } else {
-            &[]
-        };
         if !self.glue_model.present(
             &mut self.renderer,
             &self.glue,
             frame,
             global_time_ms,
             &mut self.crt_rand,
-            overlay,
+            &self.runtime_overlay_draws,
         )? {
-            frame.present_with_overlay(&mut self.renderer, overlay)?;
+            frame.present_with_overlay(&mut self.renderer, &self.runtime_overlay_draws)?;
         }
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
@@ -1756,7 +1765,7 @@ impl ClientServices {
             .glue
             .localized_text("GENERAL")
             .map_err(GlueError::from)?;
-        let world_ui = RuntimeWorldUi::prepare(
+        let (world_ui, startup_errors) = RuntimeWorldUi::prepare(
             &mut self.renderer,
             self.assets.clone(),
             self.platform.logical_extent(),
@@ -1769,7 +1778,14 @@ impl ClientServices {
             self.gameplay.action_buttons(),
             general_tab_name,
         )?;
-        tracing::info!("loaded stock FrameXML and published world-entry events");
+        for error in &startup_errors {
+            let captured = self.record_recoverable_error(error);
+            debug_assert!(captured, "FrameXML dispatch errors must remain recoverable");
+        }
+        tracing::info!(
+            startup_error_count = startup_errors.len(),
+            "loaded stock FrameXML and published world-entry events"
+        );
         self.world_ui = Some(world_ui);
         Ok(())
     }
@@ -1888,8 +1904,45 @@ impl ClientServices {
     }
 
     fn sync_platform_text_input(&mut self) {
-        self.platform
-            .set_text_input_active(self.glue.focused_edit_box().is_some());
+        self.platform.set_text_input_active(
+            self.developer_console.is_visible() || self.glue.focused_edit_box().is_some(),
+        );
+    }
+
+    /// Reuses one retained vector for the overlays shared by every presenter.
+    fn refresh_runtime_overlay_draws(&mut self) {
+        self.runtime_overlay_draws.clear();
+        if self.glue.cvar_boolean("showfps")
+            && let Some(fps) = self.fps.as_ref()
+        {
+            self.runtime_overlay_draws.extend_from_slice(fps.draws());
+        }
+        self.runtime_overlay_draws
+            .extend_from_slice(self.developer_console.draws());
+    }
+}
+
+/// Separates presentation defects that can leave the event loop interactive
+/// from device, archive, worker, and protocol failures that invalidate owners.
+fn is_recoverable_presentation_error(error: &ApplicationError) -> bool {
+    match error {
+        ApplicationError::Ui(_)
+        | ApplicationError::UiRender(_)
+        | ApplicationError::NativeText(_)
+        | ApplicationError::UiEvent(_)
+        | ApplicationError::WorldUi(_)
+        | ApplicationError::Player(_) => true,
+        ApplicationError::GlueModel(error) => !matches!(
+            error,
+            RuntimeGlueModelError::Asset(_)
+                | RuntimeGlueModelError::Vulkan(_)
+                | RuntimeGlueModelError::Cpu(_)
+                | RuntimeGlueModelError::Frame(
+                    RuntimeTerrainFrameError::TextureUpload(_)
+                        | RuntimeTerrainFrameError::Vulkan(_)
+                )
+        ),
+        _ => false,
     }
 }
 

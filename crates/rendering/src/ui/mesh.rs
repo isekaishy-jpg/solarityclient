@@ -73,6 +73,75 @@ impl UiMeshPlan {
         Ok(plan)
     }
 
+    /// Admits one already-tessellated, single-material triangle mesh.
+    ///
+    /// This boundary exists for developer tooling whose UI dependency emits
+    /// indexed triangles instead of the stock client's ordered quads. It does
+    /// not alter the stock quad batching path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiMeshPlanError`] for invalid extents, non-finite vertices,
+    /// out-of-range indices, or counts that cannot enter Vulkan's 32-bit ABI.
+    pub fn prepare_indexed(
+        logical_extent: [f32; 2],
+        vertices: Vec<UiRenderVertex>,
+        indices: Vec<u32>,
+        source: super::UiRenderSource,
+        clip: Option<[f32; 4]>,
+    ) -> Result<Self, UiMeshPlanError> {
+        validate_extent(logical_extent)?;
+        let vertex_count = u32::try_from(vertices.len())
+            .map_err(|_source| UiMeshPlanError::Capacity { domain: "vertex" })?;
+        let index_count = u32::try_from(indices.len())
+            .map_err(|_source| UiMeshPlanError::Capacity { domain: "index" })?;
+        for (index, vertex) in vertices.iter().enumerate() {
+            validate_components(index, "position", &vertex.position())?;
+            validate_components(index, "texture coordinate", &vertex.texture_coordinates())?;
+            validate_components(index, "color", &vertex.color())?;
+        }
+        if let Some(index) = indices.iter().copied().find(|index| *index >= vertex_count) {
+            return Err(UiMeshPlanError::IndexOutOfRange {
+                index,
+                vertex_count,
+            });
+        }
+        let mut vertex_bytes = Vec::with_capacity(
+            vertices
+                .len()
+                .checked_mul(UiRenderVertex::BYTE_SIZE)
+                .ok_or(UiMeshPlanError::Capacity {
+                    domain: "vertex byte",
+                })?,
+        );
+        for vertex in &vertices {
+            vertex.append_bytes(&mut vertex_bytes);
+        }
+        let mut index_bytes =
+            Vec::with_capacity(indices.len().checked_mul(size_of::<u32>()).ok_or(
+                UiMeshPlanError::Capacity {
+                    domain: "index byte",
+                },
+            )?);
+        for index in &indices {
+            index_bytes.extend_from_slice(&index.to_le_bytes());
+        }
+        Ok(Self {
+            identity: next_identity(),
+            logical_extent,
+            vertices,
+            indices,
+            vertex_bytes,
+            index_bytes,
+            batches: vec![super::UiRenderBatch::from_indexed(
+                source,
+                index_count,
+                clip,
+            )],
+            object_indices: Vec::new(),
+        })
+    }
+
     /// Returns the logical canvas consumed by the vertex transform.
     #[must_use]
     pub const fn logical_extent(&self) -> [f32; 2] {

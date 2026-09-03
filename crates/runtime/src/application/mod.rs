@@ -8,6 +8,7 @@ mod character_directory;
 mod cinematic_coordinator;
 mod client;
 mod client_services;
+mod developer_console;
 mod environment_coordinator;
 mod gameplay_coordinator;
 mod gameplay_session;

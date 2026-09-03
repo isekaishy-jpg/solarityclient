@@ -59,7 +59,7 @@ impl RuntimeWorldUi {
         realm_clock: &RealmClock,
         action_buttons: Option<&WorldActionButtons>,
         general_tab_name: String,
-    ) -> Result<Self, ApplicationError> {
+    ) -> Result<(Self, Vec<ApplicationError>), ApplicationError> {
         let environment = UiScriptEnvironment::new(logical_extent.0, logical_extent.1, false)
             .map_err(GlueError::from)?;
         let world = environment.world_state();
@@ -103,26 +103,32 @@ impl RuntimeWorldUi {
 
         let mut manager =
             FrameManager::start_shared(assets, environment, cvar_values, addon_catalog)?;
+        let mut startup_errors = Vec::new();
         for event in [
             "VARIABLES_LOADED",
             "PLAYER_LOGIN",
             "UPDATE_BINDINGS",
             "PLAYER_ENTERING_WORLD",
         ] {
-            manager.dispatch_event(event, &UiEventPayload::empty())?;
+            if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
+                startup_errors.push(error.into());
+            }
         }
         let mut texture_cache = BlpTextureCache::new();
         let frame = RuntimeUiFrame::prepare_frame(renderer, &manager, &mut texture_cache)?;
-        Ok(Self {
-            manager,
-            frame,
-            texture_cache,
-            world,
-            zone,
-            action_bar,
-            action_slots: *slots,
-            dirty: false,
-        })
+        Ok((
+            Self {
+                manager,
+                frame,
+                texture_cache,
+                world,
+                zone,
+                action_bar,
+                action_slots: *slots,
+                dirty: false,
+            },
+            startup_errors,
+        ))
     }
 
     /// Publishes a changed area projection and emits the stock events consumed

@@ -292,7 +292,11 @@ impl ClientApplication {
                 if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
-                self.services.service_platform_event(&event)?;
+                if let Err(error) = self.services.service_platform_event(&event)
+                    && !self.services.record_recoverable_error(&error)
+                {
+                    return Err(error);
+                }
                 if matches!(
                     self.services.take_process_action(),
                     Some(solarity_ui::UiProcessAction::Quit)
@@ -312,8 +316,16 @@ impl ClientApplication {
                     admitted_event_count,
                 ));
             }
-            self.services.service_login()?;
-            self.services.present_frame()?;
+            if let Err(error) = self.services.service_login()
+                && !self.services.record_recoverable_error(&error)
+            {
+                return Err(error);
+            }
+            if let Err(error) = self.services.present_frame()
+                && !self.services.record_recoverable_error(&error)
+            {
+                return Err(error);
+            }
         }
     }
 

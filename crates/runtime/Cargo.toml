@@ -7,6 +7,8 @@ publish = false
 
 [dependencies]
 ash.workspace = true
+egui.workspace = true
+egui_console.workspace = true
 glam.workspace = true
 sdl3.workspace = true
 solarity-asset.workspace = true

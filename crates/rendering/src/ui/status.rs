@@ -35,4 +35,12 @@ pub enum UiMeshPlanError {
         /// Mesh array whose offset cannot be represented.
         domain: &'static str,
     },
+    /// An indexed tooling mesh refers beyond its supplied vertex array.
+    #[error("UI mesh index {index} exceeds the available {vertex_count} vertices")]
+    IndexOutOfRange {
+        /// Invalid vertex index.
+        index: u32,
+        /// Number of available vertices.
+        vertex_count: u32,
+    },
 }

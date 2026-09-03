@@ -107,10 +107,6 @@ impl RuntimeFpsOverlay {
         Ok(())
     }
 
-    pub(super) const fn logical_extent(&self) -> [f32; 2] {
-        self.logical_extent
-    }
-
     pub(super) fn draws(&self) -> &[UiPreparedDraw] {
         self.frame.draws()
     }
