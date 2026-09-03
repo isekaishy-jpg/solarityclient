@@ -1728,6 +1728,10 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
         | 0x0000_0002;
     bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    bytes[particle_offset + 0x160..particle_offset + 0x164].copy_from_slice(&0.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x164..particle_offset + 0x168].copy_from_slice(&1.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x168..particle_offset + 0x170]
+        .copy_from_slice(&render_f32_values(&[0.5, 1.5]));
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -1757,12 +1761,14 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
     let near = M2ParticleState::new(0.5, Vec3::X, Vec3::ZERO, 0x2483)?;
     let far = M2ParticleState::new(0.5, Vec3::X * 5.0, Vec3::ZERO, 0x2484)?;
     let particles = [near, far];
-    let mesh = M2ParticleMeshPlan::prepare(
+    let table = M2ParticleTwinkleTable::new(0x0029_4823);
+    let mesh = M2ParticleMeshPlan::prepare_with_twinkle_table(
         emitter,
         pose,
         &particles,
         WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
         1.0,
+        &table,
     )?;
     let first_center = mesh.vertices()[0..4]
         .iter()
@@ -1770,6 +1776,17 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
         .sum::<Vec3>()
         / 4.0;
     assert!((first_center - far.position()).abs().max_element() < 0.0001);
+    let appearance = M2ParticleLifetimePose::sample(
+        emitter,
+        far.normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+        far.random_word(),
+    )?;
+    let far_twinkle = table
+        .sample(emitter, &particles[1])?
+        .ok_or("far particle was unexpectedly hidden")?;
+    let first_height = Vec3::from_array(mesh.vertices()[0].position())
+        .distance(Vec3::from_array(mesh.vertices()[1].position()));
+    assert!((first_height - appearance.scale().y * far_twinkle * 2.0).abs() < 0.0001);
     assert_eq!(particles, [near, far]);
     Ok(())
 }
