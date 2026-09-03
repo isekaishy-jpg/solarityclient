@@ -48,7 +48,7 @@ pub struct GlueManager {
     pointer_capture: Option<(usize, UiPointerButton)>,
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
-    live_refresh_deferred: bool,
+    deferred_slider_refresh: Option<usize>,
     glyph_logical_height: u32,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
@@ -345,7 +345,7 @@ impl GlueManager {
             pointer_capture: None,
             edit_box_pointer_anchor: None,
             pointer_hover: None,
-            live_refresh_deferred: false,
+            deferred_slider_refresh: None,
             glyph_logical_height: logical_extent.1,
             report,
             environment,
@@ -989,7 +989,7 @@ impl GlueManager {
         self.runtime
             .dispatch_slider_value(&self.bundle, object_index, value)?;
         if defer_slider_refresh {
-            self.live_refresh_deferred = true;
+            self.deferred_slider_refresh = Some(object_index);
         } else {
             self.refresh_live_state()?;
         }
@@ -1002,10 +1002,12 @@ impl GlueManager {
     /// pending drag is intentionally free so non-motion event boundaries can
     /// use it unconditionally.
     pub fn flush_deferred_refresh(&mut self) -> Result<bool, UiEventError> {
-        if !self.live_refresh_deferred {
+        let Some(slider_index) = self.deferred_slider_refresh.take() else {
             return Ok(false);
-        }
-        self.refresh_live_state()?;
+        };
+        self.runtime
+            .refresh_slider_scroll_snapshot(&self.bundle, &mut self.live, slider_index)?;
+        self.rebuild_scroll_products()?;
         Ok(true)
     }
 
@@ -1122,7 +1124,7 @@ impl GlueManager {
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
-        self.live_refresh_deferred = false;
+        self.deferred_slider_refresh = None;
         let mut live = self.runtime.snapshot_objects(&self.bundle)?;
         if live == self.live {
             return Ok(());
@@ -1191,11 +1193,16 @@ impl GlueManager {
     /// proves that text, HTML, hierarchy, material state, and pointer admission
     /// are otherwise unchanged, so none of those expensive plans need rebuilt.
     fn refresh_scroll_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
-        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        self.live = live;
+        self.rebuild_scroll_products()
+    }
+
+    fn rebuild_scroll_products(&mut self) -> Result<(), UiEventError> {
+        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
-        let scroll_frames = UiScrollFramePlan::from_live(&live);
-        let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
+        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
+        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,
@@ -1203,7 +1210,6 @@ impl GlueManager {
             &scroll_frames,
             geometry.ui_extent(),
         )?;
-        self.live = live;
         self.geometry = geometry;
         self.scroll_frames = scroll_frames;
         self.presentation = presentation;

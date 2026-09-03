@@ -181,6 +181,24 @@ impl UiRuntimeObjectPlan {
         &self.anchors[object.first_anchor..object.first_anchor + object.anchor_count]
     }
 
+    pub(crate) fn replace_slider(&mut self, object_index: usize, slider: UiRuntimeSlider) {
+        if let Some(object) = self.objects.get_mut(object_index) {
+            object.slider = Some(slider);
+        }
+    }
+
+    pub(crate) fn replace_scroll_state(
+        &mut self,
+        object_index: usize,
+        offset: (f64, f64),
+        range: (f64, f64),
+    ) {
+        if let Some(object) = self.objects.get_mut(object_index) {
+            object.scroll_offset = Some(offset);
+            object.scroll_range = Some(range);
+        }
+    }
+
     /// Returns whether the only live presentation mutations are scroll offsets
     /// and Slider values. Those values move clipped content and native thumb
     /// geometry, but cannot invalidate text layout, object ownership, or input
@@ -491,7 +509,10 @@ pub(super) fn snapshot_runtime_objects(
     Ok(UiRuntimeObjectPlan { objects, anchors })
 }
 
-fn snapshot_slider(lua_index: usize, table: &Table) -> Result<UiRuntimeSlider, UiScriptError> {
+pub(super) fn snapshot_slider(
+    lua_index: usize,
+    table: &Table,
+) -> Result<UiRuntimeSlider, UiScriptError> {
     let minimum = finite_region_number(table, slider_min_key(), lua_index, "slider minimum")?;
     let maximum = finite_region_number(table, slider_max_key(), lua_index, "slider maximum")?;
     let value = finite_region_number(table, slider_value_key(), lua_index, "slider value")?;
@@ -1141,7 +1162,7 @@ fn snapshot_anchors(
     Ok(())
 }
 
-fn finite_region_number(
+pub(super) fn finite_region_number(
     table: &Table,
     key: mlua::LightUserData,
     lua_index: usize,

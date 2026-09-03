@@ -32,6 +32,7 @@ use crate::animation::{
 use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
 use super::handlers::handler_for;
+use super::runtime_state::{finite_region_number, snapshot_slider};
 use super::templates::TEMPLATE_REGISTRY;
 
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
@@ -1995,6 +1996,70 @@ impl UiScriptRuntime {
             return Ok(());
         }
         set_range_value(lua, object, value).map_err(|error| execution_error(&label, error))
+    }
+
+    /// Copies the compact native state needed to present a captured Slider.
+    ///
+    /// Drag callbacks commonly update a ScrollFrame on every mouse event. A
+    /// frame-boundary refresh reads only the captured range and the finite set
+    /// of ScrollFrames; the release event still performs the complete arena
+    /// snapshot and therefore reconciles any unusual callback side effects.
+    pub(crate) fn refresh_slider_scroll_snapshot(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        slider_index: usize,
+    ) -> Result<(), UiScriptError> {
+        let lua = bundle.lua();
+        let registry: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error("Slider scroll refresh", error))?;
+        let scroll_indices = live
+            .objects()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, object)| {
+                (object.kind == UiObjectKind::ScrollFrame).then_some(index)
+            })
+            .collect::<Vec<_>>();
+
+        let slider: Table = registry
+            .raw_get(slider_index + 1)
+            .map_err(|error| execution_error("Slider scroll refresh", error))?;
+        let slider_state = snapshot_slider(slider_index + 1, &slider)?;
+        live.replace_slider(slider_index, slider_state);
+
+        for object_index in scroll_indices {
+            let lua_index = object_index + 1;
+            let object: Table = registry
+                .raw_get(lua_index)
+                .map_err(|error| execution_error("Slider scroll refresh", error))?;
+            let offset = (
+                finite_region_number(
+                    &object,
+                    horizontal_scroll_key(),
+                    lua_index,
+                    "horizontal scroll",
+                )?,
+                finite_region_number(&object, vertical_scroll_key(), lua_index, "vertical scroll")?,
+            );
+            let range = (
+                finite_region_number(
+                    &object,
+                    horizontal_scroll_range_key(),
+                    lua_index,
+                    "horizontal scroll range",
+                )?,
+                finite_region_number(
+                    &object,
+                    vertical_scroll_range_key(),
+                    lua_index,
+                    "vertical scroll range",
+                )?,
+            );
+            live.replace_scroll_state(object_index, offset, range);
+        }
+        Ok(())
     }
 
     fn runtime_object(
