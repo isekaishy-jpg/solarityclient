@@ -23,7 +23,7 @@ use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::{
-    GlueM2Texture, M2Frame, M2GlueCpuSource, M2GlueCpuSourceKey, prepare_glue_cpu_source,
+    GlueM2Texture, M2CpuSource, M2Frame, M2GlueCpuSourceKey, prepare_m2_cpu_source,
 };
 use crate::random::CrtRand;
 
@@ -153,7 +153,7 @@ struct PendingGlueBackdropLoad {
 
 /// One completed worker result and its execution time, excluding queue delay.
 struct PreparedGlueCpuSource {
-    source: M2GlueCpuSource,
+    source: M2CpuSource,
     elapsed: std::time::Duration,
 }
 
@@ -197,7 +197,7 @@ fn prepare_glue_cpu_task(
     local_light_count: M2LocalLightCount,
 ) -> Result<PreparedGlueCpuSource, RuntimeTerrainFrameError> {
     let started = std::time::Instant::now();
-    let source = prepare_glue_cpu_source(model, local_light_count)?;
+    let source = prepare_m2_cpu_source(model, local_light_count)?;
     Ok(PreparedGlueCpuSource {
         source,
         elapsed: started.elapsed(),
@@ -453,7 +453,7 @@ pub(crate) struct RuntimeGlueModelScene {
     pending_backdrop_load: Option<PendingGlueBackdropLoad>,
     loaded_backdrops: VecDeque<LoadedGlueBackdrop>,
     prepared: HashMap<GlueModelGenerationKey, PreparedGlueModel>,
-    character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
+    character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
     pending_character_sources: Vec<PendingGlueCharacterSource>,
     character_replacement_required: bool,
 }

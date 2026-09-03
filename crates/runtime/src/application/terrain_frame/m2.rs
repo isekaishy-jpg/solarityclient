@@ -190,8 +190,8 @@ pub(in crate::application) enum GlueM2Texture {
     StockFailure,
 }
 
-/// CPU-only Glue model generation prepared away from the presentation thread.
-pub(in crate::application) struct M2GlueCpuSource {
+/// CPU-only M2 generation prepared away from the presentation thread.
+pub(in crate::application) struct M2CpuSource {
     plan: Arc<M2MeshPlan>,
     mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
     particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
@@ -237,15 +237,15 @@ struct M2GlueProgramCache {
 }
 
 /// Shares immutable worker results across every finite Glue backdrop.
-static GLUE_PROGRAMS: OnceLock<Mutex<M2GlueProgramCache>> = OnceLock::new();
+static M2_PROGRAMS: OnceLock<Mutex<M2GlueProgramCache>> = OnceLock::new();
 
 /// Builds the immutable mesh plan and every required shader permutation.
-pub(in crate::application) fn prepare_glue_cpu_source(
+pub(in crate::application) fn prepare_m2_cpu_source(
     model: &Arc<DecodedM2Model>,
     local_light_count: M2LocalLightCount,
-) -> Result<M2GlueCpuSource, RuntimeTerrainFrameError> {
+) -> Result<M2CpuSource, RuntimeTerrainFrameError> {
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
-    let cache_lock = GLUE_PROGRAMS.get_or_init(|| Mutex::new(M2GlueProgramCache::default()));
+    let cache_lock = M2_PROGRAMS.get_or_init(|| Mutex::new(M2GlueProgramCache::default()));
     let mut mesh_compiler = None;
     let mut mesh_programs = HashMap::new();
     for draw in plan.draws() {
@@ -365,7 +365,7 @@ pub(in crate::application) fn prepare_glue_cpu_source(
             }
         }
     }
-    Ok(M2GlueCpuSource {
+    Ok(M2CpuSource {
         plan,
         mesh_programs,
         particle_programs,
@@ -891,7 +891,7 @@ impl M2Frame {
         renderer: &mut VulkanRenderer,
         model: Arc<DecodedM2Model>,
         textures: &[GlueM2Texture],
-        cpu_source: &M2GlueCpuSource,
+        cpu_source: &M2CpuSource,
         local_light_count: M2LocalLightCount,
     ) -> Result<M2GlueGpuSource, RuntimeTerrainFrameError> {
         let resolved = textures
@@ -995,7 +995,7 @@ impl M2Frame {
         input: Option<ResidentGlueCharacterFrameInput<'_>>,
         character_light_count: M2LocalLightCount,
         pet_light_count: M2LocalLightCount,
-        cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
+        cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let Some(input) = input else {
@@ -2395,7 +2395,7 @@ fn prepare_glue_character_gpu_source(
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
-    cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
+    cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     let key = M2GlueCpuSourceKey::new(model.path().clone(), local_light_count);
     let cpu_source =
@@ -3045,7 +3045,7 @@ fn prepare_source(
             ResidentM2Texture::Replaceable(kind) => M2ResolvedTexture::Unresolved(*kind),
         })
         .collect::<Vec<_>>();
-    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
+    let plan = Arc::clone(&source.cpu_source().plan);
     for draw in plan.draws() {
         for binding in draw.texture_bindings() {
             let texture = resolved
@@ -3100,12 +3100,13 @@ fn prepare_source(
             return Ok(None);
         }
     }
-    Ok(Some(prepare_gpu_source(
+    Ok(Some(prepare_gpu_source_from_cpu(
         renderer,
         model,
         &resolved,
         None,
         M2LocalLightCount::Zero,
+        source.cpu_source(),
     )?))
 }
 
@@ -3137,7 +3138,7 @@ fn prepare_gpu_source_from_cpu(
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
-    cpu_source: &M2GlueCpuSource,
+    cpu_source: &M2CpuSource,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     prepare_gpu_source_with_plan(
         renderer,
@@ -3159,7 +3160,7 @@ fn prepare_gpu_source_with_plan(
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
     plan: Arc<M2MeshPlan>,
-    cpu_source: Option<&M2GlueCpuSource>,
+    cpu_source: Option<&M2CpuSource>,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {

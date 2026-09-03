@@ -36,6 +36,9 @@ pub enum RuntimeTerrainError {
     /// The bounded CPU executor rejected or lost terrain preparation work.
     #[error(transparent)]
     Cpu(#[from] CpuError),
+    /// Immutable M2 mesh or shader preparation failed before GPU publication.
+    #[error(transparent)]
+    Frame(#[from] crate::application::terrain_frame::RuntimeTerrainFrameError),
     /// A required client asset or table failed strict decoding.
     #[error(transparent)]
     Asset(#[from] AssetError),

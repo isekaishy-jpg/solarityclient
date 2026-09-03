@@ -9,7 +9,10 @@ use solarity_asset::{
     M2HardcodedTextureSource, M2ModelCache, M2TextureKind, TerrainDoodadPlacement,
     TerrainWorldModelPlacement, WorldModelDoodad,
 };
+use solarity_rendering::M2LocalLightCount;
 use solarity_systems::{M2CollisionScene, PlacedM2Collision};
+
+use crate::application::terrain_frame::m2::{M2CpuSource, prepare_m2_cpu_source};
 
 use super::RuntimeTerrainError;
 
@@ -41,6 +44,7 @@ pub(in crate::application) enum ResidentM2Texture {
 pub(in crate::application) struct ResidentM2Source {
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentM2Texture>,
+    cpu_source: M2CpuSource,
 }
 
 impl ResidentM2Source {
@@ -53,7 +57,12 @@ impl ResidentM2Source {
     ) -> Result<Self, RuntimeTerrainError> {
         let model = cache.load(store, path)?;
         let textures = prepare_textures(&model, texture_cache, store)?;
-        Ok(Self { model, textures })
+        let cpu_source = prepare_m2_cpu_source(&model, M2LocalLightCount::Zero)?;
+        Ok(Self {
+            model,
+            textures,
+            cpu_source,
+        })
     }
 
     /// Returns the immutable M2/SKIN generation selected by MPQ precedence.
@@ -64,6 +73,11 @@ impl ResidentM2Source {
     /// Returns one resident source for every model texture declaration.
     pub(in crate::application) fn textures(&self) -> &[ResidentM2Texture] {
         &self.textures
+    }
+
+    /// Returns the worker-prepared mesh plan and complete shader programs.
+    pub(in crate::application) const fn cpu_source(&self) -> &M2CpuSource {
+        &self.cpu_source
     }
 }
 
