@@ -37,6 +37,10 @@ use super::templates::TEMPLATE_REGISTRY;
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
+const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
+const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
+const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
+const FOCUSED_EDIT_BOX_REGISTRY: &str = "solarity.ui.focused_edit_box";
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -932,6 +936,17 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
+        lua.set_named_registry_value(
+            ON_UPDATE_OBJECTS_REGISTRY,
+            lua.create_table()
+                .map_err(|error| execution_error("registry", error))?,
+        )
+        .and_then(|()| {
+            lua.set_named_registry_value(ON_UPDATE_MEMBERS_REGISTRY, lua.create_table()?)
+        })
+        .and_then(|()| lua.set_named_registry_value(ON_UPDATE_SEEN_REGISTRY, lua.create_table()?))
+        .and_then(|()| lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize))
+        .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
             .map_err(|error| execution_error("registry", error))?;
         let metatables = lua
@@ -1417,13 +1432,27 @@ impl UiScriptRuntime {
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
-        let object_count = self.registered_object_count();
         let animation_changed = advance_animations(lua, elapsed_seconds)
             .map_err(|error| execution_error("FrameXML animation update", error))?;
-        advance_edit_box_carets(lua, &objects, object_count, elapsed_seconds)
+        advance_edit_box_caret(lua, &objects, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
+        let update_objects: Table = lua
+            .named_registry_value(ON_UPDATE_OBJECTS_REGISTRY)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let update_members: Table = lua
+            .named_registry_value(ON_UPDATE_MEMBERS_REGISTRY)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let mut dispatched = 0;
-        for index in 1..=object_count {
+        for slot in 1..=update_objects.raw_len() {
+            let index = update_objects
+                .raw_get::<usize>(slot)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?;
+            if !update_members
+                .raw_get::<bool>(index)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?
+            {
+                continue;
+            }
             let object = objects
                 .raw_get::<Table>(index)
                 .map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -2481,6 +2510,12 @@ impl UiScriptRuntime {
         objects
             .raw_set(node_index + 1, table.clone())
             .map_err(|error| execution_error("object registration", error))?;
+        if is_frame_object(object.kind()) {
+            let subscribed = object_has_script(&table, UiScriptHandler::Update)
+                .map_err(|error| execution_error("object registration", error))?;
+            set_update_subscription(lua, &table, subscribed)
+                .map_err(|error| execution_error("object registration", error))?;
+        }
         if let Some(key) = object.parent_key()
             && let Some(parent) = object.construction_parent()
         {
@@ -3081,6 +3116,10 @@ fn create_dynamic_object(
     object.set_metatable(Some(metatables.raw_get(kind)?))?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     objects.raw_set(index, object.clone())?;
+    if !matches!(kind, "Texture" | "FontString") {
+        let subscribed = object_has_script(&object, UiScriptHandler::Update)?;
+        set_update_subscription(lua, &object, subscribed)?;
+    }
     if let Some(parent) = parent
         && let Some(key) = dynamic_widget_region_key(record.raw_get::<String>("role")?.as_str())
     {
@@ -3701,7 +3740,7 @@ fn register_frame_script_methods(
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetScript",
-        lua.create_function(move |_, (object, name, value): (Table, String, Value)| {
+        lua.create_function(move |lua, (object, name, value): (Table, String, Value)| {
             let handler = handler_for(kind, &name)
                 .ok_or_else(|| mlua::Error::runtime(format!("Unknown script handler: {name}")))?;
             if !matches!(value, Value::Nil | Value::Function(_)) {
@@ -3711,7 +3750,12 @@ fn register_frame_script_methods(
                 )));
             }
             let handlers: Table = object.raw_get(script_handlers_key())?;
-            handlers.raw_set(handler.name(), value)
+            let subscribed = !matches!(value, Value::Nil);
+            handlers.raw_set(handler.name(), value)?;
+            if handler == UiScriptHandler::Update {
+                set_update_subscription(lua, &object, subscribed)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -3862,6 +3906,30 @@ fn object_script_function(
         }
         _ => Err(mlua::Error::runtime("script handler slot is invalid")),
     }
+}
+
+fn object_has_script(object: &Table, handler: UiScriptHandler) -> mlua::Result<bool> {
+    let Some(handlers) = object.raw_get::<Option<Table>>(script_handlers_key())? else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        handlers.raw_get::<Value>(handler.name())?,
+        Value::Nil
+    ))
+}
+
+/// Retains construction order while allowing `SetScript(..., nil)` to remove
+/// a frame from the hot update path without compacting the sequence table.
+fn set_update_subscription(lua: &Lua, object: &Table, subscribed: bool) -> mlua::Result<()> {
+    let object_index = object.raw_get::<usize>(index_key())?;
+    let members: Table = lua.named_registry_value(ON_UPDATE_MEMBERS_REGISTRY)?;
+    let seen: Table = lua.named_registry_value(ON_UPDATE_SEEN_REGISTRY)?;
+    if subscribed && !seen.raw_get::<bool>(object_index)? {
+        let objects: Table = lua.named_registry_value(ON_UPDATE_OBJECTS_REGISTRY)?;
+        objects.raw_set(objects.raw_len() + 1, object_index)?;
+        seen.raw_set(object_index, true)?;
+    }
+    members.raw_set(object_index, subscribed)
 }
 
 fn register_font_string_methods(
@@ -5696,22 +5764,17 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
         if was_focused {
             object.raw_set(edit_focused_key(), false)?;
             reset_edit_box_caret(object)?;
+            if lua.named_registry_value::<usize>(FOCUSED_EDIT_BOX_REGISTRY)? == object_index {
+                lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize)?;
+            }
             call_optional_object_handler(lua, object, UiScriptHandler::EditFocusLost)?;
         }
         return Ok(());
     }
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    let mut losing_focus = Vec::new();
-    for pair in objects.pairs::<usize, Table>() {
-        let (_, candidate) = pair?;
-        if candidate.raw_get::<Option<String>>(type_key())?.as_deref() == Some("EditBox")
-            && candidate.raw_get::<bool>(edit_focused_key())?
-            && candidate.raw_get::<usize>(index_key())? != object_index
-        {
-            losing_focus.push(candidate);
-        }
-    }
-    for candidate in losing_focus {
+    let previous = lua.named_registry_value::<usize>(FOCUSED_EDIT_BOX_REGISTRY)?;
+    if previous != 0 && previous != object_index {
+        let candidate = objects.raw_get::<Table>(previous)?;
         candidate.raw_set(edit_focused_key(), false)?;
         reset_edit_box_caret(&candidate)?;
         call_optional_object_handler(lua, &candidate, UiScriptHandler::EditFocusLost)?;
@@ -5719,6 +5782,7 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
     if !was_focused {
         object.raw_set(edit_focused_key(), true)?;
         reset_edit_box_caret(object)?;
+        lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, object_index)?;
         call_optional_object_handler(lua, object, UiScriptHandler::EditFocusGained)?;
     }
     Ok(())
@@ -5731,20 +5795,14 @@ fn reset_edit_box_caret(object: &Table) -> mlua::Result<()> {
 
 /// Advances the one focused EditBox's authored half-cycle and marks only
 /// visibility boundaries as retained presentation changes.
-fn advance_edit_box_carets(
-    lua: &Lua,
-    objects: &Table,
-    object_count: usize,
-    elapsed_seconds: f64,
-) -> mlua::Result<()> {
+fn advance_edit_box_caret(lua: &Lua, objects: &Table, elapsed_seconds: f64) -> mlua::Result<()> {
+    let object_index = lua.named_registry_value::<usize>(FOCUSED_EDIT_BOX_REGISTRY)?;
+    if object_index == 0 {
+        return Ok(());
+    }
     let mut changed = false;
-    for index in 1..=object_count {
-        let object = objects.raw_get::<Table>(index)?;
-        if object.raw_get::<Option<String>>(type_key())?.as_deref() != Some("EditBox")
-            || !object.raw_get::<bool>(edit_focused_key())?
-        {
-            continue;
-        }
+    let object = objects.raw_get::<Table>(object_index)?;
+    if object.raw_get::<bool>(edit_focused_key())? {
         let interval = object.raw_get::<f64>(edit_blink_speed_key())?;
         let visible = object.raw_get::<bool>(edit_caret_visible_key())?;
         if interval <= 0.0 {
@@ -5752,18 +5810,18 @@ fn advance_edit_box_carets(
                 reset_edit_box_caret(&object)?;
                 changed = true;
             }
-            continue;
-        }
-        let total = object.raw_get::<f64>(edit_caret_elapsed_key())? + elapsed_seconds;
-        if total < interval {
-            object.raw_set(edit_caret_elapsed_key(), total)?;
-            continue;
-        }
-        let boundaries = (total / interval).floor() as u64;
-        object.raw_set(edit_caret_elapsed_key(), total % interval)?;
-        if boundaries & 1 != 0 {
-            object.raw_set(edit_caret_visible_key(), !visible)?;
-            changed = true;
+        } else {
+            let total = object.raw_get::<f64>(edit_caret_elapsed_key())? + elapsed_seconds;
+            if total < interval {
+                object.raw_set(edit_caret_elapsed_key(), total)?;
+            } else {
+                let boundaries = (total / interval).floor() as u64;
+                object.raw_set(edit_caret_elapsed_key(), total % interval)?;
+                if boundaries & 1 != 0 {
+                    object.raw_set(edit_caret_visible_key(), !visible)?;
+                    changed = true;
+                }
+            }
         }
     }
     if changed {

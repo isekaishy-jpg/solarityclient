@@ -7,8 +7,8 @@ use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
-use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
+use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::model::{M2MaterialUniform, M2SceneUniform};
 
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;

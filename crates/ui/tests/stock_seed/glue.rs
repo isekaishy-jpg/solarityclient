@@ -1275,7 +1275,14 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
   <Scripts><OnLoad>DISABLE_NEXT = false</OnLoad><OnUpdate>
     if DISABLE_NEXT then DISABLE_NEXT = false self:Disable() end
   </OnUpdate></Scripts>
-</Button></Ui>"#,
+</Button>
+<Frame name="DynamicUpdate"><Scripts><OnLoad>
+  DYNAMIC_UPDATE_CALLS = 0
+  self:SetScript("OnUpdate", function(frame)
+    DYNAMIC_UPDATE_CALLS = DYNAMIC_UPDATE_CALLS + 1
+    frame:SetScript("OnUpdate", nil)
+  end)
+</OnLoad></Scripts></Frame></Ui>"#,
         },
     ])?;
     let catalog =
@@ -1314,8 +1321,43 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .get::<u32>("UPDATE_CALLS")?,
         1
     );
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("DYNAMIC_UPDATE_CALLS")?,
+        1
+    );
     manager.bundle().lua().globals().set("DISABLE_NEXT", true)?;
     assert!(manager.update(0.0)?);
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("DYNAMIC_UPDATE_CALLS")?,
+        1
+    );
+    manager
+        .bundle()
+        .lua()
+        .load(
+            r#"DynamicUpdate:SetScript("OnUpdate", function(frame)
+          DYNAMIC_UPDATE_CALLS = DYNAMIC_UPDATE_CALLS + 1
+          frame:SetScript("OnUpdate", nil)
+        end)"#,
+        )
+        .exec()?;
+    manager.update(0.0)?;
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("DYNAMIC_UPDATE_CALLS")?,
+        2
+    );
     let presented = manager
         .presentation()
         .members_in_draw_order()
@@ -1336,7 +1378,7 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .lua()
             .globals()
             .get::<u32>("UPDATE_CALLS")?,
-        2
+        3
     );
     assert!(matches!(
         manager.update(-0.01),

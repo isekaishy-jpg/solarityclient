@@ -1118,13 +1118,11 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
 #[test]
 fn m2_particle_model_space_uses_stock_flag() -> Result<(), Box<dyn Error>> {
     let mut local_bytes = render_m2_bytes("Particle.blp", 1)?;
-    let local_offset =
-        usize::try_from(u32::from_le_bytes(local_bytes[0x12c..0x130].try_into()?))?;
+    let local_offset = usize::try_from(u32::from_le_bytes(local_bytes[0x12c..0x130].try_into()?))?;
     local_bytes[local_offset + 4..local_offset + 8]
         .copy_from_slice(&(0x8000_u32 | 0x10).to_le_bytes());
     let mut spin_bytes = render_m2_bytes("Particle.blp", 1)?;
-    let spin_offset =
-        usize::try_from(u32::from_le_bytes(spin_bytes[0x12c..0x130].try_into()?))?;
+    let spin_offset = usize::try_from(u32::from_le_bytes(spin_bytes[0x12c..0x130].try_into()?))?;
     spin_bytes[spin_offset + 4..spin_offset + 8]
         .copy_from_slice(&(0x8000_u32 | 0x200).to_le_bytes());
     let skin = render_skin_bytes()?;
