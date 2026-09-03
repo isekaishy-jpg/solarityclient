@@ -84,8 +84,8 @@ impl UiMeshRegistry {
         if slot >= self.resources.len() {
             return Err(VulkanError::UnknownUiMeshHandle);
         }
-        let vertex_bytes = aligned_update_bytes(plan.vertex_bytes())?;
-        let index_bytes = aligned_update_bytes(plan.index_bytes())?;
+        let vertex_bytes = validated_update_bytes(plan.vertex_bytes())?;
+        let index_bytes = validated_update_bytes(plan.index_bytes())?;
         let resource = &mut self.resources[slot];
         if vertex_bytes.len() > resource.vertex_bytes.capacity()
             || index_bytes.len() > resource.index_bytes.capacity()
@@ -100,14 +100,14 @@ impl UiMeshRegistry {
         }
 
         let mut pending_updates = 0;
-        if resource.vertex_bytes != vertex_bytes {
+        if resource.vertex_bytes.as_slice() != vertex_bytes {
             resource.vertex_bytes.clear();
-            resource.vertex_bytes.extend_from_slice(&vertex_bytes);
+            resource.vertex_bytes.extend_from_slice(vertex_bytes);
             pending_updates |= VERTEX_UPDATE;
         }
-        if resource.index_bytes != index_bytes {
+        if resource.index_bytes.as_slice() != index_bytes {
             resource.index_bytes.clear();
-            resource.index_bytes.extend_from_slice(&index_bytes);
+            resource.index_bytes.extend_from_slice(index_bytes);
             pending_updates |= INDEX_UPDATE;
         }
         resource.info = mesh_info(plan);
@@ -247,4 +247,15 @@ fn aligned_update_bytes(bytes: &[u8]) -> Result<Vec<u8>, VulkanError> {
     aligned_bytes.extend_from_slice(bytes);
     aligned_bytes.resize(aligned, 0);
     Ok(aligned_bytes)
+}
+
+/// Validates the inline-update ABI without allocating a duplicate payload.
+fn validated_update_bytes(bytes: &[u8]) -> Result<&[u8], VulkanError> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(VulkanError::operation(
+            "align UI mesh update",
+            "payload is not four-byte aligned",
+        ));
+    }
+    Ok(bytes)
 }

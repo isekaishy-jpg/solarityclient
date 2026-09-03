@@ -87,6 +87,8 @@ const STOCK_CHARACTER_BACKDROPS: [&str; 10] = [
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<RuntimeUiFrame>,
+    /// Live Glue state changed while the renderer-resident frame remains owned.
+    glue_ui_dirty: bool,
     /// Last Glue screen actually submitted to the swapchain.
     ///
     /// Input may select a different screen while SDL still has events queued
@@ -368,6 +370,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                glue_ui_dirty: false,
                 presented_glue_screen,
                 ui_textures,
                 world_ui: None,
@@ -473,7 +476,7 @@ impl ClientServices {
             return self.service_world_platform_event(event);
         }
         if !matches!(event, PlatformEvent::MouseMotion(_)) && self.glue.flush_deferred_refresh()? {
-            self.login_ui = None;
+            self.glue_ui_dirty = true;
         }
         match event {
             PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
@@ -567,7 +570,7 @@ impl ClientServices {
                     .pointer_motion_deferred_refresh(position)?
                     .is_some()
                 {
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
             }
             PlatformEvent::MouseWheel(wheel)
@@ -718,7 +721,7 @@ impl ClientServices {
             return Ok(());
         }
         if self.gameplay.world().is_none() && self.glue.flush_deferred_refresh()? {
-            self.login_ui = None;
+            self.glue_ui_dirty = true;
         }
         if self.gameplay.world().is_none() {
             self.sound
@@ -748,10 +751,14 @@ impl ClientServices {
                 .duration_since(self.glue_update_clock)
                 .as_secs_f64();
             self.glue_update_clock = update_time;
-            if self.glue.update(glue_elapsed)?
+            if self.glue.update(glue_elapsed)? {
+                self.glue_ui_dirty = true;
+            }
+            if self.glue_ui_dirty
                 && let Some(frame) = self.login_ui.as_mut()
             {
                 frame.refresh_glue(&mut self.renderer, &self.glue, &mut self.ui_textures)?;
+                self.glue_ui_dirty = false;
             }
             self.sync_platform_text_input();
             self.persist_active_cvars()?;
@@ -923,6 +930,7 @@ impl ClientServices {
                 &self.glue,
                 &mut self.ui_textures,
             )?);
+            self.glue_ui_dirty = false;
         }
         let frame = self
             .login_ui
