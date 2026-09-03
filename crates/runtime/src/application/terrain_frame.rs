@@ -5,10 +5,10 @@ use std::sync::Arc;
 use glam::Vec4;
 use solarity_asset::{AssetPath, BlpTextureSource, TerrainTileIndex};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightState, M2MaterialPoseError,
-    M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError, M2ParticleSpirvError,
-    M2RibbonMeshPlanError, M2RibbonSpirvError, M2RibbonTrailError, M2SceneUniform,
-    M2ShaderPlanError, M2SpirvError, TerrainLayerCount, TerrainLayerCountError,
+    BlpColorSpace, BlpTextureUploadError, M2BonePoseError, M2LocalLightCount, M2LocalLightState,
+    M2MaterialPoseError, M2MeshPlanError, M2ParticleMeshPlanError, M2ParticleSimulationError,
+    M2ParticleSpirvError, M2RibbonMeshPlanError, M2RibbonSpirvError, M2RibbonTrailError,
+    M2SceneUniform, M2ShaderPlanError, M2SpirvError, TerrainLayerCount, TerrainLayerCountError,
     TerrainPreparedDraw, TerrainSceneUniform, TerrainTextureSet, TerrainTileMeshPlan,
     UiPreparedDraw, VulkanError, VulkanRenderer, WorldCameraError, WorldCameraFrame,
     WorldFrameReport, WorldFrameScene, WorldFrustum, WorldModelBaseMip, WorldModelMeshPlanError,
@@ -76,6 +76,14 @@ pub enum RuntimeTerrainFrameError {
         model: AssetPath,
         /// Shader family whose exact identity was absent.
         domain: &'static str,
+    },
+    /// Glue attempted to publish a character model before its worker generation completed.
+    #[error("Glue character M2 {model} has no worker-prepared source for {local_light_count:?}")]
+    MissingGlueCpuSource {
+        /// Model whose immutable CPU source is not resident.
+        model: AssetPath,
+        /// Exact local-light permutation required by the current ModelFFX bank.
+        local_light_count: M2LocalLightCount,
     },
     /// One visible M2 could not form its bone palette.
     #[error(transparent)]

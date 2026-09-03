@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::Mat4;
-use solarity_asset::{BlpTextureSource, DecodedM2Model, M2ParticleEmitter};
+use solarity_asset::{AssetPath, BlpTextureSource, DecodedM2Model, M2ParticleEmitter};
 use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
@@ -193,6 +193,31 @@ pub(in crate::application) struct M2GlueCpuSource {
     mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
     particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
     ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
+}
+
+/// Exact immutable CPU generation shared by Glue character placements.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(in crate::application) struct M2GlueCpuSourceKey {
+    path: AssetPath,
+    local_light_count: M2LocalLightCount,
+}
+
+impl M2GlueCpuSourceKey {
+    /// Identifies one model and stock local-light shader permutation.
+    pub(in crate::application) fn new(
+        path: AssetPath,
+        local_light_count: M2LocalLightCount,
+    ) -> Self {
+        Self {
+            path,
+            local_light_count,
+        }
+    }
+
+    /// Returns the exact shader light count represented by this key.
+    pub(in crate::application) const fn local_light_count(&self) -> M2LocalLightCount {
+        self.local_light_count
+    }
 }
 
 /// Process-wide worker bytecode indexed by complete stock shader identity.
@@ -914,6 +939,7 @@ impl M2Frame {
         input: Option<ResidentGlueCharacterFrameInput<'_>>,
         character_light_count: M2LocalLightCount,
         pet_light_count: M2LocalLightCount,
+        cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let Some(input) = input else {
@@ -941,12 +967,13 @@ impl M2Frame {
                 ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
             })
             .collect::<Vec<_>>();
-        let source = prepare_gpu_source(
+        let source = prepare_glue_character_gpu_source(
             renderer,
             input.model(),
             &resolved,
             Some(M2GeosetSelection::Character(input.geosets())),
             character_light_count,
+            cpu_sources,
         )?;
         let transform = Mat4::from_rotation_z(input.facing_radians())
             * Mat4::from_scale(glam::Vec3::splat(input.model_scale()));
@@ -987,12 +1014,13 @@ impl M2Frame {
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
-            let source = prepare_gpu_source(
+            let source = prepare_glue_character_gpu_source(
                 renderer,
                 attachment.model(),
                 &resolved,
                 None,
                 character_light_count,
+                cpu_sources,
             )?;
             let placement = unit_gpu_placement(
                 0,
@@ -1025,12 +1053,13 @@ impl M2Frame {
                         }
                     })
                     .collect::<Vec<_>>();
-                let source = prepare_gpu_source(
+                let source = prepare_glue_character_gpu_source(
                     renderer,
                     effect.model(),
                     &resolved,
                     None,
                     character_light_count,
+                    cpu_sources,
                 )?;
                 let placement = unit_gpu_placement(
                     0,
@@ -1066,12 +1095,13 @@ impl M2Frame {
                     }
                 })
                 .collect::<Vec<_>>();
-            let source = prepare_gpu_source(
+            let source = prepare_glue_character_gpu_source(
                 renderer,
                 pet.model(),
                 &resolved,
                 pet.geosets().map(M2GeosetSelection::from),
                 pet_light_count,
+                cpu_sources,
             )?;
             let transform = Mat4::from_scale(glam::Vec3::splat(pet.model_scale()));
             let mut placement = unit_gpu_placement(
@@ -2228,6 +2258,34 @@ impl M2Frame {
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
     }
+}
+
+/// Publishes one Glue character source from an already completed worker generation.
+#[allow(clippy::too_many_arguments)]
+fn prepare_glue_character_gpu_source(
+    renderer: &mut VulkanRenderer,
+    model: &Arc<DecodedM2Model>,
+    textures: &[M2ResolvedTexture<'_>],
+    geosets: Option<M2GeosetSelection<'_>>,
+    local_light_count: M2LocalLightCount,
+    cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
+) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
+    let key = M2GlueCpuSourceKey::new(model.path().clone(), local_light_count);
+    let cpu_source =
+        cpu_sources
+            .get(&key)
+            .ok_or_else(|| RuntimeTerrainFrameError::MissingGlueCpuSource {
+                model: model.path().clone(),
+                local_light_count,
+            })?;
+    prepare_gpu_source_from_cpu(
+        renderer,
+        model,
+        textures,
+        geosets,
+        local_light_count,
+        cpu_source,
+    )
 }
 
 /// Replays the shared-model distance bit computed after M2/SKIN publication.
