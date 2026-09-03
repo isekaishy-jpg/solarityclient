@@ -2096,7 +2096,7 @@ fn m2_particle_mesh_inherits_emitter_view_scale() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Raw `0x100` selects the stock vertical sphere launch; Squirt `0x8000` does not.
+/// Raw `0x100` selects vertical sphere launch; `0x80` filters outward motion.
 #[test]
 fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Error>> {
     let sphere_bytes = |flags: u32| -> Result<Vec<u8>, Box<dyn Error>> {
@@ -2115,6 +2115,7 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
     };
     let vertical_bytes = sphere_bytes(0x100)?;
     let squirt_bytes = sphere_bytes(0x8000)?;
+    let implosion_bytes = sphere_bytes(0x80)?;
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -2133,12 +2134,21 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
             path: "Creature\\Solarity\\SquirtSphereParticle00.skin",
             bytes: &skin,
         },
+        FixtureFile {
+            path: "Creature\\Solarity\\ImplosionSphereParticle.m2",
+            bytes: &implosion_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\ImplosionSphereParticle00.skin",
+            bytes: &skin,
+        },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog)?;
     let simulate = |store: &mut AssetStore,
-                    path: &str|
+                    path: &str,
+                    expected_deaths: usize|
      -> Result<(M2ParticlePose, M2ParticleSimulation), Box<dyn Error>> {
         let model = DecodedM2Model::load(store, &AssetPath::new(path)?)?;
         let emitter = model
@@ -2155,14 +2165,23 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
         let mut simulation = M2ParticleSimulation::new(0x0029_4823);
         let report = simulation.advance_sphere(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
         assert_eq!(report.emitted(), 2);
-        assert_eq!(report.deaths(), 0);
-        assert_eq!(report.live(), 2);
+        assert_eq!(report.deaths(), expected_deaths);
+        assert_eq!(report.live(), 2 - expected_deaths);
         Ok((pose, simulation))
     };
-    let (vertical_pose, vertical) =
-        simulate(&mut store, "Creature\\Solarity\\VerticalSphereParticle.m2")?;
+    let (vertical_pose, vertical) = simulate(
+        &mut store,
+        "Creature\\Solarity\\VerticalSphereParticle.m2",
+        0,
+    )?;
     let (squirt_pose, squirt) =
-        simulate(&mut store, "Creature\\Solarity\\SquirtSphereParticle.m2")?;
+        simulate(&mut store, "Creature\\Solarity\\SquirtSphereParticle.m2", 0)?;
+    let (_, implosion) = simulate(
+        &mut store,
+        "Creature\\Solarity\\ImplosionSphereParticle.m2",
+        2,
+    )?;
+    assert!(implosion.particles().is_empty());
     assert!(vertical.particles().iter().all(|particle| {
         particle.velocity().truncate().length_squared() < f32::EPSILON
             && particle.velocity().z.is_finite()

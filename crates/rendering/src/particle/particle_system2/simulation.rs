@@ -21,6 +21,9 @@ const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0010;
 /// Adds sampled emitter motion to newly born particle velocity.
 const INHERIT_VELOCITY: u32 = 0x0000_0040;
 
+/// Removes sphere particles after their velocity carries them beyond the emitter center.
+const SPHERE_IMPLOSION_FILTER: u32 = 0x0000_0080;
+
 /// Moves established particles by a speed-scaled share of emitter motion.
 const FOLLOW_POSITION: u32 = 0x0000_4000;
 
@@ -484,13 +487,27 @@ impl M2ParticleSimulation {
 
         let mut deaths = 0;
         let mut index = 0;
+        let implosion_center = if emitter.flags() & PARTICLES_IN_MODEL_SPACE != 0 {
+            Vec3::ZERO
+        } else {
+            emitter_transform.transform_point3(Vec3::ZERO)
+        };
         while index < self.particles.len() {
             let particle = &mut self.particles[index];
             if emitter.flags() & DYNAMIC_WIND == 0 {
                 particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
             }
+            let displacement = particle.velocity() * elapsed_seconds;
             particle.advance(elapsed_seconds, pose.gravity(), emitter.drag())?;
-            if particle.is_alive(pose.lifespan(), emitter.lifespan_variation()) {
+            // Sphere runtime bit `0x1000` (raw `0x80`) makes `0x00979BB0`
+            // reject a particle once its post-step position has crossed the
+            // emitter-center plane perpendicular to this step's velocity.
+            let crossed_implosion_center = matches!(shape, EmitterShape::Sphere)
+                && emitter.flags() & SPHERE_IMPLOSION_FILTER != 0
+                && (particle.position() - implosion_center).dot(displacement) > 0.0;
+            if !crossed_implosion_center
+                && particle.is_alive(pose.lifespan(), emitter.lifespan_variation())
+            {
                 index += 1;
             } else {
                 self.particles.swap_remove(index);
