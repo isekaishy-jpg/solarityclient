@@ -649,6 +649,7 @@ pub(in crate::application) struct M2Frame {
     placements: Vec<M2GpuPlacement>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
     animation_started_at: std::time::Instant,
+    bone_pose_scratch: M2BonePose,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     transparent_draws: Vec<M2TransparentDraw>,
@@ -745,6 +746,7 @@ impl M2Frame {
             placements,
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
+            bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
@@ -954,6 +956,7 @@ impl M2Frame {
             }],
             particle_twinkle,
             animation_started_at,
+            bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
@@ -1916,42 +1919,45 @@ impl M2Frame {
             let advance =
                 playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
             if let Some(expired) = advance.expired_variation {
-                let expired_pose = M2BonePose::compose_with_model_view_and_orientation_mask(
-                    source.model.animations(),
-                    expired.clock,
-                    camera.view() * placement.transform,
-                    &source.model_oriented_billboard_bones,
-                )?;
+                self.bone_pose_scratch
+                    .recompose_with_model_view_and_orientation_mask(
+                        source.model.animations(),
+                        expired.clock,
+                        camera.view() * placement.transform,
+                        &source.model_oriented_billboard_bones,
+                    )?;
                 append_triggered_events(
                     &mut self.triggered_events,
                     &source.model,
                     placement.owner,
                     placement.transform,
-                    &expired_pose,
+                    &self.bone_pose_scratch,
                     expired.event_window,
                 )?;
             }
             let clock = advance.clock;
             let event_window = playback.event_window(animation_time_ms, global_time_ms);
             let model_view = camera.view() * placement.transform;
-            let bone_pose = M2BonePose::compose_with_model_view_and_orientation_mask(
-                source.model.animations(),
-                clock,
-                model_view,
-                &source.model_oriented_billboard_bones,
-            )?;
+            self.bone_pose_scratch
+                .recompose_with_model_view_and_orientation_mask(
+                    source.model.animations(),
+                    clock,
+                    model_view,
+                    &source.model_oriented_billboard_bones,
+                )?;
+            let bone_pose = &self.bone_pose_scratch;
             append_triggered_events(
                 &mut self.triggered_events,
                 &source.model,
                 placement.owner,
                 placement.transform,
-                &bone_pose,
+                bone_pose,
                 event_window,
             )?;
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
                 let sampled_lights = sample_m2_lights(
                     source.model.animations(),
-                    &bone_pose,
+                    bone_pose,
                     clock,
                     placement.transform,
                 )?;
@@ -1982,7 +1988,7 @@ impl M2Frame {
                     self.mount_camera_sample = Some(sample_mount_camera(
                         &source.model,
                         placement.transform,
-                        &bone_pose,
+                        bone_pose,
                         animation_time_ms,
                     )?);
                 }
@@ -2093,7 +2099,7 @@ impl M2Frame {
                 let emitter_transform = particle_emitter_transform(
                     &source.model,
                     placement.transform,
-                    &bone_pose,
+                    bone_pose,
                     particle_index,
                     emitter,
                 )?;
@@ -2193,7 +2199,7 @@ impl M2Frame {
             advance_ribbons(
                 &source.model,
                 placement,
-                &bone_pose,
+                bone_pose,
                 clock,
                 effect_delta_seconds,
             )?;
@@ -2252,7 +2258,7 @@ impl M2Frame {
                         .with_light_bank(light_bank);
                     if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
                     {
-                        let section_distance = section_distance_key(draw, &bone_pose, model_view)?;
+                        let section_distance = section_distance_key(draw, bone_pose, model_view)?;
                         let primary_distance = if self.model_distance_sort[placement_index] {
                             m2_model_distance_key(model_view)
                         } else {

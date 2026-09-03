@@ -2727,6 +2727,25 @@ fn m2_bone_pose_applies_stock_view_space_billboard() -> Result<(), Box<dyn Error
     assert_eq!(view_bone.x_axis.truncate(), Vec3::new(0.0, 0.0, -1.0));
     assert_eq!(view_bone.y_axis.truncate(), Vec3::X);
     assert_eq!(view_bone.z_axis.truncate(), Vec3::Y);
+    let mut retained_pose = M2BonePose::default();
+    retained_pose.recompose_with_model_view_and_orientation_mask(
+        model.animations(),
+        M2AnimationClock::new(0, 500.0, 0.0),
+        camera.view(),
+        &[],
+    )?;
+    assert_eq!(retained_pose.transforms(), pose.transforms());
+    let retained_transform_storage = retained_pose.transforms().as_ptr();
+    retained_pose.recompose_with_model_view_and_orientation_mask(
+        model.animations(),
+        M2AnimationClock::new(0, 750.0, 0.0),
+        camera.view(),
+        &[],
+    )?;
+    assert_eq!(
+        retained_pose.transforms().as_ptr(),
+        retained_transform_storage
+    );
     let model_oriented = M2BonePose::compose_with_model_view_and_orientation_mask(
         model.animations(),
         M2AnimationClock::new(0, 500.0, 0.0),

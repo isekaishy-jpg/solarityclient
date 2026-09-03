@@ -75,9 +75,11 @@ impl M2AnimationClock {
 }
 
 /// One complete model-bone matrix palette ready for GPU upload.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct M2BonePose {
     transforms: Vec<Mat4>,
+    local: Vec<Mat4>,
+    states: Vec<u8>,
 }
 
 /// Precomputed camera transforms shared by every billboard bone in a pose.
@@ -135,6 +137,29 @@ impl M2BonePose {
         model_view: Mat4,
         model_oriented_billboard_bones: &[bool],
     ) -> Result<Self, M2BonePoseError> {
+        let mut pose = Self::default();
+        pose.recompose_with_model_view_and_orientation_mask(
+            animations,
+            clock,
+            model_view,
+            model_oriented_billboard_bones,
+        )?;
+        Ok(pose)
+    }
+
+    /// Rebuilds a camera-aware palette while retaining its backing storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as
+    /// [`Self::compose_with_model_view_and_orientation_mask`].
+    pub fn recompose_with_model_view_and_orientation_mask(
+        &mut self,
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Mat4,
+        model_oriented_billboard_bones: &[bool],
+    ) -> Result<(), M2BonePoseError> {
         if !finite_matrix(model_view) {
             return Err(M2BonePoseError::InvalidModelView);
         }
@@ -142,7 +167,7 @@ impl M2BonePose {
         if !determinant.is_finite() || determinant.abs() <= 1.0e-8 {
             return Err(M2BonePoseError::InvalidModelView);
         }
-        Self::compose_inner(
+        self.recompose_inner(
             animations,
             clock,
             Some(BillboardView {
@@ -160,6 +185,24 @@ impl M2BonePose {
         model_view: Option<BillboardView>,
         model_oriented_billboard_bones: &[bool],
     ) -> Result<Self, M2BonePoseError> {
+        let mut pose = Self::default();
+        pose.recompose_inner(
+            animations,
+            clock,
+            model_view,
+            model_oriented_billboard_bones,
+        )?;
+        Ok(pose)
+    }
+
+    /// Shares animation selection and hierarchy work while retaining vectors.
+    fn recompose_inner(
+        &mut self,
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Option<BillboardView>,
+        model_oriented_billboard_bones: &[bool],
+    ) -> Result<(), M2BonePoseError> {
         let sequence = clock.resolve(animations)?;
         if model_view.is_none()
             && let Some((bone, _)) = animations
@@ -171,8 +214,8 @@ impl M2BonePose {
             return Err(M2BonePoseError::BillboardViewRequired { bone });
         }
 
-        let mut local = Vec::with_capacity(animations.bones().len());
-        for bone in animations.bones() {
+        self.local.resize(animations.bones().len(), Mat4::IDENTITY);
+        for (index, bone) in animations.bones().iter().enumerate() {
             let translation = sample_vec3(
                 animations,
                 bone.translation(),
@@ -196,29 +239,29 @@ impl M2BonePose {
                 clock.global_time_ms,
                 Vec3::ONE,
             );
-            local.push(
-                Mat4::from_translation(bone.pivot())
-                    * Mat4::from_translation(translation)
-                    * Mat4::from_quat(rotation)
-                    * Mat4::from_scale(scale)
-                    * Mat4::from_translation(-bone.pivot()),
-            );
+            self.local[index] = Mat4::from_translation(bone.pivot())
+                * Mat4::from_translation(translation)
+                * Mat4::from_quat(rotation)
+                * Mat4::from_scale(scale)
+                * Mat4::from_translation(-bone.pivot());
         }
 
-        let mut transforms = vec![Mat4::IDENTITY; local.len()];
-        let mut states = vec![0_u8; local.len()];
-        for index in 0..local.len() {
+        self.transforms.resize(self.local.len(), Mat4::IDENTITY);
+        self.transforms.fill(Mat4::IDENTITY);
+        self.states.resize(self.local.len(), 0);
+        self.states.fill(0);
+        for index in 0..self.local.len() {
             compose_bone(
                 index,
                 animations,
-                &local,
-                &mut transforms,
-                &mut states,
+                &self.local,
+                &mut self.transforms,
+                &mut self.states,
                 model_view,
                 model_oriented_billboard_bones,
             );
         }
-        Ok(Self { transforms })
+        Ok(())
     }
 
     /// Returns model-space transforms indexed exactly like the M2 bone array.
