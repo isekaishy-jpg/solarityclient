@@ -1491,25 +1491,13 @@ fn clip_quad(
     let clipped_bottom = bottom.max(viewport.bottom() as f32);
     let clipped_right = right.min(viewport.right() as f32);
     let clipped_top = top.min(viewport.top() as f32);
-    let horizontal_span = right - left;
-    let vertical_span = top - bottom;
-    if horizontal_span <= 0.0 || vertical_span <= 0.0 {
+    if clipped_left >= clipped_right || clipped_bottom >= clipped_top {
         return None;
     }
+
+    let horizontal_span = right - left;
+    let vertical_span = top - bottom;
     let [upper_left, lower_left, upper_right, _lower_right] = quad.texture_coordinates;
-    if clipped_left >= clipped_right || clipped_bottom >= clipped_top {
-        // Retain the atlas packet and quad count for off-viewport glyphs so a
-        // ScrollFrame offset changes only vertex bytes, never UI resources.
-        let x = left.clamp(viewport.left() as f32, viewport.right() as f32);
-        let y = bottom.clamp(viewport.bottom() as f32, viewport.top() as f32);
-        let horizontal = ((x - left) / horizontal_span).clamp(0.0, 1.0);
-        let vertical = ((top - y) / vertical_span).clamp(0.0, 1.0);
-        let u = upper_left[0] + (upper_right[0] - upper_left[0]) * horizontal;
-        let v = upper_left[1] + (lower_left[1] - upper_left[1]) * vertical;
-        quad.bounds = [x, y, x, y];
-        quad.texture_coordinates = [[u, v]; 4];
-        return Some(quad);
-    }
     let left_fraction = (clipped_left - left) / horizontal_span;
     let right_fraction = (clipped_right - left) / horizontal_span;
     let top_fraction = (top - clipped_top) / vertical_span;
