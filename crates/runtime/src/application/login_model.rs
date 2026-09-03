@@ -1,12 +1,12 @@
 //! Retained stock M2 scene inserted beneath pre-world Glue presentation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use glam::{Vec3, Vec4};
 use solarity_asset::{
-    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, M2HardcodedTextureSource,
-    M2LightKind, M2ModelCache, M2TextureKind,
+    ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle, BlpTextureCache,
+    M2HardcodedTextureSource, M2LightKind, M2ModelCache, M2TextureKind,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
@@ -138,6 +138,19 @@ struct PendingGlueModel {
     task: CpuTask<Result<PreparedGlueCpuSource, RuntimeTerrainFrameError>>,
 }
 
+/// Archive-decoded backdrop state waiting for its immutable render plan.
+struct LoadedGlueBackdrop {
+    generation: GlueModelGenerationKey,
+    model: Arc<solarity_asset::DecodedM2Model>,
+    textures: Vec<GlueM2Texture>,
+}
+
+/// One independently mounted archive pass owned entirely by a CPU worker.
+struct PendingGlueBackdropLoad {
+    submitted_at: std::time::Instant,
+    task: CpuTask<Result<Vec<LoadedGlueBackdrop>, RuntimeGlueModelError>>,
+}
+
 /// One completed worker result and its execution time, excluding queue delay.
 struct PreparedGlueCpuSource {
     source: M2GlueCpuSource,
@@ -189,6 +202,105 @@ fn prepare_glue_cpu_task(
         source,
         elapsed: started.elapsed(),
     })
+}
+
+/// Mounts a worker-private archive stack and decodes every present stock
+/// backdrop without borrowing the main-thread asset owner.
+fn load_glue_backdrops(
+    catalog: ArchiveCatalog,
+    paths: Vec<AssetPath>,
+) -> Result<Vec<LoadedGlueBackdrop>, RuntimeGlueModelError> {
+    let mut store = AssetStore::mount(catalog)?;
+    let mut models = M2ModelCache::new();
+    let mut textures = BlpTextureCache::new();
+    let mut backdrops = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !store.contains(&path)? {
+            continue;
+        }
+        let (model, texture_sources) =
+            load_glue_model_generation(&mut models, &mut textures, &mut store, &path)?;
+        backdrops.push(LoadedGlueBackdrop {
+            generation: GlueModelGenerationKey {
+                path,
+                external_directional_light: true,
+            },
+            model,
+            textures: texture_sources,
+        });
+    }
+    Ok(backdrops)
+}
+
+/// Loads one environment M2 and resolves its complete hardcoded texture set.
+fn load_glue_model_generation(
+    models: &mut M2ModelCache,
+    textures: &mut BlpTextureCache,
+    store: &mut AssetStore,
+    path: &AssetPath,
+) -> Result<(Arc<solarity_asset::DecodedM2Model>, Vec<GlueM2Texture>), RuntimeGlueModelError> {
+    let asset_started = std::time::Instant::now();
+    let model = models.load(store, path)?;
+    let mut texture_sources = Vec::with_capacity(model.textures().len());
+    for (texture_index, texture) in model.textures().iter().enumerate() {
+        if texture.kind() != M2TextureKind::Hardcoded {
+            return Err(RuntimeGlueModelError::ReplaceableTexture {
+                model: model.path().clone(),
+                texture_index,
+                kind: texture.kind(),
+            });
+        }
+        match texture.hardcoded_source().ok_or_else(|| {
+            RuntimeGlueModelError::MissingTexturePath {
+                model: model.path().clone(),
+                texture_index,
+            }
+        })? {
+            M2HardcodedTextureSource::Archive(path) => match textures.load(store, path) {
+                Ok(texture) => texture_sources.push(GlueM2Texture::Authored(texture)),
+                Err(source) => {
+                    tracing::warn!(
+                        model = %model.path(),
+                        texture = %path,
+                        error = %source,
+                        "Glue M2 texture request failed; using stock green texture"
+                    );
+                    texture_sources.push(GlueM2Texture::StockFailure);
+                }
+            },
+            M2HardcodedTextureSource::StockWhite => {
+                texture_sources.push(GlueM2Texture::StockWhite);
+            }
+            M2HardcodedTextureSource::StockFailure => {
+                tracing::warn!(
+                    model = %model.path(),
+                    "Glue M2 contains a non-archive texture name; using stock green texture"
+                );
+                texture_sources.push(GlueM2Texture::StockFailure);
+            }
+        }
+    }
+    let authored_directional_lights = model
+        .animations()
+        .lights()
+        .iter()
+        .filter(|light| light.kind() == M2LightKind::Directional)
+        .count();
+    let authored_point_lights = model
+        .animations()
+        .lights()
+        .iter()
+        .filter(|light| light.kind() == M2LightKind::Point)
+        .count();
+    tracing::info!(
+        model = %model.path(),
+        texture_count = texture_sources.len(),
+        authored_directional_lights,
+        authored_point_lights,
+        asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
+        "loaded Glue model archive generation"
+    );
+    Ok((model, texture_sources))
 }
 
 /// Immutable Vulkan resources retained across Glue backdrop switches.
@@ -338,6 +450,8 @@ pub(crate) struct RuntimeGlueModelScene {
     textures: BlpTextureCache,
     active: Option<ActiveGlueModel>,
     pending: Vec<PendingGlueModel>,
+    pending_backdrop_load: Option<PendingGlueBackdropLoad>,
+    loaded_backdrops: VecDeque<LoadedGlueBackdrop>,
     prepared: HashMap<GlueModelGenerationKey, PreparedGlueModel>,
     character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
     pending_character_sources: Vec<PendingGlueCharacterSource>,
@@ -352,11 +466,37 @@ impl RuntimeGlueModelScene {
             textures: BlpTextureCache::new(),
             active: None,
             pending: Vec::new(),
+            pending_backdrop_load: None,
+            loaded_backdrops: VecDeque::new(),
             prepared: HashMap::new(),
             character_sources: HashMap::new(),
             pending_character_sources: Vec::new(),
             character_replacement_required: false,
         }
+    }
+
+    /// Starts one worker-owned archive pass for the finite racial backdrops.
+    ///
+    /// A second archive mount gives the worker exclusive mutable handles;
+    /// neither MPQ reads nor M2/BLP parsing can then block the presentation
+    /// thread. Stock CharacterSelect and CharacterCreate both install the
+    /// ModelFFX background-light bank, so only that exact shader contract is
+    /// prepared.
+    pub(crate) fn prewarm_backdrops(
+        &mut self,
+        catalog: ArchiveCatalog,
+        paths: Vec<AssetPath>,
+        cpu: &CpuExecutor,
+    ) -> Result<(), RuntimeGlueModelError> {
+        if self.pending_backdrop_load.is_some() || paths.is_empty() {
+            return Ok(());
+        }
+        let task = cpu.try_submit(move || load_glue_backdrops(catalog, paths))?;
+        self.pending_backdrop_load = Some(PendingGlueBackdropLoad {
+            submitted_at: std::time::Instant::now(),
+            task,
+        });
+        Ok(())
     }
 
     /// Begins immutable environment-model preparation before its Glue screen
@@ -451,40 +591,80 @@ impl RuntimeGlueModelScene {
         Ok(())
     }
 
-    /// Publishes every finished backdrop prewarm while authentication UI is
-    /// covering the login scene.
+    /// Advances backdrop prewarm without monopolizing a presentation frame.
     ///
-    /// CPU preparation begins at startup, but Vulkan ownership requires the
-    /// presentation thread. Draining that work here makes the subsequent Glue
-    /// screen change a cache lookup instead of exposing a clear-only frame.
-    pub(crate) fn finish_authentication_prewarms(
+    /// Archive decoding stays on its dedicated worker. Once that pass finishes,
+    /// at most one render plan is admitted and at most one completed generation
+    /// is published per frame. This bounds both CPU-pool contention and Vulkan
+    /// pipeline creation while still making the subsequent Glue screen change
+    /// a cache lookup.
+    pub(crate) fn service_backdrop_prewarms(
         &mut self,
         renderer: &mut VulkanRenderer,
+        cpu: &CpuExecutor,
     ) -> Result<bool, RuntimeGlueModelError> {
-        let mut completed = 0_usize;
-        while let Some(index) = self
+        if self
+            .pending_backdrop_load
+            .as_ref()
+            .is_some_and(|pending| pending.task.is_finished())
+        {
+            let pending = self
+                .pending_backdrop_load
+                .take()
+                .ok_or(RuntimeGlueModelError::PendingState)?;
+            let residency_wait = pending.submitted_at.elapsed();
+            match pending.task.join()? {
+                Ok(backdrops) => {
+                    let backdrop_count = backdrops.len();
+                    self.loaded_backdrops.extend(backdrops);
+                    tracing::info!(
+                        backdrop_count,
+                        worker_load_ms = residency_wait.as_secs_f64() * 1_000.0,
+                        "loaded Glue backdrops on archive worker"
+                    );
+                }
+                Err(source) => {
+                    tracing::warn!(
+                        error = %source,
+                        "optional Glue backdrop archive prewarm failed"
+                    );
+                }
+            }
+        }
+        if let Some(loaded) = self.loaded_backdrops.pop_front() {
+            let local_light_count = maximum_glue_light_count(&loaded.model, true);
+            let task_model = Arc::clone(&loaded.model);
+            let task =
+                cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
+            self.pending.push(PendingGlueModel {
+                generation: loaded.generation,
+                local_light_count,
+                model: loaded.model,
+                textures: loaded.textures,
+                submitted_at: std::time::Instant::now(),
+                task,
+            });
+        }
+        let completed = if let Some(index) = self
             .pending
             .iter()
             .position(|pending| pending.task.is_finished())
         {
-            self.complete_pending(
-                renderer,
-                index,
-                "prepared authentication-covered Glue model generation",
-            )?;
-            completed += 1;
-        }
-        let complete = self.pending.is_empty();
-        if completed != 0 {
-            tracing::info!(completed, complete, "serviced Glue authentication prewarm");
-        }
+            self.complete_pending(renderer, index, "prepared background Glue model generation")?;
+            true
+        } else {
+            false
+        };
+        let complete = self.pending_backdrop_load.is_none()
+            && self.loaded_backdrops.is_empty()
+            && self.pending.is_empty();
         if complete
-            && completed != 0
+            && completed
             && let Err(source) = renderer.save_pipeline_cache()
         {
             tracing::warn!(
                 error = %source,
-                "could not checkpoint authentication Vulkan pipeline cache"
+                "could not checkpoint Glue backdrop Vulkan pipeline cache"
             );
         }
         Ok(complete)
@@ -911,72 +1091,8 @@ impl RuntimeGlueModelScene {
         path: &AssetPath,
     ) -> Result<(Arc<solarity_asset::DecodedM2Model>, Vec<GlueM2Texture>), RuntimeGlueModelError>
     {
-        let asset_started = std::time::Instant::now();
         let mut store = assets.borrow_mut();
-        let model = self.models.load(&mut store, path)?;
-        let mut texture_sources = Vec::with_capacity(model.textures().len());
-        for (texture_index, texture) in model.textures().iter().enumerate() {
-            if texture.kind() != M2TextureKind::Hardcoded {
-                return Err(RuntimeGlueModelError::ReplaceableTexture {
-                    model: model.path().clone(),
-                    texture_index,
-                    kind: texture.kind(),
-                });
-            }
-            match texture.hardcoded_source().ok_or_else(|| {
-                RuntimeGlueModelError::MissingTexturePath {
-                    model: model.path().clone(),
-                    texture_index,
-                }
-            })? {
-                M2HardcodedTextureSource::Archive(path) => {
-                    match self.textures.load(&mut store, path) {
-                        Ok(texture) => texture_sources.push(GlueM2Texture::Authored(texture)),
-                        Err(source) => {
-                            tracing::warn!(
-                                model = %model.path(),
-                                texture = %path,
-                                error = %source,
-                                "Glue M2 texture request failed; using stock green texture"
-                            );
-                            texture_sources.push(GlueM2Texture::StockFailure);
-                        }
-                    }
-                }
-                M2HardcodedTextureSource::StockWhite => {
-                    texture_sources.push(GlueM2Texture::StockWhite);
-                }
-                M2HardcodedTextureSource::StockFailure => {
-                    tracing::warn!(
-                        model = %model.path(),
-                        "Glue M2 contains a non-archive texture name; using stock green texture"
-                    );
-                    texture_sources.push(GlueM2Texture::StockFailure);
-                }
-            }
-        }
-        drop(store);
-        let authored_directional_lights = model
-            .animations()
-            .lights()
-            .iter()
-            .filter(|light| light.kind() == M2LightKind::Directional)
-            .count();
-        let authored_point_lights = model
-            .animations()
-            .lights()
-            .iter()
-            .filter(|light| light.kind() == M2LightKind::Point)
-            .count();
-        tracing::info!(
-            model = %model.path(),
-            texture_count = texture_sources.len(),
-            authored_directional_lights,
-            authored_point_lights,
-            asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
-            "loaded Glue model archive generation"
-        );
-        Ok((model, texture_sources))
+        load_glue_model_generation(&mut self.models, &mut self.textures, &mut store, path)
     }
 
     /// Presents the authored model/effects and then the loaded FrameXML pass.

@@ -161,6 +161,7 @@ impl ClientServices {
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
+        let backdrop_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
         let animations = AnimationDataCatalog::load(&mut assets)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
@@ -325,23 +326,14 @@ impl ClientServices {
                 false,
             )?;
         }
-        // The stock racial backdrop set is finite. Submit all immutable CPU
-        // generations after the currently visible/login generation so worker
-        // FIFO priority preserves startup while later screen swaps are warm.
-        for path in STOCK_CHARACTER_BACKDROPS {
-            let path = AssetPath::new(path)?;
-            // Prewarming is optional residency work. Minimal archive fixtures
-            // and partial diagnostic installs may omit screens they never
-            // select; an actual selection still follows the strict load path.
-            if assets.borrow().contains(&path)? {
-                // CharacterSelect and CharacterCreate install a ModelFFX
-                // background-light bank independently of AccountLogin. Keep
-                // both finite shader contracts resident so the eventual Lua
-                // selection cannot invalidate startup prewarm identity.
-                glue_model.prewarm(path.clone(), 0, &assets, &cpu)?;
-                glue_model.prewarm(path, 1, &assets, &cpu)?;
-            }
-        }
+        // The finite racial set is decoded through a separately mounted worker
+        // archive stack. Startup therefore does not parse ten M2s and all of
+        // their textures on the presentation thread before showing the window.
+        let backdrop_paths = STOCK_CHARACTER_BACKDROPS
+            .into_iter()
+            .map(AssetPath::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        glue_model.prewarm_backdrops(backdrop_catalog, backdrop_paths, &cpu)?;
         let mut ui_textures = BlpTextureCache::new();
         let login_ui = if glue.media_intent().movie().is_some() {
             None
@@ -1274,14 +1266,15 @@ impl ClientServices {
                 }
             }
         }
-        // The login click must present its stock status dialog once before
-        // renderer-owned prewarm work is drained. On the next service pass the
-        // already-present popup covers all completed backdrop uploads.
+        // One render plan and one Vulkan generation may cross their ownership
+        // boundaries per frame. Movie, EULA, and ordinary login dwell time can
+        // therefore warm character screens without one bulk publication stall.
+        let backdrop_prewarms_complete = self
+            .glue_model
+            .service_backdrop_prewarms(&mut self.renderer, &self.cpu)?;
         if self.authentication_prewarm_active
             && !authentication_started
-            && self
-                .glue_model
-                .finish_authentication_prewarms(&mut self.renderer)?
+            && backdrop_prewarms_complete
         {
             self.authentication_prewarm_active = false;
         }
