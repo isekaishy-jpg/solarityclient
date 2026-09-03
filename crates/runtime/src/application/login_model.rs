@@ -437,6 +437,45 @@ impl RuntimeGlueModelScene {
         Ok(())
     }
 
+    /// Publishes every finished backdrop prewarm while authentication UI is
+    /// covering the login scene.
+    ///
+    /// CPU preparation begins at startup, but Vulkan ownership requires the
+    /// presentation thread. Draining that work here makes the subsequent Glue
+    /// screen change a cache lookup instead of exposing a clear-only frame.
+    pub(crate) fn finish_authentication_prewarms(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<bool, RuntimeGlueModelError> {
+        let mut completed = 0_usize;
+        while let Some(index) = self
+            .pending
+            .iter()
+            .position(|pending| pending.task.is_finished())
+        {
+            self.complete_pending(
+                renderer,
+                index,
+                "prepared authentication-covered Glue model generation",
+            )?;
+            completed += 1;
+        }
+        let complete = self.pending.is_empty();
+        if completed != 0 {
+            tracing::info!(completed, complete, "serviced Glue authentication prewarm");
+        }
+        if complete
+            && completed != 0
+            && let Err(source) = renderer.save_pipeline_cache()
+        {
+            tracing::warn!(
+                error = %source,
+                "could not checkpoint authentication Vulkan pipeline cache"
+            );
+        }
+        Ok(complete)
+    }
+
     /// Advances the resident login model while the cinematic covers it.
     ///
     /// This performs no swapchain submission. It only keeps animation,
@@ -498,6 +537,15 @@ impl RuntimeGlueModelScene {
     ) -> Result<(), RuntimeGlueModelError> {
         let visible = glue.presentation().models();
         if visible.is_empty() {
+            // CharacterSelect briefly owns an empty directory before its
+            // asynchronous enumeration arrives. Keep the last fully rendered
+            // Glue generation underneath that transition instead of clearing
+            // the swapchain between complete scenes.
+            if self.active.is_some()
+                && matches!(glue.current_screen().as_str(), "charselect" | "charcreate")
+            {
+                return Ok(());
+            }
             self.active = None;
             return Ok(());
         }

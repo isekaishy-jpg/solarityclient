@@ -128,6 +128,9 @@ pub(crate) struct ClientServices {
     realm_directory_published: bool,
     character_screen_published: bool,
     character_directory_published: bool,
+    /// Backdrop GPU residency is drained only after the authentication popup
+    /// has reached the swapchain, keeping that one-time work covered.
+    authentication_prewarm_active: bool,
     pending_character_screen_requests: RuntimeCharacterScreenRequests,
     pending_realm_id: Option<u32>,
     selected_realm: Option<SelectedRealmFacts>,
@@ -418,6 +421,7 @@ impl ClientServices {
                 realm_directory_published: false,
                 character_screen_published: false,
                 character_directory_published: false,
+                authentication_prewarm_active: false,
                 pending_character_screen_requests: RuntimeCharacterScreenRequests::default(),
                 pending_realm_id: None,
                 selected_realm: None,
@@ -971,6 +975,7 @@ impl ClientServices {
         };
         let handle = network.handle().clone();
         let mut character_screen_requests = RuntimeCharacterScreenRequests::default();
+        let mut authentication_started = false;
         while let Some(action) = self.glue.take_network_action() {
             match action {
                 UiGlueNetworkAction::Login(request) => {
@@ -982,6 +987,8 @@ impl ClientServices {
                     match result {
                         Ok(()) => {
                             self.realm_directory_published = false;
+                            self.authentication_prewarm_active = true;
+                            authentication_started = true;
                         }
                         Err(RuntimeLoginError::AlreadyActive)
                         | Err(RuntimeLoginError::AlreadyAuthenticated) => {}
@@ -990,6 +997,7 @@ impl ClientServices {
                 }
                 UiGlueNetworkAction::CancelLogin => {
                     self.login.cancel();
+                    self.authentication_prewarm_active = false;
                     self.realm_directory_published = false;
                     self.glue.set_network_status(UiGlueNetworkStatus::default());
                 }
@@ -1016,6 +1024,7 @@ impl ClientServices {
                     self.terrain.disconnect();
                     self.sound.disconnect()?;
                     self.terrain_frame = None;
+                    self.authentication_prewarm_active = false;
                     self.realm_directory_published = false;
                     self.character_screen_published = false;
                     self.character_directory_published = false;
@@ -1225,6 +1234,17 @@ impl ClientServices {
                     }
                 }
             }
+        }
+        // The login click must present its stock status dialog once before
+        // renderer-owned prewarm work is drained. On the next service pass the
+        // already-present popup covers all completed backdrop uploads.
+        if self.authentication_prewarm_active
+            && !authentication_started
+            && self
+                .glue_model
+                .finish_authentication_prewarms(&mut self.renderer)?
+        {
+            self.authentication_prewarm_active = false;
         }
         if !character_screen_requests.is_empty() {
             self.pending_character_screen_requests
@@ -1875,6 +1895,7 @@ const fn glue_pointer_button(button: MouseButton) -> Option<UiPointerButton> {
 
 impl ClientServices {
     fn publish_login_failure(&mut self, error: RuntimeLoginError) {
+        self.authentication_prewarm_active = false;
         self.realm_directory_published = false;
         self.glue.set_network_status(UiGlueNetworkStatus::default());
         tracing::warn!(error = %error, "login exchange failed");
