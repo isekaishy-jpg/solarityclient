@@ -208,13 +208,22 @@ impl M2FrameSlot {
         bone_transforms: &[Mat4],
         draws: &[M2PreparedDraw],
     ) -> Result<(), VulkanError> {
-        let allocation = self.buffer_allocation.as_mut().ok_or_else(|| {
+        let allocation = self.buffer_allocation.as_ref().ok_or_else(|| {
             VulkanError::operation("access M2 frame buffer", "allocation is unavailable")
         })?;
-        // SAFETY: The allocation is host-visible and covers `layout.total_bytes`.
-        let destination = unsafe { allocator.map_memory(allocation) }
-            .map_err(|source| VulkanError::operation("map M2 frame buffer", source))?;
-        let write_result = (|| {
+        let destination = allocator
+            .get_allocation_info(allocation)
+            .mapped_data
+            .cast::<u8>();
+        if destination.is_null() {
+            return Err(VulkanError::operation(
+                "access M2 frame mapping",
+                "persistent mapping is unavailable",
+            ));
+        }
+        // SAFETY: VMA reports a persistent mapping covering `layout.total_bytes`,
+        // and the slot fence was waited before this CPU write.
+        (|| {
             copy_bytes(destination, 0, &scene.to_bytes(), self.layout.total_bytes)?;
             if bone_transforms.is_empty() {
                 copy_bytes(
@@ -249,12 +258,9 @@ impl M2FrameSlot {
                 )?;
             }
             allocator
-                .flush_allocation(allocation, 0, vk::WHOLE_SIZE)
+                .flush_allocation(allocation, 0, self.layout.total_bytes)
                 .map_err(|source| VulkanError::operation("flush M2 frame buffer", source))
-        })();
-        // SAFETY: This balances the successful map on every write/flush result.
-        unsafe { allocator.unmap_memory(allocation) };
-        write_result
+        })()
     }
 
     /// Releases every child in reverse dependency order.
@@ -320,7 +326,8 @@ impl M2FrameSlot {
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_info = vk_mem::AllocationCreateInfo {
-            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                | vk_mem::AllocationCreateFlags::MAPPED,
             usage: vk_mem::MemoryUsage::AutoPreferHost,
             required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
             ..Default::default()

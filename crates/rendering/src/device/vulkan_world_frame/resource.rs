@@ -277,13 +277,22 @@ impl WorldFrameSlot {
         particle_indices: &[u32],
         ribbon_vertices: &[M2RibbonRenderVertex],
     ) -> Result<(), VulkanError> {
-        let allocation = self.buffer_allocation.as_mut().ok_or_else(|| {
+        let allocation = self.buffer_allocation.as_ref().ok_or_else(|| {
             VulkanError::operation("access world frame buffer", "allocation is unavailable")
         })?;
-        // SAFETY: The allocation is host-visible and covers `total_bytes`.
-        let destination = unsafe { allocator.map_memory(allocation) }
-            .map_err(|source| VulkanError::operation("map world frame buffer", source))?;
-        let result = (|| {
+        let destination = allocator
+            .get_allocation_info(allocation)
+            .mapped_data
+            .cast::<u8>();
+        if destination.is_null() {
+            return Err(VulkanError::operation(
+                "access world frame mapping",
+                "persistent mapping is unavailable",
+            ));
+        }
+        // SAFETY: VMA reports a persistent mapping covering `total_bytes`, and
+        // the slot fence was waited before this CPU write.
+        (|| {
             copy_bytes(
                 destination,
                 self.layout.terrain_scene_offset,
@@ -390,12 +399,9 @@ impl WorldFrameSlot {
                 )?;
             }
             allocator
-                .flush_allocation(allocation, 0, vk::WHOLE_SIZE)
+                .flush_allocation(allocation, 0, self.layout.total_bytes)
                 .map_err(|source| VulkanError::operation("flush world frame buffer", source))
-        })();
-        // SAFETY: Balances the successful map on every result.
-        unsafe { allocator.unmap_memory(allocation) };
-        result
+        })()
     }
 
     fn create_buffer(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
@@ -409,7 +415,8 @@ impl WorldFrameSlot {
             )
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_info = vk_mem::AllocationCreateInfo {
-            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                | vk_mem::AllocationCreateFlags::MAPPED,
             usage: vk_mem::MemoryUsage::AutoPreferHost,
             required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
             ..Default::default()
