@@ -373,6 +373,55 @@ fn glue_manager_routes_captured_button_clicks() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A primary-button gesture captured by one Glue screen cannot release into
+/// an overlapping button exposed by a screen transition during that gesture.
+#[test]
+fn glue_manager_does_not_click_through_a_held_primary_button() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"HeldPointer.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\HeldPointer.xml",
+            bytes: br#"<Ui>
+<Frame name="CharacterSelectScreen">
+  <Size x="600" y="400"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>SetCurrentScreen("charselect")</OnLoad></Scripts>
+  <Frames><Button name="CharacterSelectBackButton" enableMouse="true">
+    <Size x="150" y="38"/><Anchors><Anchor point="BOTTOMRIGHT"/></Anchors>
+    <Scripts><OnMouseDown>
+      CharacterSelectScreen:Hide()
+      AccountLoginScreen:Show()
+      SetCurrentScreen("login")
+    </OnMouseDown></Scripts>
+  </Button></Frames>
+</Frame>
+<Frame name="AccountLoginScreen" hidden="true">
+  <Size x="600" y="400"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Frames><Button name="AccountLoginExitButton" enableMouse="true">
+    <Size x="150" y="38"/><Anchors><Anchor point="BOTTOMRIGHT"/></Anchors>
+    <Scripts><OnClick>QuitGame()</OnClick></Scripts>
+  </Button></Frames>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let position = (900.0, 200.0);
+
+    let down = manager.pointer_button(position, UiPointerButton::Left, true)?;
+    assert!(down.object_index().is_some());
+    assert_eq!(manager.current_screen(), "login");
+    let up = manager.pointer_button(position, UiPointerButton::Left, false)?;
+
+    assert!(!up.click_activated());
+    assert_eq!(manager.take_process_action(), None);
+    Ok(())
+}
+
 /// ScrollFrame's native wheel admission drives authored `OnMouseWheel` and
 /// clamped `OnVerticalScroll` state without a runtime-invented scroll speed.
 #[test]

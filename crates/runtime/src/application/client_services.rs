@@ -76,6 +76,12 @@ pub(crate) struct ClientServices {
     login_ui: Option<RuntimeUiFrame>,
     /// Publishes first-run/legal UI before the cold model generation is ready.
     glue_handoff_ui_pending: bool,
+    /// Last Glue screen actually submitted to the swapchain.
+    ///
+    /// Input may select a different screen while SDL still has events queued
+    /// for the old presentation. Process-ending actions are admitted only
+    /// after the selected screen has crossed this presentation boundary.
+    presented_glue_screen: Option<String>,
     ui_textures: BlpTextureCache,
     world_ui: Option<RuntimeWorldUi>,
     glue_model: RuntimeGlueModelScene,
@@ -272,6 +278,7 @@ impl ClientServices {
             }
             Some(frame)
         };
+        let presented_glue_screen = login_ui.as_ref().map(|_| glue.current_screen());
         platform.set_text_input_active(glue.focused_edit_box().is_some());
         platform.show()?;
         let network = Builder::new_multi_thread()
@@ -290,6 +297,7 @@ impl ClientServices {
                 renderer,
                 login_ui,
                 glue_handoff_ui_pending: false,
+                presented_glue_screen,
                 ui_textures,
                 world_ui: None,
                 glue_model,
@@ -596,10 +604,27 @@ impl ClientServices {
 
     /// Takes one process-level action emitted by the currently owned built-in UI.
     pub(crate) fn take_process_action(&mut self) -> Option<UiProcessAction> {
-        self.world_ui
+        if let Some(action) = self
+            .world_ui
             .as_ref()
             .and_then(RuntimeWorldUi::take_process_action)
-            .or_else(|| self.glue.take_process_action())
+        {
+            return Some(action);
+        }
+        let action = self.glue.take_process_action()?;
+        let current_screen = self.glue.current_screen();
+        if glue_process_action_is_presented(&current_screen, self.presented_glue_screen.as_deref())
+        {
+            Some(action)
+        } else {
+            tracing::warn!(
+                ?action,
+                current_screen,
+                presented_screen = self.presented_glue_screen.as_deref(),
+                "ignored Glue process action from an unpresented screen"
+            );
+            None
+        }
     }
 
     /// Presents one Glue or resident-world frame under the active VSync policy.
@@ -828,6 +853,7 @@ impl ClientServices {
             if let Some(fps) = self.fps.as_mut() {
                 fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
             }
+            self.presented_glue_screen = Some(self.glue.current_screen());
             return Ok(());
         }
         let current_screen = self.glue.current_screen();
@@ -874,6 +900,7 @@ impl ClientServices {
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
+        self.presented_glue_screen = Some(current_screen);
         Ok(())
     }
 
@@ -1813,6 +1840,12 @@ impl ClientServices {
     }
 }
 
+/// Returns whether the active Glue screen has reached the swapchain at least
+/// once since it was selected. Case folding follows Glue's screen dispatch.
+fn glue_process_action_is_presented(current_screen: &str, presented_screen: Option<&str>) -> bool {
+    presented_screen.is_some_and(|presented| presented.eq_ignore_ascii_case(current_screen))
+}
+
 /// Maps SDL's admitted desktop button vocabulary onto Glue script names.
 const fn glue_pointer_button(button: MouseButton) -> Option<UiPointerButton> {
     match button {
@@ -1967,5 +2000,20 @@ impl SelectedRealmFacts {
 impl Drop for ClientServices {
     fn drop(&mut self) {
         let _shutdown_result = self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glue_process_action_is_presented;
+
+    #[test]
+    fn process_action_requires_the_selected_glue_screen_to_have_been_presented() {
+        assert!(!glue_process_action_is_presented("login", None));
+        assert!(!glue_process_action_is_presented(
+            "login",
+            Some("charselect")
+        ));
+        assert!(glue_process_action_is_presented("login", Some("LOGIN")));
     }
 }
