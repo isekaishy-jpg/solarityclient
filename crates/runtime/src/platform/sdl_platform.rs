@@ -188,7 +188,10 @@ impl SdlPlatform {
 
     /// Reveals the window after rendering has presented initialized contents.
     pub(crate) fn show(&mut self) -> Result<(), PlatformError> {
-        if self.window.show() {
+        // SolCL waits for Win32/SDL to finish applying the visibility change.
+        // Keeping the same boundary prevents the compositor from racing the
+        // first visible client frame or a later caption-button restore.
+        if self.window.show() && self.window.sync() {
             return Ok(());
         }
         Err(PlatformError::ShowWindow {
