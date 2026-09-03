@@ -11,6 +11,7 @@ mod c_gx_device;
 mod c_gx_device_d3d;
 mod c_gx_device_d3d9_ex;
 mod c_gx_device_open_gl;
+mod capacity;
 mod gfx_singleton_manager;
 mod status;
 mod vulkan_character_atlas;

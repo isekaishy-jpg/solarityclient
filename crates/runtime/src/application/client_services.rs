@@ -666,8 +666,10 @@ impl ClientServices {
                 .duration_since(self.glue_update_clock)
                 .as_secs_f64();
             self.glue_update_clock = update_time;
-            if self.glue.update(glue_elapsed)? {
-                self.login_ui = None;
+            if self.glue.update(glue_elapsed)?
+                && let Some(frame) = self.login_ui.as_mut()
+            {
+                frame.refresh_glue(&mut self.renderer, &self.glue, &mut self.ui_textures)?;
             }
             self.sync_platform_text_input();
             self.persist_active_cvars()?;
@@ -1023,11 +1025,7 @@ impl ClientServices {
                     self.glue.sort_realm_directory(sort);
                     self.glue
                         .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
-                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                        &mut self.renderer,
-                        &self.glue,
-                        &mut self.ui_textures,
-                    )?);
+                    self.login_ui = None;
                 }
                 UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen } => {
                     if from_login_screen {
@@ -1272,11 +1270,7 @@ impl ClientServices {
                     "SET_GLUE_SCREEN",
                     &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
                 )?;
-                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
-                    &self.glue,
-                    &mut self.ui_textures,
-                )?);
+                self.login_ui = None;
             }
             Ok(RuntimeWorldPoll::CharacterScreenReady) => {}
             Ok(RuntimeWorldPoll::CharacterDirectoryReady)
@@ -1296,11 +1290,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                        &mut self.renderer,
-                        &self.glue,
-                        &mut self.ui_textures,
-                    )?);
+                    self.login_ui = None;
                 }
             }
             Ok(RuntimeWorldPoll::CharacterDirectoryReady) => {}
@@ -1328,11 +1318,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
-                    &self.glue,
-                    &mut self.ui_textures,
-                )?);
+                self.login_ui = None;
             }
             Ok(RuntimeWorldPoll::CharacterDeletionFinished(result)) => {
                 if result.is_success() {
@@ -1356,11 +1342,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
-                    &self.glue,
-                    &mut self.ui_textures,
-                )?);
+                self.login_ui = None;
             }
             Ok(RuntimeWorldPoll::CharacterRenameFinished(result)) => {
                 if result.is_success() {
@@ -1382,11 +1364,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
-                    &self.glue,
-                    &mut self.ui_textures,
-                )?);
+                self.login_ui = None;
             }
             Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
@@ -1415,11 +1393,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                        &mut self.renderer,
-                        &self.glue,
-                        &mut self.ui_textures,
-                    )?);
+                    self.login_ui = None;
                 }
                 // Stock `0x006B2070` tears the optimistic world load back to
                 // character selection, then `0x004DAB40` state 11 presents
@@ -1435,11 +1409,7 @@ impl ClientServices {
                         UiEventArgument::String(message),
                     ])?,
                 )?;
-                self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
-                    &self.glue,
-                    &mut self.ui_textures,
-                )?);
+                self.login_ui = None;
             }
             Err(error) => self.publish_world_failure(error),
         }
@@ -1929,11 +1899,7 @@ impl ClientServices {
         );
         self.glue.set_realm_directory(realms);
         self.glue.dispatch_event(event, &payload)?;
-        self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-            &mut self.renderer,
-            &self.glue,
-            &mut self.ui_textures,
-        )?);
+        self.login_ui = None;
         Ok(())
     }
 
@@ -1962,11 +1928,7 @@ impl ClientServices {
             self.glue
                 .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
         }
-        self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-            &mut self.renderer,
-            &self.glue,
-            &mut self.ui_textures,
-        )?);
+        self.login_ui = None;
         Ok(())
     }
 }

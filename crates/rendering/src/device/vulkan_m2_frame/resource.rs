@@ -7,6 +7,7 @@ use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
+use crate::device::capacity::geometric_capacity;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::model::{M2MaterialUniform, M2SceneUniform};
@@ -520,8 +521,8 @@ impl M2FrameResources {
         // proves no prior slot or texture descriptor is still referenced.
         unsafe { context.device.device_wait_idle() }
             .map_err(|source| VulkanError::operation("idle before M2 frame growth", source))?;
-        let draw_capacity = self.draw_capacity.max(context.draw_capacity);
-        let bone_capacity = self.bone_capacity.max(context.bone_capacity);
+        let draw_capacity = geometric_capacity(self.draw_capacity, context.draw_capacity);
+        let bone_capacity = geometric_capacity(self.bone_capacity, context.bone_capacity);
         self.destroy(context.device, context.allocator);
         let layout = FrameBufferLayout::new(
             draw_capacity,

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use solarity_asset::AssetPath;
 use solarity_rendering::{
     BlpTextureHandle, UiFrameReport, UiGlyphTextureHandle, UiMeshPlan, UiPreparedDraw,
-    UiRenderSource, UiSampledTexture, UiSamplerInfo, UiShaderSource, UiTextureResidency,
-    VulkanError, VulkanRenderer,
+    UiRenderBatch, UiRenderSource, UiSampledTexture, UiSamplerInfo, UiShaderSource,
+    UiTextureResidency, VulkanError, VulkanRenderer,
 };
 
 use crate::application::ApplicationError;
@@ -15,6 +15,7 @@ use crate::application::ApplicationError;
 pub(crate) struct PreparedUiFrame {
     logical_extent: [f32; 2],
     draws: Vec<UiPreparedDraw>,
+    prepared_batches: Vec<(usize, UiRenderBatch)>,
 }
 
 impl PreparedUiFrame {
@@ -27,6 +28,7 @@ impl PreparedUiFrame {
     ) -> Result<Self, ApplicationError> {
         let mesh = renderer.upload_ui_mesh(plan)?;
         let mut batch_resources = Vec::with_capacity(plan.batches().len());
+        let mut prepared_batches = Vec::with_capacity(plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
             let source = match batch.source() {
@@ -69,6 +71,7 @@ impl PreparedUiFrame {
                 UiRenderSource::VertexColor => None,
             };
             batch_resources.push((batch_index, pipeline, sampled_index));
+            prepared_batches.push((batch_index, batch.clone()));
         }
         let texture_sets = renderer.prepare_ui_texture_sets(&sampled_textures)?;
         let draws = batch_resources
@@ -86,6 +89,7 @@ impl PreparedUiFrame {
         Ok(Self {
             logical_extent: plan.logical_extent(),
             draws,
+            prepared_batches,
         })
     }
 
@@ -109,7 +113,7 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<(), ApplicationError> {
-        if plan.batches().len() != self.draws.len() {
+        if !self.can_replace_mesh(plan) {
             return Err(VulkanError::UiDrawIndex {
                 requested: plan.batches().len(),
                 available: self.draws.len(),
@@ -125,19 +129,49 @@ impl PreparedUiFrame {
         self.draws = self
             .draws
             .iter()
-            .enumerate()
-            .map(|(batch_index, draw)| {
+            .zip(&self.prepared_batches)
+            .map(|(draw, (batch_index, _batch))| {
                 renderer.prepare_ui_draw(
                     mesh,
                     draw.pipeline(),
                     draw.texture_set(),
                     plan,
-                    batch_index,
+                    *batch_index,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for ((_, retained), candidate) in self.prepared_batches.iter_mut().zip(plan.batches()) {
+            *retained = candidate.clone();
+        }
         self.logical_extent = plan.logical_extent();
         Ok(())
+    }
+
+    /// Replaces only geometry when every prepared batch still selects the
+    /// same material in the same draw slot. A caller can fall back to complete
+    /// resource preparation when visibility changes the material topology.
+    pub(crate) fn try_replace_compatible_mesh(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        plan: &UiMeshPlan,
+    ) -> Result<bool, ApplicationError> {
+        if !self.can_replace_mesh(plan) {
+            return Ok(false);
+        }
+        self.replace_mesh(renderer, plan)?;
+        Ok(true)
+    }
+
+    fn can_replace_mesh(&self, plan: &UiMeshPlan) -> bool {
+        self.prepared_batches.len() == plan.batches().len()
+            && self
+                .prepared_batches
+                .iter()
+                .zip(plan.batches())
+                .enumerate()
+                .all(|(expected_index, ((batch_index, retained), candidate))| {
+                    *batch_index == expected_index && same_ui_material(retained, candidate)
+                })
     }
 
     pub(crate) const fn logical_extent(&self) -> [f32; 2] {
@@ -147,4 +181,13 @@ impl PreparedUiFrame {
     pub(crate) fn draws(&self) -> &[UiPreparedDraw] {
         &self.draws
     }
+}
+
+fn same_ui_material(left: &UiRenderBatch, right: &UiRenderBatch) -> bool {
+    left.source() == right.source()
+        && left.blend() == right.blend()
+        && left.horizontal_address() == right.horizontal_address()
+        && left.vertical_address() == right.vertical_address()
+        && left.residency() == right.residency()
+        && left.desaturated() == right.desaturated()
 }

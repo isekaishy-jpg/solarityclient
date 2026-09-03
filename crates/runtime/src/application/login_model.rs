@@ -123,6 +123,7 @@ struct PendingGlueModel {
     environment: GlueModelEnvironment,
     model: Arc<solarity_asset::DecodedM2Model>,
     textures: Vec<GlueM2Texture>,
+    submitted_at: std::time::Instant,
     task: CpuTask<Result<M2GlueCpuSource, RuntimeTerrainFrameError>>,
 }
 
@@ -354,7 +355,9 @@ impl RuntimeGlueModelScene {
                 .pending
                 .take()
                 .ok_or(RuntimeGlueModelError::PendingState)?;
+            let worker_elapsed = pending.submitted_at.elapsed();
             let cpu_source = pending.task.join()??;
+            let gpu_started = std::time::Instant::now();
             let mut frame = M2Frame::prepare_glue_model(
                 renderer,
                 Arc::clone(&pending.model),
@@ -375,6 +378,13 @@ impl RuntimeGlueModelScene {
                 random,
             )?;
             frame.set_glue_opacity(pending.environment.alpha)?;
+            tracing::info!(
+                model = %pending.model.path(),
+                texture_count = pending.textures.len(),
+                worker_elapsed_ms = worker_elapsed.as_secs_f64() * 1_000.0,
+                gpu_prepare_ms = gpu_started.elapsed().as_secs_f64() * 1_000.0,
+                "published Glue model generation"
+            );
             self.active = Some(ActiveGlueModel {
                 key: pending.key,
                 environment: pending.environment,
@@ -383,6 +393,7 @@ impl RuntimeGlueModelScene {
             });
             return Ok(());
         }
+        let asset_started = std::time::Instant::now();
         let mut store = assets.borrow_mut();
         let model = self.models.load(&mut store, &key.path)?;
         let mut texture_sources = Vec::with_capacity(model.textures().len());
@@ -427,6 +438,12 @@ impl RuntimeGlueModelScene {
             }
         }
         drop(store);
+        tracing::info!(
+            model = %model.path(),
+            texture_count = texture_sources.len(),
+            asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
+            "loaded Glue model archive generation"
+        );
         let task_model = Arc::clone(&model);
         let light_count = local_light_count(environment.local_lights);
         let task = cpu.try_submit(move || prepare_glue_cpu_source(&task_model, light_count))?;
@@ -436,6 +453,7 @@ impl RuntimeGlueModelScene {
             environment,
             model,
             textures: texture_sources,
+            submitted_at: std::time::Instant::now(),
             task,
         });
         Ok(())

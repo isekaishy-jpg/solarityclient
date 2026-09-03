@@ -29,6 +29,25 @@ impl RuntimeUiFrame {
         Self::prepare_source(renderer, glue, cache)
     }
 
+    /// Refreshes one live Glue generation in place when only vertex/index
+    /// content changed. Texture or material topology changes still take the
+    /// complete preparation path.
+    pub(super) fn refresh_glue(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        glue: &GlueManager,
+        cache: &mut BlpTextureCache,
+    ) -> Result<(), ApplicationError> {
+        if self
+            .frame
+            .try_replace_compatible_mesh(renderer, glue.render_plan().mesh())?
+        {
+            return Ok(());
+        }
+        *self = Self::prepare_source(renderer, glue, cache)?;
+        Ok(())
+    }
+
     /// Uploads the current FrameXML generation into renderer-owned resources.
     pub(super) fn prepare_frame(
         renderer: &mut VulkanRenderer,
@@ -44,9 +63,12 @@ impl RuntimeUiFrame {
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
     ) -> Result<Self, ApplicationError> {
+        let started = std::time::Instant::now();
         let render_plan = source.render_plan();
         let mesh_plan = render_plan.mesh();
+        let asset_started = std::time::Instant::now();
         let bindings = source.load_blocking_render_textures(cache)?;
+        let asset_elapsed = asset_started.elapsed();
         let mut textures = HashMap::<AssetPath, BlpTextureHandle>::new();
         let mut texture_paths = Vec::new();
         let mut texture_uploads = Vec::new();
@@ -61,12 +83,14 @@ impl RuntimeUiFrame {
             texture_paths.push(request.path().clone());
             texture_uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear));
         }
-        for (path, handle) in texture_paths
-            .into_iter()
-            .zip(renderer.upload_blp_textures(&texture_uploads)?)
-        {
+        let texture_count = texture_uploads.len();
+        let upload_started = std::time::Instant::now();
+        let uploaded = renderer.upload_blp_textures(&texture_uploads)?;
+        let upload_elapsed = upload_started.elapsed();
+        for (path, handle) in texture_paths.into_iter().zip(uploaded) {
             textures.insert(path, handle);
         }
+        let glyph_started = std::time::Instant::now();
         let glyph_texture = mesh_plan
             .batches()
             .iter()
@@ -76,11 +100,24 @@ impl RuntimeUiFrame {
                 renderer.upload_ui_glyph_texture(glyphs.identity(), glyphs.extent(), glyphs.rgba8())
             })
             .transpose()?;
+        let glyph_elapsed = glyph_started.elapsed();
 
         let glyph_texture = glyph_texture.map(|texture| (source.glyphs().identity(), texture));
-        Ok(Self {
-            frame: PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?,
-        })
+        let frame_started = std::time::Instant::now();
+        let frame = PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?;
+        let frame_elapsed = frame_started.elapsed();
+        tracing::info!(
+            texture_count,
+            batch_count = mesh_plan.batches().len(),
+            vertex_count = mesh_plan.vertices().len(),
+            asset_ms = asset_elapsed.as_secs_f64() * 1_000.0,
+            texture_upload_ms = upload_elapsed.as_secs_f64() * 1_000.0,
+            glyph_upload_ms = glyph_elapsed.as_secs_f64() * 1_000.0,
+            frame_prepare_ms = frame_elapsed.as_secs_f64() * 1_000.0,
+            total_ms = started.elapsed().as_secs_f64() * 1_000.0,
+            "prepared built-in UI generation"
+        );
+        Ok(Self { frame })
     }
 
     /// Queues this Glue generation followed by an independent overlay.

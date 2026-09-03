@@ -7,6 +7,7 @@ use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
+use crate::device::capacity::geometric_capacity;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
@@ -682,20 +683,37 @@ impl WorldFrameResources {
         // SAFETY: Growth invalidates descriptors and depth images; idle retires all use.
         unsafe { context.device.device_wait_idle() }
             .map_err(|source| VulkanError::operation("idle before world frame growth", source))?;
-        let world_model_draw_capacity = self
-            .world_model_draw_capacity
-            .max(context.world_model_draw_capacity);
-        let m2_draw_capacity = self.m2_draw_capacity.max(context.m2_draw_capacity);
-        let bone_capacity = self.bone_capacity.max(context.bone_capacity);
-        let particle_vertex_capacity = self
-            .particle_vertex_capacity
-            .max(context.particle_vertex_capacity);
-        let particle_index_capacity = self
-            .particle_index_capacity
-            .max(context.particle_index_capacity);
-        let ribbon_vertex_capacity = self
-            .ribbon_vertex_capacity
-            .max(context.ribbon_vertex_capacity);
+        let world_model_draw_capacity = geometric_capacity(
+            self.world_model_draw_capacity,
+            context.world_model_draw_capacity,
+        );
+        let m2_draw_capacity = geometric_capacity(self.m2_draw_capacity, context.m2_draw_capacity);
+        let bone_capacity = geometric_capacity(self.bone_capacity, context.bone_capacity);
+        let particle_vertex_capacity = geometric_capacity(
+            self.particle_vertex_capacity,
+            context.particle_vertex_capacity,
+        );
+        let particle_index_capacity = geometric_capacity(
+            self.particle_index_capacity,
+            context.particle_index_capacity,
+        );
+        let ribbon_vertex_capacity =
+            geometric_capacity(self.ribbon_vertex_capacity, context.ribbon_vertex_capacity);
+        tracing::info!(
+            required_world_model_draws = context.world_model_draw_capacity,
+            required_m2_draws = context.m2_draw_capacity,
+            required_bones = context.bone_capacity,
+            required_particle_vertices = context.particle_vertex_capacity,
+            required_particle_indices = context.particle_index_capacity,
+            required_ribbon_vertices = context.ribbon_vertex_capacity,
+            world_model_draw_capacity,
+            m2_draw_capacity,
+            bone_capacity,
+            particle_vertex_capacity,
+            particle_index_capacity,
+            ribbon_vertex_capacity,
+            "growing unified Vulkan frame resources"
+        );
         self.destroy(context.device, context.allocator);
         let expanded = FrameCreateContext {
             world_model_draw_capacity,
