@@ -649,6 +649,7 @@ impl TerrainFrame {
         transport: Option<&ResidentTransport>,
         ui_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
+        ui_overlay_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         match (self.tile, plan.map(TerrainTileMeshPlan::tile)) {
             (Some(frame), Some(plan)) if frame != plan => {
@@ -728,7 +729,7 @@ impl TerrainFrame {
         )?;
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
-        Ok(renderer.present_world_frame_with_ui(
+        Ok(renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,
             &self.visible_draws,
@@ -742,6 +743,7 @@ impl TerrainFrame {
             WorldScreenWindow::FULL,
             ui_extent,
             ui_draws,
+            ui_overlay_draws,
         )?)
     }
 

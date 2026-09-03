@@ -906,9 +906,6 @@ impl ClientServices {
             .world_ui
             .as_ref()
             .map_or(&[][..], RuntimeWorldUi::draws);
-        let mut ui_draws = Vec::with_capacity(frame_draws.len() + self.runtime_overlay_draws.len());
-        ui_draws.extend_from_slice(frame_draws);
-        ui_draws.extend_from_slice(&self.runtime_overlay_draws);
         frame.present(
             &mut self.renderer,
             plan,
@@ -921,7 +918,8 @@ impl ClientServices {
             &remote_players,
             self.transport.resident(),
             ui_extent,
-            &ui_draws,
+            frame_draws,
+            &self.runtime_overlay_draws,
         )?;
         let mount_camera_sample = frame.take_mount_camera_sample();
         let camera_time_ms = mount_camera_sample
