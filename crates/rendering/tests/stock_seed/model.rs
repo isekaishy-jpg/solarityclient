@@ -1202,6 +1202,9 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         emitter,
         M2AnimationClock::new(0, 0.0, 0.0),
     )?;
+    let mut prewarmed = M2ParticleSimulation::new(0x0029_4823);
+    prewarmed.reserve_authored_capacity(emitter)?;
+    assert_eq!(prewarmed.capacity(), 69);
     let mut simulation = M2ParticleSimulation::new(0x0029_4823);
     let initial = simulation.advance_planar(emitter, initial_pose, 0.0, Mat4::IDENTITY, 1.0)?;
     assert_eq!(initial.live(), 0);

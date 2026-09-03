@@ -120,6 +120,30 @@ impl M2ParticleSimulation {
         self.inherited_motion = InheritedEmitterMotion::default();
     }
 
+    /// Reserves the largest pool implied by an emitter's authored rate and
+    /// lifetime keys before its first visible update.
+    ///
+    /// Stock grows to the same estimate as animated values are encountered.
+    /// Glue scenes are a finite, persistent presentation set, so reserving the
+    /// maximum up front preserves emission while preventing repeated unified
+    /// GPU-buffer replacement as the login animation ramps its rates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2ParticleSimulationError::Capacity`] for non-finite or
+    /// unrepresentable authored bounds, or `Allocation` when reservation fails.
+    pub fn reserve_authored_capacity(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+    ) -> Result<(), M2ParticleSimulationError> {
+        let maximum_rate = maximum_authored_value(emitter.emission_rate())
+            + f64::from(emitter.emission_rate_variation());
+        let maximum_lifetime =
+            maximum_authored_value(emitter.lifespan()) + f64::from(emitter.lifespan_variation());
+        let estimate = maximum_rate * maximum_lifetime * STOCK_CAPACITY_HEADROOM;
+        self.reserve_capacity_estimate(estimate)
+    }
+
     /// Emits planar particles, advances all live particles, and removes deaths.
     ///
     /// This covers stock emitter type `1`, including inherited velocity and
@@ -506,6 +530,14 @@ impl M2ParticleSimulation {
         let rate = f64::from(pose.emission_rate()) + f64::from(emitter.emission_rate_variation());
         let lifetime = f64::from(pose.lifespan()) + f64::from(emitter.lifespan_variation());
         let estimate = rate * lifetime * STOCK_CAPACITY_HEADROOM;
+        self.reserve_capacity_estimate(estimate)
+    }
+
+    /// Applies one stock-format estimate without shrinking retained storage.
+    fn reserve_capacity_estimate(
+        &mut self,
+        estimate: f64,
+    ) -> Result<(), M2ParticleSimulationError> {
         if !estimate.is_finite() || estimate < 0.0 || estimate > usize::MAX as f64 {
             return Err(M2ParticleSimulationError::Capacity);
         }
@@ -518,6 +550,18 @@ impl M2ParticleSimulation {
         }
         Ok(())
     }
+}
+
+/// Finds a conservative upper bound across every sequence/global channel.
+fn maximum_authored_value(track: &solarity_asset::M2Track<f32>) -> f64 {
+    track
+        .channels()
+        .iter()
+        .flat_map(|channel| channel.values())
+        .copied()
+        .filter(|value| value.is_finite())
+        .map(f64::from)
+        .fold(0.0, f64::max)
 }
 
 /// Generator selector retained separately from raw authored bytes.

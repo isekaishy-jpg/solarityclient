@@ -934,7 +934,7 @@ impl M2Frame {
         } = gpu_source;
         let model = Arc::clone(&source.model);
         let playback = M2Playback::new(&model, animation_id, random)?;
-        let particles = stock_particle_simulations(&model);
+        let particles = glue_particle_simulations(&model)?;
         let ribbons = model
             .animations()
             .ribbons()
@@ -2803,6 +2803,22 @@ fn stock_particle_simulations(model: &DecodedM2Model) -> Vec<M2ParticleSimulatio
         .particles()
         .iter()
         .map(|_emitter| M2ParticleSimulation::new(0))
+        .collect()
+}
+
+/// Reserves each finite Glue emitter's authored maximum before presentation.
+fn glue_particle_simulations(
+    model: &DecodedM2Model,
+) -> Result<Vec<M2ParticleSimulation>, RuntimeTerrainFrameError> {
+    model
+        .animations()
+        .particles()
+        .iter()
+        .map(|emitter| {
+            let mut simulation = M2ParticleSimulation::new(0);
+            simulation.reserve_authored_capacity(emitter)?;
+            Ok(simulation)
+        })
         .collect()
 }
 
