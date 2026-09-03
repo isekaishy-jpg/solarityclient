@@ -43,6 +43,7 @@ pub(in crate::device) struct UiOverlayRecordContext<'a> {
     pub(in crate::device) meshes: &'a UiMeshRegistry,
     pub(in crate::device) texture_sets: &'a UiTextureSetRegistry,
     pub(in crate::device) draws: &'a [UiPreparedDraw],
+    pub(in crate::device) overlay: &'a [UiPreparedDraw],
 }
 
 /// Records attachment transitions, shared state, and ordered indexed draws.
@@ -151,7 +152,7 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
 pub(in crate::device) fn record_loaded_overlay(
     context: UiOverlayRecordContext<'_>,
 ) -> Result<(), VulkanError> {
-    if context.draws.is_empty() {
+    if context.draws.is_empty() && context.overlay.is_empty() {
         return Ok(());
     }
     record_mesh_updates(
@@ -159,6 +160,12 @@ pub(in crate::device) fn record_loaded_overlay(
         context.command_buffer,
         context.meshes,
         context.draws,
+    )?;
+    record_mesh_updates(
+        context.device,
+        context.command_buffer,
+        context.meshes,
+        context.overlay,
     )?;
     let attachment = vk::RenderingAttachmentInfo::default()
         .image_view(context.image_view)
@@ -202,6 +209,18 @@ pub(in crate::device) fn record_loaded_overlay(
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
     for draw in context.draws.iter().copied() {
+        record_draw(
+            context.device,
+            context.command_buffer,
+            context.pipelines,
+            context.meshes,
+            context.texture_sets,
+            draw,
+            context.logical_extent,
+            context.extent,
+        )?;
+    }
+    for draw in context.overlay.iter().copied() {
         record_draw(
             context.device,
             context.command_buffer,

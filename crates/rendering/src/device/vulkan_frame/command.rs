@@ -59,6 +59,7 @@ pub(super) fn record_frame(context: RecordContext<'_>) -> Result<(), VulkanError
             meshes: ui.meshes,
             texture_sets: ui.texture_sets,
             draws: ui.draws,
+            overlay: &[],
         })?;
         transition_ui_to_present(&context);
     } else {

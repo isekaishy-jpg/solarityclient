@@ -77,6 +77,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
 pub(in crate::device) struct WorldUiOverlay<'a> {
     pub(in crate::device) logical_extent: [f32; 2],
     pub(in crate::device) draws: &'a [UiPreparedDraw],
+    pub(in crate::device) overlay: &'a [UiPreparedDraw],
 }
 
 /// Partial normalized screen window used by Glue model widgets.
@@ -270,6 +271,7 @@ impl WorldFrameRenderer {
                 meshes: context.ui_meshes,
                 texture_sets: context.ui_texture_sets,
                 draws: ui.draws,
+                overlay: ui.overlay,
             }),
             glow: context.glow,
             image_index,

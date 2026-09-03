@@ -1105,9 +1105,6 @@ impl RuntimeGlueModelScene {
             character_local_lights,
         );
         let pet_model = character_model.with_local_lights(pet_local_lights);
-        let mut ui_draws = Vec::with_capacity(ui.draws().len() + overlay.len());
-        ui_draws.extend_from_slice(ui.draws());
-        ui_draws.extend_from_slice(overlay);
         let gamma_value = glue.cvar_value("gamma");
         let gamma = gamma_value
             .as_deref()
@@ -1126,7 +1123,7 @@ impl RuntimeGlueModelScene {
                 visible.particle_index_capacity,
             );
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
-            renderer.present_world_frame_with_ui_and_glow(
+            renderer.present_world_frame_with_ui_layers_and_glow(
                 scene,
                 visible.bone_transforms,
                 &[],
@@ -1140,10 +1137,11 @@ impl RuntimeGlueModelScene {
                 screen_window,
                 WorldFrameGlow::new(strength.clamp(0.0, 4.0), gamma.clamp(0.1, 4.0))?,
                 ui.logical_extent(),
-                &ui_draws,
+                ui.draws(),
+                overlay,
             )?;
         } else {
-            renderer.present_world_frame_with_ui(
+            renderer.present_world_frame_with_ui_layers(
                 scene,
                 visible.bone_transforms,
                 &[],
@@ -1156,7 +1154,8 @@ impl RuntimeGlueModelScene {
                 visible.ribbon_draws,
                 screen_window,
                 ui.logical_extent(),
-                &ui_draws,
+                ui.draws(),
+                overlay,
             )?;
         }
         Ok(true)

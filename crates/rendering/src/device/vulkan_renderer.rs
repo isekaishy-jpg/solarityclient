@@ -1847,6 +1847,53 @@ impl VulkanRenderer {
                 Some(WorldUiOverlay {
                     logical_extent: ui_logical_extent,
                     draws: ui_draws,
+                    overlay: &[],
+                }),
+                None,
+            )
+        })
+    }
+
+    /// Presents the unified model/effect scene followed by two borrowed UI layers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::present_world_frame_with_ui`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn present_world_frame_with_ui_layers(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
+        screen_window: crate::WorldScreenWindow,
+        ui_logical_extent: [f32; 2],
+        ui_draws: &[UiPreparedDraw],
+        ui_overlay_draws: &[UiPreparedDraw],
+    ) -> Result<WorldFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_world_frame_internal(
+                scene,
+                bone_transforms,
+                terrain_draws,
+                world_model_draws,
+                m2_draws,
+                particle_vertices,
+                particle_indices,
+                particle_draws,
+                ribbon_vertices,
+                ribbon_draws,
+                screen_window,
+                Some(WorldUiOverlay {
+                    logical_extent: ui_logical_extent,
+                    draws: ui_draws,
+                    overlay: ui_overlay_draws,
                 }),
                 None,
             )
@@ -1888,6 +1935,54 @@ impl VulkanRenderer {
                 Some(WorldUiOverlay {
                     logical_extent: ui_logical_extent,
                     draws: ui_draws,
+                    overlay: &[],
+                }),
+                Some(glow),
+            )
+        })
+    }
+
+    /// Presents ModelFFX glow followed by two borrowed UI draw layers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::present_world_frame_with_ui_and_glow`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn present_world_frame_with_ui_layers_and_glow(
+        &mut self,
+        scene: WorldFrameScene,
+        bone_transforms: &[Mat4],
+        terrain_draws: &[TerrainPreparedDraw],
+        world_model_draws: &[WorldModelPreparedDraw],
+        m2_draws: &[M2PreparedDraw],
+        particle_vertices: &[crate::M2ParticleRenderVertex],
+        particle_indices: &[u32],
+        particle_draws: &[M2ParticlePreparedDraw],
+        ribbon_vertices: &[crate::M2RibbonRenderVertex],
+        ribbon_draws: &[M2RibbonPreparedDraw],
+        screen_window: crate::WorldScreenWindow,
+        glow: WorldFrameGlow,
+        ui_logical_extent: [f32; 2],
+        ui_draws: &[UiPreparedDraw],
+        ui_overlay_draws: &[UiPreparedDraw],
+    ) -> Result<WorldFrameReport, VulkanError> {
+        self.with_swapchain_retry(|renderer| {
+            renderer.present_world_frame_internal(
+                scene,
+                bone_transforms,
+                terrain_draws,
+                world_model_draws,
+                m2_draws,
+                particle_vertices,
+                particle_indices,
+                particle_draws,
+                ribbon_vertices,
+                ribbon_draws,
+                screen_window,
+                Some(WorldUiOverlay {
+                    logical_extent: ui_logical_extent,
+                    draws: ui_draws,
+                    overlay: ui_overlay_draws,
                 }),
                 Some(glow),
             )
