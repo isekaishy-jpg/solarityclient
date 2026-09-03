@@ -45,7 +45,11 @@ const DYNAMIC_WIND: u32 = 0x8000_0000;
 /// the render-only local-orientation bit and does not change particle motion.
 /// Raw `0x0008_0000` is likewise handled by lifetime appearance sampling; its
 /// mapped runtime bit is `0x0080_0000`, which is not an authored flag here.
-const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800 | 0x0000_2000;
+/// Raw `0x2000` is also intentionally absent. `0x00832EA0` maps it to runtime
+/// bit `0x40000`, and the model-owner path at `0x008274C1` tests that bit only
+/// to retain an emitter whose bone lookup produced the `0xFFFF` sentinel. It
+/// has no branch in the ordinary planar or spherical update functions.
+const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800;
 
 /// Placement-local stock particle storage, emission remainder, and PRNG.
 #[derive(Clone, Debug)]

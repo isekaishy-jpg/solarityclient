@@ -1468,6 +1468,55 @@ fn m2_particle_simulation_accepts_unmapped_authored_high_bit() -> Result<(), Box
     Ok(())
 }
 
+/// The raw `0x2000` bit admits an unbound emitter; it is not a motion mode.
+///
+/// Build 12340 maps it to runtime `0x40000` in `0x00832EA0`. The model-owner
+/// path at `0x008274C1` uses that bit only to retain a particle declaration
+/// after its bone lookup returns `0xFFFF`; neither ordinary update path tests
+/// it. Such emitters must therefore reach the planar simulator unchanged.
+#[test]
+fn m2_particle_simulation_accepts_unbound_emitter_flag() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = m2_array_offset(&bytes, 0x128)?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0000_2000_u32.to_le_bytes());
+    bytes[particle_offset + 0x14..particle_offset + 0x16].copy_from_slice(&u16::MAX.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\UnboundParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\UnboundParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\UnboundParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 0.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0);
+
+    assert_eq!(emitter.bone_index(), None);
+    assert_eq!(M2ParticleSimulation::unsupported_behavior_flags(emitter), 0);
+    simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 1.0)?;
+
+    Ok(())
+}
+
 /// Prewarming includes spline overshoot instead of only stored key values.
 #[test]
 fn m2_particle_prewarm_bounds_hermite_emission_rate() -> Result<(), Box<dyn Error>> {
