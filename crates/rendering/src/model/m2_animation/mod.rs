@@ -10,7 +10,7 @@ mod status;
 
 pub use camera::{M2CameraFrameError, sample_m2_camera_frame};
 pub use event::{M2EventTimeWindow, triggered_m2_event_indices};
-pub use light::sample_m2_directional_lights;
+pub use light::{M2SampledLights, sample_m2_directional_lights, sample_m2_lights};
 pub use material::M2MaterialPose;
 pub use pose::{M2AnimationClock, M2BonePose};
 pub use status::{M2BonePoseError, M2MaterialPoseError};

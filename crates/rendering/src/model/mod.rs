@@ -21,8 +21,8 @@ pub use character_component::{
 };
 pub use m2_animation::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraFrameError, M2EventTimeWindow,
-    M2MaterialPose, M2MaterialPoseError, sample_m2_camera_frame, sample_m2_directional_lights,
-    triggered_m2_event_indices,
+    M2MaterialPose, M2MaterialPoseError, M2SampledLights, sample_m2_camera_frame,
+    sample_m2_directional_lights, sample_m2_lights, triggered_m2_event_indices,
 };
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2LocalLightState, M2MaterialUniform,

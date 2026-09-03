@@ -11,6 +11,56 @@ const GREEN_LUMINANCE: f32 = 0.715_16;
 const BLUE_LUMINANCE: f32 = 0.072_169;
 const GLUE_CHARACTER_AMBIENT: Vec3 = Vec3::splat(0.60);
 const GLUE_CHARACTER_DIFFUSE: Vec3 = Vec3::new(0.40, 0.40, 0.32);
+const M2_POINT_LIGHT_ATTENUATION: Vec3 = Vec3::new(0.0, 0.7, 0.03);
+
+/// One visible M2 point light transformed into scene coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct M2PointLight {
+    position: Vec3,
+    ambient: Vec3,
+    diffuse: Vec3,
+}
+
+impl M2PointLight {
+    /// Retains one authored point source after bone and placement transforms.
+    #[must_use]
+    pub const fn new(position: Vec3, ambient: Vec3, diffuse: Vec3) -> Self {
+        Self {
+            position,
+            ambient,
+            diffuse,
+        }
+    }
+
+    /// Returns the point source in scene coordinates.
+    #[must_use]
+    pub const fn position(self) -> Vec3 {
+        self.position
+    }
+
+    /// Returns this source's animated ambient contribution.
+    #[must_use]
+    pub const fn ambient(self) -> Vec3 {
+        self.ambient
+    }
+
+    /// Returns this source's animated diffuse contribution.
+    #[must_use]
+    pub const fn diffuse(self) -> Vec3 {
+        self.diffuse
+    }
+
+    /// Converts the source to build 12340's fixed-function attenuation.
+    #[must_use]
+    pub fn local_light_state(self) -> M2LocalLightState {
+        M2LocalLightState::positional(
+            self.position,
+            self.ambient.clamp(Vec3::ZERO, Vec3::splat(16.0)),
+            self.diffuse.clamp(Vec3::ZERO, Vec3::splat(16.0)),
+            M2_POINT_LIGHT_ATTENUATION,
+        )
+    }
+}
 
 /// One directional source accumulated by build 12340's M2 sunlight merger.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -20,7 +20,7 @@ use solarity_rendering::{
     M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
     M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
     WorldFrustum, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
-    sample_m2_directional_lights, triggered_m2_event_indices,
+    sample_m2_lights, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -661,6 +661,7 @@ pub(in crate::application) struct M2Frame {
     triggered_events: Vec<RuntimeM2Event>,
     mount_camera_sample: Option<RuntimeMountCameraSample>,
     glue_directional_lights: Vec<solarity_rendering::M2DirectionalLight>,
+    glue_point_lights: Vec<solarity_rendering::M2PointLight>,
     last_effect_time_ms: Option<f32>,
 }
 
@@ -677,6 +678,7 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) ribbon_draws: &'frame [M2RibbonPreparedDraw],
     pub(in crate::application) glue_directional_lights:
         &'frame [solarity_rendering::M2DirectionalLight],
+    pub(in crate::application) glue_point_lights: &'frame [solarity_rendering::M2PointLight],
 }
 
 impl M2Frame {
@@ -747,6 +749,7 @@ impl M2Frame {
             triggered_events: Vec::new(),
             mount_camera_sample: None,
             glue_directional_lights: Vec::new(),
+            glue_point_lights: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -947,6 +950,7 @@ impl M2Frame {
             triggered_events: Vec::new(),
             mount_camera_sample: None,
             glue_directional_lights: Vec::new(),
+            glue_point_lights: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -1690,6 +1694,7 @@ impl M2Frame {
         self.triggered_events.clear();
         self.mount_camera_sample = None;
         self.glue_directional_lights.clear();
+        self.glue_point_lights.clear();
         // Stock model instances initialize their effect timestamp to zero, so
         // the first render receives the elapsed local scene clock. The emitter
         // update itself caps that history to one lifetime.
@@ -1887,13 +1892,15 @@ impl M2Frame {
                 event_window,
             )?;
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                let sampled_lights = sample_m2_lights(
+                    source.model.animations(),
+                    &bone_pose,
+                    clock,
+                    placement.transform,
+                )?;
                 self.glue_directional_lights
-                    .extend(sample_m2_directional_lights(
-                        source.model.animations(),
-                        &bone_pose,
-                        clock,
-                        placement.transform,
-                    )?);
+                    .extend(sampled_lights.directional);
+                self.glue_point_lights.extend(sampled_lights.points);
                 for attachment_id in &glue_attachment_ids {
                     let attachment = source.model.attachment(*attachment_id).ok_or_else(|| {
                         RuntimeTerrainFrameError::MissingGlueM2Attachment {
@@ -2282,6 +2289,7 @@ impl M2Frame {
             ribbon_vertices: &self.ribbon_vertices,
             ribbon_draws: &self.ribbon_draws,
             glue_directional_lights: &self.glue_directional_lights,
+            glue_point_lights: &self.glue_point_lights,
         })
     }
 

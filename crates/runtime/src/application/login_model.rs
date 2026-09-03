@@ -224,6 +224,7 @@ struct GlueModelEnvironment {
     background_directional_lights: [Option<M2DirectionalLight>; 4],
     character_local_lights: [M2LocalLightState; 4],
     pet_local_lights: [M2LocalLightState; 4],
+    shared_point_light_count: usize,
     character_uses_camera_light: bool,
     pet_inherits_character_light: bool,
     bounds: UiScreenRect,
@@ -266,6 +267,7 @@ impl GlueModelEnvironment {
             background_directional_lights,
             character_local_lights,
             pet_local_lights,
+            shared_point_light_count: 0,
             character_uses_camera_light,
             pet_inherits_character_light,
             bounds: model.bounds(),
@@ -276,11 +278,12 @@ impl GlueModelEnvironment {
 
     /// Returns the shader light count after stock directional-light merging.
     fn character_light_count(self) -> M2LocalLightCount {
-        if self.character_uses_camera_light {
-            M2LocalLightCount::One
+        let directional_count = if self.character_uses_camera_light {
+            1
         } else {
-            local_light_count(self.character_local_lights)
-        }
+            active_local_light_count(self.character_local_lights)
+        };
+        local_light_count_from_len((directional_count + self.shared_point_light_count).min(4))
     }
 
     /// Applies stock's pet fallback to the effective character light bank.
@@ -288,7 +291,8 @@ impl GlueModelEnvironment {
         if self.pet_inherits_character_light {
             self.character_light_count()
         } else {
-            local_light_count(self.pet_local_lights)
+            let directional_count = active_local_light_count(self.pet_local_lights);
+            local_light_count_from_len((directional_count + self.shared_point_light_count).min(4))
         }
     }
 }
@@ -564,11 +568,42 @@ impl RuntimeGlueModelScene {
         } else {
             GlueModelLightVariant::Live
         };
-        let environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
+        let mut environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
         let external_directional_light = environment
             .background_directional_lights
             .iter()
             .any(Option::is_some);
+        let generation = GlueModelGenerationKey {
+            path: key.path.clone(),
+            external_directional_light,
+        };
+        let known_model = self
+            .active
+            .as_ref()
+            .filter(|active| active.key.path == key.path)
+            .map(|active| Arc::clone(&active.model))
+            .or_else(|| {
+                self.prepared
+                    .get(&generation)
+                    .map(|prepared| Arc::clone(&prepared.model))
+            })
+            .or_else(|| {
+                self.pending
+                    .iter()
+                    .find(|pending| pending.generation == generation)
+                    .map(|pending| Arc::clone(&pending.model))
+            });
+        let mut newly_loaded_generation = None;
+        let lighting_model = match known_model {
+            Some(model) => model,
+            None => {
+                let loaded = self.load_model_generation(assets, &key.path)?;
+                let model = Arc::clone(&loaded.0);
+                newly_loaded_generation = Some(loaded);
+                model
+            }
+        };
+        environment.shared_point_light_count = maximum_glue_point_light_count(&lighting_model);
         if glue_character_changed {
             self.character_replacement_required = true;
         }
@@ -626,10 +661,6 @@ impl RuntimeGlueModelScene {
                 camera: key.camera,
             });
         }
-        let generation = GlueModelGenerationKey {
-            path: key.path.clone(),
-            external_directional_light,
-        };
         if self.prepared.contains_key(&generation) {
             if self.character_replacement_required && !character_sources_ready {
                 return Ok(());
@@ -674,7 +705,10 @@ impl RuntimeGlueModelScene {
             self.character_replacement_required = false;
             return Ok(());
         }
-        let (model, texture_sources) = self.load_model_generation(assets, &key.path)?;
+        let (model, texture_sources) = match newly_loaded_generation {
+            Some(loaded) => loaded,
+            None => self.load_model_generation(assets, &key.path)?,
+        };
         let environment_light_count = maximum_glue_light_count(&model, external_directional_light);
         let task_model = Arc::clone(&model);
         let task =
@@ -989,16 +1023,30 @@ impl RuntimeGlueModelScene {
             global_time_ms,
             random,
         )?;
-        let directional_lights = active
+        let external_directional_lights = active
             .environment
             .background_directional_lights
             .into_iter()
             .flatten()
-            .chain(visible.glue_directional_lights.iter().copied())
             .collect::<Vec<_>>();
+        let directional_lights = if external_directional_lights.is_empty() {
+            visible.glue_directional_lights
+        } else {
+            &external_directional_lights
+        };
         let mut environment_local_lights = [M2LocalLightState::disabled(); 4];
-        if let Some(sunlight) = merge_wotlk_directional_lights(&directional_lights) {
+        let mut environment_light_count = 0_usize;
+        if let Some(sunlight) = merge_wotlk_directional_lights(directional_lights) {
             environment_local_lights[0] = sunlight.local_light_state();
+            environment_light_count = 1;
+        }
+        for point in visible
+            .glue_point_lights
+            .iter()
+            .take(4 - environment_light_count)
+        {
+            environment_local_lights[environment_light_count] = point.local_light_state();
+            environment_light_count += 1;
         }
         let (environment_ambient, environment_diffuse) = if directional_lights.is_empty() {
             (active.environment.ambient, active.environment.diffuse)
@@ -1036,11 +1084,16 @@ impl RuntimeGlueModelScene {
         } else {
             active.environment.character_local_lights
         };
-        let pet_local_lights = if active.environment.pet_inherits_character_light {
+        let mut character_local_lights = character_local_lights;
+        append_point_lights(&mut character_local_lights, visible.glue_point_lights);
+        let mut pet_local_lights = if active.environment.pet_inherits_character_light {
             character_local_lights
         } else {
             active.environment.pet_local_lights
         };
+        if !active.environment.pet_inherits_character_light {
+            append_point_lights(&mut pet_local_lights, visible.glue_point_lights);
+        }
         let character_model = M2SceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
@@ -1146,12 +1199,31 @@ fn model_screen_window(
     ))
 }
 
-fn local_light_count(lights: [M2LocalLightState; 4]) -> M2LocalLightCount {
-    let count = lights
+fn active_local_light_count(lights: [M2LocalLightState; 4]) -> usize {
+    lights
         .iter()
         .filter(|light| **light != M2LocalLightState::disabled())
-        .count();
-    local_light_count_from_len(count)
+        .count()
+}
+
+fn append_point_lights(
+    lights: &mut [M2LocalLightState; 4],
+    points: &[solarity_rendering::M2PointLight],
+) {
+    let light_count = active_local_light_count(*lights);
+    for (offset, point) in points.iter().take(4 - light_count).enumerate() {
+        lights[light_count + offset] = point.local_light_state();
+    }
+}
+
+fn maximum_glue_point_light_count(model: &solarity_asset::DecodedM2Model) -> usize {
+    model
+        .animations()
+        .lights()
+        .iter()
+        .filter(|light| light.kind() == M2LightKind::Point)
+        .count()
+        .min(3)
 }
 
 /// Reserves stock's slot-zero directional aggregate and at most three point
@@ -1165,11 +1237,7 @@ fn maximum_glue_light_count(
         || authored
             .iter()
             .any(|light| light.kind() == M2LightKind::Directional);
-    let point_count = authored
-        .iter()
-        .filter(|light| light.kind() == M2LightKind::Point)
-        .count()
-        .min(3);
+    let point_count = maximum_glue_point_light_count(model);
     local_light_count_from_len(usize::from(has_directional) + point_count)
 }
 

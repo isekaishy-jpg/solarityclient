@@ -45,7 +45,8 @@ pub use device::{
     WorldModelTextureSetHandle, WorldModelTextureSetInfo,
 };
 pub use lighting::{
-    M2DirectionalLight, M2Sunlight, glue_character_sunlight, merge_wotlk_directional_lights,
+    M2DirectionalLight, M2PointLight, M2Sunlight, glue_character_sunlight,
+    merge_wotlk_directional_lights,
 };
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
@@ -58,10 +59,11 @@ pub use model::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraFrameError, M2DrawCall,
     M2DrawPushConstants, M2EffectOrder, M2EventTimeWindow, M2LocalLightState, M2MaterialPose,
     M2MaterialPoseError, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex,
-    M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentSortKey,
-    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
-    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
-    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights,
+    M2SampledLights, M2SceneUniform, M2ShadowMatrix, M2ShadowState, M2TextureBinding,
+    M2TransparentSortKey, PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange,
+    WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
     triggered_m2_event_indices,
 };
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};

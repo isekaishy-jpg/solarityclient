@@ -26,7 +26,7 @@ use solarity_rendering::{
     M2SceneLightBank, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
     M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
     TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
-    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights,
+    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
     triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
@@ -113,6 +113,59 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
     assert!((lights[0].ambient() - Vec3::splat(0.3)).abs().max_element() < 0.000_01);
     assert!(
         (lights[0].diffuse() - Vec3::splat(1.05))
+            .abs()
+            .max_element()
+            < 0.000_01
+    );
+    Ok(())
+}
+
+/// Authored point lights retain bone-relative positions in scene space.
+#[test]
+fn m2_point_lights_sample_animated_scene_state() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("PointLight", 1)?;
+    append_render_directional_light(&mut bytes)?;
+    let light_offset = usize::try_from(u32::from_le_bytes(bytes[0x10c..0x110].try_into()?))?;
+    bytes[light_offset..light_offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\PointLight.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\PointLight00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Creature\\Solarity\\PointLight.m2")?;
+    let model = DecodedM2Model::load(&mut store, &path)?;
+    let clock = M2AnimationClock::new(0, 500.0, 0.0);
+    let pose = M2BonePose::compose(model.animations(), clock)?;
+    let transform = Mat4::from_translation(Vec3::new(5.0, 7.0, 11.0))
+        * Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2);
+
+    let lights = sample_m2_lights(model.animations(), &pose, clock, transform)?;
+
+    assert!(lights.directional.is_empty());
+    assert_eq!(lights.points.len(), 1);
+    assert!(
+        (lights.points[0].position() - Vec3::new(5.0, 10.0, 11.0))
+            .abs()
+            .max_element()
+            < 0.000_01
+    );
+    assert!(
+        (lights.points[0].ambient() - Vec3::splat(0.3))
+            .abs()
+            .max_element()
+            < 0.000_01
+    );
+    assert!(
+        (lights.points[0].diffuse() - Vec3::splat(1.05))
             .abs()
             .max_element()
             < 0.000_01

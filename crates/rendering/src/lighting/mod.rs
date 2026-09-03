@@ -8,5 +8,6 @@ mod m2_light;
 mod world_scene;
 
 pub use m2_light::{
-    M2DirectionalLight, M2Sunlight, glue_character_sunlight, merge_wotlk_directional_lights,
+    M2DirectionalLight, M2PointLight, M2Sunlight, glue_character_sunlight,
+    merge_wotlk_directional_lights,
 };

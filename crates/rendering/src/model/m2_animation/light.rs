@@ -1,9 +1,9 @@
 //! Animated light sampling for one M2 placement.
 
 use glam::{Mat4, Vec3};
-use solarity_asset::{M2AnimationSet, M2LightKind};
+use solarity_asset::{M2AnimationSet, M2Light, M2LightKind};
 
-use crate::M2DirectionalLight;
+use crate::{M2DirectionalLight, M2PointLight};
 
 use super::sample::{sample_discrete, sample_scalar, sample_vec3};
 use super::{M2AnimationClock, M2BonePose, M2BonePoseError};
@@ -25,13 +25,36 @@ pub fn sample_m2_directional_lights(
     clock: M2AnimationClock,
     model_transform: Mat4,
 ) -> Result<Vec<M2DirectionalLight>, M2BonePoseError> {
+    Ok(sample_m2_lights(animations, pose, clock, model_transform)?.directional)
+}
+
+/// Every visible directional and point light sampled for one M2 placement.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct M2SampledLights {
+    /// Directional sources in authored order.
+    pub directional: Vec<M2DirectionalLight>,
+    /// Point sources ordered nearest to the model placement first.
+    pub points: Vec<M2PointLight>,
+}
+
+/// Samples all visible authored M2 lights in scene coordinates.
+///
+/// Point sources are stably ordered by distance to the model placement, as in
+/// build 12340, before the caller applies the fixed four-light hardware bound.
+///
+/// # Errors
+///
+/// Returns [`M2BonePoseError`] when the animation clock cannot resolve or an
+/// authored light references a bone absent from the supplied pose.
+pub fn sample_m2_lights(
+    animations: &M2AnimationSet,
+    pose: &M2BonePose,
+    clock: M2AnimationClock,
+    model_transform: Mat4,
+) -> Result<M2SampledLights, M2BonePoseError> {
     let sequence = clock.resolve(animations)?;
-    let mut sampled = Vec::new();
-    for light in animations
-        .lights()
-        .iter()
-        .filter(|light| light.kind() == M2LightKind::Directional)
-    {
+    let mut sampled = M2SampledLights::default();
+    for light in animations.lights() {
         let visible = sample_discrete(
             animations,
             light.visibility(),
@@ -43,45 +66,16 @@ pub fn sample_m2_directional_lights(
         if visible == 0 {
             continue;
         }
-        let ambient_intensity = sample_scalar(
-            animations,
-            light.ambient_intensity(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            1.0,
-        )
-        .max(0.0);
-        let diffuse_intensity = sample_scalar(
-            animations,
-            light.diffuse_intensity(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            1.0,
-        )
-        .max(0.0);
-        let ambient = (sample_vec3(
-            animations,
-            light.ambient_color(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            Vec3::ONE,
-        ) * ambient_intensity)
-            .max(Vec3::ZERO);
-        let diffuse = (sample_vec3(
-            animations,
-            light.diffuse_color(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            Vec3::ONE,
-        ) * diffuse_intensity)
-            .max(Vec3::ZERO);
-        let mut direction = light.position().extend(0.0);
+        let (ambient, diffuse) = sample_light_colors(animations, light, sequence, clock);
+        let mut position = light
+            .position()
+            .extend(if light.kind() == M2LightKind::Point {
+                1.0
+            } else {
+                0.0
+            });
         if let Some(bone_index) = light.bone_index() {
-            direction = pose
+            position = pose
                 .transforms()
                 .get(usize::from(bone_index))
                 .copied()
@@ -89,14 +83,73 @@ pub fn sample_m2_directional_lights(
                     requested: bone_index,
                     available: pose.transforms().len(),
                 })?
-                * direction;
+                * position;
         }
-        direction = model_transform * direction;
-        let mut direction = direction.truncate();
-        if direction.length() > f32::EPSILON {
-            direction = direction.normalize();
+        position = model_transform * position;
+        if light.kind() == M2LightKind::Point {
+            sampled
+                .points
+                .push(M2PointLight::new(position.truncate(), ambient, diffuse));
+        } else {
+            let mut direction = position.truncate();
+            if direction.length() > f32::EPSILON {
+                direction = direction.normalize();
+            }
+            sampled
+                .directional
+                .push(M2DirectionalLight::new(direction, ambient, diffuse));
         }
-        sampled.push(M2DirectionalLight::new(direction, ambient, diffuse));
     }
+    let origin = model_transform.transform_point3(Vec3::ZERO);
+    sampled.points.sort_by(|left, right| {
+        left.position()
+            .distance_squared(origin)
+            .total_cmp(&right.position().distance_squared(origin))
+    });
     Ok(sampled)
+}
+
+fn sample_light_colors(
+    animations: &M2AnimationSet,
+    light: &M2Light,
+    sequence: usize,
+    clock: M2AnimationClock,
+) -> (Vec3, Vec3) {
+    let ambient_intensity = sample_scalar(
+        animations,
+        light.ambient_intensity(),
+        sequence,
+        clock.animation_time_ms(),
+        clock.global_time_ms(),
+        1.0,
+    )
+    .max(0.0);
+    let diffuse_intensity = sample_scalar(
+        animations,
+        light.diffuse_intensity(),
+        sequence,
+        clock.animation_time_ms(),
+        clock.global_time_ms(),
+        1.0,
+    )
+    .max(0.0);
+    let ambient = (sample_vec3(
+        animations,
+        light.ambient_color(),
+        sequence,
+        clock.animation_time_ms(),
+        clock.global_time_ms(),
+        Vec3::ONE,
+    ) * ambient_intensity)
+        .max(Vec3::ZERO);
+    let diffuse = (sample_vec3(
+        animations,
+        light.diffuse_color(),
+        sequence,
+        clock.animation_time_ms(),
+        clock.global_time_ms(),
+        Vec3::ONE,
+    ) * diffuse_intensity)
+        .max(Vec3::ZERO);
+    (ambient, diffuse)
 }
