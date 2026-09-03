@@ -6,7 +6,7 @@ mod selector;
 mod status;
 mod types;
 
-pub use material::{M2BlendFactor, M2MaterialState};
+pub use material::{M2BlendFactor, M2FogMode, M2MaterialState};
 pub use permutation::{
     M2LocalLightCount, M2ShaderPermutation, M2ShadowFiltering, M2ShadowPermutation,
 };

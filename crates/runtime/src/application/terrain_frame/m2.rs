@@ -2033,7 +2033,7 @@ impl M2Frame {
                         fog_color.extend(1.0),
                         glam::Vec4::new(
                             material_state.alpha_reference(instance_color.w),
-                            0.0,
+                            material_state.fog_mode().shader_code(),
                             0.0,
                             0.0,
                         ),

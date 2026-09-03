@@ -19,6 +19,30 @@ pub enum M2BlendFactor {
     SourceColor,
 }
 
+/// Fog color specialization selected by the direct GX blend mode.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum M2FogMode {
+    /// Material flag `0x2` bypasses fog.
+    Disabled = 0,
+    /// Use the active scene fog color.
+    SceneColor = 1,
+    /// Additive paths fade toward black.
+    Black = 2,
+    /// Modulation fades toward white.
+    White = 3,
+    /// Doubled modulation fades toward half-white.
+    HalfWhite = 4,
+}
+
+impl M2FogMode {
+    /// Returns the fixed numeric selector consumed by the M2 fragment shader.
+    #[must_use]
+    pub const fn shader_code(self) -> f32 {
+        self as u8 as f32
+    }
+}
+
 /// Immutable pass-zero material state recovered from `CM2SceneRender`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct M2MaterialState {
@@ -151,6 +175,22 @@ impl M2MaterialState {
     #[must_use]
     pub const fn is_unfogged(self) -> bool {
         self.is_unfogged
+    }
+
+    /// Returns build 12340's fog color specialization for this material.
+    #[must_use]
+    pub const fn fog_mode(self) -> M2FogMode {
+        if self.is_unfogged {
+            return M2FogMode::Disabled;
+        }
+        match self.blend_mode {
+            M2BlendMode::NoAlphaAdd | M2BlendMode::Add => M2FogMode::Black,
+            M2BlendMode::Mod => M2FogMode::White,
+            M2BlendMode::Mod2x => M2FogMode::HalfWhite,
+            M2BlendMode::Opaque | M2BlendMode::AlphaKey | M2BlendMode::Alpha => {
+                M2FogMode::SceneColor
+            }
+        }
     }
 
     /// Computes stock's shader alpha-reference constant for an instance alpha.

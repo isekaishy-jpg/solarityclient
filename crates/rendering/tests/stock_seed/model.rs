@@ -17,8 +17,8 @@ use solarity_rendering::{
     CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState,
     CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EffectOrder,
-    M2EventTimeWindow, M2LocalLightCount, M2LocalLightState, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
+    M2EventTimeWindow, M2FogMode, M2LocalLightCount, M2LocalLightState, M2MaterialPose,
+    M2MaterialState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
     M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
     M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler,
     M2ParticleState, M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan,
@@ -1911,6 +1911,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert!(!state.depth_write_enabled());
     assert!(!state.is_unlit());
     assert!(state.is_unfogged());
+    assert_eq!(state.fog_mode(), M2FogMode::Disabled);
     assert!((state.alpha_reference(0.5) - (112.0 / 255.0)).abs() < f32::EPSILON);
     let faded = specialized.with_runtime_alpha_fade().material();
     assert!(faded.blend_enabled());
@@ -1938,6 +1939,20 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(fallback.pixel_shader(), M2PixelShader::ModMod);
     assert!(fallback.used_stock_fallback());
     assert!(fallback.material().is_unlit());
+    assert_eq!(fallback.material().fog_mode(), M2FogMode::White);
+
+    assert_eq!(
+        M2MaterialState::from_particle(2, 0).fog_mode(),
+        M2FogMode::SceneColor
+    );
+    assert_eq!(
+        M2MaterialState::from_particle(4, 0).fog_mode(),
+        M2FogMode::Black
+    );
+    assert_eq!(
+        M2MaterialState::from_particle(5, 0).fog_mode(),
+        M2FogMode::White
+    );
 
     let lit_permutation = M2ShaderPermutation::resolve(
         draw,

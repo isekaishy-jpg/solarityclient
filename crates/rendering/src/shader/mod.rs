@@ -17,8 +17,9 @@ mod world_model_spirv;
 
 pub use glow_spirv::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram};
 pub use m2_effect::{
-    M2BlendFactor, M2LocalLightCount, M2MaterialState, M2PixelShader, M2ShaderPermutation,
-    M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2VertexShader,
+    M2BlendFactor, M2FogMode, M2LocalLightCount, M2MaterialState, M2PixelShader,
+    M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation,
+    M2VertexShader,
 };
 pub use m2_spirv::{M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram};
 pub use particle_spirv::{M2ParticleSpirvCompiler, M2ParticleSpirvError, M2ParticleSpirvProgram};

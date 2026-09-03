@@ -75,7 +75,7 @@ pub use particle::{
     M2RibbonTrailError,
 };
 pub use shader::{
-    GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram, M2BlendFactor,
+    GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram, M2BlendFactor, M2FogMode,
     M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler, M2ParticleSpirvError,
     M2ParticleSpirvProgram, M2PixelShader, M2RibbonSpirvCompiler, M2RibbonSpirvError,
     M2RibbonSpirvProgram, M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering,
