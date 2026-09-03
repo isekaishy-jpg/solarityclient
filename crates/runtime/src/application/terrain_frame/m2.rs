@@ -994,7 +994,7 @@ impl M2Frame {
         )?;
         let transform = Mat4::from_rotation_z(input.facing_radians())
             * Mat4::from_scale(glam::Vec3::splat(input.model_scale()));
-        let placement = unit_gpu_placement(
+        let mut placement = unit_gpu_placement(
             0,
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: 0 },
@@ -1003,11 +1003,12 @@ impl M2Frame {
             input.particle_colors().cloned(),
             random,
         )?;
-        // Wow.exe 0x004E0160/0x004E2E70 installs the Glue body at the scene
-        // origin with unit translation and scale. Facing is retained beside
-        // that transform and consumed by the model renderer. Attachment zero
-        // belongs to the backdrop scene; parenting the body to its rotated
-        // marker moves the preview rightward and turns it away from camera.
+        // CCharacterSelection installs the body with a zero local position,
+        // then the ModelFFX scene resolves that local transform beneath the
+        // backdrop's authored character stand. Glue backdrops place attachment
+        // zero beside their camera (the Human stand is near -225/-81 while the
+        // model origin is hundreds of units outside the view).
+        placement.glue_parent_attachment = Some(0);
         let mut prepared = vec![(source, placement)];
         for attachment in input.attachments() {
             if input.model().attachment(attachment.point().id()).is_none() {
@@ -1216,9 +1217,9 @@ impl M2Frame {
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
         let transform = Mat4::from_rotation_z(facing_radians)
             * Mat4::from_scale(glam::Vec3::splat(model_scale));
-        // Glue bodies have no placement parent. Keep the submitted transform
-        // synchronized immediately; the same frame samples body attachments
-        // from it before positioning equipment and item visual effects.
+        // Retain the stand-local transform. The next draw preparation composes
+        // the animated backdrop attachment before sampling body attachments
+        // for equipment and item visual effects.
         placement.local_transform = transform;
         placement.transform = transform;
         Ok(())
