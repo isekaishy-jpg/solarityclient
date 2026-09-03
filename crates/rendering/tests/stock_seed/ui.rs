@@ -135,14 +135,15 @@ fn ui_mesh_retains_single_material_indexed_triangles() -> Result<(), Box<dyn Err
     );
     assert_eq!(mesh.index_bytes().len(), 3 * size_of::<u32>());
 
-    let error = UiMeshPlan::prepare_indexed(
+    let Err(error) = UiMeshPlan::prepare_indexed(
         [800.0, 600.0],
         vertices,
         vec![3],
         UiRenderSource::GlyphAtlas(91),
         None,
-    )
-    .expect_err("an index outside the vertex array must be rejected");
+    ) else {
+        return Err("an index outside the vertex array must be rejected".into());
+    };
     assert_eq!(
         error,
         UiMeshPlanError::IndexOutOfRange {
