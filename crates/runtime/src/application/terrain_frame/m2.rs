@@ -218,6 +218,11 @@ impl M2GlueCpuSourceKey {
     pub(in crate::application) const fn local_light_count(&self) -> M2LocalLightCount {
         self.local_light_count
     }
+
+    /// Returns the canonical archive model path represented by this key.
+    pub(in crate::application) const fn path(&self) -> &AssetPath {
+        &self.path
+    }
 }
 
 /// Process-wide worker bytecode indexed by complete stock shader identity.
@@ -238,10 +243,6 @@ pub(in crate::application) fn prepare_glue_cpu_source(
 ) -> Result<M2GlueCpuSource, RuntimeTerrainFrameError> {
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     let cache_lock = GLUE_PROGRAMS.get_or_init(|| Mutex::new(M2GlueProgramCache::default()));
-    let mut cache = match cache_lock.lock() {
-        Ok(cache) => cache,
-        Err(poisoned) => poisoned.into_inner(),
-    };
     let mut mesh_compiler = None;
     let mut mesh_programs = HashMap::new();
     for draw in plan.draws() {
@@ -260,16 +261,27 @@ pub(in crate::application) fn prepare_glue_cpu_source(
         for shader in shaders.into_iter().flatten() {
             let key = M2SpirvKey::new(shader, permutation);
             if let std::collections::hash_map::Entry::Vacant(entry) = mesh_programs.entry(key) {
-                let program = if let Some(program) = cache.mesh.get(&key) {
-                    program.clone()
+                let cached = match cache_lock.lock() {
+                    Ok(cache) => cache.mesh.get(&key).cloned(),
+                    Err(poisoned) => poisoned.into_inner().mesh.get(&key).cloned(),
+                };
+                let program = if let Some(program) = cached {
+                    program
                 } else {
                     let compiler = match mesh_compiler.as_ref() {
                         Some(compiler) => compiler,
                         None => mesh_compiler.insert(M2SpirvCompiler::new()?),
                     };
                     let program = compiler.compile(shader, permutation)?;
-                    cache.mesh.insert(key, program.clone());
-                    program
+                    match cache_lock.lock() {
+                        Ok(mut cache) => cache.mesh.entry(key).or_insert(program).clone(),
+                        Err(poisoned) => poisoned
+                            .into_inner()
+                            .mesh
+                            .entry(key)
+                            .or_insert(program)
+                            .clone(),
+                    }
                 };
                 entry.insert(program);
             }
@@ -284,16 +296,27 @@ pub(in crate::application) fn prepare_glue_cpu_source(
             if let std::collections::hash_map::Entry::Vacant(entry) =
                 particle_programs.entry(material)
             {
-                let program = if let Some(program) = cache.particles.get(&material) {
-                    program.clone()
+                let cached = match cache_lock.lock() {
+                    Ok(cache) => cache.particles.get(&material).cloned(),
+                    Err(poisoned) => poisoned.into_inner().particles.get(&material).cloned(),
+                };
+                let program = if let Some(program) = cached {
+                    program
                 } else {
                     let compiler = match particle_compiler.as_ref() {
                         Some(compiler) => compiler,
                         None => particle_compiler.insert(M2ParticleSpirvCompiler::new()?),
                     };
                     let program = compiler.compile(material)?;
-                    cache.particles.insert(material, program.clone());
-                    program
+                    match cache_lock.lock() {
+                        Ok(mut cache) => cache.particles.entry(material).or_insert(program).clone(),
+                        Err(poisoned) => poisoned
+                            .into_inner()
+                            .particles
+                            .entry(material)
+                            .or_insert(program)
+                            .clone(),
+                    }
                 };
                 entry.insert(program);
             }
@@ -310,16 +333,29 @@ pub(in crate::application) fn prepare_glue_cpu_source(
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     ribbon_programs.entry(material)
                 {
-                    let program = if let Some(program) = cache.ribbons.get(&material) {
-                        program.clone()
+                    let cached = match cache_lock.lock() {
+                        Ok(cache) => cache.ribbons.get(&material).cloned(),
+                        Err(poisoned) => poisoned.into_inner().ribbons.get(&material).cloned(),
+                    };
+                    let program = if let Some(program) = cached {
+                        program
                     } else {
                         let compiler = match ribbon_compiler.as_ref() {
                             Some(compiler) => compiler,
                             None => ribbon_compiler.insert(M2RibbonSpirvCompiler::new()?),
                         };
                         let program = compiler.compile(material)?;
-                        cache.ribbons.insert(material, program.clone());
-                        program
+                        match cache_lock.lock() {
+                            Ok(mut cache) => {
+                                cache.ribbons.entry(material).or_insert(program).clone()
+                            }
+                            Err(poisoned) => poisoned
+                                .into_inner()
+                                .ribbons
+                                .entry(material)
+                                .or_insert(program)
+                                .clone(),
+                        }
                     };
                     entry.insert(program);
                 }

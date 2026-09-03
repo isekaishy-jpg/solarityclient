@@ -321,7 +321,12 @@ impl ClientServices {
             // and partial diagnostic installs may omit screens they never
             // select; an actual selection still follows the strict load path.
             if assets.borrow().contains(&path)? {
-                glue_model.prewarm(path, background_light_count, &assets, &cpu)?;
+                // CharacterSelect and CharacterCreate install a ModelFFX
+                // background-light bank independently of AccountLogin. Keep
+                // both finite shader contracts resident so the eventual Lua
+                // selection cannot invalidate startup prewarm identity.
+                glue_model.prewarm(path.clone(), 0, &assets, &cpu)?;
+                glue_model.prewarm(path, 1, &assets, &cpu)?;
             }
         }
         let mut ui_textures = BlpTextureCache::new();

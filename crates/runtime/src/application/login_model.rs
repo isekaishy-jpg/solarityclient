@@ -143,33 +143,11 @@ struct PreparedGlueCpuSource {
     elapsed: std::time::Duration,
 }
 
-/// Character, equipment, effect, and pet models prepared as one requested generation.
-struct PendingGlueCharacter {
-    generation: Vec<M2GlueCpuSourceKey>,
+/// One character, equipment, effect, or pet source prepared independently.
+struct PendingGlueCharacterSource {
+    key: M2GlueCpuSourceKey,
     submitted_at: std::time::Instant,
-    task: CpuTask<Result<PreparedGlueCharacterCpuSources, RuntimeTerrainFrameError>>,
-}
-
-/// Completed immutable character CPU sources and worker execution time.
-struct PreparedGlueCharacterCpuSources {
-    sources: Vec<(M2GlueCpuSourceKey, M2GlueCpuSource)>,
-    elapsed: std::time::Duration,
-}
-
-/// Builds every missing model plan and shader family for one Glue character.
-fn prepare_glue_character_cpu_task(
-    models: Vec<(M2GlueCpuSourceKey, Arc<solarity_asset::DecodedM2Model>)>,
-) -> Result<PreparedGlueCharacterCpuSources, RuntimeTerrainFrameError> {
-    let started = std::time::Instant::now();
-    let mut sources = Vec::with_capacity(models.len());
-    for (key, model) in models {
-        let source = prepare_glue_cpu_source(&model, key.local_light_count())?;
-        sources.push((key, source));
-    }
-    Ok(PreparedGlueCharacterCpuSources {
-        sources,
-        elapsed: started.elapsed(),
-    })
+    task: CpuTask<Result<PreparedGlueCpuSource, RuntimeTerrainFrameError>>,
 }
 
 /// Collects each distinct immutable model/light permutation in one preview.
@@ -345,7 +323,7 @@ pub(crate) struct RuntimeGlueModelScene {
     pending: Vec<PendingGlueModel>,
     prepared: HashMap<GlueModelGenerationKey, PreparedGlueModel>,
     character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2GlueCpuSource>>,
-    pending_characters: Vec<PendingGlueCharacter>,
+    pending_character_sources: Vec<PendingGlueCharacterSource>,
     character_replacement_required: bool,
 }
 
@@ -359,7 +337,7 @@ impl RuntimeGlueModelScene {
             pending: Vec::new(),
             prepared: HashMap::new(),
             character_sources: HashMap::new(),
-            pending_characters: Vec::new(),
+            pending_character_sources: Vec::new(),
             character_replacement_required: false,
         }
     }
@@ -447,7 +425,15 @@ impl RuntimeGlueModelScene {
                 "could not checkpoint startup Vulkan pipeline cache"
             );
         }
-        self.activate_prepared(generation, key, environment, random, particle_twinkle)?;
+        self.activate_prepared(
+            renderer,
+            generation,
+            key,
+            environment,
+            None,
+            random,
+            particle_twinkle,
+        )?;
         Ok(())
     }
 
@@ -597,7 +583,19 @@ impl RuntimeGlueModelScene {
             external_directional_light,
         };
         if self.prepared.contains_key(&generation) {
-            self.activate_prepared(generation, key, environment, random, particle_twinkle)?;
+            if self.character_replacement_required && !character_sources_ready {
+                return Ok(());
+            }
+            self.activate_prepared(
+                renderer,
+                generation,
+                key,
+                environment,
+                glue_character,
+                random,
+                particle_twinkle,
+            )?;
+            self.character_replacement_required = false;
             return Ok(());
         }
         if let Some(pending_index) = self
@@ -613,7 +611,19 @@ impl RuntimeGlueModelScene {
                 pending_index,
                 "prepared resident Glue model generation",
             )?;
-            self.activate_prepared(generation, key, environment, random, particle_twinkle)?;
+            if self.character_replacement_required && !character_sources_ready {
+                return Ok(());
+            }
+            self.activate_prepared(
+                renderer,
+                generation,
+                key,
+                environment,
+                glue_character,
+                random,
+                particle_twinkle,
+            )?;
+            self.character_replacement_required = false;
             return Ok(());
         }
         let (model, texture_sources) = self.load_model_generation(assets, &key.path)?;
@@ -645,62 +655,62 @@ impl RuntimeGlueModelScene {
             return Ok(true);
         };
         let models = glue_character_cpu_models(input, character_light_count, pet_light_count);
-        let generation = models
+        if models
             .iter()
-            .map(|(key, _model)| key.clone())
-            .collect::<Vec<_>>();
-        if generation
-            .iter()
-            .all(|key| self.character_sources.contains_key(key))
+            .all(|(key, _model)| self.character_sources.contains_key(key))
         {
             return Ok(true);
         }
-        if self
-            .pending_characters
-            .iter()
-            .any(|pending| pending.generation == generation)
-        {
-            return Ok(false);
+        let mut submitted_count = 0_usize;
+        for (key, model) in models {
+            if self.character_sources.contains_key(&key)
+                || self
+                    .pending_character_sources
+                    .iter()
+                    .any(|pending| pending.key == key)
+            {
+                continue;
+            }
+            let local_light_count = key.local_light_count();
+            let task_model = Arc::clone(&model);
+            let task =
+                cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
+            self.pending_character_sources
+                .push(PendingGlueCharacterSource {
+                    key,
+                    submitted_at: std::time::Instant::now(),
+                    task,
+                });
+            submitted_count += 1;
         }
-        let missing = models
-            .into_iter()
-            .filter(|(key, _model)| !self.character_sources.contains_key(key))
-            .collect::<Vec<_>>();
-        let model_count = missing.len();
-        let task = cpu.try_submit(move || prepare_glue_character_cpu_task(missing))?;
-        self.pending_characters.push(PendingGlueCharacter {
-            generation,
-            submitted_at: std::time::Instant::now(),
-            task,
-        });
-        tracing::info!(
-            model_count,
-            "submitted Glue character generation to bounded CPU executor"
-        );
+        if submitted_count != 0 {
+            tracing::info!(
+                model_count = submitted_count,
+                "submitted parallel Glue character sources to bounded CPU executor"
+            );
+        }
         Ok(false)
     }
 
     /// Joins completed character tasks without ever waiting on the presentation thread.
     fn complete_finished_character_tasks(&mut self) -> Result<(), RuntimeGlueModelError> {
         let finished = self
-            .pending_characters
+            .pending_character_sources
             .iter()
             .enumerate()
             .filter_map(|(index, pending)| pending.task.is_finished().then_some(index))
             .rev()
             .collect::<Vec<_>>();
         for index in finished {
-            let pending = self.pending_characters.swap_remove(index);
+            let pending = self.pending_character_sources.swap_remove(index);
             let prepared = pending.task.join()??;
-            let source_count = prepared.sources.len();
-            for (key, source) in prepared.sources {
-                self.character_sources.insert(key, Arc::new(source));
-            }
+            self.character_sources
+                .insert(pending.key.clone(), Arc::new(prepared.source));
             tracing::info!(
-                source_count,
+                model = %pending.key.path(),
                 worker_prepare_ms = prepared.elapsed.as_secs_f64() * 1_000.0,
                 residency_wait_ms = pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
-                "completed Glue character CPU generation"
+                "completed Glue character CPU source"
             );
         }
         Ok(())
@@ -751,9 +761,11 @@ impl RuntimeGlueModelScene {
     #[allow(clippy::too_many_arguments)]
     fn activate_prepared(
         &mut self,
+        renderer: &mut VulkanRenderer,
         generation: GlueModelGenerationKey,
         key: GlueModelKey,
         environment: GlueModelEnvironment,
+        glue_character: Option<ResidentGlueCharacterFrameInput<'_>>,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
@@ -783,6 +795,14 @@ impl RuntimeGlueModelScene {
             key.model_scale,
             random,
             particle_twinkle,
+        )?;
+        frame.replace_glue_character(
+            renderer,
+            glue_character,
+            environment.character_light_count(),
+            environment.pet_light_count(),
+            &self.character_sources,
+            random,
         )?;
         frame.set_glue_opacity(environment.alpha)?;
         tracing::info!(model = %model.path(), "activated resident Glue model generation");
