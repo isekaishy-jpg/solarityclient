@@ -379,6 +379,7 @@ pub struct RuntimePlayerPresentation {
     glue_character: Option<ResidentGlueCharacterModel>,
     glue_worker_catalog: Option<ArchiveCatalog>,
     pending_glue_character: Option<PendingGlueCharacter>,
+    failed_glue_character: Option<ResidentGlueCharacterKey>,
 }
 
 impl RuntimePlayerPresentation {
@@ -412,6 +413,7 @@ impl RuntimePlayerPresentation {
             glue_character: None,
             glue_worker_catalog: None,
             pending_glue_character: None,
+            failed_glue_character: None,
         }
     }
 
@@ -476,6 +478,7 @@ impl RuntimePlayerPresentation {
     ) -> Result<bool, RuntimePlayerError> {
         let Some(requested) = requested else {
             self.pending_glue_character = None;
+            self.failed_glue_character = None;
             return Ok(self.glue_character.take().is_some());
         };
         if let Some(resident) = self.glue_character.as_mut()
@@ -484,6 +487,14 @@ impl RuntimePlayerPresentation {
             resident.apply_transform_key(requested);
             return Ok(false);
         }
+        if self
+            .failed_glue_character
+            .as_ref()
+            .is_some_and(|failed| failed.same_residency(&requested))
+        {
+            return Ok(false);
+        }
+        self.failed_glue_character = None;
 
         if let Some(pending) = self.pending_glue_character.as_ref()
             && pending.key.same_residency(&requested)
@@ -495,7 +506,14 @@ impl RuntimePlayerPresentation {
                 .pending_glue_character
                 .take()
                 .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
-            let mut resident = pending.task.join()??;
+            let result = pending.task.join()?;
+            let mut resident = match result {
+                Ok(resident) => resident,
+                Err(source) => {
+                    self.failed_glue_character = Some(requested);
+                    return Err(source);
+                }
+            };
             resident.apply_transform_key(requested);
             tracing::info!(
                 residency_wait_ms = pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
@@ -1850,6 +1868,7 @@ fn prepare_glue_character_on_worker(
         glue_character: None,
         glue_worker_catalog: None,
         pending_glue_character: None,
+        failed_glue_character: None,
     };
     match &key {
         ResidentGlueCharacterKey::Creation(preview) => {
