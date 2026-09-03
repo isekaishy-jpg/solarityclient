@@ -203,8 +203,8 @@ fn upload_ui_mesh(
     let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
     vertex_bytes.clear();
     index_bytes.clear();
-    vertex_bytes.extend_from_slice(&aligned_update_bytes(plan.vertex_bytes())?);
-    index_bytes.extend_from_slice(&aligned_update_bytes(plan.index_bytes())?);
+    vertex_bytes.extend_from_slice(logical_vertex_bytes);
+    index_bytes.extend_from_slice(logical_index_bytes);
     Ok(GpuUiMesh {
         buffers,
         info,
@@ -225,7 +225,7 @@ fn mesh_info(plan: &UiMeshPlan) -> UiMeshResourceInfo {
 }
 
 /// Reserves geometric headroom while preserving the exact logical payload.
-fn retained_update_bytes(bytes: Vec<u8>) -> Result<Vec<u8>, VulkanError> {
+fn retained_update_bytes(bytes: &[u8]) -> Result<Vec<u8>, VulkanError> {
     let logical = aligned_update_bytes(bytes)?;
     let capacity = logical
         .len()
@@ -237,12 +237,14 @@ fn retained_update_bytes(bytes: Vec<u8>) -> Result<Vec<u8>, VulkanError> {
     Ok(retained)
 }
 
-fn aligned_update_bytes(mut bytes: Vec<u8>) -> Result<Vec<u8>, VulkanError> {
+fn aligned_update_bytes(bytes: &[u8]) -> Result<Vec<u8>, VulkanError> {
     let aligned = bytes
         .len()
         .checked_add(3)
         .map(|length| length & !3)
         .ok_or_else(|| VulkanError::operation("align UI mesh update", "size overflow"))?;
-    bytes.resize(aligned, 0);
-    Ok(bytes)
+    let mut aligned_bytes = Vec::with_capacity(aligned);
+    aligned_bytes.extend_from_slice(bytes);
+    aligned_bytes.resize(aligned, 0);
+    Ok(aligned_bytes)
 }

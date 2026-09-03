@@ -10,6 +10,8 @@ pub struct UiMeshPlan {
     logical_extent: [f32; 2],
     vertices: Vec<UiRenderVertex>,
     indices: Vec<u32>,
+    vertex_bytes: Vec<u8>,
+    index_bytes: Vec<u8>,
     batches: Vec<UiRenderBatch>,
     object_indices: Vec<usize>,
 }
@@ -44,11 +46,24 @@ impl UiMeshPlan {
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "index" })?;
         u32::try_from(quad_count)
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "quad" })?;
+        let vertex_byte_capacity = vertex_capacity
+            .checked_mul(UiRenderVertex::BYTE_SIZE)
+            .ok_or(UiMeshPlanError::Capacity {
+                domain: "vertex byte",
+            })?;
+        let index_byte_capacity =
+            index_capacity
+                .checked_mul(size_of::<u32>())
+                .ok_or(UiMeshPlanError::Capacity {
+                    domain: "index byte",
+                })?;
         let mut plan = Self {
             identity: next_identity(),
             logical_extent,
             vertices: Vec::with_capacity(vertex_capacity),
             indices: Vec::with_capacity(index_capacity),
+            vertex_bytes: Vec::with_capacity(vertex_byte_capacity),
+            index_bytes: Vec::with_capacity(index_byte_capacity),
             batches: Vec::with_capacity(quad_count),
             object_indices: Vec::with_capacity(quad_count),
         };
@@ -95,22 +110,14 @@ impl UiMeshPlan {
 
     /// Serializes vertices without relying on Rust layout or unsafe casts.
     #[must_use]
-    pub fn vertex_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.vertices.len() * UiRenderVertex::BYTE_SIZE);
-        for vertex in &self.vertices {
-            vertex.append_bytes(&mut bytes);
-        }
-        bytes
+    pub fn vertex_bytes(&self) -> &[u8] {
+        &self.vertex_bytes
     }
 
     /// Serializes direct unsigned 32-bit indices for Vulkan upload.
     #[must_use]
-    pub fn index_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.indices.len() * size_of::<u32>());
-        for index in &self.indices {
-            bytes.extend_from_slice(&index.to_le_bytes());
-        }
-        bytes
+    pub fn index_bytes(&self) -> &[u8] {
+        &self.index_bytes
     }
 
     /// Validates and appends one counter-clockwise two-triangle quad.
@@ -127,20 +134,26 @@ impl UiMeshPlan {
         let texture_coordinates = quad.texture_coordinates();
         let colors = quad.colors();
         for corner in 0..4 {
-            self.vertices.push(UiRenderVertex::new(
+            let vertex = UiRenderVertex::new(
                 positions[corner],
                 texture_coordinates[corner],
                 colors[corner],
-            ));
+            );
+            vertex.append_bytes(&mut self.vertex_bytes);
+            self.vertices.push(vertex);
         }
-        self.indices.extend_from_slice(&[
+        let indices = [
             base_vertex,
             base_vertex + 1,
             base_vertex + 2,
             base_vertex + 2,
             base_vertex + 1,
             base_vertex + 3,
-        ]);
+        ];
+        for index in indices {
+            self.index_bytes.extend_from_slice(&index.to_le_bytes());
+        }
+        self.indices.extend_from_slice(&indices);
         if let Some(batch) = self.batches.last_mut()
             && batch.can_append(&quad)
         {
