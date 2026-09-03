@@ -1005,9 +1005,16 @@ impl GlueManager {
         let Some(slider_index) = self.deferred_slider_refresh.take() else {
             return Ok(false);
         };
+        let previous = self.live.clone();
         self.runtime
             .refresh_slider_scroll_snapshot(&self.bundle, &mut self.live, slider_index)?;
-        self.rebuild_scroll_products()?;
+        self.render_plan.refresh_scroll_transforms(
+            &previous,
+            &self.live,
+            &mut self.geometry,
+            &mut self.presentation,
+        );
+        self.scroll_frames = UiScrollFramePlan::from_live(&self.live);
         Ok(true)
     }
 
@@ -1186,36 +1193,21 @@ impl GlueManager {
         Ok(())
     }
 
-    /// Updates the two retained products affected by a stock scrollbar drag.
+    /// Updates only retained draw state and transform-only public geometry.
     ///
     /// Slider values can move an unanchored thumb and ScrollFrame offsets move
     /// and clip their assigned child. The complete snapshot comparison above
     /// proves that text, HTML, hierarchy, material state, and pointer admission
     /// are otherwise unchanged, so none of those expensive plans need rebuilt.
     fn refresh_scroll_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
+        self.render_plan.refresh_scroll_transforms(
+            &self.live,
+            &live,
+            &mut self.geometry,
+            &mut self.presentation,
+        );
+        self.scroll_frames = UiScrollFramePlan::from_live(&live);
         self.live = live;
-        self.rebuild_scroll_products()
-    }
-
-    fn rebuild_scroll_products(&mut self) -> Result<(), UiEventError> {
-        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
-        // Scroll offsets do not change region dimensions, and Slider values
-        // only translate the native thumb. Lua's published GetWidth/GetHeight
-        // cache therefore remains exact; rewriting those two fields on every
-        // one of ~1,800 object tables was the last large drag-time Lua cost.
-        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
-        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
-        let render_plan = UiRenderPlan::prepare_with_glyphs(
-            &presentation,
-            &self.glyphs,
-            &geometry,
-            &scroll_frames,
-            geometry.ui_extent(),
-        )?;
-        self.geometry = geometry;
-        self.scroll_frames = scroll_frames;
-        self.presentation = presentation;
-        self.render_plan = render_plan;
         Ok(())
     }
 }

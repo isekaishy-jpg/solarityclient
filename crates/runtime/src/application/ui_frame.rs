@@ -14,6 +14,7 @@ use crate::application::ApplicationError;
 /// One immutable UI mesh generation joined to renderer-owned resources.
 pub(crate) struct PreparedUiFrame {
     mesh: UiMeshHandle,
+    mesh_identity: u64,
     logical_extent: [f32; 2],
     draws: Vec<UiPreparedDraw>,
     /// Source batch index parallel to each resident renderer draw.
@@ -121,6 +122,7 @@ impl PreparedUiFrame {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             mesh,
+            mesh_identity: plan.geometry_identity(),
             logical_extent: plan.logical_extent(),
             draws,
             draw_batches,
@@ -148,6 +150,9 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<(), ApplicationError> {
+        if self.refresh_retained_draw_state(plan) {
+            return Ok(());
+        }
         if !self.can_replace_mesh(plan) {
             return Err(VulkanError::UiDrawIndex {
                 requested: plan.batches().len(),
@@ -156,7 +161,10 @@ impl PreparedUiFrame {
             .into());
         }
         let mesh = self.mesh;
-        renderer.replace_ui_mesh(mesh, plan)?;
+        if self.mesh_identity != plan.geometry_identity() {
+            renderer.replace_ui_mesh(mesh, plan)?;
+            self.mesh_identity = plan.geometry_identity();
+        }
         for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
             *draw = renderer.prepare_ui_draw(
                 mesh,
@@ -178,11 +186,29 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<bool, ApplicationError> {
+        if self.refresh_retained_draw_state(plan) {
+            return Ok(true);
+        }
         if !self.can_replace_mesh(plan) {
             return Ok(false);
         }
         self.replace_mesh(renderer, plan)?;
         Ok(true)
+    }
+
+    /// Updates only push constants and scissors when CPU and GPU share geometry.
+    fn refresh_retained_draw_state(&mut self, plan: &UiMeshPlan) -> bool {
+        if self.mesh_identity != plan.geometry_identity() {
+            return false;
+        }
+        for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
+            let Some(batch) = plan.batches().get(*batch_index) else {
+                return false;
+            };
+            draw.set_transform_state(batch.translation(), batch.clip());
+        }
+        self.logical_extent = plan.logical_extent();
+        true
     }
 
     fn can_replace_mesh(&self, plan: &UiMeshPlan) -> bool {

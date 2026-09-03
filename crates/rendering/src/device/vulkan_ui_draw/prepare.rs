@@ -111,5 +111,7 @@ pub(in crate::device) fn prepare_draw(
         batch.first_index(),
         batch.index_count(),
         base_vertex,
+        batch.translation(),
+        batch.clip(),
     ))
 }

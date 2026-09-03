@@ -93,5 +93,5 @@ pub use terrain::{
 };
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource,
-    UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
+    UiRenderTransform, UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };

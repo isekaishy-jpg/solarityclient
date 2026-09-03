@@ -87,6 +87,8 @@ pub struct UiTexturePresentation {
     object_index: usize,
     /// Assigned ScrollFrame viewport, excluding sibling scrollbar chrome.
     clip_object: Option<usize>,
+    /// Native Slider owning an unanchored, transform-only thumb texture.
+    slider_object: Option<usize>,
     source: UiTextureSource,
     blend_mode: UiBlendMode,
     bounds: UiScreenRect,
@@ -297,6 +299,10 @@ impl UiTexturePresentation {
         self.clip_object
     }
 
+    pub(crate) const fn slider_object(&self) -> Option<usize> {
+        self.slider_object
+    }
+
     /// Returns the live object-arena index used for subsequent updates.
     #[must_use]
     pub const fn object_index(&self) -> usize {
@@ -388,6 +394,15 @@ pub struct UiPresentationPlan {
 }
 
 impl UiPresentationPlan {
+    /// Moves every presentation quad owned by one transform-only region.
+    pub(crate) fn translate_object(&mut self, object_index: usize, delta: [f32; 2]) {
+        for member in &mut self.members {
+            if member.object_index == object_index {
+                member.bounds = member.bounds.translated(delta);
+            }
+        }
+    }
+
     pub(crate) fn resolve(
         live: &UiRuntimeObjectPlan,
         geometry: &UiRegionGeometryPlan,
@@ -472,6 +487,11 @@ impl UiPresentationPlan {
                     key,
                     object_index,
                     clip_object: nearest_owning_scroll_frame(live, object_index),
+                    slider_object: (object.role == UiObjectRole::ThumbTexture
+                        && live.anchors_for(object).is_empty())
+                    .then_some(object.parent)
+                    .flatten()
+                    .filter(|parent| live.objects()[*parent].slider.is_some()),
                     source,
                     blend_mode: texture.blend_mode,
                     bounds: region.presentation_bounds(),
@@ -916,6 +936,7 @@ fn push_backdrop_quad(
             key,
             object_index,
             clip_object,
+            slider_object: None,
             source: UiTextureSource::Asset(path.clone()),
             blend_mode,
             bounds,

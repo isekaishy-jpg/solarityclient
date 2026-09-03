@@ -1,6 +1,6 @@
 //! Allocation-conscious conversion from ordered UI quads to indexed mesh runs.
 
-use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderVertex};
+use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderTransform, UiRenderVertex};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upload-ready UI geometry with adjacent compatible quads already batched.
@@ -108,6 +108,35 @@ impl UiMeshPlan {
         self.identity
     }
 
+    /// Returns the immutable vertex/index generation shared by cheap draw-state clones.
+    #[must_use]
+    pub const fn geometry_identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// Changes one retained draw translation without touching serialized mesh bytes.
+    pub fn set_transform_translation(
+        &mut self,
+        transform: UiRenderTransform,
+        translation: [f32; 2],
+    ) {
+        for batch in &mut self.batches {
+            if batch.transform() == Some(transform) {
+                batch.set_translation(translation);
+            }
+        }
+    }
+
+    /// Moves one retained draw slot relative to its current presentation state.
+    pub fn translate_transform(&mut self, transform: UiRenderTransform, delta: [f32; 2]) {
+        for batch in &mut self.batches {
+            if batch.transform() == Some(transform) {
+                let current = batch.translation();
+                batch.set_translation([current[0] + delta[0], current[1] + delta[1]]);
+            }
+        }
+    }
+
     /// Serializes vertices without relying on Rust layout or unsafe casts.
     #[must_use]
     pub fn vertex_bytes(&self) -> &[u8] {
@@ -191,6 +220,15 @@ fn validate_extent(extent: [f32; 2]) -> Result<(), UiMeshPlanError> {
 fn validate_quad(quad: &UiRenderQuad) -> Result<(), UiMeshPlanError> {
     let bounds = quad.bounds();
     validate_components(quad.object_index(), "bounds", &bounds)?;
+    validate_components(quad.object_index(), "translation", &quad.translation())?;
+    if let Some(clip) = quad.clip() {
+        validate_components(quad.object_index(), "clip", &clip)?;
+        if clip[2] < clip[0] || clip[3] < clip[1] {
+            return Err(UiMeshPlanError::InvertedBounds {
+                object_index: quad.object_index(),
+            });
+        }
+    }
     if bounds[2] < bounds[0] || bounds[3] < bounds[1] {
         return Err(UiMeshPlanError::InvertedBounds {
             object_index: quad.object_index(),

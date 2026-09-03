@@ -3,7 +3,9 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_rendering::{UiRenderBlend, UiRenderSource, UiTextureAddressMode, UiTextureResidency};
+use solarity_rendering::{
+    UiRenderBlend, UiRenderSource, UiRenderTransform, UiTextureAddressMode, UiTextureResidency,
+};
 use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiTextureSource};
 
 use crate::support::{Fixture, FixtureFile};
@@ -421,7 +423,8 @@ fn glue_presentation_builds_stock_native_backdrop_quads() -> Result<(), Box<dyn 
 /// ScrollFrame translates and clips every region beneath its assigned child
 /// while leaving sibling scrollbar chrome in the ScrollFrame's own space.
 #[test]
-fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<(), Box<dyn Error>> {
+fn glue_render_plan_retains_scrolled_textures_without_moving_chrome() -> Result<(), Box<dyn Error>>
+{
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "Interface\\GlueXML\\GlueXML.toc",
@@ -476,6 +479,11 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
         .iter()
         .position(|object| object.name() == Some("OffscreenTexture"))
         .ok_or("missing offscreen texture")?;
+    let viewport_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("Viewport"))
+        .ok_or("missing viewport")?;
     let mesh = manager.render_plan().mesh();
     let content_quad = mesh
         .object_indices()
@@ -493,14 +501,29 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
             || (position[0] - (expected_left + 100.0)).abs() < 0.000_1
     }));
     assert!(positions.iter().all(|position| {
-        (position[1] - 359.0).abs() < 0.000_1 || (position[1] - 409.0).abs() < 0.000_1
+        (position[1] - 309.0).abs() < 0.000_1 || (position[1] - 409.0).abs() < 0.000_1
     }));
-    assert_eq!(content[0].texture_coordinates(), [0.0, 0.25]);
-    assert_eq!(content[1].texture_coordinates(), [0.0, 0.75]);
-    assert_eq!(content[2].texture_coordinates(), [1.0, 0.25]);
-    assert_eq!(content[3].texture_coordinates(), [1.0, 0.75]);
-    assert_eq!(content[0].color(), [0.75, 0.0, 0.25, 1.0]);
-    assert_eq!(content[1].color(), [0.25, 0.0, 0.75, 1.0]);
+    assert_eq!(content[0].texture_coordinates(), [0.0, 0.0]);
+    assert_eq!(content[1].texture_coordinates(), [0.0, 1.0]);
+    assert_eq!(content[2].texture_coordinates(), [1.0, 0.0]);
+    assert_eq!(content[3].texture_coordinates(), [1.0, 1.0]);
+    let content_batch = mesh
+        .batches()
+        .iter()
+        .find(|batch| {
+            let first = batch.first_quad() as usize;
+            first <= content_quad && content_quad < first + batch.quad_count() as usize
+        })
+        .ok_or("missing retained content batch")?;
+    assert_eq!(
+        content_batch.transform(),
+        Some(UiRenderTransform::ScrollFrame(viewport_index))
+    );
+    assert_eq!(content_batch.translation(), [0.0, 25.0]);
+    assert_eq!(
+        content_batch.clip(),
+        Some([expected_left, 359.0, expected_left + 100.0, 409.0])
+    );
 
     let chrome_quad = mesh
         .object_indices()
@@ -519,11 +542,10 @@ fn glue_render_plan_clips_scrolled_textures_without_moving_chrome() -> Result<()
         .position(|index| *index == offscreen_index)
         .ok_or("fully clipped texture lost its retained mesh slot")?;
     let offscreen = &mesh.vertices()[offscreen_quad * 4..offscreen_quad * 4 + 4];
-    assert!(
-        offscreen
-            .iter()
-            .all(|vertex| vertex.position() == offscreen[0].position())
-    );
+    assert!(offscreen.iter().any(|vertex| {
+        vertex.position()[0] != offscreen[0].position()[0]
+            || vertex.position()[1] != offscreen[0].position()[1]
+    }));
     assert!(
         manager
             .render_plan()

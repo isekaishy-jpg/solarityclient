@@ -7,7 +7,7 @@ use ash::{Device, vk};
 use crate::device::VulkanError;
 use crate::{UiRenderBlend, UiRenderVertex, UiSpirvProgram};
 
-const CANVAS_PUSH_CONSTANT_BYTES: u32 = 8;
+const CANVAS_PUSH_CONSTANT_BYTES: u32 = 16;
 
 /// Common sampled-image and canvas-transform ABI for every UI variant.
 #[derive(Default)]

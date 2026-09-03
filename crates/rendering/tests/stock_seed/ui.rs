@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::AssetPath;
 use solarity_rendering::{
-    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderVertex, UiTextureAddressMode,
-    UiTextureResidency,
+    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform, UiRenderVertex,
+    UiTextureAddressMode, UiTextureResidency,
 };
 
 /// Adjacent equal materials merge without changing quad or index order.
@@ -69,6 +69,39 @@ fn ui_mesh_batches_adjacent_glyph_atlas_quads() -> Result<(), Box<dyn Error>> {
     assert_eq!(mesh.batches()[0].quad_count(), 2);
     assert_eq!(mesh.batches()[1].source(), &UiRenderSource::GlyphAtlas(8));
     assert_eq!(mesh.batches()[1].quad_count(), 1);
+    Ok(())
+}
+
+/// Scroll translation changes draw state without touching immutable mesh bytes.
+#[test]
+fn ui_mesh_retains_geometry_across_scroll_transforms() -> Result<(), Box<dyn Error>> {
+    let transform = UiRenderTransform::ScrollFrame(12);
+    let quads = vec![
+        quad(21, UiRenderSource::GlyphAtlas(7), [0.0, 0.0, 10.0, 20.0]).with_transform(
+            transform,
+            [0.0, 4.0],
+            Some([0.0, 0.0, 20.0, 20.0]),
+        ),
+        quad(21, UiRenderSource::GlyphAtlas(7), [10.0, 0.0, 20.0, 20.0]).with_transform(
+            transform,
+            [0.0, 4.0],
+            Some([0.0, 0.0, 20.0, 20.0]),
+        ),
+        quad(22, UiRenderSource::GlyphAtlas(7), [20.0, 0.0, 30.0, 20.0]),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+    let identity = mesh.geometry_identity();
+    let vertex_bytes = mesh.vertex_bytes().to_vec();
+    let index_bytes = mesh.index_bytes().to_vec();
+
+    mesh.set_transform_translation(transform, [0.0, 18.0]);
+
+    assert_eq!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.vertex_bytes(), vertex_bytes);
+    assert_eq!(mesh.index_bytes(), index_bytes);
+    assert_eq!(mesh.batches().len(), 2);
+    assert_eq!(mesh.batches()[0].translation(), [0.0, 18.0]);
+    assert_eq!(mesh.batches()[1].translation(), [0.0, 0.0]);
     Ok(())
 }
 

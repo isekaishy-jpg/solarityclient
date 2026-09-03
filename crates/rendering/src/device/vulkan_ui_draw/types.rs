@@ -3,7 +3,7 @@
 use crate::device::{UiMeshHandle, UiPipelineHandle, UiTextureSetHandle};
 
 /// One fully validated indexed UI material batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiPreparedDraw {
     mesh: UiMeshHandle,
     pipeline: UiPipelineHandle,
@@ -11,10 +11,13 @@ pub struct UiPreparedDraw {
     first_index: u32,
     index_count: u32,
     base_vertex: i32,
+    translation: [f32; 2],
+    clip: Option<[f32; 4]>,
 }
 
 impl UiPreparedDraw {
     /// Constructs a packet after every renderer-local resource join is validated.
+    #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(
         mesh: UiMeshHandle,
         pipeline: UiPipelineHandle,
@@ -22,6 +25,8 @@ impl UiPreparedDraw {
         first_index: u32,
         index_count: u32,
         base_vertex: i32,
+        translation: [f32; 2],
+        clip: Option<[f32; 4]>,
     ) -> Self {
         Self {
             mesh,
@@ -30,6 +35,8 @@ impl UiPreparedDraw {
             first_index,
             index_count,
             base_vertex,
+            translation,
+            clip,
         }
     }
 
@@ -67,5 +74,23 @@ impl UiPreparedDraw {
     #[must_use]
     pub const fn base_vertex(self) -> i32 {
         self.base_vertex
+    }
+
+    /// Returns the logical draw translation applied without modifying vertices.
+    #[must_use]
+    pub const fn translation(self) -> [f32; 2] {
+        self.translation
+    }
+
+    /// Returns an optional bottom-left-origin logical clip rectangle.
+    #[must_use]
+    pub const fn clip(self) -> Option<[f32; 4]> {
+        self.clip
+    }
+
+    /// Rebinds only push-constant/scissor state for retained immutable geometry.
+    pub fn set_transform_state(&mut self, translation: [f32; 2], clip: Option<[f32; 4]>) {
+        self.translation = translation;
+        self.clip = clip;
     }
 }

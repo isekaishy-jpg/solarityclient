@@ -108,7 +108,6 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
-    let logical_extent_bytes = logical_extent_bytes(context.logical_extent);
     for draw in context.draws.iter().copied() {
         record_draw(
             context.device,
@@ -117,7 +116,8 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             context.meshes,
             context.texture_sets,
             draw,
-            &logical_extent_bytes,
+            context.logical_extent,
+            context.extent,
         )?;
     }
     // SAFETY: A matching dynamic-rendering scope is active.
@@ -182,7 +182,6 @@ pub(in crate::device) fn record_loaded_overlay(
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
-    let logical_extent_bytes = logical_extent_bytes(context.logical_extent);
     for draw in context.draws.iter().copied() {
         record_draw(
             context.device,
@@ -191,7 +190,8 @@ pub(in crate::device) fn record_loaded_overlay(
             context.meshes,
             context.texture_sets,
             draw,
-            &logical_extent_bytes,
+            context.logical_extent,
+            context.extent,
         )?;
     }
     // SAFETY: A matching color-only dynamic-rendering scope is active.
@@ -281,6 +281,7 @@ fn record_buffer_update(
 }
 
 /// Binds one validated packet and records its unsigned-32 indexed range.
+#[allow(clippy::too_many_arguments)]
 fn record_draw(
     device: &Device,
     command_buffer: vk::CommandBuffer,
@@ -288,7 +289,8 @@ fn record_draw(
     meshes: &UiMeshRegistry,
     texture_sets: &UiTextureSetRegistry,
     draw: UiPreparedDraw,
-    logical_extent_bytes: &[u8; 8],
+    logical_extent: [f32; 2],
+    physical_extent: (u32, u32),
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = pipelines
         .raw(draw.pipeline())
@@ -298,6 +300,8 @@ fn record_draw(
         .ok_or(VulkanError::UnknownUiMeshHandle)?;
     // SAFETY: Prepared draws join compatible local handles and exact ranges.
     unsafe {
+        let scissor = logical_scissor(draw.clip(), logical_extent, physical_extent);
+        device.cmd_set_scissor(command_buffer, 0, &[scissor]);
         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
         device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
         device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT32);
@@ -319,7 +323,7 @@ fn record_draw(
             layout,
             vk::ShaderStageFlags::VERTEX,
             0,
-            logical_extent_bytes,
+            &draw_state_bytes(logical_extent, draw.translation()),
         );
         // Every UI quad has the same six-index pattern. Reuse the mesh's
         // canonical prefix for each batch and select its contiguous vertices
@@ -336,13 +340,54 @@ fn record_draw(
     Ok(())
 }
 
-/// Serializes the two-float push constant once for the complete frame.
-fn logical_extent_bytes(extent: [f32; 2]) -> [u8; 8] {
-    let width = extent[0].to_le_bytes();
-    let height = extent[1].to_le_bytes();
-    [
-        width[0], width[1], width[2], width[3], height[0], height[1], height[2], height[3],
-    ]
+/// Serializes the four-float canvas and retained-translation push constant.
+fn draw_state_bytes(extent: [f32; 2], translation: [f32; 2]) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    for (index, value) in extent.into_iter().chain(translation).enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+/// Converts stock bottom-left logical clipping into Vulkan framebuffer pixels.
+fn logical_scissor(
+    clip: Option<[f32; 4]>,
+    logical_extent: [f32; 2],
+    physical_extent: (u32, u32),
+) -> vk::Rect2D {
+    let Some([left, bottom, right, top]) = clip else {
+        return vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: vk::Extent2D {
+                width: physical_extent.0,
+                height: physical_extent.1,
+            },
+        };
+    };
+    let scale_x = physical_extent.0 as f32 / logical_extent[0];
+    let scale_y = physical_extent.1 as f32 / logical_extent[1];
+    let x0 = (left * scale_x)
+        .floor()
+        .clamp(0.0, physical_extent.0 as f32) as u32;
+    let x1 = (right * scale_x)
+        .ceil()
+        .clamp(0.0, physical_extent.0 as f32) as u32;
+    let y0 = ((logical_extent[1] - top) * scale_y)
+        .floor()
+        .clamp(0.0, physical_extent.1 as f32) as u32;
+    let y1 = ((logical_extent[1] - bottom) * scale_y)
+        .ceil()
+        .clamp(0.0, physical_extent.1 as f32) as u32;
+    vk::Rect2D {
+        offset: vk::Offset2D {
+            x: x0 as i32,
+            y: y0 as i32,
+        },
+        extent: vk::Extent2D {
+            width: x1.saturating_sub(x0),
+            height: y1.saturating_sub(y0),
+        },
+    }
 }
 
 /// Discards prior contents and exposes swapchain color writes.

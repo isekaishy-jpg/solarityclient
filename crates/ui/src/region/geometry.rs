@@ -59,6 +59,15 @@ impl UiScreenRect {
     pub fn height(self) -> f64 {
         self.top - self.bottom
     }
+
+    pub(crate) const fn translated(self, delta: [f32; 2]) -> Self {
+        Self {
+            left: self.left + delta[0] as f64,
+            bottom: self.bottom + delta[1] as f64,
+            right: self.right + delta[0] as f64,
+            top: self.top + delta[1] as f64,
+        }
+    }
 }
 
 /// Resolved startup geometry and inherited presentation state for one region.
@@ -107,6 +116,16 @@ impl UiRegionGeometry {
 pub struct UiRegionGeometryPlan {
     ui_extent: (f64, f64),
     regions: Vec<UiRegionGeometry>,
+}
+
+impl UiRegionGeometryPlan {
+    /// Moves one transform-only region while retaining the solved dependency graph.
+    pub(crate) fn translate_region(&mut self, object_index: usize, delta: [f32; 2]) {
+        if let Some(region) = self.regions.get_mut(object_index) {
+            region.logical_bounds = region.logical_bounds.translated(delta);
+            region.presentation_bounds = region.presentation_bounds.translated(delta);
+        }
+    }
 }
 
 impl UiRegionGeometryPlan {

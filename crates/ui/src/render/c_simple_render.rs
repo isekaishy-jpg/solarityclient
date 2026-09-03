@@ -1,21 +1,15 @@
 //! Batched UI mesh generation recovered from `CSimpleRender.cpp`.
 
 use solarity_rendering::{
-    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiTextureAddressMode,
-    UiTextureResidency,
+    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform,
+    UiTextureAddressMode, UiTextureResidency,
 };
 
 use crate::{
     UiBlendMode, UiGlyphAtlasPlan, UiGlyphQuad, UiPresentationPlan, UiRegionGeometryPlan,
     UiRenderError, UiScrollFramePlan, UiTextureAssetPlan, UiTexturePresentation, UiTextureSource,
 };
-
-/// Cropped geometry and interpolants retained for one ScrollFrame texture.
-struct ClippedTexturedQuad {
-    bounds: [f32; 4],
-    coordinates: [[f32; 2]; 4],
-    colors: [[f32; 4]; 4],
-}
+use crate::{UiObjectRole, script::UiRuntimeObjectPlan};
 
 /// Renderer-owned mesh data derived from one complete live presentation pass.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,16 +68,18 @@ impl UiRenderPlan {
         let texture_count = ordered.len();
         ordered.extend(
             glyphs
-                .quads_with_scroll(geometry, scroll_frames)
+                .retained_scroll_quads(geometry, scroll_frames)
                 .into_iter()
                 .enumerate()
-                .map(|(sequence, quad)| {
-                    (
+                .filter_map(|(sequence, quad)| {
+                    let rendered =
+                        render_glyph_quad(glyphs.identity(), &quad, geometry, scroll_frames)?;
+                    Some((
                         quad.packet_key(),
                         quad.object_index(),
                         texture_count + sequence,
-                        render_glyph_quad(glyphs.identity(), quad),
-                    )
+                        rendered,
+                    ))
                 }),
         );
         ordered.sort_by_key(|(key, object_index, sequence, _)| {
@@ -111,12 +107,90 @@ impl UiRenderPlan {
     pub const fn texture_assets(&self) -> &UiTextureAssetPlan {
         &self.texture_assets
     }
+
+    /// Patches ScrollFrame and native thumb draw state without rebuilding mesh bytes.
+    pub(crate) fn refresh_scroll_transforms(
+        &mut self,
+        previous: &UiRuntimeObjectPlan,
+        current: &UiRuntimeObjectPlan,
+        geometry: &mut UiRegionGeometryPlan,
+        presentation: &mut UiPresentationPlan,
+    ) {
+        for (object_index, (old, new)) in
+            previous.objects().iter().zip(current.objects()).enumerate()
+        {
+            if old.scroll_offset != new.scroll_offset
+                && let (Some((horizontal, vertical)), Some(child)) =
+                    (new.scroll_offset, new.scroll_child)
+                && let Some(child_geometry) = geometry.region(child)
+            {
+                let scale = child_geometry.effective_scale() as f32;
+                self.mesh.set_transform_translation(
+                    UiRenderTransform::ScrollFrame(object_index),
+                    [-(horizontal as f32) * scale, vertical as f32 * scale],
+                );
+            }
+            let (Some(old_slider), Some(new_slider)) = (old.slider, new.slider) else {
+                continue;
+            };
+            if old_slider.value == new_slider.value {
+                continue;
+            }
+            let Some(thumb_index) = current.objects().iter().position(|candidate| {
+                candidate.parent == Some(object_index)
+                    && candidate.role == UiObjectRole::ThumbTexture
+                    && current.anchors_for(candidate).is_empty()
+            }) else {
+                continue;
+            };
+            let (Some(track), Some(thumb)) =
+                (geometry.region(object_index), geometry.region(thumb_index))
+            else {
+                continue;
+            };
+            let old_fraction =
+                slider_fraction(old_slider.minimum, old_slider.maximum, old_slider.value);
+            let new_fraction =
+                slider_fraction(new_slider.minimum, new_slider.maximum, new_slider.value);
+            let fraction_delta = (new_fraction - old_fraction) as f32;
+            let track = track.presentation_bounds();
+            let thumb = thumb.presentation_bounds();
+            let delta = if new_slider.vertical {
+                [
+                    0.0,
+                    -fraction_delta * (track.height() - thumb.height()).max(0.0) as f32,
+                ]
+            } else {
+                [
+                    fraction_delta * (track.width() - thumb.width()).max(0.0) as f32,
+                    0.0,
+                ]
+            };
+            self.mesh
+                .translate_transform(UiRenderTransform::Slider(object_index), delta);
+            geometry.translate_region(thumb_index, delta);
+            presentation.translate_object(thumb_index, delta);
+        }
+    }
+}
+
+fn slider_fraction(minimum: f64, maximum: f64, value: f64) -> f64 {
+    if maximum > minimum {
+        ((value - minimum) / (maximum - minimum)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 /// Converts one already clipped coverage glyph into a sampled UI quad.
-fn render_glyph_quad(atlas_identity: u64, glyph: UiGlyphQuad) -> UiRenderQuad {
+fn render_glyph_quad(
+    atlas_identity: u64,
+    glyph: &UiGlyphQuad,
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: &UiScrollFramePlan,
+) -> Option<UiRenderQuad> {
     let color = glyph.color();
-    UiRenderQuad::new(
+    let quad = UiRenderQuad::new(
         glyph.object_index(),
         UiRenderSource::GlyphAtlas(atlas_identity),
         UiRenderBlend::Alpha,
@@ -127,7 +201,8 @@ fn render_glyph_quad(atlas_identity: u64, glyph: UiGlyphQuad) -> UiRenderQuad {
         glyph.bounds(),
         glyph.texture_coordinates(),
         [color; 4],
-    )
+    );
+    attach_scroll_transform(quad, glyph.clip_object(), geometry, scroll_frames)
 }
 
 /// Converts one live texture region without disturbing its established order.
@@ -152,38 +227,46 @@ fn render_quad_with_scroll(
     geometry: &UiRegionGeometryPlan,
     scroll_frames: &UiScrollFramePlan,
 ) -> Option<UiRenderQuad> {
-    let Some(clip_object) = texture.clip_object() else {
-        return Some(render_quad(texture));
+    let quad = render_quad(texture);
+    if let Some(clip_object) = texture.clip_object() {
+        return attach_scroll_transform(quad, Some(clip_object), geometry, scroll_frames);
+    }
+    if let Some(slider) = texture.slider_object() {
+        return Some(quad.with_transform(UiRenderTransform::Slider(slider), [0.0, 0.0], None));
+    }
+    Some(quad)
+}
+
+/// Attaches a fixed viewport and current translation to immutable child geometry.
+fn attach_scroll_transform(
+    quad: UiRenderQuad,
+    clip_object: Option<usize>,
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: &UiScrollFramePlan,
+) -> Option<UiRenderQuad> {
+    let Some(clip_object) = clip_object else {
+        return Some(quad);
     };
-    let scroll = scroll_frames.state(clip_object)?;
-    let child = scroll.child()?;
-    let child_scale = geometry.region(child)?.effective_scale() as f32;
+    let Some(scroll) = scroll_frames.state(clip_object) else {
+        // EditBox text uses its own region as a CPU clip and does not carry a
+        // ScrollFrame transform slot.
+        return Some(quad);
+    };
+    let child_scale = geometry.region(scroll.child()?)?.effective_scale() as f32;
     let viewport = geometry.region(clip_object)?.presentation_bounds();
     let (horizontal, vertical) = scroll.offset();
-    let bounds = texture.bounds();
-    let shifted = [
-        bounds.left() as f32 - horizontal as f32 * child_scale,
-        bounds.bottom() as f32 + vertical as f32 * child_scale,
-        bounds.right() as f32 - horizontal as f32 * child_scale,
-        bounds.top() as f32 + vertical as f32 * child_scale,
-    ];
-    let coordinates = texture_coordinates(texture.tex_coords());
-    let clipped = clip_textured_quad(
-        shifted,
-        coordinates,
-        texture.vertex_colors(),
+    Some(quad.with_transform(
+        UiRenderTransform::ScrollFrame(clip_object),
         [
+            -(horizontal as f32) * child_scale,
+            vertical as f32 * child_scale,
+        ],
+        Some([
             viewport.left() as f32,
             viewport.bottom() as f32,
             viewport.right() as f32,
             viewport.top() as f32,
-        ],
-    )?;
-    Some(render_quad_parts(
-        texture,
-        clipped.bounds,
-        clipped.coordinates,
-        clipped.colors,
+        ]),
     ))
 }
 
@@ -237,65 +320,6 @@ fn texture_coordinates(coordinates: [f32; 8]) -> [[f32; 2]; 4] {
         [coordinates[4], coordinates[5]],
         [coordinates[6], coordinates[7]],
     ]
-}
-
-/// Crops one translated quad and all interpolated attributes to a viewport.
-fn clip_textured_quad(
-    bounds: [f32; 4],
-    coordinates: [[f32; 2]; 4],
-    colors: [[f32; 4]; 4],
-    viewport: [f32; 4],
-) -> Option<ClippedTexturedQuad> {
-    let [left, bottom, right, top] = bounds;
-    let width = right - left;
-    let height = top - bottom;
-    if width <= 0.0 || height <= 0.0 {
-        return None;
-    }
-    let clipped = [
-        left.max(viewport[0]),
-        bottom.max(viewport[1]),
-        right.min(viewport[2]),
-        top.min(viewport[3]),
-    ];
-    if clipped[0] >= clipped[2] || clipped[1] >= clipped[3] {
-        // Keep the source quad's material packet and mesh slot stable while it
-        // is outside the viewport. A zero-area quad emits no fragments but
-        // prevents scrolling from rebuilding pipelines and texture sets.
-        let x = left.clamp(viewport[0], viewport[2]);
-        let y = bottom.clamp(viewport[1], viewport[3]);
-        let sample_x = ((x - left) / width).clamp(0.0, 1.0);
-        let sample_y = ((top - y) / height).clamp(0.0, 1.0);
-        return Some(ClippedTexturedQuad {
-            bounds: [x, y, x, y],
-            coordinates: [interpolate_quad(coordinates, sample_x, sample_y); 4],
-            colors: [interpolate_quad(colors, sample_x, sample_y); 4],
-        });
-    }
-    let left_fraction = (clipped[0] - left) / width;
-    let right_fraction = (clipped[2] - left) / width;
-    let top_fraction = (top - clipped[3]) / height;
-    let bottom_fraction = (top - clipped[1]) / height;
-    let samples = [
-        [left_fraction, top_fraction],
-        [left_fraction, bottom_fraction],
-        [right_fraction, top_fraction],
-        [right_fraction, bottom_fraction],
-    ];
-    Some(ClippedTexturedQuad {
-        bounds: clipped,
-        coordinates: samples.map(|[x, y]| interpolate_quad(coordinates, x, y)),
-        colors: samples.map(|[x, y]| interpolate_quad(colors, x, y)),
-    })
-}
-
-/// Bilinearly samples attributes stored as upper-left through lower-right.
-fn interpolate_quad<const N: usize>(corners: [[f32; N]; 4], x: f32, y: f32) -> [f32; N] {
-    std::array::from_fn(|component| {
-        let top = corners[0][component] + (corners[2][component] - corners[0][component]) * x;
-        let bottom = corners[1][component] + (corners[3][component] - corners[1][component]) * x;
-        top + (bottom - top) * y
-    })
 }
 
 /// Maps each independently authored tiling flag onto Vulkan sampler vocabulary.

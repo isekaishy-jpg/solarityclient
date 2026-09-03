@@ -26,6 +26,7 @@ const GLYPH_PADDING: u32 = 1;
 pub struct UiGlyphQuad {
     packet_key: Option<UiPresentationPacketKey>,
     object_index: usize,
+    clip_object: Option<usize>,
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
@@ -34,6 +35,10 @@ pub struct UiGlyphQuad {
 impl UiGlyphQuad {
     pub(crate) const fn packet_key(&self) -> Option<UiPresentationPacketKey> {
         self.packet_key
+    }
+
+    pub(crate) const fn clip_object(&self) -> Option<usize> {
+        self.clip_object
     }
 
     /// Returns the owning static UI object index.
@@ -569,6 +574,32 @@ impl UiGlyphAtlasPlan {
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<UiGlyphQuad> {
         self.resolve_quads(geometry, Some(scroll_frames))
+    }
+
+    /// Resolves the complete immutable glyph mesh before GPU scroll translation.
+    ///
+    /// Rectangular ScrollFrame clipping is draw state, so every document line
+    /// remains resident and scrolling never has to regenerate glyph vertices.
+    pub(crate) fn retained_scroll_quads(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+    ) -> Vec<UiGlyphQuad> {
+        self.html_quads
+            .iter()
+            .chain(&self.live_quads)
+            .filter_map(|quad| {
+                if quad
+                    .clip_object
+                    .and_then(|clip| scroll_frames.state(clip))
+                    .is_some()
+                {
+                    resolve_quad_unclipped(quad, geometry, None)
+                } else {
+                    resolve_quad(quad, geometry, None)
+                }
+            })
+            .collect()
     }
 
     fn resolve_quads(
@@ -1546,6 +1577,15 @@ fn resolve_quad(
     geometry: &UiRegionGeometryPlan,
     scroll_frames: Option<&UiScrollFramePlan>,
 ) -> Option<UiGlyphQuad> {
+    let resolved = resolve_quad_unclipped(quad, geometry, scroll_frames)?;
+    clip_quad(resolved, quad.clip_object, geometry)
+}
+
+fn resolve_quad_unclipped(
+    quad: &LocalGlyphQuad,
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: Option<&UiScrollFramePlan>,
+) -> Option<UiGlyphQuad> {
     let region = geometry.region(quad.object_index)?;
     if !region.effectively_shown() || region.effective_alpha() <= 0.0 {
         return None;
@@ -1562,6 +1602,7 @@ fn resolve_quad(
     let resolved = UiGlyphQuad {
         packet_key: quad.packet_key,
         object_index: quad.object_index,
+        clip_object: quad.clip_object,
         bounds: [
             (owner.left() + (f64::from(left) - scroll.0) * scale) as f32,
             (owner.top() + (f64::from(bottom) + scroll.1) * scale) as f32,
@@ -1571,7 +1612,7 @@ fn resolve_quad(
         texture_coordinates: quad.texture_coordinates,
         color,
     };
-    clip_quad(resolved, quad.clip_object, geometry)
+    Some(resolved)
 }
 
 /// Clips a glyph to its scroll viewport and retains texel-to-edge alignment.

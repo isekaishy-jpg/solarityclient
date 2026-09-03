@@ -29,6 +29,15 @@ pub enum UiTextureResidency {
     NonBlocking,
 }
 
+/// Retained draw-state slot whose motion does not modify immutable UI vertices.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UiRenderTransform {
+    /// The assigned ScrollFrame child moves beneath a fixed rectangular clip.
+    ScrollFrame(usize),
+    /// A native unanchored Slider thumb moves along its fixed track.
+    Slider(usize),
+}
+
 /// A UI batch either samples one archive BLP or uses vertex color alone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UiRenderSource {
@@ -53,6 +62,9 @@ pub struct UiRenderQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     colors: [[f32; 4]; 4],
+    transform: Option<UiRenderTransform>,
+    translation: [f32; 2],
+    clip: Option<[f32; 4]>,
 }
 
 impl UiRenderQuad {
@@ -82,7 +94,24 @@ impl UiRenderQuad {
             bounds,
             texture_coordinates,
             colors,
+            transform: None,
+            translation: [0.0, 0.0],
+            clip: None,
         }
+    }
+
+    /// Assigns immutable geometry to one small retained transform/scissor slot.
+    #[must_use]
+    pub const fn with_transform(
+        mut self,
+        transform: UiRenderTransform,
+        translation: [f32; 2],
+        clip: Option<[f32; 4]>,
+    ) -> Self {
+        self.transform = Some(transform);
+        self.translation = translation;
+        self.clip = clip;
+        self
     }
 
     /// Returns the live UI object-arena identity.
@@ -131,6 +160,18 @@ impl UiRenderQuad {
 
     pub(super) const fn desaturated(&self) -> bool {
         self.desaturated
+    }
+
+    pub(super) const fn transform(&self) -> Option<UiRenderTransform> {
+        self.transform
+    }
+
+    pub(super) const fn translation(&self) -> [f32; 2] {
+        self.translation
+    }
+
+    pub(super) const fn clip(&self) -> Option<[f32; 4]> {
+        self.clip
     }
 }
 
@@ -190,7 +231,7 @@ impl UiRenderVertex {
 }
 
 /// One maximal adjacent run sharing sampled-image and fixed material state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderBatch {
     source: UiRenderSource,
     blend: UiRenderBlend,
@@ -202,6 +243,9 @@ pub struct UiRenderBatch {
     index_count: u32,
     first_quad: u32,
     quad_count: u32,
+    transform: Option<UiRenderTransform>,
+    translation: [f32; 2],
+    clip: Option<[f32; 4]>,
 }
 
 impl UiRenderBatch {
@@ -217,6 +261,9 @@ impl UiRenderBatch {
             index_count: 6,
             first_quad,
             quad_count: 1,
+            transform: quad.transform(),
+            translation: quad.translation(),
+            clip: quad.clip(),
         }
     }
 
@@ -227,6 +274,9 @@ impl UiRenderBatch {
             && self.vertical_address == quad.vertical_address()
             && self.residency == quad.residency()
             && self.desaturated == quad.desaturated()
+            && self.transform == quad.transform()
+            && self.translation == quad.translation()
+            && self.clip == quad.clip()
     }
 
     pub(super) fn append_quad(&mut self) {
@@ -292,5 +342,27 @@ impl UiRenderBatch {
     #[must_use]
     pub const fn quad_count(&self) -> u32 {
         self.quad_count
+    }
+
+    /// Returns the retained state slot controlling this batch.
+    #[must_use]
+    pub const fn transform(&self) -> Option<UiRenderTransform> {
+        self.transform
+    }
+
+    /// Returns the logical translation applied by the vertex shader.
+    #[must_use]
+    pub const fn translation(&self) -> [f32; 2] {
+        self.translation
+    }
+
+    /// Returns an optional bottom-left-origin logical scissor rectangle.
+    #[must_use]
+    pub const fn clip(&self) -> Option<[f32; 4]> {
+        self.clip
+    }
+
+    pub(super) fn set_translation(&mut self, translation: [f32; 2]) {
+        self.translation = translation;
     }
 }

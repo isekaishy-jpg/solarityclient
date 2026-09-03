@@ -29,9 +29,9 @@ impl RuntimeUiFrame {
         Self::prepare_source(renderer, glue, cache)
     }
 
-    /// Refreshes one live Glue generation in place when only vertex/index
-    /// content changed. Texture or material topology changes still take the
-    /// complete preparation path.
+    /// Refreshes one live Glue generation in place. Retained scroll state only
+    /// changes draw push constants/scissors; geometry or material changes use
+    /// the compatible replacement or complete preparation paths.
     pub(super) fn refresh_glue(
         &mut self,
         renderer: &mut VulkanRenderer,
