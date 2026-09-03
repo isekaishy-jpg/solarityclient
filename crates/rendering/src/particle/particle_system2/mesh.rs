@@ -302,6 +302,54 @@ impl M2ParticleMeshPlan {
         )
     }
 
+    /// Appends transformed geometry directly to retained frame storage.
+    ///
+    /// Indices remain local to this emitter because the prepared Vulkan draw
+    /// supplies the returned vertex start as its signed base-vertex offset.
+    /// Both destinations are restored to their original lengths when
+    /// preparation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare_transformed_with_particle_color`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_transformed_with_particle_color(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        inherited_scale: f32,
+        alpha_multiplier: f32,
+        twinkle_table: &M2ParticleTwinkleTable,
+        replacement: Option<&M2ParticleColorReplacement>,
+        vertices: &mut Vec<M2ParticleRenderVertex>,
+        indices: &mut Vec<u32>,
+    ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
+        let first_vertex = vertices.len();
+        let first_index = indices.len();
+        match Self::append_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            particle_to_world,
+            inherited_scale,
+            alpha_multiplier,
+            Some(twinkle_table),
+            replacement,
+            vertices,
+            indices,
+        ) {
+            Ok(counts) => Ok(counts),
+            Err(error) => {
+                vertices.truncate(first_vertex);
+                indices.truncate(first_index);
+                Err(error)
+            }
+        }
+    }
+
     /// Shared ordinary preparation with an optional explicit twinkle owner.
     #[allow(clippy::too_many_arguments)]
     fn prepare_internal(
@@ -315,6 +363,39 @@ impl M2ParticleMeshPlan {
         twinkle_table: Option<&M2ParticleTwinkleTable>,
         replacement: Option<&M2ParticleColorReplacement>,
     ) -> Result<Self, M2ParticleMeshPlanError> {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        Self::append_internal(
+            emitter,
+            pose,
+            particles,
+            camera,
+            particle_to_world,
+            inherited_scale,
+            alpha_multiplier,
+            twinkle_table,
+            replacement,
+            &mut vertices,
+            &mut indices,
+        )?;
+        Ok(Self { vertices, indices })
+    }
+
+    /// Shared ordinary preparation into caller-owned storage.
+    #[allow(clippy::too_many_arguments)]
+    fn append_internal(
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        particles: &[M2ParticleState],
+        camera: WorldCameraFrame,
+        particle_to_world: glam::Mat4,
+        inherited_scale: f32,
+        alpha_multiplier: f32,
+        twinkle_table: Option<&M2ParticleTwinkleTable>,
+        replacement: Option<&M2ParticleColorReplacement>,
+        vertices: &mut Vec<M2ParticleRenderVertex>,
+        indices: &mut Vec<u32>,
+    ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
         }
@@ -375,12 +456,12 @@ impl M2ParticleMeshPlan {
             1.0
         };
 
+        let first_vertex = vertices.len();
+        let first_index = indices.len();
         let (vertex_count, index_count) = Self::buffer_capacity(emitter, particles.len())?;
-        let mut vertices = Vec::new();
         vertices
             .try_reserve_exact(vertex_count)
             .map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
-        let mut indices = Vec::new();
         indices
             .try_reserve_exact(index_count)
             .map_err(|_source| M2ParticleMeshPlanError::IndexCount)?;
@@ -468,8 +549,9 @@ impl M2ParticleMeshPlan {
                     }
                 };
                 push_quad(
-                    &mut vertices,
-                    &mut indices,
+                    vertices,
+                    indices,
+                    first_vertex,
                     positions,
                     normal,
                     color,
@@ -519,8 +601,9 @@ impl M2ParticleMeshPlan {
                     )
                 };
                 push_quad(
-                    &mut vertices,
-                    &mut indices,
+                    vertices,
+                    indices,
+                    first_vertex,
                     positions,
                     normal,
                     color,
@@ -530,7 +613,7 @@ impl M2ParticleMeshPlan {
                 )?;
             }
         }
-        Ok(Self { vertices, indices })
+        Ok((vertices.len() - first_vertex, indices.len() - first_index))
     }
 
     /// Returns ordinary billboard vertices in live-particle storage order.
@@ -648,6 +731,7 @@ fn velocity_aligned_billboard_positions(
 fn push_quad(
     vertices: &mut Vec<M2ParticleRenderVertex>,
     indices: &mut Vec<u32>,
+    first_vertex: usize,
     positions: [Vec3; 4],
     normal: Vec3,
     color: Vec4,
@@ -656,8 +740,8 @@ fn push_quad(
     cell_size: Vec2,
 ) -> Result<(), M2ParticleMeshPlanError> {
     let cell_origin = Vec2::new((cell & (columns - 1)) as f32, (cell / columns) as f32) * cell_size;
-    let base_vertex =
-        u32::try_from(vertices.len()).map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
+    let base_vertex = u32::try_from(vertices.len() - first_vertex)
+        .map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
     let color_bgra = pack_bgra(color.to_array());
     for (position, coordinate) in positions.into_iter().zip(CELL_COORDINATES) {
         vertices.push(M2ParticleRenderVertex {

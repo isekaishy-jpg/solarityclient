@@ -6,7 +6,7 @@ use crate::device::vulkan_m2_particle_pipeline::{
     M2ParticlePipelineHandle, M2ParticlePipelineRegistry,
 };
 use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
-use crate::{M2EffectOrder, M2MaterialState, M2ParticleMeshPlan};
+use crate::{M2EffectOrder, M2MaterialState};
 
 /// Renderer-local resources and indexed ranges for one particle emitter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,7 +91,8 @@ pub(in crate::device) fn prepare_draw(
     order: M2EffectOrder,
     first_vertex: u32,
     first_index: u32,
-    mesh: &M2ParticleMeshPlan,
+    vertex_count: usize,
+    index_count: usize,
 ) -> Result<M2ParticlePreparedDraw, VulkanError> {
     let pipeline_info = pipelines
         .info(pipeline)
@@ -105,15 +106,15 @@ pub(in crate::device) fn prepare_draw(
     if texture_info.stage_count() != 1 {
         return Err(VulkanError::M2ParticleDrawTextureSetMismatch);
     }
-    let vertex_count = u32::try_from(mesh.vertices().len())
-        .map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
+    let vertex_count =
+        u32::try_from(vertex_count).map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
     first_vertex
         .checked_add(vertex_count)
         .ok_or(VulkanError::M2ParticleDrawVertexRange)?;
     let vertex_offset =
         i32::try_from(first_vertex).map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
-    let index_count = u32::try_from(mesh.indices().len())
-        .map_err(|_source| VulkanError::M2ParticleDrawIndexRange)?;
+    let index_count =
+        u32::try_from(index_count).map_err(|_source| VulkanError::M2ParticleDrawIndexRange)?;
     first_index
         .checked_add(index_count)
         .ok_or(VulkanError::M2ParticleDrawIndexRange)?;

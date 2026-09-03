@@ -983,6 +983,25 @@ fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Err
         Some(&replacement),
     )?;
     assert_eq!(mesh.vertices()[0].color_bgra(), [0, 128, 128, 191]);
+    let mut retained_vertices = vec![mesh.vertices()[0]];
+    let mut retained_indices = vec![u32::MAX];
+    let counts = M2ParticleMeshPlan::append_transformed_with_particle_color(
+        emitter,
+        emitter_pose,
+        &[particle],
+        camera,
+        Mat4::IDENTITY,
+        1.0,
+        1.0,
+        &twinkle,
+        Some(&replacement),
+        &mut retained_vertices,
+        &mut retained_indices,
+    )?;
+    assert_eq!(counts, (mesh.vertices().len(), mesh.indices().len()));
+    assert_eq!(&retained_vertices[1..], mesh.vertices());
+    assert_eq!(&retained_indices[1..], mesh.indices());
+    assert_eq!(retained_indices[0], u32::MAX);
     Ok(())
 }
 

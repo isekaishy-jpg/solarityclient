@@ -2142,30 +2142,33 @@ impl M2Frame {
                 };
                 let inherited_scale =
                     emitter_transform.x_axis.truncate().length() * particle_view_scale;
-                let mesh = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
-                    emitter,
-                    pose,
-                    simulation.particles(),
-                    camera,
-                    particle_to_world,
-                    inherited_scale,
-                    placement_color(placement.color).w * placement.opacity,
-                    &self.particle_twinkle,
-                    placement.particle_colors.as_ref(),
-                )?;
                 let first_vertex =
                     u32::try_from(self.particle_vertices.len()).map_err(|_source| {
                         solarity_rendering::VulkanError::M2ParticleDrawVertexRange
                     })?;
                 let first_index = u32::try_from(self.particle_indices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                let (vertex_count, index_count) =
+                    M2ParticleMeshPlan::append_transformed_with_particle_color(
+                        emitter,
+                        pose,
+                        simulation.particles(),
+                        camera,
+                        particle_to_world,
+                        inherited_scale,
+                        placement_color(placement.color).w * placement.opacity,
+                        &self.particle_twinkle,
+                        placement.particle_colors.as_ref(),
+                        &mut self.particle_vertices,
+                        &mut self.particle_indices,
+                    )?;
                 let effect_order = u32::try_from(
                     self.particle_draws.len() + self.ribbon_draws.len(),
                 )
                 .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
                 self.particle_draws.push(
                     renderer
-                        .prepare_m2_particle_draw(
+                        .prepare_m2_particle_draw_range(
                             resources.pipeline,
                             resources.texture_set,
                             emitter.blending_type(),
@@ -2173,18 +2176,17 @@ impl M2Frame {
                             M2EffectOrder::new(emitter.priority_plane(), effect_order),
                             first_vertex,
                             first_index,
-                            &mesh,
+                            vertex_count,
+                            index_count,
                         )?
                         .with_light_bank(light_bank),
                 );
-                self.particle_vertices.extend_from_slice(mesh.vertices());
-                self.particle_indices.extend_from_slice(mesh.indices());
                 tracing::trace!(
                     model = %source.model.path(),
                     particle_index,
                     live_count = simulation.particles().len(),
-                    vertex_count = mesh.vertices().len(),
-                    index_count = mesh.indices().len(),
+                    vertex_count,
+                    index_count,
                     "placement-local particles entered unified world frame"
                 );
             }

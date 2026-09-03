@@ -1445,6 +1445,38 @@ impl VulkanRenderer {
         first_index: u32,
         mesh: &M2ParticleMeshPlan,
     ) -> Result<M2ParticlePreparedDraw, VulkanError> {
+        self.prepare_m2_particle_draw_range(
+            pipeline,
+            texture_set,
+            blending_type,
+            particle_flags,
+            order,
+            first_vertex,
+            first_index,
+            mesh.vertices().len(),
+            mesh.indices().len(),
+        )
+    }
+
+    /// Joins one range in retained particle storage to compatible GPU resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same conditions as
+    /// [`Self::prepare_m2_particle_draw`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_m2_particle_draw_range(
+        &self,
+        pipeline: M2ParticlePipelineHandle,
+        texture_set: M2TextureSetHandle,
+        blending_type: u8,
+        particle_flags: u32,
+        order: M2EffectOrder,
+        first_vertex: u32,
+        first_index: u32,
+        vertex_count: usize,
+        index_count: usize,
+    ) -> Result<M2ParticlePreparedDraw, VulkanError> {
         prepare_particle_draw(
             &self.m2_particle_pipelines,
             &self.m2_texture_sets,
@@ -1455,7 +1487,8 @@ impl VulkanRenderer {
             order,
             first_vertex,
             first_index,
-            mesh,
+            vertex_count,
+            index_count,
         )
     }
 
