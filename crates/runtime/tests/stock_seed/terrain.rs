@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::io::Cursor;
+use std::num::NonZeroUsize;
 
 use glam::Vec3;
 use solarity_asset::{
@@ -11,6 +12,7 @@ use solarity_asset::{
     ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog, ParticleColorCatalog,
     TerrainTileIndex,
 };
+use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_rendering::{
     CharacterComponentTextureLevel, WorldCamera, WorldFrustum, WorldScreenWindow,
@@ -58,7 +60,9 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
-    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
+    let worker_catalog = catalog.clone();
+    let mut store = AssetStore::mount(catalog)?;
     let maps = MapCatalog::load(&mut store)?;
     let animations = AnimationDataCatalog::load(&mut store)?;
     let creatures = CreatureCatalog::load(&mut store)?;
@@ -85,7 +89,8 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
             particle_colors,
         ),
     );
-    let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
+    let mut terrain =
+        RuntimeTerrainCoordinator::new(assets, maps).with_worker_catalog(worker_catalog);
     let player_position = Vec3::new(1_000.0, 5_800.0, 250.0);
     let world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(571),
@@ -188,6 +193,32 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     .frame(1.0)?;
     let visible = terrain.visible_chunks(WorldFrustum::new(frame, WorldScreenWindow::FULL)?)?;
     assert!(!visible.is_empty());
+
+    terrain.disconnect();
+    let cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    assert_eq!(
+        terrain.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTerrainPoll::Pending { map_id: 571 }
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match terrain.synchronize_async(Some(&world), &cpu)? {
+            RuntimeTerrainPoll::Pending { .. } if std::time::Instant::now() < deadline => {
+                std::thread::yield_now();
+            }
+            RuntimeTerrainPoll::Pending { .. } => return Err("terrain worker timed out".into()),
+            RuntimeTerrainPoll::TileLoaded {
+                map_id: 571,
+                tile: loaded_tile,
+            } if loaded_tile == tile => break,
+            poll => return Err(format!("unexpected terrain worker result: {poll:?}").into()),
+        }
+    }
+    assert_eq!(terrain.resident_tile().map(|tile| tile.index()), Some(tile));
+    assert_eq!(
+        terrain.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTerrainPoll::Current { map_id: 571, tile }
+    );
 
     assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
     assert_eq!(player.synchronize(None)?, RuntimePlayerPoll::Idle);

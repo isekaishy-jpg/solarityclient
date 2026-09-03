@@ -1,10 +1,11 @@
-//! Main-thread terrain map, tile residency, and explicit frustum selection.
+//! Worker-prepared terrain residency and main-thread scene queries.
 
 use solarity_asset::{
-    AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
-    DecodedTerrainTile, M2ModelCache, MapCatalog, TerrainDoodadPlacement, TerrainMap,
-    TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
+    ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
+    DecodedTerrainTile, M2ModelCache, MapCatalog, MapDefinition, TerrainDoodadPlacement,
+    TerrainMap, TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
 };
+use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
     TerrainChunkDrawPlan, TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldCameraError,
@@ -32,6 +33,9 @@ use world_model_residency::{
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainError {
+    /// The bounded CPU executor rejected or lost terrain preparation work.
+    #[error(transparent)]
+    Cpu(#[from] CpuError),
     /// A required client asset or table failed strict decoding.
     #[error(transparent)]
     Asset(#[from] AssetError),
@@ -80,6 +84,9 @@ pub enum RuntimeTerrainError {
         /// MDDF unique identifier shared across nearby chunks and ADTs.
         unique_id: u32,
     },
+    /// Production terrain synchronization lacks its independently mounted worker archive stack.
+    #[error("terrain CPU worker archive catalog is unavailable")]
+    MissingWorkerCatalog,
     /// The server selected a map absent from the mounted build's `Map.dbc`.
     #[error("active world references unknown client map {map_id}")]
     UnknownMap {
@@ -134,6 +141,11 @@ pub enum RuntimeCameraError {
 pub enum RuntimeTerrainPoll {
     /// No active world exists and no terrain is resident.
     Idle,
+    /// The requested WDT/ADT generation is still being prepared off thread.
+    Pending {
+        /// Active client map identifier.
+        map_id: u32,
+    },
     /// The WDT-level WMO and its nested doodads became resident.
     GlobalWorldModelLoaded {
         /// Active client map identifier.
@@ -168,6 +180,10 @@ pub struct RuntimeTerrainCoordinator {
     models: M2ModelCache,
     world_models: WmoModelCache,
     active: Option<ResidentTerrainMap>,
+    worker_catalog: Option<ArchiveCatalog>,
+    worker: Option<TerrainWorkerState>,
+    pending: Option<PendingTerrainGeneration>,
+    failed_request: Option<TerrainRequest>,
 }
 
 impl RuntimeTerrainCoordinator {
@@ -181,7 +197,165 @@ impl RuntimeTerrainCoordinator {
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
             active: None,
+            worker_catalog: None,
+            worker: None,
+            pending: None,
+            failed_request: None,
         }
+    }
+
+    /// Supplies the archive catalog used by bounded worker-side terrain preparation.
+    #[must_use]
+    pub fn with_worker_catalog(mut self, catalog: ArchiveCatalog) -> Self {
+        self.worker_catalog = Some(catalog);
+        self
+    }
+
+    /// Polls complete WDT/ADT and dependency preparation on the bounded CPU pool.
+    ///
+    /// The currently resident generation stays available while a replacement is
+    /// decoded. Only publishing the completed immutable generation into Vulkan
+    /// remains on the presentation thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeTerrainError`] when worker admission, archive access,
+    /// decoding, or dependency preparation fails.
+    pub fn synchronize_async(
+        &mut self,
+        world: Option<&ActiveWorld>,
+        cpu: &CpuExecutor,
+    ) -> Result<RuntimeTerrainPoll, RuntimeTerrainError> {
+        let Some(world) = world else {
+            self.active = None;
+            self.failed_request = None;
+            self.collect_main_thread_caches();
+            self.recover_finished_stale_worker()?;
+            return Ok(RuntimeTerrainPoll::Idle);
+        };
+        let map_id = world.map_id().value();
+        let position = world.local_player_transform()?.position();
+        let request = TerrainRequest {
+            map_id,
+            tile: TerrainMap::tile_at_world_position(position.x, position.y),
+        };
+
+        if let Some(active) = self.active.as_ref()
+            && active.map_id() == map_id
+        {
+            if active.global_world_model.is_some() {
+                self.recover_finished_stale_worker()?;
+                return Ok(RuntimeTerrainPoll::GlobalWorldModelCurrent { map_id });
+            }
+            if active.tile.as_ref().map(ResidentTerrainTile::index) == Some(request.tile) {
+                self.recover_finished_stale_worker()?;
+                return Ok(RuntimeTerrainPoll::Current {
+                    map_id,
+                    tile: request.tile,
+                });
+            }
+        }
+
+        if let Some(pending) = self.pending.as_ref()
+            && pending.request == request
+            && !pending.task.is_finished()
+        {
+            return Ok(RuntimeTerrainPoll::Pending { map_id });
+        }
+        if let Some(pending) = self.pending.as_ref()
+            && !pending.task.is_finished()
+        {
+            return Ok(RuntimeTerrainPoll::Pending { map_id });
+        }
+        if let Some(pending) = self.pending.take() {
+            let pending_request = pending.request;
+            let completion = pending.task.join()?;
+            if let Some(worker) = completion.worker {
+                self.worker = Some(worker);
+            }
+            if pending_request == request {
+                match completion.result {
+                    Ok(active) => {
+                        let global_world_model = active.global_world_model.is_some();
+                        self.active = Some(active);
+                        self.failed_request = None;
+                        self.collect_main_thread_caches();
+                        tracing::info!(
+                            map_id,
+                            tile_x = request.tile.x(),
+                            tile_y = request.tile.y(),
+                            residency_wait_ms =
+                                pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
+                            "published worker-prepared terrain generation"
+                        );
+                        return Ok(if global_world_model {
+                            RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id }
+                        } else {
+                            RuntimeTerrainPoll::TileLoaded {
+                                map_id,
+                                tile: request.tile,
+                            }
+                        });
+                    }
+                    Err(source) => {
+                        self.failed_request = Some(request);
+                        return Err(source);
+                    }
+                }
+            }
+        }
+        if self.failed_request == Some(request) {
+            return Ok(RuntimeTerrainPoll::Pending { map_id });
+        }
+
+        let definition = self
+            .maps
+            .map(map_id)
+            .cloned()
+            .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
+        let source = if let Some(worker) = self.worker.take() {
+            TerrainWorkerSource::Ready(worker)
+        } else {
+            TerrainWorkerSource::Catalog(
+                self.worker_catalog
+                    .as_ref()
+                    .ok_or(RuntimeTerrainError::MissingWorkerCatalog)?
+                    .clone(),
+            )
+        };
+        let task =
+            cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
+        self.pending = Some(PendingTerrainGeneration {
+            request,
+            submitted_at: std::time::Instant::now(),
+            task,
+        });
+        Ok(RuntimeTerrainPoll::Pending { map_id })
+    }
+
+    fn collect_main_thread_caches(&mut self) {
+        self.textures.collect_unused();
+        self.models.collect_unused();
+        self.world_models.collect_unused();
+    }
+
+    fn recover_finished_stale_worker(&mut self) -> Result<(), RuntimeTerrainError> {
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|pending| !pending.task.is_finished())
+        {
+            return Ok(());
+        }
+        let pending = self
+            .pending
+            .take()
+            .ok_or(RuntimeTerrainError::MissingWorkerCatalog)?;
+        let completion = pending.task.join()?;
+        if let Some(worker) = completion.worker {
+            self.worker = Some(worker);
+        }
+        Ok(())
     }
 
     /// Synchronizes map and exact player-tile residency from authoritative ECS.
@@ -669,9 +843,123 @@ impl RuntimeTerrainCoordinator {
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
+        self.failed_request = None;
         self.textures.collect_unused();
         self.models.collect_unused();
         self.world_models.collect_unused();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TerrainRequest {
+    map_id: u32,
+    tile: TerrainTileIndex,
+}
+
+struct PendingTerrainGeneration {
+    request: TerrainRequest,
+    submitted_at: std::time::Instant,
+    task: CpuTask<TerrainWorkerCompletion>,
+}
+
+enum TerrainWorkerSource {
+    Catalog(ArchiveCatalog),
+    Ready(TerrainWorkerState),
+}
+
+struct TerrainWorkerState {
+    assets: AssetStore,
+    textures: BlpTextureCache,
+    models: M2ModelCache,
+    world_models: WmoModelCache,
+}
+
+impl TerrainWorkerState {
+    fn mount(catalog: ArchiveCatalog) -> Result<Self, RuntimeTerrainError> {
+        Ok(Self {
+            assets: AssetStore::mount(catalog)?,
+            textures: BlpTextureCache::new(),
+            models: M2ModelCache::new(),
+            world_models: WmoModelCache::new(),
+        })
+    }
+
+    fn prepare(
+        &mut self,
+        definition: &MapDefinition,
+        request: TerrainRequest,
+    ) -> Result<ResidentTerrainMap, RuntimeTerrainError> {
+        let terrain = TerrainMap::load(&mut self.assets, definition)?;
+        if let Some(placement) = terrain.global_world_model() {
+            let global_world_model = Some(ResidentGlobalWorldModel::prepare(
+                placement,
+                &mut self.textures,
+                &mut self.models,
+                &mut self.world_models,
+                &mut self.assets,
+            )?);
+            return Ok(ResidentTerrainMap {
+                terrain,
+                tile: None,
+                global_world_model,
+            });
+        }
+        if !terrain.tile(request.tile).exists() {
+            return Err(RuntimeTerrainError::MissingPlayerTile {
+                map_id: request.map_id,
+                tile_x: request.tile.x(),
+                tile_y: request.tile.y(),
+            });
+        }
+        let decoded = terrain.load_tile(&mut self.assets, request.tile)?;
+        let tile = Some(ResidentTerrainTile::prepare(
+            decoded,
+            &mut self.textures,
+            &mut self.models,
+            &mut self.world_models,
+            &mut self.assets,
+        )?);
+        Ok(ResidentTerrainMap {
+            terrain,
+            tile,
+            global_world_model: None,
+        })
+    }
+
+    fn collect_unused(&mut self) {
+        self.textures.collect_unused();
+        self.models.collect_unused();
+        self.world_models.collect_unused();
+    }
+}
+
+struct TerrainWorkerCompletion {
+    worker: Option<TerrainWorkerState>,
+    result: Result<ResidentTerrainMap, RuntimeTerrainError>,
+}
+
+fn prepare_terrain_on_worker(
+    source: TerrainWorkerSource,
+    definition: MapDefinition,
+    request: TerrainRequest,
+) -> TerrainWorkerCompletion {
+    let mut worker = match source {
+        TerrainWorkerSource::Catalog(catalog) => match TerrainWorkerState::mount(catalog) {
+            Ok(worker) => worker,
+            Err(source) => {
+                return TerrainWorkerCompletion {
+                    worker: None,
+                    result: Err(source),
+                };
+            }
+        },
+        TerrainWorkerSource::Ready(worker) => worker,
+    };
+    let result = worker.prepare(&definition, request);
+    worker.collect_unused();
+    TerrainWorkerCompletion {
+        worker: Some(worker),
+        result,
     }
 }
 

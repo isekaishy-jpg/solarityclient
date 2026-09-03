@@ -163,6 +163,7 @@ impl ClientServices {
         let archive_count = catalog.descriptors().len();
         let backdrop_catalog = catalog.clone();
         let player_catalog = catalog.clone();
+        let terrain_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
         let animations = AnimationDataCatalog::load(&mut assets)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
@@ -409,7 +410,8 @@ impl ClientServices {
                 )
                 .with_glue_worker_catalog(player_catalog),
                 transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays),
-                terrain: RuntimeTerrainCoordinator::new(assets, maps),
+                terrain: RuntimeTerrainCoordinator::new(assets, maps)
+                    .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
                 fps,
                 developer_console,
@@ -1525,6 +1527,13 @@ impl ClientServices {
         }
         self.service_loading_screen_prewarm()?;
         self.gameplay.service()?;
+        // Stock continues world/UI initialization while the loading card owns
+        // presentation. Start immutable terrain generation first so FrameXML,
+        // character, and transport preparation overlap its worker execution.
+        let terrain_poll = self
+            .terrain
+            .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        self.prepare_world_ui_if_ready()?;
         if let (Some(world_ui), Some(buttons)) =
             (self.world_ui.as_mut(), self.gameplay.action_buttons())
         {
@@ -1620,7 +1629,7 @@ impl ClientServices {
             }
             RuntimeTransportPoll::Current { .. } => {}
         }
-        match self.terrain.synchronize(self.gameplay.world())? {
+        match terrain_poll {
             RuntimeTerrainPoll::TileLoaded { tile, .. } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
                     RuntimeTerrainFrameError::MissingMeshPlan {
@@ -1720,6 +1729,7 @@ impl ClientServices {
                 self.sound.disconnect()?;
                 self.terrain_frame = None;
             }
+            RuntimeTerrainPoll::Pending { .. } => {}
             RuntimeTerrainPoll::Current { tile, .. } => {
                 if self.terrain_frame.as_ref().and_then(TerrainFrame::tile) != Some(tile) {
                     return Err(RuntimeTerrainFrameError::MissingGpuGeneration {
@@ -1739,7 +1749,6 @@ impl ClientServices {
                 }
             }
         }
-        self.prepare_world_ui_if_ready()?;
         self.synchronize_world_ui_zone()?;
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {
@@ -1755,19 +1764,18 @@ impl ClientServices {
         Ok(())
     }
 
-    /// Builds the independently retained FrameXML owner only after the loading
-    /// surface has presented and every synchronous world fact is authoritative.
+    /// Builds the independently retained FrameXML owner behind the loading card.
     fn prepare_world_ui_if_ready(&mut self) -> Result<(), ApplicationError> {
         if self.world_ui.is_some()
             || !self
                 .loading_screen
                 .as_ref()
                 .is_some_and(RuntimeLoadingScreen::has_presented)
-            || self.environment.current().is_none()
-            || self.player.resident_frame_input().is_none()
-            || self.terrain_frame.is_none()
-            || !self.transport.is_ready()
-            || self.gameplay.action_buttons().is_none()
+            || self
+                .gameplay
+                .action_buttons()
+                .and_then(|buttons| buttons.slots())
+                .is_none()
         {
             return Ok(());
         }
