@@ -49,9 +49,6 @@ const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 /// Initial `particleDensity` CVar registered by the stock UI environment.
 const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
 
-/// A larger gap is a presentation discontinuity rather than effect history.
-const STOCK_EFFECT_CLOCK_DISCONTINUITY_SECONDS: f32 = 2.0;
-
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 struct M2GpuSource {
     model: Arc<DecodedM2Model>,
@@ -71,6 +68,7 @@ struct M2GpuSource {
 /// clocks. The source is moved into the live frame when Glue first shows it.
 pub(in crate::application) struct M2GlueGpuSource {
     source: M2GpuSource,
+    animation_started_at: std::time::Instant,
 }
 
 /// Fixed renderer objects paired with one exact SKIN material batch.
@@ -762,6 +760,7 @@ impl M2Frame {
                 GlueM2Texture::StockFailure => M2ResolvedTexture::StockFailure,
             })
             .collect::<Vec<_>>();
+        let animation_started_at = std::time::Instant::now();
         let source = prepare_gpu_source_from_cpu(
             renderer,
             &model,
@@ -770,10 +769,13 @@ impl M2Frame {
             local_light_count,
             cpu_source,
         )?;
-        Ok(M2GlueGpuSource { source })
+        Ok(M2GlueGpuSource {
+            source,
+            animation_started_at,
+        })
     }
 
-    /// Activates a pre-uploaded Glue source and starts all of its local clocks.
+    /// Activates a pre-uploaded Glue source while retaining its preparation clock.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn activate_glue_gpu_source(
         gpu_source: M2GlueGpuSource,
@@ -786,7 +788,10 @@ impl M2Frame {
         if !model_scale.is_finite() || model_scale <= 0.0 {
             return Err(RuntimeTerrainFrameError::InvalidGlueM2Scale);
         }
-        let source = gpu_source.source;
+        let M2GlueGpuSource {
+            source,
+            animation_started_at,
+        } = gpu_source;
         let model = Arc::clone(&source.model);
         let playback = M2Playback::new(&model, animation_id, random)?;
         let particles = model
@@ -822,7 +827,7 @@ impl M2Frame {
                 ribbons,
             }],
             particle_twinkle,
-            animation_started_at: std::time::Instant::now(),
+            animation_started_at,
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             transparent_draws: Vec::new(),
@@ -1572,28 +1577,15 @@ impl M2Frame {
         self.triggered_events.clear();
         self.mount_camera_sample = None;
         self.glue_directional_lights.clear();
-        let elapsed_effect_seconds = self.last_effect_time_ms.map_or(0.0, |previous| {
-            (animation_time_ms - previous).max(0.0) * 0.001
-        });
+        // Stock model instances initialize their effect timestamp to zero, so
+        // the first render receives the elapsed local scene clock. The emitter
+        // update itself caps that history to one lifetime.
+        let elapsed_effect_seconds = self.last_effect_time_ms.map_or_else(
+            || animation_time_ms.max(0.0) * 0.001,
+            |previous| (animation_time_ms - previous).max(0.0) * 0.001,
+        );
         self.last_effect_time_ms = Some(animation_time_ms);
-        let effect_clock_discontinuity =
-            elapsed_effect_seconds > STOCK_EFFECT_CLOCK_DISCONTINUITY_SECONDS;
-        let effect_delta_seconds = if effect_clock_discontinuity {
-            // Stock repopulates only one bounded current-pose tick after a
-            // suspended presentation instead of replaying the entire gap.
-            0.1
-        } else {
-            elapsed_effect_seconds
-        };
-        if effect_clock_discontinuity {
-            for placement in &mut self.placements {
-                placement
-                    .particles
-                    .iter_mut()
-                    .for_each(M2ParticleSimulation::reset);
-                placement.ribbons.iter_mut().for_each(M2RibbonTrail::reset);
-            }
-        }
+        let effect_delta_seconds = elapsed_effect_seconds;
         let requested_items = self
             .placements
             .iter()

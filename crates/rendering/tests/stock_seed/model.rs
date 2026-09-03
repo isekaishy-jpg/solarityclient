@@ -1194,19 +1194,47 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let mut explicit_slices = M2ParticleSimulation::new(0x0029_4823);
     let first_slice = explicit_slices.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
     let second_slice = explicit_slices.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+    let terminal_slice = explicit_slices.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 1.0)?;
     assert_eq!(
         bounded_report.emitted(),
-        first_slice.emitted() + second_slice.emitted()
+        first_slice.emitted() + second_slice.emitted() + terminal_slice.emitted()
     );
     assert_eq!(
         bounded_report.deaths(),
-        first_slice.deaths() + second_slice.deaths()
+        first_slice.deaths() + second_slice.deaths() + terminal_slice.deaths()
     );
-    assert_eq!(bounded_report.live(), second_slice.live());
+    assert_eq!(bounded_report.live(), terminal_slice.live());
     assert_eq!(bounded.particles(), explicit_slices.particles());
     assert_eq!(
         bounded.emission_remainder(),
         explicit_slices.emission_remainder()
+    );
+
+    let catch_up_seconds = 20.05_f32;
+    let mut caught_up = M2ParticleSimulation::new(0x0029_4823);
+    let catch_up_report =
+        caught_up.advance_planar_bounded(emitter, pose, catch_up_seconds, Mat4::IDENTITY, 1.0)?;
+    let mut lifetime_history = M2ParticleSimulation::new(0x0029_4823);
+    let mut expected_emitted = 0;
+    let mut expected_deaths = 0;
+    let lifetime_step_count = (pose.lifespan() * 10.0).floor() as usize;
+    for _step_index in 0..lifetime_step_count {
+        let report = lifetime_history.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+        expected_emitted += report.emitted();
+        expected_deaths += report.deaths();
+    }
+    let remainder_seconds = catch_up_seconds - (catch_up_seconds * 10.0).floor() * 0.1;
+    let remainder_report =
+        lifetime_history.advance_planar(emitter, pose, remainder_seconds, Mat4::IDENTITY, 1.0)?;
+    expected_emitted += remainder_report.emitted();
+    expected_deaths += remainder_report.deaths();
+    assert_eq!(catch_up_report.emitted(), expected_emitted);
+    assert_eq!(catch_up_report.deaths(), expected_deaths);
+    assert_eq!(catch_up_report.live(), lifetime_history.particles().len());
+    assert_eq!(caught_up.particles(), lifetime_history.particles());
+    assert_eq!(
+        caught_up.emission_remainder(),
+        lifetime_history.emission_remainder()
     );
 
     bounded.reset();

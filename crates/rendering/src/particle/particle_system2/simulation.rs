@@ -12,6 +12,9 @@ const STOCK_CAPACITY_HEADROOM: f64 = f32::from_bits(0x3F93_3333) as f64;
 /// `CM2ParticleEmitter::Update` consumes at most 100 ms per simulation step.
 const STOCK_MAXIMUM_STEP_SECONDS: f32 = 0.1;
 
+/// Reciprocal step constant loaded at executable address `0x009E30CC`.
+const STOCK_STEPS_PER_SECOND: f32 = 10.0;
+
 /// Particles stay in emitter-local space and receive the live bone matrix.
 const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0010;
 
@@ -142,6 +145,10 @@ impl M2ParticleSimulation {
 
     /// Advances a planar emitter through build-12340's bounded update slices.
     ///
+    /// A long first-visible or suspended-frame interval is capped to the
+    /// emitter lifetime, preserving a populated current state without replaying
+    /// arbitrarily old particles.
+    ///
     /// # Errors
     ///
     /// Returns the same failures as [`Self::advance_planar`].
@@ -189,6 +196,8 @@ impl M2ParticleSimulation {
 
     /// Advances a spherical emitter through build-12340's bounded slices.
     ///
+    /// Long intervals use the same lifetime-bounded history as planar emitters.
+    ///
     /// # Errors
     ///
     /// Returns the same failures as [`Self::advance_sphere`].
@@ -233,22 +242,37 @@ impl M2ParticleSimulation {
                 shape,
             );
         }
+        if elapsed_seconds <= STOCK_MAXIMUM_STEP_SECONDS {
+            return self.advance_with_emitter_motion(
+                emitter,
+                pose,
+                elapsed_seconds,
+                emitter_transform,
+                density,
+                shape,
+            );
+        }
         validate_update_inputs(elapsed_seconds, emitter_transform, density)?;
         let (follow_delta, inherited_velocity) =
             self.emitter_motion(emitter, elapsed_seconds, emitter_transform);
-        let mut remaining = elapsed_seconds;
+        // Build 12340 `CM2ParticleEmitter::Update` at `0x0097ACB0`
+        // retains the sub-step remainder but caps whole 100 ms history slices
+        // to the current base lifetime.
+        let whole_steps = (elapsed_seconds * STOCK_STEPS_PER_SECOND).floor();
+        let remainder = (elapsed_seconds - whole_steps * STOCK_MAXIMUM_STEP_SECONDS).max(0.0);
+        let lifetime_steps = (pose.lifespan() * STOCK_STEPS_PER_SECOND).floor();
+        let bounded_steps = whole_steps.min(lifetime_steps).max(0.0) as usize;
         let mut first_step = true;
         let mut report = M2ParticleSimulationReport {
             emitted: 0,
             deaths: 0,
             live: self.particles.len(),
         };
-        while remaining > 0.0 {
-            let step = remaining.min(STOCK_MAXIMUM_STEP_SECONDS);
+        for _step_index in 0..bounded_steps {
             let current = self.advance(
                 emitter,
                 pose,
-                step,
+                STOCK_MAXIMUM_STEP_SECONDS,
                 emitter_transform,
                 density,
                 shape,
@@ -258,9 +282,21 @@ impl M2ParticleSimulation {
             report.emitted += current.emitted;
             report.deaths += current.deaths;
             report.live = current.live;
-            remaining = (remaining - step).max(0.0);
             first_step = false;
         }
+        let current = self.advance(
+            emitter,
+            pose,
+            remainder,
+            emitter_transform,
+            density,
+            shape,
+            if first_step { follow_delta } else { Vec3::ZERO },
+            inherited_velocity,
+        )?;
+        report.emitted += current.emitted;
+        report.deaths += current.deaths;
+        report.live = current.live;
         Ok(report)
     }
 
