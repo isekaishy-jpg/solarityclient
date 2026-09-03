@@ -662,6 +662,14 @@ pub(in crate::application) struct M2Frame {
     mount_camera_sample: Option<RuntimeMountCameraSample>,
     glue_directional_lights: Vec<solarity_rendering::M2DirectionalLight>,
     glue_point_lights: Vec<solarity_rendering::M2PointLight>,
+    requested_items: Vec<(u64, CharacterAttachmentPoint)>,
+    requested_visuals: Vec<(u64, CharacterAttachmentPoint, u32)>,
+    mounted_guids: Vec<u64>,
+    rider_transforms: Vec<(u64, Option<Mat4>)>,
+    item_transforms: Vec<(u64, CharacterAttachmentPoint, Option<Mat4>)>,
+    visual_transforms: Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
+    glue_attachment_ids: Vec<u32>,
+    glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
     last_effect_time_ms: Option<f32>,
 }
 
@@ -750,6 +758,14 @@ impl M2Frame {
             mount_camera_sample: None,
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
+            requested_items: Vec::new(),
+            requested_visuals: Vec::new(),
+            mounted_guids: Vec::new(),
+            rider_transforms: Vec::new(),
+            item_transforms: Vec::new(),
+            visual_transforms: Vec::new(),
+            glue_attachment_ids: Vec::new(),
+            glue_attachment_transforms: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -951,6 +967,14 @@ impl M2Frame {
             mount_camera_sample: None,
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
+            requested_items: Vec::new(),
+            requested_visuals: Vec::new(),
+            mounted_guids: Vec::new(),
+            rider_transforms: Vec::new(),
+            item_transforms: Vec::new(),
+            visual_transforms: Vec::new(),
+            glue_attachment_ids: Vec::new(),
+            glue_attachment_transforms: Vec::new(),
             last_effect_time_ms: None,
         })
     }
@@ -1706,64 +1730,91 @@ impl M2Frame {
         let effect_delta_seconds = elapsed_effect_seconds;
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
-        let requested_items = self
-            .placements
-            .iter()
-            .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
-                M2GpuPlacementOwner::Static(_)
-                | M2GpuPlacementOwner::GlueModel { .. }
-                | M2GpuPlacementOwner::GluePet
-                | M2GpuPlacementOwner::PlayerBody { .. }
-                | M2GpuPlacementOwner::PlayerMount { .. }
-                | M2GpuPlacementOwner::RemotePlayerBody { .. }
-                | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                | M2GpuPlacementOwner::CreatureBody { .. }
-                | M2GpuPlacementOwner::Transport { .. }
-                | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let requested_visuals = self
-            .placements
-            .iter()
-            .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::PlayerItemVisual {
-                    guid,
-                    item_point,
-                    effect_point,
-                } => Some((guid, item_point, effect_point)),
-                M2GpuPlacementOwner::Static(_)
-                | M2GpuPlacementOwner::GlueModel { .. }
-                | M2GpuPlacementOwner::GluePet
-                | M2GpuPlacementOwner::PlayerBody { .. }
-                | M2GpuPlacementOwner::PlayerMount { .. }
-                | M2GpuPlacementOwner::RemotePlayerBody { .. }
-                | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                | M2GpuPlacementOwner::CreatureBody { .. }
-                | M2GpuPlacementOwner::Transport { .. }
-                | M2GpuPlacementOwner::PlayerItem { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let mounted_guids = self
-            .placements
-            .iter()
-            .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::PlayerMount { guid }
-                | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut rider_transforms = Vec::with_capacity(mounted_guids.len());
-        let mut item_transforms = Vec::with_capacity(requested_items.len());
-        let mut visual_transforms = Vec::with_capacity(requested_visuals.len());
-        let mut glue_attachment_ids = self
-            .placements
-            .iter()
-            .filter_map(|placement| placement.glue_parent_attachment)
-            .collect::<Vec<_>>();
-        glue_attachment_ids.sort_unstable();
-        glue_attachment_ids.dedup();
-        let mut glue_attachment_transforms = Vec::with_capacity(glue_attachment_ids.len());
+        self.requested_items.clear();
+        self.requested_items
+            .extend(
+                self.placements
+                    .iter()
+                    .filter_map(|placement| match placement.owner {
+                        M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
+                        M2GpuPlacementOwner::Static(_)
+                        | M2GpuPlacementOwner::GlueModel { .. }
+                        | M2GpuPlacementOwner::GluePet
+                        | M2GpuPlacementOwner::PlayerBody { .. }
+                        | M2GpuPlacementOwner::PlayerMount { .. }
+                        | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                        | M2GpuPlacementOwner::RemotePlayerMount { .. }
+                        | M2GpuPlacementOwner::CreatureBody { .. }
+                        | M2GpuPlacementOwner::Transport { .. }
+                        | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
+                    }),
+            );
+        self.requested_visuals.clear();
+        self.requested_visuals
+            .extend(
+                self.placements
+                    .iter()
+                    .filter_map(|placement| match placement.owner {
+                        M2GpuPlacementOwner::PlayerItemVisual {
+                            guid,
+                            item_point,
+                            effect_point,
+                        } => Some((guid, item_point, effect_point)),
+                        M2GpuPlacementOwner::Static(_)
+                        | M2GpuPlacementOwner::GlueModel { .. }
+                        | M2GpuPlacementOwner::GluePet
+                        | M2GpuPlacementOwner::PlayerBody { .. }
+                        | M2GpuPlacementOwner::PlayerMount { .. }
+                        | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                        | M2GpuPlacementOwner::RemotePlayerMount { .. }
+                        | M2GpuPlacementOwner::CreatureBody { .. }
+                        | M2GpuPlacementOwner::Transport { .. }
+                        | M2GpuPlacementOwner::PlayerItem { .. } => None,
+                    }),
+            );
+        self.mounted_guids.clear();
+        self.mounted_guids
+            .extend(
+                self.placements
+                    .iter()
+                    .filter_map(|placement| match placement.owner {
+                        M2GpuPlacementOwner::PlayerMount { guid }
+                        | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
+                        _ => None,
+                    }),
+            );
+        self.rider_transforms.clear();
+        self.rider_transforms.reserve(
+            self.mounted_guids
+                .len()
+                .saturating_sub(self.rider_transforms.capacity()),
+        );
+        self.item_transforms.clear();
+        self.item_transforms.reserve(
+            self.requested_items
+                .len()
+                .saturating_sub(self.item_transforms.capacity()),
+        );
+        self.visual_transforms.clear();
+        self.visual_transforms.reserve(
+            self.requested_visuals
+                .len()
+                .saturating_sub(self.visual_transforms.capacity()),
+        );
+        self.glue_attachment_ids.clear();
+        self.glue_attachment_ids.extend(
+            self.placements
+                .iter()
+                .filter_map(|placement| placement.glue_parent_attachment),
+        );
+        self.glue_attachment_ids.sort_unstable();
+        self.glue_attachment_ids.dedup();
+        self.glue_attachment_transforms.clear();
+        self.glue_attachment_transforms.reserve(
+            self.glue_attachment_ids
+                .len()
+                .saturating_sub(self.glue_attachment_transforms.capacity()),
+        );
         update_model_distance_sort_flags(
             &self.placements,
             &self.sources,
@@ -1771,7 +1822,8 @@ impl M2Frame {
         );
         for (placement_index, placement) in self.placements.iter_mut().enumerate() {
             if let Some(attachment_id) = placement.glue_parent_attachment {
-                let parent = glue_attachment_transforms
+                let parent = self
+                    .glue_attachment_transforms
                     .iter()
                     .find_map(|(id, transform)| (*id == attachment_id).then_some(*transform))
                     .ok_or(RuntimeTerrainFrameError::MissingGlueM2AttachmentPose {
@@ -1784,9 +1836,10 @@ impl M2Frame {
             }
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
-                && mounted_guids.contains(&guid)
+                && self.mounted_guids.contains(&guid)
             {
-                let transform = rider_transforms
+                let transform = self
+                    .rider_transforms
                     .iter()
                     .find_map(|(owner_guid, transform)| (*owner_guid == guid).then_some(*transform))
                     .ok_or(RuntimeTerrainFrameError::MissingMountM2AttachmentPose {
@@ -1799,13 +1852,15 @@ impl M2Frame {
                 placement.transform = transform;
             }
             if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
-                if rider_transforms
+                if self
+                    .rider_transforms
                     .iter()
                     .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
                 {
                     continue;
                 }
-                let transform = item_transforms
+                let transform = self
+                    .item_transforms
                     .iter()
                     .find_map(|(owner_guid, owner_point, transform)| {
                         (*owner_guid == guid && *owner_point == point).then_some(*transform)
@@ -1825,13 +1880,15 @@ impl M2Frame {
                 effect_point,
             } = placement.owner
             {
-                if rider_transforms
+                if self
+                    .rider_transforms
                     .iter()
                     .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
                 {
                     continue;
                 }
-                let transform = visual_transforms
+                let transform = self
+                    .visual_transforms
                     .iter()
                     .find_map(
                         |(owner_guid, owner_item_point, owner_effect_point, transform)| {
@@ -1901,7 +1958,7 @@ impl M2Frame {
                 self.glue_directional_lights
                     .extend(sampled_lights.directional);
                 self.glue_point_lights.extend(sampled_lights.points);
-                for attachment_id in &glue_attachment_ids {
+                for attachment_id in &self.glue_attachment_ids {
                     let attachment = source.model.attachment(*attachment_id).ok_or_else(|| {
                         RuntimeTerrainFrameError::MissingGlueM2Attachment {
                             model: source.model.path().clone(),
@@ -1914,7 +1971,8 @@ impl M2Frame {
                         clock,
                         placement.transform,
                     )?;
-                    glue_attachment_transforms.push((*attachment_id, transform));
+                    self.glue_attachment_transforms
+                        .push((*attachment_id, transform));
                 }
             }
             if let M2GpuPlacementOwner::PlayerMount { guid }
@@ -1940,12 +1998,13 @@ impl M2Frame {
                     clock,
                     placement.transform,
                 )?;
-                rider_transforms.push((guid, transform));
+                self.rider_transforms.push((guid, transform));
             }
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
             {
-                for (_owner_guid, point) in requested_items
+                for (_owner_guid, point) in self
+                    .requested_items
                     .iter()
                     .filter(|(owner_guid, _point)| *owner_guid == guid)
                 {
@@ -1961,11 +2020,12 @@ impl M2Frame {
                         clock,
                         placement.transform,
                     )?;
-                    item_transforms.push((guid, *point, transform));
+                    self.item_transforms.push((guid, *point, transform));
                 }
             }
             if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
-                for (_owner_guid, _owner_item_point, effect_point) in requested_visuals
+                for (_owner_guid, _owner_item_point, effect_point) in self
+                    .requested_visuals
                     .iter()
                     .filter(|(owner_guid, item_point, _)| {
                         *owner_guid == guid && *item_point == point
@@ -1983,7 +2043,8 @@ impl M2Frame {
                         clock,
                         placement.transform,
                     )?;
-                    visual_transforms.push((guid, point, *effect_point, transform));
+                    self.visual_transforms
+                        .push((guid, point, *effect_point, transform));
                 }
             }
             let bounds = source.model.bounds();
