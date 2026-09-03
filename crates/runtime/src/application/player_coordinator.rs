@@ -477,12 +477,6 @@ impl RuntimePlayerPresentation {
             u32::from(preview.gender_id()),
             CharacterWeaponState::new(UnitSheathState::Unarmed),
         )?;
-        let authored_scale = body.display().model_scale() * body.model().model_scale();
-        let model_scale = if authored_scale > 0.0 {
-            authored_scale
-        } else {
-            1.0
-        };
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, body.model_path())?;
         let atlas = texture_plan.compose_at_level(
@@ -524,7 +518,6 @@ impl RuntimePlayerPresentation {
             atlas,
             geosets,
             animation,
-            model_scale,
             facing_radians: preview.facing_degrees().to_radians() as f32,
             attachments,
             pet: None,
@@ -608,12 +601,6 @@ impl RuntimePlayerPresentation {
             u32::from(preview.gender_id()),
             preview.class_id(),
         )?;
-        let authored_scale = body.display().model_scale() * body.model().model_scale();
-        let model_scale = if authored_scale > 0.0 {
-            authored_scale
-        } else {
-            1.0
-        };
         let mut assets = self.assets.borrow_mut();
         let model = self.models.load(&mut assets, body.model_path())?;
         let atlas = texture_plan.compose_at_level(
@@ -656,7 +643,6 @@ impl RuntimePlayerPresentation {
             atlas,
             geosets,
             animation,
-            model_scale,
             facing_radians: preview.facing_degrees().to_radians() as f32,
             attachments,
             pet,
@@ -1733,7 +1719,6 @@ struct ResidentGlueCharacterModel {
     atlas: CharacterAtlasTexture,
     geosets: CharacterGeosetPlan,
     animation: UnitModelAnimation,
-    model_scale: f32,
     facing_radians: f32,
     attachments: Vec<ResidentPlayerAttachment>,
     pet: Option<ResidentGluePetModel>,
@@ -1756,7 +1741,6 @@ pub(super) struct ResidentGlueCharacterFrameInput<'a> {
     atlas: &'a CharacterAtlasTexture,
     geosets: &'a CharacterGeosetPlan,
     animation: UnitModelAnimation,
-    model_scale: f32,
     facing_radians: f32,
     attachments: &'a [ResidentPlayerAttachment],
     pet: Option<ResidentGluePetFrameInput<'a>>,
@@ -1782,7 +1766,6 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
             atlas: &resident.atlas,
             geosets: &resident.geosets,
             animation: resident.animation,
-            model_scale: resident.model_scale,
             facing_radians: resident.facing_radians,
             attachments: &resident.attachments,
             pet: resident.pet.as_ref().map(|pet| ResidentGluePetFrameInput {
@@ -1816,10 +1799,6 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
 
     pub(super) const fn animation(&self) -> UnitModelAnimation {
         self.animation
-    }
-
-    pub(super) const fn model_scale(&self) -> f32 {
-        self.model_scale
     }
 
     pub(super) const fn facing_radians(&self) -> f32 {

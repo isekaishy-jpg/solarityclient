@@ -999,10 +999,7 @@ impl M2Frame {
             self.remove_player();
             return Ok(());
         };
-        if !input.model_scale().is_finite()
-            || input.model_scale() <= 0.0
-            || !input.facing_radians().is_finite()
-        {
+        if !input.facing_radians().is_finite() {
             return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
         }
         let resolved = input
@@ -1028,8 +1025,7 @@ impl M2Frame {
             character_light_count,
             cpu_sources,
         )?;
-        let transform = Mat4::from_rotation_z(input.facing_radians())
-            * Mat4::from_scale(glam::Vec3::splat(input.model_scale()));
+        let transform = stock_glue_character_local_transform(input.facing_radians());
         let mut placement = unit_gpu_placement(
             0,
             transform,
@@ -1238,10 +1234,9 @@ impl M2Frame {
     /// Updates rotation without rebuilding the retained Glue character generation.
     pub(in crate::application) fn update_glue_character_transform(
         &mut self,
-        model_scale: f32,
         facing_radians: f32,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        if !model_scale.is_finite() || model_scale <= 0.0 || !facing_radians.is_finite() {
+        if !facing_radians.is_finite() {
             return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
         }
         let placement = self
@@ -1251,8 +1246,7 @@ impl M2Frame {
                 matches!(placement.owner, M2GpuPlacementOwner::PlayerBody { guid: 0 })
             })
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        let transform = Mat4::from_rotation_z(facing_radians)
-            * Mat4::from_scale(glam::Vec3::splat(model_scale));
+        let transform = stock_glue_character_local_transform(facing_radians);
         // Retain the stand-local transform. The next draw preparation composes
         // the animated backdrop attachment before sampling body attachments
         // for equipment and item visual effects.
@@ -2378,6 +2372,15 @@ impl M2Frame {
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
     }
+}
+
+/// Reproduces `CCharacterSelection::SetFacing` from build 12340.
+///
+/// Stock passes zero translation, the requested facing, and an explicit scale
+/// of one into the model transform. Creature display/model scale belongs to
+/// world creature placement and must not be multiplied into a Glue character.
+fn stock_glue_character_local_transform(facing_radians: f32) -> Mat4 {
+    Mat4::from_rotation_z(facing_radians)
 }
 
 /// Publishes one Glue character source from an already completed worker generation.
@@ -3544,9 +3547,20 @@ fn ordinary_particle_texture_index(
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec3;
+    use glam::{Mat4, Vec3};
 
-    use super::{PARTICLE_IGNORE_DISTANCE_LOD, particle_emission_density};
+    use super::{
+        PARTICLE_IGNORE_DISTANCE_LOD, particle_emission_density,
+        stock_glue_character_local_transform,
+    };
+
+    #[test]
+    fn glue_character_local_transform_keeps_stock_unit_scale() {
+        let transform = stock_glue_character_local_transform(0.75);
+        assert_eq!(transform.transform_vector3(Vec3::X).length(), 1.0);
+        assert_eq!(transform.transform_point3(Vec3::ZERO), Vec3::ZERO);
+        assert_ne!(transform, Mat4::IDENTITY);
+    }
 
     #[test]
     fn particle_distance_lod_matches_stock_threshold_and_floor() {
