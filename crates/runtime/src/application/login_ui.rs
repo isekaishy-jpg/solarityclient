@@ -44,7 +44,7 @@ impl RuntimeUiFrame {
         {
             return Ok(());
         }
-        *self = Self::prepare_source(renderer, glue, cache)?;
+        *self = Self::prepare_source_with_mesh(renderer, glue, cache, Some(self.frame.mesh()))?;
         Ok(())
     }
 
@@ -62,6 +62,16 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
+    ) -> Result<Self, ApplicationError> {
+        Self::prepare_source_with_mesh(renderer, source, cache, None)
+    }
+
+    /// Prepares material resources while optionally retaining geometry storage.
+    fn prepare_source_with_mesh(
+        renderer: &mut VulkanRenderer,
+        source: &impl RuntimeUiSource,
+        cache: &mut BlpTextureCache,
+        retained_mesh: Option<solarity_rendering::UiMeshHandle>,
     ) -> Result<Self, ApplicationError> {
         let started = std::time::Instant::now();
         let render_plan = source.render_plan();
@@ -104,7 +114,17 @@ impl RuntimeUiFrame {
 
         let glyph_texture = glyph_texture.map(|texture| (source.glyphs().identity(), texture));
         let frame_started = std::time::Instant::now();
-        let frame = PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?;
+        let frame = if let Some(mesh) = retained_mesh {
+            PreparedUiFrame::prepare_reusing_mesh(
+                renderer,
+                mesh,
+                mesh_plan,
+                &textures,
+                glyph_texture,
+            )?
+        } else {
+            PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?
+        };
         let frame_elapsed = frame_started.elapsed();
         tracing::info!(
             texture_count,

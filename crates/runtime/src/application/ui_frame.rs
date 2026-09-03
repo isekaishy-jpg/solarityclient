@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use solarity_asset::AssetPath;
 use solarity_rendering::{
-    BlpTextureHandle, UiFrameReport, UiGlyphTextureHandle, UiMeshPlan, UiPreparedDraw,
-    UiRenderBatch, UiRenderSource, UiSampledTexture, UiSamplerInfo, UiShaderSource,
+    BlpTextureHandle, UiFrameReport, UiGlyphTextureHandle, UiMeshHandle, UiMeshPlan,
+    UiPreparedDraw, UiRenderBatch, UiRenderSource, UiSampledTexture, UiSamplerInfo, UiShaderSource,
     UiTextureResidency, VulkanError, VulkanRenderer,
 };
 
@@ -13,6 +13,7 @@ use crate::application::ApplicationError;
 
 /// One immutable UI mesh generation joined to renderer-owned resources.
 pub(crate) struct PreparedUiFrame {
+    mesh: UiMeshHandle,
     logical_extent: [f32; 2],
     draws: Vec<UiPreparedDraw>,
     /// Source batch index parallel to each resident renderer draw.
@@ -29,7 +30,34 @@ impl PreparedUiFrame {
         textures: &HashMap<AssetPath, BlpTextureHandle>,
         glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
     ) -> Result<Self, ApplicationError> {
-        let mesh = renderer.upload_ui_mesh(plan)?;
+        Self::prepare_with_mesh(renderer, plan, textures, glyph_texture, None)
+    }
+
+    /// Rejoins changed material resources to an existing retained mesh slot.
+    pub(crate) fn prepare_reusing_mesh(
+        renderer: &mut VulkanRenderer,
+        mesh: UiMeshHandle,
+        plan: &UiMeshPlan,
+        textures: &HashMap<AssetPath, BlpTextureHandle>,
+        glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
+    ) -> Result<Self, ApplicationError> {
+        Self::prepare_with_mesh(renderer, plan, textures, glyph_texture, Some(mesh))
+    }
+
+    /// Builds one validated draw list around new or retained geometry storage.
+    fn prepare_with_mesh(
+        renderer: &mut VulkanRenderer,
+        plan: &UiMeshPlan,
+        textures: &HashMap<AssetPath, BlpTextureHandle>,
+        glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
+        retained_mesh: Option<UiMeshHandle>,
+    ) -> Result<Self, ApplicationError> {
+        let mesh = if let Some(mesh) = retained_mesh {
+            renderer.replace_ui_mesh(mesh, plan)?;
+            mesh
+        } else {
+            renderer.upload_ui_mesh(plan)?
+        };
         let mut batch_resources = Vec::with_capacity(plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
@@ -92,6 +120,7 @@ impl PreparedUiFrame {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
+            mesh,
             logical_extent: plan.logical_extent(),
             draws,
             draw_batches,
@@ -126,11 +155,7 @@ impl PreparedUiFrame {
             }
             .into());
         }
-        let mesh = self
-            .draws
-            .first()
-            .map(|draw| draw.mesh())
-            .ok_or(VulkanError::EmptyUiFrame)?;
+        let mesh = self.mesh;
         renderer.replace_ui_mesh(mesh, plan)?;
         for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
             *draw = renderer.prepare_ui_draw(
@@ -175,6 +200,11 @@ impl PreparedUiFrame {
 
     pub(crate) fn draws(&self) -> &[UiPreparedDraw] {
         &self.draws
+    }
+
+    /// Returns the stable renderer allocation reused across material changes.
+    pub(crate) const fn mesh(&self) -> UiMeshHandle {
+        self.mesh
     }
 }
 
