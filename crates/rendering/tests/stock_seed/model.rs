@@ -1011,6 +1011,7 @@ fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Err
     assert_eq!(mesh.vertices()[0].color_bgra(), [0, 128, 128, 191]);
     let mut retained_vertices = vec![mesh.vertices()[0]];
     let mut retained_indices = vec![u32::MAX];
+    let mut sort_indices = Vec::new();
     let counts = M2ParticleMeshPlan::append_transformed_with_particle_color(
         emitter,
         emitter_pose,
@@ -1021,6 +1022,7 @@ fn m2_particle_colors_follow_stock_display_selection() -> Result<(), Box<dyn Err
         1.0,
         &twinkle,
         Some(&replacement),
+        &mut sort_indices,
         &mut retained_vertices,
         &mut retained_indices,
     )?;

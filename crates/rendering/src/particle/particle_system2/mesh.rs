@@ -321,6 +321,7 @@ impl M2ParticleMeshPlan {
         alpha_multiplier: f32,
         twinkle_table: &M2ParticleTwinkleTable,
         replacement: Option<&M2ParticleColorReplacement>,
+        sort_indices: &mut Vec<usize>,
         vertices: &mut Vec<M2ParticleRenderVertex>,
         indices: &mut Vec<u32>,
     ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
@@ -336,6 +337,7 @@ impl M2ParticleMeshPlan {
             alpha_multiplier,
             Some(twinkle_table),
             replacement,
+            sort_indices,
             vertices,
             indices,
         ) {
@@ -363,6 +365,7 @@ impl M2ParticleMeshPlan {
     ) -> Result<Self, M2ParticleMeshPlanError> {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
+        let mut sort_indices = Vec::new();
         Self::append_internal(
             emitter,
             pose,
@@ -373,6 +376,7 @@ impl M2ParticleMeshPlan {
             alpha_multiplier,
             twinkle_table,
             replacement,
+            &mut sort_indices,
             &mut vertices,
             &mut indices,
         )?;
@@ -391,6 +395,7 @@ impl M2ParticleMeshPlan {
         alpha_multiplier: f32,
         twinkle_table: Option<&M2ParticleTwinkleTable>,
         replacement: Option<&M2ParticleColorReplacement>,
+        sort_indices: &mut Vec<usize>,
         vertices: &mut Vec<M2ParticleRenderVertex>,
         indices: &mut Vec<u32>,
     ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
@@ -472,8 +477,9 @@ impl M2ParticleMeshPlan {
             // CM2Model's recovered render path sorts a temporary presentation
             // list; simulation slots and their address-derived twinkle phases
             // must remain untouched.
-            let mut sorted = (0..particles.len()).collect::<Vec<_>>();
-            sorted.sort_by(|left, right| {
+            sort_indices.clear();
+            sort_indices.extend(0..particles.len());
+            sort_indices.sort_by(|left, right| {
                 let distance = |particle: &M2ParticleState| {
                     particle_to_world
                         .transform_point3(particle.position())
@@ -483,7 +489,7 @@ impl M2ParticleMeshPlan {
                     .partial_cmp(&distance(&particles[*left]))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            Some(sorted)
+            Some(&*sort_indices)
         } else {
             None
         };
