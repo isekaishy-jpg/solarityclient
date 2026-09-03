@@ -148,6 +148,11 @@ impl M2ParticleState {
     pub(super) fn add_velocity(&mut self, impulse: Vec3) {
         self.velocity += impulse;
     }
+
+    /// Applies the emitter's recovered follow-position displacement.
+    pub(super) fn translate(&mut self, displacement: Vec3) {
+        self.position += displacement;
+    }
 }
 
 /// Invalid input cannot participate in stock particle simulation.

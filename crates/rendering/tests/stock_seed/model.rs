@@ -1246,6 +1246,141 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// Flag `0x4000` carries established particles with the moving emitter.
+#[test]
+fn m2_particle_simulation_applies_follow_position() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_4000;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    for (relative, value) in [(0x1b0, 0.0_f32), (0x1b4, 1.0), (0x1b8, 1.0), (0x1bc, 1.0)] {
+        bytes[particle_offset + relative..particle_offset + relative + 4]
+            .copy_from_slice(&value.to_le_bytes());
+    }
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\FollowParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\FollowParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\FollowParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    simulation.advance_planar(emitter, pose, 0.2, Mat4::IDENTITY, 1.0)?;
+    let before = simulation.particles().to_vec();
+    simulation.advance_planar(
+        emitter,
+        pose,
+        0.01,
+        Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+        0.0,
+    )?;
+
+    assert_eq!(simulation.particles().len(), before.len());
+    for (before, after) in before.iter().zip(simulation.particles()) {
+        let mut expected = before.position() + Vec3::new(10.0, 0.0, 0.0) + before.velocity() * 0.01;
+        expected.z -= pose.gravity() * 0.01 * 0.01 * 0.5;
+        assert!((after.position() - expected).abs().max_element() < 0.0001);
+    }
+    Ok(())
+}
+
+/// Flag `0x40` adds the recovered 30 ms emitter-motion sample at birth.
+#[test]
+fn m2_particle_simulation_inherits_emitter_velocity() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0000_0040;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    bytes[particle_offset + 0x170..particle_offset + 0x174].copy_from_slice(&0.5_f32.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\InheritedVelocityParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\InheritedVelocityParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\InheritedVelocityParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let seed = 0x0029_4823;
+    let mut simulation = M2ParticleSimulation::new(seed);
+    simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 0.0)?;
+    simulation.advance_planar(
+        emitter,
+        pose,
+        0.04,
+        Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
+        1.0,
+    )?;
+    let particle = simulation
+        .particles()
+        .first()
+        .ok_or("inherited-velocity particle was not emitted")?;
+    let mut random = M2ParticleRandom::new(seed);
+    let _first_rate = random.next_signed();
+    let _second_rate = random.next_signed();
+    let _initial_age = random.next_unit() * 0.04;
+    let _random_word = random.next_u32() as u16;
+    let local_y = random.next_signed() * pose.emission_area_width() * 0.5;
+    let local_x = random.next_signed() * pose.emission_area_length() * 0.5;
+    let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
+    let _polar = random.next_signed() * pose.vertical_range();
+    let _azimuth = random.next_signed() * pose.horizontal_range();
+    let inherited = Vec3::new(3.0, 0.0, 0.0) * (0.03 / 0.04 * 0.5);
+    let inherit_variation = random.next_signed() * pose.speed_variation() + 1.0;
+    let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed
+        + inherited * inherit_variation;
+    expected_velocity.z -= pose.gravity() * 0.04;
+    assert!(
+        (particle.velocity() - expected_velocity)
+            .abs()
+            .max_element()
+            < 0.0001
+    );
+    Ok(())
+}
+
 /// Flag `0x10` keeps births emitter-local for the live bone transform; `0x200`
 /// controls spin randomization and must not select that coordinate domain.
 #[test]

@@ -15,6 +15,15 @@ const STOCK_MAXIMUM_STEP_SECONDS: f32 = 0.1;
 /// Particles stay in emitter-local space and receive the live bone matrix.
 const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0010;
 
+/// Adds sampled emitter motion to newly born particle velocity.
+const INHERIT_VELOCITY: u32 = 0x0000_0040;
+
+/// Moves established particles by a speed-scaled share of emitter motion.
+const FOLLOW_POSITION: u32 = 0x0000_4000;
+
+/// Build 12340 normalizes inherited emitter displacement to a 30 ms sample.
+const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
+
 /// Sphere particles launch along local +Z rather than away from the center.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
 
@@ -29,6 +38,52 @@ pub struct M2ParticleSimulation {
     emission_remainder: f32,
     seed: u32,
     random: M2ParticleRandom,
+    previous_follow_position: Option<Vec3>,
+    inherited_motion: InheritedEmitterMotion,
+}
+
+/// Per-emitter history for build 12340's 30 ms inherited-motion sampler.
+#[derive(Clone, Copy, Debug, Default)]
+struct InheritedEmitterMotion {
+    previous_position: Option<Vec3>,
+    sampled_motion: Vec3,
+    accumulated_seconds: f32,
+}
+
+impl InheritedEmitterMotion {
+    fn sample(
+        &mut self,
+        current_position: Vec3,
+        elapsed_seconds: f32,
+        scale: f32,
+        enabled: bool,
+        has_live_particles: bool,
+    ) -> Vec3 {
+        let Some(previous_position) = self.previous_position else {
+            self.previous_position = Some(current_position);
+            return Vec3::ZERO;
+        };
+        if !enabled {
+            self.previous_position = Some(current_position);
+            self.sampled_motion = Vec3::ZERO;
+            self.accumulated_seconds = 0.0;
+            return Vec3::ZERO;
+        }
+        if elapsed_seconds > 0.0 {
+            self.accumulated_seconds += elapsed_seconds;
+            if self.accumulated_seconds >= EMITTER_MOTION_SAMPLE_SECONDS {
+                self.sampled_motion = if has_live_particles {
+                    Vec3::ZERO
+                } else {
+                    (current_position - previous_position)
+                        * (EMITTER_MOTION_SAMPLE_SECONDS / self.accumulated_seconds * scale)
+                };
+                self.previous_position = Some(current_position);
+                self.accumulated_seconds = 0.0;
+            }
+        }
+        self.sampled_motion
+    }
 }
 
 impl M2ParticleSimulation {
@@ -41,6 +96,8 @@ impl M2ParticleSimulation {
             emission_remainder: 0.0,
             seed,
             random: M2ParticleRandom::new(seed),
+            previous_follow_position: None,
+            inherited_motion: InheritedEmitterMotion::default(),
         }
     }
 
@@ -51,13 +108,15 @@ impl M2ParticleSimulation {
         self.capacity = 0;
         self.emission_remainder = 0.0;
         self.random = M2ParticleRandom::new(self.seed);
+        self.previous_follow_position = None;
+        self.inherited_motion = InheritedEmitterMotion::default();
     }
 
     /// Emits planar particles, advances all live particles, and removes deaths.
     ///
-    /// This covers stock emitter type `1`. Spline, collision, inherited
-    /// velocity, and follow-position paths use separate entry points or return
-    /// typed errors until their recovered implementations are selected.
+    /// This covers stock emitter type `1`, including inherited velocity and
+    /// follow-position motion. Spline and collision paths return typed errors
+    /// until their recovered implementations are selected.
     ///
     /// # Errors
     ///
@@ -71,7 +130,7 @@ impl M2ParticleSimulation {
         emitter_transform: Mat4,
         density: f32,
     ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
-        self.advance(
+        self.advance_with_emitter_motion(
             emitter,
             pose,
             elapsed_seconds,
@@ -118,7 +177,7 @@ impl M2ParticleSimulation {
         emitter_transform: Mat4,
         density: f32,
     ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
-        self.advance(
+        self.advance_with_emitter_motion(
             emitter,
             pose,
             elapsed_seconds,
@@ -165,9 +224,20 @@ impl M2ParticleSimulation {
             return Err(M2ParticleSimulationError::ElapsedTime);
         }
         if elapsed_seconds == 0.0 {
-            return self.advance(emitter, pose, 0.0, emitter_transform, density, shape);
+            return self.advance_with_emitter_motion(
+                emitter,
+                pose,
+                0.0,
+                emitter_transform,
+                density,
+                shape,
+            );
         }
+        validate_update_inputs(elapsed_seconds, emitter_transform, density)?;
+        let (follow_delta, inherited_velocity) =
+            self.emitter_motion(emitter, elapsed_seconds, emitter_transform);
         let mut remaining = elapsed_seconds;
+        let mut first_step = true;
         let mut report = M2ParticleSimulationReport {
             emitted: 0,
             deaths: 0,
@@ -175,17 +245,27 @@ impl M2ParticleSimulation {
         };
         while remaining > 0.0 {
             let step = remaining.min(STOCK_MAXIMUM_STEP_SECONDS);
-            let current = self.advance(emitter, pose, step, emitter_transform, density, shape)?;
+            let current = self.advance(
+                emitter,
+                pose,
+                step,
+                emitter_transform,
+                density,
+                shape,
+                if first_step { follow_delta } else { Vec3::ZERO },
+                inherited_velocity,
+            )?;
             report.emitted += current.emitted;
             report.deaths += current.deaths;
             report.live = current.live;
             remaining = (remaining - step).max(0.0);
+            first_step = false;
         }
         Ok(report)
     }
 
-    /// Runs emission and live-particle advancement shared by stock shapes.
-    fn advance(
+    /// Samples emitter history once before one unbounded simulation update.
+    fn advance_with_emitter_motion(
         &mut self,
         emitter: &M2ParticleEmitter,
         pose: M2ParticlePose,
@@ -194,15 +274,73 @@ impl M2ParticleSimulation {
         density: f32,
         shape: EmitterShape,
     ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
-        if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
-            return Err(M2ParticleSimulationError::ElapsedTime);
-        }
-        if !density.is_finite() || density < 0.0 {
-            return Err(M2ParticleSimulationError::Density);
-        }
-        if !emitter_transform.is_finite() {
-            return Err(M2ParticleSimulationError::Transform);
-        }
+        validate_update_inputs(elapsed_seconds, emitter_transform, density)?;
+        let (follow_delta, inherited_velocity) =
+            self.emitter_motion(emitter, elapsed_seconds, emitter_transform);
+        self.advance(
+            emitter,
+            pose,
+            elapsed_seconds,
+            emitter_transform,
+            density,
+            shape,
+            follow_delta,
+            inherited_velocity,
+        )
+    }
+
+    /// Resolves follow-position and inherited-velocity state from one live pose.
+    fn emitter_motion(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+    ) -> (Vec3, Vec3) {
+        let current_position = emitter_transform.transform_point3(Vec3::ZERO);
+        let follow_delta = self
+            .previous_follow_position
+            .map_or(Vec3::ZERO, |previous| {
+                if emitter.flags() & FOLLOW_POSITION == 0 {
+                    return Vec3::ZERO;
+                }
+                let delta = current_position - previous;
+                let (speed_minimum, speed_maximum) = emitter.follow_speed();
+                let (scale_minimum, scale_maximum) = emitter.follow_scale();
+                let denominator = speed_maximum - speed_minimum;
+                let (multiplier, base) = if denominator.abs() > 0.000_001 {
+                    let multiplier = (scale_maximum - scale_minimum) / denominator;
+                    (multiplier, scale_minimum - speed_minimum * multiplier)
+                } else {
+                    (0.0, 0.0)
+                };
+                let speed = delta.length() / elapsed_seconds.max(0.000_001);
+                delta * (multiplier * speed + base).clamp(0.0, 1.0)
+            });
+        self.previous_follow_position = Some(current_position);
+        let inherited_velocity = self.inherited_motion.sample(
+            current_position,
+            elapsed_seconds,
+            emitter.inherit_velocity_scale(),
+            emitter.flags() & INHERIT_VELOCITY != 0,
+            !self.particles.is_empty(),
+        );
+        (follow_delta, inherited_velocity)
+    }
+
+    /// Runs emission and live-particle advancement shared by stock shapes.
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
+        &mut self,
+        emitter: &M2ParticleEmitter,
+        pose: M2ParticlePose,
+        elapsed_seconds: f32,
+        emitter_transform: Mat4,
+        density: f32,
+        shape: EmitterShape,
+        follow_delta: Vec3,
+        inherited_velocity: Vec3,
+    ) -> Result<M2ParticleSimulationReport, M2ParticleSimulationError> {
+        validate_update_inputs(elapsed_seconds, emitter_transform, density)?;
         if emitter.emitter_type() != shape.selector() {
             return Err(M2ParticleSimulationError::EmitterType {
                 expected: shape.selector(),
@@ -239,6 +377,7 @@ impl M2ParticleSimulation {
                         elapsed_seconds,
                         emitter_transform,
                         &mut self.random,
+                        inherited_velocity,
                     )?,
                     EmitterShape::Sphere => spawn_sphere(
                         emitter,
@@ -246,6 +385,7 @@ impl M2ParticleSimulation {
                         elapsed_seconds,
                         emitter_transform,
                         &mut self.random,
+                        inherited_velocity,
                     )?,
                 };
                 self.particles.push(particle);
@@ -256,6 +396,20 @@ impl M2ParticleSimulation {
             // fixed-capacity pool cannot admit the requested births.
             if self.emission_remainder > 2.0 {
                 self.emission_remainder = 0.0;
+            }
+        }
+
+        if follow_delta != Vec3::ZERO {
+            let displacement = if emitter.flags() & PARTICLES_IN_MODEL_SPACE != 0 {
+                emitter_transform.inverse().transform_vector3(follow_delta)
+            } else {
+                follow_delta
+            };
+            let existing_count = self.particles.len().saturating_sub(emitted);
+            for particle in &mut self.particles[..existing_count] {
+                if particle.age_seconds() + elapsed_seconds > 2.0 * elapsed_seconds {
+                    particle.translate(displacement);
+                }
             }
         }
 
@@ -348,6 +502,7 @@ fn spawn_planar(
     elapsed_seconds: f32,
     emitter_transform: Mat4,
     random: &mut M2ParticleRandom,
+    inherited_motion: Vec3,
 ) -> Result<M2ParticleState, M2ParticleSimulationError> {
     let age = random.next_unit() * elapsed_seconds;
     let random_word = random.next_u32() as u16;
@@ -374,9 +529,15 @@ fn spawn_planar(
         }
         aim.normalize() * speed
     };
+    let inherited_velocity = varied_inherited_velocity(emitter, pose, random, inherited_motion);
     if emitter.flags() & PARTICLES_IN_MODEL_SPACE == 0 {
         velocity = emitter_transform.transform_vector3(velocity);
         position = emitter_transform.transform_point3(position);
+        velocity += inherited_velocity;
+    } else {
+        velocity += emitter_transform
+            .inverse()
+            .transform_vector3(inherited_velocity);
     }
     M2ParticleState::new(age, position, velocity, random_word).map_err(Into::into)
 }
@@ -388,6 +549,7 @@ fn spawn_sphere(
     elapsed_seconds: f32,
     emitter_transform: Mat4,
     random: &mut M2ParticleRandom,
+    inherited_motion: Vec3,
 ) -> Result<M2ParticleState, M2ParticleSimulationError> {
     let age = random.next_unit() * elapsed_seconds;
     let random_word = random.next_u32() as u16;
@@ -416,11 +578,49 @@ fn spawn_sphere(
     };
     let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
     direction *= speed;
+    let inherited_velocity = varied_inherited_velocity(emitter, pose, random, inherited_motion);
     if emitter.flags() & PARTICLES_IN_MODEL_SPACE == 0 {
         direction = emitter_transform.transform_vector3(direction);
         position = emitter_transform.transform_point3(position);
+        direction += inherited_velocity;
+    } else {
+        direction += emitter_transform
+            .inverse()
+            .transform_vector3(inherited_velocity);
     }
     M2ParticleState::new(age, position, direction, random_word).map_err(Into::into)
+}
+
+/// Applies the second speed-variation sample used by build 12340 only when
+/// inherited motion is selected. The conditional PRNG consumption is part of
+/// the executable's per-particle call order (`0x00981950`).
+fn varied_inherited_velocity(
+    emitter: &M2ParticleEmitter,
+    pose: M2ParticlePose,
+    random: &mut M2ParticleRandom,
+    inherited_motion: Vec3,
+) -> Vec3 {
+    if emitter.flags() & INHERIT_VELOCITY == 0 {
+        return Vec3::ZERO;
+    }
+    inherited_motion * (random.next_signed() * pose.speed_variation() + 1.0)
+}
+
+fn validate_update_inputs(
+    elapsed_seconds: f32,
+    emitter_transform: Mat4,
+    density: f32,
+) -> Result<(), M2ParticleSimulationError> {
+    if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
+        return Err(M2ParticleSimulationError::ElapsedTime);
+    }
+    if !density.is_finite() || density < 0.0 {
+        return Err(M2ParticleSimulationError::Density);
+    }
+    if !emitter_transform.is_finite() {
+        return Err(M2ParticleSimulationError::Transform);
+    }
+    Ok(())
 }
 
 /// Counts produced by one complete emitter update.
