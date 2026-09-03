@@ -3,13 +3,14 @@
 use std::sync::Arc;
 
 use solarity_asset::{
-    AnimationDataCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
-    BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog,
-    CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog, CreatureModelAppearance,
-    DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource, M2ModelCache, M2Texture,
-    M2TextureKind, ParticleColorCatalog,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
+    BlpTextureCache, BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization,
+    CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog,
+    CreatureModelAppearance, DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource,
+    M2ModelCache, M2Texture, M2TextureKind, ParticleColorCatalog,
 };
+use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
     ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
     UnitAnimationTier, UnitSheathState, VisibleEquipmentItem, WorldStateError, WorldTransform,
@@ -51,6 +52,9 @@ const NPC_EQUIPMENT_SLOTS: [PlayerEquipmentSlot; 11] = [
 /// Failure while resolving the local player's authored presentation model.
 #[derive(Debug, Error)]
 pub enum RuntimePlayerError {
+    /// Bounded character-preparation work could not be admitted or completed.
+    #[error(transparent)]
+    Cpu(#[from] CpuError),
     /// The active ECS world lost a required player invariant.
     #[error(transparent)]
     World(#[from] WorldStateError),
@@ -220,6 +224,9 @@ pub enum RuntimePlayerError {
         /// Rejected model-facing value.
         facing_degrees: f64,
     },
+    /// A completed worker did not publish the character it was asked to build.
+    #[error("Glue character worker completed without a resident character")]
+    MissingGlueCharacterWorkerResult,
     /// DBC fallback traversal found no animation sequence present in the M2.
     #[error(
         "player M2 {model} has no stock fallback for animation {animation_id} at tier {animation_tier}"
@@ -271,15 +278,15 @@ pub enum RuntimeRemotePlayerPoll {
 
 /// Immutable client-table dependencies used to resolve player presentation.
 pub struct RuntimePlayerCatalogs {
-    animations: AnimationDataCatalog,
-    creatures: CreatureCatalog,
-    creature_families: CreatureFamilyCatalog,
-    characters: CharacterAppearanceCatalog,
-    races: CharacterRaceCatalog,
-    helmet_visibility: HelmetGeosetVisibilityCatalog,
-    start_outfits: CharacterStartOutfitCatalog,
+    animations: Arc<AnimationDataCatalog>,
+    creatures: Arc<CreatureCatalog>,
+    creature_families: Arc<CreatureFamilyCatalog>,
+    characters: Arc<CharacterAppearanceCatalog>,
+    races: Arc<CharacterRaceCatalog>,
+    helmet_visibility: Arc<HelmetGeosetVisibilityCatalog>,
+    start_outfits: Arc<CharacterStartOutfitCatalog>,
     items: RuntimePlayerItemCatalogs,
-    particle_colors: ParticleColorCatalog,
+    particle_colors: Arc<ParticleColorCatalog>,
 }
 
 /// Item-table group consumed together by player equipment presentation.
@@ -321,33 +328,48 @@ impl RuntimePlayerCatalogs {
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
-            animations,
-            creatures,
-            creature_families,
-            characters,
-            races,
-            helmet_visibility,
-            start_outfits,
+            animations: Arc::new(animations),
+            creatures: Arc::new(creatures),
+            creature_families: Arc::new(creature_families),
+            characters: Arc::new(characters),
+            races: Arc::new(races),
+            helmet_visibility: Arc::new(helmet_visibility),
+            start_outfits: Arc::new(start_outfits),
             items,
-            particle_colors,
+            particle_colors: Arc::new(particle_colors),
         }
     }
+}
+
+#[derive(Clone)]
+struct RuntimePlayerSharedCatalogs {
+    animations: Arc<AnimationDataCatalog>,
+    creatures: Arc<CreatureCatalog>,
+    creature_families: Arc<CreatureFamilyCatalog>,
+    characters: Arc<CharacterAppearanceCatalog>,
+    races: Arc<CharacterRaceCatalog>,
+    helmet_visibility: Arc<HelmetGeosetVisibilityCatalog>,
+    start_outfits: Arc<CharacterStartOutfitCatalog>,
+    item_definitions: Arc<ItemDefinitionCatalog>,
+    item_displays: Arc<ItemDisplayCatalog>,
+    item_visuals: Arc<ItemVisualCatalog>,
+    particle_colors: Arc<ParticleColorCatalog>,
 }
 
 /// Resolves ECS appearance into a shared model without putting assets in ECS.
 pub struct RuntimePlayerPresentation {
     assets: AssetStoreHandle,
-    animations: AnimationDataCatalog,
-    creatures: CreatureCatalog,
-    creature_families: CreatureFamilyCatalog,
-    characters: CharacterAppearanceCatalog,
-    races: CharacterRaceCatalog,
-    helmet_visibility: HelmetGeosetVisibilityCatalog,
-    start_outfits: CharacterStartOutfitCatalog,
-    item_definitions: ItemDefinitionCatalog,
-    item_displays: ItemDisplayCatalog,
-    item_visuals: ItemVisualCatalog,
-    particle_colors: ParticleColorCatalog,
+    animations: Arc<AnimationDataCatalog>,
+    creatures: Arc<CreatureCatalog>,
+    creature_families: Arc<CreatureFamilyCatalog>,
+    characters: Arc<CharacterAppearanceCatalog>,
+    races: Arc<CharacterRaceCatalog>,
+    helmet_visibility: Arc<HelmetGeosetVisibilityCatalog>,
+    start_outfits: Arc<CharacterStartOutfitCatalog>,
+    item_definitions: Arc<ItemDefinitionCatalog>,
+    item_displays: Arc<ItemDisplayCatalog>,
+    item_visuals: Arc<ItemVisualCatalog>,
+    particle_colors: Arc<ParticleColorCatalog>,
     models: M2ModelCache,
     textures: BlpTextureCache,
     component_texture_level: CharacterComponentTextureLevel,
@@ -355,12 +377,19 @@ pub struct RuntimePlayerPresentation {
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
+    glue_worker_catalog: Option<ArchiveCatalog>,
+    pending_glue_character: Option<PendingGlueCharacter>,
 }
 
 impl RuntimePlayerPresentation {
     /// Creates an empty owner over process-wide assets and immutable DBC catalogs.
     #[must_use]
     pub fn new(assets: AssetStoreHandle, catalogs: RuntimePlayerCatalogs) -> Self {
+        let RuntimePlayerItemCatalogs {
+            definitions,
+            displays,
+            visuals,
+        } = catalogs.items;
         Self {
             assets,
             animations: catalogs.animations,
@@ -370,9 +399,9 @@ impl RuntimePlayerPresentation {
             races: catalogs.races,
             helmet_visibility: catalogs.helmet_visibility,
             start_outfits: catalogs.start_outfits,
-            item_definitions: catalogs.items.definitions,
-            item_displays: catalogs.items.displays,
-            item_visuals: catalogs.items.visuals,
+            item_definitions: Arc::new(definitions),
+            item_displays: Arc::new(displays),
+            item_visuals: Arc::new(visuals),
             particle_colors: catalogs.particle_colors,
             models: M2ModelCache::new(),
             textures: BlpTextureCache::new(),
@@ -381,7 +410,131 @@ impl RuntimePlayerPresentation {
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
+            glue_worker_catalog: None,
+            pending_glue_character: None,
         }
+    }
+
+    /// Enables non-blocking Glue character construction on a private archive mount.
+    #[must_use]
+    pub fn with_glue_worker_catalog(mut self, catalog: ArchiveCatalog) -> Self {
+        self.glue_worker_catalog = Some(catalog);
+        self
+    }
+
+    fn shared_catalogs(&self) -> RuntimePlayerSharedCatalogs {
+        RuntimePlayerSharedCatalogs {
+            animations: Arc::clone(&self.animations),
+            creatures: Arc::clone(&self.creatures),
+            creature_families: Arc::clone(&self.creature_families),
+            characters: Arc::clone(&self.characters),
+            races: Arc::clone(&self.races),
+            helmet_visibility: Arc::clone(&self.helmet_visibility),
+            start_outfits: Arc::clone(&self.start_outfits),
+            item_definitions: Arc::clone(&self.item_definitions),
+            item_displays: Arc::clone(&self.item_displays),
+            item_visuals: Arc::clone(&self.item_visuals),
+            particle_colors: Arc::clone(&self.particle_colors),
+        }
+    }
+
+    /// Polls or submits complete character-creation representation work.
+    ///
+    /// Archive reads, M2 parsing, BLP decoding, atlas composition, and item
+    /// attachment resolution stay off the presentation thread. The returned
+    /// change becomes true only after a matching complete generation arrives.
+    pub(super) fn synchronize_character_creation_async(
+        &mut self,
+        preview: Option<&UiCharacterCreationPreview>,
+        cpu: &CpuExecutor,
+    ) -> Result<bool, RuntimePlayerError> {
+        self.synchronize_glue_character_async(
+            preview.cloned().map(ResidentGlueCharacterKey::Creation),
+            cpu,
+        )
+    }
+
+    /// Polls or submits complete character-selection representation work.
+    pub(super) fn synchronize_character_selection_async(
+        &mut self,
+        preview: Option<&UiCharacterSelectionPreview>,
+        cpu: &CpuExecutor,
+    ) -> Result<bool, RuntimePlayerError> {
+        self.synchronize_glue_character_async(
+            preview
+                .cloned()
+                .map(Box::new)
+                .map(ResidentGlueCharacterKey::Selection),
+            cpu,
+        )
+    }
+
+    fn synchronize_glue_character_async(
+        &mut self,
+        requested: Option<ResidentGlueCharacterKey>,
+        cpu: &CpuExecutor,
+    ) -> Result<bool, RuntimePlayerError> {
+        let Some(requested) = requested else {
+            self.pending_glue_character = None;
+            return Ok(self.glue_character.take().is_some());
+        };
+        if let Some(resident) = self.glue_character.as_mut()
+            && resident.key.same_residency(&requested)
+        {
+            resident.apply_transform_key(requested);
+            return Ok(false);
+        }
+
+        if let Some(pending) = self.pending_glue_character.as_ref()
+            && pending.key.same_residency(&requested)
+        {
+            if !pending.task.is_finished() {
+                return Ok(false);
+            }
+            let pending = self
+                .pending_glue_character
+                .take()
+                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
+            let mut resident = pending.task.join()??;
+            resident.apply_transform_key(requested);
+            tracing::info!(
+                residency_wait_ms = pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
+                "published worker-prepared Glue character representation"
+            );
+            self.glue_character = Some(resident);
+            return Ok(true);
+        }
+
+        if let Some(pending) = self.pending_glue_character.as_ref() {
+            if !pending.task.is_finished() {
+                return Ok(false);
+            }
+            let stale = self
+                .pending_glue_character
+                .take()
+                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
+            if let Err(source) = stale.task.join()? {
+                tracing::warn!(error = %source, "stale Glue character preparation failed");
+            }
+        }
+
+        let catalog = self
+            .glue_worker_catalog
+            .as_ref()
+            .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?
+            .clone();
+        let catalogs = self.shared_catalogs();
+        let component_texture_level = self.component_texture_level;
+        let task_key = requested.clone();
+        let task = cpu.try_submit(move || {
+            prepare_glue_character_on_worker(catalog, catalogs, component_texture_level, task_key)
+        })?;
+        self.pending_glue_character = Some(PendingGlueCharacter {
+            key: requested,
+            submitted_at: std::time::Instant::now(),
+            task,
+        });
+        Ok(false)
     }
 
     /// Applies the live component-texture level and invalidates affected models.
@@ -1668,6 +1821,49 @@ impl RuntimePlayerPresentation {
     }
 }
 
+fn prepare_glue_character_on_worker(
+    catalog: ArchiveCatalog,
+    catalogs: RuntimePlayerSharedCatalogs,
+    component_texture_level: CharacterComponentTextureLevel,
+    key: ResidentGlueCharacterKey,
+) -> Result<ResidentGlueCharacterModel, RuntimePlayerError> {
+    let store = AssetStore::mount(catalog)?;
+    let mut presentation = RuntimePlayerPresentation {
+        assets: AssetStoreHandle::new(store),
+        animations: catalogs.animations,
+        creatures: catalogs.creatures,
+        creature_families: catalogs.creature_families,
+        characters: catalogs.characters,
+        races: catalogs.races,
+        helmet_visibility: catalogs.helmet_visibility,
+        start_outfits: catalogs.start_outfits,
+        item_definitions: catalogs.item_definitions,
+        item_displays: catalogs.item_displays,
+        item_visuals: catalogs.item_visuals,
+        particle_colors: catalogs.particle_colors,
+        models: M2ModelCache::new(),
+        textures: BlpTextureCache::new(),
+        component_texture_level,
+        resident: None,
+        creatures_resident: Vec::new(),
+        remote_players: Vec::new(),
+        glue_character: None,
+        glue_worker_catalog: None,
+        pending_glue_character: None,
+    };
+    match &key {
+        ResidentGlueCharacterKey::Creation(preview) => {
+            presentation.synchronize_character_creation(Some(preview))?;
+        }
+        ResidentGlueCharacterKey::Selection(preview) => {
+            presentation.synchronize_character_selection(Some(preview))?;
+        }
+    }
+    presentation
+        .glue_character
+        .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum ResidentGlueCharacterKey {
     Creation(UiCharacterCreationPreview),
@@ -1675,6 +1871,23 @@ enum ResidentGlueCharacterKey {
 }
 
 impl ResidentGlueCharacterKey {
+    fn same_residency(&self, requested: &Self) -> bool {
+        match (self, requested) {
+            (Self::Creation(_), Self::Creation(preview)) => self.matches_creation(preview),
+            (Self::Selection(_), Self::Selection(preview)) => self.matches_selection(preview),
+            (Self::Creation(_), Self::Selection(_)) | (Self::Selection(_), Self::Creation(_)) => {
+                false
+            }
+        }
+    }
+
+    fn facing_radians(&self) -> f32 {
+        match self {
+            Self::Creation(preview) => preview.facing_degrees().to_radians() as f32,
+            Self::Selection(preview) => preview.facing_degrees().to_radians() as f32,
+        }
+    }
+
     /// Compares creation inputs that require body, texture, or equipment residency.
     fn matches_creation(&self, preview: &UiCharacterCreationPreview) -> bool {
         let Self::Creation(current) = self else {
@@ -1723,6 +1936,19 @@ struct ResidentGlueCharacterModel {
     attachments: Vec<ResidentPlayerAttachment>,
     pet: Option<ResidentGluePetModel>,
     particle_colors: Option<M2ParticleColorReplacement>,
+}
+
+impl ResidentGlueCharacterModel {
+    fn apply_transform_key(&mut self, key: ResidentGlueCharacterKey) {
+        self.facing_radians = key.facing_radians();
+        self.key = key;
+    }
+}
+
+struct PendingGlueCharacter {
+    key: ResidentGlueCharacterKey,
+    submitted_at: std::time::Instant,
+    task: CpuTask<Result<ResidentGlueCharacterModel, RuntimePlayerError>>,
 }
 
 struct ResidentGluePetModel {

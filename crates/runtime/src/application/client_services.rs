@@ -162,6 +162,7 @@ impl ClientServices {
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
         let backdrop_catalog = catalog.clone();
+        let player_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
         let animations = AnimationDataCatalog::load(&mut assets)?;
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
@@ -405,7 +406,8 @@ impl ClientServices {
                         ),
                         particle_colors,
                     ),
-                ),
+                )
+                .with_glue_worker_catalog(player_catalog),
                 transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps),
                 terrain_frame: None,
@@ -951,14 +953,16 @@ impl ClientServices {
             "charcreate" => {
                 let preview = self.glue.character_creation_preview();
                 self.player
-                    .synchronize_character_creation(preview.as_ref())?
+                    .synchronize_character_creation_async(preview.as_ref(), &self.cpu)?
             }
             "charselect" => {
                 let preview = self.glue.character_selection_preview();
                 self.player
-                    .synchronize_character_selection(preview.as_ref())?
+                    .synchronize_character_selection_async(preview.as_ref(), &self.cpu)?
             }
-            _ => self.player.synchronize_character_creation(None)?,
+            _ => self
+                .player
+                .synchronize_character_creation_async(None, &self.cpu)?,
         };
         let glue_character = self.player.glue_character_frame_input();
         self.glue_model.synchronize(
