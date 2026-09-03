@@ -15,9 +15,6 @@ const INDEPENDENT_SCALE_VARIATION: u32 = 0x0008_0000;
 /// Selects one random atlas image when the lifetime ramp has no keys.
 const CHOOSE_RANDOM_TEXTURE: u32 = 0x0001_0000;
 
-/// Starts flipbook animation from one random atlas image.
-const RANDOM_FLIPBOOK_START: u32 = 0x0020_0000;
-
 /// Executable lower bound at `0x009E8CD0` for a random scale multiplier.
 const MINIMUM_SCALE_MULTIPLIER: f32 = f32::from_bits(0x38d1_b717);
 
@@ -88,7 +85,7 @@ impl M2ParticleLifetimePose {
         let mut random = M2ParticleRandom::new(u32::from(random_word));
         let head_texture_cell = sample_held(emitter.head_uv_animation(), key, 0).map_or_else(
             || {
-                if emitter.flags() & (CHOOSE_RANDOM_TEXTURE | RANDOM_FLIPBOOK_START) == 0 {
+                if emitter.flags() & CHOOSE_RANDOM_TEXTURE == 0 {
                     0
                 } else {
                     random_atlas_cell(emitter, &mut random)

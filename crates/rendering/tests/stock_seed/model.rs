@@ -1078,6 +1078,49 @@ fn m2_particle_pose_selects_random_head_cell_in_stock_order() -> Result<(), Box<
     Ok(())
 }
 
+/// Raw flag `0x200000` is unrelated to the random-cell path at `0x00979E90`.
+#[test]
+fn m2_particle_pose_does_not_randomize_head_cell_for_unrelated_flag() -> Result<(), Box<dyn Error>>
+{
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x0020_0000_u32.to_le_bytes());
+    bytes[particle_offset + 0x13c..particle_offset + 0x140].copy_from_slice(&0_u32.to_le_bytes());
+    bytes[particle_offset + 0x144..particle_offset + 0x148].copy_from_slice(&0_u32.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\UnrelatedParticleFlag.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\UnrelatedParticleFlag00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\UnrelatedParticleFlag.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let random_word = 0x1234;
+    let pose = M2ParticleLifetimePose::sample(emitter, 0.5, random_word)?;
+    let mut random = M2ParticleRandom::new(u32::from(random_word));
+    let shared = random.next_signed();
+    let expected_scale = glam::Vec2::new(2.0 * (1.0 + shared * 0.5), 3.0 * (1.0 + shared * 0.25));
+
+    assert_eq!(pose.head_texture_cell(), 0);
+    assert!((pose.scale() - expected_scale).abs().max_element() < 0.0001);
+    Ok(())
+}
+
 /// Shared scale randomness retains each authored axis variation magnitude.
 #[test]
 fn m2_particle_pose_shares_random_sample_between_scale_axes() -> Result<(), Box<dyn Error>> {
