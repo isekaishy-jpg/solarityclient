@@ -290,6 +290,7 @@ fn glue_retains_hidden_model_source_for_prewarm() -> Result<(), Box<dyn Error>> 
             path: "Interface\\GlueXML\\HiddenModel.xml",
             bytes: br#"<Ui>
 <ModelFFX name="AccountLogin" hidden="true">
+  <Size x="800" y="600"/><Anchors><Anchor point="CENTER"/></Anchors>
   <Scripts><OnLoad>
     self:SetModel("Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2")
   </OnLoad></Scripts>
@@ -314,6 +315,14 @@ fn glue_retains_hidden_model_source_for_prewarm() -> Result<(), Box<dyn Error>> 
         "INTERFACE\\GLUES\\MODELS\\UI_MAINMENU_NORTHREND\\UI_MAINMENU_NORTHREND.M2"
     );
     assert_eq!(light_count, 0);
+    let configured = manager
+        .configured_model_presentation("AccountLogin")?
+        .ok_or("missing hidden AccountLogin model presentation")?;
+    assert_eq!(configured.object_index(), 0);
+    assert_eq!(configured.camera(), 0);
+    assert_eq!(configured.sequence(), 0);
+    assert!((configured.bounds().width() - 800.0).abs() < 0.000_01);
+    assert!((configured.bounds().height() - 600.0).abs() < 0.000_01);
     assert_eq!(manager.configured_model_source("MissingModel")?, None);
     Ok(())
 }

@@ -249,26 +249,44 @@ impl ClientServices {
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let mut glue_model = RuntimeGlueModelScene::new();
         if initial_screen == GlueInitialScreen::Movie
-            && let Some((login_model, background_light_count)) = glue
-                .configured_model_source("AccountLogin")
+            && let Some(login_model) = glue
+                .configured_model_presentation("AccountLogin")
                 .map_err(GlueError::from)?
         {
-            glue_model.prewarm(login_model, background_light_count, &assets, &cpu)?;
-            // AccountLogin must be fully resident before the movie starts. The
-            // immutable Vulkan generation is safe to prepare while hidden; its
-            // animation and effect clocks begin only when EULA/Login shows it.
-            glue_model.finish_prewarm(&mut renderer)?;
+            let background_light_count = login_model
+                .background_lights()
+                .live()
+                .iter()
+                .filter(|light| light.is_some())
+                .count();
+            glue_model.prewarm(
+                login_model.path().clone(),
+                background_light_count,
+                &assets,
+                &cpu,
+            )?;
+            // AccountLogin's immutable resources and live effect owner must
+            // both exist before the movie starts. The movie then advances that
+            // hidden owner until EULA reveals the already-current scene.
+            glue_model.finish_prewarm(
+                &mut renderer,
+                &login_model,
+                &mut crt_rand,
+                Arc::clone(&particle_twinkle),
+            )?;
         }
-        glue_model.synchronize(
-            &mut renderer,
-            &glue,
-            &assets,
-            &cpu,
-            &mut crt_rand,
-            Arc::clone(&particle_twinkle),
-            None,
-            false,
-        )?;
+        if initial_screen != GlueInitialScreen::Movie {
+            glue_model.synchronize(
+                &mut renderer,
+                &glue,
+                &assets,
+                &cpu,
+                &mut crt_rand,
+                Arc::clone(&particle_twinkle),
+                None,
+                false,
+            )?;
+        }
         let mut ui_textures = BlpTextureCache::new();
         let login_ui = if glue.media_intent().movie().is_some() {
             None
@@ -698,6 +716,12 @@ impl ClientServices {
                 cinematic_overlay,
             )? {
                 RuntimeCinematicPoll::Presented => {
+                    let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
+                    self.glue_model.advance_hidden(
+                        &self.renderer,
+                        global_time_ms,
+                        &mut self.crt_rand,
+                    )?;
                     if let Some(fps) = self.fps.as_mut() {
                         fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
                     }

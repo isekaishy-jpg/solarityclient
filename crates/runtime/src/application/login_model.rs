@@ -21,7 +21,7 @@ use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::{
-    GlueM2Texture, M2Frame, M2GlueCpuSource, M2GlueGpuSource, prepare_glue_cpu_source,
+    GlueM2Texture, M2Frame, M2GlueCpuSource, prepare_glue_cpu_source,
 };
 use crate::random::CrtRand;
 
@@ -134,15 +134,6 @@ struct PendingGlueModel {
 struct PendingGlueModelRequest {
     key: GlueModelKey,
     environment: GlueModelEnvironment,
-}
-
-/// One hidden environment generation whose immutable Vulkan state is resident.
-struct PreparedGlueModel {
-    path: AssetPath,
-    external_directional_light: bool,
-    local_light_count: M2LocalLightCount,
-    model: Arc<solarity_asset::DecodedM2Model>,
-    source: M2GlueGpuSource,
 }
 
 /// Selected half of each ModelFFX live/ghost light pair.
@@ -269,7 +260,6 @@ pub(crate) struct RuntimeGlueModelScene {
     textures: BlpTextureCache,
     active: Option<ActiveGlueModel>,
     pending: Option<PendingGlueModel>,
-    prepared: Option<PreparedGlueModel>,
 }
 
 impl RuntimeGlueModelScene {
@@ -280,7 +270,6 @@ impl RuntimeGlueModelScene {
             textures: BlpTextureCache::new(),
             active: None,
             pending: None,
-            prepared: None,
         }
     }
 
@@ -303,10 +292,6 @@ impl RuntimeGlueModelScene {
                 pending.path == path
                     && pending.external_directional_light == external_directional_light
             })
-            || self.prepared.as_ref().is_some_and(|prepared| {
-                prepared.path == path
-                    && prepared.external_directional_light == external_directional_light
-            })
         {
             return Ok(());
         }
@@ -328,14 +313,18 @@ impl RuntimeGlueModelScene {
         Ok(())
     }
 
-    /// Completes a hidden prewarm before the cinematic begins presenting.
+    /// Completes and activates a hidden prewarm before the cinematic presents.
     ///
     /// Vulkan resource ownership stays on the presentation thread, while the
     /// mesh plan and shader compilation are joined from the bounded CPU pool.
-    /// Playback is deliberately not constructed until the model becomes visible.
+    /// Playback begins here so the cinematic can advance the same live effects
+    /// that EULA reveals, rather than constructing an empty instance afterward.
     pub(crate) fn finish_prewarm(
         &mut self,
         renderer: &mut VulkanRenderer,
+        presentation: &UiModelPresentation,
+        random: &mut CrtRand,
+        particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
         let Some(pending) = self.pending.take() else {
             return Ok(());
@@ -361,13 +350,90 @@ impl RuntimeGlueModelScene {
             gpu_prepare_ms = gpu_started.elapsed().as_secs_f64() * 1_000.0,
             "prepared hidden Glue model generation"
         );
-        self.prepared = Some(PreparedGlueModel {
-            path: pending.path,
-            external_directional_light: pending.external_directional_light,
+        let key = GlueModelKey::from_presentation(presentation);
+        if key.path != pending.path {
+            return Err(RuntimeGlueModelError::PendingState);
+        }
+        if key.camera < 0 {
+            return Err(RuntimeGlueModelError::NegativeCamera {
+                object_index: key.object_index,
+                camera: key.camera,
+            });
+        }
+        let animation_id = u16::try_from(key.sequence).map_err(|_source| {
+            RuntimeGlueModelError::AnimationCapacity {
+                object_index: key.object_index,
+                sequence: key.sequence,
+            }
+        })?;
+        let environment =
+            GlueModelEnvironment::from_presentation(presentation, GlueModelLightVariant::Live);
+        let mut frame = M2Frame::activate_glue_gpu_source(
+            source,
+            key.object_index,
+            animation_id,
+            key.model_scale,
+            random,
+            particle_twinkle,
+        )?;
+        frame.set_glue_opacity(environment.alpha)?;
+        tracing::info!(
+            model = %pending.model.path(),
+            "activated hidden Glue model generation"
+        );
+        self.active = Some(ActiveGlueModel {
+            key,
+            environment,
             local_light_count: pending.local_light_count,
             model: pending.model,
-            source,
+            frame,
         });
+        Ok(())
+    }
+
+    /// Advances the resident login model while the cinematic covers it.
+    ///
+    /// This performs no swapchain submission. It only keeps animation,
+    /// particle, ribbon, material, and light state current for the first EULA
+    /// frame that follows the movie.
+    pub(crate) fn advance_hidden(
+        &mut self,
+        renderer: &VulkanRenderer,
+        global_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeGlueModelError> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(());
+        };
+        let aspect_ratio =
+            active.environment.bounds.width() as f32 / active.environment.bounds.height() as f32;
+        let animation_time_ms = active.frame.animation_time_ms();
+        let clock =
+            active
+                .frame
+                .advance_glue_animation_clock(animation_time_ms, global_time_ms, random)?;
+        let camera_index = usize::try_from(active.key.camera).map_err(|_source| {
+            RuntimeGlueModelError::NegativeCamera {
+                object_index: active.key.object_index,
+                camera: active.key.camera,
+            }
+        })?;
+        let camera =
+            sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        let particle_view_scale =
+            1.0_f32.hypot(STOCK_M2_CAMERA_ASPECT_RATIO) / 1.0_f32.hypot(aspect_ratio);
+        let frustum =
+            WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
+        active.frame.prepare_visible_draws(
+            renderer,
+            frustum,
+            camera,
+            active.environment.fog_color,
+            particle_view_scale,
+            animation_time_ms,
+            global_time_ms,
+            random,
+        )?;
         Ok(())
     }
 
@@ -456,42 +522,6 @@ impl RuntimeGlueModelScene {
                 || pending.external_directional_light != external_directional_light
         }) {
             self.pending = None;
-        }
-        if self.prepared.as_ref().is_some_and(|prepared| {
-            prepared.path != key.path
-                || prepared.external_directional_light != external_directional_light
-        }) {
-            self.prepared = None;
-        }
-        if let Some(prepared) = self.prepared.take() {
-            let mut frame = M2Frame::activate_glue_gpu_source(
-                prepared.source,
-                key.object_index,
-                animation_id,
-                key.model_scale,
-                random,
-                particle_twinkle,
-            )?;
-            frame.replace_glue_character(
-                renderer,
-                glue_character,
-                environment.character_light_count(),
-                environment.pet_light_count(),
-                random,
-            )?;
-            frame.set_glue_opacity(environment.alpha)?;
-            tracing::info!(
-                model = %prepared.model.path(),
-                "activated resident Glue model generation"
-            );
-            self.active = Some(ActiveGlueModel {
-                key,
-                environment,
-                local_light_count: prepared.local_light_count,
-                model: prepared.model,
-                frame,
-            });
-            return Ok(());
         }
         if let Some(pending) = self.pending.as_mut() {
             let consumed_prewarm = pending.request.is_none();

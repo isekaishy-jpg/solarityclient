@@ -63,9 +63,8 @@ struct M2GpuSource {
 
 /// Immutable renderer resources for one Glue model prepared before activation.
 ///
-/// Keeping this separate from [`M2Frame`] lets startup upload AccountLogin while
-/// it is hidden without starting its animation, particle, ribbon, or event
-/// clocks. The source is moved into the live frame when Glue first shows it.
+/// Keeping this separate from [`M2Frame`] lets startup upload AccountLogin
+/// before constructing the hidden live owner that the cinematic advances.
 pub(in crate::application) struct M2GlueGpuSource {
     source: M2GpuSource,
     animation_started_at: std::time::Instant,

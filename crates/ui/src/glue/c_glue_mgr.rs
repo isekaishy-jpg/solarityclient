@@ -441,6 +441,32 @@ impl GlueManager {
         &self,
         object_name: &str,
     ) -> Result<Option<(solarity_asset::AssetPath, usize)>, crate::UiScriptError> {
+        Ok(self
+            .configured_model_presentation(object_name)?
+            .map(|model| {
+                let live_background_light_count = model
+                    .background_lights()
+                    .live()
+                    .iter()
+                    .filter(|light| light.is_some())
+                    .count();
+                (model.path().clone(), live_background_light_count)
+            }))
+    }
+
+    /// Returns the complete configured state of a named model while hidden.
+    ///
+    /// Startup uses this to construct AccountLogin's live animation/effect
+    /// owner behind the cinematic instead of delaying that owner until EULA.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::UiScriptError`] when the live Lua object arena cannot
+    /// be snapshotted.
+    pub fn configured_model_presentation(
+        &self,
+        object_name: &str,
+    ) -> Result<Option<crate::UiModelPresentation>, crate::UiScriptError> {
         let Some(object_index) = self
             .objects
             .iter()
@@ -449,17 +475,11 @@ impl GlueManager {
             return Ok(None);
         };
         let live = self.runtime.snapshot_objects(&self.bundle)?;
-        Ok(live.objects().get(object_index).and_then(|object| {
-            let model = object.model.as_ref()?;
-            let path = model.file.clone()?;
-            let live_background_light_count = model
-                .background_lights
-                .live
-                .iter()
-                .filter(|light| light.is_some())
-                .count();
-            Some((path, live_background_light_count))
-        }))
+        Ok(crate::UiPresentationPlan::configured_model(
+            &live,
+            &self.geometry,
+            object_index,
+        ))
     }
 
     /// Returns the locale-loaded legal and help document layout.

@@ -419,37 +419,12 @@ impl UiPresentationPlan {
                     },
                 );
             }
-            if let (Some(model), Some(region), Some(strata), Some(frame_level)) = (
-                &object.model,
-                geometry.region(object_index),
-                object.frame_strata,
-                object.frame_level,
-            ) && region.effectively_shown()
-                && region.effective_alpha() > 0.0
-                && let Some(path) = &model.file
+            if let Some(model) = Self::configured_model(live, geometry, object_index)
+                && geometry.region(object_index).is_some_and(|region| {
+                    region.effectively_shown() && region.effective_alpha() > 0.0
+                })
             {
-                models.push(UiModelPresentation {
-                    object_index,
-                    path: path.clone(),
-                    camera: model.camera,
-                    sequence: model.sequence,
-                    sequence_time_sequence: model.sequence_time_sequence,
-                    sequence_time_ms: model.sequence_time_ms,
-                    model_scale: model.scale as f32,
-                    fog: model.fog_color.map(|color| UiModelFog {
-                        color: color.map(|value| value as f32),
-                        near: model.fog_near as f32,
-                        far: model.fog_far as f32,
-                    }),
-                    glow: model.glow as f32,
-                    background_lights: model_light_sets(model.background_lights),
-                    character_lights: model_light_sets(model.character_lights),
-                    pet_lights: model_light_sets(model.pet_lights),
-                    bounds: region.presentation_bounds(),
-                    alpha: region.effective_alpha() as f32,
-                    strata,
-                    frame_level,
-                });
+                models.push(model);
             }
             let Some(texture) = &object.texture else {
                 continue;
@@ -566,6 +541,40 @@ impl UiPresentationPlan {
     #[must_use]
     pub fn models(&self) -> &[UiModelPresentation] {
         &self.models
+    }
+
+    /// Resolves one model widget without requiring its owning screen to be shown.
+    pub(crate) fn configured_model(
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+    ) -> Option<UiModelPresentation> {
+        let object = live.objects().get(object_index)?;
+        let model = object.model.as_ref()?;
+        let region = geometry.region(object_index)?;
+        let path = model.file.as_ref()?;
+        Some(UiModelPresentation {
+            object_index,
+            path: path.clone(),
+            camera: model.camera,
+            sequence: model.sequence,
+            sequence_time_sequence: model.sequence_time_sequence,
+            sequence_time_ms: model.sequence_time_ms,
+            model_scale: model.scale as f32,
+            fog: model.fog_color.map(|color| UiModelFog {
+                color: color.map(|value| value as f32),
+                near: model.fog_near as f32,
+                far: model.fog_far as f32,
+            }),
+            glow: model.glow as f32,
+            background_lights: model_light_sets(model.background_lights),
+            character_lights: model_light_sets(model.character_lights),
+            pet_lights: model_light_sets(model.pet_lights),
+            bounds: region.presentation_bounds(),
+            alpha: region.effective_alpha() as f32,
+            strata: object.frame_strata?,
+            frame_level: object.frame_level?,
+        })
     }
 }
 
