@@ -188,9 +188,14 @@ impl UiSimpleHtmlLine {
 pub struct UiSimpleHtmlNode {
     source: Option<LocalizedDocument>,
     document: Option<UiSimpleHtmlDocument>,
+    dynamic_text: Option<String>,
+    dynamic_blocks: Option<Vec<UiSimpleHtmlBlock>>,
     lines: Vec<UiSimpleHtmlLine>,
     content_height: f32,
+    minimum_height: f32,
     clip_object: Option<usize>,
+    styles: [Option<HtmlFontStyle>; 4],
+    label: String,
 }
 
 impl UiSimpleHtmlNode {
@@ -203,9 +208,11 @@ impl UiSimpleHtmlNode {
     /// Returns semantic blocks in source order.
     #[must_use]
     pub fn blocks(&self) -> &[UiSimpleHtmlBlock] {
-        self.document
-            .as_ref()
-            .map_or(&[], UiSimpleHtmlDocument::blocks)
+        self.dynamic_blocks.as_deref().unwrap_or_else(|| {
+            self.document
+                .as_ref()
+                .map_or(&[], UiSimpleHtmlDocument::blocks)
+        })
     }
 
     /// Returns measured lines in top-to-bottom order.
@@ -311,9 +318,16 @@ impl UiSimpleHtmlPlan {
             nodes.push(Some(UiSimpleHtmlNode {
                 source,
                 document,
+                dynamic_text: None,
+                dynamic_blocks: None,
                 lines,
                 content_height: content_height as f32,
+                minimum_height: regions
+                    .state(index)
+                    .map_or(0.0, crate::UiRegionState::height),
                 clip_object: nearest_scroll_frame(tree, index),
+                styles,
+                label,
             }));
         }
         Ok(Self { nodes })
@@ -323,6 +337,73 @@ impl UiSimpleHtmlPlan {
     #[must_use]
     pub fn node(&self, object_index: usize) -> Option<&UiSimpleHtmlNode> {
         self.nodes.get(object_index).and_then(Option::as_ref)
+    }
+
+    /// Replaces one document through stock `SimpleHTML:SetText` semantics.
+    ///
+    /// The dynamic string uses the same restricted HTML parser, font slots,
+    /// wrapping, and archive-backed raster metrics as file-backed documents.
+    /// `None` retains the XML-authored file and is distinct from an explicitly
+    /// empty string.
+    pub(crate) fn refresh_text(
+        &mut self,
+        object_index: usize,
+        text: Option<&str>,
+        width: f64,
+        fonts: &FontCatalog,
+        assets: &mut AssetStore,
+        logical_height: u32,
+    ) -> Result<Option<(f32, Option<usize>)>, UiSimpleHtmlError> {
+        let Some(node) = self.nodes.get_mut(object_index).and_then(Option::as_mut) else {
+            return Ok(None);
+        };
+        if node.dynamic_text.as_deref() == text {
+            return Ok(None);
+        }
+
+        let dynamic_blocks = text
+            .map(|text| {
+                if text.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    // Stock `CSimpleHTML::SetText` at 0x0096D890 falls back to
+                    // `AddText` when the input is not an HTML/BODY document.
+                    match parse_runtime_document(text.as_bytes()) {
+                        Ok(blocks) => Ok(blocks),
+                        Err(UiSimpleHtmlError::Load(_)) => Ok(vec![UiSimpleHtmlBlock {
+                            font: UiSimpleHtmlFontSlot::Normal,
+                            alignment: UiSimpleHtmlAlignment::Left,
+                            text: text.to_owned(),
+                        }]),
+                        Err(error) => Err(error),
+                    }
+                }
+            })
+            .transpose()?;
+        let blocks = dynamic_blocks.as_deref().unwrap_or_else(|| {
+            node.document
+                .as_ref()
+                .map_or(&[], UiSimpleHtmlDocument::blocks)
+        });
+        let mut font_system = FontSystem::new()?;
+        let (lines, content_height) = wrap_blocks(
+            blocks,
+            &node.styles,
+            fonts,
+            width,
+            logical_height as f64 / 768.0,
+            assets,
+            &mut font_system,
+            &node.label,
+        )?;
+        node.dynamic_text = text.map(str::to_owned);
+        node.dynamic_blocks = dynamic_blocks;
+        node.lines = lines;
+        node.content_height = content_height as f32;
+        Ok(Some((
+            node.minimum_height.max(node.content_height),
+            node.clip_object,
+        )))
     }
 }
 
@@ -343,7 +424,7 @@ fn nearest_scroll_frame(tree: &UiObjectTree<'_>, object_index: usize) -> Option<
     None
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct HtmlFontStyle {
     object: String,
     spacing: f64,
@@ -430,6 +511,22 @@ fn parse_document(
     bytes: &[u8],
 ) -> Result<Vec<UiSimpleHtmlBlock>, UiSimpleHtmlError> {
     let path = AssetPath::new(source.file_name())?;
+    parse_document_at_path(path, bytes)
+}
+
+/// Gives Lua-authored HTML a stable diagnostic identity without pretending it
+/// came from one of the locale-root legal documents.
+fn parse_runtime_document(bytes: &[u8]) -> Result<Vec<UiSimpleHtmlBlock>, UiSimpleHtmlError> {
+    parse_document_at_path(
+        AssetPath::new("Interface\\GlueXML\\SimpleHTML-SetText.xml")?,
+        bytes,
+    )
+}
+
+fn parse_document_at_path(
+    path: AssetPath,
+    bytes: &[u8],
+) -> Result<Vec<UiSimpleHtmlBlock>, UiSimpleHtmlError> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     let text = std::str::from_utf8(bytes).map_err(|error| UiLoadError::TextEncoding {
         path: path.clone(),

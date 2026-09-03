@@ -135,6 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     report_login_presentation(&later, texture_bindings.resident_count());
     validate_login_input(&mut later)?;
+    validate_login_secondary_frames(&mut later)?;
     let atlas_extent = later.glyphs().extent();
     let atlas_bytes = later.glyphs().rgba8().len();
     let visible_glyphs = visible_glyph_owners(&later).len();
@@ -145,6 +146,64 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "validated first-run agreements, later-run bypass, authored login input, character selection, and character creation: changes={changes:?} atlas={atlas_extent:?} atlas_bytes={atlas_bytes} login_visible_glyphs={visible_glyphs}"
     );
+    Ok(())
+}
+
+fn validate_login_secondary_frames(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    manager
+        .bundle()
+        .lua()
+        .load("AccountLogin_Credits()")
+        .exec()?;
+    for _frame in 0..120 {
+        manager.update(1.0 / 60.0)?;
+    }
+    if manager.current_screen() != "credits" || !object_is_shown(manager, "CreditsFrame")? {
+        return Err(invalid_data(format!(
+            "credits did not become active: screen={}",
+            manager.current_screen()
+        ))
+        .into());
+    }
+    let credits_text = object_index(manager, "CreditsText")?;
+    if !visible_glyph_owners(manager).contains(&credits_text) {
+        return Err(
+            invalid_data("dynamic CreditsText produced no visible glyphs".to_owned()).into(),
+        );
+    }
+    let credits_scroll = object_index(manager, "CreditsScrollFrame")?;
+    let range = manager
+        .scroll_frames()
+        .state(credits_scroll)
+        .ok_or_else(|| invalid_data("CreditsScrollFrame has no live range".to_owned()))?
+        .range();
+    if range.1 <= 0.0 {
+        return Err(invalid_data(format!(
+            "dynamic credits document produced invalid scroll range {range:?}"
+        ))
+        .into());
+    }
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+    )?;
+    for _frame in 0..120 {
+        manager.update(1.0 / 60.0)?;
+    }
+    manager
+        .bundle()
+        .lua()
+        .load("OptionsSelectFrame:Show()")
+        .exec()?;
+    manager.update(1.0 / 60.0)?;
+    if !object_is_shown(manager, "OptionsSelectFrame")? {
+        return Err(invalid_data("options selector did not become active".to_owned()).into());
+    }
+    manager
+        .bundle()
+        .lua()
+        .load("OptionsSelectFrame:Hide()")
+        .exec()?;
     Ok(())
 }
 

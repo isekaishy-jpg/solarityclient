@@ -19,9 +19,9 @@ use crate::{
     FontCatalog, FontDefinition, FontOutline, FontShadow, HorizontalJustification, UiAnchorTarget,
     UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
     UiFrameStrata, UiKeyboardModifiers, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind,
-    UiObjectRole, UiObjectTree, UiPoint, UiRegionStatePlan, UiResourceContent,
-    UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan, UiScriptTarget,
-    UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
+    UiObjectRole, UiObjectTree, UiPoint, UiRegionGeometryPlan, UiRegionStatePlan,
+    UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan,
+    UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
 };
 
 use crate::animation::{
@@ -1290,6 +1290,98 @@ impl UiScriptRuntime {
     #[must_use]
     pub const fn simple_html(&self) -> &crate::UiSimpleHtmlPlan {
         &self.simple_html
+    }
+
+    /// Applies Lua-authored `SimpleHTML:SetText` documents to native layout.
+    ///
+    /// Document parsing and font measurement happen once per changed string.
+    /// Updated child heights and scroll ranges are published before the next
+    /// live-state snapshot, matching the observable stock frame-tick result.
+    pub(crate) fn refresh_simple_html_layout(
+        &mut self,
+        bundle: &UiBundle,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        fonts: &FontCatalog,
+        assets: &mut AssetStore,
+        logical_height: u32,
+    ) -> Result<bool, UiScriptError> {
+        let mut changes = Vec::new();
+        for (object_index, object) in live.objects().iter().enumerate() {
+            if object.kind != UiObjectKind::SimpleHtml {
+                continue;
+            }
+            let width = geometry
+                .region(object_index)
+                .ok_or_else(|| UiScriptError::Plan {
+                    message: format!("SimpleHTML object {object_index} has no resolved geometry"),
+                })?
+                .logical_bounds()
+                .width();
+            if let Some((height, clip_object)) = self.simple_html.refresh_text(
+                object_index,
+                object.simple_html_text.as_deref(),
+                width,
+                fonts,
+                assets,
+                logical_height,
+            )? {
+                changes.push((object_index, f64::from(height), clip_object));
+            }
+        }
+        if changes.is_empty() {
+            return Ok(false);
+        }
+
+        let lua = bundle.lua();
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error("refresh SimpleHTML layout", error))?;
+        for (object_index, height, clip_object) in changes {
+            let object: Table = objects
+                .raw_get(object_index + 1)
+                .map_err(|error| execution_error("refresh SimpleHTML layout", error))?;
+            object
+                .raw_set(height_key(), height)
+                .map_err(|error| execution_error("refresh SimpleHTML layout", error))?;
+            let Some(clip_object) = clip_object else {
+                continue;
+            };
+            let scroll_frame: Table = objects
+                .raw_get(clip_object + 1)
+                .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?;
+            let previous = (
+                scroll_frame
+                    .raw_get::<f64>(horizontal_scroll_range_key())
+                    .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?,
+                scroll_frame
+                    .raw_get::<f64>(vertical_scroll_range_key())
+                    .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?,
+            );
+            update_scroll_child_rect(&scroll_frame)
+                .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?;
+            let current = (
+                scroll_frame
+                    .raw_get::<f64>(horizontal_scroll_range_key())
+                    .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?,
+                scroll_frame
+                    .raw_get::<f64>(vertical_scroll_range_key())
+                    .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?,
+            );
+            if current != previous
+                && let Some(function) =
+                    object_script_function(lua, &scroll_frame, UiScriptHandler::ScrollRangeChanged)
+                        .map_err(|error| {
+                            execution_error("SimpleHTML scroll-range callback", error)
+                        })?
+            {
+                call_two_number_object_handler(lua, &function, scroll_frame, current.0, current.1)
+                    .map_err(|error| execution_error("SimpleHTML scroll-range callback", error))?;
+            }
+        }
+        mark_live_state_changed(lua)
+            .map_err(|error| execution_error("refresh SimpleHTML layout", error))?;
+        Ok(true)
     }
 
     /// Publishes native layout-pass dimensions used by region query methods.
@@ -3622,6 +3714,9 @@ fn create_object_metatable(
     if kind == UiObjectKind::FontString {
         register_font_string_methods(lua, &methods, text_measurement)?;
     }
+    if kind == UiObjectKind::SimpleHtml {
+        register_simple_html_methods(lua, &methods)?;
+    }
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
     }
@@ -3930,6 +4025,23 @@ fn set_update_subscription(lua: &Lua, object: &Table, subscribed: bool) -> mlua:
         seen.raw_set(object_index, true)?;
     }
     members.raw_set(object_index, subscribed)
+}
+
+/// Installs the runtime document replacement used by stock CreditsFrame.lua.
+///
+/// Build 12340 registers `SetText` at `0x00B2D1E0 -> 0x009750D0`;
+/// `CSimpleHTML::SetText` at `0x0096D890` consumes a missing argument as an
+/// empty document and marks native layout dirty.
+fn register_simple_html_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetText",
+        lua.create_function(|lua, (object, value): (Table, Value)| {
+            let text = lua
+                .coerce_string(value)?
+                .map_or_else(String::new, |value| value.to_string_lossy());
+            object.raw_set(text_key(), text)
+        })?,
+    )
 }
 
 fn register_font_string_methods(
@@ -5880,6 +5992,40 @@ fn call_number_object_handler(
         Err(error) => {
             let _ = restore_this;
             let _ = restore_arg;
+            Err(error)
+        }
+    }
+}
+
+/// Preserves legacy callback globals for two finite numeric arguments.
+fn call_two_number_object_handler(
+    lua: &Lua,
+    function: &mlua::Function,
+    object: Table,
+    first: f64,
+    second: f64,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let previous_this = globals.raw_get::<Value>("this")?;
+    let previous_arg1 = globals.raw_get::<Value>("arg1")?;
+    let previous_arg2 = globals.raw_get::<Value>("arg2")?;
+    globals.raw_set("this", object.clone())?;
+    globals.raw_set("arg1", first)?;
+    globals.raw_set("arg2", second)?;
+    let result = function.call::<()>((object, first, second));
+    let restore_this = globals.raw_set("this", previous_this);
+    let restore_arg1 = globals.raw_set("arg1", previous_arg1);
+    let restore_arg2 = globals.raw_set("arg2", previous_arg2);
+    match result {
+        Ok(()) => {
+            restore_this?;
+            restore_arg1?;
+            restore_arg2
+        }
+        Err(error) => {
+            let _ = restore_this;
+            let _ = restore_arg1;
+            let _ = restore_arg2;
             Err(error)
         }
     }

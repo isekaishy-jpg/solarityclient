@@ -2,10 +2,13 @@
 
 use std::error::Error;
 
-use solarity_asset::LocalizedDocument;
+use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale, LocalizedDocument};
 use solarity_ui::{
-    UiSimpleHtmlAlignment, UiSimpleHtmlDocument, UiSimpleHtmlError, UiSimpleHtmlFontSlot,
+    GlueManager, UiSimpleHtmlAlignment, UiSimpleHtmlDocument, UiSimpleHtmlError,
+    UiSimpleHtmlFontSlot,
 };
+
+use crate::support::{Fixture, FixtureFile};
 
 /// Locale HTML preserves only the stock block vocabulary and explicit breaks.
 #[test]
@@ -36,4 +39,38 @@ fn localized_document_rejects_non_stock_root() {
     let result = UiSimpleHtmlDocument::parse(LocalizedDocument::Tos, b"<document/>");
 
     assert!(matches!(result, Err(UiSimpleHtmlError::Load(_))));
+}
+
+/// The stock SimpleHTML method table accepts the empty dynamic document used
+/// to clear native content without requiring a file-backed locale document.
+#[test]
+fn simple_html_set_text_is_available_to_frame_xml() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"SimpleHtml.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\SimpleHtml.xml",
+            bytes: br#"<Ui>
+<Font name="HtmlFont" virtual="true"><FontHeight><AbsValue val="12"/></FontHeight></Font>
+<SimpleHTML name="DynamicHtml" font="HtmlFont">
+  <Size x="200" y="20"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>self:SetText(""); HTML_SET_TEXT_CALLED = true</OnLoad></Scripts>
+</SimpleHTML>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1024, 768), false)?;
+
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("HTML_SET_TEXT_CALLED")?
+    );
+    Ok(())
 }

@@ -1059,14 +1059,27 @@ impl GlueManager {
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
-        let live = self.runtime.snapshot_objects(&self.bundle)?;
-        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let mut live = self.runtime.snapshot_objects(&self.bundle)?;
+        let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let html_changed = self.runtime.refresh_simple_html_layout(
+            &self.bundle,
+            &live,
+            &geometry,
+            &self.fonts,
+            &mut self.assets.borrow_mut(),
+            self.glyph_logical_height,
+        )?;
+        if html_changed {
+            live = self.runtime.snapshot_objects(&self.bundle)?;
+            geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        }
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
         let scroll_frames = UiScrollFramePlan::from_live(&live);
-        if self
-            .glyphs
-            .supports_live_text(&live, self.glyph_logical_height)
+        if !html_changed
+            && self
+                .glyphs
+                .supports_live_text(&live, self.glyph_logical_height)
         {
             self.glyphs
                 .refresh_live_text(&live, &geometry, self.glyph_logical_height)?;

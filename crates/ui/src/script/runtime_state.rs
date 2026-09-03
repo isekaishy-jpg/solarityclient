@@ -58,6 +58,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) anchor_count: usize,
     pub(crate) texture: Option<UiRuntimeTexture>,
     pub(crate) text: Option<UiRuntimeText>,
+    pub(crate) simple_html_text: Option<String>,
     pub(crate) model: Option<UiRuntimeModel>,
     pub(crate) backdrop_color: Option<[f64; 4]>,
     pub(crate) backdrop_border_color: Option<[f64; 4]>,
@@ -312,6 +313,13 @@ pub(super) fn snapshot_runtime_objects(
             anchor_count: anchors.len() - first_anchor,
             texture,
             text,
+            simple_html_text: (kind == UiObjectKind::SimpleHtml)
+                .then(|| table.raw_get::<Option<String>>(text_key()))
+                .transpose()
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} SimpleHTML text"), error)
+                })?
+                .flatten(),
             model,
             backdrop_color: is_frame
                 .then(|| {
