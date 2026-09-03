@@ -1284,12 +1284,17 @@ fn layout_live_quads(
                 }
                 pen_x += advance;
             }
-            if text.caret_visible
-                && let Some((caret_offset, caret_width)) = caret
-            {
+            if let Some((caret_offset, caret_width)) = caret {
                 // Build 12340 presents the insertion point as a full
                 // character-cell block. Pixel (0, 0) is the atlas-owned solid
-                // coverage sample reserved by `compose_atlas`.
+                // coverage sample reserved by `compose_atlas`. Retain that
+                // final quad while the blink is dark so a half-cycle changes
+                // four color vertices instead of the complete material and
+                // draw topology of the Glue frame.
+                let mut caret_color = color;
+                if !text.caret_visible {
+                    caret_color[3] = 0.0;
+                }
                 caret_quads.push(LocalGlyphQuad {
                     packet_key,
                     object_index,
@@ -1301,7 +1306,7 @@ fn layout_live_quads(
                         line_top as f32,
                     ],
                     texture_coordinates: solid_coordinates(extent),
-                    color,
+                    color: caret_color,
                 });
             }
         }
