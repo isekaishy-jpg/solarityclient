@@ -1421,6 +1421,61 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// Prewarming includes spline overshoot instead of only stored key values.
+#[test]
+fn m2_particle_prewarm_bounds_hermite_emission_rate() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = m2_array_offset(&bytes, 0x128)?;
+    append_render_track(
+        &mut bytes,
+        particle_offset + 0x0b0,
+        &[0, 1_000],
+        &render_f32_values(&[
+            10.0, 0.0, 0.0, // First value, incoming tangent, outgoing tangent.
+            10.0, -100.0, 0.0, // Second value, incoming tangent, outgoing tangent.
+        ]),
+        12,
+    )?;
+    bytes[particle_offset + 0x0b0..particle_offset + 0x0b2].copy_from_slice(&3_u16.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\HermiteParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\HermiteParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\HermiteParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let peak_pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 2_000.0 / 3.0, 0.0),
+    )?;
+    assert!((peak_pose.emission_rate() - (10.0 + 400.0 / 27.0)).abs() < 0.0001);
+
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    simulation.reserve_authored_capacity(emitter)?;
+    // ceil((10 + 400/27) * 3 seconds * stock 1.15 headroom)
+    assert_eq!(simulation.capacity(), 86);
+    simulation.advance_planar(emitter, peak_pose, 0.0, Mat4::IDENTITY, 1.0)?;
+    assert_eq!(simulation.capacity(), 86);
+    Ok(())
+}
+
 /// Flag `0x4000` carries established particles with the moving emitter.
 #[test]
 fn m2_particle_simulation_applies_follow_position() -> Result<(), Box<dyn Error>> {
