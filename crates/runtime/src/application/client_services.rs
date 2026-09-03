@@ -250,6 +250,13 @@ impl ClientServices {
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
         let mut glue_model = RuntimeGlueModelScene::new();
+        if initial_screen == GlueInitialScreen::Movie
+            && let Some((login_model, background_light_count)) = glue
+                .configured_model_source("AccountLogin")
+                .map_err(GlueError::from)?
+        {
+            glue_model.prewarm(login_model, background_light_count, &assets, &cpu)?;
+        }
         glue_model.synchronize(
             &mut renderer,
             &glue,

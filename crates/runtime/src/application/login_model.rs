@@ -119,12 +119,18 @@ struct ActiveGlueModel {
 
 /// One scene generation whose CPU plan and shaders are still being prepared.
 struct PendingGlueModel {
-    key: GlueModelKey,
-    environment: GlueModelEnvironment,
+    path: AssetPath,
+    local_light_count: M2LocalLightCount,
+    request: Option<PendingGlueModelRequest>,
     model: Arc<solarity_asset::DecodedM2Model>,
     textures: Vec<GlueM2Texture>,
     submitted_at: std::time::Instant,
     task: CpuTask<Result<M2GlueCpuSource, RuntimeTerrainFrameError>>,
+}
+
+struct PendingGlueModelRequest {
+    key: GlueModelKey,
+    environment: GlueModelEnvironment,
 }
 
 /// Selected half of each ModelFFX live/ghost light pair.
@@ -271,6 +277,43 @@ impl RuntimeGlueModelScene {
         }
     }
 
+    /// Begins immutable environment-model preparation before its Glue screen
+    /// becomes visible. The movie screen intentionally has no visible model,
+    /// but stock has already assigned AccountLogin's source in `OnLoad`.
+    pub(crate) fn prewarm(
+        &mut self,
+        path: AssetPath,
+        background_light_count: usize,
+        assets: &AssetStoreHandle,
+        cpu: &CpuExecutor,
+    ) -> Result<(), RuntimeGlueModelError> {
+        let local_light_count = local_light_count_from_len(background_light_count);
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.key.path == path)
+            || self.pending.as_ref().is_some_and(|pending| {
+                pending.path == path && pending.local_light_count == local_light_count
+            })
+        {
+            return Ok(());
+        }
+        let (model, textures) = self.load_model_generation(assets, &path)?;
+        let task_model = Arc::clone(&model);
+        let task =
+            cpu.try_submit(move || prepare_glue_cpu_source(&task_model, local_light_count))?;
+        self.pending = Some(PendingGlueModel {
+            path,
+            local_light_count,
+            request: None,
+            model,
+            textures,
+            submitted_at: std::time::Instant::now(),
+            task,
+        });
+        Ok(())
+    }
+
     /// Rebuilds GPU state only when Glue changes the selected model generation.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn synchronize(
@@ -287,7 +330,13 @@ impl RuntimeGlueModelScene {
         let visible = glue.presentation().models();
         if visible.is_empty() {
             self.active = None;
-            self.pending = None;
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.request.is_some())
+            {
+                self.pending = None;
+            }
             return Ok(());
         }
         if visible.len() != 1 {
@@ -339,16 +388,19 @@ impl RuntimeGlueModelScene {
                 sequence: key.sequence,
             }
         })?;
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.key != key)
-        {
+        let environment_light_count = local_light_count(environment.local_lights);
+        if self.pending.as_ref().is_some_and(|pending| {
+            pending.path != key.path || pending.local_light_count != environment_light_count
+        }) {
             self.pending = None;
         }
         if let Some(pending) = self.pending.as_mut() {
-            pending.environment = environment;
-            if !pending.task.is_finished() {
+            let consumed_prewarm = pending.request.is_none();
+            pending.request = Some(PendingGlueModelRequest {
+                key: key.clone(),
+                environment,
+            });
+            if !pending.task.is_finished() && !consumed_prewarm {
                 return Ok(());
             }
             let pending = self
@@ -357,27 +409,28 @@ impl RuntimeGlueModelScene {
                 .ok_or(RuntimeGlueModelError::PendingState)?;
             let worker_elapsed = pending.submitted_at.elapsed();
             let cpu_source = pending.task.join()??;
+            let request = pending.request.ok_or(RuntimeGlueModelError::PendingState)?;
             let gpu_started = std::time::Instant::now();
             let mut frame = M2Frame::prepare_glue_model(
                 renderer,
                 Arc::clone(&pending.model),
                 &pending.textures,
                 &cpu_source,
-                pending.key.object_index,
+                request.key.object_index,
                 animation_id,
-                pending.key.model_scale,
-                local_light_count(pending.environment.local_lights),
+                request.key.model_scale,
+                pending.local_light_count,
                 random,
                 particle_twinkle,
             )?;
             frame.replace_glue_character(
                 renderer,
                 glue_character,
-                pending.environment.character_light_count(),
-                pending.environment.pet_light_count(),
+                request.environment.character_light_count(),
+                request.environment.pet_light_count(),
                 random,
             )?;
-            frame.set_glue_opacity(pending.environment.alpha)?;
+            frame.set_glue_opacity(request.environment.alpha)?;
             tracing::info!(
                 model = %pending.model.path(),
                 texture_count = pending.textures.len(),
@@ -386,16 +439,39 @@ impl RuntimeGlueModelScene {
                 "published Glue model generation"
             );
             self.active = Some(ActiveGlueModel {
-                key: pending.key,
-                environment: pending.environment,
+                key: request.key,
+                environment: request.environment,
                 model: pending.model,
                 frame,
             });
             return Ok(());
         }
+        let (model, texture_sources) = self.load_model_generation(assets, &key.path)?;
+        let task_model = Arc::clone(&model);
+        let task =
+            cpu.try_submit(move || prepare_glue_cpu_source(&task_model, environment_light_count))?;
+        self.active = None;
+        self.pending = Some(PendingGlueModel {
+            path: key.path.clone(),
+            local_light_count: environment_light_count,
+            request: Some(PendingGlueModelRequest { key, environment }),
+            model,
+            textures: texture_sources,
+            submitted_at: std::time::Instant::now(),
+            task,
+        });
+        Ok(())
+    }
+
+    fn load_model_generation(
+        &mut self,
+        assets: &AssetStoreHandle,
+        path: &AssetPath,
+    ) -> Result<(Arc<solarity_asset::DecodedM2Model>, Vec<GlueM2Texture>), RuntimeGlueModelError>
+    {
         let asset_started = std::time::Instant::now();
         let mut store = assets.borrow_mut();
-        let model = self.models.load(&mut store, &key.path)?;
+        let model = self.models.load(&mut store, path)?;
         let mut texture_sources = Vec::with_capacity(model.textures().len());
         for (texture_index, texture) in model.textures().iter().enumerate() {
             if texture.kind() != M2TextureKind::Hardcoded {
@@ -444,19 +520,7 @@ impl RuntimeGlueModelScene {
             asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
             "loaded Glue model archive generation"
         );
-        let task_model = Arc::clone(&model);
-        let light_count = local_light_count(environment.local_lights);
-        let task = cpu.try_submit(move || prepare_glue_cpu_source(&task_model, light_count))?;
-        self.active = None;
-        self.pending = Some(PendingGlueModel {
-            key,
-            environment,
-            model,
-            textures: texture_sources,
-            submitted_at: std::time::Instant::now(),
-            task,
-        });
-        Ok(())
+        Ok((model, texture_sources))
     }
 
     /// Presents the authored model/effects and then the loaded FrameXML pass.
@@ -644,6 +708,10 @@ fn local_light_count(lights: [M2LocalLightState; 4]) -> M2LocalLightCount {
         .iter()
         .filter(|light| **light != M2LocalLightState::disabled())
         .count();
+    local_light_count_from_len(count)
+}
+
+fn local_light_count_from_len(count: usize) -> M2LocalLightCount {
     match count {
         0 => M2LocalLightCount::Zero,
         1 => M2LocalLightCount::One,

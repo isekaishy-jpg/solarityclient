@@ -277,6 +277,47 @@ fn glue_presentation_retains_stock_model_ffx_state() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// A model assigned by stock `OnLoad` remains discoverable while another Glue
+/// screen hides it from the render presentation.
+#[test]
+fn glue_retains_hidden_model_source_for_prewarm() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"HiddenModel.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\HiddenModel.xml",
+            bytes: br#"<Ui>
+<ModelFFX name="AccountLogin" hidden="true">
+  <Scripts><OnLoad>
+    self:SetModel("Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2")
+  </OnLoad></Scripts>
+</ModelFFX>
+</Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2",
+            bytes: b"fixture model marker",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1600, 900), false)?;
+
+    assert!(manager.presentation().models().is_empty());
+    let (path, light_count) = manager
+        .configured_model_source("AccountLogin")?
+        .ok_or("missing hidden AccountLogin model source")?;
+    assert_eq!(
+        path.as_str(),
+        "INTERFACE\\GLUES\\MODELS\\UI_MAINMENU_NORTHREND\\UI_MAINMENU_NORTHREND.M2"
+    );
+    assert_eq!(light_count, 0);
+    assert_eq!(manager.configured_model_source("MissingModel")?, None);
+    Ok(())
+}
+
 /// Native backdrops preserve inherited XML state and the eight-slice edge atlas.
 #[test]
 fn glue_presentation_builds_stock_native_backdrop_quads() -> Result<(), Box<dyn Error>> {

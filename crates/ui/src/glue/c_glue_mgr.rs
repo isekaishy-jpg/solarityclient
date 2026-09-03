@@ -426,6 +426,42 @@ impl GlueManager {
         &self.render_plan
     }
 
+    /// Returns the model source retained by a named live Model widget, even
+    /// when its owning Glue screen is currently hidden.
+    ///
+    /// This is intentionally read from post-Lua runtime state rather than XML:
+    /// stock assigns environment models from `OnLoad`, and the cinematic
+    /// screen hides those widgets before they enter the presentation plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::UiScriptError`] when the live Lua object arena cannot
+    /// be snapshotted.
+    pub fn configured_model_source(
+        &self,
+        object_name: &str,
+    ) -> Result<Option<(solarity_asset::AssetPath, usize)>, crate::UiScriptError> {
+        let Some(object_index) = self
+            .objects
+            .iter()
+            .position(|object| object.name() == Some(object_name))
+        else {
+            return Ok(None);
+        };
+        let live = self.runtime.snapshot_objects(&self.bundle)?;
+        Ok(live.objects().get(object_index).and_then(|object| {
+            let model = object.model.as_ref()?;
+            let path = model.file.clone()?;
+            let live_background_light_count = model
+                .background_lights
+                .live
+                .iter()
+                .filter(|light| light.is_some())
+                .count();
+            Some((path, live_background_light_count))
+        }))
+    }
+
     /// Returns the locale-loaded legal and help document layout.
     #[must_use]
     pub const fn simple_html(&self) -> &crate::UiSimpleHtmlPlan {
