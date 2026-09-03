@@ -159,15 +159,27 @@ pub(super) fn create_pipeline(
     program: &M2SpirvProgram,
 ) -> Result<vk::Pipeline, VulkanError> {
     let modules = ShaderModules::create(device, program)?;
+    let vertex_data = specialization_bytes(&program.vertex_specialization());
+    let vertex_entries = specialization_entries(2);
+    let vertex_specialization = vk::SpecializationInfo::default()
+        .map_entries(&vertex_entries)
+        .data(&vertex_data);
+    let fragment_data = specialization_bytes(&program.fragment_specialization());
+    let fragment_entries = specialization_entries(3);
+    let fragment_specialization = vk::SpecializationInfo::default()
+        .map_entries(&fragment_entries)
+        .data(&fragment_data);
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(modules.vertex)
-            .name(c"main"),
+            .name(c"main")
+            .specialization_info(&vertex_specialization),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(modules.fragment)
-            .name(c"main"),
+            .name(c"main")
+            .specialization_info(&fragment_specialization),
     ];
     let binding = vk::VertexInputBindingDescription::default()
         .binding(0)
@@ -241,6 +253,23 @@ pub(super) fn create_pipeline(
         .ok_or_else(|| {
             VulkanError::operation("create M2 graphics pipeline", "driver returned none")
         })
+}
+
+fn specialization_bytes(values: &[u32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_ne_bytes())
+        .collect()
+}
+
+fn specialization_entries(count: u32) -> Vec<vk::SpecializationMapEntry> {
+    (0..count)
+        .map(|constant_id| vk::SpecializationMapEntry {
+            constant_id,
+            offset: constant_id * 4,
+            size: 4,
+        })
+        .collect()
 }
 
 /// Describes the decoder-independent 48-byte M2 vertex ABI exactly.

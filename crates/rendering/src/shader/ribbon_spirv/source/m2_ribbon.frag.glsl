@@ -1,8 +1,6 @@
 #version 460
 
-#ifndef RIBBON_ALPHA_REFERENCE
-#error RIBBON_ALPHA_REFERENCE must contain the stock material threshold
-#endif
+layout(constant_id = 0) const float RIBBON_ALPHA_REFERENCE = 0.0;
 
 layout(location = 0) in vec2 in_tex_coord;
 layout(location = 1) in vec4 in_color;

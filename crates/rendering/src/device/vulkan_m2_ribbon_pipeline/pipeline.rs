@@ -66,6 +66,15 @@ pub(super) fn create_pipeline(
     program: &M2RibbonSpirvProgram,
 ) -> Result<vk::Pipeline, VulkanError> {
     let modules = ShaderModules::create(device, program)?;
+    let fragment_value = program.fragment_specialization()[0].to_ne_bytes();
+    let fragment_entries = [vk::SpecializationMapEntry {
+        constant_id: 0,
+        offset: 0,
+        size: 4,
+    }];
+    let fragment_specialization = vk::SpecializationInfo::default()
+        .map_entries(&fragment_entries)
+        .data(&fragment_value);
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
@@ -74,7 +83,8 @@ pub(super) fn create_pipeline(
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(modules.fragment)
-            .name(c"main"),
+            .name(c"main")
+            .specialization_info(&fragment_specialization),
     ];
     let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)

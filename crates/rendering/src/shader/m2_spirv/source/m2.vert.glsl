@@ -1,11 +1,7 @@
 #version 460
 
-#ifndef M2_VERTEX_EFFECT
-#error M2_VERTEX_EFFECT must select a stock coordinate effect
-#endif
-#ifndef M2_VERTEX_PERMUTATION
-#error M2_VERTEX_PERMUTATION must select a stock BLS permutation
-#endif
+layout(constant_id = 0) const int M2_VERTEX_EFFECT = 0;
+layout(constant_id = 1) const int M2_VERTEX_PERMUTATION = 0;
 
 const int M2_SHADED = M2_VERTEX_PERMUTATION % 2;
 const int M2_LOCAL_LIGHT_COUNT = (M2_VERTEX_PERMUTATION / 2) % 5;

@@ -1,17 +1,12 @@
 #version 460
 
-#ifndef M2_PIXEL_EFFECT
-#error M2_PIXEL_EFFECT must select a stock combiner effect
-#endif
-#ifndef M2_PIXEL_PERMUTATION
-#error M2_PIXEL_PERMUTATION must select a stock BLS permutation
-#endif
-#ifndef M2_TEXTURE_COUNT
-#error M2_TEXTURE_COUNT must select the validated stock texture-stage count
-#endif
 #ifndef M2_SHADOW_FILTERING
 #error M2_SHADOW_FILTERING must select direct or comparison shadow sampling
 #endif
+
+layout(constant_id = 0) const int M2_PIXEL_EFFECT = 0;
+layout(constant_id = 1) const int M2_PIXEL_PERMUTATION = 0;
+layout(constant_id = 2) const int M2_TEXTURE_COUNT = 1;
 
 const bool M2_SHADER_ALPHA_TEST = (M2_PIXEL_PERMUTATION / 8) != 0;
 const int M2_SHADOW_MODE = M2_PIXEL_PERMUTATION % 4;

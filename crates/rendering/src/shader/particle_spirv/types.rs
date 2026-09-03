@@ -8,6 +8,8 @@ pub struct M2ParticleSpirvProgram {
     material: M2MaterialState,
     vertex_words: Vec<u32>,
     fragment_words: Vec<u32>,
+    vertex_specialization: [u32; 1],
+    fragment_specialization: [u32; 2],
 }
 
 impl M2ParticleSpirvProgram {
@@ -15,11 +17,15 @@ impl M2ParticleSpirvProgram {
         material: M2MaterialState,
         vertex_words: Vec<u32>,
         fragment_words: Vec<u32>,
+        vertex_specialization: [u32; 1],
+        fragment_specialization: [u32; 2],
     ) -> Self {
         Self {
             material,
             vertex_words,
             fragment_words,
+            vertex_specialization,
+            fragment_specialization,
         }
     }
 
@@ -39,5 +45,17 @@ impl M2ParticleSpirvProgram {
     #[must_use]
     pub fn fragment_words(&self) -> &[u32] {
         &self.fragment_words
+    }
+
+    /// Returns the stock shaded-path specialization value.
+    #[must_use]
+    pub const fn vertex_specialization(&self) -> [u32; 1] {
+        self.vertex_specialization
+    }
+
+    /// Returns the stock alpha-reference and fog specializations.
+    #[must_use]
+    pub const fn fragment_specialization(&self) -> [u32; 2] {
+        self.fragment_specialization
     }
 }

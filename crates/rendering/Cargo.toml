@@ -8,13 +8,15 @@ publish = false
 [dependencies]
 ash.workspace = true
 glam.workspace = true
-shaderc.workspace = true
 solarity-asset.workspace = true
 solarity-cpu.workspace = true
 solarity-ecs.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 vk-mem.workspace = true
+
+[build-dependencies]
+shaderc.workspace = true
 
 [lints]
 workspace = true

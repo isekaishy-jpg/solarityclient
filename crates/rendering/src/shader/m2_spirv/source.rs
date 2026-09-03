@@ -1,7 +1,7 @@
-//! Embedded GLSL translations specialized into the stock BLS variant space.
+//! Build inputs and embedded SPIR-V for the stock BLS variant space.
 
-/// Vertex translation shared by the seven coordinate effects and 30 unshadowed variants.
-pub(super) const M2_VERTEX_SOURCE: &str = include_str!("source/m2.vert.glsl");
-
-/// Fragment translation shared by all 23 model combiners and alpha-test variants.
-pub(super) const M2_FRAGMENT_SOURCE: &str = include_str!("source/m2.frag.glsl");
+pub(super) const M2_VERTEX_SPIRV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/m2.vert.spv"));
+pub(super) const M2_DIRECT_FRAGMENT_SPIRV: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/m2-direct.frag.spv"));
+pub(super) const M2_PCF_FRAGMENT_SPIRV: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/m2-pcf.frag.spv"));

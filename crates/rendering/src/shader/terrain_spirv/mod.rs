@@ -1,7 +1,6 @@
 //! Stock terrain layer composition compiled for Vulkan 1.3 and SPIR-V 1.6.
 
 mod compiler;
-mod source;
 mod status;
 mod types;
 

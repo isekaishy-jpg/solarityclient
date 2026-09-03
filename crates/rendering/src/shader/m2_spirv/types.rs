@@ -35,15 +35,25 @@ pub struct M2SpirvProgram {
     key: M2SpirvKey,
     vertex_words: Vec<u32>,
     fragment_words: Vec<u32>,
+    vertex_specialization: [u32; 2],
+    fragment_specialization: [u32; 3],
 }
 
 impl M2SpirvProgram {
     /// Retains a compiled pair under its complete pipeline-cache identity.
-    pub(super) fn new(key: M2SpirvKey, vertex_words: Vec<u32>, fragment_words: Vec<u32>) -> Self {
+    pub(super) fn new(
+        key: M2SpirvKey,
+        vertex_words: Vec<u32>,
+        fragment_words: Vec<u32>,
+        vertex_specialization: [u32; 2],
+        fragment_specialization: [u32; 3],
+    ) -> Self {
         Self {
             key,
             vertex_words,
             fragment_words,
+            vertex_specialization,
+            fragment_specialization,
         }
     }
 
@@ -63,5 +73,17 @@ impl M2SpirvProgram {
     #[must_use]
     pub fn fragment_words(&self) -> &[u32] {
         &self.fragment_words
+    }
+
+    /// Returns the coordinate-effect and vertex-permutation constants.
+    #[must_use]
+    pub const fn vertex_specialization(&self) -> [u32; 2] {
+        self.vertex_specialization
+    }
+
+    /// Returns the combiner, pixel-permutation, and texture-count constants.
+    #[must_use]
+    pub const fn fragment_specialization(&self) -> [u32; 3] {
+        self.fragment_specialization
     }
 }

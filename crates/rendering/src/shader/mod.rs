@@ -1,7 +1,7 @@
-//! Stock shader translation, SPIR-V 1.6 compilation, reflection, and pipelines.
+//! Stock shader translation, build-generated SPIR-V 1.6, reflection, and pipelines.
 //!
 //! `ShaderEffectManager.cpp` and the GX device family identify the source
-//! responsibility. `shaderc` produces the pinned SPIR-V target consumed by the
+//! responsibility. The build produces the pinned SPIR-V target consumed by the
 //! Vulkan 1.3 backend; unsupported stock shader forms fail explicitly.
 
 mod glow_spirv;

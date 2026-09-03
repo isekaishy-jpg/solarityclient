@@ -8,6 +8,7 @@ pub struct M2RibbonSpirvProgram {
     material: M2MaterialState,
     vertex_words: Vec<u32>,
     fragment_words: Vec<u32>,
+    fragment_specialization: [u32; 1],
 }
 
 impl M2RibbonSpirvProgram {
@@ -15,11 +16,13 @@ impl M2RibbonSpirvProgram {
         material: M2MaterialState,
         vertex_words: Vec<u32>,
         fragment_words: Vec<u32>,
+        fragment_specialization: [u32; 1],
     ) -> Self {
         Self {
             material,
             vertex_words,
             fragment_words,
+            fragment_specialization,
         }
     }
 
@@ -39,5 +42,11 @@ impl M2RibbonSpirvProgram {
     #[must_use]
     pub fn fragment_words(&self) -> &[u32] {
         &self.fragment_words
+    }
+
+    /// Returns the stock alpha-reference specialization.
+    #[must_use]
+    pub const fn fragment_specialization(&self) -> [u32; 1] {
+        self.fragment_specialization
     }
 }

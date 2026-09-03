@@ -1,8 +1,6 @@
 #version 460
 
-#ifndef PARTICLE_SHADED
-#error PARTICLE_SHADED must select the stock particle lighting path
-#endif
+layout(constant_id = 0) const int PARTICLE_SHADED = 0;
 
 struct M2LocalLight {
     vec4 position;

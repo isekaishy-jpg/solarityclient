@@ -1,11 +1,7 @@
 #version 460
 
-#ifndef PARTICLE_ALPHA_REFERENCE
-#error PARTICLE_ALPHA_REFERENCE must contain the stock material threshold
-#endif
-#ifndef PARTICLE_FOG_MODE
-#error PARTICLE_FOG_MODE must select the stock particle fog path
-#endif
+layout(constant_id = 0) const float PARTICLE_ALPHA_REFERENCE = 0.0;
+layout(constant_id = 1) const int PARTICLE_FOG_MODE = 0;
 
 struct M2LocalLight {
     vec4 position;

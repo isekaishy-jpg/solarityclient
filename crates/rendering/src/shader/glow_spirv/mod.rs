@@ -1,14 +1,11 @@
-//! Pinned Vulkan shader compilation for the stock FFXGlow pass chain.
+//! Selection of build-generated SPIR-V for the stock FFXGlow pass chain.
 
-use shaderc::{
-    CompileOptions, Compiler, EnvVersion, OptimizationLevel, ShaderKind, SpirvVersion, TargetEnv,
-};
 use thiserror::Error;
 
-const VERTEX_SOURCE: &str = include_str!("source/glow.vert.glsl");
-const COMPOSITE_SOURCE: &str = include_str!("source/glow.frag.glsl");
-const BLUR_SOURCE: &str = include_str!("source/glow_blur.frag.glsl");
-const BOX_SOURCE: &str = include_str!("source/glow_box.frag.glsl");
+const VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow.vert.spv"));
+const COMPOSITE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-composite.frag.spv"));
+const BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-blur.frag.spv"));
+const BOX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-box.frag.spv"));
 
 /// Stable identity of one fragment stage in the stock glow chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,82 +46,40 @@ impl GlowSpirvProgram {
     }
 }
 
-/// Failure to initialize or compile an exact stock glow shader.
+/// Build-generated glow bytecode could not be selected.
 #[derive(Debug, Error)]
-pub enum GlowSpirvError {
-    /// shaderc could not allocate its compiler object.
-    #[error("glow SPIR-V compiler initialization failed: {message}")]
-    Initialization {
-        /// Compiler initialization diagnostic.
-        message: String,
-    },
-    /// GLSL compilation rejected one stage.
-    #[error("glow {stage} shader compilation failed: {message}")]
-    Compilation {
-        /// Rejected stage name.
-        stage: &'static str,
-        /// Compiler diagnostic.
-        message: String,
-    },
-}
+#[error("build-generated glow SPIR-V is unavailable")]
+pub struct GlowSpirvError;
 
-/// Reusable compiler for the three fixed glow pipeline pairs.
-pub struct GlowSpirvCompiler {
-    compiler: Compiler,
-}
+/// Selector for the three fixed build-generated glow pipeline pairs.
+pub struct GlowSpirvCompiler;
 
 impl GlowSpirvCompiler {
-    /// Creates the pinned compiler.
+    /// Creates the build-generated shader selector.
     pub fn new() -> Result<Self, GlowSpirvError> {
-        Compiler::new()
-            .map(|compiler| Self { compiler })
-            .map_err(|error| GlowSpirvError::Initialization {
-                message: error.to_string(),
-            })
+        Ok(Self)
     }
 
-    /// Compiles one fixed pass for Vulkan 1.3 and SPIR-V 1.6.
+    /// Selects one fixed pass compiled during the Cargo build.
     pub fn compile(&self, pass: GlowShaderPass) -> Result<GlowSpirvProgram, GlowSpirvError> {
-        let vertex_words = self.compile_stage(
-            VERTEX_SOURCE,
-            ShaderKind::Vertex,
-            "glow.vert.glsl",
-            "vertex",
-        )?;
-        let (source, name) = match pass {
-            GlowShaderPass::Composite => (COMPOSITE_SOURCE, "glow.frag.glsl"),
-            GlowShaderPass::Blur => (BLUR_SOURCE, "glow_blur.frag.glsl"),
-            GlowShaderPass::Box => (BOX_SOURCE, "glow_box.frag.glsl"),
+        let fragment = match pass {
+            GlowShaderPass::Composite => COMPOSITE,
+            GlowShaderPass::Blur => BLUR,
+            GlowShaderPass::Box => BOX,
         };
-        let fragment_words = self.compile_stage(source, ShaderKind::Fragment, name, "fragment")?;
         Ok(GlowSpirvProgram {
             pass,
-            vertex_words,
-            fragment_words,
+            vertex_words: spirv_words(VERTEX),
+            fragment_words: spirv_words(fragment),
         })
     }
+}
 
-    fn compile_stage(
-        &self,
-        source: &str,
-        kind: ShaderKind,
-        name: &'static str,
-        stage: &'static str,
-    ) -> Result<Vec<u32>, GlowSpirvError> {
-        let mut options =
-            CompileOptions::new().map_err(|error| GlowSpirvError::Initialization {
-                message: error.to_string(),
-            })?;
-        options.set_target_env(TargetEnv::Vulkan, EnvVersion::Vulkan1_3 as u32);
-        options.set_target_spirv(SpirvVersion::V1_6);
-        options.set_optimization_level(OptimizationLevel::Performance);
-        options.set_warnings_as_errors();
-        self.compiler
-            .compile_into_spirv(source, kind, name, "main", Some(&options))
-            .map(|artifact| artifact.as_binary().to_vec())
-            .map_err(|error| GlowSpirvError::Compilation {
-                stage,
-                message: error.to_string(),
-            })
-    }
+fn spirv_words(bytes: &[u8]) -> Vec<u32> {
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .collect()
 }
