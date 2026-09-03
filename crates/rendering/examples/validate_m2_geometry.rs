@@ -8,7 +8,10 @@ use glam::{Mat4, Vec3};
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
 };
-use solarity_rendering::{M2AnimationClock, M2BonePose, M2MeshPlan, sample_m2_camera_frame};
+use solarity_rendering::{
+    M2AnimationClock, M2BonePose, M2MaterialPose, M2MeshPlan, M2ParticlePose, M2ShaderPlan,
+    sample_m2_camera_frame,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os();
@@ -150,8 +153,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     for (texture_index, texture) in model.textures().iter().enumerate() {
         println!(
-            "texture={texture_index} kind={:?} filename={:?}",
+            "texture={texture_index} kind={:?} flags={:#06X} filename={:?}",
             texture.kind(),
+            texture.flags(),
             texture.filename(),
         );
     }
@@ -169,10 +173,50 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         println!(
-            "draw={draw_index} geoset={} indices={} bindings={bindings:?}",
+            "draw={draw_index} geoset={} indices={} shader={:#06X} priority={} layer={} blend={:?} flags={:#06X} transparent={} bindings={bindings:?}",
             draw.geoset_id(),
             draw.index_count(),
+            draw.batch().shader_id,
+            draw.batch().priority_plane,
+            draw.batch().material_layer,
+            draw.material().blend_mode(),
+            draw.material().flags(),
+            draw.transparent_sort_unit(),
         );
+        let shader = M2ShaderPlan::resolve(&model, draw)?;
+        println!(
+            "  effect: vertex={:?} pixel={:?} resolved={:#06X}",
+            shader.vertex_shader(),
+            shader.pixel_shader(),
+            shader.resolved_shader_id(),
+        );
+        let start = M2MaterialPose::sample(
+            &model,
+            &plan,
+            draw_index,
+            M2AnimationClock::new(0, 0.0, 0.0),
+        )?;
+        let current = M2MaterialPose::sample(
+            &model,
+            &plan,
+            draw_index,
+            M2AnimationClock::new(0, animation_time_ms, animation_time_ms),
+        )?;
+        if start != current {
+            let start_origins = start
+                .texture_transforms()
+                .map(|transform| transform.transform_point3(Vec3::ZERO).truncate());
+            let current_origins = current
+                .texture_transforms()
+                .map(|transform| transform.transform_point3(Vec3::ZERO).truncate());
+            println!(
+                "  animated material: color {:?} -> {:?}, texture origins {:?} -> {:?}",
+                start.mesh_color(),
+                current.mesh_color(),
+                start_origins,
+                current_origins,
+            );
+        }
     }
     for (camera_index, camera) in model.animations().cameras().iter().enumerate() {
         let frame = sample_m2_camera_frame(
@@ -207,6 +251,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     for (particle_index, particle) in model.animations().particles().iter().enumerate() {
+        let particle_pose = M2ParticlePose::sample(
+            model.animations(),
+            particle,
+            M2AnimationClock::new(0, animation_time_ms, animation_time_ms),
+        )?;
         let textures = particle
             .texture_indices()
             .into_iter()
@@ -220,11 +269,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         println!(
-            "particle={particle_index} id={} blend={} flags={:#010X} priority={} textures={textures:?}",
+            "particle={particle_index} id={} type={} blend={} flags={:#010X} priority={} position={:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} textures={textures:?}",
             particle.id(),
+            particle.emitter_type(),
             particle.blending_type(),
             particle.flags(),
             particle.priority_plane(),
+            particle.position(),
+            particle.texture_columns(),
+            particle.texture_rows(),
+            particle_pose.emission_speed(),
+            particle_pose.gravity(),
+            particle_pose.lifespan(),
+            particle_pose.emission_rate(),
+            particle_pose.emission_area_length(),
+            particle_pose.emission_area_width(),
         );
     }
     Ok(())
