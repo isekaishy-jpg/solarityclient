@@ -72,10 +72,10 @@ impl RuntimeLoadingScreen {
         renderer: &mut VulkanRenderer,
         assets: &AssetStoreHandle,
         directory: &LoadingScreenDirectory,
-        map_id: u32,
+        map_id: Option<u32>,
         display_extent: (u32, u32),
     ) -> Result<Self, ApplicationError> {
-        let screen = directory.screen(map_id);
+        let screen = map_id.and_then(|map_id| directory.screen(map_id));
         let background = resolve_background(assets, screen, display_extent)?;
         let logical_extent = [
             display_extent.0 as f32 / display_extent.1 as f32 * 768.0,

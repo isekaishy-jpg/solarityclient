@@ -1243,8 +1243,8 @@ impl ClientServices {
                         .world
                         .character_selection()
                         .and_then(|selection| selection.directory().by_guid(guid))
-                        .map_or(u32::MAX, |character| character.location().map_id());
-                    if map_id == u32::MAX {
+                        .map(|character| character.location().map_id());
+                    if map_id.is_none() {
                         tracing::warn!(
                             character_guid = format_args!("{guid:#018X}"),
                             "selected character has no directory map; using generic loading card"
@@ -1254,9 +1254,10 @@ impl ClientServices {
                     // present. Always retain a generic card when a malformed
                     // or racing Glue action omits directory metadata; leaving
                     // this as None strands an accepted world behind Glue.
-                    let loading = self
-                        .loading_screen_cache
-                        .remove(&(map_id, display_extent))
+                    let loading = map_id
+                        .and_then(|map_id| {
+                            self.loading_screen_cache.remove(&(map_id, display_extent))
+                        })
                         .map_or_else(
                             || {
                                 RuntimeLoadingScreen::prepare(
@@ -1971,7 +1972,7 @@ impl ClientServices {
                 &mut self.renderer,
                 &self.assets,
                 &self.loading_directory,
-                map_id,
+                Some(map_id),
                 display_extent,
             )?;
             self.loading_screen_cache.insert(key, loading);
