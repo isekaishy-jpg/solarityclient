@@ -108,10 +108,18 @@ struct M2GpuRibbonPass {
     material: solarity_asset::M2Material,
 }
 
-/// One pass-one mesh packet retained until the shared comparator runs.
-struct M2TransparentDraw {
+/// One stock transparent scene element retained until the shared comparator runs.
+struct M2TransparentElement {
     key: M2TransparentSortKey,
-    draw: M2PreparedDraw,
+    draw: M2TransparentDrawIndex,
+}
+
+/// Typed payload dispatched after the stock common scene-element sort.
+#[derive(Clone, Copy)]
+enum M2TransparentDrawIndex {
+    Mesh(usize),
+    Particle(usize),
+    Ribbon(usize),
 }
 
 /// Exact per-instance state required by later animation and material assembly.
@@ -655,7 +663,7 @@ pub(in crate::application) struct M2Frame {
     bone_pose_scratch: M2BonePose,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
-    transparent_draws: Vec<M2TransparentDraw>,
+    transparent_elements: Vec<M2TransparentElement>,
     model_distance_sort: Vec<bool>,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
@@ -753,7 +761,7 @@ impl M2Frame {
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
-            transparent_draws: Vec::new(),
+            transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
@@ -964,7 +972,7 @@ impl M2Frame {
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
-            transparent_draws: Vec::new(),
+            transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
@@ -1712,7 +1720,7 @@ impl M2Frame {
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.bone_transforms.clear();
         self.visible_draws.clear();
-        self.transparent_draws.clear();
+        self.transparent_elements.clear();
         self.particle_vertices.clear();
         self.particle_indices.clear();
         self.particle_draws.clear();
@@ -1938,6 +1946,8 @@ impl M2Frame {
             let clock = advance.clock;
             let event_window = playback.event_window(animation_time_ms, global_time_ms);
             let model_view = camera.view() * placement.transform;
+            let instance_identity = std::ptr::from_ref(&*placement).addr();
+            let instance_distance = m2_model_distance_key(model_view);
             self.bone_pose_scratch
                 .recompose_with_model_view_and_orientation_mask(
                     source.model.animations(),
@@ -2173,25 +2183,35 @@ impl M2Frame {
                         &mut self.particle_vertices,
                         &mut self.particle_indices,
                     )?;
-                let effect_order = u32::try_from(
-                    self.particle_draws.len() + self.ribbon_draws.len(),
-                )
-                .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
-                self.particle_draws.push(
-                    renderer
-                        .prepare_m2_particle_draw_range(
-                            resources.pipeline,
-                            resources.texture_set,
-                            emitter.blending_type(),
-                            emitter.flags(),
-                            M2EffectOrder::new(emitter.priority_plane(), effect_order),
-                            first_vertex,
-                            first_index,
-                            vertex_count,
-                            index_count,
-                        )?
-                        .with_light_bank(light_bank),
-                );
+                let effect_order = u32::try_from(self.transparent_elements.len())
+                    .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                let prepared = renderer
+                    .prepare_m2_particle_draw_range(
+                        resources.pipeline,
+                        resources.texture_set,
+                        emitter.blending_type(),
+                        emitter.flags(),
+                        M2EffectOrder::new(emitter.priority_plane(), effect_order),
+                        first_vertex,
+                        first_index,
+                        vertex_count,
+                        index_count,
+                    )?
+                    .with_light_bank(light_bank);
+                let prepared_index = self.particle_draws.len();
+                self.particle_draws.push(prepared);
+                self.transparent_elements.push(M2TransparentElement {
+                    key: M2TransparentSortKey::new(
+                        instance_distance,
+                        false,
+                        emitter.priority_plane(),
+                        instance_distance,
+                        instance_identity,
+                        0,
+                    )
+                    .with_scene_element(3, effect_order),
+                    draw: M2TransparentDrawIndex::Particle(prepared_index),
+                });
                 tracing::trace!(
                     model = %source.model.path(),
                     particle_index,
@@ -2212,7 +2232,6 @@ impl M2Frame {
                 .extend_from_slice(bone_pose.transforms());
             let mut instance_color = placement_color(placement.color);
             instance_color.w *= placement.opacity;
-            let instance_identity = std::ptr::from_ref(&*placement).addr();
             if let Some(mesh) = source.mesh {
                 for (draw_index, resources) in source.draws.iter().enumerate() {
                     let Some(resources) = resources else {
@@ -2269,19 +2288,27 @@ impl M2Frame {
                         } else {
                             section_distance
                         };
-                        self.transparent_draws.push(M2TransparentDraw {
+                        let producer_order = u32::try_from(self.transparent_elements.len())
+                            .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
+                        let prepared_index = self.visible_draws.len();
+                        self.visible_draws.push(prepared);
+                        self.transparent_elements.push(M2TransparentElement {
                             key: M2TransparentSortKey::new(
                                 primary_distance,
                                 false,
-                                draw.batch().priority_plane,
+                                i16::from(draw.batch().priority_plane),
                                 section_distance,
                                 instance_identity,
                                 draw.batch().material_layer,
-                            ),
-                            draw: prepared,
+                            )
+                            .with_scene_element(0, producer_order),
+                            draw: M2TransparentDrawIndex::Mesh(prepared_index),
                         });
                     } else {
-                        self.visible_draws.push(prepared);
+                        let scene_order = u32::try_from(self.visible_draws.len())
+                            .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
+                        self.visible_draws
+                            .push(prepared.with_scene_order(scene_order));
                     }
                 }
             } else {
@@ -2308,22 +2335,33 @@ impl M2Frame {
                     M2RibbonMeshPlan::append(emitter, trail, &mut self.ribbon_vertices)?;
                 for pass in passes {
                     let effect_order =
-                        u32::try_from(self.particle_draws.len() + self.ribbon_draws.len())
-                            .map_err(|_source| {
-                                solarity_rendering::VulkanError::M2RibbonDrawVertexRange
-                            })?;
-                    self.ribbon_draws.push(
-                        renderer
-                            .prepare_m2_ribbon_draw_range(
-                                pass.pipeline,
-                                pass.texture_set,
-                                pass.material,
-                                M2EffectOrder::new(emitter.priority_plane(), effect_order),
-                                first_vertex,
-                                vertex_count,
-                            )?
-                            .with_light_bank(light_bank),
-                    );
+                        u32::try_from(self.transparent_elements.len()).map_err(|_source| {
+                            solarity_rendering::VulkanError::M2RibbonDrawVertexRange
+                        })?;
+                    let prepared = renderer
+                        .prepare_m2_ribbon_draw_range(
+                            pass.pipeline,
+                            pass.texture_set,
+                            pass.material,
+                            M2EffectOrder::new(emitter.priority_plane(), effect_order),
+                            first_vertex,
+                            vertex_count,
+                        )?
+                        .with_light_bank(light_bank);
+                    let prepared_index = self.ribbon_draws.len();
+                    self.ribbon_draws.push(prepared);
+                    self.transparent_elements.push(M2TransparentElement {
+                        key: M2TransparentSortKey::new(
+                            instance_distance,
+                            false,
+                            emitter.priority_plane(),
+                            instance_distance,
+                            instance_identity,
+                            0,
+                        )
+                        .with_scene_element(4, effect_order),
+                        draw: M2TransparentDrawIndex::Ribbon(prepared_index),
+                    });
                 }
                 tracing::trace!(
                     model = %source.model.path(),
@@ -2334,24 +2372,41 @@ impl M2Frame {
                 );
             }
         }
-        self.transparent_draws
+        self.transparent_elements
             .sort_unstable_by(|left, right| compare_m2_transparent(&left.key, &right.key));
-        self.visible_draws
-            .extend(self.transparent_draws.iter().map(|queued| queued.draw));
-        self.particle_draws.sort_by_key(|draw| {
-            (
-                draw.priority_plane(),
-                draw.blend_order(),
-                draw.effect_order(),
-            )
-        });
-        self.ribbon_draws.sort_by_key(|draw| {
-            (
-                draw.priority_plane(),
-                draw.blend_order(),
-                draw.effect_order(),
-            )
-        });
+        let first_transparent_order = self.visible_draws.len();
+        for (index, element) in self.transparent_elements.iter().enumerate() {
+            let scene_order = first_transparent_order
+                .checked_add(index)
+                .and_then(|index| u32::try_from(index).ok())
+                .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
+            match element.draw {
+                M2TransparentDrawIndex::Mesh(draw_index) => {
+                    let draw = self
+                        .visible_draws
+                        .get_mut(draw_index)
+                        .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
+                    *draw = draw.with_scene_order(scene_order);
+                }
+                M2TransparentDrawIndex::Particle(draw_index) => {
+                    let draw = self
+                        .particle_draws
+                        .get_mut(draw_index)
+                        .ok_or(solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                    *draw = draw.with_scene_order(scene_order);
+                }
+                M2TransparentDrawIndex::Ribbon(draw_index) => {
+                    let draw = self
+                        .ribbon_draws
+                        .get_mut(draw_index)
+                        .ok_or(solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
+                    *draw = draw.with_scene_order(scene_order);
+                }
+            }
+        }
+        self.visible_draws.sort_by_key(|draw| draw.scene_order());
+        self.particle_draws.sort_by_key(|draw| draw.scene_order());
+        self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
         Ok(M2VisibleFrame {
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,

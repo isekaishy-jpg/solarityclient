@@ -71,6 +71,45 @@ fn transparent_common_key_does_not_invent_a_fifo_tie() {
     );
 }
 
+/// Particles and ribbons occupy the same sorted array as translucent meshes;
+/// distance precedes plane, while the stock type discriminator resolves a tie.
+#[test]
+fn transparent_effects_share_the_stock_mesh_queue() {
+    let mut keys = [
+        (
+            "near low-plane particle",
+            M2TransparentSortKey::new(10.0, false, -20, 10.0, 4, 0).with_scene_element(3, 1),
+        ),
+        (
+            "far high-plane mesh",
+            M2TransparentSortKey::new(20.0, false, 20, 20.0, 4, 7).with_scene_element(0, 2),
+        ),
+        (
+            "tied particle",
+            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(3, 3),
+        ),
+        (
+            "tied ribbon",
+            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(4, 4),
+        ),
+        (
+            "tied mesh",
+            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 7).with_scene_element(0, 5),
+        ),
+    ];
+    keys.sort_unstable_by(|left, right| compare_m2_transparent(&left.1, &right.1));
+    assert_eq!(
+        keys.map(|(label, _key)| label),
+        [
+            "far high-plane mesh",
+            "tied mesh",
+            "tied particle",
+            "tied ribbon",
+            "near low-plane particle",
+        ]
+    );
+}
+
 /// Radius flags move along the transformed center ray and retain its Z sign.
 #[test]
 fn section_sort_sphere_uses_stock_near_far_and_signed_keys() {

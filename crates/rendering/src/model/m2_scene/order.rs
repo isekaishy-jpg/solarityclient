@@ -46,10 +46,12 @@ impl M2EffectOrder {
 pub struct M2TransparentSortKey {
     primary_distance: f32,
     alternate_copy: bool,
-    priority_plane: i8,
+    priority_plane: i16,
     secondary_distance: f32,
     instance_identity: usize,
     material_layer: u16,
+    element_type: u8,
+    producer_order: u32,
 }
 
 impl M2TransparentSortKey {
@@ -61,7 +63,7 @@ impl M2TransparentSortKey {
     pub const fn new(
         primary_distance: f32,
         alternate_copy: bool,
-        priority_plane: i8,
+        priority_plane: i16,
         secondary_distance: f32,
         instance_identity: usize,
         material_layer: u16,
@@ -73,7 +75,20 @@ impl M2TransparentSortKey {
             secondary_distance,
             instance_identity,
             material_layer,
+            element_type: 0,
+            producer_order: 0,
         }
+    }
+
+    /// Adds the stock scene-element discriminator and its producer-local tie.
+    ///
+    /// Build 12340 assigns mesh types `0..=2`, particles type `3`, and ribbons
+    /// type `4` before sorting the common transparent queue.
+    #[must_use]
+    pub const fn with_scene_element(mut self, element_type: u8, producer_order: u32) -> Self {
+        self.element_type = element_type;
+        self.producer_order = producer_order;
+        self
     }
 }
 
@@ -99,7 +114,15 @@ pub fn compare_m2_transparent(
                 .unwrap_or(Ordering::Equal)
         })
         .then_with(|| left.instance_identity.cmp(&right.instance_identity))
-        .then_with(|| left.material_layer.cmp(&right.material_layer))
+        .then_with(|| left.element_type.cmp(&right.element_type))
+        .then_with(|| {
+            if left.element_type < 3 && right.element_type < 3 {
+                left.material_layer.cmp(&right.material_layer)
+            } else {
+                Ordering::Equal
+            }
+        })
+        .then_with(|| left.producer_order.cmp(&right.producer_order))
 }
 
 /// Computes the animated section-center distance used by M2 mesh elements.

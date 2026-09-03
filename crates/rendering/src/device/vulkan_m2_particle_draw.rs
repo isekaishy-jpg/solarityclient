@@ -19,6 +19,7 @@ pub struct M2ParticlePreparedDraw {
     light_bank: M2SceneLightBank,
     order: M2EffectOrder,
     blend_order: u8,
+    scene_order: u32,
 }
 
 impl M2ParticlePreparedDraw {
@@ -78,6 +79,19 @@ impl M2ParticlePreparedDraw {
     pub const fn effect_order(self) -> u32 {
         self.order.producer_order()
     }
+
+    /// Assigns this emitter's position in the unified stock scene-element queue.
+    #[must_use]
+    pub const fn with_scene_order(mut self, scene_order: u32) -> Self {
+        self.scene_order = scene_order;
+        self
+    }
+
+    /// Returns this emitter's position in the unified scene-element queue.
+    #[must_use]
+    pub const fn scene_order(self) -> u32 {
+        self.scene_order
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,5 +141,6 @@ pub(in crate::device) fn prepare_draw(
         light_bank: M2SceneLightBank::Environment,
         order,
         blend_order: blending_type,
+        scene_order: u32::MAX,
     })
 }

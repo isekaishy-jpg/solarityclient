@@ -156,20 +156,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
         record_world_model(&context, index, draw)?;
     }
-    let mut next_particle = 0;
-    let mut next_ribbon = 0;
-    for (index, draw) in context.m2_draws.iter().copied().enumerate() {
-        if draw.effect_interleave() {
-            record_effects_through(
-                &context,
-                &mut next_particle,
-                &mut next_ribbon,
-                draw.priority_plane(),
-            )?;
-        }
-        record_m2(&context, index, draw)?;
-    }
-    record_effects_through(&context, &mut next_particle, &mut next_ribbon, i16::MAX)?;
+    record_m2_scene_elements(&context)?;
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     if let Some((glow, settings)) = context.glow {
@@ -193,44 +180,62 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
         .map_err(|source| VulkanError::operation("end world command buffer", source))
 }
 
-/// Records the two prepared effect streams in their shared stock order.
-fn record_effects_through(
-    context: &RecordContext<'_>,
-    next_particle: &mut usize,
-    next_ribbon: &mut usize,
-    inclusive_plane: i16,
-) -> Result<(), VulkanError> {
+/// Dispatches the typed streams in their one stock scene-element order.
+fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanError> {
+    let mut next_m2 = 0;
+    let mut next_particle = 0;
+    let mut next_ribbon = 0;
     loop {
-        let particle = context.particle_draws.get(*next_particle).copied();
-        let ribbon = context.ribbon_draws.get(*next_ribbon).copied();
-        let particle_key = particle.map(|draw| {
-            (
-                draw.priority_plane(),
-                draw.blend_order(),
-                draw.effect_order(),
-            )
-        });
-        let ribbon_key = ribbon.map(|draw| {
-            (
-                draw.priority_plane(),
-                draw.blend_order(),
-                draw.effect_order(),
-            )
-        });
-        let next_plane = match (particle_key, ribbon_key) {
-            (Some(left), Some(right)) => left.min(right).0,
-            (Some(key), None) | (None, Some(key)) => key.0,
-            (None, None) => return Ok(()),
-        };
-        if next_plane > inclusive_plane {
-            return Ok(());
-        }
-        if particle_key.is_some_and(|left| ribbon_key.is_none_or(|right| left <= right)) {
-            record_particle(context, particle.ok_or(VulkanError::WorldFrameCapacity)?)?;
-            *next_particle += 1;
-        } else {
-            record_ribbon(context, ribbon.ok_or(VulkanError::WorldFrameCapacity)?)?;
-            *next_ribbon += 1;
+        let m2_key = context
+            .m2_draws
+            .get(next_m2)
+            .map(|draw| (draw.scene_order(), 0_u8));
+        let particle_key = context
+            .particle_draws
+            .get(next_particle)
+            .map(|draw| (draw.scene_order(), 3_u8));
+        let ribbon_key = context
+            .ribbon_draws
+            .get(next_ribbon)
+            .map(|draw| (draw.scene_order(), 4_u8));
+        let next = [
+            m2_key.map(|key| (key, 0_u8)),
+            particle_key.map(|key| (key, 1_u8)),
+            ribbon_key.map(|key| (key, 2_u8)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(key, _kind)| *key);
+        match next.map(|(_key, kind)| kind) {
+            Some(0) => {
+                let draw = context
+                    .m2_draws
+                    .get(next_m2)
+                    .copied()
+                    .ok_or(VulkanError::WorldFrameCapacity)?;
+                record_m2(context, next_m2, draw)?;
+                next_m2 += 1;
+            }
+            Some(1) => {
+                let draw = context
+                    .particle_draws
+                    .get(next_particle)
+                    .copied()
+                    .ok_or(VulkanError::WorldFrameCapacity)?;
+                record_particle(context, draw)?;
+                next_particle += 1;
+            }
+            Some(2) => {
+                let draw = context
+                    .ribbon_draws
+                    .get(next_ribbon)
+                    .copied()
+                    .ok_or(VulkanError::WorldFrameCapacity)?;
+                record_ribbon(context, draw)?;
+                next_ribbon += 1;
+            }
+            Some(_) => return Err(VulkanError::WorldFrameCapacity),
+            None => return Ok(()),
         }
     }
 }

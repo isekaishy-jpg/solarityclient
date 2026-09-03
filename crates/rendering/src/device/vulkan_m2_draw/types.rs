@@ -19,6 +19,7 @@ pub struct M2PreparedDraw {
     light_bank: M2SceneLightBank,
     priority_plane: i16,
     effect_interleave: bool,
+    scene_order: u32,
 }
 
 impl M2PreparedDraw {
@@ -48,6 +49,7 @@ impl M2PreparedDraw {
             light_bank: M2SceneLightBank::Environment,
             priority_plane,
             effect_interleave,
+            scene_order: u32::MAX,
         }
     }
 
@@ -122,5 +124,18 @@ impl M2PreparedDraw {
     #[must_use]
     pub const fn effect_interleave(self) -> bool {
         self.effect_interleave
+    }
+
+    /// Assigns this packet's position in the unified stock scene-element queue.
+    #[must_use]
+    pub const fn with_scene_order(mut self, scene_order: u32) -> Self {
+        self.scene_order = scene_order;
+        self
+    }
+
+    /// Returns this packet's position in the unified scene-element queue.
+    #[must_use]
+    pub const fn scene_order(self) -> u32 {
+        self.scene_order
     }
 }
