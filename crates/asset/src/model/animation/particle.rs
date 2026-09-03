@@ -106,9 +106,13 @@ impl M2ParticleEmitter {
     }
 
     /// Reports whether live particles remain in the animated emitter space.
+    ///
+    /// Build 12340's historical `WorldSpace` label is flag `0x10`: set-bit
+    /// births remain emitter-local and receive the live bone matrix at draw
+    /// time. Flag `0x200` instead controls random angular-velocity negation.
     #[must_use]
     pub const fn particles_in_model_space(&self) -> bool {
-        self.flags & 0x0000_0200 != 0
+        self.flags & 0x0000_0010 != 0
     }
 
     /// Returns the emitter position relative to its owning bone.

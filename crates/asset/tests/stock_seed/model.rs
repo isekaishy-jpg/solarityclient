@@ -690,8 +690,8 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
         .ok_or("particle is absent")?;
 
     assert_eq!(particle.id(), 0x5041_5254);
-    assert_eq!(particle.flags(), 0x9000_8042);
-    assert!(!particle.particles_in_model_space());
+    assert_eq!(particle.flags(), 0x9000_8052);
+    assert!(particle.particles_in_model_space());
     assert_eq!(particle.position(), glam::Vec3::new(1.0, 2.0, 3.0));
     assert_eq!(particle.bone_index(), Some(0));
     assert_eq!(particle.texture_id(), Some(0));
@@ -1914,7 +1914,7 @@ fn animated_particle_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let particle_offset = bytes.len();
     bytes.resize(particle_offset + 476, 0);
     bytes[particle_offset..particle_offset + 4].copy_from_slice(&0x5041_5254_u32.to_le_bytes());
-    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x9000_8042_u32.to_le_bytes());
+    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x9000_8052_u32.to_le_bytes());
     bytes[particle_offset + 8..particle_offset + 20].copy_from_slice(&f32_values(&[1.0, 2.0, 3.0]));
     bytes[particle_offset + 0x14..particle_offset + 0x16].copy_from_slice(&0_u16.to_le_bytes());
     bytes[particle_offset + 0x16..particle_offset + 0x18].copy_from_slice(&0_u16.to_le_bytes());

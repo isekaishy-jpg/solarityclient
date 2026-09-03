@@ -1113,6 +1113,85 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// Flag `0x10` keeps births emitter-local for the live bone transform; `0x200`
+/// controls spin randomization and must not select that coordinate domain.
+#[test]
+fn m2_particle_model_space_uses_stock_flag() -> Result<(), Box<dyn Error>> {
+    let mut local_bytes = render_m2_bytes("Particle.blp", 1)?;
+    let local_offset =
+        usize::try_from(u32::from_le_bytes(local_bytes[0x12c..0x130].try_into()?))?;
+    local_bytes[local_offset + 4..local_offset + 8]
+        .copy_from_slice(&(0x8000_u32 | 0x10).to_le_bytes());
+    let mut spin_bytes = render_m2_bytes("Particle.blp", 1)?;
+    let spin_offset =
+        usize::try_from(u32::from_le_bytes(spin_bytes[0x12c..0x130].try_into()?))?;
+    spin_bytes[spin_offset + 4..spin_offset + 8]
+        .copy_from_slice(&(0x8000_u32 | 0x200).to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\LocalParticle.m2",
+            bytes: &local_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\LocalParticle00.skin",
+            bytes: &skin,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SpinParticle.m2",
+            bytes: &spin_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SpinParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let local_path = AssetPath::new("Creature\\Solarity\\LocalParticle.m2")?;
+    let spin_path = AssetPath::new("Creature\\Solarity\\SpinParticle.m2")?;
+    let local_model = DecodedM2Model::load(&mut store, &local_path)?;
+    let spin_model = DecodedM2Model::load(&mut store, &spin_path)?;
+    let emitter_transform = Mat4::from_translation(Vec3::new(100.0, 200.0, 300.0));
+
+    let simulate = |model: &DecodedM2Model| -> Result<M2ParticleSimulation, Box<dyn Error>> {
+        let emitter = model
+            .animations()
+            .particles()
+            .first()
+            .ok_or("particle emitter is absent")?;
+        let pose = M2ParticlePose::sample(
+            model.animations(),
+            emitter,
+            M2AnimationClock::new(0, 500.0, 0.0),
+        )?;
+        let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+        let report = simulation.advance_planar(emitter, pose, 0.2, emitter_transform, 1.0)?;
+        assert_eq!(report.emitted(), 3);
+        Ok(simulation)
+    };
+    let local = simulate(&local_model)?;
+    let spin = simulate(&spin_model)?;
+
+    assert!(local_model.animations().particles()[0].particles_in_model_space());
+    assert!(!spin_model.animations().particles()[0].particles_in_model_space());
+    assert!(
+        local
+            .particles()
+            .iter()
+            .all(|particle| particle.position().max_element() < 20.0)
+    );
+    assert!(
+        spin.particles()
+            .iter()
+            .all(|particle| particle.position().x > 90.0
+                && particle.position().y > 190.0
+                && particle.position().z > 290.0)
+    );
+    Ok(())
+}
+
 /// Tail style selects render geometry without changing planar simulation.
 #[test]
 fn m2_tail_style_particle_reaches_simulation_and_mesh() -> Result<(), Box<dyn Error>> {

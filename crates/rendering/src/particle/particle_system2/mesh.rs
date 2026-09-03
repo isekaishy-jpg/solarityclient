@@ -175,7 +175,7 @@ impl M2ParticleMeshPlan {
 
     /// Builds ordinary geometry while resolving simulation space to world.
     ///
-    /// World-space simulations pass identity. Flag-`0x200` simulations pass
+    /// World-space simulations pass identity. Flag-`0x10` simulations pass
     /// the current placement/bone/emitter matrix so particles follow it.
     ///
     /// # Errors

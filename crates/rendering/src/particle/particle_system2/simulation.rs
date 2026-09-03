@@ -12,8 +12,8 @@ const STOCK_CAPACITY_HEADROOM: f64 = f32::from_bits(0x3F93_3333) as f64;
 /// `CM2ParticleEmitter::Update` consumes at most 100 ms per simulation step.
 const STOCK_MAXIMUM_STEP_SECONDS: f32 = 0.1;
 
-/// Particles stay in emitter-local space instead of receiving the bone matrix.
-const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0200;
+/// Particles stay in emitter-local space and receive the live bone matrix.
+const PARTICLES_IN_MODEL_SPACE: u32 = 0x0000_0010;
 
 /// Sphere particles launch along local +Z rather than away from the center.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
