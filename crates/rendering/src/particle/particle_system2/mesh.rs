@@ -36,7 +36,7 @@ const TAIL_STYLE: u32 = 0x0004_0000;
 const LOCAL_ORIENTATION_HEAD: u32 = 0x0000_1000;
 
 /// Raw `0x200`, mapped to runtime `0x10000` at build-12340 `0x00832EA0`,
-/// gives each billboard a stable 50% chance to negate authored spin.
+/// negates the complete authored angle for alternating 32-byte particle slots.
 const NEGATE_SPIN_RANDOMLY: u32 = 0x0000_0200;
 
 /// Raw `0x4`, mapped to runtime `0x200000` at build-12340 `0x00832EA0`,
@@ -532,8 +532,11 @@ impl M2ParticleMeshPlan {
                     let mut rotation =
                         M2ParticleRotationPose::sample(emitter, particle.random_word())
                             .angle_radians(particle.age_seconds());
+                    // `0x0097BE80` tests address bit `0x20` on the live
+                    // 32-byte particle record, so adjacent pool slots alternate
+                    // without consuming PRNG state or keying off particle data.
                     if emitter.flags() & NEGATE_SPIN_RANDOMLY != 0
-                        && particle.random_word() & 1 != 0
+                        && std::ptr::from_ref(particle).addr() & 0x20 != 0
                     {
                         rotation = -rotation;
                     }

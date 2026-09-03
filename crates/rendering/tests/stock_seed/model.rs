@@ -1160,9 +1160,9 @@ fn m2_particle_pose_shares_random_sample_between_scale_axes() -> Result<(), Box<
     Ok(())
 }
 
-/// Flag `0x200` consumes the stock spin stream and may negate angular speed.
+/// Flag `0x200` leaves the per-particle spin stream unchanged.
 #[test]
-fn m2_particle_rotation_randomly_negates_angular_speed() -> Result<(), Box<dyn Error>> {
+fn m2_particle_rotation_retains_authored_angular_speed() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
@@ -1195,12 +1195,7 @@ fn m2_particle_rotation_randomly_negates_angular_speed() -> Result<(), Box<dyn E
     let rotation = M2ParticleRotationPose::sample(emitter, random_word);
     let mut random = M2ParticleRandom::new(u32::from(random_word));
     let expected_initial = 0.8 + random.next_signed() * 0.9;
-    let varied_speed = 1.1 + random.next_signed() * 1.2;
-    let expected_speed = if random.next_unit() < 0.5 {
-        -varied_speed
-    } else {
-        varied_speed
-    };
+    let expected_speed = 1.1 + random.next_signed() * 1.2;
 
     assert_eq!(rotation.initial_radians(), expected_initial);
     assert_eq!(rotation.radians_per_second(), expected_speed);
@@ -1836,7 +1831,7 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Flag `0x200` gives each head a stable random chance to negate spin.
+/// Flag `0x200` negates the complete angle on alternating stock pool slots.
 #[test]
 fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
@@ -1884,7 +1879,7 @@ fn m2_particle_mesh_alternates_authored_head_rotation() -> Result<(), Box<dyn Er
     let authored_angle = M2ParticleRotationPose::sample(emitter, particles[0].random_word())
         .angle_radians(particles[0].age_seconds());
     for (particle_index, particle) in particles.iter().enumerate() {
-        let angle = if particle.random_word() & 1 != 0 {
+        let angle = if std::ptr::from_ref(particle).addr() & 0x20 != 0 {
             -authored_angle
         } else {
             authored_angle
