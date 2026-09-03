@@ -21,8 +21,8 @@ use super::simple_script::{
     normal_font_key, parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key,
     slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
     spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
-    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
+    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transform;
 use crate::{
@@ -688,15 +688,30 @@ fn snapshot_text(
     let draw_layer = table
         .raw_get::<String>(draw_layer_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} text draw layer"), error))?;
-    let color: Table = font
+    let style = presentation_font.unwrap_or(table);
+    let color: Table = style
         .raw_get(text_color_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} text color"), error))?;
-    let shadow_offset: Table = font
+    let shadow_offset: Table = style
         .raw_get(font_shadow_offset_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} shadow offset"), error))?;
-    let shadow_color: Table = font
+    let shadow_color: Table = style
         .raw_get(font_shadow_color_key())
         .map_err(|error| snapshot_error(format!("object {lua_index} shadow color"), error))?;
+    // Build 12340's CSimpleFontString presentation callback applies the
+    // Region's explicit vertex color when its presence flag is set and uses
+    // opaque white when it is absent. Stock options code relies on this to
+    // replace an inherited gold font with white High/Low slider labels.
+    let vertex_color = table
+        .raw_get::<bool>(vertex_color_set_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} vertex color flag"), error))?
+        .then(|| {
+            table
+                .raw_get::<Table>(texture_color_key())
+                .map_err(|error| snapshot_error(format!("object {lua_index} vertex color"), error))
+                .and_then(|values| numeric_array::<4>(&values, lua_index, "vertex color"))
+        })
+        .transpose()?;
     let is_edit_box = kind == UiObjectKind::EditBox;
     let text_insets = if is_edit_box {
         let values: Table = table
@@ -755,8 +770,10 @@ fn snapshot_text(
         } else {
             0.0
         },
-        color: presentation_color
-            .map_or_else(|| numeric_array::<4>(&color, lua_index, "text color"), Ok)?,
+        color: vertex_color.unwrap_or(
+            presentation_color
+                .map_or_else(|| numeric_array::<4>(&color, lua_index, "text color"), Ok)?,
+        ),
         shadow_offset: numeric_array::<2>(&shadow_offset, lua_index, "shadow offset")?,
         shadow_color: numeric_array::<4>(&shadow_color, lua_index, "shadow color")?,
         spacing: finite_region_number(table, spacing_key(), lua_index, "font spacing")?,
@@ -1201,5 +1218,75 @@ fn snapshot_error(label: impl Into<String>, error: mlua::Error) -> UiScriptError
     UiScriptError::Execution {
         label: format!("{} snapshot", label.into()),
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::*;
+
+    #[test]
+    fn font_string_snapshot_uses_live_and_explicit_region_colors() -> Result<(), Box<dyn Error>> {
+        let lua = Lua::new();
+        let font = lua.create_table()?;
+        font.raw_set(font_face_key(), "Fonts\\FRIZQT__.TTF")?;
+        font.raw_set(font_height_key(), 10.0)?;
+        font.raw_set(font_flags_key(), "")?;
+        font.raw_set(
+            text_color_key(),
+            lua.create_sequence_from([1.0, 0.82, 0.0, 1.0])?,
+        )?;
+        font.raw_set(
+            font_shadow_offset_key(),
+            lua.create_sequence_from([0.0, 0.0])?,
+        )?;
+        font.raw_set(
+            font_shadow_color_key(),
+            lua.create_sequence_from([0.0, 0.0, 0.0, 1.0])?,
+        )?;
+
+        let object = lua.create_table()?;
+        object.raw_set(font_set_key(), true)?;
+        object.raw_set(font_object_key(), font)?;
+        object.raw_set(text_key(), "High")?;
+        object.raw_set(justify_h_key(), "CENTER")?;
+        object.raw_set(justify_v_key(), "MIDDLE")?;
+        object.raw_set(draw_layer_key(), "ARTWORK")?;
+        object.raw_set(draw_sub_level_key(), 0_i16)?;
+        object.raw_set(spacing_key(), 0.0)?;
+        object.raw_set(word_wrap_key(), true)?;
+        object.raw_set(non_space_wrap_key(), false)?;
+        object.raw_set(max_text_lines_key(), 0_u32)?;
+        object.raw_set(
+            text_color_key(),
+            lua.create_sequence_from([0.25, 0.5, 0.75, 0.8])?,
+        )?;
+        object.raw_set(
+            font_shadow_offset_key(),
+            lua.create_sequence_from([1.0, -1.0])?,
+        )?;
+        object.raw_set(
+            font_shadow_color_key(),
+            lua.create_sequence_from([0.1, 0.2, 0.3, 0.4])?,
+        )?;
+        object.raw_set(
+            texture_color_key(),
+            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
+        )?;
+        object.raw_set(vertex_color_set_key(), false)?;
+
+        let live = snapshot_text(1, UiObjectKind::FontString, &object, None, None)?
+            .ok_or("test font string did not snapshot")?;
+        assert_eq!(live.color, [0.25, 0.5, 0.75, 0.8]);
+        assert_eq!(live.shadow_offset, [1.0, -1.0]);
+        assert_eq!(live.shadow_color, [0.1, 0.2, 0.3, 0.4]);
+
+        object.raw_set(vertex_color_set_key(), true)?;
+        let live = snapshot_text(1, UiObjectKind::FontString, &object, None, None)?
+            .ok_or("test font string did not snapshot")?;
+        assert_eq!(live.color, [1.0; 4]);
+        Ok(())
     }
 }

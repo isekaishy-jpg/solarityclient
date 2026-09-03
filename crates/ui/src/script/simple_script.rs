@@ -176,6 +176,7 @@ static MAX_TEXT_LINES_TOKEN: u8 = 129;
 static EDIT_CARET_ELAPSED_TOKEN: u8 = 130;
 static EDIT_CARET_VISIBLE_TOKEN: u8 = 131;
 static EDIT_HIGHLIGHT_COLOR_TOKEN: u8 = 132;
+static VERTEX_COLOR_SET_TOKEN: u8 = 133;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -2328,6 +2329,7 @@ impl UiScriptRuntime {
                     lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
                 )
             })
+            .and_then(|()| table.raw_set(vertex_color_set_key(), false))
             .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
             let script_handlers = lua
@@ -3036,6 +3038,7 @@ fn create_dynamic_object(
         texture_color_key(),
         lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
     )?;
+    object.raw_set(vertex_color_set_key(), false)?;
     if !matches!(kind, "Texture" | "FontString") {
         object.raw_set(events_key(), lua.create_table()?)?;
         object.raw_set(all_events_key(), false)?;
@@ -7016,7 +7019,8 @@ fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Res
             object.raw_set(
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(component_count))?,
-            )
+            )?;
+            object.raw_set(vertex_color_set_key(), true)
         })?,
     )?;
     methods.raw_set(
@@ -8319,6 +8323,10 @@ pub(super) fn keyboard_enabled_key() -> LightUserData {
 
 pub(super) fn texture_color_key() -> LightUserData {
     hidden_key(&TEXTURE_COLOR_TOKEN)
+}
+
+pub(super) fn vertex_color_set_key() -> LightUserData {
+    hidden_key(&VERTEX_COLOR_SET_TOKEN)
 }
 
 pub(super) fn texture_file_key() -> LightUserData {
