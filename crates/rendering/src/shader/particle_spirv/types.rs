@@ -1,13 +1,15 @@
 //! Owned particle SPIR-V words and their complete material identity.
 
+use std::sync::Arc;
+
 use crate::M2MaterialState;
 
 /// One material-specialized ordinary-particle shader pair.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct M2ParticleSpirvProgram {
     material: M2MaterialState,
-    vertex_words: Vec<u32>,
-    fragment_words: Vec<u32>,
+    vertex_words: Arc<[u32]>,
+    fragment_words: Arc<[u32]>,
     vertex_specialization: [u32; 1],
     fragment_specialization: [u32; 2],
 }
@@ -15,8 +17,8 @@ pub struct M2ParticleSpirvProgram {
 impl M2ParticleSpirvProgram {
     pub(super) fn new(
         material: M2MaterialState,
-        vertex_words: Vec<u32>,
-        fragment_words: Vec<u32>,
+        vertex_words: Arc<[u32]>,
+        fragment_words: Arc<[u32]>,
         vertex_specialization: [u32; 1],
         fragment_specialization: [u32; 2],
     ) -> Self {

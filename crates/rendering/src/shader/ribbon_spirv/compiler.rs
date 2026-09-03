@@ -1,5 +1,7 @@
 //! Selection of build-generated ribbon SPIR-V.
 
+use std::sync::{Arc, OnceLock};
+
 use super::source::{RIBBON_FRAGMENT_SPIRV, RIBBON_VERTEX_SPIRV};
 use super::{M2RibbonSpirvError, M2RibbonSpirvProgram};
 use crate::M2MaterialState;
@@ -28,18 +30,24 @@ impl M2RibbonSpirvCompiler {
     ) -> Result<M2RibbonSpirvProgram, M2RibbonSpirvError> {
         Ok(M2RibbonSpirvProgram::new(
             material,
-            spirv_words(RIBBON_VERTEX_SPIRV),
-            spirv_words(RIBBON_FRAGMENT_SPIRV),
+            retained_spirv_words(RIBBON_VERTEX_SPIRV, &RIBBON_VERTEX_WORDS),
+            retained_spirv_words(RIBBON_FRAGMENT_SPIRV, &RIBBON_FRAGMENT_WORDS),
             [material.alpha_reference(1.0).to_bits()],
         ))
     }
 }
 
-fn spirv_words(bytes: &[u8]) -> Vec<u32> {
-    bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-        .collect()
+static RIBBON_VERTEX_WORDS: OnceLock<Arc<[u32]>> = OnceLock::new();
+static RIBBON_FRAGMENT_WORDS: OnceLock<Arc<[u32]>> = OnceLock::new();
+
+/// Converts one embedded ribbon module once for every material specialization.
+fn retained_spirv_words(bytes: &[u8], words: &OnceLock<Arc<[u32]>>) -> Arc<[u32]> {
+    Arc::clone(words.get_or_init(|| {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect()
+    }))
 }

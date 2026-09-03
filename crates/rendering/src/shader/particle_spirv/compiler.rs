@@ -1,5 +1,7 @@
 //! Selection of build-generated ordinary-particle SPIR-V.
 
+use std::sync::{Arc, OnceLock};
+
 use super::source::{PARTICLE_FRAGMENT_SPIRV, PARTICLE_VERTEX_SPIRV};
 use super::{M2ParticleSpirvError, M2ParticleSpirvProgram};
 use crate::M2MaterialState;
@@ -28,8 +30,8 @@ impl M2ParticleSpirvCompiler {
     ) -> Result<M2ParticleSpirvProgram, M2ParticleSpirvError> {
         Ok(M2ParticleSpirvProgram::new(
             material,
-            spirv_words(PARTICLE_VERTEX_SPIRV),
-            spirv_words(PARTICLE_FRAGMENT_SPIRV),
+            retained_spirv_words(PARTICLE_VERTEX_SPIRV, &PARTICLE_VERTEX_WORDS),
+            retained_spirv_words(PARTICLE_FRAGMENT_SPIRV, &PARTICLE_FRAGMENT_WORDS),
             [u32::from(!material.is_unlit())],
             [
                 material.alpha_reference(1.0).to_bits(),
@@ -39,11 +41,17 @@ impl M2ParticleSpirvCompiler {
     }
 }
 
-fn spirv_words(bytes: &[u8]) -> Vec<u32> {
-    bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-        .collect()
+static PARTICLE_VERTEX_WORDS: OnceLock<Arc<[u32]>> = OnceLock::new();
+static PARTICLE_FRAGMENT_WORDS: OnceLock<Arc<[u32]>> = OnceLock::new();
+
+/// Converts one embedded particle module once for every material specialization.
+fn retained_spirv_words(bytes: &[u8], words: &OnceLock<Arc<[u32]>>) -> Arc<[u32]> {
+    Arc::clone(words.get_or_init(|| {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect()
+    }))
 }

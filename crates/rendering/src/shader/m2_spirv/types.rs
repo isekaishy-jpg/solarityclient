@@ -1,5 +1,7 @@
 //! Cache identities and owned SPIR-V words for one M2 effect pair.
 
+use std::sync::Arc;
+
 use super::super::{M2ShaderPermutation, M2ShaderPlan};
 
 /// Complete immutable identity of one compiled M2 shader pair.
@@ -33,8 +35,8 @@ impl M2SpirvKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct M2SpirvProgram {
     key: M2SpirvKey,
-    vertex_words: Vec<u32>,
-    fragment_words: Vec<u32>,
+    vertex_words: Arc<[u32]>,
+    fragment_words: Arc<[u32]>,
     vertex_specialization: [u32; 2],
     fragment_specialization: [u32; 3],
 }
@@ -43,8 +45,8 @@ impl M2SpirvProgram {
     /// Retains a compiled pair under its complete pipeline-cache identity.
     pub(super) fn new(
         key: M2SpirvKey,
-        vertex_words: Vec<u32>,
-        fragment_words: Vec<u32>,
+        vertex_words: Arc<[u32]>,
+        fragment_words: Arc<[u32]>,
         vertex_specialization: [u32; 2],
         fragment_specialization: [u32; 3],
     ) -> Self {
