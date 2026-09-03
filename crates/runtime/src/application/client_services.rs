@@ -668,6 +668,18 @@ impl ClientServices {
                     }
                     return Ok(());
                 }
+                RuntimeCinematicPoll::Waiting { remaining } => {
+                    // Keep input latency bounded while avoiding duplicate swapchain
+                    // presents between authored movie frames. The audio device is
+                    // the stock master clock, so the next pass recomputes the exact
+                    // remaining interval instead of accumulating sleep error.
+                    std::thread::sleep(
+                        remaining
+                            .max(std::time::Duration::from_millis(1))
+                            .min(std::time::Duration::from_millis(8)),
+                    );
+                    return Ok(());
+                }
                 RuntimeCinematicPoll::Finished { object_index } => {
                     self.glue.movie_finished(object_index)?;
                     self.login_ui = None;

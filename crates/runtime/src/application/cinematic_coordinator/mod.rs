@@ -17,6 +17,8 @@ pub(super) enum RuntimeCinematicPoll {
     Stopped,
     /// A decoded frame was presented for the active movie.
     Presented,
+    /// The current decoded frame was already presented and its successor is not due.
+    Waiting { remaining: Duration },
     /// The final frame duration elapsed and the owning widget must be notified.
     Finished { object_index: usize },
 }
@@ -28,6 +30,7 @@ struct ActiveCinematic {
     decoder: CinematicDecoder,
     current: CinematicVideoFrame,
     frame_index: u64,
+    presented_frame_index: Option<u64>,
     pending: Option<CinematicVideoFrame>,
     started_at: Instant,
     first_presentation_time: Duration,
@@ -106,6 +109,14 @@ impl RuntimeCinematicCoordinator {
             );
             return Ok(RuntimeCinematicPoll::Finished { object_index });
         }
+        if let Some(remaining) = repeated_frame_wait(
+            active.presented_frame_index,
+            active.frame_index,
+            active.next_change_time()?,
+            elapsed,
+        ) {
+            return Ok(RuntimeCinematicPoll::Waiting { remaining });
+        }
         let source_extent = (active.current.width(), active.current.height());
         let identity = CinematicFrameIdentity::new(active.generation, active.frame_index);
         if let Some((logical_extent, draws)) = overlay {
@@ -119,6 +130,7 @@ impl RuntimeCinematicCoordinator {
         } else {
             renderer.present_cinematic_rgba8(identity, source_extent, active.current.rgba8())?;
         }
+        active.presented_frame_index = Some(active.frame_index);
         Ok(RuntimeCinematicPoll::Presented)
     }
 }
@@ -142,17 +154,19 @@ impl ActiveCinematic {
             })
             .filter(|interval| !interval.is_zero())
             .unwrap_or(Duration::from_millis(16));
+        let end_time = pending.is_none().then_some(last_interval);
         Ok(Self {
             generation: request.generation(),
             object_index: request.object_index(),
             decoder,
             current,
             frame_index: 0,
+            presented_frame_index: None,
             pending,
             started_at: Instant::now(),
             first_presentation_time,
             last_interval,
-            end_time: None,
+            end_time,
             volume: request.volume(),
             audio_started: false,
         })
@@ -209,6 +223,29 @@ impl ActiveCinematic {
         }
         Ok(())
     }
+
+    /// Returns the master-clock deadline for the next image or completion.
+    fn next_change_time(&self) -> Result<Duration, RuntimeCinematicError> {
+        self.pending
+            .as_ref()
+            .map(|frame| {
+                frame
+                    .presentation_time()
+                    .saturating_sub(self.first_presentation_time)
+            })
+            .or(self.end_time)
+            .ok_or(RuntimeCinematicError::State)
+    }
+}
+
+/// Suppresses duplicate presents until the next authored/audio-master deadline.
+fn repeated_frame_wait(
+    presented_frame_index: Option<u64>,
+    frame_index: u64,
+    next_change_time: Duration,
+    elapsed: Duration,
+) -> Option<Duration> {
+    (presented_frame_index == Some(frame_index)).then(|| next_change_time.saturating_sub(elapsed))
 }
 
 /// A movie could not advance through its exact decode/presentation path.
@@ -229,4 +266,40 @@ pub enum RuntimeCinematicError {
     /// A movie exceeded the representable authored frame identity.
     #[error("cinematic decoded frame index exceeds u64 capacity")]
     FrameIndexCapacity,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repeated_frame_wait;
+    use std::time::Duration;
+
+    #[test]
+    fn first_and_advanced_frames_present_immediately() {
+        let deadline = Duration::from_millis(40);
+        let elapsed = Duration::from_millis(10);
+        assert_eq!(repeated_frame_wait(None, 0, deadline, elapsed), None);
+        assert_eq!(repeated_frame_wait(Some(0), 1, deadline, elapsed), None);
+    }
+
+    #[test]
+    fn repeated_frame_waits_only_until_its_authored_deadline() {
+        assert_eq!(
+            repeated_frame_wait(
+                Some(7),
+                7,
+                Duration::from_millis(75),
+                Duration::from_millis(50),
+            ),
+            Some(Duration::from_millis(25)),
+        );
+        assert_eq!(
+            repeated_frame_wait(
+                Some(7),
+                7,
+                Duration::from_millis(50),
+                Duration::from_millis(75),
+            ),
+            Some(Duration::ZERO),
+        );
+    }
 }
