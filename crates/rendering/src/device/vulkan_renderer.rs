@@ -1562,6 +1562,32 @@ impl VulkanRenderer {
         first_vertex: u32,
         mesh: &M2RibbonMeshPlan,
     ) -> Result<M2RibbonPreparedDraw, VulkanError> {
+        self.prepare_m2_ribbon_draw_range(
+            pipeline,
+            texture_set,
+            material,
+            order,
+            first_vertex,
+            mesh.vertices().len(),
+        )
+    }
+
+    /// Joins one range in retained ribbon storage to compatible GPU resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same conditions as
+    /// [`Self::prepare_m2_ribbon_draw`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_m2_ribbon_draw_range(
+        &self,
+        pipeline: M2RibbonPipelineHandle,
+        texture_set: M2TextureSetHandle,
+        material: M2Material,
+        order: M2EffectOrder,
+        first_vertex: u32,
+        vertex_count: usize,
+    ) -> Result<M2RibbonPreparedDraw, VulkanError> {
         prepare_ribbon_draw(
             &self.m2_ribbon_pipelines,
             &self.m2_texture_sets,
@@ -1570,7 +1596,7 @@ impl VulkanRenderer {
             material,
             order,
             first_vertex,
-            mesh,
+            vertex_count,
         )
     }
 

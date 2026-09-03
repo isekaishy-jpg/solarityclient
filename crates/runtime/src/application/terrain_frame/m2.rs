@@ -2288,12 +2288,13 @@ impl M2Frame {
                 if passes.is_empty() {
                     continue;
                 }
-                let mesh = M2RibbonMeshPlan::prepare(emitter, trail)?;
-                if mesh.vertices().len() < 4 {
+                if trail.sections().len() < 2 {
                     continue;
                 }
                 let first_vertex = u32::try_from(self.ribbon_vertices.len())
                     .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
+                let vertex_count =
+                    M2RibbonMeshPlan::append(emitter, trail, &mut self.ribbon_vertices)?;
                 for pass in passes {
                     let effect_order =
                         u32::try_from(self.particle_draws.len() + self.ribbon_draws.len())
@@ -2302,22 +2303,21 @@ impl M2Frame {
                             })?;
                     self.ribbon_draws.push(
                         renderer
-                            .prepare_m2_ribbon_draw(
+                            .prepare_m2_ribbon_draw_range(
                                 pass.pipeline,
                                 pass.texture_set,
                                 pass.material,
                                 M2EffectOrder::new(emitter.priority_plane(), effect_order),
                                 first_vertex,
-                                &mesh,
+                                vertex_count,
                             )?
                             .with_light_bank(light_bank),
                     );
                 }
-                self.ribbon_vertices.extend_from_slice(mesh.vertices());
                 tracing::trace!(
                     model = %source.model.path(),
                     ribbon_index,
-                    vertex_count = mesh.vertices().len(),
+                    vertex_count,
                     pass_count = passes.len(),
                     "placement-local ribbon entered unified world frame"
                 );

@@ -81,6 +81,39 @@ impl M2RibbonMeshPlan {
         emitter: &M2RibbonEmitter,
         trail: &M2RibbonTrail,
     ) -> Result<Self, M2RibbonMeshPlanError> {
+        let mut vertices = Vec::new();
+        Self::append(emitter, trail, &mut vertices)?;
+        Ok(Self { vertices })
+    }
+
+    /// Appends one ribbon strip directly to retained frame storage.
+    ///
+    /// The destination is restored to its original length if preparation
+    /// fails, so callers never retain a partial strip.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::prepare`].
+    pub fn append(
+        emitter: &M2RibbonEmitter,
+        trail: &M2RibbonTrail,
+        vertices: &mut Vec<M2RibbonRenderVertex>,
+    ) -> Result<usize, M2RibbonMeshPlanError> {
+        let first_vertex = vertices.len();
+        match Self::append_internal(emitter, trail, vertices) {
+            Ok(vertex_count) => Ok(vertex_count),
+            Err(error) => {
+                vertices.truncate(first_vertex);
+                Err(error)
+            }
+        }
+    }
+
+    fn append_internal(
+        emitter: &M2RibbonEmitter,
+        trail: &M2RibbonTrail,
+        vertices: &mut Vec<M2RibbonRenderVertex>,
+    ) -> Result<usize, M2RibbonMeshPlanError> {
         let rows = emitter.texture_rows();
         let columns = emitter.texture_columns();
         if rows == 0 || columns == 0 {
@@ -91,7 +124,6 @@ impl M2RibbonMeshPlan {
             .len()
             .checked_mul(2)
             .ok_or(M2RibbonMeshPlanError::VertexCount)?;
-        let mut vertices = Vec::new();
         vertices
             .try_reserve_exact(vertex_count)
             .map_err(|_source| M2RibbonMeshPlanError::VertexCount)?;
@@ -116,7 +148,7 @@ impl M2RibbonMeshPlan {
                 texture_coordinates: [u, next_v],
             });
         }
-        Ok(Self { vertices })
+        Ok(vertex_count)
     }
 
     /// Returns edge pairs ordered from the oldest retained section to live.

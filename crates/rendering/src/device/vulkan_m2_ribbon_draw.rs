@@ -6,7 +6,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_m2_draw::M2SceneLightBank;
 use crate::device::vulkan_m2_ribbon_pipeline::{M2RibbonPipelineHandle, M2RibbonPipelineRegistry};
 use crate::device::vulkan_m2_texture_set::{M2TextureSetHandle, M2TextureSetRegistry};
-use crate::{M2EffectOrder, M2MaterialState, M2RibbonMeshPlan};
+use crate::{M2EffectOrder, M2MaterialState};
 
 /// Renderer-local resources and vertex range for one ribbon strip.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,7 +82,7 @@ pub(in crate::device) fn prepare_draw(
     material: M2Material,
     order: M2EffectOrder,
     first_vertex: u32,
-    mesh: &M2RibbonMeshPlan,
+    vertex_count: usize,
 ) -> Result<M2RibbonPreparedDraw, VulkanError> {
     let pipeline_info = pipelines
         .info(pipeline)
@@ -96,8 +96,8 @@ pub(in crate::device) fn prepare_draw(
     if texture_info.stage_count() != 1 {
         return Err(VulkanError::M2RibbonDrawTextureSetMismatch);
     }
-    let vertex_count = u32::try_from(mesh.vertices().len())
-        .map_err(|_source| VulkanError::M2RibbonDrawVertexRange)?;
+    let vertex_count =
+        u32::try_from(vertex_count).map_err(|_source| VulkanError::M2RibbonDrawVertexRange)?;
     first_vertex
         .checked_add(vertex_count)
         .ok_or(VulkanError::M2RibbonDrawVertexRange)?;

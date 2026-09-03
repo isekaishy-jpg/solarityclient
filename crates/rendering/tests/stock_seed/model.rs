@@ -796,6 +796,10 @@ fn m2_ribbon_pose_samples_placement_effect_values() -> Result<(), Box<dyn Error>
             .texture_coordinates(),
         [0.25, 0.5]
     );
+    let mut retained_vertices = vec![mesh.vertices()[0]];
+    let vertex_count = M2RibbonMeshPlan::append(emitter, &trail, &mut retained_vertices)?;
+    assert_eq!(vertex_count, mesh.vertices().len());
+    assert_eq!(&retained_vertices[1..], mesh.vertices());
 
     let final_pose = M2RibbonPose::sample(
         model.animations(),
