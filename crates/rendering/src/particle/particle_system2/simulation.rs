@@ -28,7 +28,11 @@ const FOLLOW_POSITION: u32 = 0x0000_4000;
 const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
 
 /// Sphere particles launch along local +Z rather than away from the center.
-const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_8000;
+///
+/// Build 12340 maps raw emitter flag `0x100` to runtime bit `0x8000` in
+/// `0x00832EA0`; the sphere spawn path tests that runtime bit at `0x00981950`.
+/// Raw `0x8000` is the distinct Squirt flag.
+const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_0100;
 
 /// Selects scene-provided dynamic wind instead of the emitter's static vector.
 const DYNAMIC_WIND: u32 = 0x8000_0000;

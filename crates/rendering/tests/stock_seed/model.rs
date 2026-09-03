@@ -2096,53 +2096,92 @@ fn m2_particle_mesh_inherits_emitter_view_scale() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Spherical emission samples a bounded shell and its dedicated launch path.
+/// Raw `0x100` selects the stock vertical sphere launch; Squirt `0x8000` does not.
 #[test]
 fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Error>> {
-    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
-    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
-    bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&0x8000_u32.to_le_bytes());
-    bytes[particle_offset + 41] = 2;
+    let sphere_bytes = |flags: u32| -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+        let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+        bytes[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+        bytes[particle_offset + 41] = 2;
+        let value_refs = usize::try_from(u32::from_le_bytes(
+            bytes[particle_offset + 0x100..particle_offset + 0x104].try_into()?,
+        ))?;
+        let value_data = usize::try_from(u32::from_le_bytes(
+            bytes[value_refs + 4..value_refs + 8].try_into()?,
+        ))?;
+        bytes[value_data..value_data + 8].fill(0);
+        Ok(bytes)
+    };
+    let vertical_bytes = sphere_bytes(0x100)?;
+    let squirt_bytes = sphere_bytes(0x8000)?;
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
-            path: "Creature\\Solarity\\SphereParticle.m2",
-            bytes: &bytes,
+            path: "Creature\\Solarity\\VerticalSphereParticle.m2",
+            bytes: &vertical_bytes,
         },
         FixtureFile {
-            path: "Creature\\Solarity\\SphereParticle00.skin",
+            path: "Creature\\Solarity\\VerticalSphereParticle00.skin",
+            bytes: &skin,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SquirtSphereParticle.m2",
+            bytes: &squirt_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\SquirtSphereParticle00.skin",
             bytes: &skin,
         },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog)?;
-    let path = AssetPath::new("Creature\\Solarity\\SphereParticle.m2")?;
-    let model = DecodedM2Model::load(&mut store, &path)?;
-    let emitter = model
-        .animations()
-        .particles()
-        .first()
-        .ok_or("particle emitter is absent")?;
-    assert_eq!(emitter.flags(), 0x8000);
-    let pose = M2ParticlePose::sample(
-        model.animations(),
-        emitter,
-        M2AnimationClock::new(0, 500.0, 0.0),
-    )?;
-    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
-    let report = simulation.advance_sphere(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
-
-    assert_eq!(report.emitted(), 2);
-    assert_eq!(report.deaths(), 0);
-    assert_eq!(report.live(), 2);
-    assert!(simulation.particles().iter().all(|particle| {
-        let position = particle.position();
-        let horizontal_radius = position.truncate().length();
-        position.is_finite()
-            && particle.velocity().is_finite()
-            && horizontal_radius <= pose.emission_area_width() + pose.emission_speed() * 0.1
+    let simulate = |store: &mut AssetStore,
+                    path: &str|
+     -> Result<(M2ParticlePose, M2ParticleSimulation), Box<dyn Error>> {
+        let model = DecodedM2Model::load(store, &AssetPath::new(path)?)?;
+        let emitter = model
+            .animations()
+            .particles()
+            .first()
+            .ok_or("particle emitter is absent")?;
+        let pose = M2ParticlePose::sample(
+            model.animations(),
+            emitter,
+            M2AnimationClock::new(0, 500.0, 0.0),
+        )?;
+        assert_eq!(pose.z_source(), 0.0);
+        let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+        let report = simulation.advance_sphere(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+        assert_eq!(report.emitted(), 2);
+        assert_eq!(report.deaths(), 0);
+        assert_eq!(report.live(), 2);
+        Ok((pose, simulation))
+    };
+    let (vertical_pose, vertical) =
+        simulate(&mut store, "Creature\\Solarity\\VerticalSphereParticle.m2")?;
+    let (squirt_pose, squirt) =
+        simulate(&mut store, "Creature\\Solarity\\SquirtSphereParticle.m2")?;
+    assert!(vertical.particles().iter().all(|particle| {
+        particle.velocity().truncate().length_squared() < f32::EPSILON
+            && particle.velocity().z.is_finite()
     }));
+    assert!(
+        squirt
+            .particles()
+            .iter()
+            .all(|particle| particle.velocity().truncate().length_squared() > f32::EPSILON)
+    );
+    for (pose, simulation) in [(vertical_pose, vertical), (squirt_pose, squirt)] {
+        assert!(simulation.particles().iter().all(|particle| {
+            let position = particle.position();
+            let horizontal_radius = position.truncate().length();
+            position.is_finite()
+                && particle.velocity().is_finite()
+                && horizontal_radius <= pose.emission_area_width() + pose.emission_speed() * 0.1
+        }));
+    }
     Ok(())
 }
 
