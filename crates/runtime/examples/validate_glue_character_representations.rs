@@ -6,6 +6,7 @@ use std::io::{Error as IoError, ErrorKind};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
     CharacterRaceCatalog, CharacterStartOutfitCatalog, ClientDataRoot, CreatureCatalog,
@@ -13,9 +14,11 @@ use solarity_asset::{
     ItemDisplayCatalog, ItemVisualCatalog, Locale, ParticleColorCatalog,
 };
 use solarity_cpu::BlizzardRand;
+use solarity_ecs::{ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldTransform};
 use solarity_runtime::{
-    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
+    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
 };
+use solarity_systems::project_object_fields;
 use solarity_ui::{
     UiCharacterCreationPreview, UiCharacterCreationState, UiCharacterDirectory,
     UiCharacterEquipment, UiCharacterExpansion, UiCharacterInfo, UiCharacterPetPreview,
@@ -47,6 +50,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let creature_families = CreatureFamilyCatalog::load(&mut store)?;
     let characters = CharacterAppearanceCatalog::load(&mut store)?;
     let races = CharacterRaceCatalog::load(&mut store)?;
+    let human_male_display_id = races
+        .race(1)
+        .ok_or_else(|| invalid_data("playable Human race is absent".to_owned()))?
+        .male_display_id();
     let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut store)?;
     let start_outfits = CharacterStartOutfitCatalog::load(&mut store)?;
     let item_definitions = ItemDefinitionCatalog::load(&mut store)?;
@@ -130,11 +137,89 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     validate_selection_representation(&mut presentation)?;
+    validate_selection_to_world_transfer(&mut presentation, human_male_display_id)?;
     presentation.synchronize_character_creation(None)?;
 
     println!(
         "validated {outfit_count} race/class/gender outfits, {appearance_count} authored customization representations, and one complete enum-time equipment/pet representation"
     );
+    Ok(())
+}
+
+/// Proves world entry consumes the already-composed selected character instead
+/// of decoding its body, atlas, and attachment generation a second time.
+fn validate_selection_to_world_transfer(
+    presentation: &mut RuntimePlayerPresentation,
+    body_display_id: u32,
+) -> Result<(), Box<dyn Error>> {
+    let guid = 0x42;
+    let directory = UiCharacterDirectory::new(
+        vec![UiCharacterInfo::new(
+            guid,
+            "TransferHuman".to_owned(),
+            "Human".to_owned(),
+            1,
+            "Human".to_owned(),
+            "Warrior".to_owned(),
+            1,
+            1,
+            None,
+            2,
+            0,
+            [0; 5],
+            [UiCharacterEquipment::default(); 23],
+            UiCharacterPetPreview::default(),
+            0,
+            0,
+        )],
+        "Human".to_owned(),
+    );
+    let preview = directory
+        .selection_preview()
+        .ok_or_else(|| invalid_data("world-transfer fixture produced no preview".to_owned()))?;
+    if !presentation.synchronize_character_selection(Some(&preview))? {
+        return Err(invalid_data(
+            "world-transfer fixture did not publish its selected character".to_owned(),
+        )
+        .into());
+    }
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        guid,
+        "TransferHuman",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let fields = [
+        (4, 1.0_f32.to_bits()),
+        (23, u32::from_le_bytes([1, 1, 0, 0])),
+        (67, body_display_id),
+        (68, body_display_id),
+        (69, 0),
+        (74, 0),
+        (122, 0),
+        (153, 0),
+        (154, 0),
+    ];
+    world.create_object(
+        guid,
+        ObjectKind::Player,
+        Some(WorldTransform::new(Vec3::ZERO, 0.0)),
+        fields,
+    )?;
+    project_object_fields(&mut world, guid, fields)?;
+    if presentation.synchronize(Some(&world))? != RuntimePlayerPoll::ModelLoaded {
+        return Err(invalid_data(
+            "selected character did not transfer into active-world residency".to_owned(),
+        )
+        .into());
+    }
+    if !presentation.synchronize_character_selection(Some(&preview))? {
+        return Err(invalid_data(
+            "world entry retained a duplicate Glue character generation".to_owned(),
+        )
+        .into());
+    }
     Ok(())
 }
 

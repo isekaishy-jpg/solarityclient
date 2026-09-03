@@ -687,9 +687,13 @@ impl RuntimePlayerPresentation {
             model,
             textures,
             atlas,
+            texture_plan,
             geosets,
+            attachment_plan,
             animation,
             facing_radians: preview.facing_degrees().to_radians() as f32,
+            hair,
+            extra_skin,
             attachments,
             pet: None,
             particle_colors: M2ParticleColorReplacement::resolve(
@@ -812,9 +816,13 @@ impl RuntimePlayerPresentation {
             model,
             textures,
             atlas,
+            texture_plan,
             geosets,
+            attachment_plan,
             animation,
             facing_radians: preview.facing_degrees().to_radians() as f32,
+            hair,
+            extra_skin,
             attachments,
             pet,
             particle_colors: M2ParticleColorReplacement::resolve(
@@ -1079,16 +1087,108 @@ impl RuntimePlayerPresentation {
             UnitLocomotionAnimation::STAND,
             resolve_unit_locomotion_animation,
         );
-        let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, &path)?;
-        let texture_plan =
-            CharacterTexturePlan::equipped(character, &assets, equipment_items.iter().copied())?;
+        let texture_plan = CharacterTexturePlan::equipped(
+            character,
+            &self.assets.borrow(),
+            equipment_items.iter().copied(),
+        )?;
         let geosets = CharacterGeosetPlan::equipped(
             character,
             CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
             &self.helmet_visibility,
             equipment_items.iter().copied(),
         )?;
+        let reusable_glue_character = mount_key.is_none()
+            && self.glue_character.as_ref().is_some_and(|resident| {
+                matches!(
+                    &resident.key,
+                    ResidentGlueCharacterKey::Selection(preview) if preview.guid() == guid
+                ) && resident.model.path() == &path
+                    && resident.texture_plan == texture_plan
+                    && resident.geosets == geosets
+                    && resident.attachment_plan == attachment_plan
+            });
+        if reusable_glue_character {
+            let glue = self
+                .glue_character
+                .take()
+                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
+            let ResidentGlueCharacterModel {
+                model,
+                textures,
+                atlas,
+                texture_plan,
+                geosets,
+                attachment_plan,
+                hair,
+                extra_skin,
+                attachments,
+                particle_colors,
+                ..
+            } = glue;
+            let base_camera_height = resolve_model_camera_subject_height(&model, scale)?;
+            let previous_camera = self.resident.as_ref().and_then(|resident| {
+                (resident.path() == &path && resident.object_scale == scale).then_some((
+                    resident.camera_height_state,
+                    resident.camera_time_ms,
+                    resident.mount_key.clone(),
+                ))
+            });
+            let (mut camera_height_state, camera_time_ms, previous_mount_key) = previous_camera
+                .unwrap_or((PlayerCameraHeightState::new(base_camera_height), 0.0, None));
+            if previous_mount_key.is_some() {
+                camera_height_state.set_mounted(false, camera_time_ms)?;
+            }
+            let camera_heights = camera_height_state.sample(camera_time_ms)?;
+            let camera_height = camera_heights.subject_height();
+            let world_transform = world.local_player_transform()?;
+            let view = world.local_player_view()?;
+            let camera_pose =
+                resolve_mounted_player_camera_pose(world_transform, view, camera_heights)?;
+            let animation = resolve_resident_animation(
+                &self.animations,
+                &model,
+                requested_animation,
+                unit_presentation.animation_tier(),
+            )?;
+            self.resident = Some(ResidentPlayerModel {
+                guid,
+                object_scale: scale,
+                collision_extent,
+                particle_color_id,
+                particle_colors,
+                base_texture_plan,
+                base_geosets,
+                equipment_key,
+                attachment_plan,
+                texture_plan,
+                geosets,
+                atlas,
+                hair,
+                extra_skin,
+                textures,
+                attachments,
+                world_transform,
+                view,
+                animation,
+                camera_height,
+                camera_height_state,
+                camera_time_ms,
+                camera_pose: Some(camera_pose),
+                model,
+                mount_key: None,
+                mount: None,
+            });
+            tracing::info!(
+                guid,
+                "transferred character-selection representation into active world"
+            );
+            self.models.collect_unused();
+            self.textures.collect_unused();
+            return Ok(RuntimePlayerPoll::ModelLoaded);
+        }
+        let mut assets = self.assets.borrow_mut();
+        let model = self.models.load(&mut assets, &path)?;
         let atlas = texture_plan.compose_at_level(
             &mut assets,
             &mut self.textures,
@@ -1949,9 +2049,13 @@ struct ResidentGlueCharacterModel {
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
     atlas: CharacterAtlasTexture,
+    texture_plan: CharacterTexturePlan,
     geosets: CharacterGeosetPlan,
+    attachment_plan: CharacterAttachmentPlan,
     animation: UnitModelAnimation,
     facing_radians: f32,
+    hair: Option<Arc<BlpTextureSource>>,
+    extra_skin: Option<Arc<BlpTextureSource>>,
     attachments: Vec<ResidentPlayerAttachment>,
     pet: Option<ResidentGluePetModel>,
     particle_colors: Option<M2ParticleColorReplacement>,
