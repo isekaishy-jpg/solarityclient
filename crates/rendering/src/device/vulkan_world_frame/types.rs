@@ -8,6 +8,8 @@ pub struct WorldFrameScene {
     terrain: TerrainSceneUniform,
     world_model: WorldModelSceneUniform,
     m2: [M2SceneUniform; M2SceneLightBank::COUNT],
+    particle_vertex_capacity: usize,
+    particle_index_capacity: usize,
 }
 
 impl WorldFrameScene {
@@ -22,6 +24,8 @@ impl WorldFrameScene {
             terrain,
             world_model,
             m2: [m2; M2SceneLightBank::COUNT],
+            particle_vertex_capacity: 0,
+            particle_index_capacity: 0,
         }
     }
 
@@ -37,6 +41,18 @@ impl WorldFrameScene {
         self
     }
 
+    /// Reserves effect storage from stock's emitter-pool estimates.
+    #[must_use]
+    pub const fn with_particle_capacity(
+        mut self,
+        vertex_capacity: usize,
+        index_capacity: usize,
+    ) -> Self {
+        self.particle_vertex_capacity = vertex_capacity;
+        self.particle_index_capacity = index_capacity;
+        self
+    }
+
     pub(super) const fn terrain(self) -> TerrainSceneUniform {
         self.terrain
     }
@@ -47,6 +63,14 @@ impl WorldFrameScene {
 
     pub(super) const fn m2(self, light_bank: M2SceneLightBank) -> M2SceneUniform {
         self.m2[light_bank.index()]
+    }
+
+    pub(super) const fn particle_vertex_capacity(self) -> usize {
+        self.particle_vertex_capacity
+    }
+
+    pub(super) const fn particle_index_capacity(self) -> usize {
+        self.particle_index_capacity
     }
 }
 

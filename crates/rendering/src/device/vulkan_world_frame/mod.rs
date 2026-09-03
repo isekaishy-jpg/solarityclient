@@ -182,8 +182,10 @@ impl WorldFrameRenderer {
             world_model_draw_capacity: world_model_draws.len(),
             m2_draw_capacity: m2_draws.len(),
             bone_capacity: bone_transforms.len(),
-            particle_vertex_capacity: particle_vertices.len(),
-            particle_index_capacity: particle_indices.len(),
+            particle_vertex_capacity: particle_vertices
+                .len()
+                .max(scene.particle_vertex_capacity()),
+            particle_index_capacity: particle_indices.len().max(scene.particle_index_capacity()),
             ribbon_vertex_capacity: ribbon_vertices.len(),
             uniform_alignment: context.uniform_alignment,
             storage_alignment: context.storage_alignment,

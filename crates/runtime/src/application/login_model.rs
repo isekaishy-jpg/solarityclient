@@ -1067,7 +1067,11 @@ impl RuntimeGlueModelScene {
             0.0
         };
         let scene = WorldFrameScene::new(terrain, world_model, model)
-            .with_m2_light_banks(character_model, pet_model);
+            .with_m2_light_banks(character_model, pet_model)
+            .with_particle_capacity(
+                visible.particle_vertex_capacity,
+                visible.particle_index_capacity,
+            );
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
             renderer.present_world_frame_with_ui_and_glow(
                 scene,

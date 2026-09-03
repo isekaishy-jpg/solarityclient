@@ -11,16 +11,16 @@ use solarity_rendering::{
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall,
     M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose, M2MaterialState,
     M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
-    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
-    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
-    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
-    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_model_distance_key, m2_section_distance_key, sample_m2_directional_lights,
-    triggered_m2_event_indices,
+    M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
+    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
+    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail,
+    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
+    M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
+    WorldFrustum, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
+    sample_m2_directional_lights, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -671,6 +671,8 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) particle_vertices: &'frame [M2ParticleRenderVertex],
     pub(in crate::application) particle_indices: &'frame [u32],
     pub(in crate::application) particle_draws: &'frame [M2ParticlePreparedDraw],
+    pub(in crate::application) particle_vertex_capacity: usize,
+    pub(in crate::application) particle_index_capacity: usize,
     pub(in crate::application) ribbon_vertices: &'frame [M2RibbonRenderVertex],
     pub(in crate::application) ribbon_draws: &'frame [M2RibbonPreparedDraw],
     pub(in crate::application) glue_directional_lights:
@@ -1697,6 +1699,8 @@ impl M2Frame {
         );
         self.last_effect_time_ms = Some(animation_time_ms);
         let effect_delta_seconds = elapsed_effect_seconds;
+        let mut particle_vertex_capacity = 0_usize;
+        let mut particle_index_capacity = 0_usize;
         let requested_items = self
             .placements
             .iter()
@@ -2048,6 +2052,18 @@ impl M2Frame {
                         });
                     }
                 };
+                let (emitter_vertex_capacity, emitter_index_capacity) =
+                    M2ParticleMeshPlan::buffer_capacity(emitter, simulation.capacity())?;
+                particle_vertex_capacity = particle_vertex_capacity
+                    .checked_add(emitter_vertex_capacity)
+                    .ok_or(M2ParticleMeshPlanError::VertexCount)?;
+                particle_index_capacity = particle_index_capacity
+                    .checked_add(emitter_index_capacity)
+                    .ok_or(M2ParticleMeshPlanError::IndexCount)?;
+                self.particle_vertices
+                    .reserve(particle_vertex_capacity.saturating_sub(self.particle_vertices.len()));
+                self.particle_indices
+                    .reserve(particle_index_capacity.saturating_sub(self.particle_indices.len()));
                 if simulation.particles().is_empty() {
                     continue;
                 }
@@ -2261,6 +2277,8 @@ impl M2Frame {
             particle_vertices: &self.particle_vertices,
             particle_indices: &self.particle_indices,
             particle_draws: &self.particle_draws,
+            particle_vertex_capacity,
+            particle_index_capacity,
             ribbon_vertices: &self.ribbon_vertices,
             ribbon_draws: &self.ribbon_draws,
             glue_directional_lights: &self.glue_directional_lights,

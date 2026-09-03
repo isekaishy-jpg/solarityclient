@@ -781,6 +781,7 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
         .particles()
         .first()
         .ok_or("particle emitter is absent")?;
+    assert_eq!(M2ParticleMeshPlan::buffer_capacity(emitter, 7)?, (56, 84));
 
     let pose = M2ParticlePose::sample(
         model.animations(),

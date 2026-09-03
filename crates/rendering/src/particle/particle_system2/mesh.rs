@@ -129,6 +129,34 @@ pub struct M2ParticleMeshPlan {
 }
 
 impl M2ParticleMeshPlan {
+    /// Returns the largest vertex/index payload for one admitted particle pool.
+    ///
+    /// This lets a retained GPU frame reserve the emitter's stock pool size
+    /// before births gradually fill it, avoiding presentation-time resource
+    /// rebuilds as an effect warms up.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2ParticleMeshPlanError`] when the authored geometry selector
+    /// or the resulting buffer counts are invalid.
+    pub fn buffer_capacity(
+        emitter: &M2ParticleEmitter,
+        particle_capacity: usize,
+    ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
+        let quads_per_particle = particle_quads(emitter)?;
+        let quad_count = particle_capacity
+            .checked_mul(quads_per_particle)
+            .ok_or(M2ParticleMeshPlanError::VertexCount)?;
+        let vertex_count = quad_count
+            .checked_mul(4)
+            .ok_or(M2ParticleMeshPlanError::VertexCount)?;
+        let index_count = quad_count
+            .checked_mul(6)
+            .ok_or(M2ParticleMeshPlanError::IndexCount)?;
+        u32::try_from(vertex_count).map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
+        Ok((vertex_count, index_count))
+    }
+
     /// Builds ordinary head and tail quads from one placement-local live set.
     ///
     /// # Errors
@@ -316,19 +344,7 @@ impl M2ParticleMeshPlan {
         let emitter_right = particle_to_world.transform_vector3(Vec3::X);
         let emitter_up = particle_to_world.transform_vector3(Vec3::Y);
         let emitter_normal = particle_to_world.transform_vector3(Vec3::Z).normalize();
-        let style_flags = emitter.flags() & (HEAD_STYLE | TAIL_STYLE);
-        let (emit_head, emit_tail) = if style_flags != 0 {
-            (style_flags & HEAD_STYLE != 0, style_flags & TAIL_STYLE != 0)
-        } else {
-            // Build 12340 authors stock styles in the flags. Retain the legacy
-            // byte for custom assets which set neither style flag.
-            match emitter.head_or_tail() {
-                0 => (true, false),
-                1 => (false, true),
-                2 => (true, true),
-                selector => return Err(M2ParticleMeshPlanError::HeadOrTail(selector)),
-            }
-        };
+        let (emit_head, emit_tail) = particle_geometry(emitter)?;
         if emitter.texture_rows() == 0 || emitter.texture_columns() == 0 {
             return Err(M2ParticleMeshPlanError::EmptyTextureAtlas);
         }
@@ -359,20 +375,7 @@ impl M2ParticleMeshPlan {
             1.0
         };
 
-        let quads_per_particle = usize::from(emit_head) + usize::from(emit_tail);
-        let quad_count = particles
-            .len()
-            .checked_mul(quads_per_particle)
-            .ok_or(M2ParticleMeshPlanError::VertexCount)?;
-        let vertex_count = particles
-            .len()
-            .checked_mul(quads_per_particle)
-            .and_then(|count| count.checked_mul(4))
-            .ok_or(M2ParticleMeshPlanError::VertexCount)?;
-        let index_count = quad_count
-            .checked_mul(6)
-            .ok_or(M2ParticleMeshPlanError::IndexCount)?;
-        u32::try_from(vertex_count).map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
+        let (vertex_count, index_count) = Self::buffer_capacity(emitter, particles.len())?;
         let mut vertices = Vec::new();
         vertices
             .try_reserve_exact(vertex_count)
@@ -551,6 +554,26 @@ impl M2ParticleMeshPlan {
         }
         bytes
     }
+}
+
+fn particle_geometry(emitter: &M2ParticleEmitter) -> Result<(bool, bool), M2ParticleMeshPlanError> {
+    let style_flags = emitter.flags() & (HEAD_STYLE | TAIL_STYLE);
+    if style_flags != 0 {
+        return Ok((style_flags & HEAD_STYLE != 0, style_flags & TAIL_STYLE != 0));
+    }
+    // Build 12340 authors stock styles in the flags. Retain the legacy byte
+    // for custom assets which set neither style flag.
+    match emitter.head_or_tail() {
+        0 => Ok((true, false)),
+        1 => Ok((false, true)),
+        2 => Ok((true, true)),
+        selector => Err(M2ParticleMeshPlanError::HeadOrTail(selector)),
+    }
+}
+
+fn particle_quads(emitter: &M2ParticleEmitter) -> Result<usize, M2ParticleMeshPlanError> {
+    let (head, tail) = particle_geometry(emitter)?;
+    Ok(usize::from(head) + usize::from(tail))
 }
 
 /// Produces the executable corner table in the current camera basis.

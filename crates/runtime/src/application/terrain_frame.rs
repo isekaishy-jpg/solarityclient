@@ -704,7 +704,6 @@ impl TerrainFrame {
             light.fog_color(),
             [M2LocalLightState::disabled(); 4],
         );
-        let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene);
         let world_model_draws = self.world_models.prepare_visible_draws(
             renderer,
             frustum,
@@ -727,6 +726,8 @@ impl TerrainFrame {
             global_animation_time_ms,
             random,
         )?;
+        let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+            .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
         Ok(renderer.present_world_frame_with_ui(
             scene,
             m2.bone_transforms,
