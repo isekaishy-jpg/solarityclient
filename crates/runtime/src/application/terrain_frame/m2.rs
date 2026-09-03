@@ -701,17 +701,7 @@ impl M2Frame {
             let (playback, particles, ribbons) = match sources[placement.source_index()].as_ref() {
                 Some(source) => {
                     let playback = M2Playback::new(&source.model, 0, random)?;
-                    let particles = source
-                        .model
-                        .animations()
-                        .particles()
-                        .iter()
-                        .map(|_emitter| {
-                            let first = u32::from(random.next_u15());
-                            let second = u32::from(random.next_u15());
-                            M2ParticleSimulation::new(first << 16 | second)
-                        })
-                        .collect();
+                    let particles = stock_particle_simulations(&source.model);
                     let ribbons = source
                         .model
                         .animations()
@@ -918,16 +908,7 @@ impl M2Frame {
         } = gpu_source;
         let model = Arc::clone(&source.model);
         let playback = M2Playback::new(&model, animation_id, random)?;
-        let particles = model
-            .animations()
-            .particles()
-            .iter()
-            .map(|_emitter| {
-                let first = u32::from(random.next_u15());
-                let second = u32::from(random.next_u15());
-                M2ParticleSimulation::new(first << 16 | second)
-            })
-            .collect();
+        let particles = stock_particle_simulations(&model);
         let ribbons = model
             .animations()
             .ribbons()
@@ -2686,16 +2667,7 @@ fn unit_gpu_placement(
     random: &mut CrtRand,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let playback = M2Playback::new(model, animation_id, random)?;
-    let particles = model
-        .animations()
-        .particles()
-        .iter()
-        .map(|_emitter| {
-            let first = u32::from(random.next_u15());
-            let second = u32::from(random.next_u15());
-            M2ParticleSimulation::new(first << 16 | second)
-        })
-        .collect();
+    let particles = stock_particle_simulations(model);
     let ribbons = model
         .animations()
         .ribbons()
@@ -2716,6 +2688,19 @@ fn unit_gpu_placement(
         particles,
         ribbons,
     })
+}
+
+/// Constructs every placement-local emitter with stock's fixed PRNG seed.
+///
+/// `CM2ParticleEmitter` initializes its embedded Blizzard generator to zero;
+/// it does not consume the process CRT stream used by animation selection.
+fn stock_particle_simulations(model: &DecodedM2Model) -> Vec<M2ParticleSimulation> {
+    model
+        .animations()
+        .particles()
+        .iter()
+        .map(|_emitter| M2ParticleSimulation::new(0))
+        .collect()
 }
 
 /// Resolves one emitter's current bone-relative local-to-world matrix.
