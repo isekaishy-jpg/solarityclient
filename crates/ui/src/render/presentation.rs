@@ -11,6 +11,9 @@ use crate::{
     UiRegionGeometryPlan, UiScreenRect,
 };
 
+const RETAINED_TOOLTIP_HORIZONTAL_EDGE_QUADS: usize = 96;
+const RETAINED_TOOLTIP_VERTICAL_EDGE_QUADS: usize = 64;
+
 /// A texture's renderable source after stock `SetTexture` mutation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiTextureSource {
@@ -613,8 +616,9 @@ impl UiPresentationPlan {
                 geometry.region(object_index),
                 object.frame_strata,
                 object.frame_level,
-            ) && region.effectively_shown()
-                && (region.effective_alpha() > 0.0 || region.animation_active())
+            ) && ((region.effectively_shown()
+                && (region.effective_alpha() > 0.0 || region.animation_active()))
+                || strata == UiFrameStrata::Tooltip)
             {
                 append_backdrop(
                     &mut keyed,
@@ -624,7 +628,8 @@ impl UiPresentationPlan {
                         object,
                         clip_object: nearest_owning_scroll_frame(live, object_index),
                         bounds: region.presentation_bounds(),
-                        effective_alpha: region.effective_alpha() as f32,
+                        effective_alpha: region.effective_alpha() as f32
+                            * f32::from(region.effectively_shown()),
                         effective_scale: region.effective_scale(),
                         strata,
                         frame_level,
@@ -645,11 +650,6 @@ impl UiPresentationPlan {
             let Some(region) = geometry.region(object_index) else {
                 continue;
             };
-            if !region.effectively_shown()
-                || region.effective_alpha() <= 0.0 && !region.animation_active()
-            {
-                continue;
-            }
             let Some(owner_index) = nearest_owning_frame(live, object) else {
                 continue;
             };
@@ -657,6 +657,12 @@ impl UiPresentationPlan {
             let (Some(strata), Some(frame_level)) = (owner.frame_strata, owner.frame_level) else {
                 continue;
             };
+            if (!region.effectively_shown()
+                || region.effective_alpha() <= 0.0 && !region.animation_active())
+                && strata != UiFrameStrata::Tooltip
+            {
+                continue;
+            }
             let source = if let Some(path) = &texture.file {
                 UiTextureSource::Asset(path.clone())
             } else if let Some(color) = texture.solid_color {
@@ -675,6 +681,7 @@ impl UiPresentationPlan {
                 .vertex_colors
                 .map(|color| color.map(|value| value as f32));
             let effective_alpha = region.effective_alpha() as f32
+                * f32::from(region.effectively_shown())
                 * f32::from(widget_role_is_active(
                     object.role,
                     owner,
@@ -769,6 +776,18 @@ impl UiPresentationPlan {
         &self.members
     }
 
+    /// Iterates retained texture quads owned by one live object in draw order.
+    pub(crate) fn members_for_object(
+        &self,
+        object_index: usize,
+    ) -> impl Iterator<Item = &UiTexturePresentation> {
+        self.member_indices_by_object
+            .get(object_index)
+            .into_iter()
+            .flatten()
+            .map(|&member_index| &self.members[member_index])
+    }
+
     /// Returns visible model viewports in stable back-to-front frame order.
     #[must_use]
     pub fn models(&self) -> &[UiModelPresentation] {
@@ -861,6 +880,7 @@ fn append_backdrop(
         strata,
         frame_level,
     } = context;
+    let retained_tooltip = strata == UiFrameStrata::Tooltip;
     if let Some(path) = backdrop.background() {
         let [left, right, top, bottom] = backdrop
             .insets()
@@ -980,6 +1000,7 @@ fn append_backdrop(
         bounds.bottom() + edge,
         bounds.top() - edge,
         edge,
+        retained_tooltip.then_some(RETAINED_TOOLTIP_VERTICAL_EDGE_QUADS),
     );
     append_vertical_edge(
         output,
@@ -996,6 +1017,7 @@ fn append_backdrop(
         bounds.bottom() + edge,
         bounds.top() - edge,
         edge,
+        retained_tooltip.then_some(RETAINED_TOOLTIP_VERTICAL_EDGE_QUADS),
     );
     append_horizontal_edge(
         output,
@@ -1012,6 +1034,7 @@ fn append_backdrop(
         bounds.right() - edge,
         bounds.top() - edge,
         edge,
+        retained_tooltip.then_some(RETAINED_TOOLTIP_HORIZONTAL_EDGE_QUADS),
     );
     append_horizontal_edge(
         output,
@@ -1028,6 +1051,7 @@ fn append_backdrop(
         bounds.right() - edge,
         bounds.bottom(),
         edge,
+        retained_tooltip.then_some(RETAINED_TOOLTIP_HORIZONTAL_EDGE_QUADS),
     );
 }
 
@@ -1047,8 +1071,10 @@ fn append_vertical_edge(
     bottom: f64,
     top: f64,
     edge: f64,
+    retained_capacity: Option<usize>,
 ) {
     let mut cursor = top;
+    let mut emitted = 0;
     while cursor > bottom {
         let length = (cursor - bottom).min(edge);
         let next = cursor - length;
@@ -1069,6 +1095,25 @@ fn append_vertical_edge(
             UiDrawLayer::Border,
         );
         cursor = next;
+        emitted += 1;
+    }
+    for _ in emitted..retained_capacity.unwrap_or(emitted) {
+        push_backdrop_quad(
+            output,
+            object_index,
+            clip_object,
+            path,
+            backdrop.blend_mode(),
+            UiScreenRect::from_edges(left, bottom, left + edge, bottom + edge),
+            atlas_coords(slice, 1.0),
+            [[0.0; 4]; 4],
+            opacity,
+            false,
+            false,
+            strata,
+            frame_level,
+            UiDrawLayer::Border,
+        );
     }
 }
 
@@ -1088,8 +1133,10 @@ fn append_horizontal_edge(
     right: f64,
     bottom: f64,
     edge: f64,
+    retained_capacity: Option<usize>,
 ) {
     let mut cursor = left;
+    let mut emitted = 0;
     while cursor < right {
         let length = (right - cursor).min(edge);
         let fraction = (length / edge) as f32;
@@ -1115,6 +1162,25 @@ fn append_horizontal_edge(
             UiDrawLayer::Border,
         );
         cursor += length;
+        emitted += 1;
+    }
+    for _ in emitted..retained_capacity.unwrap_or(emitted) {
+        push_backdrop_quad(
+            output,
+            object_index,
+            clip_object,
+            path,
+            backdrop.blend_mode(),
+            UiScreenRect::from_edges(left, bottom, left + edge, bottom + edge),
+            atlas_coords(slice, 1.0),
+            [[0.0; 4]; 4],
+            opacity,
+            false,
+            false,
+            strata,
+            frame_level,
+            UiDrawLayer::Border,
+        );
     }
 }
 

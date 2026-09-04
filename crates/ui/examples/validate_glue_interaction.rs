@@ -511,6 +511,9 @@ fn validate_character_creation_class_tooltips(
 ) -> Result<(), Box<dyn Error>> {
     let tooltip_index = object_index(manager, "CharacterCreateTooltip")?;
     let text_index = object_index(manager, "CharacterCreateTooltipTextLeft1")?;
+    let retained_indices = manager.render_plan().mesh().index_bytes().to_vec();
+    let retained_objects = manager.render_plan().mesh().object_indices().to_vec();
+    let mut longest_tooltip = 0;
     for class_index in 1..=10 {
         let name = format!("CharacterCreateClassButton{class_index}");
         let button_index = object_index(manager, &name)?;
@@ -521,6 +524,7 @@ fn validate_character_creation_class_tooltips(
             .get::<mlua::Table>(name.as_str())?
             .get::<Option<String>>("tooltip")?
             .ok_or_else(|| invalid_data(format!("{name} has no authored tooltip")))?;
+        longest_tooltip = longest_tooltip.max(authored_tooltip.chars().count());
         let center = object_center(manager, button_index)?;
         if manager.pointer_motion(center)? != Some(button_index) {
             return Err(invalid_data(format!(
@@ -545,6 +549,14 @@ fn validate_character_creation_class_tooltips(
             ))
             .into());
         }
+        if manager.render_plan().mesh().index_bytes() != retained_indices
+            || manager.render_plan().mesh().object_indices() != retained_objects
+        {
+            return Err(invalid_data(format!(
+                "{name} rebuilt shared UI topology while changing its tooltip"
+            ))
+            .into());
+        }
     }
     manager.pointer_motion((-1.0, -1.0))?;
     if manager
@@ -557,6 +569,7 @@ fn validate_character_creation_class_tooltips(
         )
         .into());
     }
+    println!("character creation class tooltips: max_characters={longest_tooltip}");
     Ok(())
 }
 

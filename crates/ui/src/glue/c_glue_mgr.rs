@@ -13,7 +13,7 @@ use crate::script::UiRuntimeObjectPlan;
 use crate::script::{UiGlueNetworkBridge, UiProcessBridge};
 use crate::{
     FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
-    UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan, UiFrameStatePlan,
+    UiEventDispatch, UiEventError, UiEventPayload, UiFramePlan, UiFrameStatePlan, UiFrameStrata,
     UiGlueMediaAction, UiGlueMediaIntent, UiGlueNetworkAction, UiGlueNetworkStatus,
     UiGlyphAtlasPlan, UiKeyboardModifiers, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
     UiObjectKind, UiObjectTree, UiPointerButton, UiPointerDispatch, UiPresentationPlan,
@@ -942,6 +942,16 @@ impl GlueManager {
         let edit_box_text_journal = self
             .runtime
             .is_edit_box_text_journal(&self.live, dirty_objects);
+        if let Some(tooltip_owner) = self.retained_tooltip_journal_owner(dirty_objects)
+            && self.refresh_retained_tooltip(
+                tooltip_owner,
+                dirty_objects,
+                visual_objects,
+                started,
+            )?
+        {
+            return Ok(());
+        }
         let mut visual_objects_refreshed = false;
         if edit_box_text_journal {
             if !visual_objects.is_empty() {
@@ -1053,6 +1063,99 @@ impl GlueManager {
             );
         }
         Ok(())
+    }
+
+    fn retained_tooltip_journal_owner(&self, dirty_objects: &[(usize, u32)]) -> Option<usize> {
+        let mut owner = None;
+        for &(object_index, _) in dirty_objects {
+            let mut cursor = Some(object_index);
+            let mut candidate = None;
+            while let Some(index) = cursor {
+                let object = self.live.objects().get(index)?;
+                if object.frame_strata == Some(UiFrameStrata::Tooltip) {
+                    candidate = Some(index);
+                    break;
+                }
+                cursor = object.parent;
+            }
+            let candidate = candidate?;
+            if owner.is_some_and(|owner| owner != candidate) {
+                return None;
+            }
+            owner = Some(candidate);
+        }
+        owner
+    }
+
+    fn refresh_retained_tooltip(
+        &mut self,
+        tooltip_owner: usize,
+        dirty_objects: &[(usize, u32)],
+        visual_objects: &[usize],
+        started: std::time::Instant,
+    ) -> Result<bool, UiEventError> {
+        if !visual_objects.is_empty() {
+            self.runtime
+                .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+        }
+        let text_objects =
+            self.runtime
+                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        if text_objects.is_empty()
+            || !self.glyphs.supports_live_text_objects(
+                &self.live,
+                self.glyph_logical_height,
+                text_objects.iter().copied(),
+            )
+        {
+            return Ok(false);
+        }
+        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        self.runtime
+            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
+        synchronize_resolved_dimensions(&mut self.live, &geometry);
+        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
+        self.glyphs.refresh_live_text_objects(
+            &self.live,
+            &geometry,
+            self.glyph_logical_height,
+            &text_objects,
+        )?;
+        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let glyphs_retained = self.render_plan.refresh_glyph_objects(
+            &self.glyphs,
+            &self.live,
+            &geometry,
+            &scroll_frames,
+            &text_objects,
+        )?;
+        let backdrop_retained = self.render_plan.refresh_texture_objects(
+            &presentation,
+            &geometry,
+            &scroll_frames,
+            &[tooltip_owner],
+        )?;
+        if !glyphs_retained || !backdrop_retained {
+            return Ok(false);
+        }
+        self.collect_visual_subtrees(&[tooltip_owner]);
+        self.render_plan.refresh_region_opacities(
+            &presentation,
+            &geometry,
+            &self.visual_indices,
+        )?;
+        self.geometry = geometry;
+        self.scroll_frames = scroll_frames;
+        self.presentation = presentation;
+        self.pointer = UiPointerPlan::from_live(&self.live);
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI retained tooltip patch: owner={tooltip_owner} text_objects={} total={:.3}ms",
+                text_objects.len(),
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+        Ok(true)
     }
 
     fn refresh_retained_edit_box_text(

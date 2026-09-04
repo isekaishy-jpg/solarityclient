@@ -313,6 +313,59 @@ impl UiRenderPlan {
             .map_err(Into::into)
     }
 
+    /// Patches complete retained texture vertices for topology-stable objects.
+    pub(crate) fn refresh_texture_objects(
+        &mut self,
+        presentation: &UiPresentationPlan,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+        object_indices: &[usize],
+    ) -> Result<bool, UiRenderError> {
+        for &object_index in object_indices {
+            let rendered = presentation
+                .members_for_object(object_index)
+                .filter_map(|member| {
+                    let source = match member.source() {
+                        UiTextureSource::Asset(path) => UiRenderSource::Texture(path.clone()),
+                        UiTextureSource::SolidColor(_) => UiRenderSource::VertexColor,
+                    };
+                    render_quad_with_scroll(member, geometry, scroll_frames)
+                        .map(|quad| (source, quad))
+                })
+                .collect::<Vec<_>>();
+            let mut sources = Vec::new();
+            for (source, _) in &rendered {
+                if !sources.contains(source) {
+                    sources.push(source.clone());
+                }
+            }
+            if sources.is_empty() {
+                if self.mesh.contains_object(object_index) {
+                    return Ok(false);
+                }
+                continue;
+            }
+            for source in sources {
+                let quads = rendered
+                    .iter()
+                    .filter(|(candidate, _)| candidate == &source)
+                    .map(|(_, quad)| quad.clone())
+                    .collect::<Vec<_>>();
+                if !self
+                    .mesh
+                    .replace_object_source_quads(object_index, &source, &quads)?
+                {
+                    return Ok(false);
+                }
+            }
+            self.mesh.set_object_opacity(
+                object_index,
+                presentation.object_opacity(object_index).unwrap_or(0.0),
+            )?;
+        }
+        Ok(true)
+    }
+
     /// Patches retained Button state slots without rebuilding geometry bytes.
     pub(crate) fn refresh_object_opacities(
         &mut self,
@@ -322,6 +375,26 @@ impl UiRenderPlan {
         for &object_index in object_indices {
             let opacity = presentation.object_opacity(object_index).unwrap_or(1.0);
             self.mesh.set_object_opacity(object_index, opacity)?;
+        }
+        Ok(())
+    }
+
+    /// Refreshes inherited visibility for every retained source in a subtree.
+    pub(crate) fn refresh_region_opacities(
+        &mut self,
+        presentation: &UiPresentationPlan,
+        geometry: &UiRegionGeometryPlan,
+        object_indices: &[usize],
+    ) -> Result<(), UiRenderError> {
+        for &object_index in object_indices {
+            let opacity = presentation.object_opacity(object_index).or_else(|| {
+                geometry.region(object_index).map(|region| {
+                    region.effective_alpha() as f32 * f32::from(region.effectively_shown())
+                })
+            });
+            if let Some(opacity) = opacity {
+                self.mesh.set_object_opacity(object_index, opacity)?;
+            }
         }
         Ok(())
     }

@@ -22,6 +22,7 @@ const ATLAS_ROW_WIDTH: u32 = 512;
 const GLYPH_PADDING: u32 = 1;
 const DEFAULT_RETAINED_EDIT_BOX_LETTERS: usize = 256;
 const MAX_RETAINED_EDIT_BOX_LETTERS: usize = 4_096;
+const RETAINED_GLUE_TOOLTIP_LETTERS: usize = 128;
 
 /// One positioned glyph sampling the current immutable coverage atlas.
 #[derive(Clone, Debug, PartialEq)]
@@ -892,7 +893,12 @@ fn retained_glyph_state(
     scroll_frames: &UiScrollFramePlan,
 ) -> Option<RetainedGlyphState> {
     let region = geometry.region(quad.object_index)?;
-    if !region.effectively_shown() || region.effective_alpha() <= 0.0 && !region.animation_active()
+    let retained_tooltip = quad
+        .packet_key
+        .is_some_and(|key| key.strata() == crate::UiFrameStrata::Tooltip);
+    if (!region.effectively_shown()
+        || region.effective_alpha() <= 0.0 && !region.animation_active())
+        && !retained_tooltip
     {
         return None;
     }
@@ -938,7 +944,7 @@ fn retained_glyph_state(
             scale: region.effective_scale(),
         },
         clip,
-        opacity: region.effective_alpha() as f32,
+        opacity: region.effective_alpha() as f32 * f32::from(region.effectively_shown()),
         transform,
     })
 }
@@ -1405,14 +1411,16 @@ fn layout_live_quads_for_objects(
         let Some(text) = &object.text else {
             continue;
         };
-        if text.content.is_empty() && object.kind != UiObjectKind::EditBox {
-            continue;
-        }
         let Some(region) = geometry.region(object_index) else {
             continue;
         };
-        let font = runtime_font_key(text, pixels_per_ui_unit)?;
         let packet_key = UiPresentationPacketKey::for_text(live, object_index);
+        let retained_tooltip =
+            packet_key.is_some_and(|key| key.strata() == crate::UiFrameStrata::Tooltip);
+        if text.content.is_empty() && object.kind != UiObjectKind::EditBox && !retained_tooltip {
+            continue;
+        }
+        let font = runtime_font_key(text, pixels_per_ui_unit)?;
         let metrics = metrics.get(&font).ok_or_else(|| FontError::Presentation {
             message: format!(
                 "live text object {object_index} has no retained metrics for {} at {}px",
@@ -1688,14 +1696,17 @@ fn layout_live_quads_for_objects(
             );
         }
         quads.extend(primary_quads);
-        if object.kind == UiObjectKind::EditBox {
-            let letters = if text.max_letters == 0 {
+        if object.kind == UiObjectKind::EditBox || retained_tooltip {
+            let letters = if retained_tooltip {
+                RETAINED_GLUE_TOOLTIP_LETTERS
+            } else if text.max_letters == 0 {
                 DEFAULT_RETAINED_EDIT_BOX_LETTERS
             } else {
                 text.max_letters as usize
             }
             .min(MAX_RETAINED_EDIT_BOX_LETTERS);
-            let regular_passes = 2
+            let regular_passes = 1
+                + usize::from(object.kind == UiObjectKind::EditBox)
                 + usize::from(outline > 0.0) * 8
                 + usize::from(shadow_offset != [0.0, 0.0] && text.shadow_color[3] > 0.0);
             let regular_capacity = letters.saturating_mul(regular_passes);
