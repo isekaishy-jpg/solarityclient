@@ -2,8 +2,30 @@
 
 use glam::{Mat4, Vec3};
 use solarity_rendering::{
-    M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
+    M2ElementAlphaState, M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key,
 };
+
+/// `0x00821A20` keeps equality on the visible side of both alpha thresholds.
+#[test]
+fn stock_element_alpha_admission_preserves_exact_boundaries() {
+    assert_eq!(
+        M2ElementAlphaState::classify(0.000_099_99),
+        M2ElementAlphaState::Hidden
+    );
+    assert_eq!(
+        M2ElementAlphaState::classify(0.000_1),
+        M2ElementAlphaState::Translucent
+    );
+    assert_eq!(
+        M2ElementAlphaState::classify(0.999_989_9),
+        M2ElementAlphaState::Translucent
+    );
+    assert_eq!(
+        M2ElementAlphaState::classify(0.999_99),
+        M2ElementAlphaState::Authored
+    );
+}
 
 /// Distance remains the first key; the remaining fields resolve exact ties in
 /// alternate-copy, plane, secondary-distance, instance, then layer order.

@@ -9,9 +9,9 @@ use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
-    M2DrawCall, M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose,
-    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ModelOrientation,
-    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
+    M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2LocalLightCount,
+    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan,
+    M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
     M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
     M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
     M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
@@ -44,9 +44,6 @@ use super::RuntimeTerrainFrameError;
 /// not swap geometry profiles per placement. Vulkan 1.3 exceeds the original
 /// hardware capability gate, so this renderer selects the authored `00.skin`.
 const STOCK_HIGH_CAPABILITY_PROFILE: usize = 0;
-
-/// Runtime opacity boundary stored at build-12340 address `0x00A45528`.
-const STOCK_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999_99;
 
 /// Initial `particleDensity` CVar registered by the stock UI environment.
 const STOCK_DEFAULT_PARTICLE_DENSITY: f32 = 1.0;
@@ -2473,7 +2470,11 @@ impl M2Frame {
                     let draw = &source.plan.draws()[draw_index];
                     let material_state = M2MaterialState::from_material(draw.material());
                     let element_alpha = pose.mesh_color().w * instance_color.w;
-                    let runtime_alpha_fade = element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
+                    let alpha_state = M2ElementAlphaState::classify(element_alpha);
+                    if alpha_state == M2ElementAlphaState::Hidden {
+                        continue;
+                    }
+                    let runtime_alpha_fade = alpha_state == M2ElementAlphaState::Translucent
                         && !material_state.blend_enabled();
                     let material = M2MaterialUniform::new(
                         placement.transform,
@@ -2511,7 +2512,8 @@ impl M2Frame {
                             0,
                         )?
                         .with_light_bank(light_bank);
-                    if draw.transparent_sort_unit() || element_alpha < STOCK_OPAQUE_ALPHA_THRESHOLD
+                    if draw.transparent_sort_unit()
+                        || alpha_state == M2ElementAlphaState::Translucent
                     {
                         let section_distance = section_distance_key(draw, bone_pose, model_view)?;
                         let primary_distance = if self.model_distance_sort[placement_index] {

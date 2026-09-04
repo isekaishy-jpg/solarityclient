@@ -7,6 +7,35 @@ use glam::{Mat4, Vec3};
 /// Squared-length normalization guard at build-12340 address `0x009EA27C`.
 const STOCK_SORT_DIRECTION_EPSILON: f32 = 2.384_185_8e-7;
 
+/// Runtime-alpha classification applied before build 12340 queues an M2 item.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum M2ElementAlphaState {
+    /// Alpha below the scene admission epsilon produces no item or draw.
+    Hidden,
+    /// Fully opaque runtime alpha retains the authored material pass.
+    Authored,
+    /// Intermediate runtime alpha enters translucent scene handling.
+    Translucent,
+}
+
+impl M2ElementAlphaState {
+    /// Classifies the final color/texture-weight/instance alpha product.
+    ///
+    /// Build 12340 `0x00821A20` omits values below `0.0001` and promotes
+    /// values below `0.99999` into translucent handling. Equality remains on
+    /// the higher branch at both comparisons.
+    #[must_use]
+    pub const fn classify(element_alpha: f32) -> Self {
+        if element_alpha < 0.000_1 {
+            Self::Hidden
+        } else if element_alpha < 0.999_99 {
+            Self::Translucent
+        } else {
+            Self::Authored
+        }
+    }
+}
+
 /// Stable producer identity shared by ordinary particles and ribbons.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct M2EffectOrder {
