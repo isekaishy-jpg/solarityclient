@@ -127,6 +127,17 @@ enum GlueCharacterScreen {
     Creation,
 }
 
+/// Publication state for one complete Glue scene generation.
+///
+/// A pending result leaves the previously active backdrop and character
+/// untouched. The composition root can therefore retain its matching UI frame
+/// until every replacement resource is ready to cross the swapchain boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeGlueModelPoll {
+    Pending,
+    Ready,
+}
+
 /// Exact immutable backdrop variant selected by its external-light contract.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct GlueModelGenerationKey {
@@ -804,7 +815,8 @@ impl RuntimeGlueModelScene {
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
         glue_character: Option<ResidentGlueCharacterFrameInput<'_>>,
         glue_character_changed: bool,
-    ) -> Result<(), RuntimeGlueModelError> {
+        glue_character_expected: bool,
+    ) -> Result<RuntimeGlueModelPoll, RuntimeGlueModelError> {
         let mut visible = glue.presentation().visible_models();
         let character_screen = match glue.current_screen().as_str() {
             "charselect" => Some(GlueCharacterScreen::Selection),
@@ -812,35 +824,18 @@ impl RuntimeGlueModelScene {
             _ => None,
         };
         let character_screen_changed = self.character_screen != character_screen;
-        self.character_screen = character_screen;
-        // CharacterSelect and CharacterCreate are separate native owners. If
-        // the new owner's generation is not ready, remove the prior route's
-        // body even while its backdrop Model is still hidden or loading.
-        if character_screen_changed && glue_character.is_none() {
-            if let Some(active) = self.active.as_mut() {
-                active.frame.replace_glue_character(
-                    renderer,
-                    None,
-                    active.environment.character_light_count(),
-                    active.environment.pet_light_count(),
-                    &self.character_sources,
-                    random,
-                )?;
-            }
-            self.character_replacement_required = false;
-        }
         let Some(presentation) = visible.next() else {
             // CharacterSelect briefly owns an empty directory before its
-            // asynchronous enumeration arrives. Keep the last fully rendered
-            // Glue generation underneath that transition instead of clearing
-            // the swapchain between complete scenes.
+            // asynchronous enumeration arrives. The old scene remains a
+            // complete generation until the new Model widget becomes visible.
             if self.active.is_some()
                 && matches!(glue.current_screen().as_str(), "charselect" | "charcreate")
             {
-                return Ok(());
+                return Ok(RuntimeGlueModelPoll::Pending);
             }
             self.active = None;
-            return Ok(());
+            self.character_screen = character_screen;
+            return Ok(RuntimeGlueModelPoll::Ready);
         };
         if visible.next().is_some() {
             return Err(RuntimeGlueModelError::VisibleModelCount {
@@ -889,7 +884,7 @@ impl RuntimeGlueModelScene {
             }
         };
         environment.shared_point_light_count = maximum_glue_point_light_count(&lighting_model);
-        if glue_character_changed {
+        if glue_character_changed || character_screen_changed {
             self.character_replacement_required = true;
         }
         let active_matches = self.active.as_ref().is_some_and(|active| {
@@ -900,7 +895,12 @@ impl RuntimeGlueModelScene {
         if !active_matches {
             self.character_replacement_required |= glue_character.is_some();
         }
-        let character_sources_ready = if self.character_replacement_required {
+        let character_sources_ready = if self.character_replacement_required
+            && glue_character_expected
+            && glue_character.is_none()
+        {
+            false
+        } else if self.character_replacement_required {
             self.ensure_character_cpu_sources(
                 glue_character.as_ref(),
                 environment.character_light_count(),
@@ -913,8 +913,11 @@ impl RuntimeGlueModelScene {
         if let Some(active) = self.active.as_mut()
             && active_matches
         {
+            if self.character_replacement_required && !character_sources_ready {
+                return Ok(RuntimeGlueModelPoll::Pending);
+            }
             active.environment = environment;
-            if self.character_replacement_required && character_sources_ready {
+            if self.character_replacement_required {
                 let gpu_started = std::time::Instant::now();
                 active.frame.replace_glue_character(
                     renderer,
@@ -937,7 +940,8 @@ impl RuntimeGlueModelScene {
                     .update_glue_character_transform(character.facing_radians())?;
             }
             active.frame.set_glue_opacity(active.environment.alpha)?;
-            return Ok(());
+            self.character_screen = character_screen;
+            return Ok(RuntimeGlueModelPoll::Ready);
         }
         if key.camera < 0 {
             return Err(RuntimeGlueModelError::NegativeCamera {
@@ -947,7 +951,7 @@ impl RuntimeGlueModelScene {
         }
         if self.prepared.contains_key(&generation) {
             if self.character_replacement_required && !character_sources_ready {
-                return Ok(());
+                return Ok(RuntimeGlueModelPoll::Pending);
             }
             self.activate_prepared(
                 renderer,
@@ -959,7 +963,8 @@ impl RuntimeGlueModelScene {
                 particle_twinkle,
             )?;
             self.character_replacement_required = false;
-            return Ok(());
+            self.character_screen = character_screen;
+            return Ok(RuntimeGlueModelPoll::Ready);
         }
         if let Some(pending_index) = self
             .pending
@@ -967,7 +972,7 @@ impl RuntimeGlueModelScene {
             .position(|pending| pending.generation == generation)
         {
             if !self.pending[pending_index].task.is_finished() {
-                return Ok(());
+                return Ok(RuntimeGlueModelPoll::Pending);
             }
             self.complete_pending(
                 renderer,
@@ -975,7 +980,7 @@ impl RuntimeGlueModelScene {
                 "prepared resident Glue model generation",
             )?;
             if self.character_replacement_required && !character_sources_ready {
-                return Ok(());
+                return Ok(RuntimeGlueModelPoll::Pending);
             }
             self.activate_prepared(
                 renderer,
@@ -987,7 +992,8 @@ impl RuntimeGlueModelScene {
                 particle_twinkle,
             )?;
             self.character_replacement_required = false;
-            return Ok(());
+            self.character_screen = character_screen;
+            return Ok(RuntimeGlueModelPoll::Ready);
         }
         let (model, texture_sources) = match newly_loaded_generation {
             Some(loaded) => loaded,
@@ -1005,7 +1011,7 @@ impl RuntimeGlueModelScene {
             submitted_at: std::time::Instant::now(),
             task,
         });
-        Ok(())
+        Ok(RuntimeGlueModelPoll::Pending)
     }
 
     /// Reports whether every immutable CPU source for the current preview is resident.

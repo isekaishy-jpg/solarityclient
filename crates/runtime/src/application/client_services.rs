@@ -46,7 +46,9 @@ use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,
 };
-use crate::application::login_model::{RuntimeGlueModelError, RuntimeGlueModelScene};
+use crate::application::login_model::{
+    RuntimeGlueModelError, RuntimeGlueModelPoll, RuntimeGlueModelScene,
+};
 use crate::application::login_ui::{RuntimeUiFrame, RuntimeUiResidency};
 use crate::application::performance_overlay::{RuntimeFpsOverlay, overlay_extent};
 use crate::application::player_coordinator::{
@@ -89,6 +91,12 @@ const STOCK_CHARACTER_BACKDROPS: [&str; 8] = [
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     login_ui: Option<RuntimeUiFrame>,
+    /// Second UI slot used as a candidate during an atomic screen transition.
+    ///
+    /// After publication the retired frame returns here, so Glue screen
+    /// changes reuse two renderer allocations instead of leaking one mesh per
+    /// transition.
+    pending_login_ui: Option<(String, RuntimeUiFrame)>,
     /// Live Glue state changed while the renderer-resident frame remains owned.
     glue_ui_dirty: bool,
     /// Last Glue screen actually submitted to the swapchain.
@@ -322,7 +330,7 @@ impl ClientServices {
             )?;
         }
         if initial_screen != GlueInitialScreen::Movie {
-            glue_model.synchronize(
+            let _initial_model_poll = glue_model.synchronize(
                 &mut renderer,
                 &glue,
                 &assets,
@@ -330,6 +338,7 @@ impl ClientServices {
                 &mut crt_rand,
                 Arc::clone(&particle_twinkle),
                 None,
+                false,
                 false,
             )?;
         }
@@ -406,6 +415,7 @@ impl ClientServices {
             Self {
                 renderer,
                 login_ui,
+                pending_login_ui: None,
                 glue_ui_dirty: false,
                 presented_glue_screen,
                 ui_textures,
@@ -544,6 +554,13 @@ impl ClientServices {
         if !matches!(event, PlatformEvent::MouseMotion(_)) && self.glue.flush_deferred_refresh()? {
             self.glue_ui_dirty = true;
         }
+        // Lua owns the selected screen before its renderer transaction is
+        // necessarily complete. Do not route input into that invisible tree;
+        // it could activate controls that do not belong to the retained frame
+        // the user can still see.
+        let current_screen = self.glue.current_screen();
+        let selected_screen_is_presented =
+            glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref());
         match event {
             PlatformEvent::Key(key_event) if key_event.window_id == self.platform.window_id() => {
                 let Some(scan_code) = key_event.scan_code else {
@@ -561,7 +578,7 @@ impl ClientServices {
                         }
                         self.login_ui = None;
                     }
-                } else {
+                } else if selected_screen_is_presented {
                     let modifiers = UiKeyboardModifiers::new(
                         key_event.modifiers.has_shift(),
                         key_event.modifiers.has_control(),
@@ -578,6 +595,7 @@ impl ClientServices {
             }
             PlatformEvent::TextInput(input)
                 if input.window_id == self.platform.window_id()
+                    && selected_screen_is_presented
                     && self.glue.media_intent().movie().is_none() =>
             {
                 if self.glue.text_input(&input.text)?.is_some() {
@@ -586,6 +604,7 @@ impl ClientServices {
             }
             PlatformEvent::TextEditing(composition)
                 if composition.window_id == self.platform.window_id()
+                    && selected_screen_is_presented
                     && self.glue.media_intent().movie().is_none() =>
             {
                 if self.glue.text_composition(&composition.text)?.is_some() {
@@ -594,6 +613,7 @@ impl ClientServices {
             }
             PlatformEvent::MouseButton(pointer)
                 if pointer.window_id == self.platform.window_id()
+                    && selected_screen_is_presented
                     && self.glue.media_intent().movie().is_none() =>
             {
                 let Some(button) = glue_pointer_button(pointer.button) else {
@@ -623,6 +643,7 @@ impl ClientServices {
             }
             PlatformEvent::MouseMotion(pointer)
                 if pointer.window_id == self.platform.window_id()
+                    && selected_screen_is_presented
                     && self.glue.media_intent().movie().is_none() =>
             {
                 let (window_width, window_height) = self.platform.logical_extent();
@@ -641,6 +662,7 @@ impl ClientServices {
             }
             PlatformEvent::MouseWheel(wheel)
                 if wheel.window_id == self.platform.window_id()
+                    && selected_screen_is_presented
                     && self.glue.media_intent().movie().is_none() =>
             {
                 let delta = match wheel.direction {
@@ -761,8 +783,7 @@ impl ClientServices {
         }
         let action = self.glue.take_process_action()?;
         let current_screen = self.glue.current_screen();
-        if glue_process_action_is_presented(&current_screen, self.presented_glue_screen.as_deref())
-        {
+        if glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref()) {
             Some(action)
         } else {
             tracing::warn!(
@@ -823,7 +844,9 @@ impl ClientServices {
             if self.glue.update(glue_elapsed)? {
                 self.glue_ui_dirty = true;
             }
+            let current_screen = self.glue.current_screen();
             if self.glue_ui_dirty
+                && glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref())
                 && let Some(frame) = self.login_ui.as_mut()
             {
                 frame.refresh_glue(
@@ -1079,7 +1102,33 @@ impl ClientServices {
 
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
         self.synchronize_component_texture_level();
-        if self.login_ui.is_none() {
+        let current_screen = self.glue.current_screen();
+        let screen_transition =
+            !glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref());
+        if screen_transition {
+            if let Some((candidate_screen, frame)) = self.pending_login_ui.as_mut() {
+                if !candidate_screen.eq_ignore_ascii_case(&current_screen) || self.glue_ui_dirty {
+                    frame.refresh_glue(
+                        &mut self.renderer,
+                        &self.glue,
+                        &mut self.ui_textures,
+                        &mut self.ui_texture_residency,
+                    )?;
+                    candidate_screen.clone_from(&current_screen);
+                    self.glue_ui_dirty = false;
+                }
+            } else {
+                let frame = RuntimeUiFrame::prepare_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                    &mut self.ui_textures,
+                    &mut self.ui_texture_residency,
+                )?;
+                self.pending_login_ui = Some((current_screen.clone(), frame));
+                self.glue_ui_dirty = false;
+            }
+        }
+        if self.login_ui.is_none() && !screen_transition {
             self.login_ui = Some(RuntimeUiFrame::prepare_glue(
                 &mut self.renderer,
                 &self.glue,
@@ -1088,39 +1137,43 @@ impl ClientServices {
             )?);
             self.glue_ui_dirty = false;
         }
-        let frame = self
-            .login_ui
-            .as_ref()
-            .ok_or_else(|| ApplicationError::NetworkRuntime {
-                message: "Glue frame preparation produced no presentation state".to_owned(),
-            })?;
-        let current_screen = self.glue.current_screen();
-        let glue_character_result = match current_screen.as_str() {
+        let (glue_character_result, glue_character_expected) = match current_screen.as_str() {
             "charcreate" => {
                 let preview = self.glue.character_creation_preview();
-                self.player
-                    .synchronize_character_creation_async(preview.as_ref(), &self.cpu)
+                let expected = preview.is_some();
+                (
+                    self.player
+                        .synchronize_character_creation_async(preview.as_ref(), &self.cpu),
+                    expected,
+                )
             }
             "charselect" => {
                 let preview = self.glue.character_selection_preview();
-                self.player
-                    .synchronize_character_selection_async(preview.as_ref(), &self.cpu)
+                let expected = preview.is_some();
+                (
+                    self.player
+                        .synchronize_character_selection_async(preview.as_ref(), &self.cpu),
+                    expected,
+                )
             }
-            _ => self
-                .player
-                .synchronize_character_creation_async(None, &self.cpu),
+            _ => (
+                self.player
+                    .synchronize_character_creation_async(None, &self.cpu),
+                false,
+            ),
         };
-        let glue_character_changed = match glue_character_result {
-            Ok(changed) => changed,
+        let (glue_character_changed, mut glue_character_expected) = match glue_character_result {
+            Ok(changed) => (changed, glue_character_expected),
             Err(error) => {
                 let message = error.to_string();
                 tracing::error!(error = %message, "contained Glue character preparation error");
                 self.developer_console.record_error(&message);
-                false
+                (false, false)
             }
         };
+        glue_character_expected &= !self.player.glue_character_request_failed();
         let glue_character = self.player.glue_character_frame_input();
-        self.glue_model.synchronize(
+        let model_poll = self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,
             &self.assets,
@@ -1129,7 +1182,36 @@ impl ClientServices {
             Arc::clone(&self.particle_twinkle),
             glue_character,
             glue_character_changed,
+            glue_character_expected,
         )?;
+        if screen_transition && model_poll == RuntimeGlueModelPoll::Ready {
+            let (candidate_screen, candidate) =
+                self.pending_login_ui
+                    .take()
+                    .ok_or_else(|| ApplicationError::NetworkRuntime {
+                        message: "Glue scene became ready without a prepared UI candidate"
+                            .to_owned(),
+                    })?;
+            if !candidate_screen.eq_ignore_ascii_case(&current_screen) {
+                return Err(ApplicationError::NetworkRuntime {
+                    message: "Glue UI candidate does not match the ready scene".to_owned(),
+                });
+            }
+            let retired = self.login_ui.replace(candidate);
+            self.pending_login_ui = retired.map(|frame| {
+                (
+                    self.presented_glue_screen.clone().unwrap_or_default(),
+                    frame,
+                )
+            });
+        }
+        let frame = self
+            .login_ui
+            .as_ref()
+            .or_else(|| self.pending_login_ui.as_ref().map(|(_screen, frame)| frame))
+            .ok_or_else(|| ApplicationError::NetworkRuntime {
+                message: "Glue frame preparation produced no presentation state".to_owned(),
+            })?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         if !self.glue_model.present(
             &mut self.renderer,
@@ -1144,7 +1226,9 @@ impl ClientServices {
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
-        self.presented_glue_screen = Some(current_screen);
+        if model_poll == RuntimeGlueModelPoll::Ready {
+            self.presented_glue_screen = Some(current_screen);
+        }
         Ok(())
     }
 
@@ -2182,9 +2266,12 @@ impl ClientServices {
     }
 
     fn sync_platform_text_input(&mut self) {
-        self.platform.set_text_input_active(
-            self.developer_console.is_visible() || self.glue.focused_edit_box().is_some(),
-        );
+        let current_screen = self.glue.current_screen();
+        let glue_focus_is_visible =
+            glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref())
+                && self.glue.focused_edit_box().is_some();
+        self.platform
+            .set_text_input_active(self.developer_console.is_visible() || glue_focus_is_visible);
     }
 
     /// Reuses one retained vector for the overlays shared by every presenter.
@@ -2226,7 +2313,7 @@ fn is_recoverable_presentation_error(error: &ApplicationError) -> bool {
 
 /// Returns whether the active Glue screen has reached the swapchain at least
 /// once since it was selected. Case folding follows Glue's screen dispatch.
-fn glue_process_action_is_presented(current_screen: &str, presented_screen: Option<&str>) -> bool {
+fn glue_screen_is_presented(current_screen: &str, presented_screen: Option<&str>) -> bool {
     presented_screen.is_some_and(|presented| presented.eq_ignore_ascii_case(current_screen))
 }
 
@@ -2410,7 +2497,7 @@ impl Drop for ClientServices {
 
 #[cfg(test)]
 mod tests {
-    use super::{STOCK_CHARACTER_BACKDROPS, glue_process_action_is_presented};
+    use super::{STOCK_CHARACTER_BACKDROPS, glue_screen_is_presented};
 
     #[test]
     fn stock_backdrop_prewarm_uses_only_distinct_archive_models() {
@@ -2424,11 +2511,8 @@ mod tests {
 
     #[test]
     fn process_action_requires_the_selected_glue_screen_to_have_been_presented() {
-        assert!(!glue_process_action_is_presented("login", None));
-        assert!(!glue_process_action_is_presented(
-            "login",
-            Some("charselect")
-        ));
-        assert!(glue_process_action_is_presented("login", Some("LOGIN")));
+        assert!(!glue_screen_is_presented("login", None));
+        assert!(!glue_screen_is_presented("login", Some("charselect")));
+        assert!(glue_screen_is_presented("login", Some("LOGIN")));
     }
 }

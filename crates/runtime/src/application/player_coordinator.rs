@@ -967,6 +967,19 @@ impl RuntimePlayerPresentation {
             .map(ResidentGlueCharacterFrameInput::from_resident)
     }
 
+    /// Reports that the selected preview has already failed preparation.
+    ///
+    /// The error is emitted when the worker result first arrives. Retaining
+    /// this state prevents the scene publication transaction from treating a
+    /// known-unavailable representation as work that can still complete.
+    pub(super) fn glue_character_request_failed(&self) -> bool {
+        self.failed_glue_character.as_ref().is_some_and(|failed| {
+            self.requested_glue_character
+                .as_ref()
+                .is_some_and(|requested| failed.same_residency(requested))
+        })
+    }
+
     /// Verifies that every selected character-body draw has a concrete or
     /// stock-neutral texture before the GPU frame is prepared.
     ///
