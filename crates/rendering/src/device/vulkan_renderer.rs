@@ -929,6 +929,9 @@ impl VulkanRenderer {
         &mut self,
         requests: &[BlpTextureUploadRequest<'_>],
     ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;

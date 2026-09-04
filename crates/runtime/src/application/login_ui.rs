@@ -47,6 +47,9 @@ impl RuntimeUiResidency {
             uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear));
         }
         let upload_count = uploads.len();
+        if upload_count == 0 {
+            return Ok(0);
+        }
         for (path, handle) in paths
             .into_iter()
             .zip(renderer.upload_blp_textures(&uploads)?)
@@ -179,7 +182,11 @@ impl RuntimeUiFrame {
         }
         let texture_count = texture_uploads.len();
         let upload_started = std::time::Instant::now();
-        let uploaded = renderer.upload_blp_textures(&texture_uploads)?;
+        let uploaded = if texture_uploads.is_empty() {
+            Vec::new()
+        } else {
+            renderer.upload_blp_textures(&texture_uploads)?
+        };
         let upload_elapsed = upload_started.elapsed();
         for (path, handle) in texture_paths.into_iter().zip(uploaded) {
             textures.insert(path, handle);
