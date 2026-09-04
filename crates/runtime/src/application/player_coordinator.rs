@@ -1,6 +1,6 @@
 //! Local-player model residency and authored presentation measurements.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
@@ -378,6 +378,7 @@ pub struct RuntimePlayerPresentation {
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
     glue_worker_catalog: Option<ArchiveCatalog>,
+    glue_worker_cache: Arc<Mutex<GlueCharacterWorkerCache>>,
     pending_glue_character: Option<PendingGlueCharacter>,
     failed_glue_character: Option<ResidentGlueCharacterKey>,
 }
@@ -412,6 +413,7 @@ impl RuntimePlayerPresentation {
             remote_players: Vec::new(),
             glue_character: None,
             glue_worker_catalog: None,
+            glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
             pending_glue_character: None,
             failed_glue_character: None,
         }
@@ -543,9 +545,16 @@ impl RuntimePlayerPresentation {
             .clone();
         let catalogs = self.shared_catalogs();
         let component_texture_level = self.component_texture_level;
+        let worker_cache = Arc::clone(&self.glue_worker_cache);
         let task_key = requested.clone();
         let task = cpu.try_submit(move || {
-            prepare_glue_character_on_worker(catalog, catalogs, component_texture_level, task_key)
+            prepare_glue_character_on_worker(
+                catalog,
+                catalogs,
+                component_texture_level,
+                task_key,
+                &worker_cache,
+            )
         })?;
         self.pending_glue_character = Some(PendingGlueCharacter {
             key: requested,
@@ -1944,8 +1953,18 @@ fn prepare_glue_character_on_worker(
     catalogs: RuntimePlayerSharedCatalogs,
     component_texture_level: CharacterComponentTextureLevel,
     key: ResidentGlueCharacterKey,
+    worker_cache: &Mutex<GlueCharacterWorkerCache>,
 ) -> Result<ResidentGlueCharacterModel, RuntimePlayerError> {
     let store = AssetStore::mount(catalog)?;
+    let (models, textures) = {
+        let mut cache = worker_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            std::mem::take(&mut cache.models),
+            std::mem::take(&mut cache.textures),
+        )
+    };
     let mut presentation = RuntimePlayerPresentation {
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,
@@ -1959,28 +1978,42 @@ fn prepare_glue_character_on_worker(
         item_displays: catalogs.item_displays,
         item_visuals: catalogs.item_visuals,
         particle_colors: catalogs.particle_colors,
-        models: M2ModelCache::new(),
-        textures: BlpTextureCache::new(),
+        models,
+        textures,
         component_texture_level,
         resident: None,
         creatures_resident: Vec::new(),
         remote_players: Vec::new(),
         glue_character: None,
         glue_worker_catalog: None,
+        glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
         pending_glue_character: None,
         failed_glue_character: None,
     };
-    match &key {
+    let result = match &key {
         ResidentGlueCharacterKey::Creation(preview) => {
-            presentation.synchronize_character_creation(Some(preview))?;
+            presentation.synchronize_character_creation(Some(preview))
         }
         ResidentGlueCharacterKey::Selection(preview) => {
-            presentation.synchronize_character_selection(Some(preview))?;
+            presentation.synchronize_character_selection(Some(preview))
         }
-    }
+    };
+    let mut cache = worker_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.models = std::mem::take(&mut presentation.models);
+    cache.textures = std::mem::take(&mut presentation.textures);
+    drop(cache);
+    result?;
     presentation
         .glue_character
         .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
+}
+
+#[derive(Default)]
+struct GlueCharacterWorkerCache {
+    models: M2ModelCache,
+    textures: BlpTextureCache,
 }
 
 #[derive(Clone, Debug, PartialEq)]
