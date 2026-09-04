@@ -23,11 +23,21 @@ The steady borderless ceiling is therefore currently presentation/GPU
 back-pressure, not the Lua idle tick. UI and residency mutations are a separate
 source of long individual frames and visible FPS oscillation.
 
-The real 3,240-object Glue archive currently measures about 0.20 ms per idle
-UI update and 0.034 ms per held-hover color update. A CharacterCreate screen
-event is not an idle frame: it executes about 13 ms of stock Lua and spends a
-further 13 ms publishing a monolithic glyph/mesh generation. That transition
-path is the principal UI architectural debt.
+The real 3,240-object Glue archive now measures 0.067 ms mean per idle UI
+update (0.290 ms p99) and 0.034 ms mean per held-hover color update. A
+CharacterCreate screen event is not an idle frame: it executes about 13 ms of
+stock Lua and spends a further 13 ms publishing a monolithic glyph/mesh
+generation. Caching inherited geometry per text owner reduced that event's
+10,889-glyph resolve phase from about 4.0 ms to 2.7 ms, but the transition path
+remains the principal UI architectural debt.
+
+Character preview publication had two independent presentation-thread waits:
+dynamic atlas upload and authored BLP batch upload. Both now submit before the
+following draw on the same graphics queue and retain their staging resources
+behind retirement fences. Queue order preserves transfer-to-sample safety
+without a host wait. Character screen identity is also independent of worker
+readiness, so an obsolete CharacterSelect body or failed worker generation
+cannot become the authority for CharacterCreate.
 
 ## Permanent ownership model
 
@@ -62,6 +72,14 @@ The permanent runtime follows these boundaries:
    authentication cover. A transition becomes visible only when its complete
    UI, environment, character, and required material set is ready.
 
+The SolCL retained-runtime implementation confirms two details that matter to
+the next cut: resource assignments are subscribed when setters run even while
+their objects are hidden, and renderer publication consumes an atomic revision
+of retained chunks. Solarity should copy those ownership properties, not its
+language or class layout. Building every hidden widget into the active draw
+mesh would merely move the stall to startup; setter-time residency plus a
+screen-revision commit is the required boundary.
+
 This is compatible with the corresponding SolCL design: typed dirty
 dependencies, cached compositor order, retained render chunks, scoped task
 mailboxes, and explicit scheduler policies. Solarity will migrate by replacing
@@ -70,9 +88,10 @@ measured monolithic boundaries, not by adding a second UI tree beside them.
 ## Migration order
 
 The current retained implementation already avoids idle snapshots, coalesces
-character requests, keeps hidden presentation slots resident, directly patches
-hover colors, and reserves CPU capacity for interactive residency. The next
-structural slices are:
+character requests, keeps encountered hidden presentation slots resident,
+directly patches hover colors, retains compatible prepared Vulkan draws and
+command bindings, defers character texture transfers, and reserves CPU capacity
+for interactive residency. The next structural slices are:
 
 1. Replace whole-arena geometry resolution with indexed dependency-island
    publication and remove resolved engine state from Lua shadow fields.
