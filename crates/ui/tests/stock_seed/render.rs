@@ -134,7 +134,9 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let mesh = manager.render_plan().mesh();
     assert_eq!(mesh.logical_extent(), [1_365.333_4, 768.0]);
     assert_eq!(mesh.vertices().len(), 24);
-    assert_eq!(mesh.indices().len(), 36);
+    // Every contiguous batch reuses the same canonical zero-based quad-index
+    // prefix through baseVertex instead of retaining absolute indices per quad.
+    assert_eq!(mesh.indices().len(), 6);
     assert_eq!(mesh.object_indices().len(), presentation.member_count());
     let mutated_path = solarity_asset::AssetPath::new("Interface\\Glues\\After.blp")?;
     let mutated_batch = mesh
