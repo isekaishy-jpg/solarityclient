@@ -93,6 +93,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     let first_started = Instant::now();
     black_box(manager.pointer_motion(center)?);
     let first_enter = first_started.elapsed();
+    for _ in 0..120 {
+        black_box(manager.update(1.0 / 1_200.0)?);
+    }
+    let snapshots = manager.runtime_snapshot_count();
+    let mut pulse_samples = Vec::with_capacity(frame_count);
+    for _ in 0..frame_count {
+        let started = Instant::now();
+        black_box(manager.update(1.0 / 1_200.0)?);
+        pulse_samples.push(started.elapsed());
+    }
+    pulse_samples.sort_unstable();
+    let pulse_total = pulse_samples.iter().sum::<Duration>();
+    let pulse_mean = pulse_total.as_secs_f64() * 1_000_000.0 / frame_count as f64;
+    let pulse_percentile = |numerator: usize| {
+        pulse_samples[(frame_count.saturating_sub(1) * numerator) / 100].as_secs_f64() * 1_000_000.0
+    };
+    println!(
+        "hover_updates={frame_count} snapshots={} mean_us={pulse_mean:.3} p50_us={:.3} p95_us={:.3} p99_us={:.3} max_us={:.3}",
+        manager.runtime_snapshot_count() - snapshots,
+        pulse_percentile(50),
+        pulse_percentile(95),
+        pulse_percentile(99),
+        pulse_samples
+            .last()
+            .copied()
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1_000_000.0,
+    );
     black_box(manager.pointer_motion((-1.0, -1.0))?);
     let retained_indices = manager.render_plan().mesh().index_bytes().to_vec();
     let retained_batches = manager.render_plan().mesh().batches().len();

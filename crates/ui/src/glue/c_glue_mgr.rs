@@ -773,7 +773,11 @@ impl GlueManager {
         if update.targeted_objects {
             self.runtime
                 .apply_animation_transforms(&mut self.live, &update.animation_updates);
-            self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
+            if update.texture_vertex_colors_only() {
+                self.refresh_texture_vertex_colors(&update.dirty_objects, &update.visual_objects)?;
+            } else {
+                self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
+            }
         } else if update.targeted_visual && self.incremental_visual_updates {
             self.runtime
                 .apply_animation_transforms(&mut self.live, &update.animation_updates);
@@ -793,7 +797,14 @@ impl GlueManager {
         dispatch: &crate::script::UiScriptEventDispatch,
     ) -> Result<(), UiEventError> {
         if dispatch.targeted_objects {
-            self.refresh_targeted_objects(&dispatch.dirty_objects, &dispatch.visual_objects)
+            if dispatch.texture_vertex_colors_only() {
+                self.refresh_texture_vertex_colors(
+                    &dispatch.dirty_objects,
+                    &dispatch.visual_objects,
+                )
+            } else {
+                self.refresh_targeted_objects(&dispatch.dirty_objects, &dispatch.visual_objects)
+            }
         } else if dispatch.targeted_visual && self.incremental_visual_updates {
             self.refresh_targeted_visual_objects(&dispatch.visual_objects)
         } else if dispatch.changed {
@@ -801,6 +812,45 @@ impl GlueManager {
         } else {
             Ok(())
         }
+    }
+
+    /// Publishes stock Texture color animation as an object-local retained
+    /// vertex patch. `GlueButtonMaster_OnUpdate` uses this path every hovered
+    /// frame, so it must not resolve all Glue anchors or rebuild all UI quads.
+    fn refresh_texture_vertex_colors(
+        &mut self,
+        dirty_objects: &[(usize, u32)],
+        visual_objects: &[usize],
+    ) -> Result<(), UiEventError> {
+        let started = std::time::Instant::now();
+        self.deferred_slider_refresh = None;
+        if !visual_objects.is_empty() {
+            self.refresh_targeted_visual_objects(visual_objects)?;
+        }
+        let text_objects =
+            self.runtime
+                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        debug_assert!(text_objects.is_empty());
+        let mut retained = true;
+        for &(object_index, _) in dirty_objects {
+            retained &= self
+                .presentation
+                .refresh_texture_vertex_colors(&self.live, object_index);
+            retained &= self
+                .render_plan
+                .refresh_texture_vertex_colors(&self.presentation, object_index)?;
+        }
+        if !retained {
+            return self.refresh_targeted_objects(dirty_objects, visual_objects);
+        }
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI texture vertex patch: objects={} total={:.3}ms",
+                dirty_objects.len(),
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+        Ok(())
     }
 
     /// Publishes a topology-stable event from its typed mutation journal.

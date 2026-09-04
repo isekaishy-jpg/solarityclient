@@ -236,6 +236,21 @@ impl UiRenderPlan {
             .map_err(Into::into)
     }
 
+    /// Recolors one retained Texture quad without rebuilding layout, packets,
+    /// material runs, indices, or unrelated vertex payloads.
+    pub(crate) fn refresh_texture_vertex_colors(
+        &mut self,
+        presentation: &UiPresentationPlan,
+        object_index: usize,
+    ) -> Result<bool, UiRenderError> {
+        let Some(colors) = presentation.texture_vertex_colors(object_index) else {
+            return Ok(!self.mesh.contains_object(object_index));
+        };
+        self.mesh
+            .replace_object_quad_colors(object_index, std::slice::from_ref(&colors))
+            .map_err(Into::into)
+    }
+
     /// Patches retained Button state slots without rebuilding geometry bytes.
     pub(crate) fn refresh_button_state_opacities(
         &mut self,

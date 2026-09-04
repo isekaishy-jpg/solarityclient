@@ -55,6 +55,9 @@ pub(super) const DIRTY_WIDGET: u32 = 1 << 2;
 pub(super) const DIRTY_MODEL: u32 = 1 << 3;
 pub(super) const DIRTY_LAYOUT: u32 = 1 << 4;
 pub(super) const DIRTY_FRAME: u32 = 1 << 5;
+/// Texture corner colors can patch an existing retained quad without resolving
+/// layout, packet ordering, or texture residency again.
+pub(super) const DIRTY_TEXTURE_VERTEX_COLOR: u32 = 1 << 6;
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -355,6 +358,17 @@ pub(crate) struct UiUpdateDispatch {
     pub(crate) dirty_objects: Vec<(usize, u32)>,
 }
 
+impl UiUpdateDispatch {
+    /// Reports whether every typed mutation is a retained texture-color patch.
+    pub(crate) fn texture_vertex_colors_only(&self) -> bool {
+        !self.dirty_objects.is_empty()
+            && self
+                .dirty_objects
+                .iter()
+                .all(|(_, flags)| *flags == DIRTY_TEXTURE_VERTEX_COLOR)
+    }
+}
+
 /// Mutation classification for one synchronous stock event dispatch.
 pub(crate) struct UiScriptEventDispatch {
     pub(crate) subscriber_count: usize,
@@ -364,6 +378,17 @@ pub(crate) struct UiScriptEventDispatch {
     pub(crate) targeted_objects: bool,
     pub(crate) dirty_objects: Vec<(usize, u32)>,
     pub(crate) fallback_mutations: u64,
+}
+
+impl UiScriptEventDispatch {
+    /// Reports whether every typed mutation is a retained texture-color patch.
+    pub(crate) fn texture_vertex_colors_only(&self) -> bool {
+        !self.dirty_objects.is_empty()
+            && self
+                .dirty_objects
+                .iter()
+                .all(|(_, flags)| *flags == DIRTY_TEXTURE_VERTEX_COLOR)
+    }
 }
 
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
@@ -5001,7 +5026,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(16))?,
             )?;
-            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)
+            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE_VERTEX_COLOR)
         })?,
     )?;
     methods.raw_set(
@@ -5121,7 +5146,7 @@ fn set_texture_gradient(
         texture_color_key(),
         lua.create_sequence_from(colors.into_iter().flatten())?,
     )?;
-    mark_object_state_changed(lua, texture, DIRTY_TEXTURE)
+    mark_object_state_changed(lua, texture, DIRTY_TEXTURE_VERTEX_COLOR)
 }
 
 fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
@@ -7698,7 +7723,7 @@ fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Res
             )?;
             object.raw_set(vertex_color_set_key(), true)?;
             let flags = if kind == "Texture" {
-                DIRTY_TEXTURE
+                DIRTY_TEXTURE_VERTEX_COLOR
             } else {
                 DIRTY_TEXT
             };

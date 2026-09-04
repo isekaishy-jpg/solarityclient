@@ -1721,6 +1721,17 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
   <OnLoad>LAYOUT_NEXT = false</OnLoad>
   <OnUpdate>if LAYOUT_NEXT then LAYOUT_NEXT = false self:SetWidth(240) end</OnUpdate>
 </Scripts></Frame>
+<Frame name="PulseUpdate"><Size x="64" y="32"/><Anchors><Anchor point="BOTTOM"/></Anchors>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="PulseTexture" file="Interface\Glues\Pulse"/>
+  </Layer></Layers><Scripts>
+    <OnLoad>PULSE_COLOR = 0</OnLoad>
+    <OnUpdate>
+      PULSE_COLOR = PULSE_COLOR + 0.1
+      PulseTexture:SetVertexColor(PULSE_COLOR, 0.2, 0.3, 0.4)
+    </OnUpdate>
+  </Scripts>
+</Frame>
 <Frame name="DynamicUpdate"><Scripts><OnLoad>
   DYNAMIC_UPDATE_CALLS = 0
   self:SetScript("OnUpdate", function(frame)
@@ -1753,6 +1764,11 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
         .iter()
         .position(|object| object.name() == Some("LayoutUpdate"))
         .ok_or("LayoutUpdate fixture frame is absent")?;
+    let pulse = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("PulseTexture"))
+        .ok_or("PulseTexture fixture texture is absent")?;
 
     assert!(manager.update(0.25)?);
     assert_close(
@@ -1837,18 +1853,44 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
         240.0,
     );
 
+    let snapshots_before_pulse = manager.runtime_snapshot_count();
+    let pulse_bounds = manager
+        .geometry()
+        .region(pulse)
+        .ok_or("PulseTexture geometry is absent")?
+        .logical_bounds();
+    let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
+    assert!(manager.update(0.0)?);
+    let pulse_member = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|member| member.object_index() == pulse)
+        .ok_or("PulseTexture presentation is absent")?;
+    assert_close(f64::from(pulse_member.vertex_colors()[0][0]), 0.5);
+    assert_eq!(
+        manager
+            .geometry()
+            .region(pulse)
+            .ok_or("PulseTexture geometry is absent after update")?
+            .logical_bounds(),
+        pulse_bounds
+    );
+    assert_eq!(manager.render_plan().mesh().index_bytes(), index_bytes);
+    assert_eq!(manager.runtime_snapshot_count(), snapshots_before_pulse);
+
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
         &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
     )?;
-    assert!(!manager.update(0.25)?);
+    assert!(manager.update(0.25)?);
     assert_eq!(
         manager
             .bundle()
             .lua()
             .globals()
             .get::<u32>("UPDATE_CALLS")?,
-        4
+        5
     );
     assert!(matches!(
         manager.update(-0.01),

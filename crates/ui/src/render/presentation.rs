@@ -404,6 +404,46 @@ pub struct UiPresentationPlan {
 }
 
 impl UiPresentationPlan {
+    /// Copies one Texture's authored corner colors into its retained packet.
+    ///
+    /// A Texture normally owns exactly one presentation member. No members is
+    /// also valid for a currently non-resident hidden texture; its live state
+    /// will be consumed when visibility later materializes the draw slot.
+    pub(crate) fn refresh_texture_vertex_colors(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        object_index: usize,
+    ) -> bool {
+        let Some(texture) = live
+            .objects()
+            .get(object_index)
+            .and_then(|object| object.texture.as_ref())
+        else {
+            return false;
+        };
+        let Some(member_indices) = self.member_indices_by_object.get(object_index) else {
+            return true;
+        };
+        let vertex_colors = texture
+            .vertex_colors
+            .map(|color| color.map(|value| value as f32));
+        for &member_index in member_indices {
+            self.members[member_index].vertex_colors = vertex_colors;
+        }
+        true
+    }
+
+    /// Returns one Texture object's retained corner colors when it owns a
+    /// single mesh quad. Multiple members require a topology-aware rebuild.
+    pub(crate) fn texture_vertex_colors(&self, object_index: usize) -> Option<[[f32; 4]; 4]> {
+        let member_indices = self.member_indices_by_object.get(object_index)?;
+        match member_indices.as_slice() {
+            [] => None,
+            &[member_index] => Some(self.members[member_index].vertex_colors),
+            _ => None,
+        }
+    }
+
     /// Moves every presentation quad owned by one transform-only region.
     pub(crate) fn translate_object(&mut self, object_index: usize, delta: [f32; 2]) {
         if let Some(member_indices) = self.member_indices_by_object.get(object_index) {
