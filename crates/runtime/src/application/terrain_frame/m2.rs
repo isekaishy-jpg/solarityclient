@@ -2170,7 +2170,7 @@ impl M2Frame {
                 }
                 let simulation = &mut placement_particle.simulation;
                 let pose = M2ParticlePose::sample(source.model.animations(), emitter, clock)?;
-                let (emitter_transform, emitter_lod_position) = particle_emitter_transform(
+                let (emitter_transform, model_lod_position) = particle_emitter_transform(
                     &source.model,
                     placement.transform,
                     bone_pose,
@@ -2179,7 +2179,7 @@ impl M2Frame {
                 )?;
                 let particle_density = particle_emission_density(
                     emitter.flags(),
-                    emitter_lod_position,
+                    model_lod_position,
                     camera.camera().position(),
                 );
                 match emitter.emitter_type() {
@@ -2977,12 +2977,15 @@ fn particle_emitter_transform(
         None => Mat4::IDENTITY,
     };
     let emitter_transform = placement_transform * bone * Mat4::from_translation(emitter.position());
-    // Build 12340 and SolCL evaluate particle distance LOD from the authored
-    // emitter origin, after both the animated bone and placement transforms.
-    // Using the bone origin here makes large backdrop effects fade according
-    // to an unrelated point even though their births render in the right place.
-    let emitter_origin = emitter_transform.transform_point3(glam::Vec3::ZERO);
-    Ok((emitter_transform, emitter_origin))
+    // Build 12340 `0x0097EB10` measures the shared model matrix translation
+    // against the camera before updating every emitter. An emitter's authored
+    // position and animated bone do not independently change particle LOD.
+    let model_origin = particle_lod_origin(placement_transform);
+    Ok((emitter_transform, model_origin))
+}
+
+fn particle_lod_origin(placement_transform: Mat4) -> glam::Vec3 {
+    placement_transform.transform_point3(glam::Vec3::ZERO)
 }
 
 /// Applies stock's camera-distance multiplier to the global particle density.
@@ -3685,7 +3688,7 @@ mod tests {
 
     use super::{
         M2UnsupportedParticle, PARTICLE_IGNORE_DISTANCE_LOD, classify_particle_support,
-        particle_emission_density, stock_glue_character_local_transform,
+        particle_emission_density, particle_lod_origin, stock_glue_character_local_transform,
     };
 
     #[test]
@@ -3719,6 +3722,18 @@ mod tests {
         assert_eq!(
             particle_emission_density(PARTICLE_IGNORE_DISTANCE_LOD, Vec3::X * 100.0, camera),
             1.0
+        );
+    }
+
+    #[test]
+    fn particle_lod_uses_model_origin_before_emitter_offsets() {
+        let model = Mat4::from_translation(Vec3::new(12.0, 34.0, 56.0));
+        let emitter = model * Mat4::from_translation(Vec3::new(1_000.0, 2_000.0, 3_000.0));
+
+        assert_eq!(particle_lod_origin(model), Vec3::new(12.0, 34.0, 56.0));
+        assert_ne!(
+            particle_lod_origin(model),
+            emitter.transform_point3(Vec3::ZERO)
         );
     }
 }
