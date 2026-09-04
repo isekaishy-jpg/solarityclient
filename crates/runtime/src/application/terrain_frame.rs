@@ -642,6 +642,7 @@ impl TerrainFrame {
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
         global_animation_time_ms: f32,
+        specular_enabled: bool,
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
@@ -704,7 +705,8 @@ impl TerrainFrame {
             fog_parameters,
             light.fog_color(),
             [M2LocalLightState::disabled(); 4],
-        );
+        )
+        .with_specular_enabled(specular_enabled);
         let world_model_draws = self.world_models.prepare_visible_draws(
             renderer,
             frustum,

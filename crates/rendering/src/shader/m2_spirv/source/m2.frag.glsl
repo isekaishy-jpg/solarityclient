@@ -172,6 +172,7 @@ float shadow_lighting_factor() {
 vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
     vec4 input_color = fragment_input_color;
     input_color.rgb *= shadow_lighting_factor();
+    bool specular_enabled = scene.fog_parameters.z > 0.5;
     if (M2_PIXEL_EFFECT == 0) {
         return vec4(input_color.rgb * texture_0.rgb, input_color.a);
     }
@@ -195,7 +196,8 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
     }
     if (M2_PIXEL_EFFECT == 7) {
         return vec4(
-            input_color.rgb * texture_0.rgb + texture_1.rgb,
+            input_color.rgb * texture_0.rgb
+                + (specular_enabled ? texture_1.rgb : vec3(0.0)),
             input_color.a + texture_1.a);
     }
     if (M2_PIXEL_EFFECT == 8) {
@@ -210,7 +212,8 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
     }
     if (M2_PIXEL_EFFECT == 10) {
         return vec4(
-            input_color.rgb * texture_0.rgb + texture_1.rgb,
+            input_color.rgb * texture_0.rgb
+                + (specular_enabled ? texture_1.rgb : vec3(0.0)),
             input_color.a);
     }
     if (M2_PIXEL_EFFECT == 11) {
@@ -224,7 +227,8 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
             input_color.a * texture_0.a);
     }
     if (M2_PIXEL_EFFECT == 13) {
-        return input_color * texture_0 + texture_1;
+        return input_color * texture_0
+            + (specular_enabled ? texture_1 : vec4(0.0));
     }
     if (M2_PIXEL_EFFECT == 14) {
         return input_color * texture_0 * texture_1 * 2.0;
@@ -236,7 +240,8 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
     }
     if (M2_PIXEL_EFFECT == 16) {
         return vec4(
-            input_color.rgb * texture_0.rgb + texture_1.rgb,
+            input_color.rgb * texture_0.rgb
+                + (specular_enabled ? texture_1.rgb : vec3(0.0)),
             input_color.a * texture_0.a);
     }
     if (M2_PIXEL_EFFECT == 17) {
@@ -256,13 +261,18 @@ vec4 combine_textures(vec4 texture_0, vec4 texture_1) {
     }
     if (M2_PIXEL_EFFECT == 21) {
         return vec4(
-            input_color.rgb * texture_0.rgb + texture_1.rgb * texture_1.a,
+            input_color.rgb * texture_0.rgb
+                + (specular_enabled
+                    ? texture_1.rgb * texture_1.a
+                    : vec3(0.0)),
             input_color.a);
     }
     if (M2_PIXEL_EFFECT == 22) {
         return vec4(
             input_color.rgb * texture_0.rgb
-                + texture_1.rgb * texture_1.a * texture_0.a,
+                + (specular_enabled
+                    ? texture_1.rgb * texture_1.a * texture_0.a
+                    : vec3(0.0)),
             input_color.a);
     }
     return input_color * texture_0;

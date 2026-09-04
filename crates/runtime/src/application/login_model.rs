@@ -1176,6 +1176,7 @@ impl RuntimeGlueModelScene {
             active.environment.light_direction,
             active.environment.fog_range,
         );
+        let specular_enabled = glue.cvar_boolean("specular");
         let model = M2SceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
@@ -1185,7 +1186,8 @@ impl RuntimeGlueModelScene {
             active.environment.fog_range,
             active.environment.fog_color,
             environment_local_lights,
-        );
+        )
+        .with_specular_enabled(specular_enabled);
         let character_local_lights = if active.environment.character_uses_camera_light {
             let mut lights = [M2LocalLightState::disabled(); 4];
             lights[0] = glue_character_sunlight(camera.camera()).local_light_state();
@@ -1212,7 +1214,8 @@ impl RuntimeGlueModelScene {
             active.environment.fog_range,
             active.environment.fog_color,
             character_local_lights,
-        );
+        )
+        .with_specular_enabled(specular_enabled);
         let pet_model = character_model.with_local_lights(pet_local_lights);
         let gamma_value = glue.cvar_value("gamma");
         let gamma = gamma_value

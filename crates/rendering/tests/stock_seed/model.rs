@@ -2774,6 +2774,16 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         [M2LocalLightState::disabled(); 4],
     );
     assert_eq!(scene_uniform.to_bytes().len(), M2SceneUniform::BYTE_SIZE);
+    let enabled_scene_bytes = scene_uniform.to_bytes();
+    let disabled_scene_bytes = scene_uniform.with_specular_enabled(false).to_bytes();
+    assert_eq!(
+        f32::from_le_bytes(enabled_scene_bytes[136..140].try_into()?),
+        1.0
+    );
+    assert_eq!(
+        f32::from_le_bytes(disabled_scene_bytes[136..140].try_into()?),
+        0.0
+    );
     let material_uniform = M2MaterialUniform::new(
         Mat4::IDENTITY,
         [Mat4::IDENTITY; 2],

@@ -66,6 +66,7 @@ pub struct M2SceneUniform {
     diffuse_light: Vec3,
     light_direction: Vec3,
     fog_parameters: Vec4,
+    specular_enabled: bool,
     fog_color: Vec3,
     local_lights: [M2LocalLightState; 4],
     shadow: M2ShadowState,
@@ -95,6 +96,7 @@ impl M2SceneUniform {
             diffuse_light,
             light_direction,
             fog_parameters,
+            specular_enabled: true,
             fog_color,
             local_lights,
             shadow: M2ShadowState::disabled(),
@@ -115,6 +117,13 @@ impl M2SceneUniform {
         self
     }
 
+    /// Applies the live build-12340 `specular` CVar to additive M2 stages.
+    #[must_use]
+    pub const fn with_specular_enabled(mut self, enabled: bool) -> Self {
+        self.specular_enabled = enabled;
+        self
+    }
+
     /// Serializes without depending on Rust or glam's in-memory representation.
     #[must_use]
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
@@ -125,7 +134,11 @@ impl M2SceneUniform {
         write_vec4(&mut bytes, &mut offset, self.ambient_light.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.diffuse_light.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.light_direction.extend(0.0));
-        write_vec4(&mut bytes, &mut offset, self.fog_parameters);
+        let mut fog_parameters = self.fog_parameters;
+        // The third lane is private to Solarity's M2 ABI; stock's per-material
+        // fog selector lives in M2MaterialUniform instead.
+        fog_parameters.z = if self.specular_enabled { 1.0 } else { 0.0 };
+        write_vec4(&mut bytes, &mut offset, fog_parameters);
         write_vec4(&mut bytes, &mut offset, self.fog_color.extend(0.0));
         for light in self.local_lights {
             light.write_bytes(&mut bytes, &mut offset);

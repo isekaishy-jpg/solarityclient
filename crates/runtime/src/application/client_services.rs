@@ -887,6 +887,7 @@ impl ClientServices {
         }
         let plan = self.terrain.resident_mesh_plan();
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
+        let specular_enabled = self.glue.cvar_boolean("specular");
         let Some(frame) = self.terrain_frame.as_mut() else {
             return self.present_glue_frame();
         };
@@ -910,6 +911,7 @@ impl ClientServices {
             environment,
             camera,
             global_animation_time_ms,
+            specular_enabled,
             &mut self.crt_rand,
             player,
             &creatures,
