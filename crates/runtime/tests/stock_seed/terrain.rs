@@ -196,22 +196,35 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
 
     terrain.disconnect();
     let cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    assert!(terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
+    assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert_eq!(
-        terrain.synchronize_async(Some(&world), &cpu)?,
-        RuntimeTerrainPoll::Pending { map_id: 571 }
+        terrain.synchronize_async(None, &cpu)?,
+        RuntimeTerrainPoll::Idle
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        match terrain.synchronize_async(Some(&world), &cpu)? {
-            RuntimeTerrainPoll::Pending { .. } if std::time::Instant::now() < deadline => {
-                std::thread::yield_now();
+    let first_poll = terrain.synchronize_async(Some(&world), &cpu)?;
+    let prewarm_published = matches!(
+        first_poll,
+        RuntimeTerrainPoll::TileLoaded {
+            map_id: 571,
+            tile: loaded_tile,
+        } if loaded_tile == tile
+    );
+    if !prewarm_published {
+        assert_eq!(first_poll, RuntimeTerrainPoll::Pending { map_id: 571 });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match terrain.synchronize_async(Some(&world), &cpu)? {
+                RuntimeTerrainPoll::Pending { .. } if std::time::Instant::now() < deadline => {
+                    std::thread::yield_now();
+                }
+                RuntimeTerrainPoll::Pending { .. } => return Err("terrain worker timed out".into()),
+                RuntimeTerrainPoll::TileLoaded {
+                    map_id: 571,
+                    tile: loaded_tile,
+                } if loaded_tile == tile => break,
+                poll => return Err(format!("unexpected terrain worker result: {poll:?}").into()),
             }
-            RuntimeTerrainPoll::Pending { .. } => return Err("terrain worker timed out".into()),
-            RuntimeTerrainPoll::TileLoaded {
-                map_id: 571,
-                tile: loaded_tile,
-            } if loaded_tile == tile => break,
-            poll => return Err(format!("unexpected terrain worker result: {poll:?}").into()),
         }
     }
     assert_eq!(terrain.resident_tile().map(|tile| tile.index()), Some(tile));

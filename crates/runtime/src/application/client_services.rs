@@ -1246,15 +1246,34 @@ impl ClientServices {
                 UiGlueNetworkAction::EnterWorld { guid } => {
                     self.world_ui = None;
                     let display_extent = self.platform.logical_extent();
-                    let map_id = self
+                    let character_location = self
                         .world
                         .character_selection()
                         .and_then(|selection| selection.directory().by_guid(guid))
-                        .map(|character| character.location().map_id());
+                        .map(|character| character.location());
+                    let map_id = character_location.map(|location| location.map_id());
                     if map_id.is_none() {
                         tracing::warn!(
                             character_guid = format_args!("{guid:#018X}"),
                             "selected character has no directory map; using generic loading card"
+                        );
+                    }
+                    if let Some(location) = character_location
+                        && let Err(error) = self.terrain.prewarm_location(
+                            location.map_id(),
+                            location.x(),
+                            location.y(),
+                            &self.cpu,
+                        )
+                    {
+                        // Character-directory coordinates are a performance
+                        // hint only. World verification remains authoritative
+                        // and will retry through the ordinary error path.
+                        tracing::warn!(
+                            character_guid = format_args!("{guid:#018X}"),
+                            map_id = location.map_id(),
+                            error = %error,
+                            "could not start terrain preparation during world-entry handshake"
                         );
                     }
                     // World UI bootstrap intentionally waits for one loading

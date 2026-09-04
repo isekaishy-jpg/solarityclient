@@ -186,6 +186,7 @@ pub struct RuntimeTerrainCoordinator {
     worker_catalog: Option<ArchiveCatalog>,
     worker: Option<TerrainWorkerState>,
     pending: Option<PendingTerrainGeneration>,
+    prefetched: Option<PrefetchedTerrainGeneration>,
     failed_request: Option<TerrainRequest>,
 }
 
@@ -203,6 +204,7 @@ impl RuntimeTerrainCoordinator {
             worker_catalog: None,
             worker: None,
             pending: None,
+            prefetched: None,
             failed_request: None,
         }
     }
@@ -212,6 +214,69 @@ impl RuntimeTerrainCoordinator {
     pub fn with_worker_catalog(mut self, catalog: ArchiveCatalog) -> Self {
         self.worker_catalog = Some(catalog);
         self
+    }
+
+    /// Starts preparing the selected character's last-known terrain while the
+    /// encrypted world-entry handshake is still in flight.
+    ///
+    /// The character-directory position is only a cache hint. The generation
+    /// remains unpublished until [`Self::synchronize_async`] observes the same
+    /// map and tile from authoritative world state.
+    ///
+    /// Returns whether a new worker task was admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeTerrainError`] when the hinted map is unknown, the
+    /// worker archive is unavailable, or the bounded CPU pool rejects work.
+    pub fn prewarm_location(
+        &mut self,
+        map_id: u32,
+        world_x: f32,
+        world_y: f32,
+        cpu: &CpuExecutor,
+    ) -> Result<bool, RuntimeTerrainError> {
+        let request = TerrainRequest::at_world_position(map_id, world_x, world_y);
+        if self.active_satisfies(request)
+            || self
+                .prefetched
+                .as_ref()
+                .is_some_and(|prefetched| prefetched.request == request)
+        {
+            return Ok(false);
+        }
+        if let Some(pending) = self.pending.as_mut() {
+            if pending.request == request {
+                pending.retain_without_world = true;
+                return Ok(false);
+            }
+            if !pending.task.is_finished() {
+                return Ok(false);
+            }
+        }
+        self.recover_finished_stale_worker()?;
+
+        let definition = self
+            .maps
+            .map(map_id)
+            .cloned()
+            .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
+        let source = self.take_worker_source()?;
+        let task =
+            cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
+        self.pending = Some(PendingTerrainGeneration {
+            request,
+            submitted_at: std::time::Instant::now(),
+            retain_without_world: true,
+            task,
+        });
+        tracing::debug!(
+            map_id,
+            tile_x = request.tile.x(),
+            tile_y = request.tile.y(),
+            "started selected-character terrain prewarm"
+        );
+        Ok(true)
     }
 
     /// Polls complete WDT/ADT and dependency preparation on the bounded CPU pool.
@@ -233,18 +298,56 @@ impl RuntimeTerrainCoordinator {
             self.active = None;
             self.failed_request = None;
             self.collect_main_thread_caches();
-            self.recover_finished_stale_worker()?;
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.retain_without_world)
+            {
+                self.capture_finished_prewarm()?;
+            } else {
+                self.recover_finished_stale_worker()?;
+            }
             return Ok(RuntimeTerrainPoll::Idle);
         };
         let map_id = world.map_id().value();
         let position = world.local_player_transform()?.position();
-        let request = TerrainRequest {
-            map_id,
-            tile: TerrainMap::tile_at_world_position(position.x, position.y),
-        };
+        let request = TerrainRequest::at_world_position(map_id, position.x, position.y);
+
+        if let Some(prefetched) = self.prefetched.take() {
+            if prefetched.request == request {
+                let global_world_model = prefetched.resident.global_world_model.is_some();
+                self.active = Some(prefetched.resident);
+                self.failed_request = None;
+                self.collect_main_thread_caches();
+                tracing::info!(
+                    map_id,
+                    tile_x = request.tile.x(),
+                    tile_y = request.tile.y(),
+                    prewarm_age_ms = prefetched.prepared_at.elapsed().as_secs_f64() * 1_000.0,
+                    "published terrain prepared during world-entry handshake"
+                );
+                return Ok(if global_world_model {
+                    RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id }
+                } else {
+                    RuntimeTerrainPoll::TileLoaded {
+                        map_id,
+                        tile: request.tile,
+                    }
+                });
+            }
+            tracing::debug!(
+                hinted_map_id = prefetched.request.map_id,
+                hinted_tile_x = prefetched.request.tile.x(),
+                hinted_tile_y = prefetched.request.tile.y(),
+                map_id,
+                tile_x = request.tile.x(),
+                tile_y = request.tile.y(),
+                "discarded terrain prewarm after authoritative location changed"
+            );
+        }
 
         if let Some(active) = self.active.as_ref()
-            && active.map_id() == map_id
+            && self.active_satisfies(request)
         {
             if active.global_world_model.is_some() {
                 self.recover_finished_stale_worker()?;
@@ -316,24 +419,37 @@ impl RuntimeTerrainCoordinator {
             .map(map_id)
             .cloned()
             .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
-        let source = if let Some(worker) = self.worker.take() {
-            TerrainWorkerSource::Ready(worker)
-        } else {
-            TerrainWorkerSource::Catalog(
-                self.worker_catalog
-                    .as_ref()
-                    .ok_or(RuntimeTerrainError::MissingWorkerCatalog)?
-                    .clone(),
-            )
-        };
+        let source = self.take_worker_source()?;
         let task =
             cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
+            retain_without_world: false,
             task,
         });
         Ok(RuntimeTerrainPoll::Pending { map_id })
+    }
+
+    fn active_satisfies(&self, request: TerrainRequest) -> bool {
+        self.active.as_ref().is_some_and(|active| {
+            active.map_id() == request.map_id
+                && (active.global_world_model.is_some()
+                    || active.tile.as_ref().map(ResidentTerrainTile::index) == Some(request.tile))
+        })
+    }
+
+    fn take_worker_source(&mut self) -> Result<TerrainWorkerSource, RuntimeTerrainError> {
+        if let Some(worker) = self.worker.take() {
+            Ok(TerrainWorkerSource::Ready(worker))
+        } else {
+            Ok(TerrainWorkerSource::Catalog(
+                self.worker_catalog
+                    .as_ref()
+                    .ok_or(RuntimeTerrainError::MissingWorkerCatalog)?
+                    .clone(),
+            ))
+        }
     }
 
     fn collect_main_thread_caches(&mut self) {
@@ -357,6 +473,50 @@ impl RuntimeTerrainCoordinator {
         let completion = pending.task.join()?;
         if let Some(worker) = completion.worker {
             self.worker = Some(worker);
+        }
+        Ok(())
+    }
+
+    fn capture_finished_prewarm(&mut self) -> Result<(), RuntimeTerrainError> {
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|pending| !pending.task.is_finished())
+        {
+            return Ok(());
+        }
+        let pending = self
+            .pending
+            .take()
+            .ok_or(RuntimeTerrainError::MissingWorkerCatalog)?;
+        let completion = pending.task.join()?;
+        if let Some(worker) = completion.worker {
+            self.worker = Some(worker);
+        }
+        match completion.result {
+            Ok(resident) => {
+                tracing::debug!(
+                    map_id = pending.request.map_id,
+                    tile_x = pending.request.tile.x(),
+                    tile_y = pending.request.tile.y(),
+                    preparation_ms = pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
+                    "selected-character terrain prewarm completed"
+                );
+                self.prefetched = Some(PrefetchedTerrainGeneration {
+                    request: pending.request,
+                    prepared_at: std::time::Instant::now(),
+                    resident,
+                });
+            }
+            Err(error) => {
+                tracing::warn!(
+                    map_id = pending.request.map_id,
+                    tile_x = pending.request.tile.x(),
+                    tile_y = pending.request.tile.y(),
+                    error = %error,
+                    "selected-character terrain prewarm failed; authoritative load will retry"
+                );
+            }
         }
         Ok(())
     }
@@ -846,6 +1006,10 @@ impl RuntimeTerrainCoordinator {
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
+        self.prefetched = None;
+        if let Some(pending) = self.pending.as_mut() {
+            pending.retain_without_world = false;
+        }
         self.failed_request = None;
         self.textures.collect_unused();
         self.models.collect_unused();
@@ -859,10 +1023,26 @@ struct TerrainRequest {
     tile: TerrainTileIndex,
 }
 
+impl TerrainRequest {
+    fn at_world_position(map_id: u32, world_x: f32, world_y: f32) -> Self {
+        Self {
+            map_id,
+            tile: TerrainMap::tile_at_world_position(world_x, world_y),
+        }
+    }
+}
+
 struct PendingTerrainGeneration {
     request: TerrainRequest,
     submitted_at: std::time::Instant,
+    retain_without_world: bool,
     task: CpuTask<TerrainWorkerCompletion>,
+}
+
+struct PrefetchedTerrainGeneration {
+    request: TerrainRequest,
+    prepared_at: std::time::Instant,
+    resident: ResidentTerrainMap,
 }
 
 enum TerrainWorkerSource {
