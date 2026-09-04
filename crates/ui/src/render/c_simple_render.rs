@@ -272,20 +272,15 @@ impl UiRenderPlan {
     }
 
     /// Patches retained Button state slots without rebuilding geometry bytes.
-    pub(crate) fn refresh_button_state_opacities(
+    pub(crate) fn refresh_object_opacities(
         &mut self,
         presentation: &UiPresentationPlan,
+        object_indices: &[usize],
     ) -> Result<(), UiRenderError> {
-        let mut opacities = Vec::<Option<f32>>::new();
-        for member in presentation.members_in_draw_order() {
-            if member.object_index() >= opacities.len() {
-                opacities.resize(member.object_index() + 1, None);
-            }
-            opacities[member.object_index()] = Some(member.opacity());
+        for &object_index in object_indices {
+            let opacity = presentation.object_opacity(object_index).unwrap_or(1.0);
+            self.mesh.set_object_opacity(object_index, opacity)?;
         }
-        self.mesh.refresh_object_opacities(|object_index| {
-            opacities.get(object_index).copied().flatten()
-        })?;
         Ok(())
     }
 

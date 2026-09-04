@@ -1403,10 +1403,13 @@ impl GlueManager {
         if update.requires_full_refresh {
             return self.refresh_live_state();
         }
+        let mut button_owners = update.buttons.into_iter().flatten().collect::<Vec<_>>();
+        button_owners.sort_unstable();
+        button_owners.dedup();
         self.runtime.refresh_button_highlights(
             &self.bundle,
             &mut self.live,
-            update.buttons.into_iter().flatten(),
+            button_owners.iter().copied(),
         )?;
         let (button_text_layout_changed, button_text_color_changes) =
             self.runtime.refresh_button_texts(
@@ -1445,10 +1448,13 @@ impl GlueManager {
             }
             self.pointer = UiPointerPlan::from_live(&self.live);
         }
-        self.presentation
-            .refresh_button_state_opacities(&self.live, &self.geometry);
+        let changed_opacities = self.presentation.refresh_button_state_opacities(
+            &self.live,
+            &self.geometry,
+            Some(&button_owners),
+        );
         self.render_plan
-            .refresh_button_state_opacities(&self.presentation)?;
+            .refresh_object_opacities(&self.presentation, &changed_opacities)?;
         if button_text_layout_changed {
             self.rebuild_live_text_topology()?;
         } else if !button_text_color_changes.is_empty() {
@@ -1811,10 +1817,11 @@ impl GlueManager {
 
     /// Selects retained Button skins without rebuilding any immutable UI plan.
     fn refresh_button_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
-        self.presentation
-            .refresh_button_state_opacities(&live, &self.geometry);
+        let changed_opacities =
+            self.presentation
+                .refresh_button_state_opacities(&live, &self.geometry, None);
         self.render_plan
-            .refresh_button_state_opacities(&self.presentation)?;
+            .refresh_object_opacities(&self.presentation, &changed_opacities)?;
         self.live = live;
         Ok(())
     }

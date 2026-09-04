@@ -14,6 +14,7 @@ pub struct UiMeshPlan {
     indices: Vec<u32>,
     batches: Vec<UiRenderBatch>,
     object_indices: Vec<usize>,
+    object_quads: HashMap<usize, Vec<usize>>,
     object_batches: HashMap<usize, Vec<usize>>,
 }
 
@@ -66,6 +67,7 @@ impl UiMeshPlan {
             indices: Vec::with_capacity(retained_index_capacity),
             batches: Vec::with_capacity(quad_count),
             object_indices: Vec::with_capacity(quad_count),
+            object_quads: HashMap::new(),
             object_batches: HashMap::new(),
         };
         for quad in quads {
@@ -130,6 +132,7 @@ impl UiMeshPlan {
                 clip,
             )],
             object_indices: Vec::new(),
+            object_quads: HashMap::new(),
             object_batches: HashMap::from([(0, vec![0])]),
         })
     }
@@ -256,22 +259,14 @@ impl UiMeshPlan {
         object_index: usize,
         colors: &[[[f32; 4]; 4]],
     ) -> Result<bool, UiMeshPlanError> {
-        let slot_count = self
-            .object_indices
-            .iter()
-            .filter(|owner| **owner == object_index)
-            .count();
-        if slot_count != colors.len() {
+        let Some(slots) = self.object_quads.get(&object_index) else {
+            return Ok(colors.is_empty());
+        };
+        if slots.len() != colors.len() {
             return Ok(false);
         }
         let mut changed = false;
-        for (slot, quad_colors) in self
-            .object_indices
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, owner)| (*owner == object_index).then_some(slot))
-            .zip(colors)
-        {
+        for (&slot, quad_colors) in slots.iter().zip(colors) {
             for (corner, &color) in quad_colors.iter().enumerate() {
                 validate_components(object_index, "color", &color)?;
                 let vertex_index = slot * 4 + corner;
@@ -411,6 +406,10 @@ impl UiMeshPlan {
                 .or_default()
                 .push(self.batches.len() - 1);
         }
+        self.object_quads
+            .entry(quad.object_index())
+            .or_default()
+            .push(self.object_indices.len());
         self.object_indices.push(quad.object_index());
         Ok(())
     }

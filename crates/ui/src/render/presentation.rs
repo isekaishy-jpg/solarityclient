@@ -85,6 +85,7 @@ impl UiPresentationPacketKey {
 pub struct UiTexturePresentation {
     key: UiPresentationPacketKey,
     object_index: usize,
+    owner_index: usize,
     /// Assigned ScrollFrame viewport, excluding sibling scrollbar chrome.
     clip_object: Option<usize>,
     /// Native Slider owning an unanchored, transform-only thumb texture.
@@ -552,9 +553,14 @@ impl UiPresentationPlan {
         &mut self,
         live: &UiRuntimeObjectPlan,
         geometry: &UiRegionGeometryPlan,
-    ) {
+        owner_indices: Option<&[usize]>,
+    ) -> Vec<usize> {
         let disabled_texture_owners = disabled_texture_owners(live);
+        let mut changed_objects = Vec::new();
         for member in &mut self.members {
+            if owner_indices.is_some_and(|owners| !owners.contains(&member.owner_index)) {
+                continue;
+            }
             let object_index = member.object_index;
             let Some(object) = live.objects().get(object_index) else {
                 continue;
@@ -568,14 +574,22 @@ impl UiPresentationPlan {
             let Some(region) = geometry.region(object_index) else {
                 continue;
             };
-            member.opacity = region.effective_alpha() as f32
+            let opacity = region.effective_alpha() as f32
                 * f32::from(region.effectively_shown())
                 * f32::from(widget_role_is_active(
                     object.role,
                     owner,
                     disabled_texture_owners[owner_index],
                 ));
+            if member.opacity != opacity {
+                member.opacity = opacity;
+                changed_objects.push(object_index);
+            }
         }
+        changed_objects.sort_unstable();
+        changed_objects.dedup();
+        self.disabled_texture_owners = disabled_texture_owners;
+        changed_objects
     }
 
     pub(crate) fn resolve(
@@ -592,8 +606,7 @@ impl UiPresentationPlan {
                 geometry.region(object_index),
                 object.frame_strata,
                 object.frame_level,
-            ) && region.effectively_shown()
-                && (region.effective_alpha() > 0.0 || region.animation_active())
+            ) && (region.effective_alpha() > 0.0 || region.animation_active())
             {
                 append_backdrop(
                     &mut keyed,
@@ -603,19 +616,24 @@ impl UiPresentationPlan {
                         object,
                         clip_object: nearest_owning_scroll_frame(live, object_index),
                         bounds: region.presentation_bounds(),
-                        effective_alpha: region.effective_alpha() as f32,
+                        effective_alpha: region.effective_alpha() as f32
+                            * f32::from(region.effectively_shown()),
                         effective_scale: region.effective_scale(),
                         strata,
                         frame_level,
                     },
                 );
             }
-            if let Some(model) = Self::configured_model(live, geometry, object_index)
+            if let Some(mut model) = Self::configured_model(live, geometry, object_index)
                 && geometry.region(object_index).is_some_and(|region| {
-                    region.effectively_shown()
-                        && (region.effective_alpha() > 0.0 || region.animation_active())
+                    region.effective_alpha() > 0.0 || region.animation_active()
                 })
             {
+                model.alpha *= f32::from(
+                    geometry
+                        .region(object_index)
+                        .is_some_and(crate::UiRegionGeometry::effectively_shown),
+                );
                 models.push(model);
             }
             let Some(texture) = &object.texture else {
@@ -624,9 +642,7 @@ impl UiPresentationPlan {
             let Some(region) = geometry.region(object_index) else {
                 continue;
             };
-            if !region.effectively_shown()
-                || region.effective_alpha() <= 0.0 && !region.animation_active()
-            {
+            if region.effective_alpha() <= 0.0 && !region.animation_active() {
                 continue;
             }
             let Some(owner_index) = nearest_owning_frame(live, object) else {
@@ -654,6 +670,7 @@ impl UiPresentationPlan {
                 .vertex_colors
                 .map(|color| color.map(|value| value as f32));
             let effective_alpha = region.effective_alpha() as f32
+                * f32::from(region.effectively_shown())
                 * f32::from(widget_role_is_active(
                     object.role,
                     owner,
@@ -664,6 +681,7 @@ impl UiPresentationPlan {
                 UiTexturePresentation {
                     key,
                     object_index,
+                    owner_index,
                     clip_object: nearest_owning_scroll_frame(live, object_index),
                     slider_object: (object.role == UiObjectRole::ThumbTexture
                         && live.anchors_for(object).is_empty())
@@ -1135,6 +1153,7 @@ fn push_backdrop_quad(
         UiTexturePresentation {
             key,
             object_index,
+            owner_index: object_index,
             clip_object,
             slider_object: None,
             source: UiTextureSource::Asset(path.clone()),
