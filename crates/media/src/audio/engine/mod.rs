@@ -12,7 +12,7 @@ mod sound_interface2_internal;
 mod status;
 mod types;
 
-pub use sound_engine::SoundEngine;
+pub use sound_engine::{SoundEngine, SoundLoadHandle, SoundLoadRequest};
 pub use sound_engine_owner::OwnedSoundEngine;
 pub use sound_interface2_advanced_kit_ducking::{AdvancedSoundDucking, AdvancedSoundInstanceId};
 pub use sound_interface2_advanced_kit_lifecycle::{

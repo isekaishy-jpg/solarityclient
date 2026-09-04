@@ -17,6 +17,9 @@ use crate::support::{
     sound_entries_fixture_with_flags, ui_sound_lookups_fixture,
 };
 
+#[path = "engine/loading.rs"]
+mod loading;
+
 /// Master and category CVar gains retain their evidenced zero-to-one domain.
 #[test]
 fn stock_sound_gain_rejects_values_outside_cvar_range() {

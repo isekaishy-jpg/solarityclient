@@ -3,13 +3,17 @@
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
-use solarity_asset::{AssetPath, AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex};
+use solarity_asset::{
+    ArchiveCatalog, AssetPath, AssetStoreHandle, DecodedTerrainTile, TerrainTileIndex,
+};
+use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
     AdvancedSoundServiceError, OwnedSoundEngine, SoundCategory, SoundCategorySettings,
     SoundChannel, SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundGain,
-    SoundLoopMode, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest, SoundPlayback,
-    SoundResidencyPolicy, SoundSoftwareChannelCount, SoundVariationMode, SoundVoiceHandle,
+    SoundLoadHandle, SoundLoadRequest, SoundLoopMode, SoundOutputInfo, SoundOutputTarget,
+    SoundPlayRequest, SoundPlayback, SoundResidencyPolicy, SoundSoftwareChannelCount,
+    SoundVariationMode, SoundVoiceHandle,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_ui::{GlueManager, UiGlueMediaAction};
@@ -20,11 +24,24 @@ use crate::time::RealmClock;
 
 use super::terrain_frame::RuntimeM2Event;
 
+mod loader;
+
+use loader::RuntimeSoundLoader;
+
 const M2_ONE_SHOT_SOUND_IDENTIFIERS: [[u8; 4]; 3] = [*b"$SND", *b"$CSD", *b"$DSO"];
 
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
 pub enum RuntimeSoundError {
+    /// The worker archive owner could not be initialized or accessed.
+    #[error("sound archive worker is unavailable: {message}")]
+    LoaderUnavailable {
+        /// Initialization or ownership failure, without a remount retry.
+        message: String,
+    },
+    /// CPU job admission or completion failed.
+    #[error(transparent)]
+    Cpu(#[from] CpuError),
     /// A registered stock sound CVar disappeared from the live UI registry.
     #[error("required sound CVar {name} is absent")]
     MissingCVar {
@@ -80,6 +97,7 @@ pub enum RuntimeSoundError {
 pub(crate) struct RuntimeSoundCoordinator {
     assets: AssetStoreHandle,
     engine: OwnedSoundEngine,
+    loader: RuntimeSoundLoader,
     advanced: AdvancedSoundService,
     glue_music: Option<RuntimeGlueVoice>,
     glue_ambience: Option<RuntimeGlueVoice>,
@@ -94,6 +112,7 @@ impl RuntimeSoundCoordinator {
         assets: AssetStoreHandle,
         glue: &GlueManager,
         target: SoundOutputTarget,
+        catalog: ArchiveCatalog,
     ) -> Result<Self, RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
         let software_channel_count = software_channel_count(glue)?;
@@ -106,6 +125,7 @@ impl RuntimeSoundCoordinator {
         Ok(Self {
             assets,
             engine,
+            loader: RuntimeSoundLoader::new(catalog),
             advanced: AdvancedSoundService::new(),
             glue_music: None,
             glue_ambience: None,
@@ -131,6 +151,13 @@ impl RuntimeSoundCoordinator {
     #[must_use]
     pub(crate) fn engine_voice_capacity(&self) -> usize {
         self.engine.voice_capacity()
+    }
+
+    /// Includes current music and ambience admission in complete-transition measurements.
+    pub(crate) fn glue_media_ready(&self) -> bool {
+        [&self.glue_music, &self.glue_ambience]
+            .into_iter()
+            .all(|voice| voice.as_ref().is_none_or(|voice| voice.load.is_none()))
     }
 
     /// Starts movie audio with stock's unsigned-byte volume scale.
@@ -176,6 +203,7 @@ impl RuntimeSoundCoordinator {
         &mut self,
         glue: &GlueManager,
         random: &mut BlizzardRand,
+        cpu: &CpuExecutor,
     ) -> Result<(), RuntimeSoundError> {
         self.engine
             .set_settings(SoundPolicy::read(glue)?.settings)?;
@@ -191,6 +219,32 @@ impl RuntimeSoundCoordinator {
                     elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
                     "profiled Glue audio action"
                 );
+            }
+        }
+        if let Some(completion) = self.loader.poll(cpu, &self.engine)? {
+            let playback = match completion.result {
+                Ok(encoded) => self.engine.complete_load(completion.handle, &encoded),
+                Err(error) => {
+                    self.engine.cancel_load(completion.handle);
+                    tracing::warn!(%error, "Glue audio payload was not loaded");
+                    Ok(SoundPlayback::Suppressed)
+                }
+            };
+            let playback = match playback {
+                Ok(playback) => playback,
+                Err(error) => {
+                    tracing::warn!(%error, "Glue audio resource was not admitted");
+                    SoundPlayback::Suppressed
+                }
+            };
+            for voice in [&mut self.glue_music, &mut self.glue_ambience] {
+                if voice
+                    .as_ref()
+                    .is_some_and(|voice| voice.load == Some(completion.handle))
+                    && let Some(pending) = voice.take()
+                {
+                    *voice = RuntimeGlueVoice::started(pending.identity, playback);
+                }
             }
         }
         self.engine.collect_unused_encoded();
@@ -241,13 +295,12 @@ impl RuntimeSoundCoordinator {
                     return Ok(());
                 }
                 self.stop_glue_music()?;
-                let playback = self.engine.play_file(
-                    &mut self.assets.borrow_mut(),
+                let load = self.engine.begin_file_load(
                     &path,
                     SoundChannel::SCRIPT_MUSIC,
                     SoundLoopMode::Loop,
                 )?;
-                self.glue_music = RuntimeGlueVoice::started(identity, playback);
+                self.glue_music = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::PlayGlueMusic(name) | UiGlueMediaAction::PlayCreditsMusic(name) => {
                 let Some(entry_id) = self.engine.internal_sound_entry_id(&name) else {
@@ -270,12 +323,8 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Loop,
                     SoundConcurrencyMode::Concurrent,
                 );
-                let playback =
-                    self.engine
-                        .play(&mut self.assets.borrow_mut(), request, &mut || {
-                            random.next_u32()
-                        })?;
-                self.glue_music = RuntimeGlueVoice::started(identity, playback);
+                let load = self.engine.begin_load(request, &mut || random.next_u32())?;
+                self.glue_music = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::PlayGlueAmbience {
                 name,
@@ -301,12 +350,8 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Loop,
                     SoundConcurrencyMode::Concurrent,
                 );
-                let playback =
-                    self.engine
-                        .play(&mut self.assets.borrow_mut(), request, &mut || {
-                            random.next_u32()
-                        })?;
-                self.glue_ambience = RuntimeGlueVoice::started(identity, playback);
+                let load = self.engine.begin_load(request, &mut || random.next_u32())?;
+                self.glue_ambience = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::StopMusic => self.stop_glue_music()?,
             UiGlueMediaAction::StopGlueAmbience => self.stop_glue_ambience()?,
@@ -317,6 +362,29 @@ impl RuntimeSoundCoordinator {
             }
         }
         Ok(())
+    }
+
+    /// Retains same-source suppression while the selected payload is still loading.
+    fn queue_glue_voice(
+        &mut self,
+        identity: RuntimeGlueVoiceIdentity,
+        request: Option<SoundLoadRequest>,
+    ) -> Option<RuntimeGlueVoice> {
+        let request = request?;
+        let load = request.handle();
+        self.loader.queue(request);
+        Some(RuntimeGlueVoice {
+            identity,
+            load: Some(load),
+            _handle: None,
+        })
+    }
+
+    /// Cancels pending Glue reads and observes worker completion before pool shutdown.
+    pub(crate) fn shutdown(&mut self) -> Result<(), RuntimeSoundError> {
+        self.stop_glue_music()?;
+        self.stop_glue_ambience()?;
+        self.loader.shutdown(&mut self.engine)
     }
 
     /// Stops the single process-owned Glue music generation.
@@ -460,7 +528,8 @@ struct StagedTerrainEmitter {
 /// Stable identity and backend generation for one continuous Glue voice.
 struct RuntimeGlueVoice {
     identity: RuntimeGlueVoiceIdentity,
-    _handle: SoundVoiceHandle,
+    load: Option<SoundLoadHandle>,
+    _handle: Option<SoundVoiceHandle>,
 }
 
 impl RuntimeGlueVoice {
@@ -469,7 +538,8 @@ impl RuntimeGlueVoice {
         match playback {
             SoundPlayback::Started(handle) => Some(Self {
                 identity,
-                _handle: handle,
+                load: None,
+                _handle: Some(handle),
             }),
             SoundPlayback::Suppressed => None,
         }

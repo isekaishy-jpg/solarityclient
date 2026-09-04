@@ -98,7 +98,8 @@ servers. Closing the diagnostic window cancels the replay.
 Each CSV sample records input delivery time, elapsed time until the complete
 requested scene is presented, every transition frame interval, and the requested
 number of following frame intervals. Readiness requires the requested route
-and all requested model resources; an old resident scene cannot satisfy it.
+and all requested model resources, plus admission of the current music and
+ambience; an old resident scene cannot satisfy it.
 Measurements end at the normal Vulkan presentation call, not physical display
 scanout. The controlled replay excludes network polling and the frame limiter.
 
@@ -136,5 +137,19 @@ checkbox dispatch correction and its executable evidence are described in
 The warm Night Elf and Human switches spent 46.4 and 39.6 ms respectively
 inside `PlayGlueAmbience`, accounting for most of their 53.8 and 49.3 ms
 maximum transition frames. Cold Tauren ambience admission took 141 ms in the
-same run. These synchronous audio operations remain to be moved off the frame
-path while preserving stock selection, residency, and action ordering.
+same run. Per-phase profiling then isolated 38–45 ms of the warm pause in MPQ
+extraction, with WAV decoder and backend setup taking about 1–2 ms. Glue music
+and ambience now perform archive extraction on the CPU pool with ordered sound
+selection and cancellation of replaced requests. The nonblocking executable
+evidence and remaining synchronous decoder work are documented in
+[audio content loading](audio-content-loading.md).
+
+With worker reads, the same 1280 by 720 GTX 1070 replay measured warm Night Elf
+and Human maximum transition frames of 7.9 and 11.4 ms, compared with 53.8 and
+49.3 ms before this change. Complete readiness still took 58.7 and 53.3 ms:
+the benchmark now explicitly waits for current audio admission while recording
+every intervening present. WAV completion took about 1–2 ms on the main thread.
+Following-frame means ranged from about 1,415 to 2,110 FPS. Two following-frame
+outliers reached 24–28 ms, cold selection still reached 58 ms, and race/class
+text publication still produced roughly 25–38 ms frames. These results narrow
+the remaining stalls; they do not establish the full transition/FPS goal.

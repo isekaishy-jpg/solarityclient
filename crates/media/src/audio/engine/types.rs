@@ -341,6 +341,6 @@ impl SoundPlayRequest {
 pub enum SoundPlayback {
     /// A backend voice owns the selected sound.
     Started(SoundVoiceHandle),
-    /// Global or category CVar policy disabled playback before asset admission.
+    /// Policy disabled playback, or an asynchronous request was cancelled.
     Suppressed,
 }

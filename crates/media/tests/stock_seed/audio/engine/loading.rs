@@ -1,0 +1,242 @@
+//! Nonblocking stock admission preserves selection, cancellation, and live gain.
+
+use std::cell::Cell;
+use std::error::Error;
+
+use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
+use solarity_media::{
+    OwnedSoundEngine, SoundCache, SoundCategory, SoundChannel, SoundConcurrencyMode,
+    SoundEngineError, SoundLoadRequest, SoundLoopMode, SoundOutputTarget, SoundPlayRequest,
+    SoundPlayback, SoundSoftwareChannelCount, SoundVariationMode,
+};
+
+use crate::support::{
+    Fixture, FixtureFile, empty_advanced_sound_entries_fixture, pcm_wav, sdl_test_lock,
+    sound_entries_fixture_with_flags,
+};
+
+use super::settings;
+
+/// The selected path may not exist yet: begin_load must perform no payload read.
+#[test]
+fn nonblocking_selection_precedes_reads_and_respects_pending_admission()
+-> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let calls = Cell::new(0);
+    let mut random = || {
+        calls.set(calls.get() + 1);
+        0
+    };
+    let capped = request(SoundChannel::new(7)?, SoundConcurrencyMode::Concurrent);
+    let first = required(engine.begin_load(capped, &mut random)?)?;
+    let consumed = calls.get();
+    assert!(consumed > 0);
+    assert_eq!(engine.active_voice_count(), 0);
+    assert_eq!(engine.cached_sound_count(), 0);
+    assert_eq!(engine.decoded_sound_count(), 0);
+    assert!(matches!(
+        engine.begin_load(capped, &mut random),
+        Err(SoundEngineError::ChannelCapacity {
+            channel: 7,
+            maximum: 1
+        })
+    ));
+    assert!(matches!(
+        engine.play(&mut store, capped, &mut random),
+        Err(SoundEngineError::ChannelCapacity { .. })
+    ));
+    assert_eq!(calls.get(), consumed);
+    assert!(engine.cancel_load(first.handle()));
+    assert!(!engine.cancel_load(first.handle()));
+    let exclusive = request(SoundChannel::SFX, SoundConcurrencyMode::Entry);
+    let first = required(engine.begin_load(exclusive, &mut random)?)?;
+    let consumed = calls.get();
+    assert!(matches!(
+        engine.begin_load(exclusive, &mut random),
+        Err(SoundEngineError::ExclusiveEntryActive { entry_id: 77 })
+    ));
+    assert_eq!(calls.get(), consumed);
+    assert_eq!(engine.stop_category(SoundCategory::Sfx)?, 1);
+    assert!(!engine.is_load_pending(first.handle()));
+    engine.set_settings(settings(false)?)?;
+    assert!(engine.begin_load(exclusive, &mut random)?.is_none());
+    assert_eq!(calls.get(), consumed);
+    Ok(())
+}
+
+/// Stop/category replacement consumes reservations before any late bytes reach SDL.
+#[test]
+fn cancelled_foreign_and_duplicate_completions_cannot_start_voices() -> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let path = AssetPath::new("Sound/Test/Tone.wav")?;
+    let invalid = AssetPath::new("Sound/Test/Invalid.wav")?;
+    let load =
+        required(engine.begin_file_load(&invalid, SoundChannel::AMBIENCE, SoundLoopMode::Loop)?)?;
+    let mut cache = SoundCache::new();
+    let corrupt = cache.load(&mut store, &invalid)?;
+    engine.stop_category(SoundCategory::Ambience)?;
+    assert_eq!(
+        engine.complete_load(load.handle(), &corrupt)?,
+        SoundPlayback::Suppressed
+    );
+    assert_eq!(engine.decoded_sound_count(), 0);
+
+    let load =
+        required(engine.begin_file_load(&path, SoundChannel::AMBIENCE, SoundLoopMode::Loop)?)?;
+    let encoded = cache.load(&mut store, &path)?;
+    let mut foreign = OwnedSoundEngine::load(
+        &mut store,
+        SoundOutputTarget::Memory,
+        SoundSoftwareChannelCount::new(12),
+        settings(true)?,
+    )?;
+    assert_eq!(
+        foreign.complete_load(load.handle(), &encoded)?,
+        SoundPlayback::Suppressed
+    );
+    assert!(engine.is_load_pending(load.handle()));
+    let SoundPlayback::Started(voice) = engine.complete_load(load.handle(), &encoded)? else {
+        return Err("live request was suppressed".into());
+    };
+    assert_eq!(
+        engine.complete_load(load.handle(), &encoded)?,
+        SoundPlayback::Suppressed
+    );
+    assert_eq!(engine.active_voice_count(), 1);
+    engine.stop(voice)?;
+    Ok(())
+}
+
+/// Completion consumes every failing reservation instead of keeping an exclusive ghost.
+#[test]
+fn failed_or_mismatched_loads_release_admission() -> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let mut cache = SoundCache::new();
+    let invalid = AssetPath::new("Sound/Test/Invalid.wav")?;
+    let corrupt = cache.load(&mut store, &invalid)?;
+    let load =
+        required(engine.begin_file_load(&invalid, SoundChannel::SFX, SoundLoopMode::Once)?)?;
+    assert!(engine.complete_load(load.handle(), &corrupt).is_err());
+    assert!(!engine.is_load_pending(load.handle()));
+    let load = required(engine.begin_load(
+        request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
+        &mut || 0,
+    )?)?;
+    assert!(matches!(
+        engine.complete_load(load.handle(), &corrupt),
+        Err(SoundEngineError::LoadPathMismatch { .. })
+    ));
+    assert!(!engine.is_load_pending(load.handle()));
+    // The DBC's Missing.wav is intentionally absent; the immediate API must also
+    // cancel its reservation after an exact archive failure.
+    assert!(matches!(
+        engine.play(
+            &mut store,
+            request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
+            &mut || 0
+        ),
+        Err(SoundEngineError::Asset(_))
+    ));
+    let retry = required(engine.begin_load(
+        request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
+        &mut || 0,
+    )?)?;
+    engine.cancel_load(retry.handle());
+    assert_eq!(engine.active_voice_count(), 0);
+    assert_eq!(engine.decoded_sound_count(), 0);
+    Ok(())
+}
+
+/// Disabling after selection mutes accepted playback; re-enabling does not reselect it.
+#[test]
+fn accepted_load_uses_live_gain_at_completion() -> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let path = AssetPath::new("Sound/Test/Tone.wav")?;
+    let load = required(engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Loop)?)?;
+    engine.set_settings(settings(false)?)?;
+    let encoded = SoundCache::new().load(&mut store, &path)?;
+    let SoundPlayback::Started(voice) = engine.complete_load(load.handle(), &encoded)? else {
+        return Err("accepted request was discarded on mute".into());
+    };
+    let mut pcm = [0xff; 4096];
+    engine.generate(&mut pcm)?;
+    assert!(pcm.iter().all(|byte| *byte == 0));
+    engine.set_settings(settings(true)?)?;
+    engine.generate(&mut pcm)?;
+    assert!(pcm.iter().any(|byte| *byte != 0));
+    assert_eq!(engine.active_voice_count(), 1);
+    engine.stop(voice)?;
+    Ok(())
+}
+
+/// Contains a missing DBC variation and exact valid/corrupt direct-path payloads.
+fn assets() -> Result<(Fixture, AssetStore), Box<dyn Error>> {
+    let entries = sound_entries_fixture_with_flags(
+        77,
+        [("Missing.wav", 1), ("OtherMissing.wav", 1), ("", 0)],
+        "Sound/Test",
+        0x20,
+    );
+    let wav = pcm_wav(8000, &[0, 12000, 0, -12000].repeat(2000))?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntries.dbc",
+            bytes: &entries,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundEntriesAdvanced.dbc",
+            bytes: &empty_advanced_sound_entries_fixture(),
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Sound\\Test\\Tone.wav",
+            bytes: &wav,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Sound\\Test\\Invalid.wav",
+            bytes: b"invalid audio",
+        },
+    ])?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    Ok((fixture, store))
+}
+
+/// Owns a memory output so tests verify actual mixed PCM without a device or clock.
+fn engine(store: &mut AssetStore) -> Result<OwnedSoundEngine, Box<dyn Error>> {
+    Ok(OwnedSoundEngine::load(
+        store,
+        SoundOutputTarget::Memory,
+        SoundSoftwareChannelCount::new(12),
+        settings(true)?,
+    )?)
+}
+
+/// All requests here are eligible; suppression is a test failure.
+fn required(load: Option<SoundLoadRequest>) -> Result<SoundLoadRequest, Box<dyn Error>> {
+    load.ok_or_else(|| "eligible sound load was suppressed".into())
+}
+
+/// Random variation exercises the caller-owned RNG before asynchronous extraction.
+fn request(channel: SoundChannel, mode: SoundConcurrencyMode) -> SoundPlayRequest {
+    SoundPlayRequest::new(
+        77,
+        channel,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+        mode,
+    )
+}

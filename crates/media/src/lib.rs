@@ -20,8 +20,9 @@ pub use audio::{
     ResolvedSpatialSound, SoundBackend, SoundBackendError, SoundBackendPlayback, SoundCache,
     SoundCategory, SoundCategorySettings, SoundChannel, SoundChannelError, SoundConcurrencyMode,
     SoundDecodeError, SoundDecodeMode, SoundDecoder, SoundEngine, SoundEngineError,
-    SoundEngineSettings, SoundGain, SoundGainError, SoundLoopMode, SoundOutput, SoundOutputInfo,
-    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
-    SoundSoftwareChannelCount, SoundSpatialPosition, SoundVariationMode, SoundVariationSelector,
-    SoundVoiceHandle, SoundVoicePriority, SoundVoiceState, SpatialSoundCatalog, SpatialSoundError,
+    SoundEngineSettings, SoundGain, SoundGainError, SoundLoadHandle, SoundLoadRequest,
+    SoundLoopMode, SoundOutput, SoundOutputInfo, SoundOutputTarget, SoundPlayRequest,
+    SoundPlayback, SoundResidencyPolicy, SoundSoftwareChannelCount, SoundSpatialPosition,
+    SoundVariationMode, SoundVariationSelector, SoundVoiceHandle, SoundVoicePriority,
+    SoundVoiceState, SpatialSoundCatalog, SpatialSoundError,
 };

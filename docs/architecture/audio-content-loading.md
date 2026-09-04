@@ -67,6 +67,31 @@ resource during admission. This is the one adapter-boundary copy: the temporary
 once other owners release it. Unsupported or corrupt bytes fail admission and
 do not trigger another codec, filesystem search, or extension substitution.
 
+Stock admission is nonblocking: `SoundEngine.cpp` at `0x0087ee60` ORs
+`0x82010000` into the mode passed to both FMOD creation branches. This includes
+`FMOD_NONBLOCKING` (`0x00010000`); its completion callback is `0x0087b180`.
+FMOD documents background opening and readiness polling in its
+[creation API](https://www.fmod.com/docs/2.03/api/core-api-system.html).
+`SoundEngine::begin_load` therefore separates ordered definition validation,
+channel/exclusive admission, and variation selection from payload extraction.
+The pending reservation counts toward channel and same-entry limits. Completion
+consumes that reservation exactly once, applies current gain settings, and
+admits the exact selected path without another random draw. Category stop and
+explicit cancellation retire pending reservations as well as playing voices.
+Late or foreign completions cannot allocate a decoder or start a track.
+
+Glue music and ambience use these reservations with the existing bounded CPU
+executor. A worker-private archive stack mounts the already discovered catalog
+once, retains its original precedence, and serializes selected reads. Capacity
+pressure retains the selected request for later admission. Replaced queued
+requests are skipped; an already running read remains owned and its result is
+observed even after cancellation. Application shutdown cancels queued requests
+and joins the active read before shutting down the pool. SDL resources remain
+on the output-owning thread. This moves WAV archive extraction off the frame
+thread; SDL admission, including its MP3 seek-table preparation, is still
+synchronous. Ordinary UI and world sound callers retain the immediate API,
+which uses the same selection, reservation, and completion rules.
+
 Output and track ownership remain separate at the adapter boundary.
 `SoundOutput` owns one explicitly selected default-device or memory mixer;
 `SoundBackend` borrows that output and preallocates build 12340's hard 512

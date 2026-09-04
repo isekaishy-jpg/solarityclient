@@ -1,5 +1,9 @@
 //! SoundEntries-driven orchestration over media-owned backend resources.
 
+mod loading;
+
+pub use loading::{SoundLoadHandle, SoundLoadRequest};
+
 use std::num::NonZeroU16;
 use std::time::Duration;
 
@@ -13,6 +17,8 @@ use crate::audio::cache::SoundCache;
 use crate::audio::codec::SoundDecoder;
 use crate::audio::selection::SoundVariationSelector;
 use crate::audio::spatial::{ResolvedSpatialSound, SpatialSoundCatalog, SpatialSoundError};
+
+use loading::PendingVoice;
 
 use super::status::SoundEngineError;
 use super::types::{
@@ -49,6 +55,7 @@ pub struct SoundEngine<'output> {
     decoder: SoundDecoder,
     settings: SoundEngineSettings,
     active_voices: Vec<ActiveVoice>,
+    pending_voices: Vec<PendingVoice>,
     variation_selectors: Vec<(u32, SoundVariationSelector)>,
 }
 
@@ -82,6 +89,7 @@ impl<'output> SoundEngine<'output> {
             settings,
             active_voices: Vec::with_capacity(usize::from(STOCK_VIRTUAL_VOICE_CAPACITY)),
             variation_selectors: Vec::new(),
+            pending_voices: Vec::new(),
         })
     }
 
@@ -227,113 +235,10 @@ impl<'output> SoundEngine<'output> {
         request: SoundPlayRequest,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        self.collect_stopped_unmanaged_voices()?;
-        let entry =
-            self.catalog
-                .sound_entry(request.entry_id())
-                .ok_or(SoundEngineError::MissingEntry {
-                    entry_id: request.entry_id(),
-                })?;
-        let channel = request.channel();
-        let category = channel.category();
-        let Some(category_gain) = self.settings.category_gain(category) else {
+        let Some(load) = self.begin_load(request, next_random_word)? else {
             return Ok(SoundPlayback::Suppressed);
         };
-        if !entry.volume().is_finite() || entry.volume() < 0.0 {
-            return Err(SoundEngineError::InvalidEntryVolume {
-                entry_id: entry.id(),
-                volume: entry.volume(),
-            });
-        }
-        if let Some(maximum) = channel.maximum_active_voices()
-            && self
-                .active_voices
-                .iter()
-                .filter(|voice| voice.channel == channel)
-                .count()
-                >= maximum
-        {
-            return Err(SoundEngineError::ChannelCapacity {
-                channel: channel.value(),
-                maximum,
-            });
-        }
-        if request.concurrency_mode().is_exclusive(entry.flags())
-            && self
-                .active_voices
-                .iter()
-                .any(|voice| voice.entry_id == Some(entry.id()))
-        {
-            return Err(SoundEngineError::ExclusiveEntryActive {
-                entry_id: entry.id(),
-            });
-        }
-        let selector_index = match self
-            .variation_selectors
-            .binary_search_by_key(&entry.id(), |(entry_id, _selector)| *entry_id)
-        {
-            Ok(index) => index,
-            Err(index) => {
-                let selector = SoundVariationSelector::new(entry).ok_or(
-                    SoundEngineError::NoPlayableVariation {
-                        entry_id: entry.id(),
-                    },
-                )?;
-                self.variation_selectors
-                    .insert(index, (entry.id(), selector));
-                index
-            }
-        };
-        let asset_path = self.variation_selectors[selector_index]
-            .1
-            .select(request.variation_mode(), next_random_word)
-            .ok_or(SoundEngineError::NoPlayableVariation {
-                entry_id: entry.id(),
-            })?
-            .path()
-            .clone();
-        let encoded = self.cache.load(store, &asset_path)?;
-        let decode_mode = self
-            .settings
-            .residency()
-            .decode_mode(encoded.path(), encoded.bytes().len());
-        let sound = self.decoder.load(&encoded, decode_mode)?;
-        let source_gain = entry.volume();
-        let playback = match self.backend.play(
-            &self.decoder,
-            sound,
-            category_gain * source_gain,
-            request.loop_mode().is_looping(entry.flags()),
-            request.priority(),
-        ) {
-            Ok(playback) => playback,
-            Err(error) => {
-                self.decoder.release(sound);
-                return Err(error.into());
-            }
-        };
-        if let Some(stolen) = playback.stolen()
-            && let Some(index) = self
-                .active_voices
-                .iter()
-                .position(|voice| voice.handle == stolen)
-        {
-            let stolen_voice = self.active_voices.remove(index);
-            self.decoder.release(stolen_voice.sound);
-        }
-        let voice = playback.voice();
-        self.active_voices.push(ActiveVoice {
-            handle: voice,
-            sound,
-            entry_id: Some(entry.id()),
-            channel,
-            category,
-            source_gain,
-            runtime_gain: 1.0,
-            duck_gain: 1.0,
-            duck_source: request.advanced_source(),
-        });
-        Ok(SoundPlayback::Started(voice))
+        self.load_immediate(store, load)
     }
 
     /// Starts one exact archive path without inventing a `SoundEntries` row.
@@ -353,65 +258,10 @@ impl<'output> SoundEngine<'output> {
         channel: SoundChannel,
         loop_mode: super::SoundLoopMode,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        self.collect_stopped_unmanaged_voices()?;
-        let category = channel.category();
-        let Some(category_gain) = self.settings.category_gain(category) else {
+        let Some(load) = self.begin_file_load(path, channel, loop_mode)? else {
             return Ok(SoundPlayback::Suppressed);
         };
-        if let Some(maximum) = channel.maximum_active_voices()
-            && self
-                .active_voices
-                .iter()
-                .filter(|voice| voice.channel == channel)
-                .count()
-                >= maximum
-        {
-            return Err(SoundEngineError::ChannelCapacity {
-                channel: channel.value(),
-                maximum,
-            });
-        }
-        let encoded = self.cache.load(store, path)?;
-        let decode_mode = self
-            .settings
-            .residency()
-            .decode_mode(encoded.path(), encoded.bytes().len());
-        let sound = self.decoder.load(&encoded, decode_mode)?;
-        let playback = match self.backend.play(
-            &self.decoder,
-            sound,
-            category_gain,
-            loop_mode.is_looping(0),
-            crate::audio::backend::SoundVoicePriority::DEFAULT,
-        ) {
-            Ok(playback) => playback,
-            Err(error) => {
-                self.decoder.release(sound);
-                return Err(error.into());
-            }
-        };
-        if let Some(stolen) = playback.stolen()
-            && let Some(index) = self
-                .active_voices
-                .iter()
-                .position(|voice| voice.handle == stolen)
-        {
-            let stolen_voice = self.active_voices.remove(index);
-            self.decoder.release(stolen_voice.sound);
-        }
-        let voice = playback.voice();
-        self.active_voices.push(ActiveVoice {
-            handle: voice,
-            sound,
-            entry_id: None,
-            channel,
-            category,
-            source_gain: 1.0,
-            runtime_gain: 1.0,
-            duck_gain: 1.0,
-            duck_source: None,
-        });
-        Ok(SoundPlayback::Started(voice))
+        self.load_immediate(store, load)
     }
 
     /// Selects and starts one ordinary voice at an exact world position.
@@ -629,7 +479,10 @@ impl<'output> SoundEngine<'output> {
     /// Returns [`SoundEngineError`] when the backend cannot stop an owned
     /// voice.
     pub fn stop_category(&mut self, category: SoundCategory) -> Result<usize, SoundEngineError> {
-        let mut stopped = 0;
+        let pending_before = self.pending_voices.len();
+        self.pending_voices
+            .retain(|voice| voice.channel.category() != category);
+        let mut stopped = pending_before - self.pending_voices.len();
         let mut index = 0;
         while index < self.active_voices.len() {
             if self.active_voices[index].category != category {

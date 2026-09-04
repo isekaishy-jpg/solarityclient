@@ -1,6 +1,6 @@
 //! Stable sound-engine orchestration and settings failures.
 
-use solarity_asset::AssetError;
+use solarity_asset::{AssetError, AssetPath};
 use thiserror::Error;
 
 use crate::audio::backend::SoundBackendError;
@@ -35,6 +35,17 @@ impl SoundChannelError {
 /// Failure while selecting, admitting, or controlling a stock sound.
 #[derive(Debug, Error)]
 pub enum SoundEngineError {
+    /// The process exhausted its non-reusable asynchronous request identities.
+    #[error("sound load identity capacity is exhausted")]
+    LoadCapacity,
+    /// A completed read does not belong to the selected request.
+    #[error("sound load expected {expected}, received {actual}")]
+    LoadPathMismatch {
+        /// Exact path selected before the read began.
+        expected: AssetPath,
+        /// Actual path carried by the encoded payload.
+        actual: AssetPath,
+    },
     /// The requested `SoundEntries.dbc` identifier is absent.
     #[error("SoundEntries.dbc does not contain sound {entry_id}")]
     MissingEntry {

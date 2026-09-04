@@ -67,7 +67,7 @@ pub struct GlueBenchmarkResult {
     pub name: String,
     /// Time spent delivering the action, before the first frame service.
     pub action_duration: Duration,
-    /// Action start to the first present containing the complete requested scene.
+    /// Action start to a complete requested scene with its current audio admitted.
     pub ready_duration: Duration,
     /// Present intervals through the first complete scene; the first includes input.
     pub transition_frames: Vec<Duration>,
@@ -146,6 +146,7 @@ impl ClientServices {
                     });
                 }
                 if self.last_glue_model_poll == RuntimeGlueModelPoll::Ready
+                    && self.sound.glue_media_ready()
                     && self.glue.current_screen() == step.expected_screen.token()
                     && self.presented_glue_screen.as_deref() == Some(step.expected_screen.token())
                 {

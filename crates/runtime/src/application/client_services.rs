@@ -176,6 +176,7 @@ impl ClientServices {
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let archive_count = catalog.descriptors().len();
+        let sound_catalog = catalog.clone();
         let backdrop_catalog = catalog.clone();
         let ui_texture_catalog = catalog.clone();
         let player_catalog = catalog.clone();
@@ -291,6 +292,7 @@ impl ClientServices {
             assets.clone(),
             &glue,
             SoundOutputTarget::DefaultDevice,
+            sound_catalog,
         )?;
         // M2Initialize consumes these before any ordinary or Glue emitter is
         // constructed. The resulting table remains process-wide.
@@ -829,8 +831,11 @@ impl ClientServices {
             self.glue_ui_dirty = true;
         }
         if self.gameplay.world().is_none() {
-            self.sound
-                .synchronize_glue_media(&self.glue, &mut self.blizzard_rand.borrow_mut())?;
+            self.sound.synchronize_glue_media(
+                &self.glue,
+                &mut self.blizzard_rand.borrow_mut(),
+                &self.cpu,
+            )?;
         }
         if self
             .loading_screen
@@ -2202,11 +2207,13 @@ impl ClientServices {
         self.terrain_frame = None;
         self.world_ui = None;
         self.loading_screen = None;
+        let sound_result = self.sound.shutdown().map_err(ApplicationError::from);
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
             network.shutdown_timeout(self.network_shutdown_timeout);
         }
+        sound_result?;
         renderer_result?;
         cpu_result
     }
