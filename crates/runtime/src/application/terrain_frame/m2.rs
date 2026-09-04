@@ -9,19 +9,19 @@ use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
-    M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2LocalLightCount,
-    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan,
-    M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
-    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
-    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
-    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
-    M2TransparentPass, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    compare_m2_transparent, m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
-    triggered_m2_event_indices,
+    M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2FingerPoseHands,
+    M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
+    M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
+    M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
+    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
+    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail,
+    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
+    M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -2170,16 +2170,25 @@ impl M2Frame {
                 )?;
             }
             let clock = advance.clock;
+            let finger_pose_hands = held_item_finger_pose(&self.requested_items, owner);
+            let finger_pose = finger_pose_hands.and_then(|hands| {
+                source
+                    .model
+                    .animations()
+                    .sequence_for_variation(15, 0)
+                    .map(|sequence| (M2AnimationClock::new(sequence, 0.0, global_time_ms), hands))
+            });
             let event_window = playback.event_window(animation_time_ms, global_time_ms);
             let model_view = camera.view() * placement.transform;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance = m2_model_distance_key(model_view);
             self.bone_pose_scratch
-                .recompose_with_model_view_and_orientation_mask(
+                .recompose_with_model_view_orientation_and_finger_pose(
                     source.model.animations(),
                     clock,
                     model_view,
                     &source.model_oriented_billboard_bones,
+                    finger_pose,
                 )?;
             let bone_pose = &self.bone_pose_scratch;
             append_triggered_events(
@@ -2685,6 +2694,45 @@ impl M2Frame {
     /// Takes the controlled mount's marker sample from the latest model pose.
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
+    }
+}
+
+/// Selects the held-item finger trees layered by animation 15 (`HandsClosed`).
+fn held_item_finger_pose(
+    requested_items: &[(u64, CharacterAttachmentPoint)],
+    owner: M2GpuPlacementOwner,
+) -> Option<M2FingerPoseHands> {
+    let guid = match owner {
+        M2GpuPlacementOwner::PlayerBody { guid }
+        | M2GpuPlacementOwner::RemotePlayerBody { guid } => guid,
+        _ => return None,
+    };
+    let mut right = false;
+    let mut left = false;
+    for (_guid, point) in requested_items
+        .iter()
+        .filter(|(item_guid, _point)| *item_guid == guid)
+    {
+        match point {
+            CharacterAttachmentPoint::HandRight => right = true,
+            CharacterAttachmentPoint::HandLeft | CharacterAttachmentPoint::Shield => left = true,
+            CharacterAttachmentPoint::ShoulderLeft
+            | CharacterAttachmentPoint::ShoulderRight
+            | CharacterAttachmentPoint::Helmet
+            | CharacterAttachmentPoint::SheathMainHand
+            | CharacterAttachmentPoint::SheathOffHand
+            | CharacterAttachmentPoint::SheathShield
+            | CharacterAttachmentPoint::LargeWeaponLeft
+            | CharacterAttachmentPoint::LargeWeaponRight
+            | CharacterAttachmentPoint::HipWeaponLeft
+            | CharacterAttachmentPoint::HipWeaponRight => {}
+        }
+    }
+    match (right, left) {
+        (true, true) => Some(M2FingerPoseHands::Both),
+        (true, false) => Some(M2FingerPoseHands::Right),
+        (false, true) => Some(M2FingerPoseHands::Left),
+        (false, false) => None,
     }
 }
 

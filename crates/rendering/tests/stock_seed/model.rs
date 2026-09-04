@@ -17,9 +17,9 @@ use solarity_rendering::{
     CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState,
     CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale, M2DrawPushConstants,
-    M2EffectOrder, M2EventTimeWindow, M2FogMode, M2LocalLightCount, M2LocalLightState,
-    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
-    M2ModelOrientation, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    M2EffectOrder, M2EventTimeWindow, M2FingerPoseHands, M2FogMode, M2LocalLightCount,
+    M2LocalLightState, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan,
+    M2MeshPlanError, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleLifetimePose,
     M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
     M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleState,
     M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
@@ -3263,6 +3263,67 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// HandsClosed replaces only authored tracks under the selected finger tree.
+#[test]
+fn m2_bone_pose_layers_authored_held_item_fingers() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("FingerPose", 1)?;
+    append_hands_closed_fixture(&mut bytes)?;
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\FingerPose.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\FingerPose00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\FingerPose.m2")?,
+    )?;
+    let mut pose = M2BonePose::default();
+    let body_clock = M2AnimationClock::new(0, 500.0, 0.0);
+    let hand_clock = M2AnimationClock::new(1, 0.0, 0.0);
+
+    pose.recompose_with_model_view_orientation_and_finger_pose(
+        model.animations(),
+        body_clock,
+        Mat4::IDENTITY,
+        &[],
+        Some((hand_clock, M2FingerPoseHands::Left)),
+    )?;
+    assert_eq!(
+        pose.transforms()[2].transform_point3(Vec3::ZERO),
+        Vec3::new(5.0, 0.0, 0.0)
+    );
+
+    pose.recompose_with_model_view_orientation_and_finger_pose(
+        model.animations(),
+        body_clock,
+        Mat4::IDENTITY,
+        &[],
+        Some((hand_clock, M2FingerPoseHands::Right)),
+    )?;
+    assert_eq!(
+        pose.transforms()[0].transform_point3(Vec3::ZERO),
+        Vec3::new(2.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        pose.transforms()[1].transform_point3(Vec3::ZERO),
+        Vec3::new(12.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        pose.transforms()[2].transform_point3(Vec3::ZERO),
+        Vec3::new(32.0, 0.0, 0.0)
+    );
+    Ok(())
+}
+
 /// Spherical billboard bones replace view rotation without moving the pivot.
 #[test]
 fn m2_bone_pose_applies_stock_view_space_billboard() -> Result<(), Box<dyn Error>> {
@@ -4576,6 +4637,62 @@ fn append_render_animation(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     append_render_material_tracks(bytes)?;
     append_render_ribbon(bytes)?;
     append_render_particle(bytes)?;
+    Ok(())
+}
+
+/// Extends the base animation fixture with animation 15 and two finger tracks.
+fn append_hands_closed_fixture(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
+    let original_sequence = m2_array_offset(bytes, 0x1c)?;
+    let sequence = bytes[original_sequence..original_sequence + 64].to_vec();
+    let sequence_offset = bytes.len();
+    bytes.extend_from_slice(&sequence);
+    let mut hands_closed = sequence;
+    hands_closed[0..2].copy_from_slice(&15_u16.to_le_bytes());
+    bytes.extend_from_slice(&hands_closed);
+    set_render_header_array(bytes, 0x1c, 2, sequence_offset)?;
+
+    let bone_offset = m2_array_offset(bytes, 0x2c)?;
+    bytes[bone_offset + 88..bone_offset + 92].copy_from_slice(&8_i32.to_le_bytes());
+    append_two_sequence_vec3_track(
+        bytes,
+        bone_offset + 88 + 16,
+        [Vec3::X, Vec3::new(10.0, 0.0, 0.0)],
+    )?;
+    append_two_sequence_vec3_track(
+        bytes,
+        bone_offset + 176 + 16,
+        [Vec3::new(2.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)],
+    )?;
+    Ok(())
+}
+
+fn append_two_sequence_vec3_track(
+    bytes: &mut Vec<u8>,
+    track_offset: usize,
+    values: [Vec3; 2],
+) -> Result<(), Box<dyn Error>> {
+    let mut timestamps = [0_usize; 2];
+    let mut value_offsets = [0_usize; 2];
+    for (index, value) in values.into_iter().enumerate() {
+        timestamps[index] = bytes.len();
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        value_offsets[index] = bytes.len();
+        bytes.extend_from_slice(&render_f32_values(&value.to_array()));
+    }
+    let timestamp_refs = bytes.len();
+    for offset in timestamps {
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(offset)?.to_le_bytes());
+    }
+    let value_refs = bytes.len();
+    for offset in value_offsets {
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(offset)?.to_le_bytes());
+    }
+    bytes[track_offset..track_offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[track_offset + 2..track_offset + 4].copy_from_slice(&(-1_i16).to_le_bytes());
+    set_render_header_array(bytes, track_offset + 4, 2, timestamp_refs)?;
+    set_render_header_array(bytes, track_offset + 12, 2, value_refs)?;
     Ok(())
 }
 

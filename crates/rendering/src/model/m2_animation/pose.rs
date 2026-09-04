@@ -1,11 +1,35 @@
 //! Parent-first M2 bone transform composition.
 
 use glam::{Mat3, Mat4, Vec3};
-use solarity_asset::{M2AnimationSet, M2Attachment};
+use solarity_asset::{M2AnimationSet, M2Attachment, M2Track};
 
 use super::M2BonePoseError;
 use super::sample::sample_discrete;
 use super::sample::{sample_quaternion, sample_vec3};
+
+/// Per-hand selection for the model-authored `HandsClosed` finger pose.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum M2FingerPoseHands {
+    /// Do not replace either finger tree.
+    None,
+    /// Replace key-bone groups 8 through 12.
+    Right,
+    /// Replace key-bone groups 13 through 17.
+    Left,
+    /// Replace both authored finger trees.
+    Both,
+}
+
+impl M2FingerPoseHands {
+    /// Returns whether this mask includes one requested hand.
+    #[must_use]
+    pub const fn includes(self, hand: Self) -> bool {
+        matches!(
+            (self, hand),
+            (Self::Right | Self::Both, Self::Right) | (Self::Left | Self::Both, Self::Left)
+        )
+    }
+}
 
 /// The local animation and process-global clocks used by every bone track.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +111,13 @@ pub struct M2BonePose {
 struct BillboardView {
     model_view: Mat4,
     inverse_model_view: Mat4,
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedFingerPose {
+    sequence: usize,
+    animation_time_ms: f32,
+    hands: M2FingerPoseHands,
 }
 
 impl M2BonePose {
@@ -175,6 +206,40 @@ impl M2BonePose {
                 inverse_model_view: model_view.inverse(),
             }),
             model_oriented_billboard_bones,
+            None,
+        )
+    }
+
+    /// Samples the body sequence while replacing only held-item finger tracks.
+    ///
+    /// The overlay is applied only when its selected sequence authors keys for
+    /// a track in key-bone groups 8..=17 (including unnamed descendants).
+    /// Global-sequence tracks remain driven by the process clock.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recompose_with_model_view_orientation_and_finger_pose(
+        &mut self,
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Mat4,
+        model_oriented_billboard_bones: &[bool],
+        finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
+    ) -> Result<(), M2BonePoseError> {
+        if !finite_matrix(model_view) {
+            return Err(M2BonePoseError::InvalidModelView);
+        }
+        let determinant = model_view.determinant();
+        if !determinant.is_finite() || determinant.abs() <= 1.0e-8 {
+            return Err(M2BonePoseError::InvalidModelView);
+        }
+        self.recompose_inner(
+            animations,
+            clock,
+            Some(BillboardView {
+                model_view,
+                inverse_model_view: model_view.inverse(),
+            }),
+            model_oriented_billboard_bones,
+            finger_pose,
         )
     }
 
@@ -191,6 +256,7 @@ impl M2BonePose {
             clock,
             model_view,
             model_oriented_billboard_bones,
+            None,
         )?;
         Ok(pose)
     }
@@ -202,8 +268,18 @@ impl M2BonePose {
         clock: M2AnimationClock,
         model_view: Option<BillboardView>,
         model_oriented_billboard_bones: &[bool],
+        finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
     ) -> Result<(), M2BonePoseError> {
         let sequence = clock.resolve(animations)?;
+        let finger_pose = finger_pose
+            .map(|(finger_clock, hands)| {
+                Ok::<ResolvedFingerPose, M2BonePoseError>(ResolvedFingerPose {
+                    sequence: finger_clock.resolve(animations)?,
+                    animation_time_ms: finger_clock.animation_time_ms(),
+                    hands,
+                })
+            })
+            .transpose()?;
         if model_view.is_none()
             && let Some((bone, _)) = animations
                 .bones()
@@ -216,26 +292,42 @@ impl M2BonePose {
 
         self.local.resize(animations.bones().len(), Mat4::IDENTITY);
         for (index, bone) in animations.bones().iter().enumerate() {
-            let translation = sample_vec3(
-                animations,
+            let finger_pose =
+                finger_pose.filter(|pose| pose.hands.includes(finger_pose_hand(animations, index)));
+            let (translation_sequence, translation_time) = track_clock(
                 bone.translation(),
                 sequence,
                 clock.animation_time_ms,
+                finger_pose,
+            );
+            let (rotation_sequence, rotation_time) = track_clock(
+                bone.rotation(),
+                sequence,
+                clock.animation_time_ms,
+                finger_pose,
+            );
+            let (scale_sequence, scale_time) =
+                track_clock(bone.scale(), sequence, clock.animation_time_ms, finger_pose);
+            let translation = sample_vec3(
+                animations,
+                bone.translation(),
+                translation_sequence,
+                translation_time,
                 clock.global_time_ms,
                 Vec3::ZERO,
             );
             let rotation = sample_quaternion(
                 animations,
                 bone.rotation(),
-                sequence,
-                clock.animation_time_ms,
+                rotation_sequence,
+                rotation_time,
                 clock.global_time_ms,
             );
             let scale = sample_vec3(
                 animations,
                 bone.scale(),
-                sequence,
-                clock.animation_time_ms,
+                scale_sequence,
+                scale_time,
                 clock.global_time_ms,
                 Vec3::ONE,
             );
@@ -310,6 +402,44 @@ impl M2BonePose {
             model_transform * bone * Mat4::from_translation(attachment.position()),
         ))
     }
+}
+
+fn track_clock<T>(
+    track: &M2Track<T>,
+    sequence: usize,
+    animation_time_ms: f32,
+    finger_pose: Option<ResolvedFingerPose>,
+) -> (usize, f32) {
+    finger_pose
+        .filter(|pose| {
+            track.global_sequence().is_none()
+                && track
+                    .channels()
+                    .get(pose.sequence)
+                    .is_some_and(|channel| !channel.timestamps_ms().is_empty())
+        })
+        .map_or((sequence, animation_time_ms), |pose| {
+            (pose.sequence, pose.animation_time_ms)
+        })
+}
+
+/// Finds the nearest named finger ancestor in stock's key-bone domain.
+fn finger_pose_hand(animations: &M2AnimationSet, mut index: usize) -> M2FingerPoseHands {
+    for _depth in 0..animations.bones().len() {
+        let Some(bone) = animations.bones().get(index) else {
+            break;
+        };
+        match bone.key_bone_id() {
+            8..=12 => return M2FingerPoseHands::Right,
+            13..=17 => return M2FingerPoseHands::Left,
+            _ => {}
+        }
+        let Some(parent) = bone.parent() else {
+            break;
+        };
+        index = usize::from(parent);
+    }
+    M2FingerPoseHands::None
 }
 
 /// Resolves an arbitrarily ordered but cycle-free hierarchy once per bone.

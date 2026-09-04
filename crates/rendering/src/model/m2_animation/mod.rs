@@ -14,5 +14,5 @@ pub use light::{
     M2SampledLights, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
 };
 pub use material::M2MaterialPose;
-pub use pose::{M2AnimationClock, M2BonePose};
+pub use pose::{M2AnimationClock, M2BonePose, M2FingerPoseHands};
 pub use status::{M2BonePoseError, M2MaterialPoseError};
