@@ -2111,6 +2111,19 @@ impl M2Frame {
                 continue;
             };
             let owner = placement.owner;
+            // Ordinary ADT/WMO placements have no animated parent transform.
+            // Cull them before advancing playback or recomposing bones, just
+            // as the stock/SolCL world renderer first builds a visible
+            // instance list. Large tiles commonly retain thousands of static
+            // placements while only tens intersect the camera frustum.
+            let static_visibility_resolved = matches!(owner, M2GpuPlacementOwner::Static(_));
+            if static_visibility_resolved {
+                let (center, radius) =
+                    placement_bounding_sphere(&source.model, placement.transform);
+                if !frustum.contains_sphere(center, radius)? {
+                    continue;
+                }
+            }
             let animation_binding = placement.animation_binding;
             let character_source = || {
                 let guid = placement_owner_guid(owner)?;
@@ -2297,20 +2310,12 @@ impl M2Frame {
                         .push((guid, point, *effect_point, transform));
                 }
             }
-            let bounds = source.model.bounds();
-            let center = placement
-                .transform
-                .transform_point3((bounds.minimum() + bounds.maximum()) * 0.5);
-            let maximum_scale = placement.transform.x_axis.truncate().length().max(
-                placement
-                    .transform
-                    .y_axis
-                    .truncate()
-                    .length()
-                    .max(placement.transform.z_axis.truncate().length()),
-            );
-            if !frustum.contains_sphere(center, bounds.sphere_radius() * maximum_scale)? {
-                continue;
+            if !static_visibility_resolved {
+                let (center, radius) =
+                    placement_bounding_sphere(&source.model, placement.transform);
+                if !frustum.contains_sphere(center, radius)? {
+                    continue;
+                }
             }
 
             let bone_offset = u32::try_from(self.bone_transforms.len())
@@ -2695,6 +2700,19 @@ impl M2Frame {
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
     }
+}
+
+fn placement_bounding_sphere(model: &DecodedM2Model, transform: Mat4) -> (glam::Vec3, f32) {
+    let bounds = model.bounds();
+    let center = transform.transform_point3((bounds.minimum() + bounds.maximum()) * 0.5);
+    let maximum_scale = transform.x_axis.truncate().length().max(
+        transform
+            .y_axis
+            .truncate()
+            .length()
+            .max(transform.z_axis.truncate().length()),
+    );
+    (center, bounds.sphere_radius() * maximum_scale)
 }
 
 /// Selects the held-item finger trees layered by animation 15 (`HandsClosed`).

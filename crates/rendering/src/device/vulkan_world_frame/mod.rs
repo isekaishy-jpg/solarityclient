@@ -86,9 +86,84 @@ pub(in crate::device) struct WorldFrameWindow {
     pub(in crate::device) screen: WorldScreenWindow,
 }
 
-#[derive(Default)]
 pub(in crate::device) struct WorldFrameRenderer {
     resources: WorldFrameResources,
+    profiler: Option<WorldFrameProfiler>,
+}
+
+impl Default for WorldFrameRenderer {
+    fn default() -> Self {
+        Self {
+            resources: WorldFrameResources::default(),
+            profiler: WorldFrameProfiler::from_environment(),
+        }
+    }
+}
+
+struct WorldFrameProfiler {
+    window_started: std::time::Instant,
+    frame_count: u64,
+    ensure_us: u128,
+    wait_write_us: u128,
+    acquire_us: u128,
+    record_us: u128,
+    submit_present_us: u128,
+    maximum_us: [u128; 5],
+}
+
+impl WorldFrameProfiler {
+    fn from_environment() -> Option<Self> {
+        std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_value| Self {
+            window_started: std::time::Instant::now(),
+            frame_count: 0,
+            ensure_us: 0,
+            wait_write_us: 0,
+            acquire_us: 0,
+            record_us: 0,
+            submit_present_us: 0,
+            maximum_us: [0; 5],
+        })
+    }
+
+    fn record(&mut self, phases: [std::time::Duration; 5]) {
+        let elapsed_us = phases.map(|elapsed| elapsed.as_micros());
+        self.frame_count = self.frame_count.saturating_add(1);
+        self.ensure_us = self.ensure_us.saturating_add(elapsed_us[0]);
+        self.wait_write_us = self.wait_write_us.saturating_add(elapsed_us[1]);
+        self.acquire_us = self.acquire_us.saturating_add(elapsed_us[2]);
+        self.record_us = self.record_us.saturating_add(elapsed_us[3]);
+        self.submit_present_us = self.submit_present_us.saturating_add(elapsed_us[4]);
+        for (maximum, elapsed) in self.maximum_us.iter_mut().zip(elapsed_us) {
+            *maximum = (*maximum).max(elapsed);
+        }
+        let window_elapsed = self.window_started.elapsed();
+        if window_elapsed < std::time::Duration::from_secs(2) {
+            return;
+        }
+        let divisor = self.frame_count.max(1) as f64;
+        tracing::info!(
+            frame_count = self.frame_count,
+            ensure_mean_us = self.ensure_us as f64 / divisor,
+            wait_write_mean_us = self.wait_write_us as f64 / divisor,
+            acquire_mean_us = self.acquire_us as f64 / divisor,
+            record_mean_us = self.record_us as f64 / divisor,
+            submit_present_mean_us = self.submit_present_us as f64 / divisor,
+            ensure_max_us = self.maximum_us[0],
+            wait_write_max_us = self.maximum_us[1],
+            acquire_max_us = self.maximum_us[2],
+            record_max_us = self.maximum_us[3],
+            submit_present_max_us = self.maximum_us[4],
+            "profiled unified Vulkan frame phases"
+        );
+        self.window_started = std::time::Instant::now();
+        self.frame_count = 0;
+        self.ensure_us = 0;
+        self.wait_write_us = 0;
+        self.acquire_us = 0;
+        self.record_us = 0;
+        self.submit_present_us = 0;
+        self.maximum_us = [0; 5];
+    }
 }
 
 impl WorldFrameRenderer {
@@ -110,6 +185,7 @@ impl WorldFrameRenderer {
         window: WorldFrameWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
+        let ensure_started = std::time::Instant::now();
         if terrain_draws.is_empty()
             && world_model_draws.is_empty()
             && m2_draws.is_empty()
@@ -193,8 +269,10 @@ impl WorldFrameRenderer {
             extent: context.extent,
             depth_format: context.depth_format,
         })?;
+        let ensure_elapsed = ensure_started.elapsed();
         let slot_index = self.resources.next_slot_index()?;
-        let (image_index, _suboptimal) = {
+        let wait_write_started = std::time::Instant::now();
+        let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
             slot.write(
@@ -207,8 +285,10 @@ impl WorldFrameRenderer {
                 particle_indices,
                 ribbon_vertices,
             )?;
+            let wait_write_elapsed = wait_write_started.elapsed();
+            let acquire_started = std::time::Instant::now();
             // SAFETY: Swapchain and acquire semaphore live through submission.
-            unsafe {
+            let acquired = unsafe {
                 context.swapchain_loader.acquire_next_image(
                     context.swapchain,
                     u64::MAX,
@@ -216,8 +296,10 @@ impl WorldFrameRenderer {
                     vk::Fence::null(),
                 )
             }
-            .map_err(|source| swapchain_error("acquire world frame image", source))?
+            .map_err(|source| swapchain_error("acquire world frame image", source))?;
+            (acquired, wait_write_elapsed, acquire_started.elapsed())
         };
+        let (image_index, _suboptimal) = acquired;
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context
             .swapchain_images
@@ -230,6 +312,7 @@ impl WorldFrameRenderer {
             .copied()
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.resources.slot_mut(slot_index)?;
+        let record_started = std::time::Instant::now();
         record(RecordContext {
             device: context.device,
             command_buffer: slot.command_buffer(),
@@ -276,7 +359,18 @@ impl WorldFrameRenderer {
             glow: context.glow,
             image_index,
         })?;
+        let record_elapsed = record_started.elapsed();
+        let submit_started = std::time::Instant::now();
         submit_and_present(&context, slot, present_semaphore, image_index)?;
+        if let Some(profiler) = self.profiler.as_mut() {
+            profiler.record([
+                ensure_elapsed,
+                wait_write_elapsed,
+                acquire_elapsed,
+                record_elapsed,
+                submit_started.elapsed(),
+            ]);
+        }
         Ok(WorldFrameReport::new(
             terrain_draws.len(),
             world_model_draws.len(),
