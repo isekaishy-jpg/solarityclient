@@ -1273,6 +1273,11 @@ impl GlueManager {
         if live.is_visual_transform_only_update_from(&self.live) {
             return self.refresh_visual_transform_state(live);
         }
+        if live.is_visibility_only_update_from(&self.live)
+            && self.visibility_slots_are_resident(&live)?
+        {
+            return self.refresh_visibility_state(live);
+        }
         if live.is_button_state_only_update_from(&self.live) {
             return self.refresh_button_state(live);
         }
@@ -1357,6 +1362,63 @@ impl GlueManager {
         self.render_plan
             .refresh_button_state_opacities(&self.presentation)?;
         self.live = live;
+        Ok(())
+    }
+
+    /// Reports whether every newly revealed renderable already owns a lazy
+    /// retained slot from an earlier visible generation.
+    fn visibility_slots_are_resident(
+        &self,
+        live: &UiRuntimeObjectPlan,
+    ) -> Result<bool, UiEventError> {
+        let geometry = UiRegionGeometryPlan::resolve(live, self.geometry.ui_extent())?;
+        for (object_index, object) in live.objects().iter().enumerate() {
+            let was_visible = self
+                .geometry
+                .region(object_index)
+                .is_some_and(crate::UiRegionGeometry::effectively_shown);
+            let is_visible = geometry
+                .region(object_index)
+                .is_some_and(crate::UiRegionGeometry::effectively_shown);
+            if was_visible || !is_visible {
+                continue;
+            }
+            let owns_quad = object.texture.is_some()
+                || object
+                    .text
+                    .as_ref()
+                    .is_some_and(|text| !text.content.is_empty())
+                || self.backdrops.state(object_index).is_some();
+            if owns_quad && !self.render_plan.mesh().contains_object(object_index) {
+                return Ok(false);
+            }
+            if object.model.is_some() && !self.presentation.contains_model(object_index) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Retains geometry, glyph coverage, materials, and pointer topology for a
+    /// pure hide/show transition and patches only visible draw state.
+    fn refresh_visibility_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
+        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        self.presentation
+            .refresh_visibility_opacities(&live, &geometry);
+        if !self.render_plan.refresh_visual_states(
+            &self.geometry,
+            &geometry,
+            &self.presentation,
+            &self.scroll_frames,
+        )? {
+            return Err(crate::UiScriptError::Plan {
+                message: "visibility-only refresh changed immutable UI geometry".to_owned(),
+            }
+            .into());
+        }
+        self.live = live;
+        self.geometry = geometry;
+        self.pointer = UiPointerPlan::from_live(&self.live);
         Ok(())
     }
 

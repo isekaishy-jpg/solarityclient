@@ -460,6 +460,52 @@ impl UiPresentationPlan {
             .map(|&index| self.members[index].opacity)
     }
 
+    /// Reports whether a configured model already has a retained Glue slot.
+    pub(crate) fn contains_model(&self, object_index: usize) -> bool {
+        self.model_index_by_object
+            .get(object_index)
+            .is_some_and(Option::is_some)
+    }
+
+    /// Applies inherited visibility and alpha without changing draw topology.
+    pub(crate) fn refresh_visibility_opacities(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+    ) {
+        let disabled_texture_owners = disabled_texture_owners(live);
+        for member in &mut self.members {
+            let object_index = member.object_index;
+            let Some(object) = live.objects().get(object_index) else {
+                continue;
+            };
+            let Some(region) = geometry.region(object_index) else {
+                continue;
+            };
+            let widget_opacity = nearest_owning_frame(live, object)
+                .and_then(|owner_index| {
+                    live.objects().get(owner_index).map(|owner| {
+                        f32::from(widget_role_is_active(
+                            object.role,
+                            owner,
+                            disabled_texture_owners[owner_index],
+                        ))
+                    })
+                })
+                .unwrap_or(1.0);
+            member.opacity = region.effective_alpha() as f32
+                * f32::from(region.effectively_shown())
+                * widget_opacity;
+        }
+        for model in &mut self.models {
+            if let Some(region) = geometry.region(model.object_index) {
+                model.alpha =
+                    region.effective_alpha() as f32 * f32::from(region.effectively_shown());
+            }
+        }
+        self.disabled_texture_owners = disabled_texture_owners;
+    }
+
     /// Selects among retained Button state skins without changing draw topology.
     pub(crate) fn refresh_button_state_opacities(
         &mut self,
@@ -663,6 +709,14 @@ impl UiPresentationPlan {
     #[must_use]
     pub fn models(&self) -> &[UiModelPresentation] {
         &self.models
+    }
+
+    /// Iterates models whose retained viewport is currently visible.
+    ///
+    /// Hidden Glue screens keep their model slots resident so returning to a
+    /// scene does not rebuild CPU or GPU topology.
+    pub fn visible_models(&self) -> impl Iterator<Item = &UiModelPresentation> {
+        self.models.iter().filter(|model| model.alpha > 0.0)
     }
 
     /// Resolves one model widget without requiring its owning screen to be shown.

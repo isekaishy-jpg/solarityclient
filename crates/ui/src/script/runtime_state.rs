@@ -284,6 +284,32 @@ impl UiRuntimeObjectPlan {
         changed
     }
 
+    /// Returns whether only explicit region visibility changed.
+    ///
+    /// The renderer can retain already-materialized object slots across a
+    /// hide/show cycle. A newly revealed object which has never been resident
+    /// is detected by the Glue owner and takes the ordinary preparation path.
+    pub(crate) fn is_visibility_only_update_from(&self, previous: &Self) -> bool {
+        if self.anchors != previous.anchors || self.objects.len() != previous.objects.len() {
+            return false;
+        }
+
+        let mut changed = false;
+        for (current, previous) in self.objects.iter().zip(&previous.objects) {
+            if current == previous {
+                continue;
+            }
+
+            let mut normalized = current.clone();
+            normalized.shown = previous.shown;
+            if normalized != *previous {
+                return false;
+            }
+            changed = true;
+        }
+        changed
+    }
+
     /// Returns whether only mutually exclusive Button presentation state changed.
     ///
     /// These fields select already-authored state textures. They do not alter

@@ -789,8 +789,8 @@ impl RuntimeGlueModelScene {
         glue_character: Option<ResidentGlueCharacterFrameInput<'_>>,
         glue_character_changed: bool,
     ) -> Result<(), RuntimeGlueModelError> {
-        let visible = glue.presentation().models();
-        if visible.is_empty() {
+        let mut visible = glue.presentation().visible_models();
+        let Some(presentation) = visible.next() else {
             // CharacterSelect briefly owns an empty directory before its
             // asynchronous enumeration arrives. Keep the last fully rendered
             // Glue generation underneath that transition instead of clearing
@@ -802,13 +802,12 @@ impl RuntimeGlueModelScene {
             }
             self.active = None;
             return Ok(());
-        }
-        if visible.len() != 1 {
+        };
+        if visible.next().is_some() {
             return Err(RuntimeGlueModelError::VisibleModelCount {
-                count: visible.len(),
+                count: 2 + visible.count(),
             });
         }
-        let presentation = &visible[0];
         let key = GlueModelKey::from_presentation(presentation);
         let light_variant = if glue_character
             .as_ref()

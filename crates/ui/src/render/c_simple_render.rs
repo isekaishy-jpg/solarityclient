@@ -149,9 +149,9 @@ impl UiRenderPlan {
         }
         self.mesh.refresh_object_opacities(|object_index| {
             presentation.object_opacity(object_index).or_else(|| {
-                current
-                    .region(object_index)
-                    .map(|region| region.effective_alpha() as f32)
+                current.region(object_index).map(|region| {
+                    region.effective_alpha() as f32 * f32::from(region.effectively_shown())
+                })
             })
         })?;
         for object_index in 0..current.region_count() {
@@ -190,9 +190,9 @@ impl UiRenderPlan {
             let opacity = presentation
                 .object_opacity(change.object_index)
                 .or_else(|| {
-                    geometry
-                        .region(change.object_index)
-                        .map(|region| region.effective_alpha() as f32)
+                    geometry.region(change.object_index).map(|region| {
+                        region.effective_alpha() as f32 * f32::from(region.effectively_shown())
+                    })
                 })
                 .unwrap_or(1.0);
             self.mesh.set_object_opacity(change.object_index, opacity)?;

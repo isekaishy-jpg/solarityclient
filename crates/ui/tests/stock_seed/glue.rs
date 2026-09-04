@@ -1381,7 +1381,7 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
     local screen, sequence = ...
     assert(event == "SET_GLUE_SCREEN" and arg1 == screen and arg2 == sequence and arg3 == nil)
     if screen == "login" and sequence == nil then return end
-    Visual:Hide()
+    if screen == "login" then Visual:Hide() else Visual:Show() end
     EVENT_ORDER = EVENT_ORDER .. self:GetName() .. ":" .. screen .. ":" .. sequence .. ";"
   </OnEvent>
 </Scripts></Frame></Ui>"#,
@@ -1399,11 +1399,24 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
         UiEventArgument::Integer(7),
     ])?;
     assert_eq!(manager.presentation().member_count(), 1);
+    let mesh_identity = manager.render_plan().mesh().geometry_identity();
+    let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
+    let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
 
     let dispatch = manager.dispatch_event("set_glue_screen", &payload)?;
 
     assert_eq!(dispatch.subscriber_count(), 2);
-    assert_eq!(manager.presentation().member_count(), 0);
+    assert_eq!(manager.presentation().member_count(), 1);
+    assert_eq!(
+        manager.presentation().members_in_draw_order()[0].opacity(),
+        0.0
+    );
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        mesh_identity
+    );
+    assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
+    assert_eq!(manager.render_plan().mesh().index_bytes(), index_bytes);
     let globals = manager.bundle().lua().globals();
     assert_eq!(
         globals.get::<String>("EVENT_ORDER")?,
@@ -1421,6 +1434,22 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
         UiEventPayload::new((0..10).map(UiEventArgument::Integer)),
         Err(UiEventError::PayloadTooLarge { .. })
     ));
+
+    let reveal_payload = UiEventPayload::new([
+        UiEventArgument::String("charselect".to_owned()),
+        UiEventArgument::Integer(8),
+    ])?;
+    manager.dispatch_event("SET_GLUE_SCREEN", &reveal_payload)?;
+    assert_eq!(
+        manager.presentation().members_in_draw_order()[0].opacity(),
+        1.0
+    );
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        mesh_identity
+    );
+    assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
+    assert_eq!(manager.render_plan().mesh().index_bytes(), index_bytes);
     Ok(())
 }
 

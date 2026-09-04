@@ -177,6 +177,12 @@ impl UiMeshPlan {
         &self.object_indices
     }
 
+    /// Reports whether an object already owns at least one retained draw slot.
+    #[must_use]
+    pub fn contains_object(&self, object_index: usize) -> bool {
+        self.object_batches.contains_key(&object_index)
+    }
+
     /// Returns the process-local identity preserved by clones of this generation.
     pub(crate) const fn identity(&self) -> u64 {
         self.identity
