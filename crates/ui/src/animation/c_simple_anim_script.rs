@@ -545,25 +545,36 @@ pub(crate) fn advance_animations(lua: &Lua, elapsed_seconds: f64) -> mlua::Resul
 }
 
 /// Returns the temporary alpha delta and translation for one owner.
-pub(crate) fn owner_animation_transform(
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct UiAnimationTransform {
+    pub(crate) alpha_delta: f64,
+    pub(crate) offset: (f64, f64),
+    pub(crate) active: bool,
+}
+
+/// Snapshots every owner's temporary animation contribution in one registry pass.
+///
+/// The object arena is substantially larger than the animation-group arena in
+/// stock GlueXML. Indexing contributions once avoids rescanning every Lua group
+/// for every object whenever a fade advances.
+pub(crate) fn owner_animation_transforms(
     lua: &Lua,
-    owner_index: usize,
-) -> mlua::Result<(f64, (f64, f64), bool)> {
+    owner_count: usize,
+) -> mlua::Result<Vec<UiAnimationTransform>> {
     let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
-    let mut alpha_delta = 0.0;
-    let mut translation = (0.0, 0.0);
-    let mut active = false;
+    let mut transforms = vec![UiAnimationTransform::default(); owner_count];
     for group in groups.sequence_values::<Table>() {
         let group = group?;
-        if group.raw_get::<usize>(owner_index_key())? != owner_index {
+        let owner_index = group.raw_get::<usize>(owner_index_key())?;
+        let Some(transform) = transforms.get_mut(owner_index) else {
             continue;
-        }
-        active |= group.raw_get::<bool>(playing_key())?;
-        alpha_delta += group.raw_get::<f64>(alpha_delta_key())?;
-        translation.0 += group.raw_get::<f64>(translation_x_key())?;
-        translation.1 += group.raw_get::<f64>(translation_y_key())?;
+        };
+        transform.active |= group.raw_get::<bool>(playing_key())?;
+        transform.alpha_delta += group.raw_get::<f64>(alpha_delta_key())?;
+        transform.offset.0 += group.raw_get::<f64>(translation_x_key())?;
+        transform.offset.1 += group.raw_get::<f64>(translation_y_key())?;
     }
-    Ok((alpha_delta, translation, active))
+    Ok(transforms)
 }
 
 fn update_group_contribution(group: &Table, timeline_time: f64) -> mlua::Result<()> {

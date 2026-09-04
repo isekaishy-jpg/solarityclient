@@ -704,10 +704,14 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the interval is invalid, a visible update
     /// handler fails, or its mutations cannot form valid presentation state.
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
-        let (_handler_count, changed) = self
+        let (_handler_count, changed, visual_only) = self
             .runtime
             .dispatch_updates(&self.bundle, elapsed_seconds)?;
-        if changed {
+        if visual_only {
+            self.runtime
+                .refresh_visual_transforms(&self.bundle, &mut self.live)?;
+            self.rebuild_visual_transform_state()?;
+        } else if changed {
             self.refresh_live_state()?;
         }
         Ok(changed)
@@ -1139,6 +1143,9 @@ impl GlueManager {
         if live.is_scroll_only_update_from(&self.live) {
             return self.refresh_scroll_state(live);
         }
+        if live.is_visual_transform_only_update_from(&self.live) {
+            return self.refresh_visual_transform_state(live);
+        }
         let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let html_changed = self.runtime.refresh_simple_html_layout(
             &self.bundle,
@@ -1208,6 +1215,31 @@ impl GlueManager {
         );
         self.scroll_frames = UiScrollFramePlan::from_live(&live);
         self.live = live;
+        Ok(())
+    }
+
+    /// Rebuilds only the plans whose values include animated alpha or translation.
+    fn refresh_visual_transform_state(
+        &mut self,
+        live: UiRuntimeObjectPlan,
+    ) -> Result<(), UiEventError> {
+        self.live = live;
+        self.rebuild_visual_transform_state()
+    }
+
+    fn rebuild_visual_transform_state(&mut self) -> Result<(), UiEventError> {
+        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let render_plan = UiRenderPlan::prepare_with_glyphs(
+            &presentation,
+            &self.glyphs,
+            &geometry,
+            &self.scroll_frames,
+            geometry.ui_extent(),
+        )?;
+        self.geometry = geometry;
+        self.presentation = presentation;
+        self.render_plan = render_plan;
         Ok(())
     }
 }

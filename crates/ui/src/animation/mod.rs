@@ -14,5 +14,5 @@ pub use c_simple_anim::{
 
 pub(crate) use c_simple_anim_script::{
     UiAnimationMetatables, advance_animations, create_animation_metatables,
-    owner_animation_transform, register_owner_animations,
+    owner_animation_transforms, register_owner_animations,
 };

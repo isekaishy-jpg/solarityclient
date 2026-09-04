@@ -24,7 +24,7 @@ use super::simple_script::{
     texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
     vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
-use crate::animation::owner_animation_transform;
+use crate::animation::owner_animation_transforms;
 use crate::{
     FontRasterization, HorizontalJustification, UiBlendMode, UiDrawLayer, UiFrameStrata,
     UiObjectKind, UiObjectRole, UiPoint, UiScriptError, VerticalJustification,
@@ -231,6 +231,35 @@ impl UiRuntimeObjectPlan {
         }
         changed
     }
+
+    /// Returns whether only direct alpha or temporary animation contributions changed.
+    ///
+    /// Alpha and translation still require fresh resolved geometry and draw
+    /// vertices, but they cannot alter text rasterization, object hierarchy,
+    /// input topology, texture residency, or authored scroll ownership.
+    pub(crate) fn is_visual_transform_only_update_from(&self, previous: &Self) -> bool {
+        if self.anchors != previous.anchors || self.objects.len() != previous.objects.len() {
+            return false;
+        }
+
+        let mut changed = false;
+        for (current, previous) in self.objects.iter().zip(&previous.objects) {
+            if current == previous {
+                continue;
+            }
+
+            let mut normalized = current.clone();
+            normalized.alpha = previous.alpha;
+            normalized.animation_alpha_delta = previous.animation_alpha_delta;
+            normalized.animation_offset = previous.animation_offset;
+            normalized.animation_active = previous.animation_active;
+            if normalized != *previous {
+                return false;
+            }
+            changed = true;
+        }
+        changed
+    }
 }
 
 pub(super) fn snapshot_runtime_objects(
@@ -242,6 +271,8 @@ pub(super) fn snapshot_runtime_objects(
         .map_err(|error| snapshot_error("object registry", error))?;
     let mut objects = Vec::with_capacity(object_count);
     let mut anchors = Vec::new();
+    let animation_transforms = owner_animation_transforms(lua, object_count)
+        .map_err(|error| snapshot_error("object animations", error))?;
 
     for lua_index in 1..=object_count {
         let table: Table = registry
@@ -342,9 +373,7 @@ pub(super) fn snapshot_runtime_objects(
             })
             .transpose()?
             .flatten();
-        let (animation_alpha_delta, animation_offset, animation_active) =
-            owner_animation_transform(lua, stored_index - 1)
-                .map_err(|error| snapshot_error(format!("object {lua_index} animation"), error))?;
+        let animation = animation_transforms[stored_index - 1];
         objects.push(UiRuntimeObject {
             name: table
                 .raw_get(name_key())
@@ -359,9 +388,9 @@ pub(super) fn snapshot_runtime_objects(
                 .map_err(|error| snapshot_error(format!("object {lua_index} visibility"), error))?,
             alpha: finite_region_number(&table, alpha_key(), lua_index, "alpha")?,
             scale: positive_region_number(&table, scale_key(), lua_index, "scale")?,
-            animation_alpha_delta,
-            animation_offset,
-            animation_active,
+            animation_alpha_delta: animation.alpha_delta,
+            animation_offset: animation.offset,
+            animation_active: animation.active,
             first_anchor,
             anchor_count: anchors.len() - first_anchor,
             texture,
@@ -509,6 +538,34 @@ pub(super) fn snapshot_runtime_objects(
     }
 
     Ok(UiRuntimeObjectPlan { objects, anchors })
+}
+
+/// Updates only values that can change through a classified visual transform tick.
+pub(super) fn refresh_runtime_visual_transforms(
+    lua: &Lua,
+    live: &mut UiRuntimeObjectPlan,
+) -> Result<(), UiScriptError> {
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    let animation_transforms = owner_animation_transforms(lua, live.objects.len())
+        .map_err(|error| snapshot_error("object animations", error))?;
+    for (object_index, (object, animation)) in live
+        .objects
+        .iter_mut()
+        .zip(animation_transforms)
+        .enumerate()
+    {
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        object.alpha = finite_region_number(&table, alpha_key(), lua_index, "alpha")?;
+        object.animation_alpha_delta = animation.alpha_delta;
+        object.animation_offset = animation.offset;
+        object.animation_active = animation.active;
+    }
+    Ok(())
 }
 
 pub(super) fn snapshot_slider(

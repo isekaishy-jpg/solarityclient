@@ -38,6 +38,7 @@ use super::templates::TEMPLATE_REGISTRY;
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
+const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
 const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
 const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
@@ -950,6 +951,7 @@ impl UiScriptRuntime {
         .and_then(|()| lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize))
         .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
+            .and_then(|()| lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, 0_u64))
             .map_err(|error| execution_error("registry", error))?;
         let metatables = lua
             .create_table()
@@ -1514,7 +1516,7 @@ impl UiScriptRuntime {
         &mut self,
         bundle: &UiBundle,
         elapsed_seconds: f64,
-    ) -> Result<(usize, bool), UiScriptError> {
+    ) -> Result<(usize, bool, bool), UiScriptError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
             return Err(UiScriptError::Plan {
                 message: format!("invalid Glue update interval {elapsed_seconds}"),
@@ -1523,6 +1525,8 @@ impl UiScriptRuntime {
         let lua = bundle.lua();
         let generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let visual_generation = visual_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -1571,11 +1575,25 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("Glue OnUpdate", error))?;
             dispatched += 1;
         }
-        let changed = animation_changed
-            || live_state_generation(lua)
-                .map_err(|error| execution_error("Glue OnUpdate", error))?
-                != generation;
-        Ok((dispatched, changed))
+        let current_generation =
+            live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let current_visual_generation = visual_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let live_mutations = current_generation.wrapping_sub(generation);
+        let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
+        let changed = animation_changed || live_mutations != 0;
+        let visual_only = changed && live_mutations == visual_mutations;
+        Ok((dispatched, changed, visual_only))
+    }
+
+    /// Refreshes direct alpha and temporary animation fields without copying
+    /// every unchanged Lua object property.
+    pub(crate) fn refresh_visual_transforms(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+    ) -> Result<(), UiScriptError> {
+        super::runtime_state::refresh_runtime_visual_transforms(bundle.lua(), live)
     }
 
     /// Delivers native movie completion to one live `MovieFrame`.
@@ -6604,7 +6622,7 @@ fn register_region_methods(
             let alpha = alpha.clamp(0.0, 1.0);
             if object.raw_get::<f64>(alpha_key())? != alpha {
                 object.raw_set(alpha_key(), alpha)?;
-                mark_live_state_changed(lua)?;
+                mark_visual_state_changed(lua)?;
             }
             Ok(())
         })?,
@@ -8467,6 +8485,16 @@ fn button_text_key() -> LightUserData {
 
 fn live_state_generation(lua: &Lua) -> mlua::Result<u64> {
     lua.named_registry_value(LIVE_STATE_GENERATION_REGISTRY)
+}
+
+fn visual_state_generation(lua: &Lua) -> mlua::Result<u64> {
+    lua.named_registry_value(VISUAL_STATE_GENERATION_REGISTRY)
+}
+
+fn mark_visual_state_changed(lua: &Lua) -> mlua::Result<()> {
+    let generation = visual_state_generation(lua)?;
+    lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))?;
+    mark_live_state_changed(lua)
 }
 
 pub(crate) fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
