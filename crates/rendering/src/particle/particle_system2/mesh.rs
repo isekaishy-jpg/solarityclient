@@ -19,7 +19,7 @@ const UNSUPPORTED_SHARED_FLAGS: u32 = 0x0100_0000;
 /// Sorts live cards back-to-front inside one compatible emitter batch.
 const SORT_PARTICLES: u32 = 0x0000_0002;
 
-/// Multiplies authored card size by the complete emitter/view scale.
+/// Multiplies authored card size by the complete emitter transform scale.
 const INHERIT_SCALE: u32 = 0x0000_0020;
 
 /// Limits a tail's history span to the particle's current age.
@@ -800,7 +800,7 @@ pub enum M2ParticleMeshPlanError {
     /// Placement/model opacity must remain finite before color packing.
     #[error("M2 particle alpha multiplier must be finite")]
     AlphaMultiplier,
-    /// Flag `0x20` requires a finite, nonnegative complete emitter/view scale.
+    /// Flag `0x20` requires a finite, nonnegative complete emitter scale.
     #[error("M2 particle inherited scale must be finite and nonnegative")]
     InheritedScale,
     /// Model-space particles require one finite current emitter transform.

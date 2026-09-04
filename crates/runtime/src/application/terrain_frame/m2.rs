@@ -1770,7 +1770,6 @@ impl M2Frame {
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         fog_color: glam::Vec3,
-        particle_view_scale: f32,
         animation_time_ms: f32,
         global_time_ms: f32,
         random: &mut CrtRand,
@@ -2226,8 +2225,10 @@ impl M2Frame {
                 } else {
                     Mat4::IDENTITY
                 };
-                let inherited_scale =
-                    emitter_transform.x_axis.truncate().length() * particle_view_scale;
+                // Build 12340 `0x0097AC20` derives flag-`0x20` card scale
+                // solely from the first axis of the animated emitter matrix.
+                // Projection aspect never enters this value.
+                let inherited_scale = emitter_transform.x_axis.truncate().length();
                 let first_vertex =
                     u32::try_from(self.particle_vertices.len()).map_err(|_source| {
                         solarity_rendering::VulkanError::M2ParticleDrawVertexRange

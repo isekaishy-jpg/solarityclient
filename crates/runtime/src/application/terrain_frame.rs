@@ -722,7 +722,6 @@ impl TerrainFrame {
             frustum,
             camera,
             light.fog_color(),
-            1.0,
             local_animation_time_ms,
             global_animation_time_ms,
             random,

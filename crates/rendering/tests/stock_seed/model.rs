@@ -2175,9 +2175,9 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Flag `0x20` inherits the complete emitter/view scale for stock card size.
+/// Flag `0x20` inherits the complete emitter transform scale for stock card size.
 #[test]
-fn m2_particle_mesh_inherits_emitter_view_scale() -> Result<(), Box<dyn Error>> {
+fn m2_particle_mesh_inherits_emitter_transform_scale() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
     let flags = u32::from_le_bytes(bytes[particle_offset + 4..particle_offset + 8].try_into()?)
