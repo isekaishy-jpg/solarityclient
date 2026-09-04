@@ -1117,7 +1117,7 @@ impl ClientServices {
                     self.glue.sort_realm_directory(sort);
                     self.glue
                         .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
                 UiGlueNetworkAction::RealmListDialogCancelled { from_login_screen } => {
                     if from_login_screen {
@@ -1410,7 +1410,7 @@ impl ClientServices {
                     "SET_GLUE_SCREEN",
                     &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
                 )?;
-                self.login_ui = None;
+                self.glue_ui_dirty = true;
             }
             Ok(RuntimeWorldPoll::CharacterScreenReady) => {}
             Ok(RuntimeWorldPoll::CharacterDirectoryReady)
@@ -1430,7 +1430,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
                 self.queue_loading_screen_prewarms();
             }
@@ -1459,7 +1459,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = None;
+                self.glue_ui_dirty = true;
             }
             Ok(RuntimeWorldPoll::CharacterDeletionFinished(result)) => {
                 if result.is_success() {
@@ -1483,7 +1483,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = None;
+                self.glue_ui_dirty = true;
             }
             Ok(RuntimeWorldPoll::CharacterRenameFinished(result)) => {
                 if result.is_success() {
@@ -1505,7 +1505,7 @@ impl ClientServices {
                         ])?,
                     )?;
                 }
-                self.login_ui = None;
+                self.glue_ui_dirty = true;
             }
             Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
@@ -1534,7 +1534,7 @@ impl ClientServices {
                         "CHARACTER_LIST_UPDATE",
                         &UiEventPayload::new([UiEventArgument::Integer(count)])?,
                     )?;
-                    self.login_ui = None;
+                    self.glue_ui_dirty = true;
                 }
                 // Stock `0x006B2070` tears the optimistic world load back to
                 // character selection, then `0x004DAB40` state 11 presents
@@ -1550,7 +1550,7 @@ impl ClientServices {
                         UiEventArgument::String(message),
                     ])?,
                 )?;
-                self.login_ui = None;
+                self.glue_ui_dirty = true;
             }
             Err(error) => self.publish_world_failure(error),
         }
@@ -2156,7 +2156,7 @@ impl ClientServices {
         );
         self.glue.set_realm_directory(realms);
         self.glue.dispatch_event(event, &payload)?;
-        self.login_ui = None;
+        self.glue_ui_dirty = true;
         Ok(())
     }
 
@@ -2185,7 +2185,7 @@ impl ClientServices {
             self.glue
                 .dispatch_event("OPEN_REALM_LIST", &UiEventPayload::empty())?;
         }
-        self.login_ui = None;
+        self.glue_ui_dirty = true;
         Ok(())
     }
 }
