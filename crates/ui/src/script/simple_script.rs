@@ -349,8 +349,10 @@ pub(crate) struct UiUpdateDispatch {
     pub(crate) changed: bool,
     pub(crate) visual_only: bool,
     pub(crate) targeted_visual: bool,
+    pub(crate) targeted_objects: bool,
     pub(crate) animation_updates: Vec<(usize, crate::animation::UiAnimationTransform)>,
     pub(crate) visual_objects: Vec<usize>,
+    pub(crate) dirty_objects: Vec<(usize, u32)>,
 }
 
 /// Mutation classification for one synchronous stock event dispatch.
@@ -1681,10 +1683,16 @@ impl UiScriptRuntime {
         }
         let lua = bundle.lua();
         clear_visual_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        clear_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let fallback_generation = fallback_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let visual_generation = visual_state_generation(lua)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let object_generation = object_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let object_count = self.registered_object_count();
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -1735,14 +1743,25 @@ impl UiScriptRuntime {
         }
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let current_fallback_generation = fallback_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let current_visual_generation = visual_state_generation(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let current_object_generation = object_state_generation(lua)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let mut visual_objects = take_visual_dirty_objects(lua)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let live_mutations = current_generation.wrapping_sub(generation);
+        let fallback_mutations = current_fallback_generation.wrapping_sub(fallback_generation);
         let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
+        let object_mutations = current_object_generation.wrapping_sub(object_generation);
+        let dirty_objects =
+            take_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let changed = !animation_updates.is_empty() || live_mutations != 0;
-        let visual_only = changed && live_mutations == visual_mutations;
+        let visual_only = changed
+            && fallback_mutations == 0
+            && object_mutations == 0
+            && live_mutations == visual_mutations;
         visual_objects.extend(
             animation_updates
                 .iter()
@@ -1751,13 +1770,19 @@ impl UiScriptRuntime {
         visual_objects.sort_unstable();
         visual_objects.dedup();
         let targeted_visual = visual_only && !visual_objects.is_empty();
+        let targeted_objects = changed
+            && fallback_mutations == 0
+            && self.registered_object_count() == object_count
+            && !dirty_objects.is_empty();
         Ok(UiUpdateDispatch {
             handler_count: dispatched,
             changed,
             visual_only,
             targeted_visual,
+            targeted_objects,
             animation_updates,
             visual_objects,
+            dirty_objects,
         })
     }
 

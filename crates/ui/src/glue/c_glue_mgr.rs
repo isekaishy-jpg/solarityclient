@@ -770,7 +770,11 @@ impl GlueManager {
             .runtime
             .dispatch_updates(&self.bundle, elapsed_seconds)?;
         let _handler_count = update.handler_count;
-        if update.targeted_visual && self.incremental_visual_updates {
+        if update.targeted_objects {
+            self.runtime
+                .apply_animation_transforms(&mut self.live, &update.animation_updates);
+            self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
+        } else if update.targeted_visual && self.incremental_visual_updates {
             self.runtime
                 .apply_animation_transforms(&mut self.live, &update.animation_updates);
             self.refresh_targeted_visual_objects(&update.visual_objects)?;

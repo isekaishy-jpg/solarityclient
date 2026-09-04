@@ -1779,8 +1779,13 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .get::<u32>("DYNAMIC_UPDATE_CALLS")?,
         1
     );
+    let snapshots_after_dynamic_update = manager.runtime_snapshot_count();
     manager.bundle().lua().globals().set("DISABLE_NEXT", true)?;
     assert!(manager.update(0.0)?);
+    assert_eq!(
+        manager.runtime_snapshot_count(),
+        snapshots_after_dynamic_update
+    );
     assert_eq!(
         manager
             .bundle()
@@ -1818,8 +1823,10 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
     assert!(!presented.contains(&normal));
     assert!(presented.contains(&disabled));
 
+    let snapshots_before_layout = manager.runtime_snapshot_count();
     manager.bundle().lua().globals().set("LAYOUT_NEXT", true)?;
     assert!(manager.update(0.0)?);
+    assert_eq!(manager.runtime_snapshot_count(), snapshots_before_layout);
     assert_close(
         manager
             .geometry()
