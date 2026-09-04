@@ -74,6 +74,16 @@ impl UiAddonLoadState {
             .map(|entry| entry.definition.clone())
     }
 
+    /// Returns one definition selected by its case-insensitive folder name.
+    #[must_use]
+    pub(crate) fn definition_by_name(&self, name: &str) -> Option<AddonDefinition> {
+        self.entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.definition.name().eq_ignore_ascii_case(name))
+            .map(|entry| entry.definition.clone())
+    }
+
     /// Updates loader progress for an existing catalog entry.
     ///
     /// Returns `false` when no AddOn with that folder identity was discovered.

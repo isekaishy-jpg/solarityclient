@@ -1311,6 +1311,71 @@ fn register_addon_globals(
             ))
         })?,
     )?;
+    let addon_dependencies = addons.clone();
+    globals.raw_set(
+        "GetAddOnDependencies",
+        lua.create_function(move |lua, identifier: Value| {
+            // Script_GetAddOnDependencies at 0x005179B0 accepts the same
+            // one-based index-or-name identity as stock's other AddOn APIs
+            // and returns each required dependency as a separate Lua result.
+            let definition = match identifier {
+                Value::Integer(index) => {
+                    let index = usize::try_from(index).ok();
+                    let Some(index) = index.filter(|index| *index > 0) else {
+                        return Err(mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addon_dependencies.addon_count()
+                        )));
+                    };
+                    addon_dependencies
+                        .definition_by_index(index)
+                        .ok_or_else(|| {
+                            mlua::Error::runtime(format!(
+                                "AddOn index must be in the range of 1 to {}",
+                                addon_dependencies.addon_count()
+                            ))
+                        })?
+                }
+                Value::Number(index) => {
+                    let rounded = index.round();
+                    let Some(index) =
+                        (rounded.is_finite() && rounded >= 1.0).then_some(rounded as usize)
+                    else {
+                        return Err(mlua::Error::runtime(format!(
+                            "AddOn index must be in the range of 1 to {}",
+                            addon_dependencies.addon_count()
+                        )));
+                    };
+                    addon_dependencies
+                        .definition_by_index(index)
+                        .ok_or_else(|| {
+                            mlua::Error::runtime(format!(
+                                "AddOn index must be in the range of 1 to {}",
+                                addon_dependencies.addon_count()
+                            ))
+                        })?
+                }
+                Value::String(name) => {
+                    let Some(definition) =
+                        addon_dependencies.definition_by_name(name.to_str()?.as_ref())
+                    else {
+                        return Ok(MultiValue::new());
+                    };
+                    definition
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "Usage: GetAddOnDependencies(index or \"name\")",
+                    ));
+                }
+            };
+            definition
+                .dependencies()
+                .iter()
+                .map(|dependency| lua.create_string(dependency).map(Value::String))
+                .collect::<mlua::Result<MultiValue>>()
+        })?,
+    )?;
     globals.raw_set(
         "LoadAddOn",
         lua.create_function(move |_, name: String| {

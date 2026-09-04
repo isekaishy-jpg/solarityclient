@@ -110,6 +110,22 @@ Source/Example.lua
         info[6].as_string().map(|value| value.to_string_lossy()),
         Some("SECURE".to_owned())
     );
+    let dependencies = globals
+        .get::<mlua::Function>("GetAddOnDependencies")?
+        .call::<mlua::MultiValue>("blizzard_example")?;
+    assert_eq!(dependencies.len(), 2);
+    assert_eq!(
+        dependencies[0]
+            .as_string()
+            .map(|value| value.to_string_lossy()),
+        Some("Blizzard_Dependency".to_owned())
+    );
+    assert_eq!(
+        dependencies[1]
+            .as_string()
+            .map(|value| value.to_string_lossy()),
+        Some("Blizzard_Shared".to_owned())
+    );
     Ok(())
 }
 
