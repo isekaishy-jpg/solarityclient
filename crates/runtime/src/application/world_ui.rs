@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use super::ApplicationError;
 use super::character_directory::RuntimeCharacterMetadata;
-use super::login_ui::RuntimeUiFrame;
+use super::login_ui::{RuntimeUiFrame, RuntimeUiResidency};
 use crate::time::RealmClock;
 
 /// A world UI could not be formed from authoritative entry state.
@@ -33,6 +33,7 @@ pub(super) struct RuntimeWorldUi {
     manager: FrameManager,
     frame: RuntimeUiFrame,
     texture_cache: BlpTextureCache,
+    texture_residency: RuntimeUiResidency,
     world: solarity_ui::UiWorldState,
     zone: UiZoneState,
     action_bar: UiActionBarState,
@@ -101,12 +102,19 @@ impl RuntimeWorldUi {
             }
         }
         let mut texture_cache = BlpTextureCache::new();
-        let frame = RuntimeUiFrame::prepare_frame(renderer, &manager, &mut texture_cache)?;
+        let mut texture_residency = RuntimeUiResidency::new();
+        let frame = RuntimeUiFrame::prepare_frame(
+            renderer,
+            &manager,
+            &mut texture_cache,
+            &mut texture_residency,
+        )?;
         Ok((
             Self {
                 manager,
                 frame,
                 texture_cache,
+                texture_residency,
                 world,
                 zone,
                 action_bar,
@@ -204,8 +212,12 @@ impl RuntimeWorldUi {
         renderer: &mut VulkanRenderer,
     ) -> Result<(), ApplicationError> {
         if self.dirty {
-            self.frame
-                .refresh_frame(renderer, &self.manager, &mut self.texture_cache)?;
+            self.frame.refresh_frame(
+                renderer,
+                &self.manager,
+                &mut self.texture_cache,
+                &mut self.texture_residency,
+            )?;
             self.dirty = false;
         }
         Ok(())

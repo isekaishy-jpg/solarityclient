@@ -69,6 +69,11 @@ impl BlpTextureCache {
         self.textures.len() - before
     }
 
+    /// Iterates canonical paths and immutable sources retained by this owner.
+    pub fn entries(&self) -> impl Iterator<Item = (&AssetPath, &Arc<BlpTextureSource>)> {
+        self.textures.iter()
+    }
+
     /// Releases entries held only by the cache and returns the removal count.
     ///
     /// Texture users that still hold an [`Arc`] survive collection. No guessed

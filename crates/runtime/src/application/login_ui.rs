@@ -17,8 +17,44 @@ use crate::application::ui_frame::PreparedUiFrame;
 /// Prepared built-in UI generation retained across FIFO-paced presentation frames.
 pub(super) struct RuntimeUiFrame {
     frame: PreparedUiFrame,
+}
+
+/// Sampled images retained across every pre-world UI mesh generation.
+#[derive(Default)]
+pub(super) struct RuntimeUiResidency {
     textures: HashMap<AssetPath, BlpTextureHandle>,
     glyph_textures: HashMap<u64, UiGlyphTextureHandle>,
+}
+
+impl RuntimeUiResidency {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Uploads decoded UI sources that are not already renderer-resident.
+    pub(super) fn prewarm(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        cache: &BlpTextureCache,
+    ) -> Result<usize, ApplicationError> {
+        let mut paths = Vec::new();
+        let mut uploads = Vec::new();
+        for (path, source) in cache.entries() {
+            if self.textures.contains_key(path) {
+                continue;
+            }
+            paths.push(path.clone());
+            uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear));
+        }
+        let upload_count = uploads.len();
+        for (path, handle) in paths
+            .into_iter()
+            .zip(renderer.upload_blp_textures(&uploads)?)
+        {
+            self.textures.insert(path, handle);
+        }
+        Ok(upload_count)
+    }
 }
 
 impl RuntimeUiFrame {
@@ -27,8 +63,9 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         glue: &GlueManager,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_source(renderer, glue, cache)
+        Self::prepare_source(renderer, glue, cache, residency)
     }
 
     /// Refreshes one live Glue generation in place. Retained scroll state only
@@ -39,8 +76,9 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         glue: &GlueManager,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<(), ApplicationError> {
-        self.refresh_source(renderer, glue, cache)
+        self.refresh_source(renderer, glue, cache, residency)
     }
 
     /// Refreshes one live FrameXML generation through the same retained mesh
@@ -50,8 +88,9 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         frame: &FrameManager,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<(), ApplicationError> {
-        self.refresh_source(renderer, frame, cache)
+        self.refresh_source(renderer, frame, cache, residency)
     }
 
     fn refresh_source(
@@ -59,6 +98,7 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<(), ApplicationError> {
         if self
             .frame
@@ -71,8 +111,8 @@ impl RuntimeUiFrame {
             source,
             cache,
             Some(self.frame.mesh()),
-            &mut self.textures,
-            &mut self.glyph_textures,
+            &mut residency.textures,
+            &mut residency.glyph_textures,
         )?;
         self.frame = frame;
         Ok(())
@@ -83,8 +123,9 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         frame: &FrameManager,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_source(renderer, frame, cache)
+        Self::prepare_source(renderer, frame, cache, residency)
     }
 
     /// Joins one built-in UI owner to renderer-resident mesh and textures.
@@ -92,22 +133,17 @@ impl RuntimeUiFrame {
         renderer: &mut VulkanRenderer,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<Self, ApplicationError> {
-        let mut textures = HashMap::new();
-        let mut glyph_textures = HashMap::new();
         let frame = Self::prepare_source_with_resources(
             renderer,
             source,
             cache,
             None,
-            &mut textures,
-            &mut glyph_textures,
+            &mut residency.textures,
+            &mut residency.glyph_textures,
         )?;
-        Ok(Self {
-            frame,
-            textures,
-            glyph_textures,
-        })
+        Ok(Self { frame })
     }
 
     /// Prepares material resources while retaining process-long sampled images.

@@ -47,7 +47,7 @@ use crate::application::login_coordinator::{
     RuntimeLoginState,
 };
 use crate::application::login_model::{RuntimeGlueModelError, RuntimeGlueModelScene};
-use crate::application::login_ui::RuntimeUiFrame;
+use crate::application::login_ui::{RuntimeUiFrame, RuntimeUiResidency};
 use crate::application::performance_overlay::{RuntimeFpsOverlay, overlay_extent};
 use crate::application::player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
@@ -98,6 +98,8 @@ pub(crate) struct ClientServices {
     /// after the selected screen has crossed this presentation boundary.
     presented_glue_screen: Option<String>,
     ui_textures: BlpTextureCache,
+    ui_texture_residency: RuntimeUiResidency,
+    glue_gpu_texture_prewarm_pending: bool,
     pending_glue_texture_prewarm: Option<ConfiguredGlueTexturePrewarmJob>,
     world_ui: Option<RuntimeWorldUi>,
     glue_model: RuntimeGlueModelScene,
@@ -363,10 +365,16 @@ impl ClientServices {
             }
         };
         let mut ui_textures = BlpTextureCache::new();
+        let mut ui_texture_residency = RuntimeUiResidency::new();
         let login_ui = if glue.media_intent().movie().is_some() {
             None
         } else {
-            let frame = RuntimeUiFrame::prepare_glue(&mut renderer, &glue, &mut ui_textures)?;
+            let frame = RuntimeUiFrame::prepare_glue(
+                &mut renderer,
+                &glue,
+                &mut ui_textures,
+                &mut ui_texture_residency,
+            )?;
             let overlay = if glue.cvar_boolean("showfps") {
                 fps.as_ref().map_or(&[][..], RuntimeFpsOverlay::draws)
             } else {
@@ -401,6 +409,8 @@ impl ClientServices {
                 glue_ui_dirty: false,
                 presented_glue_screen,
                 ui_textures,
+                ui_texture_residency,
+                glue_gpu_texture_prewarm_pending: false,
                 pending_glue_texture_prewarm,
                 world_ui: None,
                 glue_model,
@@ -777,6 +787,7 @@ impl ClientServices {
             return Ok(());
         }
         self.poll_glue_texture_prewarm();
+        self.service_glue_gpu_texture_prewarm()?;
         let developer_elapsed = update_time
             .duration_since(self.glue_update_clock)
             .as_secs_f32();
@@ -815,7 +826,12 @@ impl ClientServices {
             if self.glue_ui_dirty
                 && let Some(frame) = self.login_ui.as_mut()
             {
-                frame.refresh_glue(&mut self.renderer, &self.glue, &mut self.ui_textures)?;
+                frame.refresh_glue(
+                    &mut self.renderer,
+                    &self.glue,
+                    &mut self.ui_textures,
+                    &mut self.ui_texture_residency,
+                )?;
                 self.glue_ui_dirty = false;
             }
             self.sync_platform_text_input();
@@ -1018,6 +1034,7 @@ impl ClientServices {
         match pending.join() {
             Ok(Ok(prepared)) => {
                 let admitted = self.ui_textures.merge(prepared.cache);
+                self.glue_gpu_texture_prewarm_pending |= admitted != 0;
                 tracing::info!(
                     admitted_texture_count = admitted,
                     resident_texture_count = self.ui_textures.len(),
@@ -1042,6 +1059,24 @@ impl ClientServices {
         }
     }
 
+    /// Publishes worker-decoded Glue images only while an authored cover is visible.
+    fn service_glue_gpu_texture_prewarm(&mut self) -> Result<(), ApplicationError> {
+        let covered =
+            self.authentication_prewarm_active || self.glue.media_intent().movie().is_some();
+        if !covered || !self.glue_gpu_texture_prewarm_pending {
+            return Ok(());
+        }
+        let uploaded = self
+            .ui_texture_residency
+            .prewarm(&mut self.renderer, &self.ui_textures)?;
+        self.glue_gpu_texture_prewarm_pending = false;
+        tracing::info!(
+            uploaded_texture_count = uploaded,
+            "published configured Glue textures behind transition cover"
+        );
+        Ok(())
+    }
+
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
         self.synchronize_component_texture_level();
         if self.login_ui.is_none() {
@@ -1049,6 +1084,7 @@ impl ClientServices {
                 &mut self.renderer,
                 &self.glue,
                 &mut self.ui_textures,
+                &mut self.ui_texture_residency,
             )?);
             self.glue_ui_dirty = false;
         }
