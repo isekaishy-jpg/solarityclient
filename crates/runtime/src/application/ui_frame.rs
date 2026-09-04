@@ -166,20 +166,38 @@ impl PreparedUiFrame {
             }
             .into());
         }
+        let draw_topology_unchanged = self
+            .materials
+            .iter()
+            .zip(plan.batches())
+            .all(|(retained, candidate)| same_ui_draw_topology(retained, candidate));
         let mesh = self.mesh;
         if self.mesh_identity != plan.geometry_identity() {
             renderer.replace_ui_mesh(mesh, plan)?;
             self.mesh_identity = plan.geometry_identity();
         }
-        for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
-            *draw = renderer.prepare_ui_draw(
-                mesh,
-                draw.pipeline(),
-                draw.texture_set(),
-                plan,
-                *batch_index,
-            )?;
+        if draw_topology_unchanged {
+            // Color/position byte patches keep every indexed range and
+            // material binding stable. Revalidating and reconstructing every
+            // draw in a several-thousand-packet Glue frame made one hover
+            // mutation proportional to the whole UI catalog.
+            for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
+                let batch = &plan.batches()[*batch_index];
+                draw.set_transform_state(batch.translation(), batch.opacity(), batch.clip());
+            }
+        } else {
+            for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
+                *draw = renderer.prepare_ui_draw(
+                    mesh,
+                    draw.pipeline(),
+                    draw.texture_set(),
+                    plan,
+                    *batch_index,
+                )?;
+            }
         }
+        self.materials.clear();
+        self.materials.extend_from_slice(plan.batches());
         self.refresh_visible_draws();
         self.logical_extent = plan.logical_extent();
         Ok(())
@@ -259,4 +277,10 @@ fn same_ui_material(left: &UiRenderBatch, right: &UiRenderBatch) -> bool {
         && left.vertical_address() == right.vertical_address()
         && left.residency() == right.residency()
         && left.desaturated() == right.desaturated()
+}
+
+fn same_ui_draw_topology(left: &UiRenderBatch, right: &UiRenderBatch) -> bool {
+    left.first_index() == right.first_index()
+        && left.index_count() == right.index_count()
+        && left.first_quad() == right.first_quad()
 }
