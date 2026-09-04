@@ -281,7 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         println!(
-            "particle={particle_index} id={} emitter_type={} particle_type={} head_or_tail={} blend={} flags={:#010X} priority={} position={:?} animated_position={animated_position:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} wind={:?} drag={} spin={}+/-{} textures={textures:?}",
+            "particle={particle_index} id={} emitter_type={} particle_type={} head_or_tail={} blend={} flags={:#010X} priority={} position={:?} animated_position={animated_position:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} scale={:?}/{:?} twinkle={}/{:?} wind={:?} drag={} spin={}+/-{} textures={textures:?}",
             particle.id(),
             particle.emitter_type(),
             particle.particle_type(),
@@ -298,6 +298,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             particle_pose.emission_rate(),
             particle_pose.emission_area_length(),
             particle_pose.emission_area_width(),
+            particle.scale().timestamps(),
+            particle.scale().values(),
+            particle.twinkle_percent(),
+            particle.twinkle_scale(),
             particle.wind_vector(),
             particle.drag(),
             particle.spin_speed(),
