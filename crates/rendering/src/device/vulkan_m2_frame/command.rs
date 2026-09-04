@@ -31,6 +31,13 @@ pub(super) struct RecordContext<'a> {
     pub(super) draws: &'a [M2PreparedDraw],
 }
 
+#[derive(Default)]
+struct M2CommandBindings {
+    pipeline: vk::Pipeline,
+    vertex_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+}
+
 /// Records attachment transitions, state binding, and every indexed draw.
 pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError> {
     let begin_info =
@@ -107,8 +114,9 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
+    let mut bindings = M2CommandBindings::default();
     for (draw_index, draw) in context.draws.iter().copied().enumerate() {
-        record_draw(&context, draw_index, draw)?;
+        record_draw(&context, draw_index, draw, &mut bindings)?;
     }
     // SAFETY: A matching dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
@@ -174,6 +182,7 @@ fn record_draw(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: M2PreparedDraw,
+    bindings: &mut M2CommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .pipelines
@@ -201,20 +210,32 @@ fn record_draw(
     // SAFETY: Prepared draw validation joins compatible renderer-local handles;
     // the descriptor sets match the common layout and dynamic offset alignment.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex_buffer], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            index_buffer,
-            0,
-            vk::IndexType::UINT16,
-        );
+        if bindings.pipeline != pipeline {
+            context.device.cmd_bind_pipeline(
+                context.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline,
+            );
+            bindings.pipeline = pipeline;
+        }
+        if bindings.vertex_buffer != vertex_buffer {
+            context.device.cmd_bind_vertex_buffers(
+                context.command_buffer,
+                0,
+                &[vertex_buffer],
+                &[0],
+            );
+            bindings.vertex_buffer = vertex_buffer;
+        }
+        if bindings.index_buffer != index_buffer {
+            context.device.cmd_bind_index_buffer(
+                context.command_buffer,
+                index_buffer,
+                0,
+                vk::IndexType::UINT16,
+            );
+            bindings.index_buffer = index_buffer;
+        }
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
