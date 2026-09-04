@@ -518,6 +518,9 @@ fn character_texture_plan_preserves_stock_regions_and_layer_order() -> Result<()
     assert_eq!(atlas_info.mip_count(), 10);
     assert_eq!(atlas_info.upload_byte_count(), 1_398_100);
     assert_eq!(renderer.character_atlas_upload_submission_count(), 1);
+    let repeated_handle = renderer.upload_character_atlas_texture(&atlas)?;
+    assert_eq!(repeated_handle, atlas_handle);
+    assert_eq!(renderer.character_atlas_upload_submission_count(), 1);
     Ok(())
 }
 

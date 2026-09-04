@@ -1,5 +1,6 @@
 //! Placement-local character atlas upload and image lifetime ownership.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ash::vk;
@@ -21,6 +22,7 @@ struct GpuCharacterAtlasTexture {
 /// Owns placement-specific body atlases without assigning archive identities.
 pub(in crate::device) struct CharacterAtlasTextureRegistry {
     registry_id: u64,
+    handles: HashMap<CharacterAtlasTexture, CharacterAtlasTextureHandle>,
     resources: Vec<GpuCharacterAtlasTexture>,
     upload_submission_count: u64,
 }
@@ -32,6 +34,7 @@ impl Default for CharacterAtlasTextureRegistry {
 
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
+            handles: HashMap::new(),
             resources: Vec::new(),
             upload_submission_count: 0,
         }
@@ -45,6 +48,9 @@ impl CharacterAtlasTextureRegistry {
         context: TextureUploadContext<'_>,
         atlas: &CharacterAtlasTexture,
     ) -> Result<CharacterAtlasTextureHandle, VulkanError> {
+        if let Some(handle) = self.handles.get(atlas) {
+            return Ok(*handle);
+        }
         let (mips, byte_count) = validate_mips(atlas)?;
         let slot = u32::try_from(self.resources.len())
             .map_err(|_source| VulkanError::CharacterAtlasTextureCapacity)?;
@@ -67,6 +73,7 @@ impl CharacterAtlasTextureRegistry {
                 byte_count,
             ),
         });
+        self.handles.insert(atlas.clone(), handle);
         self.upload_submission_count = self.upload_submission_count.saturating_add(1);
         Ok(handle)
     }
@@ -108,6 +115,7 @@ impl CharacterAtlasTextureRegistry {
         device: &ash::Device,
         allocator: &vk_mem::Allocator,
     ) {
+        self.handles.clear();
         for mut resource in self.resources.drain(..).rev() {
             resource.image.destroy(device, allocator);
         }

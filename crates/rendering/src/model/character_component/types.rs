@@ -162,7 +162,7 @@ impl CharacterAtlasRect {
 }
 
 /// One fully composed RGBA8 mip of the dynamic stock body texture.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CharacterAtlasMip {
     level: usize,
     width: u32,
@@ -204,7 +204,7 @@ impl CharacterAtlasMip {
 }
 
 /// Complete CPU-side mip chain for the dynamic stock character body texture.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CharacterAtlasTexture {
     mips: Vec<CharacterAtlasMip>,
 }
