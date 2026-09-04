@@ -45,6 +45,25 @@ without a host wait. Character screen identity is also independent of worker
 readiness, so an obsolete CharacterSelect body or failed worker generation
 cannot become the authority for CharacterCreate.
 
+Screen changes now use two reusable UI frame slots and publish the replacement
+UI, backdrop, character, attachments, and effects as one transaction. Input is
+held on the last presented screen while that transaction is pending. Worker
+queue saturation is normal backpressure: a character with more equipment
+sources than the finite queue retains its admitted prefix and retries the
+remainder instead of turning `AtCapacity` into a failed or stuck transition.
+Precompiled character driver pipelines are admitted one at a time while the
+previous complete scene remains visible; this replaces the measured 22-27 ms
+first-use pipeline burst with bounded individual frames.
+
+A recoverable Lua callback is also contained inside the UI frame boundary.
+The failing `OnUpdate` member is retired and reported once through the bounded
+developer-console mailbox, while healthy callbacks, retained mutation
+publication, and swapchain presentation continue. Previously the outer event
+loop caught the same error after `GlueManager::update` aborted, skipped the
+present, and retried it roughly every 50 ms. That produced a false 20 FPS
+"renderer" failure and stale/disappearing UI even though no rendering work was
+the cause.
+
 ## Permanent ownership model
 
 The build-12340 executable and archived GlueXML/FrameXML remain the behavioral
@@ -90,6 +109,14 @@ This is compatible with the corresponding SolCL design: typed dirty
 dependencies, cached compositor order, retained render chunks, scoped task
 mailboxes, and explicit scheduler policies. Solarity will migrate by replacing
 measured monolithic boundaries, not by adding a second UI tree beside them.
+
+SolCL's split frame/background compute lanes remain the correct direction for
+transition latency, but they do not explain or fix idle Glue throughput. The
+current idle UI cost is already far below the 0.83 ms stretch budget, whereas
+native 1440p time is dominated by graphics queue submission/presentation and
+scales with pixel count. Worker-lane changes therefore follow correctness and
+backpressure fixes; they must not be presented as a route to 1,200 FPS at a
+GPU-bound surface.
 
 ## Migration order
 
