@@ -1487,6 +1487,29 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         geometry: &crate::UiRegionGeometryPlan,
     ) -> Result<(), UiScriptError> {
+        self.publish_resolved_geometry_changes(bundle, None, geometry)
+    }
+
+    /// Publishes only geometry slots whose native result changed.
+    ///
+    /// Typed event mutations preserve arena identity. Comparing the previous
+    /// dense plan therefore avoids seven Lua table writes for every unrelated
+    /// Glue object while keeping subsequent region queries authoritative.
+    pub(crate) fn publish_changed_resolved_geometry(
+        &mut self,
+        bundle: &UiBundle,
+        previous: &crate::UiRegionGeometryPlan,
+        geometry: &crate::UiRegionGeometryPlan,
+    ) -> Result<(), UiScriptError> {
+        self.publish_resolved_geometry_changes(bundle, Some(previous), geometry)
+    }
+
+    fn publish_resolved_geometry_changes(
+        &mut self,
+        bundle: &UiBundle,
+        previous: Option<&crate::UiRegionGeometryPlan>,
+        geometry: &crate::UiRegionGeometryPlan,
+    ) -> Result<(), UiScriptError> {
         if geometry.region_count() != self.registered_object_count() {
             return Err(UiScriptError::Plan {
                 message: format!(
@@ -1494,6 +1517,11 @@ impl UiScriptRuntime {
                     geometry.region_count(),
                     self.registered_object_count()
                 ),
+            });
+        }
+        if previous.is_some_and(|previous| previous.region_count() != geometry.region_count()) {
+            return Err(UiScriptError::Plan {
+                message: "previous and current resolved geometry arenas differ".to_owned(),
             });
         }
         let lua = bundle.lua();
@@ -1506,6 +1534,12 @@ impl UiScriptRuntime {
                 .ok_or_else(|| UiScriptError::Plan {
                     message: format!("resolved geometry object {object_index} is unavailable"),
                 })?;
+            if previous
+                .and_then(|previous| previous.region(object_index))
+                .is_some_and(|previous| previous == region)
+            {
+                continue;
+            }
             let object: Table = objects
                 .raw_get(object_index + 1)
                 .map_err(|error| execution_error("publish resolved geometry", error))?;

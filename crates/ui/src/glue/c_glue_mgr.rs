@@ -877,7 +877,7 @@ impl GlueManager {
         let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
         let geometry_elapsed = started.elapsed();
         self.runtime
-            .publish_resolved_geometry(&self.bundle, &geometry)?;
+            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
         synchronize_resolved_dimensions(&mut self.live, &geometry);
         let published_elapsed = started.elapsed();
         let scroll_frames = UiScrollFramePlan::from_live(&self.live);
@@ -922,15 +922,12 @@ impl GlueManager {
             geometry.ui_extent(),
         )?;
         let render_elapsed = started.elapsed();
-        let (objects, child_indices) = build_live_hierarchy(&self.live)?;
         let pointer = UiPointerPlan::from_live(&self.live);
         let plans_elapsed = started.elapsed();
         self.geometry = geometry;
         self.scroll_frames = scroll_frames;
         self.presentation = presentation;
         self.render_plan = render_plan;
-        self.objects = objects;
-        self.child_indices = child_indices;
         self.pointer = pointer;
         if timings {
             eprintln!(
@@ -1824,6 +1821,8 @@ impl GlueManager {
     /// pure hide/show transition and patches only visible draw state.
     fn refresh_visibility_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
         let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        self.runtime
+            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
         self.presentation
             .refresh_visibility_opacities(&live, &geometry);
         if !self.render_plan.refresh_visual_states(
