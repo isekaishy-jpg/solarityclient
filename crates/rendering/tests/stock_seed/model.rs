@@ -1,5 +1,8 @@
 //! External stock-compatibility tests for character-model render preparation.
 
+#[path = "model/mesh_transfer.rs"]
+mod mesh_transfer;
+
 use std::error::Error;
 use std::io::Cursor;
 

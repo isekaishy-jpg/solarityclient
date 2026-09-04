@@ -9,7 +9,7 @@ use crate::device::VulkanError;
 use crate::model::M2MeshPlan;
 
 use super::types::{M2MeshHandle, M2MeshResourceInfo};
-use super::upload::{GpuM2Mesh, MeshUploadContext, upload_mesh};
+use super::upload::{DeferredMeshTransfer, GpuM2Mesh, MeshUploadContext, upload_mesh};
 
 /// Identity shared with the decoded M2 cache and explicit view selection.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -23,6 +23,7 @@ pub(in crate::device) struct M2MeshRegistry {
     registry_id: u64,
     handles: HashMap<M2MeshKey, M2MeshHandle>,
     resources: Vec<GpuM2Mesh>,
+    pending_transfers: Vec<DeferredMeshTransfer>,
 }
 
 impl Default for M2MeshRegistry {
@@ -34,17 +35,19 @@ impl Default for M2MeshRegistry {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
             resources: Vec::new(),
+            pending_transfers: Vec::new(),
         }
     }
 }
 
 impl M2MeshRegistry {
-    /// Returns an existing identity or performs one synchronous device upload.
+    /// Returns an existing identity or submits one device upload without waiting.
     pub(in crate::device) fn upload(
         &mut self,
         context: MeshUploadContext<'_>,
         plan: &M2MeshPlan,
     ) -> Result<M2MeshHandle, VulkanError> {
+        self.retire_completed_transfers(context.device, context.allocator)?;
         let key = M2MeshKey {
             path: plan.path().clone(),
             profile_index: plan.profile_index(),
@@ -57,14 +60,32 @@ impl M2MeshRegistry {
         // device resource that cannot receive a stable public handle.
         let slot =
             u32::try_from(self.resources.len()).map_err(|_source| VulkanError::M2MeshCapacity)?;
-        let resource = upload_mesh(context, plan)?;
+        let (resource, transfer) = upload_mesh(context, plan)?;
         let handle = M2MeshHandle {
             registry_id: self.registry_id,
             slot,
         };
         self.resources.push(resource);
+        self.pending_transfers.push(transfer);
         self.handles.insert(key, handle);
         Ok(handle)
+    }
+
+    /// Reclaims completed staging without waiting for unfinished GPU work.
+    pub(in crate::device) fn retire_completed_transfers(
+        &mut self,
+        device: &ash::Device,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<(), VulkanError> {
+        let mut index = self.pending_transfers.len();
+        while index > 0 {
+            index -= 1;
+            if self.pending_transfers[index].is_complete(device)? {
+                let mut transfer = self.pending_transfers.swap_remove(index);
+                transfer.destroy(device, allocator);
+            }
+        }
+        Ok(())
     }
 
     /// Resolves renderer-local diagnostics without exposing Vulkan objects.
@@ -91,8 +112,16 @@ impl M2MeshRegistry {
     }
 
     /// Releases buffers in reverse upload order before their VMA parent.
-    pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
+    pub(in crate::device) fn destroy(
+        &mut self,
+        device: &ash::Device,
+        allocator: &vk_mem::Allocator,
+    ) {
         self.handles.clear();
+        for transfer in self.pending_transfers.iter_mut().rev() {
+            transfer.destroy(device, allocator);
+        }
+        self.pending_transfers.clear();
         for mut resource in self.resources.drain(..).rev() {
             resource.destroy(allocator);
         }

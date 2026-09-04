@@ -544,6 +544,10 @@ impl VulkanRenderer {
         &mut self,
         mut present: impl FnMut(&mut Self) -> Result<T, VulkanError>,
     ) -> Result<T, VulkanError> {
+        if let Some(allocator) = self.allocator.as_ref() {
+            self.m2_meshes
+                .retire_completed_transfers(&self.device, allocator)?;
+        }
         match present(self) {
             Err(VulkanError::SwapchainOutOfDate) => {
                 self.recreate_swapchain()?;
@@ -611,16 +615,18 @@ impl VulkanRenderer {
     /// Model path and profile form the resource identity, matching the decoded
     /// asset cache. Repeated uploads return the existing stable handle without
     /// another allocation or transfer.
+    /// New transfers precede subsequent draws on the graphics queue; staging
+    /// stays resident behind a fence without blocking the calling thread.
     ///
     /// # Errors
     ///
     /// Returns [`VulkanError`] when the plan is empty, handle capacity is
-    /// exhausted, or Vulkan allocation, recording, submission, or waiting fails.
+    /// exhausted, or Vulkan allocation, recording, submission, or fence polling fails.
     pub fn upload_m2_mesh(&mut self, plan: &M2MeshPlan) -> Result<M2MeshHandle, VulkanError> {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.m2_meshes.upload(
+        let handle = self.m2_meshes.upload(
             MeshUploadContext {
                 device: &self.device,
                 allocator,
@@ -628,7 +634,9 @@ impl VulkanRenderer {
                 graphics_queue_family: self.report.graphics_queue_family,
             },
             plan,
-        )
+        )?;
+        self.is_idle = false;
+        Ok(handle)
     }
 
     /// Returns immutable diagnostics for a live renderer-owned M2 resource.
@@ -2413,7 +2421,7 @@ impl Drop for VulkanRenderer {
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);
             self.world_model_meshes.destroy(allocator);
-            self.m2_meshes.destroy(allocator);
+            self.m2_meshes.destroy(&self.device, allocator);
         }
         self.terrain_texture_sets.destroy(&self.device);
         self.world_model_samplers.destroy(&self.device);

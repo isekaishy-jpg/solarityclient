@@ -1,4 +1,4 @@
-//! Renderer-owned device-local M2 geometry and synchronous initial upload.
+//! Renderer-owned device-local M2 geometry with deferred transfer retirement.
 
 mod registry;
 mod types;

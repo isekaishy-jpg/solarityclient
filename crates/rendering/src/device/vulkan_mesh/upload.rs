@@ -109,7 +109,7 @@ struct MeshGuard<'a> {
 }
 
 impl MeshGuard<'_> {
-    /// Transfers ownership out after the queue fence has retired.
+    /// Transfers permanent ownership after recording has completed.
     fn finish(mut self) -> Result<GpuMeshBuffers, VulkanError> {
         self.buffers.take().ok_or_else(|| {
             VulkanError::operation("finish mesh upload", "mesh buffers are unavailable")
@@ -126,12 +126,52 @@ impl Drop for MeshGuard<'_> {
     }
 }
 
-/// Temporary host upload and command objects scoped to one synchronous transfer.
+/// Temporary host upload and command objects owned until successful submission.
 struct TransferResources<'a> {
     context: MeshUploadContext<'a>,
     staging: AllocatedBuffer,
     command_pool: vk::CommandPool,
     fence: vk::Fence,
+}
+
+/// Submitted staging and command resources retained until their fence completes.
+pub(super) struct DeferredMeshTransfer {
+    staging: AllocatedBuffer,
+    command_pool: vk::CommandPool,
+    fence: vk::Fence,
+}
+
+impl DeferredMeshTransfer {
+    /// Polls retirement without waiting on the presentation thread.
+    pub(super) fn is_complete(&self, device: &Device) -> Result<bool, VulkanError> {
+        // SAFETY: This transfer uniquely owns the submitted fence until retirement.
+        unsafe { device.get_fence_status(self.fence) }
+            .map_err(|source| VulkanError::operation("poll M2 buffer transfer", source))
+    }
+
+    /// Waits for callers whose mesh registry still requires synchronous admission.
+    fn wait(&self, device: &Device) -> Result<(), VulkanError> {
+        // SAFETY: The fence and all referenced resources remain owned through this wait.
+        unsafe { device.wait_for_fences(&[self.fence], true, u64::MAX) }
+            .map_err(|source| VulkanError::operation("wait for mesh buffer transfer", source))
+    }
+
+    /// Releases staging after fence completion or renderer-wide device idle.
+    pub(super) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        // SAFETY: Callers have retired this submission before releasing its
+        // command pool, fence, and source allocation. Device loss also ends use.
+        unsafe {
+            if self.fence != vk::Fence::null() {
+                device.destroy_fence(self.fence, None);
+                self.fence = vk::Fence::null();
+            }
+            if self.command_pool != vk::CommandPool::null() {
+                device.destroy_command_pool(self.command_pool, None);
+                self.command_pool = vk::CommandPool::null();
+            }
+        }
+        self.staging.destroy(allocator);
+    }
 }
 
 impl<'a> TransferResources<'a> {
@@ -220,8 +260,11 @@ impl<'a> TransferResources<'a> {
         })
     }
 
-    /// Submits recorded copies and synchronously retires their source allocation.
-    fn submit_and_wait(&self, command_buffer: vk::CommandBuffer) -> Result<(), VulkanError> {
+    /// Submits recorded copies and transfers staging ownership without a host wait.
+    fn submit_and_defer(
+        mut self,
+        command_buffer: vk::CommandBuffer,
+    ) -> Result<DeferredMeshTransfer, VulkanError> {
         let command_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
         let command_infos = [command_info];
         let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_infos);
@@ -235,13 +278,14 @@ impl<'a> TransferResources<'a> {
             )
         }
         .map_err(|source| VulkanError::operation("submit M2 buffer transfer", source))?;
-        // SAFETY: The fence belongs to the submitted work and is live.
-        unsafe {
-            self.context
-                .device
-                .wait_for_fences(&[self.fence], true, u64::MAX)
-        }
-        .map_err(|source| VulkanError::operation("wait for M2 buffer transfer", source))
+        Ok(DeferredMeshTransfer {
+            staging: AllocatedBuffer {
+                handle: std::mem::replace(&mut self.staging.handle, vk::Buffer::null()),
+                allocation: self.staging.allocation.take(),
+            },
+            command_pool: std::mem::replace(&mut self.command_pool, vk::CommandPool::null()),
+            fence: std::mem::replace(&mut self.fence, vk::Fence::null()),
+        })
     }
 }
 
@@ -249,7 +293,8 @@ impl Drop for TransferResources<'_> {
     /// Releases command state before the mapped-buffer allocation parent.
     fn drop(&mut self) {
         // SAFETY: Non-null handles were created by this device and are uniquely
-        // owned. The normal path has retired the only submission using them.
+        // owned. Successful submission transfers these handles to the deferred
+        // owner before this guard drops; failure paths never submitted them.
         unsafe {
             if self.fence != vk::Fence::null() {
                 self.context.device.destroy_fence(self.fence, None);
@@ -264,11 +309,11 @@ impl Drop for TransferResources<'_> {
     }
 }
 
-/// Allocates, records, submits, and retires one shared M2 geometry upload.
+/// Submits shared M2 geometry and retains staging for non-blocking retirement.
 pub(super) fn upload_mesh(
     context: MeshUploadContext<'_>,
     plan: &M2MeshPlan,
-) -> Result<GpuM2Mesh, VulkanError> {
+) -> Result<(GpuM2Mesh, DeferredMeshTransfer), VulkanError> {
     let vertex_bytes = plan.vertex_bytes();
     let index_bytes = plan.index_bytes();
     if vertex_bytes.is_empty() {
@@ -292,8 +337,8 @@ pub(super) fn upload_mesh(
         index_bytes.len(),
         plan.max_bone_index(),
     );
-    let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
-    Ok(GpuM2Mesh { buffers, info })
+    let (buffers, transfer) = upload_mesh_buffers_deferred(context, &vertex_bytes, &index_bytes)?;
+    Ok((GpuM2Mesh { buffers, info }, transfer))
 }
 
 /// Uploads one nonempty serialized vertex/index pair for any typed mesh owner.
@@ -302,6 +347,26 @@ pub(in crate::device) fn upload_mesh_buffers(
     vertex_bytes: &[u8],
     index_bytes: &[u8],
 ) -> Result<GpuMeshBuffers, VulkanError> {
+    let (mut buffers, mut transfer) =
+        upload_mesh_buffers_deferred(context, vertex_bytes, index_bytes)?;
+    let result = transfer.wait(context.device);
+    transfer.destroy(context.device, context.allocator);
+    if let Err(error) = result {
+        buffers.destroy(context.allocator);
+        return Err(error);
+    }
+    Ok(buffers)
+}
+
+/// Records transfer-to-input barriers before later draws on the graphics queue.
+///
+/// Vulkan's submission-order dependency extends to subsequent submissions on
+/// this same queue. The fence controls staging lifetime, not draw readiness.
+fn upload_mesh_buffers_deferred(
+    context: MeshUploadContext<'_>,
+    vertex_bytes: &[u8],
+    index_bytes: &[u8],
+) -> Result<(GpuMeshBuffers, DeferredMeshTransfer), VulkanError> {
     // Vulkan buffer copies operate in four-byte units. Preserve logical byte
     // lengths in diagnostics while padding only transfer/allocation storage.
     let vertex_copy_size = aligned_copy_size(vertex_bytes.len())?;
@@ -366,8 +431,14 @@ pub(in crate::device) fn upload_mesh_buffers(
         vertex_device_size,
         index_device_size,
     )?;
-    transfer.submit_and_wait(command_buffer)?;
-    guard.finish()
+    let mut buffers = guard.finish()?;
+    match transfer.submit_and_defer(command_buffer) {
+        Ok(transfer) => Ok((buffers, transfer)),
+        Err(error) => {
+            buffers.destroy(context.allocator);
+            Err(error)
+        }
+    }
 }
 
 /// Rounds a nonempty logical buffer length to Vulkan's four-byte copy unit.
