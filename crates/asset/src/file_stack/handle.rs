@@ -35,4 +35,14 @@ impl AssetStoreHandle {
     pub fn borrow_mut(&self) -> RefMut<'_, AssetStore> {
         self.store.borrow_mut()
     }
+
+    /// Recovers the mounted store when this is its sole remaining handle.
+    ///
+    /// The original handle is returned unchanged when another main-thread
+    /// owner still exists, so a caller never loses access on failure.
+    pub fn try_into_store(self) -> Result<AssetStore, Self> {
+        Rc::try_unwrap(self.store)
+            .map(RefCell::into_inner)
+            .map_err(|store| Self { store })
+    }
 }

@@ -5,8 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use solarity_asset::{
-    ArchiveCatalog, ArchiveKind, AssetError, AssetPath, AssetStore, ClientDataRoot, Locale,
-    LocalizedDocument,
+    ArchiveCatalog, ArchiveKind, AssetError, AssetPath, AssetStore, AssetStoreHandle,
+    ClientDataRoot, Locale, LocalizedDocument,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -210,6 +210,35 @@ fn asset_presence_uses_exact_archive_paths() -> Result<(), Box<dyn Error>> {
     assert!(!store.contains(&AssetPath::new(
         "item/texturecomponents/handtexture/glove_f.blp"
     )?)?);
+    Ok(())
+}
+
+/// A private worker can temporarily wrap and then recover its mounted stack.
+#[test]
+fn unique_asset_store_handle_returns_its_mounted_store() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "patch-3.MPQ",
+        path: "worker-cache.txt",
+        bytes: b"persistent mount",
+    }])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let handle = AssetStoreHandle::new(store);
+    let shared = handle.clone();
+    let handle = match handle.try_into_store() {
+        Ok(_) => return Err("shared asset handle unexpectedly surrendered its store".into()),
+        Err(handle) => handle,
+    };
+    drop(shared);
+    let mut store = match handle.try_into_store() {
+        Ok(store) => store,
+        Err(_) => return Err("unique asset handle did not surrender its store".into()),
+    };
+
+    assert_eq!(
+        store.read(&AssetPath::new("worker-cache.txt")?)?.bytes(),
+        b"persistent mount"
+    );
     Ok(())
 }
 

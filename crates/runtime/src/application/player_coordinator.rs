@@ -227,6 +227,9 @@ pub enum RuntimePlayerError {
     /// A completed worker did not publish the character it was asked to build.
     #[error("Glue character worker completed without a resident character")]
     MissingGlueCharacterWorkerResult,
+    /// A private worker leaked a clone of its temporary archive-store handle.
+    #[error("Glue character worker retained an unexpected shared archive-store handle")]
+    SharedGlueWorkerAssetStore,
     /// DBC fallback traversal found no animation sequence present in the M2.
     #[error(
         "player M2 {model} has no stock fallback for animation {animation_id} at tier {animation_tier}"
@@ -1955,16 +1958,17 @@ fn prepare_glue_character_on_worker(
     key: ResidentGlueCharacterKey,
     worker_cache: &Mutex<GlueCharacterWorkerCache>,
 ) -> Result<ResidentGlueCharacterModel, RuntimePlayerError> {
-    let store = AssetStore::mount(catalog)?;
-    let (models, textures) = {
+    let (store, models, textures) = {
         let mut cache = worker_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         (
+            cache.store.take(),
             std::mem::take(&mut cache.models),
             std::mem::take(&mut cache.textures),
         )
     };
+    let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,
@@ -1998,20 +2002,31 @@ fn prepare_glue_character_on_worker(
             presentation.synchronize_character_selection(Some(preview))
         }
     };
+    let character = presentation.glue_character.take();
+    let assets = presentation.assets;
+    let models = std::mem::take(&mut presentation.models);
+    let textures = std::mem::take(&mut presentation.textures);
+    let store = assets.try_into_store();
     let mut cache = worker_cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    cache.models = std::mem::take(&mut presentation.models);
-    cache.textures = std::mem::take(&mut presentation.textures);
+    cache.models = models;
+    cache.textures = textures;
+    match store {
+        Ok(store) => cache.store = Some(store),
+        Err(_assets) => {
+            drop(cache);
+            return Err(RuntimePlayerError::SharedGlueWorkerAssetStore);
+        }
+    }
     drop(cache);
     result?;
-    presentation
-        .glue_character
-        .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
+    character.ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
 }
 
 #[derive(Default)]
 struct GlueCharacterWorkerCache {
+    store: Option<AssetStore>,
     models: M2ModelCache,
     textures: BlpTextureCache,
 }
