@@ -12,6 +12,7 @@ mod character;
 mod character_base;
 mod character_faction;
 mod character_outfit;
+mod combat_stat;
 mod creature;
 mod db_cache;
 mod db_cache_instances;
@@ -48,6 +49,7 @@ pub use character_faction::{CharacterFactionCatalog, CharacterFactionGroup};
 pub use character_outfit::{
     CharacterStartOutfit, CharacterStartOutfitCatalog, CharacterStartOutfitItem,
 };
+pub use combat_stat::CombatStatCatalog;
 pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureFamilyCatalog,
     CreatureFamilyDefinition, CreatureModelData,

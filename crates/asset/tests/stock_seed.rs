@@ -8,6 +8,8 @@ mod archive;
 mod cache;
 #[path = "stock_seed/character_appearance.rs"]
 mod character_appearance;
+#[path = "stock_seed/combat_stat.rs"]
+mod combat_stat;
 #[path = "stock_seed/database.rs"]
 mod database;
 #[path = "stock_seed/database_creature_family.rs"]
