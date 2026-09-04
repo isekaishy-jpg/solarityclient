@@ -1476,6 +1476,10 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
     if DISABLE_NEXT then DISABLE_NEXT = false self:Disable() end
   </OnUpdate></Scripts>
 </Button>
+<Frame name="LayoutUpdate"><Size x="90" y="20"/><Scripts>
+  <OnLoad>LAYOUT_NEXT = false</OnLoad>
+  <OnUpdate>if LAYOUT_NEXT then LAYOUT_NEXT = false self:SetWidth(240) end</OnUpdate>
+</Scripts></Frame>
 <Frame name="DynamicUpdate"><Scripts><OnLoad>
   DYNAMIC_UPDATE_CALLS = 0
   self:SetScript("OnUpdate", function(frame)
@@ -1503,6 +1507,11 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
         .iter()
         .position(|object| object.name() == Some("StateButtonDisabled"))
         .ok_or("StateButton disabled texture is absent")?;
+    let layout = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("LayoutUpdate"))
+        .ok_or("LayoutUpdate fixture frame is absent")?;
 
     assert!(manager.update(0.25)?);
     assert_close(
@@ -1568,6 +1577,18 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
     assert!(!presented.contains(&normal));
     assert!(presented.contains(&disabled));
 
+    manager.bundle().lua().globals().set("LAYOUT_NEXT", true)?;
+    assert!(manager.update(0.0)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(layout)
+            .ok_or("LayoutUpdate geometry is absent")?
+            .logical_bounds()
+            .width(),
+        240.0,
+    );
+
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
         &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
@@ -1579,7 +1600,7 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
             .lua()
             .globals()
             .get::<u32>("UPDATE_CALLS")?,
-        3
+        4
     );
     assert!(matches!(
         manager.update(-0.01),

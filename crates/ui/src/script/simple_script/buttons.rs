@@ -360,7 +360,7 @@ pub(super) fn register_button_methods(
     let font_string_measurement = measurement.clone();
     methods.raw_set(
         "SetFontString",
-        lua.create_function(move |_, (button, font_string): (Table, Table)| {
+        lua.create_function(move |lua, (button, font_string): (Table, Table)| {
             if font_string.raw_get::<String>(type_key())? != "FontString" {
                 return Err(mlua::Error::runtime(
                     "Usage: Button:SetFontString(fontString)",
@@ -374,7 +374,8 @@ pub(super) fn register_button_methods(
             if let Some(measurement) = &font_string_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            button.raw_set(button_text_key(), font_string)
+            button.raw_set(button_text_key(), font_string)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     register_texture_pair(
@@ -430,6 +431,7 @@ pub(super) fn register_button_methods(
         "SetText",
         lua.create_function(move |lua, (button, value): (Table, Value)| {
             set_button_text(
+                lua,
                 &button,
                 lua_text(lua, value)?,
                 set_text_measurement.as_ref(),
@@ -443,7 +445,12 @@ pub(super) fn register_button_methods(
             let library: Table = lua.globals().raw_get("string")?;
             let format: mlua::Function = library.raw_get("format")?;
             let text = format.call::<String>(arguments)?;
-            set_button_text(&button, Some(text), formatted_text_measurement.as_ref())
+            set_button_text(
+                lua,
+                &button,
+                Some(text),
+                formatted_text_measurement.as_ref(),
+            )
         })?,
     )?;
     methods.raw_set(
@@ -518,7 +525,8 @@ pub(super) fn register_button_methods(
                 };
                 action |= click_action(value.to_string_lossy().as_str());
             }
-            button.raw_set(click_action_key(), action)
+            button.raw_set(click_action_key(), action)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -568,10 +576,14 @@ pub(super) fn register_button_methods(
 }
 
 fn set_button_text(
+    lua: &Lua,
     button: &Table,
     text: Option<String>,
     measurement: Option<&TextMeasurement>,
 ) -> mlua::Result<()> {
+    if button.raw_get::<Option<String>>(text_key())? == text {
+        return Ok(());
+    }
     button.raw_set(text_key(), text.as_deref())?;
     if let Some(font_string) = button.raw_get::<Option<Table>>(button_text_key())? {
         font_string.raw_set(text_key(), text.as_deref())?;
@@ -579,7 +591,7 @@ fn set_button_text(
             measurement.update_auto_font_string_size(&font_string)?;
         }
     }
-    Ok(())
+    mark_live_state_changed(lua)
 }
 
 pub(super) fn call_click_handler(
@@ -686,7 +698,7 @@ fn register_font_pair(
                 text.raw_set(font_object_key(), font)?;
                 text.raw_set(font_set_key(), true)?;
             }
-            Ok(())
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -710,6 +722,7 @@ fn register_texture_pair(
             let texture = match value {
                 Value::Nil => {
                     button.raw_set(key, Option::<Table>::None)?;
+                    mark_live_state_changed(lua)?;
                     return Ok(());
                 }
                 Value::Table(texture) => {
@@ -739,7 +752,8 @@ fn register_texture_pair(
                 }
                 _ => return Err(button_texture_usage(&button, setter)),
             };
-            button.raw_set(key, texture)
+            button.raw_set(key, texture)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(

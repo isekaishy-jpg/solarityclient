@@ -4350,7 +4350,15 @@ fn register_simple_html_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             let text = lua
                 .coerce_string(value)?
                 .map_or_else(String::new, |value| value.to_string_lossy());
-            object.raw_set(text_key(), text)
+            if object
+                .raw_get::<Option<String>>(text_key())?
+                .unwrap_or_default()
+                != text
+            {
+                object.raw_set(text_key(), text)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )
 }
@@ -4378,6 +4386,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &font_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            mark_live_state_changed(lua)?;
             Ok(())
         })?,
     )?;
@@ -4405,10 +4414,15 @@ fn register_font_string_methods(
         "SetText",
         lua.create_function(move |lua, (font_string, value): (Table, Value)| {
             require_font_string_font(&font_string, "SetText")?;
-            font_string.raw_set(text_key(), lua_text(lua, value)?)?;
+            let text = lua_text(lua, value)?;
+            if font_string.raw_get::<Option<String>>(text_key())? == text {
+                return Ok(());
+            }
+            font_string.raw_set(text_key(), text)?;
             if let Some(measurement) = &set_text_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            mark_live_state_changed(lua)?;
             Ok(())
         })?,
     )?;
@@ -4420,10 +4434,19 @@ fn register_font_string_methods(
                 require_font_string_font(&font_string, "SetFormattedText")?;
                 let library: Table = lua.globals().raw_get("string")?;
                 let format: mlua::Function = library.raw_get("format")?;
-                font_string.raw_set(text_key(), format.call::<String>(arguments)?)?;
+                let text = format.call::<String>(arguments)?;
+                if font_string
+                    .raw_get::<Option<String>>(text_key())?
+                    .as_deref()
+                    == Some(text.as_str())
+                {
+                    return Ok(());
+                }
+                font_string.raw_set(text_key(), text)?;
                 if let Some(measurement) = &formatted_text_measurement {
                     measurement.update_auto_font_string_size(&font_string)?;
                 }
+                mark_live_state_changed(lua)?;
                 Ok(())
             },
         )?,
@@ -4442,7 +4465,8 @@ fn register_font_string_methods(
                 font_string.raw_set(
                     text_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -4497,11 +4521,15 @@ fn register_font_string_methods(
     let word_wrap_measurement = measurement.clone();
     methods.raw_set(
         "SetWordWrap",
-        lua.create_function(move |_, (font_string, enabled): (Table, bool)| {
+        lua.create_function(move |lua, (font_string, enabled): (Table, bool)| {
+            if font_string.raw_get::<bool>(word_wrap_key())? == enabled {
+                return Ok(());
+            }
             font_string.raw_set(word_wrap_key(), enabled)?;
             if let Some(measurement) = &word_wrap_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            mark_live_state_changed(lua)?;
             Ok(())
         })?,
     )?;
@@ -4512,11 +4540,15 @@ fn register_font_string_methods(
     let non_space_measurement = measurement;
     methods.raw_set(
         "SetNonSpaceWrap",
-        lua.create_function(move |_, (font_string, enabled): (Table, bool)| {
+        lua.create_function(move |lua, (font_string, enabled): (Table, bool)| {
+            if font_string.raw_get::<bool>(non_space_wrap_key())? == enabled {
+                return Ok(());
+            }
             font_string.raw_set(non_space_wrap_key(), enabled)?;
             if let Some(measurement) = &non_space_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            mark_live_state_changed(lua)?;
             Ok(())
         })?,
     )?;
@@ -4534,11 +4566,15 @@ fn register_font_string_methods(
 fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "SetSpacing",
-        lua.create_function(|_, (object, spacing): (Table, f64)| {
+        lua.create_function(|lua, (object, spacing): (Table, f64)| {
             if !spacing.is_finite() {
                 return Err(mlua::Error::runtime("SetSpacing(): spacing must be finite"));
             }
-            object.raw_set(spacing_key(), spacing)
+            if object.raw_get::<f64>(spacing_key())? != spacing {
+                object.raw_set(spacing_key(), spacing)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4551,7 +4587,8 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
     methods.raw_set(
         "SetShadowOffset",
         lua.create_function(|lua, (object, x, y): (Table, f64, f64)| {
-            object.raw_set(font_shadow_offset_key(), lua.create_sequence_from([x, y])?)
+            object.raw_set(font_shadow_offset_key(), lua.create_sequence_from([x, y])?)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -4568,7 +4605,8 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
                 object.raw_set(
                     font_shadow_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -4589,11 +4627,15 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
 fn register_font_string_justification_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "SetJustifyH",
-        lua.create_function(|_, (font_string, value): (Table, String)| {
+        lua.create_function(|lua, (font_string, value): (Table, String)| {
             let value = stock_justify(&value).ok_or_else(|| {
                 mlua::Error::runtime("Usage: FontString:SetJustifyH(\"justify\")")
             })?;
-            font_string.raw_set(justify_h_key(), value)
+            if font_string.raw_get::<String>(justify_h_key())? != value {
+                font_string.raw_set(justify_h_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4604,11 +4646,15 @@ fn register_font_string_justification_methods(lua: &Lua, methods: &Table) -> mlu
     )?;
     methods.raw_set(
         "SetJustifyV",
-        lua.create_function(|_, (font_string, value): (Table, String)| {
+        lua.create_function(|lua, (font_string, value): (Table, String)| {
             let value = stock_justify(&value).ok_or_else(|| {
                 mlua::Error::runtime("Usage: FontString:SetJustifyV(\"justify\")")
             })?;
-            font_string.raw_set(justify_v_key(), value)
+            if font_string.raw_get::<String>(justify_v_key())? != value {
+                font_string.raw_set(justify_v_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4672,6 +4718,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 texture.raw_set(texture_file_key(), Option::<String>::None)?;
                 texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
                 texture.raw_set(texture_solid_color_key(), lua.create_sequence_from(color)?)?;
+                mark_live_state_changed(lua)?;
                 return Ok(());
             }
             let value = lua
@@ -4681,7 +4728,8 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             let file = (!value.is_empty()).then_some(value);
             texture.raw_set(texture_file_key(), file)?;
             texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
-            texture.raw_set(texture_solid_color_key(), Option::<Table>::None)
+            texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -4692,7 +4740,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     )?;
     methods.raw_set(
         "SetBlendMode",
-        lua.create_function(|_, (texture, requested): (Table, String)| {
+        lua.create_function(|lua, (texture, requested): (Table, String)| {
             let mode = if requested.eq_ignore_ascii_case("BLEND") {
                 "BLEND"
             } else if requested.eq_ignore_ascii_case("ADD") {
@@ -4700,7 +4748,11 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             } else {
                 return Err(mlua::Error::runtime("invalid texture blend mode"));
             };
-            texture.raw_set(texture_blend_mode_key(), mode)
+            if texture.raw_get::<String>(texture_blend_mode_key())? != mode {
+                texture.raw_set(texture_blend_mode_key(), mode)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4736,7 +4788,8 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             {
                 return Err(mlua::Error::runtime("TexCoord out of range"));
             }
-            texture.raw_set(tex_coord_key(), lua.create_sequence_from(coords)?)
+            texture.raw_set(tex_coord_key(), lua.create_sequence_from(coords)?)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -4773,7 +4826,8 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             texture.raw_set(
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(16))?,
-            )
+            )?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -4810,8 +4864,13 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     ] {
         methods.raw_set(
             set_name,
-            lua.create_function(move |_, (texture, enabled): (Table, Option<bool>)| {
-                texture.raw_set(key, enabled.unwrap_or(true))
+            lua.create_function(move |lua, (texture, enabled): (Table, Option<bool>)| {
+                let enabled = enabled.unwrap_or(true);
+                if texture.raw_get::<bool>(key)? != enabled {
+                    texture.raw_set(key, enabled)?;
+                    mark_live_state_changed(lua)?;
+                }
+                Ok(())
             })?,
         )?;
         methods.raw_set(
@@ -4823,7 +4882,7 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     }
     methods.raw_set(
         "SetDesaturated",
-        lua.create_function(|_, (texture, arguments): (Table, Variadic<Value>)| {
+        lua.create_function(|lua, (texture, arguments): (Table, Variadic<Value>)| {
             // Stock treats an omitted value as true, but an explicit nil as false.
             // CharacterCreate.lua relies on that distinction when it re-enables
             // race and class buttons, and on the numeric success result.
@@ -4832,7 +4891,10 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
                 Some(Value::Nil | Value::Boolean(false)) => false,
                 Some(_) => true,
             };
-            texture.raw_set(desaturated_key(), enabled)?;
+            if texture.raw_get::<bool>(desaturated_key())? != enabled {
+                texture.raw_set(desaturated_key(), enabled)?;
+                mark_live_state_changed(lua)?;
+            }
             Ok(1.0)
         })?,
     )?;
@@ -4884,7 +4946,8 @@ fn set_texture_gradient(
     texture.raw_set(
         texture_color_key(),
         lua.create_sequence_from(colors.into_iter().flatten())?,
-    )
+    )?;
+    mark_live_state_changed(lua)
 }
 
 fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
@@ -4927,7 +4990,15 @@ fn register_model_methods(
                 .borrow_mut()
                 .read(&path)
                 .map_err(|_| mlua::Error::runtime(format!("Invalid model file: {display}")))?;
-            model.raw_set(model_file_key(), path.as_str())
+            if model
+                .raw_get::<Option<String>>(model_file_key())?
+                .as_deref()
+                != Some(path.as_str())
+            {
+                model.raw_set(model_file_key(), path.as_str())?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4940,7 +5011,12 @@ fn register_model_methods(
             let value = lua
                 .coerce_number(value)?
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetCamera(index)"))?;
-            model.raw_set(model_camera_key(), value as i32)
+            let value = value as i32;
+            if model.raw_get::<i32>(model_camera_key())? != value {
+                model.raw_set(model_camera_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4954,7 +5030,12 @@ fn register_model_methods(
                     "SetSequence(sequence) exceeds valid range of 0 - 506",
                 ));
             }
-            model.raw_set(model_sequence_key(), value as u32)
+            let value = value as u32;
+            if model.raw_get::<u32>(model_sequence_key())? != value {
+                model.raw_set(model_sequence_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -4967,7 +5048,8 @@ fn register_model_methods(
                 mlua::Error::runtime("Usage: Model:SetSequenceTime(sequence, time)")
             })?;
             model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
-            model.raw_set(model_sequence_time_key(), time as i32)
+            model.raw_set(model_sequence_time_key(), time as i32)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -4985,7 +5067,11 @@ fn register_model_methods(
             let value = lua
                 .coerce_number(value)?
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetModelScale(scale)"))?;
-            model.raw_set(model_scale_key(), value)
+            if model.raw_get::<f64>(model_scale_key())? != value {
+                model.raw_set(model_scale_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5000,46 +5086,63 @@ fn register_model_methods(
                 model.raw_set(
                     model_fog_color_key(),
                     lua.create_sequence_from(color.into_iter().map(|value| value.clamp(0.0, 1.0)))?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
     methods.raw_set(
         "SetFogNear",
         lua.create_function(|lua, (model, value): (Table, Value)| {
-            model.raw_set(
-                model_fog_near_key(),
-                finite_model_number(lua, value, "fog near")?,
-            )
+            let value = finite_model_number(lua, value, "fog near")?;
+            if model.raw_get::<f64>(model_fog_near_key())? != value {
+                model.raw_set(model_fog_near_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "SetFogFar",
         lua.create_function(|lua, (model, value): (Table, Value)| {
-            model.raw_set(
-                model_fog_far_key(),
-                finite_model_number(lua, value, "fog far")?,
-            )
+            let value = finite_model_number(lua, value, "fog far")?;
+            if model.raw_get::<f64>(model_fog_far_key())? != value {
+                model.raw_set(model_fog_far_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "ClearFog",
-        lua.create_function(|_, model: Table| {
-            model.raw_set(model_fog_color_key(), Option::<Table>::None)
+        lua.create_function(|lua, model: Table| {
+            if model
+                .raw_get::<Option<Table>>(model_fog_color_key())?
+                .is_some()
+            {
+                model.raw_set(model_fog_color_key(), Option::<Table>::None)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "SetGlow",
         lua.create_function(|lua, (model, value): (Table, Value)| {
-            model.raw_set(
-                model_glow_key(),
-                finite_model_number(lua, value, "model glow")?,
-            )
+            let value = finite_model_number(lua, value, "model glow")?;
+            if model.raw_get::<f64>(model_glow_key())? != value {
+                model.raw_set(model_glow_key(), value)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "ResetLights",
-        lua.create_function(|_, model: Table| reset_model_lights(&model))?,
+        lua.create_function(|lua, model: Table| {
+            reset_model_lights(&model)?;
+            mark_live_state_changed(lua)
+        })?,
     )?;
     register_model_light_method(
         lua,
@@ -5157,7 +5260,8 @@ fn register_model_light_method(
                 values[13] * diffuse_intensity * enabled_scale,
             ])?;
             lights.raw_set(count + 1, light)?;
-            model.raw_set(key, lights)
+            model.raw_set(key, lights)?;
+            mark_live_state_changed(lua)
         })?,
     )
 }
@@ -5329,17 +5433,25 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
     )?;
     methods.raw_set(
         "SetFrameStrata",
-        lua.create_function(|_, (object, requested): (Table, String)| {
+        lua.create_function(|lua, (object, requested): (Table, String)| {
             let strata = parse_frame_strata_name(&requested)
                 .ok_or_else(|| mlua::Error::runtime("invalid frame strata"))?;
-            object.raw_set(frame_strata_key(), strata)
+            if object.raw_get::<String>(frame_strata_key())? != strata {
+                object.raw_set(frame_strata_key(), strata)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
         "EnableKeyboard",
-        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+        lua.create_function(|lua, (object, arguments): (Table, Variadic<Value>)| {
             let enabled = arguments.first().is_none_or(|value| lua_bool(value, true));
-            object.raw_set(keyboard_enabled_key(), enabled)
+            if object.raw_get::<bool>(keyboard_enabled_key())? != enabled {
+                object.raw_set(keyboard_enabled_key(), enabled)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5352,11 +5464,15 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
     )?;
     methods.raw_set(
         "EnableMouse",
-        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+        lua.create_function(|lua, (object, arguments): (Table, Variadic<Value>)| {
             let enabled = arguments
                 .first()
                 .is_some_and(|value| lua_bool(value, false));
-            object.raw_set(mouse_enabled_key(), enabled)
+            if object.raw_get::<bool>(mouse_enabled_key())? != enabled {
+                object.raw_set(mouse_enabled_key(), enabled)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5369,11 +5485,15 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
     )?;
     methods.raw_set(
         "EnableMouseWheel",
-        lua.create_function(|_, (object, arguments): (Table, Variadic<Value>)| {
+        lua.create_function(|lua, (object, arguments): (Table, Variadic<Value>)| {
             let enabled = arguments
                 .first()
                 .is_some_and(|value| lua_bool(value, false));
-            object.raw_set(mouse_wheel_enabled_key(), enabled)
+            if object.raw_get::<bool>(mouse_wheel_enabled_key())? != enabled {
+                object.raw_set(mouse_wheel_enabled_key(), enabled)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -5451,7 +5571,8 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 object.raw_set(
                     hit_rect_insets_key(),
                     lua.create_sequence_from([left, right, top, bottom])?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -5553,7 +5674,7 @@ fn set_frame_level(
 
     object.raw_set(frame_level_key(), old_level.saturating_add(delta))?;
     if !shift_children {
-        return Ok(());
+        return mark_live_state_changed(lua);
     }
 
     let root_index = object.raw_get::<usize>(index_key())?;
@@ -5576,7 +5697,7 @@ fn set_frame_level(
             }
         }
     }
-    Ok(())
+    mark_live_state_changed(lua)
 }
 
 fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {
@@ -6407,6 +6528,7 @@ fn register_scroll_frame_methods(
                 return Ok(());
             }
             object.raw_set(horizontal_scroll_key(), value)?;
+            mark_live_state_changed(lua)?;
             if let Some(function) =
                 object_script_function(lua, &object, UiScriptHandler::HorizontalScroll)?
             {
@@ -6425,6 +6547,7 @@ fn register_scroll_frame_methods(
                 return Ok(());
             }
             object.raw_set(vertical_scroll_key(), value)?;
+            mark_live_state_changed(lua)?;
             if let Some(function) =
                 object_script_function(lua, &object, UiScriptHandler::VerticalScroll)?
             {
@@ -6553,7 +6676,8 @@ fn set_scroll_child(lua: &Lua, object: &Table, requested: Value) -> mlua::Result
         child.raw_set(parent_key(), next_parent)?;
         move_child_relation(lua, child_index, previous_parent, Some(next_parent))?;
     }
-    object.raw_set(scroll_child_key(), child)
+    object.raw_set(scroll_child_key(), child)?;
+    mark_live_state_changed(lua)
 }
 
 fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
@@ -6564,14 +6688,18 @@ fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     )?;
     methods.raw_set(
         "SetOrientation",
-        lua.create_function(|_, (object, orientation): (Table, String)| {
+        lua.create_function(|lua, (object, orientation): (Table, String)| {
             let orientation = orientation.to_ascii_uppercase();
             if !matches!(orientation.as_str(), "HORIZONTAL" | "VERTICAL") {
                 return Err(mlua::Error::runtime(
                     "SetOrientation expects HORIZONTAL or VERTICAL",
                 ));
             }
-            object.raw_set(slider_orientation_key(), orientation)
+            if object.raw_get::<String>(slider_orientation_key())? != orientation {
+                object.raw_set(slider_orientation_key(), orientation)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -6612,7 +6740,7 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
     )?;
     methods.raw_set(
         "SetMinMaxValues",
-        lua.create_function(|_, (object, minimum, maximum): (Table, f64, f64)| {
+        lua.create_function(|lua, (object, minimum, maximum): (Table, f64, f64)| {
             if minimum > maximum {
                 return Err(mlua::Error::runtime(
                     "SetMinMaxValues minimum exceeds maximum",
@@ -6621,7 +6749,8 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             object.raw_set(slider_min_key(), minimum)?;
             object.raw_set(slider_max_key(), maximum)?;
             let value = object.raw_get::<f64>(slider_value_key())?;
-            object.raw_set(slider_value_key(), value.clamp(minimum, maximum))
+            object.raw_set(slider_value_key(), value.clamp(minimum, maximum))?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     Ok(())
@@ -6643,6 +6772,7 @@ fn set_range_value(lua: &Lua, object: Table, value: f64) -> mlua::Result<()> {
         return Ok(());
     }
     object.raw_set(slider_value_key(), value)?;
+    mark_live_state_changed(lua)?;
     if let Some(function) = object_script_function(lua, &object, UiScriptHandler::ValueChanged)? {
         call_number_object_handler(lua, &function, object, value)?;
     }
@@ -6663,7 +6793,8 @@ fn register_status_bar_methods(
                 object.raw_set(
                     status_bar_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -6685,6 +6816,7 @@ fn register_status_bar_methods(
             let texture = match value {
                 Value::Nil => {
                     object.raw_set(status_bar_texture_key(), Option::<Table>::None)?;
+                    mark_live_state_changed(lua)?;
                     return Ok(());
                 }
                 Value::Table(texture) => {
@@ -6720,7 +6852,8 @@ fn register_status_bar_methods(
                     ));
                 }
             };
-            object.raw_set(status_bar_texture_key(), texture)
+            object.raw_set(status_bar_texture_key(), texture)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -6799,7 +6932,8 @@ fn register_region_methods(
                 cursor = parent.raw_get::<Option<usize>>(parent_key())?;
             }
             object.raw_set(parent_key(), requested_index)?;
-            move_child_relation(lua, object_index, previous_index, requested_index)
+            move_child_relation(lua, object_index, previous_index, requested_index)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -6816,34 +6950,53 @@ fn register_region_methods(
     )?;
     methods.raw_set(
         "SetWidth",
-        lua.create_function(move |_, (object, width): (Table, f64)| {
+        lua.create_function(move |lua, (object, width): (Table, f64)| {
+            let auto_size_changed =
+                kind == UiObjectKind::FontString && object.raw_get::<bool>(auto_text_width_key())?;
+            if object.raw_get::<f64>(width_key())? == width && !auto_size_changed {
+                return Ok(());
+            }
             object.raw_set(width_key(), width)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
             }
-            Ok(())
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
         "SetHeight",
-        lua.create_function(move |_, (object, height): (Table, f64)| {
+        lua.create_function(move |lua, (object, height): (Table, f64)| {
+            let auto_size_changed = kind == UiObjectKind::FontString
+                && object.raw_get::<bool>(auto_text_height_key())?;
+            if object.raw_get::<f64>(height_key())? == height && !auto_size_changed {
+                return Ok(());
+            }
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_height_key(), false)?;
             }
-            Ok(())
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
         "SetSize",
-        lua.create_function(move |_, (object, width, height): (Table, f64, f64)| {
+        lua.create_function(move |lua, (object, width, height): (Table, f64, f64)| {
+            let auto_size_changed = kind == UiObjectKind::FontString
+                && (object.raw_get::<bool>(auto_text_width_key())?
+                    || object.raw_get::<bool>(auto_text_height_key())?);
+            if object.raw_get::<f64>(width_key())? == width
+                && object.raw_get::<f64>(height_key())? == height
+                && !auto_size_changed
+            {
+                return Ok(());
+            }
             object.raw_set(width_key(), width)?;
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
                 object.raw_set(auto_text_height_key(), false)?;
             }
-            Ok(())
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -6934,13 +7087,14 @@ fn register_region_methods(
     methods.raw_set(
         "SetDrawLayer",
         lua.create_function(
-            |_, (object, requested, sub_level): (Table, String, Option<i32>)| {
+            |lua, (object, requested, sub_level): (Table, String, Option<i32>)| {
                 let layer = parse_draw_layer_name(&requested)
                     .ok_or_else(|| mlua::Error::runtime("invalid draw layer"))?;
                 let sub_level = i16::try_from(sub_level.unwrap_or(0))
                     .map_err(|_| mlua::Error::runtime("invalid draw layer"))?;
                 object.raw_set(draw_layer_key(), layer)?;
-                object.raw_set(draw_sub_level_key(), sub_level)
+                object.raw_set(draw_sub_level_key(), sub_level)?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -6950,11 +7104,15 @@ fn register_region_methods(
     )?;
     methods.raw_set(
         "SetScale",
-        lua.create_function(|_, (object, scale): (Table, f64)| {
+        lua.create_function(|lua, (object, scale): (Table, f64)| {
             if scale <= 0.0 {
                 return Err(mlua::Error::runtime("SetScale(): scale must be positive"));
             }
-            object.raw_set(scale_key(), scale)
+            if object.raw_get::<f64>(scale_key())? != scale {
+                object.raw_set(scale_key(), scale)?;
+                mark_live_state_changed(lua)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -6992,7 +7150,8 @@ fn register_region_methods(
     methods.raw_set(
         "ClearAllPoints",
         lua.create_function(|lua, object: Table| {
-            object.raw_set(anchors_key(), lua.create_table()?)
+            object.raw_set(anchors_key(), lua.create_table()?)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     register_region_vertex_color_methods(lua, methods)?;
@@ -7356,7 +7515,8 @@ fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Res
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(component_count))?,
             )?;
-            object.raw_set(vertex_color_set_key(), true)
+            object.raw_set(vertex_color_set_key(), true)?;
+            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -7591,7 +7751,8 @@ fn set_all_region_points(lua: &Lua, object: &Table, relative: Option<Value>) -> 
     )?;
     anchors.raw_set(point_index(UiPoint::TopLeft), top_left)?;
     anchors.raw_set(point_index(UiPoint::BottomRight), bottom_right)?;
-    object.raw_set(anchors_key(), anchors)
+    object.raw_set(anchors_key(), anchors)?;
+    mark_live_state_changed(lua)
 }
 
 fn set_region_point(
@@ -7649,7 +7810,8 @@ fn set_region_point(
     };
     let record = create_anchor_record(lua, point, target, relative_point, offset)?;
     let anchors: Table = object.raw_get(anchors_key())?;
-    anchors.raw_set(point_index(point), record)
+    anchors.raw_set(point_index(point), record)?;
+    mark_live_state_changed(lua)
 }
 
 fn resolve_region_name(lua: &Lua, object: &Table, source: &str) -> mlua::Result<String> {
@@ -7794,7 +7956,8 @@ fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
         lua.create_function(
             |lua, (object, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
                 let color = clamped_color(red, green, blue, alpha);
-                object.raw_set(backdrop_color_key(), lua.create_sequence_from(color)?)
+                object.raw_set(backdrop_color_key(), lua.create_sequence_from(color)?)?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
@@ -7806,7 +7969,8 @@ fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
                 object.raw_set(
                     backdrop_border_color_key(),
                     lua.create_sequence_from(color)?,
-                )
+                )?;
+                mark_live_state_changed(lua)
             },
         )?,
     )?;
