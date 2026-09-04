@@ -59,6 +59,13 @@ pub struct GlueManager {
     bundle: UiBundle,
 }
 
+#[derive(Default)]
+struct PointerHoverUpdate {
+    changed: bool,
+    requires_full_refresh: bool,
+    buttons: [Option<usize>; 2],
+}
+
 impl GlueManager {
     /// Loads, plans, and executes the stock GlueXML manifest in source order.
     ///
@@ -382,6 +389,12 @@ impl GlueManager {
     #[must_use]
     pub const fn report(&self) -> GlueStartupReport {
         self.report
+    }
+
+    /// Returns the number of complete Lua-object arena copies performed.
+    #[must_use]
+    pub const fn runtime_snapshot_count(&self) -> usize {
+        self.runtime.snapshot_count()
     }
 
     /// Returns the loaded stock manifest and its Lua state.
@@ -830,7 +843,7 @@ impl GlueManager {
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
-        let hover_changed = self.update_pointer_hover(hit)?;
+        let hover = self.update_pointer_hover(hit)?;
         if !pressed || button == UiPointerButton::Left {
             self.edit_box_pointer_anchor = None;
         }
@@ -843,7 +856,7 @@ impl GlueManager {
                 .map(|(index, _)| index)
         };
         let Some(object_index) = object_index else {
-            if hover_changed {
+            if hover.changed {
                 self.refresh_live_state()?;
             }
             return Ok(UiPointerDispatch::new(None, false));
@@ -967,10 +980,10 @@ impl GlueManager {
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
         let previous_hover = self.pointer_hover;
-        let hover_changed = self.update_pointer_hover(hit)?;
+        let hover = self.update_pointer_hover(hit)?;
         let Some((object_index, UiPointerButton::Left)) = self.pointer_capture else {
-            if hover_changed {
-                self.refresh_live_state()?;
+            if hover.changed {
+                self.refresh_pointer_hover(hover)?;
                 return Ok(hit.or(previous_hover));
             }
             return Ok(None);
@@ -989,14 +1002,14 @@ impl GlueManager {
                         cursor,
                     )?;
                     self.refresh_live_state()?;
-                } else if hover_changed {
+                } else if hover.changed {
                     self.refresh_live_state()?;
                 }
                 return Ok(Some(object_index));
             }
             Some(UiObjectKind::Slider) => {}
             _ => {
-                if hover_changed {
+                if hover.changed {
                     self.refresh_live_state()?;
                 }
                 return Ok(Some(object_index));
@@ -1006,7 +1019,7 @@ impl GlueManager {
             .pointer
             .slider_value_at(&self.geometry, object_index, position)
         else {
-            if hover_changed {
+            if hover.changed {
                 self.refresh_live_state()?;
             }
             return Ok(Some(object_index));
@@ -1043,20 +1056,49 @@ impl GlueManager {
         Ok(true)
     }
 
-    fn update_pointer_hover(&mut self, hit: Option<usize>) -> Result<bool, UiEventError> {
+    fn update_pointer_hover(
+        &mut self,
+        hit: Option<usize>,
+    ) -> Result<PointerHoverUpdate, UiEventError> {
         if self.pointer_hover == hit {
-            return Ok(false);
+            return Ok(PointerHoverUpdate::default());
         }
+        let mut update = PointerHoverUpdate {
+            changed: true,
+            ..PointerHoverUpdate::default()
+        };
         if let Some(previous) = self.pointer_hover {
-            self.runtime
-                .dispatch_pointer_hover(&self.bundle, previous, false)?;
+            let (button, full) =
+                self.runtime
+                    .dispatch_pointer_hover(&self.bundle, previous, false)?;
+            update.requires_full_refresh |= full;
+            update.buttons[0] = button.then_some(previous);
         }
         self.pointer_hover = hit;
         if let Some(current) = hit {
-            self.runtime
-                .dispatch_pointer_hover(&self.bundle, current, true)?;
+            let (button, full) =
+                self.runtime
+                    .dispatch_pointer_hover(&self.bundle, current, true)?;
+            update.requires_full_refresh |= full;
+            update.buttons[1] = button.then_some(current);
         }
-        Ok(true)
+        Ok(update)
+    }
+
+    fn refresh_pointer_hover(&mut self, update: PointerHoverUpdate) -> Result<(), UiEventError> {
+        if update.requires_full_refresh {
+            return self.refresh_live_state();
+        }
+        self.runtime.refresh_button_highlights(
+            &self.bundle,
+            &mut self.live,
+            update.buttons.into_iter().flatten(),
+        )?;
+        self.presentation
+            .refresh_button_state_opacities(&self.live, &self.geometry);
+        self.render_plan
+            .refresh_button_state_opacities(&self.presentation)?;
+        Ok(())
     }
 
     fn update_cursor_position(&self, position: (f64, f64)) {

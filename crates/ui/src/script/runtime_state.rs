@@ -200,6 +200,17 @@ impl UiRuntimeObjectPlan {
         }
     }
 
+    pub(crate) fn replace_button_highlight(&mut self, object_index: usize, highlighted: bool) {
+        if let Some(object) = self.objects.get_mut(object_index)
+            && matches!(
+                object.kind,
+                UiObjectKind::Button | UiObjectKind::CheckButton
+            )
+        {
+            object.highlighted = Some(highlighted);
+        }
+    }
+
     /// Returns whether the only live presentation mutations are scroll offsets
     /// and Slider values. Those values move clipped content and native thumb
     /// geometry, but cannot invalidate text layout, object ownership, or input
@@ -592,6 +603,33 @@ pub(super) fn refresh_runtime_visual_transforms(
         object.animation_alpha_delta = animation.alpha_delta;
         object.animation_offset = animation.offset;
         object.animation_active = animation.active;
+    }
+    Ok(())
+}
+
+/// Copies only the native hover/locked highlight selector for named buttons.
+pub(super) fn refresh_runtime_button_highlights(
+    lua: &Lua,
+    live: &mut UiRuntimeObjectPlan,
+    object_indices: impl IntoIterator<Item = usize>,
+) -> Result<(), UiScriptError> {
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    for object_index in object_indices {
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        let highlighted = table
+            .raw_get::<bool>(highlight_locked_key())
+            .and_then(|locked| {
+                table
+                    .raw_get::<bool>(hovered_key())
+                    .map(|hovered| locked || hovered)
+            })
+            .map_err(|error| snapshot_error(format!("object {lua_index} highlight"), error))?;
+        live.replace_button_highlight(object_index, highlighted);
     }
     Ok(())
 }

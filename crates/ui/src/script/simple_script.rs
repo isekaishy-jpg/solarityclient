@@ -330,6 +330,7 @@ pub struct UiScriptRuntime {
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
+    snapshot_count: Cell<usize>,
 }
 
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
@@ -1207,6 +1208,7 @@ impl UiScriptRuntime {
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
+            snapshot_count: Cell::new(0),
         })
     }
 
@@ -1465,10 +1467,27 @@ impl UiScriptRuntime {
         &self,
         bundle: &UiBundle,
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
+        self.snapshot_count.set(self.snapshot_count.get() + 1);
         self.text_measurement
             .synchronize_auto_font_strings(bundle.lua(), self.registered_object_count())
             .map_err(|error| execution_error("automatic FontString extent", error))?;
         super::runtime_state::snapshot_runtime_objects(bundle.lua(), self.registered_object_count())
+    }
+
+    /// Returns the number of complete Lua-object arena copies performed.
+    #[must_use]
+    pub const fn snapshot_count(&self) -> usize {
+        self.snapshot_count.get()
+    }
+
+    /// Copies the highlight selector for only the buttons crossing a pointer boundary.
+    pub(crate) fn refresh_button_highlights(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        object_indices: impl IntoIterator<Item = usize>,
+    ) -> Result<(), UiScriptError> {
+        super::runtime_state::refresh_runtime_button_highlights(bundle.lua(), live, object_indices)
     }
 
     /// Returns the number of external and inline Lua chunks executed so far.
@@ -1776,15 +1795,23 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         entered: bool,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<(bool, bool), UiScriptError> {
         let phase = if entered { "enter" } else { "leave" };
         let label = format!("UI object {object_index}:pointer-{phase}");
         let lua = bundle.lua();
+        let generation =
+            live_state_generation(lua).map_err(|error| execution_error(&label, error))?;
         let object = self.runtime_object(lua, object_index, &label)?;
         let kind = object
             .raw_get::<String>(type_key())
             .map_err(|error| execution_error(&label, error))?;
-        if matches!(kind.as_str(), "Button" | "CheckButton") {
+        let is_button = matches!(kind.as_str(), "Button" | "CheckButton");
+        let has_state_font = is_button
+            && object
+                .raw_get::<Option<Table>>(highlight_font_key())
+                .map_err(|error| execution_error(&label, error))?
+                .is_some();
+        if is_button {
             object
                 .raw_set(hovered_key(), entered)
                 .map_err(|error| execution_error(&label, error))?;
@@ -1794,12 +1821,15 @@ impl UiScriptRuntime {
         } else {
             UiScriptHandler::Leave
         };
-        let Some(function) = object_script_function(lua, &object, handler)
-            .map_err(|error| execution_error(&label, error))?
-        else {
-            return Ok(());
-        };
-        call_object_handler(lua, &function, object).map_err(|error| execution_error(&label, error))
+        let function = object_script_function(lua, &object, handler)
+            .map_err(|error| execution_error(&label, error))?;
+        if let Some(function) = function {
+            call_object_handler(lua, &function, object)
+                .map_err(|error| execution_error(&label, error))?;
+        }
+        let mutated = live_state_generation(lua).map_err(|error| execution_error(&label, error))?
+            != generation;
+        Ok((is_button, mutated || has_state_font))
     }
 
     /// Delivers one normalized wheel delta to a live ScrollFrame handler.

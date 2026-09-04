@@ -551,6 +551,7 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
     };
 
     assert!(!is_presented(&manager, highlight_index));
+    let snapshots = manager.runtime_snapshot_count();
     let mesh_identity = manager.render_plan().mesh().geometry_identity();
     let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
     let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
@@ -567,6 +568,7 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
         Some(button_index)
     );
     assert!(is_presented(&manager, highlight_index));
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
     assert!(
         manager
             .bundle()
