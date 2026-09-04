@@ -33,6 +33,16 @@ impl RuntimeCharacterMetadata {
         })
     }
 
+    /// Reports whether all synchronous player facts queried by FrameXML OnLoad
+    /// handlers have arrived in the initial object-update stream.
+    pub(crate) fn active_player_is_ready(active: &ActiveWorld) -> bool {
+        active.local_player_unit_identity().is_some()
+            && active.local_player_identity().is_some()
+            && active.local_player_money().is_some()
+            && active.local_player_progression().is_some()
+            && active.local_player_vitals().is_some()
+    }
+
     /// Projects every server row without substituting unknown custom metadata.
     pub(crate) fn project(
         &self,

@@ -18,14 +18,12 @@ fn primary_page_preserves_the_closed_stock_range() {
     assert_eq!(state.page(), 6);
 }
 
-/// Slot presence is absent before its packet and preserves all 144 packed words.
+/// Stock's zero-initialized process image precedes the complete server image.
 #[test]
-fn action_slots_require_a_complete_server_image() {
+fn action_slots_start_empty_and_accept_a_complete_server_image() {
     let state = UiActionBarState::new();
-    assert_eq!(
-        state.packed_slot(1),
-        Err(UiActionBarStateError::Unavailable)
-    );
+    assert_eq!(state.packed_slot(1), Ok(0));
+    assert_eq!(state.packed_slot(144), Ok(0));
 
     let mut slots = [0_u32; 144];
     slots[0] = 0x8000_1234;

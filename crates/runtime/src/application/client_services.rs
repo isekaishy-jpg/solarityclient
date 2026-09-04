@@ -1560,6 +1560,10 @@ impl ClientServices {
             .terrain
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
         self.prepare_world_ui_if_ready()?;
+        if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
+        {
+            world_ui.synchronize_realm_clock(clock)?;
+        }
         if let (Some(world_ui), Some(buttons)) =
             (self.world_ui.as_mut(), self.gameplay.action_buttons())
         {
@@ -1801,20 +1805,15 @@ impl ClientServices {
                 .loading_screen
                 .as_ref()
                 .is_some_and(RuntimeLoadingScreen::has_presented)
-            || self
-                .gameplay
-                .action_buttons()
-                .and_then(|buttons| buttons.slots())
-                .is_none()
         {
             return Ok(());
         }
         let Some(active) = self.gameplay.world() else {
             return Ok(());
         };
-        let Some(clock) = self.gameplay.realm_clock() else {
+        if !RuntimeCharacterMetadata::active_player_is_ready(active) {
             return Ok(());
-        };
+        }
         let zone = self
             .character_metadata
             .zone_state(self.terrain.current_area_id(active)?)?;
@@ -1831,7 +1830,7 @@ impl ClientServices {
             &self.character_metadata,
             active,
             zone,
-            clock,
+            self.gameplay.realm_clock(),
             self.gameplay.action_buttons(),
             general_tab_name,
         )?;

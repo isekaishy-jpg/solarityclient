@@ -22,7 +22,10 @@ impl Default for UiActionBarState {
             // Build 12340 initializes the primary action bar to page one.
             page: Rc::new(Cell::new(1)),
             bonus_bar_offset: Rc::new(Cell::new(0)),
-            slots: Rc::new(RefCell::new(None)),
+            // Wow.exe FUN_006D8750 reads and updates the process-lifetime
+            // DAT_00AD9F6C array in place. Its BSS image is already 144 zero
+            // slots before the first SMSG_ACTION_BUTTONS packet arrives.
+            slots: Rc::new(RefCell::new(Some(Box::new([0; UI_ACTION_SLOT_COUNT])))),
         }
     }
 }
@@ -78,8 +81,8 @@ impl UiActionBarState {
     ///
     /// # Errors
     ///
-    /// Returns [`UiActionBarStateError`] until the world server has supplied a
-    /// complete slot image.
+    /// Returns [`UiActionBarStateError`] after world teardown has explicitly
+    /// cleared the process-lifetime image.
     pub fn packed_slot(&self, one_based_slot: i32) -> Result<u32, UiActionBarStateError> {
         let slots = self.slots.borrow();
         let slots = slots.as_ref().ok_or(UiActionBarStateError::Unavailable)?;
@@ -101,10 +104,10 @@ pub struct UiActionBarPageError {
     pub page: u8,
 }
 
-/// Action-slot query attempted before the world supplied its complete image.
+/// Action-slot query attempted after the active world cleared its image.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum UiActionBarStateError {
-    /// `SMSG_ACTION_BUTTONS` has not yet established slot presence.
-    #[error("action slots require an authoritative world-server image")]
+    /// The active-world owner has torn down its retained slot storage.
+    #[error("action slots are unavailable outside an active world")]
     Unavailable,
 }
