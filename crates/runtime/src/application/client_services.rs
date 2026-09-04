@@ -1310,11 +1310,19 @@ impl ClientServices {
             }
         }
         // One render plan and one Vulkan generation may cross their ownership
-        // boundaries per frame. Movie, EULA, and ordinary login dwell time can
-        // therefore warm character screens without one bulk publication stall.
-        let backdrop_prewarms_complete = self
-            .glue_model
-            .service_backdrop_prewarms(&mut self.renderer, &self.cpu)?;
+        // boundaries per frame, but Vulkan publication is presentation-thread
+        // work. Keep those finite spikes behind an authored cover instead of
+        // stealing 1-6 ms from otherwise idle EULA or AccountLogin frames.
+        // The movie and authentication dialog are the two stock transitions
+        // that can safely conceal this residency work.
+        let backdrop_prewarm_window_active =
+            self.authentication_prewarm_active || self.glue.media_intent().movie().is_some();
+        let backdrop_prewarms_complete = if backdrop_prewarm_window_active {
+            self.glue_model
+                .service_backdrop_prewarms(&mut self.renderer, &self.cpu)?
+        } else {
+            false
+        };
         if self.authentication_prewarm_active
             && !authentication_started
             && backdrop_prewarms_complete
@@ -1345,6 +1353,12 @@ impl ClientServices {
 
         match self.login.poll() {
             Ok(RuntimeLoginPoll::Idle | RuntimeLoginPoll::Pending) => {}
+            Ok(RuntimeLoginPoll::Authenticated) if self.authentication_prewarm_active => {
+                // Retain the status dialog until the finite racial backdrop set
+                // is renderer-resident. Publishing the realm/character route
+                // sooner merely trades a few covered frames for a visible black
+                // or partially prepared CharacterSelect transition.
+            }
             Ok(RuntimeLoginPoll::Authenticated) if !self.realm_directory_published => {
                 self.glue
                     .set_network_status(UiGlueNetworkStatus::new(None, true));
