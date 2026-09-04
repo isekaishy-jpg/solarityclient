@@ -505,8 +505,8 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
   <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
   <HighlightTexture name="$parentHighlight" file="Interface\Glues\Hover"/>
   <Scripts><OnLoad>POINTER_LOG = ""</OnLoad>
-    <OnEnter>POINTER_LOG = POINTER_LOG .. "button-enter;"</OnEnter>
-    <OnLeave>POINTER_LOG = POINTER_LOG .. "button-leave;"</OnLeave>
+    <OnEnter>BUTTON_MOUSE_OVER = self:IsMouseOver(); POINTER_LOG = POINTER_LOG .. "button-enter;"</OnEnter>
+    <OnLeave>BUTTON_MOUSE_LEFT = not self:IsMouseOver(); POINTER_LOG = POINTER_LOG .. "button-leave;"</OnLeave>
   </Scripts>
 </Button>
 <ModelFFX name="CharacterModel" enableMouse="true" frameStrata="DIALOG" frameLevel="1">
@@ -567,6 +567,13 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
         Some(button_index)
     );
     assert!(is_presented(&manager, highlight_index));
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("BUTTON_MOUSE_OVER")?
+    );
     assert_eq!(
         manager.render_plan().mesh().geometry_identity(),
         mesh_identity
@@ -589,6 +596,13 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
     assert_eq!(down.object_index(), Some(model_index));
     assert_eq!(up.object_index(), Some(model_index));
     assert!(!is_presented(&manager, highlight_index));
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("BUTTON_MOUSE_LEFT")?
+    );
     let globals = manager.bundle().lua().globals();
     let cursor_scale = 1080.0 / 768.0;
     assert!((globals.get::<f64>("CURSOR_X")? - model_center.0 * cursor_scale).abs() < 0.000_01);

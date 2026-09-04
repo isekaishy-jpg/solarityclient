@@ -178,6 +178,11 @@ static EDIT_CARET_ELAPSED_TOKEN: u8 = 130;
 static EDIT_CARET_VISIBLE_TOKEN: u8 = 131;
 static EDIT_HIGHLIGHT_COLOR_TOKEN: u8 = 132;
 static VERTEX_COLOR_SET_TOKEN: u8 = 133;
+static RESOLVED_LEFT_TOKEN: u8 = 134;
+static RESOLVED_BOTTOM_TOKEN: u8 = 135;
+static RESOLVED_RIGHT_TOKEN: u8 = 136;
+static RESOLVED_TOP_TOKEN: u8 = 137;
+static RESOLVED_VISIBLE_TOKEN: u8 = 138;
 
 const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Frame,
@@ -989,7 +994,9 @@ impl UiScriptRuntime {
                     lua,
                     bundle.manifest().kind(),
                     kind,
+                    environment.logical_extent(),
                     environment.ui_extent(),
+                    environment.cursor_position(),
                     environment.assets(),
                     environment.media_intent(),
                     Some(text_measurement.clone()),
@@ -1427,9 +1434,15 @@ impl UiScriptRuntime {
                 .raw_get(object_index + 1)
                 .map_err(|error| execution_error("publish resolved geometry", error))?;
             let bounds = region.logical_bounds();
+            let presentation = region.presentation_bounds();
             object
                 .raw_set(width_key(), bounds.width())
                 .and_then(|()| object.raw_set(height_key(), bounds.height()))
+                .and_then(|()| object.raw_set(resolved_left_key(), presentation.left()))
+                .and_then(|()| object.raw_set(resolved_bottom_key(), presentation.bottom()))
+                .and_then(|()| object.raw_set(resolved_right_key(), presentation.right()))
+                .and_then(|()| object.raw_set(resolved_top_key(), presentation.top()))
+                .and_then(|()| object.raw_set(resolved_visible_key(), region.effectively_shown()))
                 .map_err(|error| execution_error("publish resolved geometry", error))?;
         }
         Ok(())
@@ -3751,7 +3764,9 @@ fn create_object_metatable(
     lua: &Lua,
     manifest_kind: UiManifestKind,
     kind: UiObjectKind,
+    logical_extent: (u32, u32),
     ui_extent: (f64, f64),
+    cursor_position: Rc<Cell<(f64, f64)>>,
     assets: Option<AssetStoreHandle>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     text_measurement: Option<buttons::TextMeasurement>,
@@ -3783,7 +3798,14 @@ fn create_object_metatable(
             objects.raw_get::<Option<Table>>(parent)
         })?,
     )?;
-    register_region_methods(lua, &methods, kind, ui_extent)?;
+    register_region_methods(
+        lua,
+        &methods,
+        kind,
+        logical_extent,
+        ui_extent,
+        cursor_position,
+    )?;
     if is_frame_object(kind) {
         register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
@@ -6552,7 +6574,9 @@ fn register_region_methods(
     lua: &Lua,
     methods: &Table,
     kind: UiObjectKind,
+    logical_extent: (u32, u32),
     ui_extent: (f64, f64),
+    cursor_position: Rc<Cell<(f64, f64)>>,
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetParent",
@@ -6627,6 +6651,62 @@ fn register_region_methods(
         })?,
     )?;
     register_region_bounds_methods(lua, methods, ui_extent)?;
+    methods.raw_set(
+        "IsMouseOver",
+        lua.create_function(
+            move |lua,
+                  (object, top, bottom, left, right): (
+                Table,
+                Option<f64>,
+                Option<f64>,
+                Option<f64>,
+                Option<f64>,
+            )| {
+                let offsets = (
+                    top.unwrap_or(0.0),
+                    bottom.unwrap_or(0.0),
+                    left.unwrap_or(0.0),
+                    right.unwrap_or(0.0),
+                );
+                if !offsets.0.is_finite()
+                    || !offsets.1.is_finite()
+                    || !offsets.2.is_finite()
+                    || !offsets.3.is_finite()
+                {
+                    return Ok(false);
+                }
+                let published = (
+                    object.raw_get::<Option<f64>>(resolved_left_key())?,
+                    object.raw_get::<Option<f64>>(resolved_bottom_key())?,
+                    object.raw_get::<Option<f64>>(resolved_right_key())?,
+                    object.raw_get::<Option<f64>>(resolved_top_key())?,
+                );
+                let bounds = match published {
+                    (Some(left), Some(bottom), Some(right), Some(top)) => Some(LiveRegionBounds {
+                        left,
+                        bottom,
+                        right,
+                        top,
+                    }),
+                    _ => resolve_live_region_bounds(lua, object.clone(), ui_extent)?,
+                };
+                let visible = match object.raw_get::<Option<bool>>(resolved_visible_key())? {
+                    Some(visible) => visible,
+                    None => object_is_visible(lua, object)?,
+                };
+                let Some(bounds) = bounds.filter(|_| visible) else {
+                    return Ok(false);
+                };
+                let cursor = cursor_position.get();
+                let x = cursor.0 / f64::from(logical_extent.0) * ui_extent.0;
+                let y = cursor.1 / f64::from(logical_extent.1) * ui_extent.1;
+                Ok(bounds.left + offsets.2 < x
+                    && x < bounds.right + offsets.3
+                    && bounds.bottom + offsets.1 < y
+                    && y < bounds.top + offsets.0)
+            },
+        )?,
+    )?;
     methods.raw_set(
         "GetAlpha",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(alpha_key()))?,
@@ -8017,6 +8097,26 @@ pub(super) fn width_key() -> LightUserData {
 
 pub(super) fn height_key() -> LightUserData {
     hidden_key(&HEIGHT_TOKEN)
+}
+
+fn resolved_left_key() -> LightUserData {
+    hidden_key(&RESOLVED_LEFT_TOKEN)
+}
+
+fn resolved_bottom_key() -> LightUserData {
+    hidden_key(&RESOLVED_BOTTOM_TOKEN)
+}
+
+fn resolved_right_key() -> LightUserData {
+    hidden_key(&RESOLVED_RIGHT_TOKEN)
+}
+
+fn resolved_top_key() -> LightUserData {
+    hidden_key(&RESOLVED_TOP_TOKEN)
+}
+
+fn resolved_visible_key() -> LightUserData {
+    hidden_key(&RESOLVED_VISIBLE_TOKEN)
 }
 
 pub(super) fn backdrop_color_key() -> LightUserData {
