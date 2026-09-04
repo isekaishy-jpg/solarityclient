@@ -20,6 +20,7 @@ impl UiPointerPlan {
             .map(|(index, object)| {
                 Some(UiPointerTarget {
                     kind: object.kind,
+                    parent: object.parent,
                     strata: object.frame_strata?,
                     level: object.frame_level?,
                     keyboard_enabled: object.keyboard_enabled?,
@@ -83,14 +84,42 @@ impl UiPointerPlan {
 
     /// Returns the focused, visible EditBox selected by native focus state.
     pub(super) fn focused_edit_box(&self, geometry: &UiRegionGeometryPlan) -> Option<usize> {
-        self.targets.iter().enumerate().find_map(|(index, target)| {
-            let target = target.as_ref()?;
-            let region = geometry.region(index)?;
-            (target.kind == UiObjectKind::EditBox
-                && target.edit_focused
-                && region.effectively_shown())
-            .then_some(index)
-        })
+        let (focused_rank, focused_index) = self
+            .targets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, target)| {
+                let target = target.as_ref()?;
+                let region = geometry.region(index)?;
+                (target.kind == UiObjectKind::EditBox
+                    && target.edit_focused
+                    && region.effectively_shown())
+                .then_some(((target.strata, target.level, index), index))
+            })
+            .max()?;
+        if let Some(keyboard_index) = self.keyboard_target(geometry) {
+            let keyboard = self.targets[keyboard_index].as_ref()?;
+            let keyboard_rank = (keyboard.strata, keyboard.level, keyboard_index);
+            if keyboard_rank > focused_rank && !self.is_ancestor(keyboard_index, focused_index) {
+                return None;
+            }
+        }
+        Some(focused_index)
+    }
+
+    fn is_ancestor(&self, ancestor: usize, mut object: usize) -> bool {
+        while let Some(parent) = self
+            .targets
+            .get(object)
+            .and_then(Option::as_ref)
+            .and_then(|target| target.parent)
+        {
+            if parent == ancestor {
+                return true;
+            }
+            object = parent;
+        }
+        false
     }
 
     /// Returns the frontmost visible frame accepting unconsumed keyboard input.
@@ -206,6 +235,7 @@ impl UiPointerPlan {
 /// One live button's stock interaction ordering and hit rectangle.
 struct UiPointerTarget {
     kind: UiObjectKind,
+    parent: Option<usize>,
     strata: UiFrameStrata,
     level: i32,
     keyboard_enabled: bool,

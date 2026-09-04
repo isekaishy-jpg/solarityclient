@@ -161,6 +161,52 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A frontmost keyboard-enabled dialog owns input without destructively
+/// clearing the EditBox focus that should resume when the dialog closes.
+#[test]
+fn modal_dialog_suspends_background_edit_box_input() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Modal.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Modal.xml",
+            bytes: br#"<Ui><Frame name="Root" enableKeyboard="true">
+  <Size x="600" y="400"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Frames>
+    <EditBox name="Account"><Size x="200" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+      <Scripts><OnLoad>self:SetText("saved"); self:SetFocus()</OnLoad></Scripts>
+    </EditBox>
+    <Frame name="Modal" frameStrata="DIALOG" enableKeyboard="true">
+      <Size x="500" y="300"/><Anchors><Anchor point="CENTER"/></Anchors>
+      <Scripts><OnKeyDown>if key == "ESCAPE" then self:Hide() end</OnKeyDown></Scripts>
+    </Frame>
+  </Frames>
+</Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let account_index = object_index(&manager, "Account")?;
+    let modal_index = object_index(&manager, "Modal")?;
+    let account: mlua::Table = manager.bundle().lua().globals().get("Account")?;
+    let get_text: mlua::Function = account.get("GetText")?;
+
+    assert_eq!(manager.focused_edit_box(), None);
+    assert_eq!(manager.text_input("leaked")?, None);
+    assert_eq!(get_text.call::<String>(account.clone())?, "saved");
+    assert_eq!(
+        manager.keyboard_key("ESCAPE", true, UiKeyboardModifiers::default())?,
+        Some(modal_index)
+    );
+    assert_eq!(manager.focused_edit_box(), Some(account_index));
+    assert_eq!(manager.text_input("safe")?, Some(account_index));
+    assert_eq!(get_text.call::<String>(account)?, "savedsafe");
+    Ok(())
+}
+
 fn object_index(manager: &GlueManager, name: &str) -> Result<usize, Box<dyn Error>> {
     manager
         .objects()

@@ -190,14 +190,25 @@ fn validate_login_secondary_frames(manager: &mut GlueManager) -> Result<(), Box<
     for _frame in 0..120 {
         manager.update(1.0 / 60.0)?;
     }
-    manager
+    let account: mlua::Table = manager
         .bundle()
         .lua()
-        .load("OptionsSelectFrame:Show()")
-        .exec()?;
-    manager.update(1.0 / 60.0)?;
+        .globals()
+        .get("AccountLoginAccountEdit")?;
+    let get_account_text: mlua::Function = account.get("GetText")?;
+    let account_text = get_account_text.call::<String>(account.clone())?;
+    click_object(manager, "OptionsButton")?;
     if !object_is_shown(manager, "OptionsSelectFrame")? {
         return Err(invalid_data("options selector did not become active".to_owned()).into());
+    }
+    if manager.focused_edit_box().is_some()
+        || manager.text_input("modal-input-leak")?.is_some()
+        || get_account_text.call::<String>(account)? != account_text
+    {
+        return Err(invalid_data(
+            "options selector did not suspend background EditBox input".to_owned(),
+        )
+        .into());
     }
     let video_button = object_index(
         manager,
@@ -215,11 +226,12 @@ fn validate_login_secondary_frames(manager: &mut GlueManager) -> Result<(), Box<
     let cancel_center = object_center(manager, cancel)?;
     manager.pointer_button(cancel_center, UiPointerButton::Left, true)?;
     manager.pointer_button(cancel_center, UiPointerButton::Left, false)?;
-    manager
-        .bundle()
-        .lua()
-        .load("OptionsSelectFrame:Hide()")
-        .exec()?;
+    manager.keyboard_key("ESCAPE", true, UiKeyboardModifiers::default())?;
+    if object_is_shown(manager, "OptionsSelectFrame")? {
+        return Err(
+            invalid_data("options selector remained visible after Escape".to_owned()).into(),
+        );
+    }
     Ok(())
 }
 
@@ -1166,6 +1178,7 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
         ))
         .into());
     }
+    validate_addon_character_dropdown(manager)?;
     validate_visible_font_string_extents(manager, "character selection")?;
     let model = manager
         .presentation()
@@ -1297,6 +1310,90 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
         return Err(invalid_data(
             "character-row double click emitted an unexpected second action".to_owned(),
         )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_addon_character_dropdown(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    click_object(manager, "CharacterSelectAddonsButton")?;
+    click_object(manager, "AddonCharacterDropDownButton")?;
+
+    let globals = manager.bundle().lua().globals();
+    let list = globals.get::<mlua::Table>("DropDownList1")?;
+    let maximum_width = list.get::<f64>("maxWidth")?;
+    let button_count = list.get::<u32>("numButtons")?;
+    if button_count != 2 {
+        return Err(invalid_data(format!(
+            "AddOn character dropdown published {button_count} rows instead of All plus one character"
+        ))
+        .into());
+    }
+    let list_index = object_index(manager, "DropDownList1")?;
+    let list_bounds = manager
+        .geometry()
+        .region(list_index)
+        .filter(|geometry| geometry.effectively_shown())
+        .ok_or_else(|| invalid_data("AddOn character dropdown is not visible".to_owned()))?
+        .logical_bounds();
+    let expected_width = maximum_width + 15.0;
+    let expected_height = f64::from(button_count) * 16.0 + 30.0;
+    if (list_bounds.width() - expected_width).abs() > 0.001
+        || (list_bounds.height() - expected_height).abs() > 0.001
+    {
+        return Err(invalid_data(format!(
+            "AddOn character dropdown retained wrong stock geometry: bounds={list_bounds:?} expected_width={expected_width} expected_height={expected_height}"
+        ))
+        .into());
+    }
+    for row in 1..=button_count {
+        let button_index = object_index(manager, &format!("DropDownList1Button{row}"))?;
+        let button_bounds = manager
+            .geometry()
+            .region(button_index)
+            .ok_or_else(|| invalid_data(format!("AddOn dropdown row {row} has no geometry")))?
+            .logical_bounds();
+        if (button_bounds.width() - maximum_width).abs() > 0.001
+            || (button_bounds.height() - 16.0).abs() > 0.001
+        {
+            return Err(invalid_data(format!(
+                "AddOn dropdown row {row} retained wrong stock geometry: {button_bounds:?} maximum_width={maximum_width}"
+            ))
+            .into());
+        }
+    }
+
+    click_object(manager, "AddonListCancelButton")?;
+    let dialog_shown = object_is_shown(manager, "AddonList")?;
+    let dropdown_shown = object_is_shown(manager, "DropDownList1")?;
+    if dialog_shown || dropdown_shown {
+        return Err(invalid_data(
+            format!(
+                "AddOn Cancel did not close both the dialog and character dropdown: dialog={dialog_shown} dropdown={dropdown_shown}"
+            ),
+        )
+        .into());
+    }
+    println!(
+        "validated AddOn character dropdown: rows={button_count} width={} height={}",
+        list_bounds.width(),
+        list_bounds.height()
+    );
+    Ok(())
+}
+
+fn click_object(manager: &mut GlueManager, name: &str) -> Result<(), Box<dyn Error>> {
+    let index = object_index(manager, name)?;
+    let center = object_center(manager, index)?;
+    let down = manager.pointer_button(center, UiPointerButton::Left, true)?;
+    let up = manager.pointer_button(center, UiPointerButton::Left, false)?;
+    if down.object_index() != Some(index)
+        || up.object_index() != Some(index)
+        || !up.click_activated()
+    {
+        return Err(invalid_data(format!(
+            "{name} did not receive captured activation: down={down:?} up={up:?}"
+        ))
         .into());
     }
     Ok(())
