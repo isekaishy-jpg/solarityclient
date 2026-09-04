@@ -1277,10 +1277,11 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let _rate_variation = stock_random.next_signed();
     let initial_age = stock_random.next_unit() * 0.2;
     let random_word = stock_random.next_u32() as u16;
-    // Build-12340 CPlaneParticleEmitter::CreateParticle evaluates Y before X.
+    // Build-12340 CPlaneParticleEmitter::CreateParticle evaluates Y before X,
+    // then scales X by width and Y by length.
     // Reconstruct the observable first birth independently of production.
-    let local_y = stock_random.next_signed() * pose.emission_area_width() * 0.5;
-    let local_x = stock_random.next_signed() * pose.emission_area_length() * 0.5;
+    let local_y = stock_random.next_signed() * pose.emission_area_length() * 0.5;
+    let local_x = stock_random.next_signed() * pose.emission_area_width() * 0.5;
     let speed = (stock_random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
     let _polar = stock_random.next_signed() * pose.vertical_range();
     let _azimuth = stock_random.next_signed() * pose.horizontal_range();

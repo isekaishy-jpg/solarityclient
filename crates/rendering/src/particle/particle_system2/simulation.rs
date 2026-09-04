@@ -726,10 +726,11 @@ fn spawn_planar(
 ) -> Result<M2ParticleState, M2ParticleSimulationError> {
     let age = random.next_unit() * elapsed_seconds;
     let random_word = random.next_u32() as u16;
-    // CPlaneParticleEmitter::CreateParticle evaluates the Y coordinate before
-    // X, then consumes speed and the two spread angles in that order.
-    let position_y = random.next_signed() * pose.emission_area_width() * 0.5;
-    let position_x = random.next_signed() * pose.emission_area_length() * 0.5;
+    // `0x009815C0` consumes the Y sample first, then writes the second sample
+    // to particle X with field `+0x234` (authored width). The first sample is
+    // written to particle Y with `+0x238` (authored length).
+    let position_y = random.next_signed() * pose.emission_area_length() * 0.5;
+    let position_x = random.next_signed() * pose.emission_area_width() * 0.5;
     let mut position = Vec3::new(position_x, position_y, 0.0);
     let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
     // Both spread samples are consumed even when z-source replaces the
