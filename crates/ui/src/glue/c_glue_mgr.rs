@@ -1724,6 +1724,8 @@ impl GlueManager {
         if update.requires_full_refresh {
             return self.refresh_live_state();
         }
+        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
+        let started = std::time::Instant::now();
         let mut button_owners = update.buttons.into_iter().flatten().collect::<Vec<_>>();
         button_owners.sort_unstable();
         button_owners.dedup();
@@ -1732,12 +1734,14 @@ impl GlueManager {
             &mut self.live,
             button_owners.iter().copied(),
         )?;
-        let (button_text_layout_changed, button_text_color_changes) =
+        let highlights = started.elapsed();
+        let (button_text_layout_changes, button_text_color_changes) =
             self.runtime.refresh_button_texts(
                 &self.bundle,
                 &mut self.live,
                 update.font_buttons.into_iter().flatten(),
             )?;
+        let button_text = started.elapsed();
         if !update.dirty_objects.is_empty() {
             self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
         } else if !update.visual_objects.is_empty() && self.incremental_visual_updates {
@@ -1769,8 +1773,10 @@ impl GlueManager {
                     &self.live,
                 )?;
             }
-            self.pointer = UiPointerPlan::from_live(&self.live);
+            // Visual-only mutations cannot change pointer ownership or input
+            // metadata; hit testing reads their current geometry directly.
         }
+        let visuals = started.elapsed();
         let changed_opacities = self.presentation.refresh_button_state_opacities(
             &self.live,
             &self.geometry,
@@ -1778,9 +1784,54 @@ impl GlueManager {
         );
         self.render_plan
             .refresh_object_opacities(&self.presentation, &changed_opacities)?;
-        if button_text_layout_changed {
-            self.rebuild_live_text_topology()?;
-        } else if !button_text_color_changes.is_empty() {
+        let opacities = started.elapsed();
+        let mut rebuilt_text_topology = false;
+        if !button_text_layout_changes.is_empty() {
+            let retained_fonts = self.glyphs.supports_live_text_objects(
+                &self.live,
+                self.glyph_logical_height,
+                button_text_layout_changes.iter().copied(),
+            );
+            let text_support = started.elapsed();
+            if retained_fonts {
+                self.glyphs.refresh_live_text_objects(
+                    &self.live,
+                    &self.geometry,
+                    self.glyph_logical_height,
+                    &button_text_layout_changes,
+                )?;
+                let text_layout = started.elapsed();
+                let retained_slots = self.render_plan.refresh_glyph_objects(
+                    &self.glyphs,
+                    &self.live,
+                    &self.geometry,
+                    &self.scroll_frames,
+                    &button_text_layout_changes,
+                )?;
+                if timings {
+                    eprintln!(
+                        "UI hover text objects: support={:.3}ms layout={:.3}ms vertices={:.3}ms",
+                        text_support.saturating_sub(opacities).as_secs_f64() * 1_000.0,
+                        text_layout.saturating_sub(text_support).as_secs_f64() * 1_000.0,
+                        started.elapsed().saturating_sub(text_layout).as_secs_f64() * 1_000.0,
+                    );
+                }
+                if !retained_slots {
+                    if timings {
+                        eprintln!("UI hover text fallback: retained glyph slot count changed");
+                    }
+                    self.rebuild_live_text_topology()?;
+                    rebuilt_text_topology = true;
+                }
+            } else {
+                if timings {
+                    eprintln!("UI hover text fallback: inactive font atlas coverage missing");
+                }
+                self.rebuild_live_text_topology()?;
+                rebuilt_text_topology = true;
+            }
+        }
+        if !rebuilt_text_topology && !button_text_color_changes.is_empty() {
             self.glyphs
                 .refresh_live_text_colors(&button_text_color_changes);
             for change in button_text_color_changes {
@@ -1797,6 +1848,17 @@ impl GlueManager {
                     break;
                 }
             }
+        }
+        if timings {
+            eprintln!(
+                "UI retained hover patch: highlights={:.3}ms text={:.3}ms visuals={:.3}ms opacities={:.3}ms final_text={:.3}ms total={:.3}ms",
+                highlights.as_secs_f64() * 1_000.0,
+                button_text.saturating_sub(highlights).as_secs_f64() * 1_000.0,
+                visuals.saturating_sub(button_text).as_secs_f64() * 1_000.0,
+                opacities.saturating_sub(visuals).as_secs_f64() * 1_000.0,
+                started.elapsed().saturating_sub(opacities).as_secs_f64() * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
         }
         Ok(())
     }

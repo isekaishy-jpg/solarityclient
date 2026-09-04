@@ -1015,17 +1015,17 @@ pub(super) fn refresh_runtime_button_texts(
     lua: &Lua,
     live: &mut UiRuntimeObjectPlan,
     button_indices: impl IntoIterator<Item = usize>,
-) -> Result<(bool, Vec<UiRuntimeTextColorChange>), UiScriptError> {
+) -> Result<(Vec<usize>, Vec<UiRuntimeTextColorChange>), UiScriptError> {
     let mut button_indices = button_indices.into_iter().collect::<Vec<_>>();
     if button_indices.is_empty() {
-        return Ok((false, Vec::new()));
+        return Ok((Vec::new(), Vec::new()));
     }
     button_indices.sort_unstable();
     button_indices.dedup();
     let registry: Table = lua
         .named_registry_value(OBJECT_REGISTRY)
         .map_err(|error| snapshot_error("object registry", error))?;
-    let mut layout_changed = false;
+    let mut layout_changes = Vec::new();
     let mut color_changes = Vec::new();
     for object_index in 0..live.objects.len() {
         let (kind, role, parent) = {
@@ -1065,15 +1065,15 @@ pub(super) fn refresh_runtime_button_texts(
                             shadow_color: current.shadow_color,
                         });
                     } else {
-                        layout_changed = true;
+                        layout_changes.push(object_index);
                     }
                 }
-                _ => layout_changed = true,
+                _ => layout_changes.push(object_index),
             }
         }
         live.objects[object_index].text = text;
     }
-    Ok((layout_changed, color_changes))
+    Ok((layout_changes, color_changes))
 }
 
 pub(super) fn snapshot_slider(

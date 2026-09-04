@@ -1985,7 +1985,13 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         live: &mut super::runtime_state::UiRuntimeObjectPlan,
         button_indices: impl IntoIterator<Item = usize>,
-    ) -> Result<(bool, Vec<super::runtime_state::UiRuntimeTextColorChange>), UiScriptError> {
+    ) -> Result<
+        (
+            Vec<usize>,
+            Vec<super::runtime_state::UiRuntimeTextColorChange>,
+        ),
+        UiScriptError,
+    > {
         super::runtime_state::refresh_runtime_button_texts(bundle.lua(), live, button_indices)
     }
 

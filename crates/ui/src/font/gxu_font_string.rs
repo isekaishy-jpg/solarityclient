@@ -581,11 +581,13 @@ impl UiGlyphAtlasPlan {
                 .previous_shadow_color
                 .map(|component| component as f32);
             let shadow = change.shadow_color.map(|component| component as f32);
-            for quad in self
+            let first = self
                 .live_quads
-                .iter_mut()
-                .filter(|quad| quad.object_index == change.object_index)
-            {
+                .partition_point(|quad| quad.object_index < change.object_index);
+            let end = self
+                .live_quads
+                .partition_point(|quad| quad.object_index <= change.object_index);
+            for quad in &mut self.live_quads[first..end] {
                 if quad.color == previous_color {
                     quad.color = color;
                 } else if quad.color == previous_shadow {
@@ -602,9 +604,14 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<[[f32; 4]; 4]> {
-        self.live_quads
+        let first = self
+            .live_quads
+            .partition_point(|quad| quad.object_index < object_index);
+        let end = self
+            .live_quads
+            .partition_point(|quad| quad.object_index <= object_index);
+        self.live_quads[first..end]
             .iter()
-            .filter(|quad| quad.object_index == object_index)
             .filter_map(|quad| {
                 if quad
                     .clip_object

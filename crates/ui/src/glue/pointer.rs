@@ -13,6 +13,15 @@ pub(super) struct UiPointerPlan {
 impl UiPointerPlan {
     /// Copies only state required by main-thread hit testing and capture.
     pub(super) fn from_live(live: &UiRuntimeObjectPlan) -> Self {
+        let mut thumb_indices = vec![None; live.objects().len()];
+        for (index, object) in live.objects().iter().enumerate() {
+            if object.role == UiObjectRole::ThumbTexture
+                && let Some(parent) = object.parent
+                && let Some(slot) = thumb_indices.get_mut(parent)
+            {
+                *slot = Some(index);
+            }
+        }
         let targets = live
             .objects()
             .iter()
@@ -36,10 +45,7 @@ impl UiPointerPlan {
                         maximum: slider.maximum,
                         step: slider.step,
                         vertical: slider.vertical,
-                        thumb_index: live.objects().iter().position(|candidate| {
-                            candidate.parent == Some(index)
-                                && candidate.role == UiObjectRole::ThumbTexture
-                        }),
+                        thumb_index: thumb_indices[index],
                     }),
                 })
             })
