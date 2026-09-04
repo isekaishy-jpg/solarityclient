@@ -1,11 +1,14 @@
 //! External integration tests for loading-card transport resource residency.
 
 use std::error::Error;
+use std::num::NonZeroUsize;
+use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, GameObjectDisplayCatalog, Locale,
 };
+use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, WorldBootstrap,
     WorldMapId, WorldMovementSpeeds, WorldMovementState, WorldTransform,
@@ -26,9 +29,12 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         ("World\\Wmo\\Transport\\Fixture.wmo", &root_wmo),
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
-    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let archive_catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
+    let mut store = AssetStore::mount(archive_catalog.clone())?;
     let catalog = GameObjectDisplayCatalog::load(&mut store)?;
-    let mut presentation = RuntimeTransportPresentation::new(AssetStoreHandle::new(store), catalog);
+    let mut presentation = RuntimeTransportPresentation::new(AssetStoreHandle::new(store), catalog)
+        .with_worker_catalog(archive_catalog);
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
 
     let player_guid = 0x0000_0000_0000_0042;
     let transport_guid = 0xF110_0000_0000_002A;
@@ -49,7 +55,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     )?;
 
     assert_eq!(
-        presentation.synchronize(Some(&world))?,
+        presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::AwaitingObject {
             guid: transport_guid
         }
@@ -71,12 +77,26 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     );
 
     assert_eq!(
-        presentation.synchronize(Some(&world))?,
-        RuntimeTransportPoll::ResourceLoaded {
+        presentation.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTransportPoll::Pending {
             guid: transport_guid,
             kind: RuntimeTransportResourceKind::WorldModel,
         }
     );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let poll = presentation.synchronize_async(Some(&world), &cpu)?;
+        if poll
+            == (RuntimeTransportPoll::ResourceLoaded {
+                guid: transport_guid,
+                kind: RuntimeTransportResourceKind::WorldModel,
+            })
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "transport worker did not finish");
+        std::thread::yield_now();
+    }
     assert!(presentation.is_ready());
     assert_eq!(presentation.resident_guid(), Some(transport_guid));
     assert_eq!(presentation.resident_display_id(), Some(42));
@@ -97,7 +117,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         "WORLD\\WMO\\TRANSPORT\\FIXTURE.WMO"
     );
     assert_eq!(
-        presentation.synchronize(Some(&world))?,
+        presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Current {
             guid: transport_guid,
             kind: RuntimeTransportResourceKind::WorldModel,
@@ -112,7 +132,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         ),
     );
     assert_eq!(
-        presentation.synchronize(Some(&world))?,
+        presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Current {
             guid: transport_guid,
             kind: RuntimeTransportResourceKind::WorldModel,
@@ -122,13 +142,14 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
 
     world.remove_object(transport_guid)?;
     assert_eq!(
-        presentation.synchronize(Some(&world))?,
+        presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::AwaitingObject {
             guid: transport_guid
         }
     );
     assert!(!presentation.is_ready());
     assert_eq!(presentation.resident_guid(), None);
+    cpu.shutdown()?;
     Ok(())
 }
 

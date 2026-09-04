@@ -163,6 +163,7 @@ impl ClientServices {
         let archive_count = catalog.descriptors().len();
         let backdrop_catalog = catalog.clone();
         let player_catalog = catalog.clone();
+        let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
         let animations = AnimationDataCatalog::load(&mut assets)?;
@@ -409,7 +410,8 @@ impl ClientServices {
                     ),
                 )
                 .with_glue_worker_catalog(player_catalog),
-                transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays),
+                transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays)
+                    .with_worker_catalog(transport_catalog),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
@@ -1629,7 +1631,10 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Current => {}
         }
-        match self.transport.synchronize(self.gameplay.world())? {
+        match self
+            .transport
+            .synchronize_async(self.gameplay.world(), &self.cpu)?
+        {
             RuntimeTransportPoll::ResourceLoaded { guid, kind } => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     frame.replace_transport(
@@ -1646,6 +1651,7 @@ impl ClientServices {
             }
             RuntimeTransportPoll::Idle
             | RuntimeTransportPoll::AwaitingObject { .. }
+            | RuntimeTransportPoll::Pending { .. }
             | RuntimeTransportPoll::NoResource { .. } => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     frame.replace_transport(&mut self.renderer, None, &mut self.crt_rand)?;
