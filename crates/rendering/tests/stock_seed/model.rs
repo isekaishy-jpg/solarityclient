@@ -1421,6 +1421,75 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// Raw high-bit emitters retain their authored static wind impulse.
+///
+/// `CParticleEmitter2::UpdateParticle` at `0x00979BB0` gates the copied wind
+/// vector solely on post-increment age and `windTime`; the raw flag word is
+/// not consulted by that branch.
+#[test]
+fn m2_particle_high_flag_does_not_suppress_static_wind() -> Result<(), Box<dyn Error>> {
+    let mut ordinary_bytes = render_m2_bytes("Particle.blp", 1)?;
+    let ordinary_offset = m2_array_offset(&ordinary_bytes, 0x128)?;
+    ordinary_bytes[ordinary_offset + 0x1a0..ordinary_offset + 0x1ac]
+        .copy_from_slice(&render_f32_values(&[1.0, 2.0, 3.0]));
+    ordinary_bytes[ordinary_offset + 0x1ac..ordinary_offset + 0x1b0]
+        .copy_from_slice(&1.0_f32.to_le_bytes());
+    let mut high_flag_bytes = ordinary_bytes.clone();
+    let flags =
+        u32::from_le_bytes(high_flag_bytes[ordinary_offset + 4..ordinary_offset + 8].try_into()?)
+            | 0x8000_0000;
+    high_flag_bytes[ordinary_offset + 4..ordinary_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\OrdinaryWindParticle.m2",
+            bytes: &ordinary_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\OrdinaryWindParticle00.skin",
+            bytes: &skin,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\HighFlagWindParticle.m2",
+            bytes: &high_flag_bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\HighFlagWindParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let simulate =
+        |store: &mut AssetStore, path: &str| -> Result<M2ParticleSimulation, Box<dyn Error>> {
+            let model = DecodedM2Model::load(store, &AssetPath::new(path)?)?;
+            let emitter = model
+                .animations()
+                .particles()
+                .first()
+                .ok_or("particle emitter is absent")?;
+            let pose = M2ParticlePose::sample(
+                model.animations(),
+                emitter,
+                M2AnimationClock::new(0, 500.0, 0.0),
+            )?;
+            let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+            let report = simulation.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+            assert!(report.live() > 0);
+            Ok(simulation)
+        };
+    let ordinary = simulate(&mut store, "Creature\\Solarity\\OrdinaryWindParticle.m2")?;
+    let high_flag = simulate(&mut store, "Creature\\Solarity\\HighFlagWindParticle.m2")?;
+
+    assert_eq!(ordinary.particles().len(), high_flag.particles().len());
+    for (ordinary, high_flag) in ordinary.particles().iter().zip(high_flag.particles()) {
+        assert_eq!(ordinary.position(), high_flag.position());
+        assert_eq!(ordinary.velocity(), high_flag.velocity());
+    }
+    Ok(())
+}
+
 /// An unmapped authored high bit does not reject otherwise ordinary emission.
 ///
 /// Build 12340 maps authored `0x0008_0000`, not `0x0080_0000`, to runtime

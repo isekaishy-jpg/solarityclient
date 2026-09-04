@@ -37,9 +37,6 @@ const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
 /// Raw `0x8000` is the distinct Squirt flag.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_0100;
 
-/// Selects scene-provided dynamic wind instead of the emitter's static vector.
-const DYNAMIC_WIND: u32 = 0x8000_0000;
-
 /// Recovered simulation behaviors which must not be silently replaced by basic motion.
 /// Raw `0x1000` is intentionally absent: build-12340 `0x00832EA0` maps it to
 /// the render-only local-orientation bit and does not change particle motion.
@@ -520,7 +517,7 @@ impl M2ParticleSimulation {
             }
             // `0x00979BB0` tests the already-incremented age against authored
             // windTime before adding the static wind impulse.
-            if emitter.flags() & DYNAMIC_WIND == 0 && particle.age_seconds() < emitter.wind_time() {
+            if particle.age_seconds() < emitter.wind_time() {
                 particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
             }
             let displacement = particle.velocity() * elapsed_seconds;
