@@ -1209,7 +1209,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let particle_offset = m2_array_offset(&bytes, 0x128)?;
     bytes[particle_offset + 0x1a0..particle_offset + 0x1ac]
         .copy_from_slice(&render_f32_values(&[1.0, 2.0, 3.0]));
-    // This field does not limit static wind duration in build 12340.
+    // Zero windTime prevents the authored static vector from being applied.
     bytes[particle_offset + 0x1ac..particle_offset + 0x1b0].copy_from_slice(&0.0_f32.to_le_bytes());
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
@@ -1286,16 +1286,15 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let _polar = stock_random.next_signed() * pose.vertical_range();
     let _azimuth = stock_random.next_signed() * pose.horizontal_range();
     let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed;
-    expected_velocity += emitter.wind_vector() * 0.2;
     let mut expected_position =
         Vec3::new(local_x + 10.0, local_y + 20.0, 30.0) + expected_velocity * 0.2;
     expected_position += pose.gravity() * 0.2 * 0.2 * 0.5;
     expected_velocity += pose.gravity() * 0.2;
     expected_velocity -= expected_velocity * (0.2 * emitter.drag()).min(1.0);
     assert_eq!(first_particle.random_word(), random_word);
-    // The existing-particle pass precedes emission. A newborn keeps only its
-    // randomized within-slice age even though it receives the slice's motion.
-    assert!((first_particle.age_seconds() - initial_age).abs() < f32::EPSILON);
+    // Stock emits before walking the pool, so a newborn's randomized initial
+    // age receives the same complete slice increment as older particles.
+    assert!((first_particle.age_seconds() - (initial_age + 0.2)).abs() < f32::EPSILON);
     assert!(
         (first_particle.position() - expected_position)
             .abs()
@@ -1689,8 +1688,8 @@ fn m2_particle_simulation_inherits_emitter_velocity() -> Result<(), Box<dyn Erro
     let _second_rate = random.next_signed();
     let _initial_age = random.next_unit() * 0.04;
     let _random_word = random.next_u32() as u16;
-    let local_y = random.next_signed() * pose.emission_area_width() * 0.5;
-    let local_x = random.next_signed() * pose.emission_area_length() * 0.5;
+    let local_y = random.next_signed() * pose.emission_area_length() * 0.5;
+    let local_x = random.next_signed() * pose.emission_area_width() * 0.5;
     let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
     let _polar = random.next_signed() * pose.vertical_range();
     let _azimuth = random.next_signed() * pose.horizontal_range();
@@ -2328,11 +2327,11 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
     let (_, implosion, _) = simulate(
         &mut store,
         "Creature\\Solarity\\ImplosionSphereParticle.m2",
-        0,
+        2,
     )?;
-    // Implosion rejection belongs to the old-particle pass, which has already
-    // completed when these particles are born.
-    assert_eq!(implosion.particles().len(), 2);
+    // Births enter the active-particle pass in the same slice, so outward
+    // particles selected by the implosion filter are rejected immediately.
+    assert!(implosion.particles().is_empty());
     assert!(vertical.particles().iter().all(|particle| {
         particle.velocity().truncate().length_squared() < f32::EPSILON
             && particle.velocity().z.is_finite()

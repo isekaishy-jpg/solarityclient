@@ -440,7 +440,7 @@ impl M2ParticleEmitter {
         self.wind_vector
     }
 
-    /// Returns the time scale applied to dynamic wind.
+    /// Returns the maximum post-increment particle age receiving static wind.
     #[must_use]
     pub const fn wind_time(&self) -> f32 {
         self.wind_time

@@ -76,33 +76,31 @@ impl M2ParticleState {
         gravity: Vec3,
         drag: f32,
     ) -> Result<(), M2ParticleStateError> {
+        self.advance_age(elapsed_seconds)?;
+        self.advance_motion(elapsed_seconds, gravity, drag)?;
+        Ok(())
+    }
+
+    pub(super) fn advance_age(&mut self, elapsed_seconds: f32) -> Result<(), M2ParticleStateError> {
+        if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
+            return Err(M2ParticleStateError::ElapsedTime);
+        }
+        self.age_seconds += elapsed_seconds;
+        Ok(())
+    }
+
+    pub(super) fn advance_motion(
+        &mut self,
+        elapsed_seconds: f32,
+        gravity: Vec3,
+        drag: f32,
+    ) -> Result<(), M2ParticleStateError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
             return Err(M2ParticleStateError::ElapsedTime);
         }
         if !gravity.is_finite() || !drag.is_finite() {
             return Err(M2ParticleStateError::Forces);
         }
-        self.age_seconds += elapsed_seconds;
-        self.advance_motion(elapsed_seconds, gravity, drag);
-        Ok(())
-    }
-
-    /// Applies one birth-frame ballistic step without aging the newborn.
-    ///
-    /// Stock scatters the initial age inside the current slice, then applies
-    /// that slice's motion after emission. The ordinary old-particle pass has
-    /// already run, so adding the full slice to age here would age every
-    /// newborn twice.
-    pub(super) fn advance_newborn_motion(
-        &mut self,
-        elapsed_seconds: f32,
-        gravity: Vec3,
-        drag: f32,
-    ) {
-        self.advance_motion(elapsed_seconds, gravity, drag);
-    }
-
-    fn advance_motion(&mut self, elapsed_seconds: f32, gravity: Vec3, drag: f32) {
         self.position += self.velocity * elapsed_seconds;
         self.position += gravity * elapsed_seconds * elapsed_seconds * 0.5;
         self.velocity += gravity * elapsed_seconds;
@@ -117,6 +115,7 @@ impl M2ParticleState {
                 component
             }
         });
+        Ok(())
     }
 
     /// Returns the stock lifetime selected by this particle's random word.

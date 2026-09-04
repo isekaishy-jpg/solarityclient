@@ -462,38 +462,9 @@ impl M2ParticleSimulation {
             }
         }
 
-        let mut deaths = 0;
-        let mut index = 0;
-        let implosion_center = if emitter.flags() & PARTICLES_IN_MODEL_SPACE != 0 {
-            Vec3::ZERO
-        } else {
-            emitter_transform.transform_point3(Vec3::ZERO)
-        };
-        while index < self.particles.len() {
-            let particle = &mut self.particles[index];
-            if emitter.flags() & DYNAMIC_WIND == 0 {
-                particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
-            }
-            let displacement = particle.velocity() * elapsed_seconds;
-            particle.advance(elapsed_seconds, pose.gravity(), emitter.drag())?;
-            // Sphere runtime bit `0x1000` (raw `0x80`) makes `0x00979BB0`
-            // reject a particle once its post-step position has crossed the
-            // emitter-center plane perpendicular to this step's velocity.
-            let crossed_implosion_center = matches!(shape, EmitterShape::Sphere)
-                && emitter.flags() & SPHERE_IMPLOSION_FILTER != 0
-                && (particle.position() - implosion_center).dot(displacement) > 0.0;
-            if !crossed_implosion_center
-                && particle.is_alive(pose.lifespan(), emitter.lifespan_variation())
-            {
-                index += 1;
-            } else {
-                self.particles.swap_remove(index);
-                deaths += 1;
-            }
-        }
-        // Stock's existing-particle update and death pass finishes before
-        // this emitter admits births. A newborn receives current-slice motion
-        // but its randomized within-slice age is not incremented again.
+        // `CParticleEmitter::Update` at `0x0097DD20` invokes emission through
+        // `0x0097D8C0` before walking the active pool. Newborns therefore
+        // participate in this same slice's age, wind, and ballistic update.
         let mut emitted = 0;
         if pose.enabled() {
             self.emission_remainder += varied_rate * elapsed_seconds;
@@ -503,7 +474,7 @@ impl M2ParticleSimulation {
             let requested = (self.emission_remainder + 0.5).floor().max(0.0) as usize;
             let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
             for _ in 0..admitted {
-                let mut particle = match shape {
+                let particle = match shape {
                     EmitterShape::Plane => spawn_planar(
                         emitter,
                         pose,
@@ -521,10 +492,6 @@ impl M2ParticleSimulation {
                         inherited_velocity,
                     )?,
                 };
-                if emitter.flags() & DYNAMIC_WIND == 0 {
-                    particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
-                }
-                particle.advance_newborn_motion(elapsed_seconds, pose.gravity(), emitter.drag());
                 self.particles.push(particle);
                 emitted += 1;
             }
@@ -533,6 +500,42 @@ impl M2ParticleSimulation {
             // fixed-capacity pool cannot admit the requested births.
             if self.emission_remainder > 2.0 {
                 self.emission_remainder = 0.0;
+            }
+        }
+
+        let mut deaths = 0;
+        let mut index = 0;
+        let implosion_center = if emitter.flags() & PARTICLES_IN_MODEL_SPACE != 0 {
+            Vec3::ZERO
+        } else {
+            emitter_transform.transform_point3(Vec3::ZERO)
+        };
+        while index < self.particles.len() {
+            let particle = &mut self.particles[index];
+            particle.advance_age(elapsed_seconds)?;
+            if !particle.is_alive(pose.lifespan(), emitter.lifespan_variation()) {
+                self.particles.swap_remove(index);
+                deaths += 1;
+                continue;
+            }
+            // `0x00979BB0` tests the already-incremented age against authored
+            // windTime before adding the static wind impulse.
+            if emitter.flags() & DYNAMIC_WIND == 0 && particle.age_seconds() < emitter.wind_time() {
+                particle.add_velocity(emitter.wind_vector() * elapsed_seconds);
+            }
+            let displacement = particle.velocity() * elapsed_seconds;
+            particle.advance_motion(elapsed_seconds, pose.gravity(), emitter.drag())?;
+            // Sphere runtime bit `0x1000` (raw `0x80`) makes `0x00979BB0`
+            // reject a particle once its post-step position has crossed the
+            // emitter-center plane perpendicular to this step's velocity.
+            let crossed_implosion_center = matches!(shape, EmitterShape::Sphere)
+                && emitter.flags() & SPHERE_IMPLOSION_FILTER != 0
+                && (particle.position() - implosion_center).dot(displacement) > 0.0;
+            if crossed_implosion_center {
+                self.particles.swap_remove(index);
+                deaths += 1;
+            } else {
+                index += 1;
             }
         }
         Ok(M2ParticleSimulationReport {
