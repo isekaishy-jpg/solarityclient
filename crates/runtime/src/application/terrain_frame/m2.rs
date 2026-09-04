@@ -19,8 +19,8 @@ use solarity_rendering::{
     M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
     M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
-    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
+    M2TransparentPass, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum,
+    compare_m2_transparent, m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
     triggered_m2_event_indices,
 };
 
@@ -107,8 +107,9 @@ struct M2GpuRibbonPass {
     material: solarity_asset::M2Material,
 }
 
-/// One stock transparent scene element retained until the shared comparator runs.
+/// One stock transparent scene element retained with its outer pass selection.
 struct M2TransparentElement {
+    pass: M2TransparentPass,
     key: M2TransparentSortKey,
     draw: M2TransparentDrawIndex,
 }
@@ -2428,6 +2429,7 @@ impl M2Frame {
                 let prepared_index = self.particle_draws.len();
                 self.particle_draws.push(prepared);
                 self.transparent_elements.push(M2TransparentElement {
+                    pass: M2TransparentPass::for_particle_flags(emitter.flags()),
                     key: M2TransparentSortKey::new(
                         instance_distance,
                         false,
@@ -2526,6 +2528,7 @@ impl M2Frame {
                         let prepared_index = self.visible_draws.len();
                         self.visible_draws.push(prepared);
                         self.transparent_elements.push(M2TransparentElement {
+                            pass: M2TransparentPass::One,
                             key: M2TransparentSortKey::new(
                                 primary_distance,
                                 false,
@@ -2584,6 +2587,7 @@ impl M2Frame {
                     let prepared_index = self.ribbon_draws.len();
                     self.ribbon_draws.push(prepared);
                     self.transparent_elements.push(M2TransparentElement {
+                        pass: M2TransparentPass::One,
                         key: M2TransparentSortKey::new(
                             instance_distance,
                             false,
@@ -2605,8 +2609,11 @@ impl M2Frame {
                 );
             }
         }
-        self.transparent_elements
-            .sort_unstable_by(|left, right| compare_m2_transparent(&left.key, &right.key));
+        self.transparent_elements.sort_unstable_by(|left, right| {
+            left.pass
+                .cmp(&right.pass)
+                .then_with(|| compare_m2_transparent(&left.key, &right.key))
+        });
         let first_transparent_order = self.visible_draws.len();
         for (index, element) in self.transparent_elements.iter().enumerate() {
             let scene_order = first_transparent_order

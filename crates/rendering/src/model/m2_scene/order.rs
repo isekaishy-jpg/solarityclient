@@ -7,6 +7,31 @@ use glam::{Mat4, Vec3};
 /// Squared-length normalization guard at build-12340 address `0x009EA27C`.
 const STOCK_SORT_DIRECTION_EPSILON: f32 = 2.384_185_8e-7;
 
+/// The two translucent M2 queues submitted after stock's grouped opaque pass.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum M2TransparentPass {
+    /// Ordinary translucent meshes, ribbons, and particles.
+    One,
+    /// Late translucent work selected by stock's special routing rules.
+    Two,
+}
+
+impl M2TransparentPass {
+    /// Selects the queue used by one authored particle emitter.
+    ///
+    /// Build 12340 maps source bit `0x2000` to runtime bit `0x40000` in
+    /// `0x00832EA0`. Its sole reader at `0x00821A20` routes the particle item
+    /// to pass two; it does not project the particle onto world geometry.
+    #[must_use]
+    pub const fn for_particle_flags(flags: u32) -> Self {
+        if flags & 0x0000_2000 != 0 {
+            Self::Two
+        } else {
+            Self::One
+        }
+    }
+}
+
 /// Runtime-alpha classification applied before build 12340 queues an M2 item.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2ElementAlphaState {

@@ -61,9 +61,9 @@ pub use model::{
     M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow,
     M2LocalLightState, M2MaterialPose, M2MaterialPoseError, M2MaterialUniform, M2MeshPlan,
     M2MeshPlanError, M2RenderVertex, M2SampledLights, M2SceneUniform, M2ShadowMatrix,
-    M2ShadowState, M2TextureBinding, M2TransparentSortKey, PlacedWorldModelDrawPlan,
-    WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan,
-    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    M2ShadowState, M2TextureBinding, M2TransparentPass, M2TransparentSortKey,
+    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
+    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
     WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
     sample_m2_lights_into, triggered_m2_event_indices,
 };

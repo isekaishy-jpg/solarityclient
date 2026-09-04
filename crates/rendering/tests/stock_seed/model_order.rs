@@ -2,9 +2,23 @@
 
 use glam::{Mat4, Vec3};
 use solarity_rendering::{
-    M2ElementAlphaState, M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key,
-    m2_section_distance_key,
+    M2ElementAlphaState, M2TransparentPass, M2TransparentSortKey, compare_m2_transparent,
+    m2_model_distance_key, m2_section_distance_key,
 };
+
+/// `0x00832EA0 -> 0x00821A20` maps only raw `0x2000` to the late particle queue.
+#[test]
+fn project_particle_flag_selects_stock_pass_two_without_geometry_projection() {
+    assert_eq!(
+        M2TransparentPass::for_particle_flags(0),
+        M2TransparentPass::One
+    );
+    assert_eq!(
+        M2TransparentPass::for_particle_flags(0x0000_2000),
+        M2TransparentPass::Two
+    );
+    assert!(M2TransparentPass::One < M2TransparentPass::Two);
+}
 
 /// `0x00821A20` keeps equality on the visible side of both alpha thresholds.
 #[test]
