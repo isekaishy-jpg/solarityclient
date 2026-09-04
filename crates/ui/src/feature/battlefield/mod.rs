@@ -2,7 +2,7 @@
 
 mod state;
 
-use mlua::{Lua, MultiValue, Table, Value};
+use mlua::{Lua, MultiValue, Table, Value, Variadic};
 
 pub use state::{
     MAX_BATTLEFIELD_QUEUES, MAX_WORLD_PVP_QUEUES, UiBattlefieldQueueError, UiBattlefieldQueueState,
@@ -17,6 +17,7 @@ pub(crate) fn register_globals(
 ) -> mlua::Result<()> {
     let battlefield = state.clone();
     let active_arena = state.clone();
+    let battlefield_position_requests = state.clone();
     let battleground_count = state.clone();
     let battleground_info = state.clone();
     globals.raw_set(
@@ -46,6 +47,21 @@ pub(crate) fn register_globals(
                     slot.status() == UiBattlefieldQueueStatus::Active && slot.team_size() != 0
                 })
             }))
+        })?,
+    )?;
+    globals.raw_set(
+        "RequestBattlefieldPositions",
+        lua.create_function(move |_, _arguments: Variadic<Value>| {
+            // The build-12340 wrapper at 0x0054DCB0 ignores Lua arguments.
+            // Its core at 0x0054CF60 immediately returns unless a battlefield
+            // is active; only that active branch emits the throttled position
+            // request. Preserve the constant-time ordinary-world path here.
+            let _has_active_battlefield = (1..=MAX_BATTLEFIELD_QUEUES).any(|index| {
+                battlefield_position_requests
+                    .slot(index)
+                    .is_ok_and(|slot| slot.status() == UiBattlefieldQueueStatus::Active)
+            });
+            Ok(())
         })?,
     )?;
     globals.raw_set(

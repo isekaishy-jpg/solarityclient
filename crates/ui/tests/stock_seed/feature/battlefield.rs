@@ -76,6 +76,10 @@ fn battlefield_status_reads_authoritative_two_slot_state() -> Result<(), Box<dyn
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
     let globals = bundle.lua().globals();
+    let request_positions = globals.get::<mlua::Function>("RequestBattlefieldPositions")?;
+    request_positions.call::<()>(())?;
+    request_positions.call::<()>(0.016_f64)?;
+    request_positions.call::<()>("stock ignores arguments")?;
     let is_active_arena = globals.get::<mlua::Function>("IsActiveBattlefieldArena")?;
     assert!(!is_active_arena.call::<bool>(())?);
     battlefield.set_slot(
