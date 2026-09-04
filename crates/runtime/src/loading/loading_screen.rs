@@ -18,7 +18,7 @@ use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
 
 use super::{
-    RuntimeLoadingStage,
+    RuntimeLoadingReadiness, RuntimeLoadingStage,
     layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fill_uv},
 };
 
@@ -123,8 +123,28 @@ impl RuntimeLoadingScreen {
     }
 
     /// Advances only when a later real subsystem milestone has completed.
-    pub(crate) fn advance(&mut self, stage: RuntimeLoadingStage) {
-        self.stage = self.stage.max(stage);
+    ///
+    /// The complete readiness image is logged once per stage transition. This
+    /// keeps a retained card diagnosable without emitting one record per frame
+    /// or weakening any of stock's first-world prerequisites.
+    pub(crate) fn advance(&mut self, readiness: RuntimeLoadingReadiness) {
+        let stage = readiness.stage();
+        let previous = self.stage;
+        self.stage = previous.max(stage);
+        if self.stage == previous {
+            return;
+        }
+        tracing::info!(
+            previous_stage = ?previous,
+            stage = ?self.stage,
+            world_accepted = readiness.world_accepted,
+            environment_ready = readiness.environment_ready,
+            player_ready = readiness.player_ready,
+            scene_ready = readiness.scene_ready,
+            ui_ready = readiness.ui_ready,
+            transport_resource_ready = readiness.transport_resource_ready,
+            "loading card advanced to a completed first-world milestone"
+        );
     }
 
     /// Presents the current loading-card generation.

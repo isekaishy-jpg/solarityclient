@@ -2046,7 +2046,7 @@ impl ClientServices {
                 ui_ready: self.world_ui.is_some(),
                 transport_resource_ready: self.transport.is_ready(),
             };
-            loading.advance(readiness.stage());
+            loading.advance(readiness);
         }
         Ok(())
     }
