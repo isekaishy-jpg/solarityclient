@@ -6,9 +6,10 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAccountExpansion, UiAnimationPlan, UiBattlegroundType, UiBundle, UiFramePlan,
     UiLayoutPlan, UiMailComposeState, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPetAction,
-    UiPlayerState, UiPlayerStatsState, UiPossessAction, UiRegionStatePlan, UiRune, UiRuneType,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiShapeshiftForm, UiTexturePlan, UiTextureStatePlan, UiWorldStateIndicator,
+    UiPlayerClassState, UiPlayerState, UiPlayerStatsState, UiPlayerVitalsState, UiPossessAction,
+    UiRegionStatePlan, UiRune, UiRuneType, UiRuntimeTemplatePlan, UiScriptEnvironment,
+    UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiShapeshiftForm, UiTexturePlan,
+    UiTextureStatePlan, UiUnitPowerType, UiWorldStateIndicator,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -52,6 +53,8 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
   assert(GetMapInfo() == "TestMap")
   assert(GetCurrentMapContinent() == 1 and GetCurrentMapZone() == 7)
   assert(GetCurrentMapAreaID() == 42 and GetCurrentMapDungeonLevel() == 2)
+  SetMapToCurrentZone()
+  assert(GetCurrentMapAreaID() == 42 and GetCurrentMapZone() == 7)
   assert(GetNumDungeonMapLevels() == 3 and DungeonUsesTerrainMap() == 1)
   assert(IsZoomOutAvailable() == 1 and not HasDebugZoneMap())
   assert(GetNumWorldStateUI() == 1)
@@ -72,6 +75,87 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
   assert(maximumGroup == 10 and battlefieldCanEnter and battlefieldHoliday and not battlefieldRandom)
   local baseStat, effectiveStat, positiveStat, negativeStat = UnitStat("player", 1)
   assert(baseStat == 101 and effectiveStat == 101 and positiveStat == 7 and negativeStat == -3)
+  assert(GetAttackPowerForStat(1, 20) == 20)
+  assert(GetAttackPowerForStat(2, 20) == 0)
+  assert(GetCritChanceFromAgility("player") == 0)
+  assert(GetUnitMaxHealthModifier("player") == 0)
+  assert(GetSpellCritChanceFromIntellect("player") == 0)
+  assert(GetUnitHealthRegenRateFromSpirit("player") == 0)
+  assert(GetUnitManaRegenRateFromSpirit("player") == 0)
+  local baseArmor, effectiveArmor, armor, positiveArmor, negativeArmor = UnitArmor("player")
+  assert(baseArmor == 0 and effectiveArmor == 0 and armor == 0)
+  assert(positiveArmor == 0 and negativeArmor == 0)
+  local attackSpeed, offhandSpeed = UnitAttackSpeed("player")
+  assert(attackSpeed == 0 and offhandSpeed == nil)
+  local minDamage, maxDamage, minOffhandDamage, maxOffhandDamage,
+        damagePositive, damageNegative, damagePercent = UnitDamage("player")
+  assert(minDamage == 0 and maxDamage == 0 and minOffhandDamage == 0)
+  assert(maxOffhandDamage == 0 and damagePositive == 0 and damageNegative == 0)
+  assert(damagePercent == 0)
+  assert(GetCombatRating(18) == 0 and GetCombatRatingBonus(18) == 0)
+  local basePower, positivePower, negativePower = UnitAttackPower("player")
+  assert(basePower == 0 and positivePower == 0 and negativePower == 0)
+  assert(GetComboPoints("player") == 0 and GetComboPoints("player", "target") == 0)
+  local tank, healer, damage = UnitGroupRolesAssigned("player")
+  assert(not tank and not healer and not damage)
+  assert(UnitIsTalking("SolarityTester") == nil)
+  assert(IsPVPTimerRunning() == nil and GetPVPTimer() == 0)
+  local yesterdayKills, yesterdayHonor = GetPVPYesterdayStats()
+  local sessionKills, sessionHonor = GetPVPSessionStats()
+  local lifetimeKills, highestRank = GetPVPLifetimeStats()
+  local rankName, rankNumber = GetPVPRankInfo(0)
+  assert(yesterdayKills == 0 and yesterdayHonor == 0)
+  assert(sessionKills == 0 and sessionHonor == 0)
+  assert(lifetimeKills == 0 and highestRank == 0)
+  assert(rankName == nil and rankNumber == 0)
+  assert(UnitPVPRank("player") == 0 and GetPVPRankProgress() == 0)
+  local honor, honorCap = GetHonorCurrency()
+  local arena, arenaCap = GetArenaCurrency()
+  assert(honor == 0 and honorCap == 75000)
+  assert(arena == 0 and arenaCap == 10000)
+  assert(GetCurrentArenaSeason() == 0 and GetPreviousArenaSeason() == 0)
+  local freeSlots, bagFamily = GetContainerNumFreeSlots(0)
+  assert(freeSlots == 16 and bagFamily == 0)
+  assert(GetInventoryAlertStatus(1) == 0)
+  assert(OffhandHasWeapon() == nil)
+  local bankSlots, fullBank = GetNumBankSlots()
+  assert(bankSlots == 0 and fullBank == nil)
+  local timerName, timerValue, timerMaximum, timerScale, timerPaused, timerLabel =
+    GetMirrorTimerInfo(1)
+  assert(timerName == "UNKNOWN" and timerValue == 0 and timerMaximum == 0)
+  assert(timerScale == 0 and timerPaused == 0 and timerLabel == "")
+  assert(GetArmorPenetration() == 0 and GetDodgeChance() == 0)
+  assert(GetSpellBonusDamage(2) == 0 and GetSpellBonusHealing() == 0)
+  local expertise, offhandExpertise = GetExpertise()
+  assert(expertise == 0 and offhandExpertise == 0)
+  local manaRegen, castingManaRegen = GetManaRegen()
+  assert(manaRegen == 0 and castingManaRegen == 0)
+  assert(UnitHasMana("player") == 1 and UnitHasRelicSlot("player") == nil)
+  assert(GetXPExhaustion() == nil)
+  assert(select('#', GetQuestTimers()) == 0)
+  assert(select('#', GetTrackedAchievements()) == 0)
+  assert(HasCompletedAnyAchievement() == nil)
+  assert(CalendarGetNumPendingInvites() == 0)
+  assert(UnitCastingInfo("player") == nil and UnitChannelInfo("player") == nil)
+  assert(GetGuildRosterShowOffline() == nil)
+  SetGuildRosterShowOffline(true)
+  assert(GetGuildRosterShowOffline() == 1)
+  assert(GetNumVoiceSessionMembersBySessionID(1) == 0)
+  local queued = { 42 }
+  assert(GetLFGQueuedList(queued) == queued and next(queued) == nil)
+  local leaderRole, tankRole, healerRole, damageRole = GetLFGRoles()
+  assert(not leaderRole and not tankRole and not healerRole and not damageRole)
+  local tankAvailable, healerAvailable, damageAvailable = GetAvailableRoles()
+  assert(tankAvailable and not healerAvailable and damageAvailable)
+  assert(not CanPartyLFGBackfill())
+  assert(GetLFGDeserterExpiration() == nil)
+  assert(GetLFGRandomCooldownExpiration() == nil)
+  assert(GetNumLanguages() == 0 and GetLanguageByIndex(1) == nil)
+  local restId, restName, restMultiplier = GetRestState()
+  assert(restId == 2 and restName == "Normal" and restMultiplier == 1)
+  assert(IsXPUserDisabled() == nil)
+  RequestRaidInfo()
+  GetGMTicket()
   local tab = CreateFrame("Button", "DynamicTab", self, "RuntimeButtonTemplate")
   assert(DynamicTabText:GetFontObject() == RuntimeFont)
   DynamicTabText:SetText("Tab")
@@ -114,10 +198,22 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
         .enter_player(UiPlayerState::new(0));
     environment
         .world_state()
+        .set_player_class(UiPlayerClassState::new("Warrior", "WARRIOR", 1));
+    environment
+        .world_state()
         .set_player_stats(UiPlayerStatsState::new(
             [101, 202, 303, 404, 505],
             [7, 0, 0, 0, 0],
             [-3, 0, 0, 0, 0],
+        ));
+    environment
+        .world_state()
+        .set_player_vitals(UiPlayerVitalsState::new(
+            100,
+            100,
+            100,
+            100,
+            UiUnitPowerType::Mana,
         ));
 
     environment
@@ -151,6 +247,8 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
             .with_extended_ui("CAPTUREPOINT", [3, 4, 5]),
     ]);
     let battlefield = environment.battlefield_state();
+    let group_roster = environment.group_roster_state();
+    let support = environment.support_state();
     battlefield.replace_battleground_types(vec![
         UiBattlegroundType::new("Warsong Gulch", true, true, false, 2)
             .with_details("Capture the flag", 10),
@@ -171,6 +269,10 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
         bundle.lua().globals().get("GetNumBattlegroundTypes")?;
     assert_eq!(battleground_count.call::<usize>(())?, 1);
     runtime.execute_all(&bundle, &tree, &scripts)?;
+    assert!(group_roster.take_raid_info_request());
+    assert!(!group_roster.take_raid_info_request());
+    assert!(support.take_gm_ticket_request());
+    assert!(!support.take_gm_ticket_request());
     Ok(())
 }
 

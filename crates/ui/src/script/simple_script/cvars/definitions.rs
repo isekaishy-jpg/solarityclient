@@ -113,7 +113,13 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("Sound_ZoneMusicNoDelay", "0", 0.0, 1.0),
     // Zero selects push-to-talk; one selects voice activation.
     value("VoiceChatMode", "0"),
+    // The stock voice initializer resolves this CVar before FrameXML at
+    // FUN_007DFAF0; zero is the native non-self-muted state.
+    ranged("VoiceChatSelfMute", "0", 0.0, 1.0),
     ranged("advancedWorldMap", "0", 0.0, 1.0),
+    // FUN_0051D9B0 registers the reduced-map opacity against the stock false
+    // scalar at 0x009E14A0.
+    ranged("worldMapOpacity", "0", 0.0, 1.0),
     ranged("assistAttack", "0", 0.0, 1.0),
     ranged("autoClearAFK", "0", 0.0, 1.0),
     ranged("autoDismountFlying", "0", 0.0, 1.0),
@@ -122,8 +128,15 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("autoQuestWatch", "1", 0.0, 1.0),
     ranged("autoRangedCombat", "1", 0.0, 1.0),
     ranged("autoSelfCast", "1", 0.0, 1.0),
+    // FUN_0051D9B0 registers party autojoin against stock true and
+    // battleground autojoin against stock false.
+    ranged("autojoinPartyVoice", "1", 0.0, 1.0),
+    ranged("autojoinBGVoice", "0", 0.0, 1.0),
     ranged("blockTrades", "0", 0.0, 1.0),
     value("cameraBobbing", "0"),
+    // FUN_0051D9B0 registers the type-5 value at 0x009E1340, whose
+    // initialized build-12340 bytes are the exact string "1.0".
+    value("cameraDistanceMaxFactor", "1.0"),
     value("cameraPitchMoveSpeed", "90"),
     value("cameraPitchSmoothSpeed", "45"),
     value("cameraPivot", "1"),
@@ -133,6 +146,12 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("cameraWaterCollision", "1"),
     value("cameraYawMoveSpeed", "180"),
     value("cameraYawSmoothSpeed", "180"),
+    // FUN_0051D9B0 registers both inversion toggles against the stock false
+    // scalar at 0x009E14A0.
+    ranged("mouseInvertPitch", "0", 0.0, 1.0),
+    // FUN_00401B60 formats the platform default with `%1.1f` before
+    // registering this process-level sensitivity value.
+    value("mouseSpeed", "1.0"),
     ranged("chatBubblesParty", "1", 0.0, 1.0),
     ranged("chatBubbles", "1", 0.0, 1.0),
     ranged("chatMouseScroll", "1", 0.0, 1.0),
@@ -141,11 +160,16 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("combatDamage", "1", 0.0, 1.0),
     ranged("combatHealing", "1", 0.0, 1.0),
     ranged("combatLogPeriodicSpells", "1", 0.0, 1.0),
+    ranged("combatLogOn", "1", 0.0, 1.0),
     ranged("consolidateBuffs", "0", 0.0, 1.0),
     value("conversationMode", "popout"),
     ranged("deselectOnClick", "1", 0.0, 1.0),
     ranged("displayFreeBagSlots", "0", 0.0, 1.0),
+    // FUN_0051D9B0 registers the equipment manager against the stock false
+    // scalar at 0x009E14A0.
+    ranged("equipmentManager", "0", 0.0, 1.0),
     ranged("enableWowMouse", "0", 0.0, 1.0),
+    ranged("enablePVPNotifyAFK", "1", 0.0, 1.0),
     ranged("fctSpellMechanics", "0", 0.0, 1.0),
     ranged("fctSpellMechanicsOther", "0", 0.0, 1.0),
     ranged("removeChatDelay", "0", 0.0, 1.0),
@@ -186,10 +210,13 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("guildMemberNotify", "0", 0.0, 1.0),
     ranged("guildRecruitmentChannel", "1", 0.0, 1.0),
     value("locale", "enUS"),
+    ranged("PushToTalkSound", "0", 0.0, 1.0),
     ranged("mapQuestDifficulty", "0", 0.0, 1.0),
     ranged("movieSubtitle", "0", 0.0, 1.0),
     ranged("checkAddonVersion", "1", 0.0, 1.0),
     ranged("nameplateAllowOverlap", "1", 0.0, 1.0),
+    // Registered by FUN_0051D9B0 against stock false scalar 0x009E14A0.
+    ranged("nameplateShowEnemies", "0", 0.0, 1.0),
     ranged("nameplateShowEnemyGuardians", "1", 0.0, 1.0),
     ranged("nameplateShowEnemyPets", "1", 0.0, 1.0),
     ranged("nameplateShowEnemyTotems", "1", 0.0, 1.0),
@@ -204,17 +231,27 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("petSpellDamage", "1", 0.0, 1.0),
     ranged("petStatusText", "0", 0.0, 1.0),
     ranged("playerStatusText", "0", 0.0, 1.0),
+    // FUN_0051D9B0 registers talent preview against the stock false scalar at
+    // 0x009E14A0.
+    ranged("previewTalents", "0", 0.0, 1.0),
     // Empty means FrameXML has not persisted a paper-doll stat category yet.
     value("playerStatLeftDropdown", ""),
     value("playerStatRightDropdown", ""),
     ranged("profanityFilter", "1", 0.0, 1.0),
     ranged("rotateMinimap", "0", 0.0, 1.0),
     ranged("screenEdgeFlash", "1", 0.0, 1.0),
+    // FUN_0051D9B0 registers built-in Lua error dialogs against the stock
+    // false scalar at 0x009E14A0.
+    ranged("scriptErrors", "0", 0.0, 1.0),
     ranged("secureAbilityToggle", "1", 0.0, 1.0),
     ranged("showClassColorInNameplate", "0", 0.0, 1.0),
     ranged("showClock", "1", 0.0, 1.0),
     ranged("timeMgrUseMilitaryTime", "0", 0.0, 1.0),
     ranged("timeMgrUseLocalTime", "0", 0.0, 1.0),
+    // FUN_0051D9B0 registers objective sorting against the stock false scalar
+    // and its filter bitmask from the initialized string at 0x00A01C0C.
+    value("trackerSorting", "0"),
+    value("trackerFilter", "7"),
     value("timeMgrAlarmTime", "0"),
     value("timeMgrAlarmMessage", ""),
     ranged("timeMgrAlarmEnabled", "0", 0.0, 1.0),
@@ -225,7 +262,17 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("showItemLevel", "0", 0.0, 1.0),
     ranged("showLootSpam", "1", 0.0, 1.0),
     ranged("showRaidRange", "0", 0.0, 1.0),
+    ranged("showKeyring", "0", 0.0, 1.0),
     ranged("showTargetCastbar", "1", 0.0, 1.0),
+    // FUN_006E32C0 registers loading-screen tips against the stock true
+    // scalar at 0x009E1464.
+    ranged("showGameTips", "1", 0.0, 1.0),
+    // FUN_0051D9B0 registers verbose tooltips against the stock true scalar at
+    // 0x009E1464.
+    ranged("UberTooltips", "1", 0.0, 1.0),
+    // FUN_0051D9B0 registers tutorials against the stock true scalar at
+    // 0x009E1464.
+    ranged("showTutorials", "1", 0.0, 1.0),
     value("showTimestamps", "none"),
     ranged("showToastBroadcast", "1", 0.0, 1.0),
     ranged("showToastConversation", "1", 0.0, 1.0),
@@ -237,6 +284,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("ShowAllSpellRanks", "1", 0.0, 1.0),
     ranged("spamFilter", "1", 0.0, 1.0),
     ranged("statusTextPercentage", "0", 0.0, 1.0),
+    value("serviceTypeFilter", "3"),
     ranged("stopAutoAttackOnTargetChange", "0", 0.0, 1.0),
     ranged("targetStatusText", "0", 0.0, 1.0),
     ranged("threatPlaySounds", "1", 0.0, 1.0),
@@ -257,6 +305,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("UnitNamePlayerGuild", "1", 0.0, 1.0),
     ranged("UnitNamePlayerPVPTitle", "1", 0.0, 1.0),
     ranged("useEnglishAudio", "0", 0.0, 1.0),
+    ranged("unitHighlights", "1", 0.0, 1.0),
     ranged("watchFrameWidth", "0", 0.0, 1.0),
     ranged("wholeChatWindowClickable", "1", 0.0, 1.0),
     ranged("xpBarText", "0", 0.0, 1.0),

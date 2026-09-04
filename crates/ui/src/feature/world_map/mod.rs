@@ -83,6 +83,15 @@ pub(crate) fn register_globals(
     state: UiWorldMapState,
 ) -> mlua::Result<()> {
     globals.raw_set(
+        "SetMapToCurrentZone",
+        lua.create_function(|_, ()| {
+            // Script_SetMapToCurrentZone is the 0x00547C10 thunk into the
+            // native map selector. Runtime publication already keeps this
+            // boundary on the current player zone until map navigation exists.
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
         "CreateWorldMapArrowFrame",
         lua.create_function(move |lua, parent: Table| {
             let create_frame: Function = lua.globals().raw_get("CreateFrame")?;

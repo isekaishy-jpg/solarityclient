@@ -97,6 +97,7 @@ struct GlueModelKey {
     sequence_time_sequence: u32,
     sequence_time_ms: i32,
     model_scale: f32,
+    rotation_radians: f32,
 }
 
 impl GlueModelKey {
@@ -109,6 +110,7 @@ impl GlueModelKey {
             sequence_time_sequence: model.sequence_time_sequence(),
             sequence_time_ms: model.sequence_time_ms(),
             model_scale: model.model_scale(),
+            rotation_radians: model.rotation_radians(),
         }
     }
 }

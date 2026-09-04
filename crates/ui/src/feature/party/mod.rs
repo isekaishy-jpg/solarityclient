@@ -47,6 +47,7 @@ pub struct UiGroupRosterState {
     loot_method: Rc<Cell<UiLootMethod>>,
     loot_threshold: Rc<Cell<u8>>,
     opt_out_of_loot: Rc<Cell<bool>>,
+    raid_info_requested: Rc<Cell<bool>>,
 }
 
 impl UiGroupRosterState {
@@ -142,6 +143,11 @@ impl UiGroupRosterState {
     #[must_use]
     pub fn opt_out_of_loot(&self) -> bool {
         self.opt_out_of_loot.get()
+    }
+
+    /// Takes the pending stock raid-lockout refresh request.
+    pub fn take_raid_info_request(&self) -> bool {
+        self.raid_info_requested.replace(false)
     }
 }
 
@@ -253,5 +259,16 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetReadyCheckTimeLeft",
         lua.create_function(|_, ()| Ok(0.0_f64))?,
+    )?;
+    let raid_info = state;
+    globals.raw_set(
+        "RequestRaidInfo",
+        lua.create_function(move |_, ()| {
+            // Script_RequestRaidInfo is the build-12340 world-session request
+            // boundary. Coalescing retains one pending command until the
+            // composition root takes it for wire publication.
+            raid_info.raid_info_requested.set(true);
+            Ok(())
+        })?,
     )
 }

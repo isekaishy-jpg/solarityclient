@@ -17,14 +17,14 @@ use super::simple_script::{
     model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
     model_character_light_ghost_key, model_character_light_live_key, model_file_key,
     model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
-    model_pet_light_ghost_key, model_pet_light_live_key, model_scale_key, model_sequence_key,
-    model_sequence_time_key, model_sequence_time_sequence_key, mouse_enabled_key,
-    mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key, normal_font_key,
-    parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key, slider_max_key,
-    slider_min_key, slider_orientation_key, slider_step_key, slider_value_key, spacing_key,
-    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
-    texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
+    model_pet_light_ghost_key, model_pet_light_live_key, model_rotation_key, model_scale_key,
+    model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key, model_unit_key,
+    mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key,
+    normal_font_key, parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key,
+    slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
+    spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
+    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transforms;
 use crate::{
@@ -135,6 +135,8 @@ pub(crate) struct UiRuntimeTextColorChange {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiRuntimeModel {
     pub(crate) file: Option<AssetPath>,
+    pub(crate) unit: Option<String>,
+    pub(crate) rotation_radians: f64,
     pub(crate) camera: i32,
     pub(crate) sequence: u32,
     pub(crate) sequence_time_sequence: u32,
@@ -486,9 +488,16 @@ pub(super) fn snapshot_runtime_objects(
         } else {
             None
         };
-        let model = matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
-            .then(|| snapshot_model(lua_index, &table))
-            .transpose()?;
+        let model = matches!(
+            kind,
+            UiObjectKind::Model
+                | UiObjectKind::PlayerModel
+                | UiObjectKind::DressUpModel
+                | UiObjectKind::TabardModel
+                | UiObjectKind::ModelFfx
+        )
+        .then(|| snapshot_model(lua_index, &table))
+        .transpose()?;
         let is_frame = !matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString);
         let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
         let click_action = is_button
@@ -806,7 +815,15 @@ pub(super) fn refresh_runtime_dirty_objects(
         {
             live.objects[object_index].texture = Some(snapshot_texture(lua_index, &table)?);
         }
-        if flags & DIRTY_MODEL != 0 && matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
+        if flags & DIRTY_MODEL != 0
+            && matches!(
+                kind,
+                UiObjectKind::Model
+                    | UiObjectKind::PlayerModel
+                    | UiObjectKind::DressUpModel
+                    | UiObjectKind::TabardModel
+                    | UiObjectKind::ModelFfx
+            )
         {
             live.objects[object_index].model = Some(snapshot_model(lua_index, &table)?);
         }
@@ -1371,6 +1388,15 @@ fn snapshot_model(lua_index: usize, table: &Table) -> Result<UiRuntimeModel, UiS
     }
     Ok(UiRuntimeModel {
         file,
+        unit: table
+            .raw_get(model_unit_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} model unit"), error))?,
+        rotation_radians: finite_region_number(
+            table,
+            model_rotation_key(),
+            lua_index,
+            "model rotation",
+        )?,
         camera: table
             .raw_get(model_camera_key())
             .map_err(|error| snapshot_error(format!("object {lua_index} model camera"), error))?,

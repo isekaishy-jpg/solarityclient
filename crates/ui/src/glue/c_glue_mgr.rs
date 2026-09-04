@@ -808,7 +808,9 @@ impl GlueManager {
             .runtime
             .dispatch_updates(&self.bundle, elapsed_seconds)?;
         let _handler_count = update.handler_count;
-        if update.targeted_objects {
+        if !self.retained_object_topology_matches_runtime() {
+            self.refresh_live_state()?;
+        } else if update.targeted_objects {
             self.runtime
                 .apply_animation_transforms(&mut self.live, &update.animation_updates);
             if update.texture_vertex_colors_only() {
@@ -839,7 +841,9 @@ impl GlueManager {
         &mut self,
         dispatch: &crate::script::UiScriptEventDispatch,
     ) -> Result<(), UiEventError> {
-        if dispatch.targeted_objects {
+        if !self.retained_object_topology_matches_runtime() {
+            self.refresh_live_state()
+        } else if dispatch.targeted_objects {
             if dispatch.texture_vertex_colors_only() {
                 self.refresh_texture_vertex_colors(
                     &dispatch.dirty_objects,
@@ -855,6 +859,16 @@ impl GlueManager {
         } else {
             Ok(())
         }
+    }
+
+    /// Reports whether Lua and every retained native plan still share one arena.
+    ///
+    /// Stock FrameXML creates regions from event and update handlers. A topology
+    /// change invalidates object-local mutation journals even when every authored
+    /// property write was otherwise journaled, so it must select the atomic full
+    /// snapshot path before any old dense plan is consulted.
+    fn retained_object_topology_matches_runtime(&self) -> bool {
+        self.live.objects().len() == self.runtime.registered_object_count()
     }
 
     /// Publishes stock Texture color animation as an object-local retained

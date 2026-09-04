@@ -29,6 +29,7 @@ mod skill;
 mod social;
 mod spell_book;
 mod stance;
+mod support;
 mod tabard;
 mod taxi_map;
 mod tooltip;
@@ -60,6 +61,7 @@ pub(crate) use chat::{
 };
 pub(crate) use companion::register_globals as register_companion_globals;
 pub use companion::{UiCompanion, UiCompanionState, UiCompanionType};
+pub(crate) use container::register_globals as register_container_globals;
 pub(crate) use group_finder::register_globals as register_group_finder_globals;
 pub use group_finder::{
     UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole, UiGroupFinderRoleCheck,
@@ -93,6 +95,8 @@ pub(crate) use spell_book::register_globals as register_spell_book_globals;
 pub use spell_book::{UiSpellBookState, UiSpellBookTab};
 pub(crate) use stance::register_globals as register_stance_globals;
 pub use stance::{UiPossessAction, UiShapeshiftForm, UiStanceState};
+pub use support::UiSupportState;
+pub(crate) use support::register_globals as register_support_globals;
 pub use tabard::UiTabardState;
 pub(crate) use tabard::register_globals as register_tabard_globals;
 pub use voice_chat::UiVoiceChatState;

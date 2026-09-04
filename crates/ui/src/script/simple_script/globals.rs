@@ -2,7 +2,7 @@
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value, Variadic};
 
-use solarity_asset::{CharacterClassCatalog, Locale};
+use solarity_asset::{CharacterClassCatalog, CombatStatCatalog, Locale};
 
 use crate::{
     UiCharacterInfo, UiGlueMediaAction, UiGlueNetworkAction, UiLoginRequest, UiManifestKind,
@@ -139,12 +139,18 @@ fn register_frame_globals(
     crate::feature::register_chat_window_globals(lua, globals, environment.chat_window_state())?;
     crate::feature::register_channel_globals(lua, globals, environment.channel_state())?;
     crate::feature::register_companion_globals(lua, globals, environment.companion_state())?;
+    crate::feature::register_container_globals(lua, globals, environment.world_state())?;
     crate::feature::register_loot_globals(lua, globals, environment.loot_state())?;
     crate::feature::register_mail_globals(lua, globals, environment.mail_compose_state())?;
     crate::feature::register_minimap_globals(lua, globals, environment.minimap_tracking_state())?;
     crate::feature::register_paper_doll_globals(lua, globals, environment.assets())?;
     crate::feature::register_pet_action_globals(lua, globals, environment.pet_action_state())?;
-    crate::feature::register_group_finder_globals(lua, globals, environment.group_finder_state())?;
+    crate::feature::register_group_finder_globals(
+        lua,
+        globals,
+        environment.group_finder_state(),
+        environment.world_state(),
+    )?;
     crate::feature::register_group_roster_globals(lua, globals, environment.group_roster_state())?;
     crate::feature::register_guild_globals(lua, globals, environment.guild_state())?;
     crate::feature::register_quest_log_globals(lua, globals, environment.quest_log_state())?;
@@ -153,6 +159,7 @@ fn register_frame_globals(
     crate::feature::register_social_globals(lua, globals, environment.social_query_state())?;
     crate::feature::register_spell_book_globals(lua, globals, environment.spell_book_state())?;
     crate::feature::register_stance_globals(lua, globals, environment.stance_state())?;
+    crate::feature::register_support_globals(lua, globals, environment.support_state())?;
     crate::feature::register_tabard_globals(lua, globals, environment.tabard_state())?;
     crate::feature::register_voice_chat_globals(lua, globals, environment.voice_chat_state())?;
     crate::feature::register_world_map_globals(lua, globals, environment.world_map_state())?;
@@ -167,6 +174,8 @@ fn register_frame_globals(
     let unit_xp_max = world.clone();
     let unit_faction = world.clone();
     let default_language = world.clone();
+    let language_count = world.clone();
+    let language_by_index = world.clone();
     let zone_text = world.clone();
     let real_zone_text = world.clone();
     let sub_zone_text = world.clone();
@@ -282,7 +291,7 @@ fn register_frame_globals(
             Ok(values)
         })?,
     )?;
-    register_unit_relation_globals(lua, globals, world.clone())?;
+    register_unit_relation_globals(lua, globals, world.clone(), environment.assets())?;
     globals.raw_set(
         "GetNumFriends",
         lua.create_function(move |_, ()| {
@@ -352,6 +361,29 @@ fn register_frame_globals(
                 values.push_back(Value::String(lua.create_string(language.name())?));
             }
             Ok(values)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetNumLanguages",
+        lua.create_function(move |_, ()| {
+            Ok(u32::from(
+                language_count.player_default_language().is_some(),
+            ))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetLanguageByIndex",
+        lua.create_function(move |lua, index: u32| {
+            let Some(language) = (index == 1)
+                .then(|| language_by_index.player_default_language())
+                .flatten()
+            else {
+                return Ok(MultiValue::new());
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(language.name())?),
+                Value::Integer(i64::from(language.id())),
+            ]))
         })?,
     )?;
     globals.raw_set(
@@ -453,6 +485,7 @@ fn register_unit_relation_globals(
     lua: &Lua,
     globals: &Table,
     world: crate::UiWorldState,
+    assets: Option<solarity_asset::AssetStoreHandle>,
 ) -> mlua::Result<()> {
     let classes = world.clone();
     globals.raw_set(
@@ -550,6 +583,413 @@ fn register_unit_relation_globals(
                 (0, 0, 0, 0)
             })
         })?,
+    )?;
+    let critical_strike_catalog = assets
+        .map(|assets| CombatStatCatalog::load(&mut assets.borrow_mut()))
+        .transpose()
+        .map_err(|error| mlua::Error::runtime(error.to_string()))?
+        .map(std::rc::Rc::new);
+    let melee_critical_strike_catalog = critical_strike_catalog.clone();
+    let critical_strike_world = world.clone();
+    globals.raw_set(
+        "GetCritChanceFromAgility",
+        lua.create_function(move |_, unit: String| {
+            if !unit.eq_ignore_ascii_case("player") {
+                return Ok(0.0);
+            }
+            let Some(catalog) = melee_critical_strike_catalog.as_ref() else {
+                return Ok(0.0);
+            };
+            let Some(class) = critical_strike_world.player_class() else {
+                return Ok(0.0);
+            };
+            let Some(identity) = critical_strike_world.player_identity() else {
+                return Ok(0.0);
+            };
+            let agility = critical_strike_world
+                .player_stats()
+                .and_then(|stats| stats.stat(1))
+                .map_or(0, |(_, effective, _, _)| effective);
+            // Script_GetCritChanceFromAgility at 0x0060E130 dispatches to
+            // 0x0071BAE0. That helper indexes the base table by class and the
+            // coefficient table by class/level, clamps signed Agility at zero,
+            // and converts the resulting fraction to a percentage.
+            Ok(catalog
+                .chance_from_agility(class.id(), identity.level(), agility)
+                .unwrap_or(0.0))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetUnitMaxHealthModifier",
+        lua.create_function(|_, _unit: String| {
+            // Script_GetUnitMaxHealthModifier at 0x00612870 returns zero when
+            // the unit is absent or has no active PLAYER_FIELD_MOD_HEALTH
+            // contribution. The current world boundary does not publish an
+            // active modifier, so preserve that stock state explicitly.
+            Ok(0.0_f64)
+        })?,
+    )?;
+    let spell_critical_strike_catalog = critical_strike_catalog.clone();
+    let spell_critical_strike_world = world.clone();
+    globals.raw_set(
+        "GetSpellCritChanceFromIntellect",
+        lua.create_function(move |_, unit: String| {
+            if !unit.eq_ignore_ascii_case("player") {
+                return Ok(0.0);
+            }
+            let Some(catalog) = spell_critical_strike_catalog.as_ref() else {
+                return Ok(0.0);
+            };
+            let Some(class) = spell_critical_strike_world.player_class() else {
+                return Ok(0.0);
+            };
+            let Some(identity) = spell_critical_strike_world.player_identity() else {
+                return Ok(0.0);
+            };
+            let intellect = spell_critical_strike_world
+                .player_stats()
+                .and_then(|stats| stats.stat(3))
+                .map_or(0, |(_, effective, _, _)| effective);
+            // 0x0060E1B0 dispatches to 0x0071BB70, the spell-table analogue
+            // of the Agility formula at 0x0071BAE0.
+            Ok(catalog
+                .spell_chance_from_intellect(class.id(), identity.level(), intellect)
+                .unwrap_or(0.0))
+        })?,
+    )?;
+    let health_regen_catalog = critical_strike_catalog.clone();
+    let health_regen_world = world.clone();
+    globals.raw_set(
+        "GetUnitHealthRegenRateFromSpirit",
+        lua.create_function(move |_, unit: String| {
+            if !unit.eq_ignore_ascii_case("player") {
+                return Ok(0.0);
+            }
+            let Some(catalog) = health_regen_catalog.as_ref() else {
+                return Ok(0.0);
+            };
+            let Some(class) = health_regen_world.player_class() else {
+                return Ok(0.0);
+            };
+            let Some(identity) = health_regen_world.player_identity() else {
+                return Ok(0.0);
+            };
+            let spirit = health_regen_world
+                .player_stats()
+                .and_then(|stats| stats.stat(4))
+                .map_or(0, |(_, effective, _, _)| effective);
+            // Script_GetUnitHealthRegenRateFromSpirit at 0x00612980 calls
+            // 0x0071BA60, which splits Spirit at the stock 50-point boundary
+            // across gtOCTRegenHP and gtRegenHPPerSpt coefficients.
+            Ok(catalog
+                .health_regen_from_spirit(class.id(), identity.level(), spirit)
+                .unwrap_or(0.0))
+        })?,
+    )?;
+    let mana_regen_catalog = critical_strike_catalog.clone();
+    let mana_regen_world = world.clone();
+    globals.raw_set(
+        "GetUnitManaRegenRateFromSpirit",
+        lua.create_function(move |_, unit: String| {
+            if !unit.eq_ignore_ascii_case("player") {
+                return Ok(0.0);
+            }
+            let Some(catalog) = mana_regen_catalog.as_ref() else {
+                return Ok(0.0);
+            };
+            let Some(class) = mana_regen_world.player_class() else {
+                return Ok(0.0);
+            };
+            let Some(identity) = mana_regen_world.player_identity() else {
+                return Ok(0.0);
+            };
+            let Some(stats) = mana_regen_world.player_stats() else {
+                return Ok(0.0);
+            };
+            let intellect = stats.stat(3).map_or(0, |(_, effective, _, _)| effective);
+            let spirit = stats.stat(4).map_or(0, |(_, effective, _, _)| effective);
+            // Script_GetUnitManaRegenRateFromSpirit at 0x00612A00 calls
+            // 0x0071B9F0: sqrt(Intellect) * Spirit * gtRegenMPPerSpt plus
+            // the initialized build-12340 0.001 floor at 0x009E1134.
+            Ok(catalog
+                .mana_regen_from_spirit(class.id(), identity.level(), intellect, spirit)
+                .unwrap_or(0.0))
+        })?,
+    )?;
+    let attack_power = world.clone();
+    globals.raw_set(
+        "GetAttackPowerForStat",
+        lua.create_function(move |_, (index, value): (usize, i32)| {
+            let Some(vitals) = attack_power.player_vitals() else {
+                return Ok(0);
+            };
+            // Script_GetAttackPowerForStat at 0x0060E560 forwards the
+            // one-based stat and integer value to 0x006D7070. That helper
+            // compares ChrClasses field 1 with the Rage identifier, removes
+            // the first ten points, and contributes only Strength/Agility.
+            // Its separate shapeshift-form 0x20 branch is inactive for the
+            // ordinary world-entry state represented by this UI boundary.
+            let effective = value.saturating_sub(10).max(0);
+            let rage = vitals.power_type() == crate::UiUnitPowerType::Rage;
+            Ok(match index {
+                1 if rage => effective,
+                1 => effective.saturating_mul(2),
+                2 if rage => effective,
+                2.. => 0,
+                _ => 0,
+            })
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitArmor",
+        lua.create_function(|_, _unit: String| {
+            // Script_UnitArmor at 0x00610EC0 initializes all five results to
+            // zero and only replaces them from live combat update fields.
+            Ok((0_i32, 0_i32, 0_i32, 0_i32, 0_i32))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitAttackSpeed",
+        lua.create_function(|_, _unit: String| Ok((0.0_f64, Option::<f64>::None)))?,
+    )?;
+    globals.raw_set(
+        "UnitDamage",
+        lua.create_function(|_, _unit: String| {
+            // Script_UnitDamage at 0x00610860 publishes seven numeric zeroes
+            // when the resolved unit has no live combat update fields.
+            Ok((
+                0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64,
+            ))
+        })?,
+    )?;
+    for name in ["GetCombatRating", "GetCombatRatingBonus"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _rating_index: u32| Ok(0.0_f64))?,
+        )?;
+    }
+    globals.raw_set(
+        "UnitAttackPower",
+        lua.create_function(|_, _unit: String| Ok((0_i32, 0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "GetComboPoints",
+        lua.create_function(|_, (_unit, _target): (String, Option<String>)| {
+            // Script_GetComboPoints at 0x00611670 returns zero when neither
+            // resolved unit owns a live combo-point field. The UI boundary has
+            // no target combat state until the world session publishes one.
+            Ok(0_u32)
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitGroupRolesAssigned",
+        lua.create_function(|_, _unit: String| {
+            // Script_UnitGroupRolesAssigned at 0x0060C810 projects bits one,
+            // two, and three of the resolved unit's group-role field as tank,
+            // healer, and damage booleans. No group update means no role bits.
+            Ok((false, false, false))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitIsTalking",
+        lua.create_function(|_, _unit_name: String| {
+            // Script_UnitIsTalking at 0x007DF0B0 returns nil unless the voice
+            // session resolves the named member as actively transmitting.
+            Ok(Option::<u8>::None)
+        })?,
+    )?;
+    globals.raw_set(
+        "IsPVPTimerRunning",
+        lua.create_function(|_, ()| {
+            // Script_IsPVPTimerRunning at 0x0051BD60 returns nil unless the
+            // controlled player's PvP timer flag is active.
+            Ok(Option::<u8>::None)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetPVPTimer",
+        lua.create_function(|_, ()| {
+            // Script_GetPVPTimer at 0x0051BD00 returns zero without a resolved
+            // controlled player. FrameXML calls it only while the timer runs.
+            Ok(0_u32)
+        })?,
+    )?;
+    for name in ["GetPVPYesterdayStats", "GetPVPSessionStats"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, ()| {
+                // The build-12340 wrappers at 0x00611AD0 and 0x00611A20
+                // publish two numeric zeroes without live player PvP fields.
+                Ok((0_u32, 0_u32))
+            })?,
+        )?;
+    }
+    globals.raw_set(
+        "GetPVPLifetimeStats",
+        lua.create_function(|_, ()| {
+            // Script_GetPVPLifetimeStats at 0x00611B80 publishes lifetime
+            // kills and highest rank, both zero without live update fields.
+            Ok((0_u32, 0_u32))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetHonorCurrency",
+        lua.create_function(|_, ()| {
+            // Script_GetHonorCurrency at 0x0060FC40 returns the live balance
+            // followed by build 12340's initialized 75,000-point cap.
+            Ok((0_u32, 75_000_u32))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetArenaCurrency",
+        lua.create_function(|_, ()| {
+            // Script_GetArenaCurrency at 0x0060FCC0 returns the live balance
+            // followed by build 12340's initialized 10,000-point cap.
+            Ok((0_u32, 10_000_u32))
+        })?,
+    )?;
+    for name in ["GetCurrentArenaSeason", "GetPreviousArenaSeason"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, ()| {
+                // The build-12340 wrappers at 0x005A2A40 and 0x005A2A70
+                // return zero when their server-published season records are
+                // absent from the active world state.
+                Ok(0_u32)
+            })?,
+        )?;
+    }
+    globals.raw_set(
+        "GetPVPRankInfo",
+        lua.create_function(|_, (_rank, _unit): (u32, Option<Value>)| {
+            // Script_GetPVPRankInfo at 0x00611CB0 returns nil and rank zero
+            // outside the stock one-through-eighteen title range.
+            Ok((Option::<String>::None, 0_i32))
+        })?,
+    )?;
+    globals.raw_set(
+        "UnitPVPRank",
+        lua.create_function(|_, _unit: String| {
+            // Script_UnitPVPRank at 0x00611C40 returns zero in build 12340.
+            Ok(0_u32)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetPVPRankProgress",
+        lua.create_function(|_, ()| {
+            // Script_GetPVPRankProgress at 0x00608560 is a constant zero.
+            Ok(0.0_f64)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetMirrorTimerInfo",
+        lua.create_function(|_, timer: u32| {
+            if !(1..=3).contains(&timer) {
+                return Err(mlua::Error::runtime("Usage: GetMirrorTimerInfo(\"timer\")"));
+            }
+            // The build-12340 mirror-timer initializer writes kind 3 to all
+            // three slots at 0x00BD0B60..0x00BD0BB8; FUN_00513E00 maps that
+            // inactive sentinel to `UNKNOWN`.
+            Ok(("UNKNOWN", 0_i32, 0_i32, 0_i32, 0_i32, ""))
+        })?,
+    )?;
+    for name in [
+        "GetArmorPenetration",
+        "GetBlockChance",
+        "GetCritChance",
+        "GetDodgeChance",
+        "GetMaxCombatRatingBonus",
+        "GetParryChance",
+        "GetRangedCritChance",
+        "GetShieldBlock",
+        "GetSpellBonusDamage",
+        "GetSpellCritChance",
+    ] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _index: Option<u32>| Ok(0.0_f64))?,
+        )?;
+    }
+    for name in ["GetSpellBonusHealing", "GetSpellPenetration"] {
+        globals.raw_set(name, lua.create_function(|_, ()| Ok(0.0_f64))?)?;
+    }
+    for name in ["GetExpertise", "GetExpertisePercent", "GetManaRegen"] {
+        globals.raw_set(name, lua.create_function(|_, ()| Ok((0.0_f64, 0.0_f64)))?)?;
+    }
+    globals.raw_set(
+        "UnitAttackBothHands",
+        lua.create_function(|_, _unit: String| Ok((0_i32, 0_i32, 0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "UnitDefense",
+        lua.create_function(|_, _unit: String| Ok((0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "UnitResistance",
+        lua.create_function(|_, (_unit, _school): (String, u32)| Ok((0_i32, 0_i32, 0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "UnitRangedAttackPower",
+        lua.create_function(|_, _unit: String| Ok((0_i32, 0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "UnitRangedAttack",
+        lua.create_function(|_, _unit: String| Ok((0_i32, 0_i32)))?,
+    )?;
+    globals.raw_set(
+        "UnitRangedDamage",
+        lua.create_function(|_, _unit: String| {
+            Ok((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 1.0_f64))
+        })?,
+    )?;
+    for name in ["HasWandEquipped", "UnitHasRelicSlot"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _unit: Option<String>| Ok(Option::<u8>::None))?,
+        )?;
+    }
+    let has_mana = world.clone();
+    globals.raw_set(
+        "UnitHasMana",
+        lua.create_function(move |_, unit: String| {
+            Ok(unit_vitals(&has_mana, &unit)
+                .is_some_and(|vitals| vitals.power_type() == crate::UiUnitPowerType::Mana)
+                .then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetXPExhaustion",
+        lua.create_function(|_, ()| Ok(Option::<f64>::None))?,
+    )?;
+    globals.raw_set(
+        "GetQuestTimers",
+        lua.create_function(|_, ()| Ok(MultiValue::new()))?,
+    )?;
+    globals.raw_set(
+        "GetTrackedAchievements",
+        lua.create_function(|_, ()| Ok(MultiValue::new()))?,
+    )?;
+    globals.raw_set(
+        "HasCompletedAnyAchievement",
+        lua.create_function(|_, ()| Ok(Option::<u8>::None))?,
+    )?;
+    globals.raw_set(
+        "CalendarGetNumPendingInvites",
+        lua.create_function(|_, ()| Ok(0_u32))?,
+    )?;
+    for name in ["UnitCastingInfo", "UnitChannelInfo"] {
+        globals.raw_set(
+            name,
+            lua.create_function(|_, _unit: String| Ok(MultiValue::new()))?,
+        )?;
+    }
+    globals.raw_set(
+        "GetRestState",
+        lua.create_function(|_, ()| Ok((2_u32, "Normal", 1.0_f64)))?,
+    )?;
+    globals.raw_set(
+        "IsXPUserDisabled",
+        lua.create_function(|_, ()| Ok(Option::<u8>::None))?,
     )?;
     let connected = world.clone();
     globals.raw_set(

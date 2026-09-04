@@ -4,6 +4,8 @@ mod state;
 
 use mlua::{Lua, MultiValue, Table, Value};
 
+use crate::UiWorldState;
+
 pub use state::{
     UiGroupFinderError, UiGroupFinderProposal, UiGroupFinderRole, UiGroupFinderRoleCheck,
     UiGroupFinderServerInfo, UiGroupFinderState,
@@ -14,6 +16,7 @@ pub(crate) fn register_globals(
     lua: &Lua,
     globals: &Table,
     state: UiGroupFinderState,
+    world: UiWorldState,
 ) -> mlua::Result<()> {
     let proposal_state = state.clone();
     let server_state = state.clone();
@@ -59,6 +62,67 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "HasLFGRestrictions",
         lua.create_function(move |_, ()| Ok(restriction_state.has_restrictions()))?,
+    )?;
+    globals.raw_set(
+        "GetLFGQueuedList",
+        lua.create_function(|_, output: Table| {
+            // Script_GetLFGQueuedList at 0x00557520 clears the caller-owned
+            // output table before appending each active queued dungeon. The
+            // initial world projection owns no queued dungeon entries.
+            output.clear()?;
+            Ok(output)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetLFGRoles",
+        lua.create_function(|_, ()| {
+            // Script_GetLFGRoles at 0x00552E10 returns the four role-mask
+            // bits in leader, tank, healer, and damage order. A newly
+            // entered world owns an empty mask until the player selects one.
+            Ok((false, false, false, false))
+        })?,
+    )?;
+    globals.raw_set(
+        "GetAvailableRoles",
+        lua.create_function(move |_, ()| {
+            // Script_GetAvailableRoles at 0x005548F0 indexes the stock class
+            // role mask, then returns tank, healer, and damage bits.
+            let roles =
+                world
+                    .player_class()
+                    .map_or((false, false, false), |class| match class.id() {
+                        1 | 6 => (true, false, true),
+                        2 | 11 => (true, true, true),
+                        5 | 7 => (false, true, true),
+                        3 | 4 | 8 | 9 => (false, false, true),
+                        _ => (false, false, false),
+                    });
+            Ok(roles)
+        })?,
+    )?;
+    globals.raw_set(
+        "CanPartyLFGBackfill",
+        lua.create_function(|_, ()| {
+            // Script_CanPartyLFGBackfill at 0x00553170 only returns true for
+            // an eligible undersized LFG party. The inactive queue is false.
+            Ok(false)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetLFGDeserterExpiration",
+        lua.create_function(|_, ()| {
+            // Script_GetLFGDeserterExpiration at 0x005580E0 returns no Lua
+            // values unless an active deserter aura can be resolved.
+            Ok(None::<f64>)
+        })?,
+    )?;
+    globals.raw_set(
+        "GetLFGRandomCooldownExpiration",
+        lua.create_function(|_, ()| {
+            // Script_GetLFGRandomCooldownExpiration at 0x00558060 likewise
+            // produces no value until the corresponding aura is present.
+            Ok(None::<f64>)
+        })?,
     )
 }
 

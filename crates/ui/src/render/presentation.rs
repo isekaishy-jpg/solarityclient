@@ -183,6 +183,7 @@ pub struct UiModelPresentation {
     sequence_time_sequence: u32,
     sequence_time_ms: i32,
     model_scale: f32,
+    rotation_radians: f32,
     fog: Option<UiModelFog>,
     glow: f32,
     background_lights: UiModelLightSets,
@@ -235,6 +236,12 @@ impl UiModelPresentation {
     #[must_use]
     pub const fn model_scale(&self) -> f32 {
         self.model_scale
+    }
+
+    /// Returns the model-local yaw selected through `SetRotation`.
+    #[must_use]
+    pub const fn rotation_radians(&self) -> f32 {
+        self.rotation_radians
     }
 
     /// Returns the authored fog state, or `None` after `ClearFog`.
@@ -794,6 +801,7 @@ impl UiPresentationPlan {
             sequence_time_sequence: model.sequence_time_sequence,
             sequence_time_ms: model.sequence_time_ms,
             model_scale: model.scale as f32,
+            rotation_radians: model.rotation_radians as f32,
             fog: model.fog_color.map(|color| UiModelFog {
                 color: color.map(|value| value as f32),
                 near: model.fog_near as f32,

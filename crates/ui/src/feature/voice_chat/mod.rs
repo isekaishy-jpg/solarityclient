@@ -67,6 +67,10 @@ pub(crate) fn register_globals(
         lua.create_function(|_, _: Value| Ok(Value::Nil))?,
     )?;
     globals.raw_set(
+        "GetNumVoiceSessionMembersBySessionID",
+        lua.create_function(|_, _session: Value| Ok(0_u32))?,
+    )?;
+    globals.raw_set(
         "GetVoiceCurrentSessionID",
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;

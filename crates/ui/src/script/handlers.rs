@@ -479,7 +479,11 @@ pub(super) fn handler_for(kind: UiObjectKind, name: &str) -> Option<UiScriptHand
                 UiScriptHandler::CharComposition,
             ],
         ),
-        UiObjectKind::Model | UiObjectKind::ModelFfx => match_name(
+        UiObjectKind::Model
+        | UiObjectKind::PlayerModel
+        | UiObjectKind::DressUpModel
+        | UiObjectKind::TabardModel
+        | UiObjectKind::ModelFfx => match_name(
             name,
             &[UiScriptHandler::UpdateModel, UiScriptHandler::AnimFinished],
         ),

@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, Value};
 
 /// Shared server-published guild membership capability.
 #[derive(Clone, Debug, Default)]
@@ -11,6 +11,7 @@ pub struct UiGuildState {
     member: Rc<Cell<bool>>,
     roster_selection: Rc<Cell<usize>>,
     roster_member_count: Rc<Cell<usize>>,
+    roster_show_offline: Rc<Cell<bool>>,
     message_of_the_day: Rc<RefCell<String>>,
 }
 
@@ -61,6 +62,8 @@ pub(crate) fn register_globals(
     let selection_state = state.clone();
     let get_selection_state = state.clone();
     let motd_state = state.clone();
+    let show_offline_state = state.clone();
+    let set_show_offline_state = state.clone();
     globals.raw_set(
         "IsInGuild",
         lua.create_function(move |_, ()| Ok(state.is_member().then_some(1_u8)))?,
@@ -94,6 +97,21 @@ pub(crate) fn register_globals(
         "GetGuildRosterMOTD",
         lua.create_function(move |lua, ()| {
             lua.create_string(motd_state.message_of_the_day.borrow().as_str())
+        })?,
+    )?;
+    globals.raw_set(
+        "GetGuildRosterShowOffline",
+        lua.create_function(move |_, ()| {
+            Ok(show_offline_state.roster_show_offline.get().then_some(1_u8))
+        })?,
+    )?;
+    globals.raw_set(
+        "SetGuildRosterShowOffline",
+        lua.create_function(move |_, shown: Value| {
+            set_show_offline_state
+                .roster_show_offline
+                .set(!matches!(shown, Value::Nil | Value::Boolean(false)));
+            Ok(())
         })?,
     )
 }

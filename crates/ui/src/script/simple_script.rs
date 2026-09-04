@@ -199,8 +199,10 @@ static RESOLVED_BOTTOM_TOKEN: u8 = 135;
 static RESOLVED_RIGHT_TOKEN: u8 = 136;
 static RESOLVED_TOP_TOKEN: u8 = 137;
 static RESOLVED_VISIBLE_TOKEN: u8 = 138;
+static MODEL_UNIT_TOKEN: u8 = 139;
+static MODEL_ROTATION_TOKEN: u8 = 140;
 
-const OBJECT_KINDS: [UiObjectKind; 21] = [
+const OBJECT_KINDS: [UiObjectKind; 24] = [
     UiObjectKind::Frame,
     UiObjectKind::Button,
     UiObjectKind::CheckButton,
@@ -213,6 +215,9 @@ const OBJECT_KINDS: [UiObjectKind; 21] = [
     UiObjectKind::Minimap,
     UiObjectKind::QuestPoiFrame,
     UiObjectKind::Model,
+    UiObjectKind::PlayerModel,
+    UiObjectKind::DressUpModel,
+    UiObjectKind::TabardModel,
     UiObjectKind::ModelFfx,
     UiObjectKind::MovieFrame,
     UiObjectKind::ScrollFrame,
@@ -592,6 +597,7 @@ pub struct UiScriptEnvironment {
     social_queries: crate::UiSocialQueryState,
     spell_book: crate::UiSpellBookState,
     stances: crate::UiStanceState,
+    support: crate::UiSupportState,
     tabard: crate::UiTabardState,
     voice_chat: crate::UiVoiceChatState,
     world_map: crate::UiWorldMapState,
@@ -658,6 +664,7 @@ impl UiScriptEnvironment {
             social_queries: crate::UiSocialQueryState::new(),
             spell_book: crate::UiSpellBookState::new(),
             stances: crate::UiStanceState::new(),
+            support: crate::UiSupportState::new(),
             tabard: crate::UiTabardState::new(),
             voice_chat: crate::UiVoiceChatState::new(),
             world_map: crate::UiWorldMapState::new(),
@@ -958,6 +965,12 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn stance_state(&self) -> crate::UiStanceState {
         self.stances.clone()
+    }
+
+    /// Returns pending active-world customer-support requests.
+    #[must_use]
+    pub fn support_state(&self) -> crate::UiSupportState {
+        self.support.clone()
     }
 
     /// Returns the shared guild-tabard vendor session state.
@@ -2928,7 +2941,7 @@ impl UiScriptRuntime {
             crate::feature::initialize_minimap_state(&table)
                 .map_err(|error| execution_error("object registration", error))?;
         }
-        if matches!(object.kind(), UiObjectKind::Model | UiObjectKind::ModelFfx) {
+        if is_model_object(object.kind()) {
             initialize_model_runtime_state(lua, &table)
                 .map_err(|error| execution_error("object registration", error))?;
         }
@@ -3588,7 +3601,10 @@ fn create_dynamic_object(
         object.raw_set(tooltip_offset_y_key(), 0.0)?;
         object.raw_set(tooltip_padding_key(), 0.0)?;
     }
-    if matches!(kind, "Model" | "ModelFFX") {
+    if matches!(
+        kind,
+        "Model" | "PlayerModel" | "DressUpModel" | "TabardModel" | "ModelFFX"
+    ) {
         initialize_model_runtime_state(lua, &object)?;
     }
     if matches!(kind, "FontString" | "EditBox") {
@@ -4204,8 +4220,14 @@ fn create_object_metatable(
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
     }
-    if matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx) {
+    if is_model_object(kind) {
         register_model_methods(lua, &methods, assets.clone())?;
+    }
+    if matches!(
+        kind,
+        UiObjectKind::PlayerModel | UiObjectKind::DressUpModel | UiObjectKind::TabardModel
+    ) {
+        register_player_model_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::MovieFrame {
         register_movie_frame_methods(lua, &methods, assets, media_intent)?;
@@ -5206,6 +5228,8 @@ fn set_texture_gradient(
 }
 
 fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
+    model.raw_set(model_unit_key(), Option::<String>::None)?;
+    model.raw_set(model_rotation_key(), 0.0)?;
     model.raw_set(model_camera_key(), 0)?;
     model.raw_set(model_sequence_key(), 0_u32)?;
     model.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
@@ -5222,11 +5246,42 @@ fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> 
     Ok(())
 }
 
+/// Installs the unit-selection contract shared by stock paper-doll models.
+fn register_player_model_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetUnit",
+        lua.create_function(|lua, (model, unit): (Table, String)| {
+            if model
+                .raw_get::<Option<String>>(model_unit_key())?
+                .as_deref()
+                != Some(&unit)
+            {
+                model.raw_set(model_unit_key(), unit)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
+            }
+            Ok(())
+        })?,
+    )
+}
+
 fn register_model_methods(
     lua: &Lua,
     methods: &Table,
     assets: Option<AssetStoreHandle>,
 ) -> mlua::Result<()> {
+    methods.raw_set(
+        "SetRotation",
+        lua.create_function(|lua, (model, value): (Table, Value)| {
+            // Script_Model_SetRotation at 0x00597A10 accepts one radians
+            // scalar and forwards it unchanged to the model widget.
+            let value = finite_model_number(lua, value, "model rotation")?;
+            if model.raw_get::<f64>(model_rotation_key())? != value {
+                model.raw_set(model_rotation_key(), value)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
+            }
+            Ok(())
+        })?,
+    )?;
     methods.raw_set(
         "SetModel",
         lua.create_function(move |lua, (model, value): (Table, Value)| {
@@ -8637,6 +8692,9 @@ fn object_type_name(kind: UiObjectKind) -> &'static str {
         UiObjectKind::Minimap => "Minimap",
         UiObjectKind::QuestPoiFrame => "QuestPOIFrame",
         UiObjectKind::Model => "Model",
+        UiObjectKind::PlayerModel => "PlayerModel",
+        UiObjectKind::DressUpModel => "DressUpModel",
+        UiObjectKind::TabardModel => "TabardModel",
         UiObjectKind::ModelFfx => "ModelFFX",
         UiObjectKind::MovieFrame => "MovieFrame",
         UiObjectKind::ScrollFrame => "ScrollFrame",
@@ -8675,8 +8733,26 @@ fn is_object_type(exact: &str, candidate: &str) -> bool {
         return !matches!(exact, "Texture" | "FontString");
     }
     (candidate.eq_ignore_ascii_case("Button") && exact == "CheckButton")
-        || (candidate.eq_ignore_ascii_case("Model") && exact == "ModelFFX")
+        || (candidate.eq_ignore_ascii_case("Model")
+            && matches!(
+                exact,
+                "PlayerModel" | "DressUpModel" | "TabardModel" | "ModelFFX"
+            ))
+        || (candidate.eq_ignore_ascii_case("PlayerModel")
+            && matches!(exact, "DressUpModel" | "TabardModel"))
         || (candidate.eq_ignore_ascii_case("MessageFrame") && exact == "ScrollingMessageFrame")
+}
+
+/// Reports whether one object owns stock model-widget state.
+const fn is_model_object(kind: UiObjectKind) -> bool {
+    matches!(
+        kind,
+        UiObjectKind::Model
+            | UiObjectKind::PlayerModel
+            | UiObjectKind::DressUpModel
+            | UiObjectKind::TabardModel
+            | UiObjectKind::ModelFfx
+    )
 }
 
 fn is_frame_object(kind: UiObjectKind) -> bool {
@@ -8723,15 +8799,18 @@ const fn object_kind_index(kind: UiObjectKind) -> usize {
         UiObjectKind::Minimap => 9,
         UiObjectKind::QuestPoiFrame => 10,
         UiObjectKind::Model => 11,
-        UiObjectKind::ModelFfx => 12,
-        UiObjectKind::MovieFrame => 13,
-        UiObjectKind::ScrollFrame => 14,
-        UiObjectKind::ScrollingMessageFrame => 15,
-        UiObjectKind::SimpleHtml => 16,
-        UiObjectKind::Slider => 17,
-        UiObjectKind::StatusBar => 18,
-        UiObjectKind::Texture => 19,
-        UiObjectKind::WorldFrame => 20,
+        UiObjectKind::PlayerModel => 12,
+        UiObjectKind::DressUpModel => 13,
+        UiObjectKind::TabardModel => 14,
+        UiObjectKind::ModelFfx => 15,
+        UiObjectKind::MovieFrame => 16,
+        UiObjectKind::ScrollFrame => 17,
+        UiObjectKind::ScrollingMessageFrame => 18,
+        UiObjectKind::SimpleHtml => 19,
+        UiObjectKind::Slider => 20,
+        UiObjectKind::StatusBar => 21,
+        UiObjectKind::Texture => 22,
+        UiObjectKind::WorldFrame => 23,
     }
 }
 
@@ -9061,6 +9140,14 @@ pub(super) fn model_sequence_key() -> LightUserData {
 
 pub(super) fn model_file_key() -> LightUserData {
     hidden_key(&MODEL_FILE_TOKEN)
+}
+
+pub(super) fn model_unit_key() -> LightUserData {
+    hidden_key(&MODEL_UNIT_TOKEN)
+}
+
+pub(super) fn model_rotation_key() -> LightUserData {
+    hidden_key(&MODEL_ROTATION_TOKEN)
 }
 
 pub(super) fn click_action_key() -> LightUserData {

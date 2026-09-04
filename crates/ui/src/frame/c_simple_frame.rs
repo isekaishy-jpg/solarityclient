@@ -34,6 +34,12 @@ pub enum UiObjectKind {
     QuestPoiFrame,
     /// 3D model frame.
     Model,
+    /// Unit-backed paper-doll model frame.
+    PlayerModel,
+    /// Player model with equipment-preview operations.
+    DressUpModel,
+    /// Player model with guild-tabard customization operations.
+    TabardModel,
     /// Glue model frame with the stock FFX presentation path.
     ModelFfx,
     /// Movie playback frame.
@@ -69,6 +75,9 @@ impl UiObjectKind {
             ("Minimap", Self::Minimap),
             ("QuestPOIFrame", Self::QuestPoiFrame),
             ("Model", Self::Model),
+            ("PlayerModel", Self::PlayerModel),
+            ("DressUpModel", Self::DressUpModel),
+            ("TabardModel", Self::TabardModel),
             ("ModelFFX", Self::ModelFfx),
             ("MovieFrame", Self::MovieFrame),
             ("ScrollFrame", Self::ScrollFrame),

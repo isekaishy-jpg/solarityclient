@@ -1564,6 +1564,50 @@ fn glue_manager_resolves_live_startup_geometry() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Event-created stock regions atomically grow every retained arena.
+#[test]
+fn glue_manager_grows_retained_plans_after_event_create_frame() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"DynamicEvent.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\DynamicEvent.xml",
+            bytes: br#"<Ui><Frame name="Root"><Scripts>
+  <OnLoad>self:RegisterEvent("CHARACTER_LIST_UPDATE")</OnLoad>
+  <OnEvent>
+    local dynamic = CreateFrame("Frame", "EventDynamic", self)
+    dynamic:SetSize(120, 40)
+    dynamic:SetPoint("CENTER", self, "CENTER")
+  </OnEvent>
+</Scripts></Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+
+    assert_eq!(manager.objects().len(), 1);
+    assert_eq!(manager.geometry().region_count(), 1);
+    manager.dispatch_event("CHARACTER_LIST_UPDATE", &UiEventPayload::empty())?;
+
+    assert_eq!(manager.objects().len(), 2);
+    assert_eq!(manager.geometry().region_count(), 2);
+    assert_eq!(manager.objects()[1].name(), Some("EventDynamic"));
+    assert_eq!(manager.children(0), Some(&[1][..]));
+    assert_close(
+        manager
+            .geometry()
+            .region(1)
+            .ok_or("missing event-created geometry")?
+            .logical_bounds()
+            .width(),
+        120.0,
+    );
+    Ok(())
+}
+
 /// Mutually dependent live anchors fail instead of receiving guessed bounds.
 #[test]
 fn glue_manager_rejects_live_anchor_cycles() -> Result<(), Box<dyn Error>> {
