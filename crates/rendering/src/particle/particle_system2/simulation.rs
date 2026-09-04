@@ -94,10 +94,10 @@ impl InheritedEmitterMotion {
             self.accumulated_seconds += elapsed_seconds;
             if self.accumulated_seconds >= EMITTER_MOTION_SAMPLE_SECONDS {
                 self.sampled_motion = if has_live_particles {
-                    Vec3::ZERO
-                } else {
                     (current_position - previous_position)
                         * (EMITTER_MOTION_SAMPLE_SECONDS / self.accumulated_seconds * scale)
+                } else {
+                    Vec3::ZERO
                 };
                 self.previous_position = Some(current_position);
                 self.accumulated_seconds = 0.0;

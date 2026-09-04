@@ -1738,41 +1738,43 @@ fn m2_particle_simulation_inherits_emitter_velocity() -> Result<(), Box<dyn Erro
         emitter,
         M2AnimationClock::new(0, 500.0, 0.0),
     )?;
-    let seed = 0x0029_4823;
-    let mut simulation = M2ParticleSimulation::new(seed);
-    simulation.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 0.0)?;
-    simulation.advance_planar(
+    let mut moving = M2ParticleSimulation::new(0x0029_4823);
+    let mut stationary = M2ParticleSimulation::new(0x0029_4823);
+    moving.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 0.0)?;
+    stationary.advance_planar(emitter, pose, 0.0, Mat4::IDENTITY, 0.0)?;
+    moving.advance_planar(
         emitter,
         pose,
-        0.04,
+        0.1,
         Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
         1.0,
     )?;
-    let particle = simulation
-        .particles()
-        .first()
-        .ok_or("inherited-velocity particle was not emitted")?;
-    let mut random = M2ParticleRandom::new(seed);
-    let _first_rate = random.next_signed();
-    let _second_rate = random.next_signed();
-    let _initial_age = random.next_unit() * 0.04;
-    let _random_word = random.next_u32() as u16;
-    let local_y = random.next_signed() * pose.emission_area_length() * 0.5;
-    let local_x = random.next_signed() * pose.emission_area_width() * 0.5;
-    let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
-    let _polar = random.next_signed() * pose.vertical_range();
-    let _azimuth = random.next_signed() * pose.horizontal_range();
-    let inherited = Vec3::new(3.0, 0.0, 0.0) * (0.03 / 0.04 * 0.5);
-    let inherit_variation = random.next_signed() * pose.speed_variation() + 1.0;
-    let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed
-        + inherited * inherit_variation;
-    expected_velocity += pose.gravity() * 0.04;
-    assert!(
-        (particle.velocity() - expected_velocity)
-            .abs()
-            .max_element()
-            < 0.0001
-    );
+    stationary.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+    assert_eq!(moving.particles().len(), stationary.particles().len());
+    for (moving, stationary) in moving.particles().iter().zip(stationary.particles()) {
+        assert_eq!(moving.velocity(), stationary.velocity());
+    }
+
+    let established_count = moving.particles().len();
+    moving.advance_planar(
+        emitter,
+        pose,
+        0.1,
+        Mat4::from_translation(Vec3::new(6.0, 0.0, 0.0)),
+        1.0,
+    )?;
+    stationary.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+    assert!(moving.particles().len() > established_count);
+    assert_eq!(moving.particles().len(), stationary.particles().len());
+    for (moving, stationary) in moving.particles()[established_count..]
+        .iter()
+        .zip(&stationary.particles()[established_count..])
+    {
+        let inherited_delta = moving.velocity() - stationary.velocity();
+        assert!(inherited_delta.x.abs() > 0.01);
+        assert!(inherited_delta.y.abs() < 0.0001);
+        assert!(inherited_delta.z.abs() < 0.0001);
+    }
     Ok(())
 }
 
