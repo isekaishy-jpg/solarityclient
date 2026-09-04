@@ -6,9 +6,121 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_rendering::{
     UiRenderBlend, UiRenderSource, UiRenderTransform, UiTextureAddressMode, UiTextureResidency,
 };
-use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiTextureSource};
+use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiPointerButton, UiTextureSource};
 
 use crate::support::{Fixture, FixtureFile};
+
+/// One native callback can recolor a backdrop and texture while changing another
+/// texture's UVs. A later material replacement still removes the old source.
+#[test]
+fn mixed_content_patch_preserves_native_decorations_and_material_changes()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"Mixed.xml\n" },
+        FixtureFile { path: "Interface\\GlueXML\\Mixed.xml", bytes: br#"<Ui>
+<Button name="Panel"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Backdrop bgFile="Interface\Glues\Background"><Color r="1" g="1" b="1"/></Backdrop>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="Tint" file="Interface\Glues\Tint"><Size x="40" y="30"/><Anchors><Anchor point="LEFT"/></Anchors></Texture>
+    <Texture name="Icon" file="Interface\Glues\Icon"><Size x="40" y="30"/><Anchors><Anchor point="RIGHT"/></Anchors></Texture>
+    <Texture name="Untouched" file="Interface\Glues\Untouched"><Size x="10" y="10"/><Anchors><Anchor point="BOTTOM"/></Anchors></Texture>
+  </Layer></Layers>
+  <Scripts><OnClick>
+    if not self.changed then
+      self.changed = true
+      self:SetBackdropColor(0.25, 0.5, 0.75, 1)
+      Tint:SetVertexColor(0.5, 0.75, 1, 0.5)
+      Icon:SetTexCoord(0.25, 0.75, 0.125, 0.875)
+    else
+      Icon:SetTexture("Interface\\Glues\\Other")
+    end
+  </OnClick></Scripts>
+</Button>
+</Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (800, 600), false)?;
+    let index = |name: &str| {
+        manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))
+            .ok_or("missing named region")
+    };
+    let panel = index("Panel")?;
+    let tint = index("Tint")?;
+    let icon = index("Icon")?;
+    let untouched = index("Untouched")?;
+    let bounds = manager
+        .geometry()
+        .region(panel)
+        .ok_or("missing panel geometry")?
+        .presentation_bounds();
+    let pointer = (
+        bounds.left() + bounds.width() * 0.5,
+        bounds.bottom() + bounds.height() * 0.5,
+    );
+    let mesh = manager.render_plan().mesh();
+    let old_owners = mesh.object_indices().to_vec();
+    let old_vertices = mesh.vertices().to_vec();
+    manager.pointer_button(pointer, UiPointerButton::Left, true)?;
+    assert!(
+        manager
+            .pointer_button(pointer, UiPointerButton::Left, false)?
+            .click_activated()
+    );
+    let mesh = manager.render_plan().mesh();
+    assert_eq!(mesh.object_indices(), old_owners);
+    assert_eq!(mesh.vertices().len(), old_vertices.len());
+    for (quad, &owner) in mesh.object_indices().iter().enumerate() {
+        let vertices = &mesh.vertices()[quad * 4..quad * 4 + 4];
+        let old = &old_vertices[quad * 4..quad * 4 + 4];
+        assert!(
+            vertices
+                .iter()
+                .zip(old)
+                .all(|(new, old)| new.position() == old.position())
+        );
+        if owner == panel {
+            assert!(
+                vertices
+                    .iter()
+                    .all(|vertex| vertex.color() == [0.25, 0.5, 0.75, 1.0])
+            );
+        }
+        if owner == tint {
+            assert!(
+                vertices
+                    .iter()
+                    .all(|vertex| vertex.color() == [0.5, 0.75, 1.0, 0.5])
+            );
+        }
+        if owner == icon {
+            assert_eq!(vertices[0].texture_coordinates(), [0.25, 0.125]);
+            assert_eq!(vertices[3].texture_coordinates(), [0.75, 0.875]);
+        }
+        if owner == untouched {
+            assert_eq!(vertices, old);
+        }
+    }
+    manager.pointer_button(pointer, UiPointerButton::Left, true)?;
+    assert!(
+        manager
+            .pointer_button(pointer, UiPointerButton::Left, false)?
+            .click_activated()
+    );
+    let sources = manager
+        .render_plan()
+        .mesh()
+        .sources_for_object(icon)
+        .collect::<Vec<_>>();
+    assert_eq!(sources.len(), 1);
+    assert!(
+        matches!(sources[0], UiRenderSource::Texture(path) if path.as_str() == "INTERFACE\\GLUES\\OTHER.BLP")
+    );
+    Ok(())
+}
 
 /// Live Lua texture mutations feed stable stock packet ordering and membership.
 #[test]

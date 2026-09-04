@@ -1085,7 +1085,9 @@ impl GlueManager {
             // Script visibility/animation can target a different subtree than
             // the content journal. Publish those draw slots as well as Lua
             // state before the content path limits work to its own roots.
-            self.refresh_targeted_visual_objects(visual_objects)?;
+            if !self.try_refresh_targeted_visual_objects(visual_objects)? {
+                return Ok(false);
+            }
         }
         let text_objects =
             self.runtime
@@ -1104,7 +1106,13 @@ impl GlueManager {
         // CharacterCreateIconButtonTemplate moves its bevel and resizes its
         // shadow on mouse-down/up. Retain those texture slots, but account for
         // anchors that can move objects outside the explicit mutation set.
-        let mut texture_objects = Vec::new();
+        // A content callback can also replace icon UVs, corner colors, and
+        // frame backdrops. The renderer verifies their complete source slots
+        // before retaining them; a changed material or membership rebuilds.
+        let mut texture_objects = dirty_objects
+            .iter()
+            .map(|&(object_index, _)| object_index)
+            .collect::<Vec<_>>();
         for (index, object) in self.live.objects().iter().enumerate() {
             let (Some(previous), Some(current)) =
                 (self.geometry.region(index), geometry.region(index))
@@ -1148,7 +1156,6 @@ impl GlueManager {
                 self.glyph_logical_height,
                 &text_objects,
             )?;
-            let laid_out = started.elapsed();
             if !self.render_plan.refresh_glyph_objects(
                 &self.glyphs,
                 &self.live,
@@ -1158,16 +1165,11 @@ impl GlueManager {
             )? {
                 return Ok(false);
             }
-            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                eprintln!(
-                    "UI retained content glyphs: layout={:.3}ms vertices={:.3}ms",
-                    laid_out.saturating_sub(resolved).as_secs_f64() * 1_000.0,
-                    started.elapsed().saturating_sub(laid_out).as_secs_f64() * 1_000.0,
-                );
-            }
         }
         let glyphs = started.elapsed();
         let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        texture_objects.sort_unstable();
+        texture_objects.dedup();
         if !self.render_plan.refresh_texture_objects(
             &presentation,
             &geometry,
@@ -1374,10 +1376,26 @@ impl GlueManager {
         Ok(true)
     }
 
+    /// Publishes visual mutations, rebuilding only when newly shown slots are absent.
     fn refresh_targeted_visual_objects(
         &mut self,
         visual_objects: &[usize],
     ) -> Result<(), UiEventError> {
+        if !self.try_refresh_targeted_visual_objects(visual_objects)? {
+            self.rebuild_visual_topology_from_live()?;
+        }
+        self.pointer = UiPointerPlan::from_live(&self.live);
+        Ok(())
+    }
+
+    /// Lets a content publisher absorb missing visual topology in its one rebuild.
+    ///
+    /// Live visual state and geometry are refreshed even on false, but no full
+    /// glyph layout or mesh publication occurs before the caller handles content.
+    fn try_refresh_targeted_visual_objects(
+        &mut self,
+        visual_objects: &[usize],
+    ) -> Result<bool, UiEventError> {
         self.runtime
             .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
         self.collect_visual_subtrees(visual_objects);
@@ -1385,26 +1403,24 @@ impl GlueManager {
             .geometry
             .refresh_visual_regions(&self.live, &self.visual_indices);
         if !self.current_visual_slots_are_resident() {
-            self.rebuild_visual_topology_from_live()?;
-        } else {
-            for change in &changes {
-                self.presentation.refresh_visual_object(
-                    &self.live,
-                    &self.geometry,
-                    change.object_index,
-                    change.translation,
-                );
-            }
-            self.render_plan.refresh_visual_objects(
-                &changes,
-                &self.geometry,
-                &self.presentation,
-                &self.scroll_frames,
-                &self.live,
-            )?;
+            return Ok(false);
         }
-        self.pointer = UiPointerPlan::from_live(&self.live);
-        Ok(())
+        for change in &changes {
+            self.presentation.refresh_visual_object(
+                &self.live,
+                &self.geometry,
+                change.object_index,
+                change.translation,
+            );
+        }
+        self.render_plan.refresh_visual_objects(
+            &changes,
+            &self.geometry,
+            &self.presentation,
+            &self.scroll_frames,
+            &self.live,
+        )?;
+        Ok(true)
     }
 
     fn collect_visual_subtrees(&mut self, roots: &[usize]) {

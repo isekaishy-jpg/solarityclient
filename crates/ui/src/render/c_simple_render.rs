@@ -11,6 +11,8 @@ use crate::{
 };
 use crate::{UiObjectRole, script::UiRuntimeObjectPlan};
 
+use super::ordered_quads::{UiOrderedQuadSlot, UiOrderedQuadSlots};
+
 /// Renderer-owned mesh data derived from one complete live presentation pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderPlan {
@@ -58,41 +60,29 @@ impl UiRenderPlan {
     ) -> Result<Self, UiRenderError> {
         let profile = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
-        let mut ordered = presentation
-            .members_in_draw_order()
-            .iter()
-            .enumerate()
-            .filter_map(|(sequence, texture)| {
-                let quad = render_quad_with_scroll(texture, geometry, scroll_frames)?;
-                Some((Some(texture.key()), texture.object_index(), sequence, quad))
-            })
-            .collect::<Vec<_>>();
+        let mut texture_orders = Vec::new();
+        let mut textures = Vec::new();
+        for (sequence, texture) in presentation.members_in_draw_order().iter().enumerate() {
+            if let Some(quad) = render_quad_with_scroll(texture, geometry, scroll_frames) {
+                texture_orders.push((false, Some(texture.key()), texture.object_index(), sequence));
+                textures.push(quad);
+            }
+        }
         let textures_elapsed = started.elapsed();
-        let texture_count = ordered.len();
+        let texture_count = textures.len();
         let retained_glyphs = glyphs.retained_scroll_quads(geometry, scroll_frames);
         let glyph_count = retained_glyphs.len();
-        ordered.extend(
-            retained_glyphs
-                .into_iter()
-                .enumerate()
-                .map(|(sequence, quad)| {
-                    let rendered = render_glyph_quad(glyphs.identity(), &quad);
-                    (
-                        quad.packet_key(),
-                        quad.object_index(),
-                        texture_count + sequence,
-                        rendered,
-                    )
-                }),
-        );
         let glyphs_elapsed = started.elapsed();
-        ordered.sort_by_key(|(key, object_index, sequence, _)| {
-            (key.is_none(), *key, *object_index, *sequence)
-        });
+        let ordered = UiOrderedQuadSlots::new(texture_orders, &retained_glyphs);
         let sort_elapsed = started.elapsed();
         let mesh = UiMeshPlan::prepare(
             [logical_extent.0 as f32, logical_extent.1 as f32],
-            ordered.into_iter().map(|(_, _, _, quad)| quad),
+            ordered.map(|slot| match slot {
+                UiOrderedQuadSlot::Texture(index) => textures[index].clone(),
+                UiOrderedQuadSlot::Glyph(index) => {
+                    render_glyph_quad(glyphs.identity(), &retained_glyphs[index])
+                }
+            }),
         )?;
         let mesh_elapsed = started.elapsed();
         let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
@@ -340,7 +330,11 @@ impl UiRenderPlan {
                 }
             }
             if sources.is_empty() {
-                if self.mesh.contains_object(object_index) {
+                if self
+                    .mesh
+                    .sources_for_object(object_index)
+                    .any(|source| !matches!(source, UiRenderSource::GlyphAtlas(_)))
+                {
                     return Ok(false);
                 }
                 continue;

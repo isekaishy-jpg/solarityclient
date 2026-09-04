@@ -133,6 +133,23 @@ advances, explicit CR/LF boundaries, and `|n` control-line breaks as the Lua
 measurement methods, so character-creation descriptions and their scroll
 children cannot disagree about the field extent.
 
+Live glyph geometry is retained separately for each text owner. Updating one
+label changes only its run; it cannot copy hidden documents or shrink another
+label's retained slots. Shorter replacements clear unused slots to transparent
+geometry, preserving the owner's previously observed capacity without changing
+text layout or measurement. Hidden owners are rejected before visiting their
+individual glyph payloads. The atlas itself retains its existing identity and
+coverage until the requested characters or font configuration require a new one.
+
+Mesh construction sorts contiguous glyph runs by the shared packet key and
+owner, then merges them with texture entries using the original per-quad source
+sequence. Textures can interleave inside a glyph run's sequence interval;
+equal keys preserve the original stable texture-before-glyph ordering. Glyph
+payloads are converted directly as the mesh consumes that exact-size stream.
+Mixed text, icon-coordinate, vertex-color, and backdrop-color journals can patch
+existing source slots after validating material, count, and geometry. Changes
+outside that contract still use complete publication.
+
 ## Object declarations
 
 Every expanded root XML action is registered as either a virtual template or a

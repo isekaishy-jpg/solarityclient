@@ -1978,7 +1978,13 @@ impl UiScriptRuntime {
         live: &super::runtime_state::UiRuntimeObjectPlan,
         dirty_objects: &[(usize, u32)],
     ) -> bool {
-        let retained = DIRTY_TEXT | DIRTY_WIDGET | DIRTY_MODEL | DIRTY_LAYOUT;
+        let retained = DIRTY_TEXT
+            | DIRTY_WIDGET
+            | DIRTY_MODEL
+            | DIRTY_LAYOUT
+            | DIRTY_TEXTURE
+            | DIRTY_TEXTURE_VERTEX_COLOR
+            | DIRTY_FRAME;
         !dirty_objects.is_empty()
             && dirty_objects.iter().all(|&(index, flags)| {
                 flags != 0

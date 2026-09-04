@@ -153,3 +153,25 @@ Following-frame means ranged from about 1,415 to 2,110 FPS. Two following-frame
 outliers reached 24–28 ms, cold selection still reached 58 ms, and race/class
 text publication still produced roughly 25–38 ms frames. These results narrow
 the remaining stalls; they do not establish the full transition/FPS goal.
+
+The text publication pass now retains glyph geometry per text owner, skips
+hidden owners before traversing their glyphs, and orders contiguous glyph runs
+without sorting every quad payload. Mixed text, icon UV, vertex-color, and
+backdrop-color updates validate and reuse existing mesh slots. A newly shown
+region that needs new slots joins the content publisher's single rebuild.
+Profiling had found approximately 224,000 live glyph quads, mostly hidden;
+growing one description previously copied that entire arena. The measured
+object replacement phase fell from about 9 ms to 0.06–0.21 ms, and packet
+ordering fell from about 3.5–5 ms to 0.36–0.59 ms in the diagnostic replay.
+
+The final 1,000-following-frame replay, run separately from compilation, measured
+race-choice input at 13.5–20.0 ms and class-choice input at 8.5–18.2 ms; the
+repeated Warrior choice took 8.8 ms. Customization arrows took 2.5–3.1 ms.
+Race/class maximum transition frames ranged from 11.2 to 23.8 ms, while warm
+selection reached 7.6 and 9.6 ms. Following-frame means ranged from about 1,450
+to 2,400 FPS. Cold Human selection still reached a 68.7 ms frame and 631 ms
+complete readiness; its resource loading and synchronous audio decoder
+admission remain separate work. These local results improve recurrent input
+cost without closing the no-visible-stall requirement. Regression tests cover
+retained glyph capacity, exact stable draw ordering, and mixed texture updates;
+the installed-data Glue interaction validator and all 529 workspace tests pass.

@@ -181,6 +181,18 @@ impl UiMeshPlan {
         &self.object_indices
     }
 
+    /// Returns sources of one object's retained batches in draw order.
+    ///
+    /// A source may appear in multiple runs. This also distinguishes an
+    /// object's glyph-only slots from its independently retained decorations.
+    pub fn sources_for_object(&self, object_index: usize) -> impl Iterator<Item = &UiRenderSource> {
+        self.object_batches
+            .get(&object_index)
+            .into_iter()
+            .flatten()
+            .map(|&index| self.batches[index].source())
+    }
+
     /// Returns the smallest contiguous quad window intersecting a batch clip.
     ///
     /// ScrollFrame documents remain fully resident so scrolling never uploads

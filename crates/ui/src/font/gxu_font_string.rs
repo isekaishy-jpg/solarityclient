@@ -91,7 +91,7 @@ pub struct UiGlyphAtlasPlan {
     rgba8: Vec<u8>,
     html_quads: Vec<LocalGlyphQuad>,
     html_runs: Vec<LocalGlyphRun>,
-    live_quads: Vec<LocalGlyphQuad>,
+    live_quads: Vec<Vec<LocalGlyphQuad>>,
     edit_box_layouts: Vec<Option<EditBoxTextLayout>>,
     glyphs: HashMap<GlyphKey, RasterizedGlyph>,
     placements: HashMap<GlyphKey, AtlasPlacement>,
@@ -470,7 +470,7 @@ impl UiGlyphAtlasPlan {
             rgba8,
             html_quads: html_layout.quads,
             html_runs: html_layout.runs,
-            live_quads: live_layout.quads,
+            live_quads: group_live_quads(live_layout.quads),
             edit_box_layouts: live_layout.edit_boxes,
             glyphs,
             placements,
@@ -531,7 +531,7 @@ impl UiGlyphAtlasPlan {
             &self.metrics,
             self.extent,
         )?;
-        self.live_quads = layout.quads;
+        self.live_quads = group_live_quads(layout.quads);
         self.edit_box_layouts = layout.edit_boxes;
         Ok(())
     }
@@ -557,10 +557,7 @@ impl UiGlyphAtlasPlan {
             self.extent,
             object_indices.iter().copied(),
         )?;
-        if !replace_within_retained_live_quads(&mut self.live_quads, &layout.quads, object_indices)
-        {
-            replace_sorted_live_quads(&mut self.live_quads, layout.quads, object_indices);
-        }
+        replace_live_object_quads(&mut self.live_quads, &layout.quads, object_indices);
         for &object_index in object_indices {
             if let (Some(target), Some(source)) = (
                 self.edit_box_layouts.get_mut(object_index),
@@ -581,13 +578,10 @@ impl UiGlyphAtlasPlan {
                 .previous_shadow_color
                 .map(|component| component as f32);
             let shadow = change.shadow_color.map(|component| component as f32);
-            let first = self
-                .live_quads
-                .partition_point(|quad| quad.object_index < change.object_index);
-            let end = self
-                .live_quads
-                .partition_point(|quad| quad.object_index <= change.object_index);
-            for quad in &mut self.live_quads[first..end] {
+            let Some(quads) = self.live_quads.get_mut(change.object_index) else {
+                continue;
+            };
+            for quad in quads {
                 if quad.color == previous_color {
                     quad.color = color;
                 } else if quad.color == previous_shadow {
@@ -604,14 +598,10 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<[[f32; 4]; 4]> {
-        let first = self
-            .live_quads
-            .partition_point(|quad| quad.object_index < object_index);
-        let end = self
-            .live_quads
-            .partition_point(|quad| quad.object_index <= object_index);
-        self.live_quads[first..end]
-            .iter()
+        self.live_quads
+            .get(object_index)
+            .into_iter()
+            .flatten()
             .filter_map(|quad| {
                 if quad
                     .clip_object
@@ -706,9 +696,11 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<UiGlyphQuad> {
-        let mut resolved = Vec::with_capacity(self.html_quads.len() + self.live_quads.len());
+        let mut resolved = Vec::new();
         extend_retained_quads(&mut resolved, &self.html_quads, geometry, scroll_frames);
-        extend_retained_quads(&mut resolved, &self.live_quads, geometry, scroll_frames);
+        for quads in &self.live_quads {
+            extend_retained_object_quads(&mut resolved, quads, geometry, scroll_frames);
+        }
         resolved
     }
 
@@ -721,18 +713,9 @@ impl UiGlyphAtlasPlan {
     ) -> Vec<UiGlyphQuad> {
         let mut resolved = Vec::new();
         for &object_index in object_indices {
-            let first = self
-                .live_quads
-                .partition_point(|quad| quad.object_index < object_index);
-            let end = self
-                .live_quads
-                .partition_point(|quad| quad.object_index <= object_index);
-            extend_retained_quads(
-                &mut resolved,
-                &self.live_quads[first..end],
-                geometry,
-                scroll_frames,
-            );
+            if let Some(quads) = self.live_quads.get(object_index) {
+                extend_retained_object_quads(&mut resolved, quads, geometry, scroll_frames);
+            }
         }
         resolved
     }
@@ -756,6 +739,7 @@ impl UiGlyphAtlasPlan {
         resolved.extend(
             self.live_quads
                 .iter()
+                .flatten()
                 .filter(|quad| !quad.reserved)
                 .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
         );
@@ -763,118 +747,66 @@ impl UiGlyphAtlasPlan {
     }
 }
 
-/// Replaces object-local glyph ranges while preserving the arena's stable order.
-///
-/// Both layout producers walk object indices in ascending order. Merging their
-/// already-sorted output avoids comparison-sorting the complete Glue glyph set
-/// when an edit caret or one label changes.
-fn replace_sorted_live_quads(
-    existing: &mut Vec<LocalGlyphQuad>,
-    replacements: Vec<LocalGlyphQuad>,
-    object_indices: &[usize],
-) {
-    debug_assert!(object_indices.windows(2).all(|pair| pair[0] < pair[1]));
-    debug_assert!(
-        replacements
-            .windows(2)
-            .all(|pair| pair[0].object_index <= pair[1].object_index)
-    );
-
-    let topology_stable = object_indices.iter().all(|&object_index| {
-        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
-        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
-        let replacement_first =
-            replacements.partition_point(|quad| quad.object_index < object_index);
-        let replacement_end =
-            replacements.partition_point(|quad| quad.object_index <= object_index);
-        existing_end - existing_first == replacement_end - replacement_first
-    });
-    if topology_stable {
-        for (target, replacement) in existing
-            .iter_mut()
-            .filter(|quad| object_indices.binary_search(&quad.object_index).is_ok())
-            .zip(replacements)
-        {
-            *target = replacement;
+/// Separates immutable object runs once; changing one label never moves hidden text.
+fn group_live_quads(quads: Vec<LocalGlyphQuad>) -> Vec<Vec<LocalGlyphQuad>> {
+    let mut runs = Vec::new();
+    for quad in quads {
+        if runs.len() <= quad.object_index {
+            runs.resize_with(quad.object_index + 1, Vec::new);
         }
-        return;
+        runs[quad.object_index].push(quad);
     }
-
-    let existing_count = existing.len();
-    let mut dirty_index = 0;
-    let retained = std::mem::take(existing)
-        .into_iter()
-        .filter(|quad| {
-            while object_indices
-                .get(dirty_index)
-                .is_some_and(|dirty| *dirty < quad.object_index)
-            {
-                dirty_index += 1;
-            }
-            object_indices.get(dirty_index) != Some(&quad.object_index)
-        })
-        .peekable();
-    let replacement_count = replacements.len();
-    let mut replacements = replacements.into_iter().peekable();
-    let mut retained = retained;
-    let mut merged = Vec::with_capacity(existing_count + replacement_count);
-    while retained.peek().is_some() || replacements.peek().is_some() {
-        let take_retained = match (retained.peek(), replacements.peek()) {
-            (Some(retained), Some(replacement)) => {
-                retained.object_index <= replacement.object_index
-            }
-            (Some(_), None) => true,
-            (None, Some(_)) => false,
-            (None, None) => break,
-        };
-        if take_retained {
-            if let Some(quad) = retained.next() {
-                merged.push(quad);
-            }
-        } else if let Some(quad) = replacements.next() {
-            merged.push(quad);
-        }
-    }
-    *existing = merged;
+    runs
 }
 
-/// Replaces bounded glyph runs in place and clears their unused tail slots.
-fn replace_within_retained_live_quads(
-    existing: &mut [LocalGlyphQuad],
+/// Replaces only requested owners and preserves each run's observed slot capacity.
+///
+/// A growing owner cannot shrink another owner's retained slots. Transparent
+/// tail slots keep future shorter edits in the same renderer topology.
+fn replace_live_object_quads(
+    runs: &mut Vec<Vec<LocalGlyphQuad>>,
     replacements: &[LocalGlyphQuad],
     object_indices: &[usize],
-) -> bool {
-    let fits = object_indices.iter().all(|&object_index| {
-        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
-        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
-        let replacement_first =
-            replacements.partition_point(|quad| quad.object_index < object_index);
-        let replacement_end =
-            replacements.partition_point(|quad| quad.object_index <= object_index);
-        existing_end - existing_first >= replacement_end - replacement_first
-            && (existing_end > existing_first || replacement_end == replacement_first)
-    });
-    if !fits {
-        return false;
-    }
+) {
     for &object_index in object_indices {
-        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
-        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
-        let replacement_first =
-            replacements.partition_point(|quad| quad.object_index < object_index);
-        let replacement_end =
-            replacements.partition_point(|quad| quad.object_index <= object_index);
-        let replacement_count = replacement_end - replacement_first;
-        existing[existing_first..existing_first + replacement_count]
-            .clone_from_slice(&replacements[replacement_first..replacement_end]);
-        for reserved in &mut existing[existing_first + replacement_count..existing_end] {
+        if runs.len() <= object_index {
+            runs.resize_with(object_index + 1, Vec::new);
+        }
+        let first = replacements.partition_point(|quad| quad.object_index < object_index);
+        let end = replacements.partition_point(|quad| quad.object_index <= object_index);
+        let replacement = &replacements[first..end];
+        let run = &mut runs[object_index];
+        let shared = run.len().min(replacement.len());
+        run[..shared].clone_from_slice(&replacement[..shared]);
+        run.extend_from_slice(&replacement[shared..]);
+        for reserved in &mut run[replacement.len()..] {
             reserved.bounds = [0.0, -1.0, 1.0, 0.0];
             reserved.color = [0.0; 4];
             reserved.caret = false;
             reserved.reserved = true;
         }
     }
-    true
+}
+
+/// Skips a hidden object's entire run before touching its glyph payload.
+///
+/// Live layout assigns one clip owner and packet key to all glyph passes of
+/// one text owner, including its selection, caret, and reserved tail slots.
+fn extend_retained_object_quads(
+    output: &mut Vec<UiGlyphQuad>,
+    quads: &[LocalGlyphQuad],
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: &UiScrollFramePlan,
+) {
+    if quads
+        .first()
+        .and_then(|quad| retained_glyph_state(quad, geometry, scroll_frames))
+        .is_none()
+    {
+        return;
+    }
+    output.reserve(quads.len());
+    extend_retained_quads(output, quads, geometry, scroll_frames);
 }
 
 /// Resolves object-sorted local glyphs while looking up inherited geometry
@@ -2165,140 +2097,5 @@ fn next_identity() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn glyph(advance: i64) -> RasterizedGlyph {
-        RasterizedGlyph {
-            width: 1,
-            height: 1,
-            bearing_x: 0,
-            bearing_y: 1,
-            advance_x_26_6: advance * 64,
-            coverage: vec![255],
-        }
-    }
-
-    fn local_quad(object_index: usize, caret: bool) -> LocalGlyphQuad {
-        LocalGlyphQuad {
-            packet_key: None,
-            object_index,
-            clip_object: None,
-            bounds: [0.0; 4],
-            texture_coordinates: [[0.0; 2]; 4],
-            color: [1.0; 4],
-            caret,
-            reserved: false,
-        }
-    }
-
-    #[test]
-    fn object_glyph_refresh_linearly_replaces_adds_and_removes_sorted_ranges() {
-        let mut existing = vec![
-            local_quad(0, false),
-            local_quad(0, false),
-            local_quad(2, false),
-            local_quad(4, false),
-        ];
-        let replacements = vec![
-            local_quad(1, true),
-            local_quad(1, true),
-            local_quad(4, true),
-        ];
-
-        replace_sorted_live_quads(&mut existing, replacements, &[1, 2, 4]);
-
-        assert_eq!(
-            existing
-                .iter()
-                .map(|quad| (quad.object_index, quad.caret))
-                .collect::<Vec<_>>(),
-            [(0, false), (0, false), (1, true), (1, true), (4, true),]
-        );
-    }
-
-    #[test]
-    fn bounded_glyph_refresh_clears_unused_slots_without_changing_topology() {
-        let mut existing = vec![
-            local_quad(1, false),
-            local_quad(2, false),
-            local_quad(2, false),
-            local_quad(2, false),
-            local_quad(4, false),
-        ];
-        let replacements = vec![local_quad(2, true)];
-
-        assert!(replace_within_retained_live_quads(
-            &mut existing,
-            &replacements,
-            &[2]
-        ));
-        assert_eq!(existing.len(), 5);
-        assert!(existing[1].caret);
-        assert!(existing[2].reserved);
-        assert!(existing[3].reserved);
-        assert_eq!(existing[2].color, [0.0; 4]);
-        assert!(!replace_within_retained_live_quads(
-            &mut existing,
-            &[
-                local_quad(2, false),
-                local_quad(2, false),
-                local_quad(2, false),
-                local_quad(2, false),
-            ],
-            &[2]
-        ));
-    }
-
-    #[test]
-    fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() -> Result<(), FontError> {
-        let face = AssetPath::new("Fonts\\FRIZQT__.TTF")?;
-        let font = LineFontKey {
-            face: face.clone(),
-            pixel_height: 12,
-            rasterization: FontRasterization::Antialiased,
-        };
-        let mut glyphs = HashMap::new();
-        glyphs.insert(GlyphKey::new(&font, '*'), glyph(7));
-        glyphs.insert(GlyphKey::new(&font, ' '), glyph(3));
-        let text = UiRuntimeText {
-            content: "éx".to_owned(),
-            face,
-            height: 12.0,
-            rasterization: FontRasterization::Antialiased,
-            outline_width: 0.0,
-            color: [1.0; 4],
-            shadow_offset: [0.0; 2],
-            shadow_color: [0.0; 4],
-            spacing: 0.0,
-            word_wrap: false,
-            non_space_wrap: false,
-            max_lines: 0,
-            max_letters: 0,
-            horizontal: crate::HorizontalJustification::Left,
-            vertical: crate::VerticalJustification::Middle,
-            draw_layer: crate::UiDrawLayer::Artwork,
-            draw_sub_level: 0,
-            password: true,
-            multiline: false,
-            text_insets: [0.0; 4],
-            cursor: 2,
-            selection: [2, 2],
-            caret_visible: true,
-            highlight_color: [96.0 / 255.0, 96.0 / 255.0, 96.0 / 255.0, 1.0],
-        };
-
-        assert_eq!(
-            edit_box_caret_metrics(&text, &font, &glyphs, 1.0, 100.0),
-            (7.0, 7.0)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn atlas_reserves_opaque_padding_texel_for_text_primitives() -> Result<(), FontError> {
-        let pixels = compose_atlas((1, 1), &[], &HashMap::new(), &HashMap::new())?;
-        assert_eq!(pixels, [255; 4]);
-        Ok(())
-    }
-}
+#[path = "../../tests/font/gxu_font_string.rs"]
+mod gxu_font_string_tests;
