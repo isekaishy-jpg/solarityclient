@@ -2,9 +2,9 @@
 
 use std::error::Error;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Barrier};
 
 use solarity_cpu::{CpuError, CpuExecutor, CpuPoolConfig};
 
@@ -123,6 +123,36 @@ fn completion_can_be_observed_without_consuming_result() -> Result<(), Box<dyn E
     assert!(!task.is_finished());
     release_sender.send(())?;
     assert_eq!(task.join()?, 99);
+    executor.shutdown()?;
+    Ok(())
+}
+
+/// Speculative producers leave one multi-worker lane available for direct work.
+#[test]
+fn speculative_admission_reserves_an_interactive_worker_lane() -> Result<(), Box<dyn Error>> {
+    let mut executor = CpuExecutor::new(config(4, 32))?;
+    let started = Arc::new(Barrier::new(4));
+    let release = Arc::new(Barrier::new(4));
+    let mut tasks = Vec::new();
+    for _ in 0..3 {
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        tasks.push(executor.try_submit(move || {
+            started.wait();
+            release.wait();
+        })?);
+    }
+    started.wait();
+
+    assert!(!executor.can_admit_speculative()?);
+    let interactive = executor.try_submit(|| 42)?;
+    assert_eq!(interactive.join()?, 42);
+
+    release.wait();
+    for task in tasks {
+        task.join()?;
+    }
+    assert!(executor.can_admit_speculative()?);
     executor.shutdown()?;
     Ok(())
 }

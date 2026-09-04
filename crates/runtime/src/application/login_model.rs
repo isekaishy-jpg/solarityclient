@@ -692,7 +692,14 @@ impl RuntimeGlueModelScene {
                 }
             }
         }
-        if let Some(loaded) = self.loaded_backdrops.pop_front() {
+        // Racial backdrops are speculative. Do not let their FIFO fill every
+        // worker lane ahead of the character representation selected by the
+        // user; the configured test client deliberately has far more queue
+        // capacity than workers.
+        if !self.loaded_backdrops.is_empty()
+            && cpu.can_admit_speculative()?
+            && let Some(loaded) = self.loaded_backdrops.pop_front()
+        {
             let local_light_count = maximum_glue_light_count(&loaded.model, true);
             let task_model = Arc::clone(&loaded.model);
             let task =

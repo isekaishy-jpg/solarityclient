@@ -100,6 +100,27 @@ impl CpuExecutor {
         self.state.snapshot()
     }
 
+    /// Reports whether a single-owner scheduler may admit speculative work
+    /// while reserving one multi-worker lane for latency-sensitive tasks.
+    ///
+    /// The result is advisory because workers can finish concurrently. Callers
+    /// should query immediately before [`Self::try_submit`] and must still
+    /// handle its ordinary capacity errors. A one-worker pool admits one
+    /// speculative task because no separate interactive lane can exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CpuError::StateUnavailable`] when lifecycle state is poisoned.
+    pub fn can_admit_speculative(&self) -> Result<bool, CpuError> {
+        let snapshot = self.snapshot()?;
+        let speculative_limit = self
+            .worker_count
+            .saturating_sub(1)
+            .max(1)
+            .min(snapshot.max_in_flight().get());
+        Ok(snapshot.is_accepting() && snapshot.in_flight() < speculative_limit)
+    }
+
     /// Closes admission, waits for all admitted work, and releases the workers.
     ///
     /// The operation is idempotent. No task is cancelled or detached.
