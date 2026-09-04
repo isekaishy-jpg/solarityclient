@@ -4,6 +4,7 @@ use crate::script::{UiRuntimeAnchor, UiRuntimeObjectPlan};
 use crate::{UiLayoutError, UiObjectRole, UiPoint};
 
 const AXIS_EPSILON: f64 = 0.0001;
+const MAX_REGION_ANCHORS: usize = 9;
 
 /// One axis-aligned rectangle in the stock bottom-left UI coordinate system.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -316,8 +317,21 @@ impl GeometryResolver<'_> {
         let alpha = (object.alpha + object.animation_alpha_delta).clamp(0.0, 1.0);
         let scale = object.scale;
         let role = object.role;
-        let mut anchors = self.live.anchors_for(object).to_vec();
-        if anchors.is_empty()
+        let empty_anchor = UiRuntimeAnchor {
+            point: UiPoint::Center,
+            target: None,
+            relative_point: UiPoint::Center,
+            offset: (0.0, 0.0),
+        };
+        let live_anchors = self.live.anchors_for(object);
+        debug_assert!(live_anchors.len() <= MAX_REGION_ANCHORS);
+        let authored_anchor_count = live_anchors.len();
+        let mut authored_anchor_storage = [empty_anchor; MAX_REGION_ANCHORS];
+        authored_anchor_storage[..authored_anchor_count].copy_from_slice(live_anchors);
+        let authored_anchors = &authored_anchor_storage[..authored_anchor_count];
+        let mut synthesized_anchors = [empty_anchor; 2];
+        let mut synthesized_anchor_count = 0;
+        if authored_anchors.is_empty()
             && role == UiObjectRole::ThumbTexture
             && let Some(parent_index) = parent_index
             && let Some(slider) = self.live.objects()[parent_index].slider
@@ -347,14 +361,16 @@ impl GeometryResolver<'_> {
                     ),
                 )
             };
-            anchors.push(UiRuntimeAnchor {
+            synthesized_anchors[0] = UiRuntimeAnchor {
                 point: UiPoint::Center,
                 target: Some(parent_index),
                 relative_point,
                 offset,
-            });
+            };
+            synthesized_anchor_count = 1;
         }
-        if anchors.is_empty()
+        if authored_anchors.is_empty()
+            && synthesized_anchor_count == 0
             && let Some(parent) = parent_index
         {
             if stock_role_texture_fills_owner(role) && authored == (0.0, 0.0) {
@@ -362,35 +378,47 @@ impl GeometryResolver<'_> {
                 // widget regions. Stock gives an otherwise geometry-free slot
                 // the owner's complete rectangle; GlueXML relies on this for
                 // every file-only GluePanelButton and checkbox state texture.
-                anchors.extend([
-                    UiRuntimeAnchor {
-                        point: UiPoint::TopLeft,
-                        target: Some(parent),
-                        relative_point: UiPoint::TopLeft,
-                        offset: (0.0, 0.0),
-                    },
-                    UiRuntimeAnchor {
-                        point: UiPoint::BottomRight,
-                        target: Some(parent),
-                        relative_point: UiPoint::BottomRight,
-                        offset: (0.0, 0.0),
-                    },
-                ]);
+                synthesized_anchors[0] = UiRuntimeAnchor {
+                    point: UiPoint::TopLeft,
+                    target: Some(parent),
+                    relative_point: UiPoint::TopLeft,
+                    offset: (0.0, 0.0),
+                };
+                synthesized_anchors[1] = UiRuntimeAnchor {
+                    point: UiPoint::BottomRight,
+                    target: Some(parent),
+                    relative_point: UiPoint::BottomRight,
+                    offset: (0.0, 0.0),
+                };
+                synthesized_anchor_count = 2;
             } else if !matches!(role, UiObjectRole::Object | UiObjectRole::ScrollChild) {
-                anchors.push(UiRuntimeAnchor {
+                synthesized_anchors[0] = UiRuntimeAnchor {
                     point: UiPoint::Center,
                     target: Some(parent),
                     relative_point: UiPoint::Center,
                     offset: (0.0, 0.0),
-                });
+                };
+                synthesized_anchor_count = 1;
             }
         }
 
-        let mut x_constraints = Vec::with_capacity(anchors.len());
-        let mut y_constraints = Vec::with_capacity(anchors.len());
-        let mut all_x = Vec::with_capacity(anchors.len());
-        let mut all_y = Vec::with_capacity(anchors.len());
-        for anchor in anchors {
+        let anchors = if authored_anchors.is_empty() {
+            &synthesized_anchors[..synthesized_anchor_count]
+        } else {
+            authored_anchors
+        };
+        debug_assert!(anchors.len() <= MAX_REGION_ANCHORS);
+        let empty_constraint = AxisConstraint {
+            factor: 0.0,
+            value: 0.0,
+        };
+        let mut x_constraints = [empty_constraint; MAX_REGION_ANCHORS];
+        let mut y_constraints = [empty_constraint; MAX_REGION_ANCHORS];
+        let mut all_x = [empty_constraint; MAX_REGION_ANCHORS];
+        let mut all_y = [empty_constraint; MAX_REGION_ANCHORS];
+        let mut x_constraint_count = 0;
+        let mut y_constraint_count = 0;
+        for (anchor_index, anchor) in anchors.iter().copied().enumerate() {
             let target = match anchor.target {
                 Some(target) => self.resolve(target)?.public.logical_bounds,
                 None => self.screen,
@@ -411,13 +439,15 @@ impl GeometryResolver<'_> {
                     point_y_factor(anchor.relative_point),
                 ) + anchor.offset.1,
             };
-            all_x.push(x);
-            all_y.push(y);
+            all_x[anchor_index] = x;
+            all_y[anchor_index] = y;
             if constrains_x(anchor.point) {
-                x_constraints.push(x);
+                x_constraints[x_constraint_count] = x;
+                x_constraint_count += 1;
             }
             if constrains_y(anchor.point) {
-                y_constraints.push(y);
+                y_constraints[y_constraint_count] = y;
+                y_constraint_count += 1;
             }
         }
 
@@ -437,19 +467,19 @@ impl GeometryResolver<'_> {
         });
         let horizontal = solve_axis(
             authored.0,
-            if x_constraints.is_empty() {
-                &all_x
+            if x_constraint_count == 0 {
+                &all_x[..anchors.len()]
             } else {
-                &x_constraints
+                &x_constraints[..x_constraint_count]
             },
             fallback_left,
         )?;
         let vertical = solve_axis(
             authored.1,
-            if y_constraints.is_empty() {
-                &all_y
+            if y_constraint_count == 0 {
+                &all_y[..anchors.len()]
             } else {
-                &y_constraints
+                &y_constraints[..y_constraint_count]
             },
             fallback_bottom,
         )?;
