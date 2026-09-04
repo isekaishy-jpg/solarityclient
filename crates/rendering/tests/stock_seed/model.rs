@@ -1888,7 +1888,7 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     )?];
     let table = solarity_rendering::M2ParticleTwinkleTable::new(0x0029_4823);
     let pool_slot = (std::ptr::from_ref(&particles[0]).addr() >> 5) as u8 & 0x7f;
-    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")?;
+    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")? * 1.5;
     assert_eq!(table.sample(emitter, &particles[0])?, Some(expected_scale));
     assert_eq!(
         M2ParticleMeshPlan::prepare(
