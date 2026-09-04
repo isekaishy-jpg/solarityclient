@@ -26,10 +26,16 @@ source of long individual frames and visible FPS oscillation.
 The real 3,240-object Glue archive now measures 0.067 ms mean per idle UI
 update (0.290 ms p99) and 0.034 ms mean per held-hover color update. A
 CharacterCreate screen event is not an idle frame: it executes about 13 ms of
-stock Lua and spends a further 13 ms publishing a monolithic glyph/mesh
+stock Lua and previously spent a further 13 ms publishing a monolithic glyph/mesh
 generation. Caching inherited geometry per text owner reduced that event's
-10,889-glyph resolve phase from about 4.0 ms to 2.7 ms, but the transition path
-remains the principal UI architectural debt.
+10,889-glyph resolve phase from about 4.0 ms to 2.7 ms. Carrying opacity and
+ScrollFrame draw state with each resolved owner then removed duplicate
+per-glyph geometry queries and reduced it to about 1.8 ms. Fixed-capacity stock
+anchor scratch storage reduced global geometry resolution from about 1.4 ms to
+0.7 ms. A POD vertex ABI now exposes the typed mesh as borrowed bytes instead
+of maintaining a second serialized copy, reducing CharacterCreate mesh
+serialization from about 1.4 ms to 0.9 ms. Native publication is about 10.8 ms;
+the transition path remains the principal UI architectural debt.
 
 Character preview publication had two independent presentation-thread waits:
 dynamic atlas upload and authored BLP batch upload. Both now submit before the
@@ -95,10 +101,13 @@ for interactive residency. It also enumerates every configured Glue texture
 assignment after script initialization and decodes those sources in a private
 worker cache while the movie/authentication cover is active. Completed sources
 are adopted without replacing newer owner state, and individual missing files
-cannot discard the rest of the speculative generation. This is the transition
-step toward setter-time subscriptions; dynamic assignments still need to enter
-the same residency journal when their setters run. The next structural slices
-are:
+cannot discard the rest of the speculative generation. Sampled-image handles
+belong to a persistent pre-world residency owner instead of an individual mesh
+revision: covered prewarming uploads each configured source once, and later
+screen revisions bind cache hits rather than recreating every visible BLP and
+glyph atlas. This is the transition step toward setter-time subscriptions;
+dynamic assignments still need to enter the same residency journal when their
+setters run. The next structural slices are:
 
 1. Replace whole-arena geometry resolution with indexed dependency-island
    publication and remove resolved engine state from Lua shadow fields.
