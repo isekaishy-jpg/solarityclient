@@ -200,10 +200,56 @@ impl UiMeshPlan {
     pub fn translate_transform(&mut self, transform: UiRenderTransform, delta: [f32; 2]) {
         for batch in &mut self.batches {
             if batch.transform() == Some(transform) {
-                let current = batch.translation();
+                let current = batch.transform_translation();
                 batch.set_translation([current[0] + delta[0], current[1] + delta[1]]);
             }
         }
+    }
+
+    /// Moves every retained draw owned by one live UI object.
+    ///
+    /// Object motion composes independently with ScrollFrame and Slider state,
+    /// so either source can change without destroying the other contribution.
+    pub fn translate_object(
+        &mut self,
+        object_index: usize,
+        delta: [f32; 2],
+    ) -> Result<(), UiMeshPlanError> {
+        validate_components(object_index, "visual translation", &delta)?;
+        for batch in &mut self.batches {
+            if batch.object_index() != object_index {
+                continue;
+            }
+            let current = batch.object_translation();
+            let next = [current[0] + delta[0], current[1] + delta[1]];
+            validate_components(object_index, "visual translation", &next)?;
+            batch.translate_object(delta);
+        }
+        Ok(())
+    }
+
+    /// Replaces the clip rectangle associated with one retained transform slot.
+    pub fn set_transform_clip(
+        &mut self,
+        transform: UiRenderTransform,
+        clip: Option<[f32; 4]>,
+    ) -> Result<(), UiMeshPlanError> {
+        let object_index = match transform {
+            UiRenderTransform::ScrollFrame(object_index)
+            | UiRenderTransform::Slider(object_index) => object_index,
+        };
+        if let Some(bounds) = clip {
+            validate_components(object_index, "transform clip", &bounds)?;
+            if bounds[2] < bounds[0] || bounds[3] < bounds[1] {
+                return Err(UiMeshPlanError::InvertedBounds { object_index });
+            }
+        }
+        for batch in &mut self.batches {
+            if batch.transform() == Some(transform) {
+                batch.set_clip(clip);
+            }
+        }
+        Ok(())
     }
 
     /// Refreshes inherited opacity without changing immutable mesh identity.

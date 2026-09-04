@@ -175,6 +175,9 @@ fn glue_alpha_updates_retain_the_existing_ui_mesh() -> Result<(), Box<dyn Error>
   <Layers><Layer level="ARTWORK">
     <Texture name="FadingTexture" file="Interface\Glues\Fade" setAllPoints="true"/>
   </Layer></Layers>
+  <Animations><AnimationGroup><Translation offsetX="20" offsetY="8" duration="1"/>
+    <Scripts><OnLoad>self:Play()</OnLoad></Scripts>
+  </AnimationGroup></Animations>
   <Scripts><OnUpdate>self:SetAlpha(self:GetAlpha() - elapsed)</OnUpdate></Scripts>
 </Frame></Ui>"#,
         },
@@ -194,6 +197,7 @@ fn glue_alpha_updates_retain_the_existing_ui_mesh() -> Result<(), Box<dyn Error>
     assert_eq!(mesh.index_bytes(), index_bytes);
     assert_eq!(mesh.batches().len(), 1);
     assert!((mesh.batches()[0].opacity() - 0.75).abs() < 0.000_01);
+    assert_eq!(mesh.batches()[0].translation(), [5.0, 2.0]);
     Ok(())
 }
 

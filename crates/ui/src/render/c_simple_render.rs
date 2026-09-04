@@ -108,18 +108,68 @@ impl UiRenderPlan {
         &self.texture_assets
     }
 
-    /// Refreshes inherited alpha in retained draw packets without touching
-    /// vertex or index bytes.
-    pub(crate) fn refresh_opacities(
+    /// Refreshes animation-only draw state without touching vertex/index bytes.
+    ///
+    /// Returns `false` if the new geometry cannot be represented as rigid
+    /// per-object translation and therefore requires a complete mesh rebuild.
+    pub(crate) fn refresh_visual_states(
         &mut self,
-        geometry: &UiRegionGeometryPlan,
-    ) -> Result<(), UiRenderError> {
+        previous: &UiRegionGeometryPlan,
+        current: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+    ) -> Result<bool, UiRenderError> {
+        if previous.region_count() != current.region_count() {
+            return Ok(false);
+        }
+        let mut translations = Vec::with_capacity(current.region_count());
+        for object_index in 0..current.region_count() {
+            let (Some(previous), Some(current)) =
+                (previous.region(object_index), current.region(object_index))
+            else {
+                return Ok(false);
+            };
+            let previous = previous.presentation_bounds();
+            let current = current.presentation_bounds();
+            let horizontal = current.left() - previous.left();
+            let vertical = current.bottom() - previous.bottom();
+            if !nearly_equal(current.right() - previous.right(), horizontal)
+                || !nearly_equal(current.top() - previous.top(), vertical)
+            {
+                return Ok(false);
+            }
+            let translation = [horizontal as f32, vertical as f32];
+            if translation.iter().any(|value| !value.is_finite()) {
+                return Ok(false);
+            }
+            translations.push(translation);
+        }
+        for (object_index, translation) in translations.into_iter().enumerate() {
+            self.mesh.translate_object(object_index, translation)?;
+        }
         self.mesh.refresh_object_opacities(|object_index| {
-            geometry
+            current
                 .region(object_index)
                 .map(|region| region.effective_alpha() as f32)
         })?;
-        Ok(())
+        for object_index in 0..current.region_count() {
+            if scroll_frames.state(object_index).is_none() {
+                continue;
+            }
+            let Some(viewport) = current.region(object_index) else {
+                return Ok(false);
+            };
+            let viewport = viewport.presentation_bounds();
+            self.mesh.set_transform_clip(
+                UiRenderTransform::ScrollFrame(object_index),
+                Some([
+                    viewport.left() as f32,
+                    viewport.bottom() as f32,
+                    viewport.right() as f32,
+                    viewport.top() as f32,
+                ]),
+            )?;
+        }
+        Ok(true)
     }
 
     /// Patches ScrollFrame and native thumb draw state without rebuilding mesh bytes.
@@ -186,6 +236,11 @@ impl UiRenderPlan {
             presentation.translate_object(thumb_index, delta);
         }
     }
+}
+
+fn nearly_equal(left: f64, right: f64) -> bool {
+    let magnitude = left.abs().max(right.abs()).max(1.0);
+    (left - right).abs() <= f64::EPSILON * magnitude * 16.0
 }
 
 fn slider_fraction(minimum: f64, maximum: f64, value: f64) -> f64 {

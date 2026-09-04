@@ -131,13 +131,16 @@ fn ui_mesh_retains_geometry_across_scroll_transforms() -> Result<(), Box<dyn Err
     let index_bytes = mesh.index_bytes().to_vec();
 
     mesh.set_transform_translation(transform, [0.0, 18.0]);
+    mesh.translate_object(21, [3.0, 2.0])?;
 
     assert_eq!(mesh.geometry_identity(), identity);
     assert_eq!(mesh.vertex_bytes(), vertex_bytes);
     assert_eq!(mesh.index_bytes(), index_bytes);
     assert_eq!(mesh.batches().len(), 2);
-    assert_eq!(mesh.batches()[0].translation(), [0.0, 18.0]);
+    assert_eq!(mesh.batches()[0].translation(), [3.0, 20.0]);
     assert_eq!(mesh.batches()[1].translation(), [0.0, 0.0]);
+    mesh.set_transform_translation(transform, [0.0, 9.0]);
+    assert_eq!(mesh.batches()[0].translation(), [3.0, 11.0]);
     Ok(())
 }
 

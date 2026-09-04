@@ -261,7 +261,8 @@ pub struct UiRenderBatch {
     first_quad: u32,
     quad_count: u32,
     transform: Option<UiRenderTransform>,
-    translation: [f32; 2],
+    transform_translation: [f32; 2],
+    object_translation: [f32; 2],
     opacity: f32,
     clip: Option<[f32; 4]>,
 }
@@ -281,7 +282,8 @@ impl UiRenderBatch {
             first_quad,
             quad_count: 1,
             transform: quad.transform(),
-            translation: quad.translation(),
+            transform_translation: quad.translation(),
+            object_translation: [0.0, 0.0],
             opacity: quad.opacity(),
             clip: quad.clip(),
         }
@@ -296,7 +298,7 @@ impl UiRenderBatch {
             && self.residency == quad.residency()
             && self.desaturated == quad.desaturated()
             && self.transform == quad.transform()
-            && self.translation == quad.translation()
+            && self.transform_translation == quad.translation()
             && self.opacity == quad.opacity()
             && self.clip == quad.clip()
     }
@@ -388,7 +390,8 @@ impl UiRenderBatch {
             first_quad: 0,
             quad_count: 0,
             transform: None,
-            translation: [0.0, 0.0],
+            transform_translation: [0.0, 0.0],
+            object_translation: [0.0, 0.0],
             opacity: 1.0,
             clip,
         }
@@ -403,7 +406,18 @@ impl UiRenderBatch {
     /// Returns the logical translation applied by the vertex shader.
     #[must_use]
     pub const fn translation(&self) -> [f32; 2] {
-        self.translation
+        [
+            self.transform_translation[0] + self.object_translation[0],
+            self.transform_translation[1] + self.object_translation[1],
+        ]
+    }
+
+    pub(super) const fn transform_translation(&self) -> [f32; 2] {
+        self.transform_translation
+    }
+
+    pub(super) const fn object_translation(&self) -> [f32; 2] {
+        self.object_translation
     }
 
     /// Returns the inherited region opacity applied by the fragment stage.
@@ -419,7 +433,16 @@ impl UiRenderBatch {
     }
 
     pub(super) fn set_translation(&mut self, translation: [f32; 2]) {
-        self.translation = translation;
+        self.transform_translation = translation;
+    }
+
+    pub(super) fn translate_object(&mut self, delta: [f32; 2]) {
+        self.object_translation[0] += delta[0];
+        self.object_translation[1] += delta[1];
+    }
+
+    pub(super) fn set_clip(&mut self, clip: Option<[f32; 4]>) {
+        self.clip = clip;
     }
 
     pub(super) fn set_opacity(&mut self, opacity: f32) {
