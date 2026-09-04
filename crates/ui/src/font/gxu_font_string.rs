@@ -687,21 +687,10 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<UiGlyphQuad> {
-        self.html_quads
-            .iter()
-            .chain(&self.live_quads)
-            .filter_map(|quad| {
-                if quad
-                    .clip_object
-                    .and_then(|clip| scroll_frames.state(clip))
-                    .is_some()
-                {
-                    resolve_quad_unclipped(quad, geometry, None)
-                } else {
-                    resolve_quad(quad, geometry, None)
-                }
-            })
-            .collect()
+        let mut resolved = Vec::with_capacity(self.html_quads.len() + self.live_quads.len());
+        extend_retained_quads(&mut resolved, &self.html_quads, geometry, scroll_frames);
+        extend_retained_quads(&mut resolved, &self.live_quads, geometry, scroll_frames);
+        resolved
     }
 
     fn resolve_quads(
@@ -727,6 +716,80 @@ impl UiGlyphAtlasPlan {
         );
         resolved
     }
+}
+
+/// Resolves object-sorted local glyphs while looking up inherited geometry
+/// once per text owner instead of once per character quad.
+fn extend_retained_quads(
+    output: &mut Vec<UiGlyphQuad>,
+    quads: &[LocalGlyphQuad],
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: &UiScrollFramePlan,
+) {
+    let mut previous_key = None;
+    let mut state = None;
+    for quad in quads {
+        let key = (quad.object_index, quad.clip_object);
+        if previous_key != Some(key) {
+            previous_key = Some(key);
+            state = retained_glyph_state(quad, geometry, scroll_frames);
+        }
+        let Some(state) = state else {
+            continue;
+        };
+        let resolved = resolve_quad_with_owner(quad, state.owner);
+        output.extend(match state.clip {
+            Some(viewport) => clip_quad_to_viewport(resolved, viewport),
+            None => Some(resolved),
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RetainedGlyphState {
+    owner: GlyphOwnerTransform,
+    clip: Option<crate::UiScreenRect>,
+}
+
+#[derive(Clone, Copy)]
+struct GlyphOwnerTransform {
+    left: f64,
+    top: f64,
+    scale: f64,
+}
+
+fn retained_glyph_state(
+    quad: &LocalGlyphQuad,
+    geometry: &UiRegionGeometryPlan,
+    scroll_frames: &UiScrollFramePlan,
+) -> Option<RetainedGlyphState> {
+    let region = geometry.region(quad.object_index)?;
+    if !region.effectively_shown() || region.effective_alpha() <= 0.0 && !region.animation_active()
+    {
+        return None;
+    }
+    let owner = region.presentation_bounds();
+    let clip = match quad.clip_object {
+        Some(clip_object) if scroll_frames.state(clip_object).is_some() => None,
+        Some(clip_object) => {
+            let clip = geometry.region(clip_object)?;
+            if !clip.effectively_shown()
+                || clip.effective_alpha() <= 0.0 && !clip.animation_active()
+            {
+                return None;
+            }
+            Some(clip.presentation_bounds())
+        }
+        None => None,
+    };
+    Some(RetainedGlyphState {
+        owner: GlyphOwnerTransform {
+            left: owner.left(),
+            top: owner.top(),
+            scale: region.effective_scale(),
+        },
+        clip,
+    })
 }
 
 /// One glyph positioned relative to the top-left of its `SimpleHTML` owner.
@@ -1736,27 +1799,46 @@ fn resolve_quad_unclipped(
         .clip_object
         .and_then(|index| scroll_frames?.state(index))
         .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
+    Some(resolve_quad_with_owner_and_scroll(
+        quad,
+        GlyphOwnerTransform {
+            left: owner.left(),
+            top: owner.top(),
+            scale,
+        },
+        scroll,
+    ))
+}
+
+fn resolve_quad_with_owner(quad: &LocalGlyphQuad, owner: GlyphOwnerTransform) -> UiGlyphQuad {
+    resolve_quad_with_owner_and_scroll(quad, owner, (0.0, 0.0))
+}
+
+fn resolve_quad_with_owner_and_scroll(
+    quad: &LocalGlyphQuad,
+    owner: GlyphOwnerTransform,
+    scroll: (f64, f64),
+) -> UiGlyphQuad {
     let [left, bottom, right, top] = quad.bounds;
-    let resolved = UiGlyphQuad {
+    UiGlyphQuad {
         packet_key: quad.packet_key,
         object_index: quad.object_index,
         clip_object: quad.clip_object,
         bounds: [
-            (owner.left() + (f64::from(left) - scroll.0) * scale) as f32,
-            (owner.top() + (f64::from(bottom) + scroll.1) * scale) as f32,
-            (owner.left() + (f64::from(right) - scroll.0) * scale) as f32,
-            (owner.top() + (f64::from(top) + scroll.1) * scale) as f32,
+            (owner.left + (f64::from(left) - scroll.0) * owner.scale) as f32,
+            (owner.top + (f64::from(bottom) + scroll.1) * owner.scale) as f32,
+            (owner.left + (f64::from(right) - scroll.0) * owner.scale) as f32,
+            (owner.top + (f64::from(top) + scroll.1) * owner.scale) as f32,
         ],
         texture_coordinates: quad.texture_coordinates,
         color: quad.color,
         caret: quad.caret,
-    };
-    Some(resolved)
+    }
 }
 
 /// Clips a glyph to its scroll viewport and retains texel-to-edge alignment.
 fn clip_quad(
-    mut quad: UiGlyphQuad,
+    quad: UiGlyphQuad,
     clip_object: Option<usize>,
     geometry: &UiRegionGeometryPlan,
 ) -> Option<UiGlyphQuad> {
@@ -1767,7 +1849,13 @@ fn clip_quad(
     if !clip.effectively_shown() || clip.effective_alpha() <= 0.0 && !clip.animation_active() {
         return None;
     }
-    let viewport = clip.presentation_bounds();
+    clip_quad_to_viewport(quad, clip.presentation_bounds())
+}
+
+fn clip_quad_to_viewport(
+    mut quad: UiGlyphQuad,
+    viewport: crate::UiScreenRect,
+) -> Option<UiGlyphQuad> {
     let [left, bottom, right, top] = quad.bounds;
     let clipped_left = left.max(viewport.left() as f32);
     let clipped_bottom = bottom.max(viewport.bottom() as f32);
