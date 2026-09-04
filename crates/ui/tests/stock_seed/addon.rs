@@ -126,6 +126,22 @@ Source/Example.lua
             .map(|value| value.to_string_lossy()),
         Some("Blizzard_Shared".to_owned())
     );
+    let get_enable_state = globals.get::<mlua::Function>("GetAddOnEnableState")?;
+    let enable = globals.get::<mlua::Function>("EnableAddOn")?;
+    let disable = globals.get::<mlua::Function>("DisableAddOn")?;
+    let save = globals.get::<mlua::Function>("SaveAddOns")?;
+    let reset = globals.get::<mlua::Function>("ResetAddOns")?;
+    assert_eq!(get_enable_state.call::<u8>((None::<String>, 1_u32))?, 2);
+    disable.call::<()>((None::<String>, 1_u32))?;
+    assert_eq!(get_enable_state.call::<u8>((None::<String>, 1_u32))?, 0);
+    reset.call::<()>(())?;
+    assert_eq!(get_enable_state.call::<u8>((None::<String>, 1_u32))?, 2);
+    disable.call::<()>(1_u32)?;
+    save.call::<()>(())?;
+    enable.call::<()>("Blizzard_Example")?;
+    assert_eq!(get_enable_state.call::<u8>((None::<String>, 1_u32))?, 2);
+    reset.call::<()>(())?;
+    assert_eq!(get_enable_state.call::<u8>((None::<String>, 1_u32))?, 0);
     Ok(())
 }
 

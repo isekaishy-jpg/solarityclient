@@ -1,6 +1,7 @@
 //! Shared script-visible AddOn load progress.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::{AddonCatalog, AddonDefinition};
@@ -10,6 +11,10 @@ struct AddonLoadEntry {
     definition: AddonDefinition,
     loaded: bool,
     finished: bool,
+    enabled_for_all: bool,
+    character_overrides: BTreeMap<String, bool>,
+    saved_enabled_for_all: bool,
+    saved_character_overrides: BTreeMap<String, bool>,
 }
 
 /// Ordered AddOn load flags shared by the loader and FrameXML Lua globals.
@@ -34,6 +39,10 @@ impl UiAddonLoadState {
                         definition: addon.clone(),
                         loaded: false,
                         finished: false,
+                        enabled_for_all: addon.is_enabled_by_default(),
+                        character_overrides: BTreeMap::new(),
+                        saved_enabled_for_all: addon.is_enabled_by_default(),
+                        saved_character_overrides: BTreeMap::new(),
                     })
                     .collect(),
             )),
@@ -82,6 +91,86 @@ impl UiAddonLoadState {
             .iter()
             .find(|entry| entry.definition.name().eq_ignore_ascii_case(name))
             .map(|entry| entry.definition.clone())
+    }
+
+    /// Resolves a case-insensitive folder identity to its one-based UI index.
+    #[must_use]
+    pub(crate) fn index_by_name(&self, name: &str) -> Option<usize> {
+        self.entries
+            .borrow()
+            .iter()
+            .position(|entry| entry.definition.name().eq_ignore_ascii_case(name))
+            .map(|index| index + 1)
+    }
+
+    /// Returns stock's tri-state AddOn enablement value for one selection.
+    #[must_use]
+    pub(crate) fn enable_state(&self, character: Option<&str>, index: usize) -> Option<u8> {
+        let entries = self.entries.borrow();
+        let entry = entries.get(index.checked_sub(1)?)?;
+        let fully_enabled =
+            entry.enabled_for_all && entry.character_overrides.values().all(|enabled| *enabled);
+        if character.is_none() {
+            let partly_enabled =
+                entry.enabled_for_all || entry.character_overrides.values().any(|enabled| *enabled);
+            return Some(if fully_enabled {
+                2
+            } else if partly_enabled {
+                1
+            } else {
+                0
+            });
+        }
+        let enabled = character
+            .and_then(|name| entry.character_overrides.get(&name.to_ascii_lowercase()))
+            .copied()
+            .unwrap_or(entry.enabled_for_all);
+        Some(if !enabled {
+            0
+        } else if fully_enabled {
+            2
+        } else {
+            1
+        })
+    }
+
+    /// Stages one AddOn's enablement for all characters or one named character.
+    pub(crate) fn set_enabled(&self, character: Option<&str>, index: usize, enabled: bool) -> bool {
+        let mut entries = self.entries.borrow_mut();
+        let Some(entry) = index
+            .checked_sub(1)
+            .and_then(|index| entries.get_mut(index))
+        else {
+            return false;
+        };
+        match character {
+            Some(name) => {
+                entry
+                    .character_overrides
+                    .insert(name.to_ascii_lowercase(), enabled);
+            }
+            None => {
+                entry.enabled_for_all = enabled;
+                entry.character_overrides.clear();
+            }
+        }
+        true
+    }
+
+    /// Commits staged AddOn selections as the reset baseline.
+    pub(crate) fn save_enablement(&self) {
+        for entry in self.entries.borrow_mut().iter_mut() {
+            entry.saved_enabled_for_all = entry.enabled_for_all;
+            entry.saved_character_overrides = entry.character_overrides.clone();
+        }
+    }
+
+    /// Restores the last saved AddOn selections after a cancelled dialog.
+    pub(crate) fn reset_enablement(&self) {
+        for entry in self.entries.borrow_mut().iter_mut() {
+            entry.enabled_for_all = entry.saved_enabled_for_all;
+            entry.character_overrides = entry.saved_character_overrides.clone();
+        }
     }
 
     /// Updates loader progress for an existing catalog entry.

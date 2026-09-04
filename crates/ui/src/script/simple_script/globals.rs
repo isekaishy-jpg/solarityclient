@@ -1179,6 +1179,49 @@ fn unit_vitals(world: &crate::UiWorldState, unit: &str) -> Option<crate::UiPlaye
         .flatten()
 }
 
+fn addon_index_from_value(
+    addons: &crate::UiAddonLoadState,
+    identifier: &Value,
+    usage: &'static str,
+) -> mlua::Result<Option<usize>> {
+    let index = match identifier {
+        Value::Integer(index) => usize::try_from(*index).ok(),
+        Value::Number(index) => {
+            let rounded = index.round();
+            (rounded.is_finite() && rounded >= 1.0).then_some(rounded as usize)
+        }
+        Value::String(name) => return Ok(addons.index_by_name(name.to_str()?.as_ref())),
+        _ => return Err(mlua::Error::runtime(usage)),
+    };
+    let Some(index) = index.filter(|index| *index > 0 && *index <= addons.addon_count()) else {
+        return Err(mlua::Error::runtime(format!(
+            "AddOn index must be in the range of 1 to {}",
+            addons.addon_count()
+        )));
+    };
+    Ok(Some(index))
+}
+
+fn addon_mutation_arguments(
+    addons: &crate::UiAddonLoadState,
+    arguments: &Variadic<Value>,
+    usage: &'static str,
+) -> mlua::Result<Option<(Option<String>, usize)>> {
+    let (character, identifier) = match arguments.as_slice() {
+        [identifier] => (None, identifier),
+        [character, identifier] => {
+            let character = match character {
+                Value::Nil => None,
+                Value::String(name) => Some(name.to_str()?.to_owned()),
+                _ => return Err(mlua::Error::runtime(usage)),
+            };
+            (character, identifier)
+        }
+        _ => return Err(mlua::Error::runtime(usage)),
+    };
+    Ok(addon_index_from_value(addons, identifier, usage)?.map(|index| (character, index)))
+}
+
 /// Registers the exact two-result AddOn progress query used by stock FrameXML.
 fn register_addon_globals(
     lua: &Lua,
@@ -1227,8 +1270,9 @@ fn register_addon_globals(
                 .get("checkAddonVersion")
                 .is_some_and(|value| value != "0");
             let incompatible = !matches!(addon.compatibility(), crate::AddonCompatibility::Current);
-            let loadable = addon.is_enabled_by_default() && (!check_version || !incompatible);
-            let reason = if !addon.is_enabled_by_default() {
+            let enabled = addon_info.enable_state(None, index).unwrap_or(0) > 0;
+            let loadable = enabled && (!check_version || !incompatible);
+            let reason = if !enabled {
                 Some("DISABLED")
             } else if incompatible && check_version {
                 Some("INTERFACE_VERSION")
@@ -1374,6 +1418,83 @@ fn register_addon_globals(
                 .iter()
                 .map(|dependency| lua.create_string(dependency).map(Value::String))
                 .collect::<mlua::Result<MultiValue>>()
+        })?,
+    )?;
+    let addon_enable_state = addons.clone();
+    globals.raw_set(
+        "GetAddOnEnableState",
+        lua.create_function(move |_, (character, index): (Option<String>, Value)| {
+            // Script_GetAddOnEnableState at 0x004DC7C0 accepts a character
+            // name (or nil) followed by a one-based numeric AddOn index.
+            let Some(index) = addon_index_from_value(
+                &addon_enable_state,
+                &index,
+                "Usage: GetAddOnEnableState(character, index)",
+            )?
+            else {
+                return Ok(0_u8);
+            };
+            Ok(addon_enable_state
+                .enable_state(character.as_deref(), index)
+                .unwrap_or(0))
+        })?,
+    )?;
+    let enable_addon = addons.clone();
+    globals.raw_set(
+        "EnableAddOn",
+        lua.create_function(move |_, arguments: Variadic<Value>| {
+            // Glue's 0x004DC8A0 wrapper supplies character/index while the
+            // generic 0x00511840 wrapper also permits a lone index or name.
+            if let Some((character, index)) = addon_mutation_arguments(
+                &enable_addon,
+                &arguments,
+                "Usage: EnableAddOn([character,] index or \"name\")",
+            )? {
+                enable_addon.set_enabled(character.as_deref(), index, true);
+            }
+            Ok(())
+        })?,
+    )?;
+    let disable_addon = addons.clone();
+    globals.raw_set(
+        "DisableAddOn",
+        lua.create_function(move |_, arguments: Variadic<Value>| {
+            // Glue's 0x004DC9B0 wrapper supplies character/index while the
+            // generic 0x00511940 wrapper also permits a lone index or name.
+            if let Some((character, index)) = addon_mutation_arguments(
+                &disable_addon,
+                &arguments,
+                "Usage: DisableAddOn([character,] index or \"name\")",
+            )? {
+                disable_addon.set_enabled(character.as_deref(), index, false);
+            }
+            Ok(())
+        })?,
+    )?;
+    let save_addons = addons.clone();
+    globals.raw_set(
+        "SaveAddOns",
+        lua.create_function(move |_, ()| {
+            // The stock Glue thunk at 0x004DCAC0 commits the staged list.
+            save_addons.save_enablement();
+            Ok(())
+        })?,
+    )?;
+    let reset_addons = addons.clone();
+    globals.raw_set(
+        "ResetAddOns",
+        lua.create_function(move |_, ()| {
+            // The stock Glue thunk at 0x004DCAD0 restores the saved list.
+            reset_addons.reset_enablement();
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "LaunchAddOnURL",
+        lua.create_function(|_, _index: usize| {
+            // No authored URL is currently published by GetAddOnInfo, so the
+            // stock button cannot become visible. Keep its callable contract.
+            Ok(())
         })?,
     )?;
     globals.raw_set(
