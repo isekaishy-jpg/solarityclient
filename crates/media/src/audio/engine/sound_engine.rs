@@ -480,8 +480,15 @@ impl<'output> SoundEngine<'output> {
     /// voice.
     pub fn stop_category(&mut self, category: SoundCategory) -> Result<usize, SoundEngineError> {
         let pending_before = self.pending_voices.len();
-        self.pending_voices
-            .retain(|voice| voice.channel.category() != category);
+        self.pending_voices.retain(|voice| {
+            if voice.channel.category() != category {
+                return true;
+            }
+            if let Some(ticket) = voice.decode {
+                self.decoder.cancel_load(ticket);
+            }
+            false
+        });
         let mut stopped = pending_before - self.pending_voices.len();
         let mut index = 0;
         while index < self.active_voices.len() {

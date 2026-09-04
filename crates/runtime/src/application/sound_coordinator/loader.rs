@@ -1,4 +1,4 @@
-//! Worker-owned archive reads for selected Glue sound requests.
+//! Ordered archive extraction and decoder preparation for selected Glue sounds.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -6,14 +6,28 @@ use std::time::Instant;
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
-use solarity_media::{EncodedSound, SoundCache, SoundEngine, SoundLoadHandle, SoundLoadRequest};
+use solarity_media::{
+    EncodedSound, SoundCache, SoundEngine, SoundLoadHandle, SoundLoadRequest, SoundPlayback,
+};
 
 use super::RuntimeSoundError;
 
-/// One read result whose reservation may have been cancelled while it ran.
-pub(super) struct SoundReadCompletion {
+/// One final admission result whose reservation may have been cancelled while loading.
+pub(super) struct SoundLoadCompletion {
     pub(super) handle: SoundLoadHandle,
-    pub(super) result: Result<Arc<EncodedSound>, RuntimeSoundError>,
+    pub(super) result: Result<SoundPlayback, RuntimeSoundError>,
+}
+
+/// Archive completion stays private until worker decoding has also completed.
+struct SoundReadCompletion {
+    handle: SoundLoadHandle,
+    result: Result<Arc<EncodedSound>, RuntimeSoundError>,
+}
+
+/// Retains selected bytes while decoder submission is at capacity or still running.
+struct PendingSoundDecode {
+    handle: SoundLoadHandle,
+    encoded: Arc<EncodedSound>,
 }
 
 /// A single archive owner, lazily mounted once on a CPU worker.
@@ -52,6 +66,7 @@ pub(super) struct RuntimeSoundLoader {
     assets: Arc<Mutex<SoundReadAssets>>,
     queued: VecDeque<SoundLoadRequest>,
     active: Option<ActiveSoundRead>,
+    decoding: Option<PendingSoundDecode>,
 }
 
 impl RuntimeSoundLoader {
@@ -64,6 +79,7 @@ impl RuntimeSoundLoader {
             })),
             queued: VecDeque::new(),
             active: None,
+            decoding: None,
         }
     }
 
@@ -76,19 +92,42 @@ impl RuntimeSoundLoader {
     pub(super) fn poll(
         &mut self,
         cpu: &CpuExecutor,
-        engine: &SoundEngine<'_>,
-    ) -> Result<Option<SoundReadCompletion>, RuntimeSoundError> {
-        let completion = if self
+        engine: &mut SoundEngine<'_>,
+    ) -> Result<Option<SoundLoadCompletion>, RuntimeSoundError> {
+        if self
             .active
             .as_ref()
             .is_some_and(|read| read.task.is_finished())
+            && let Some(completion) = self.finish_active()
         {
-            self.finish_active()?
-        } else {
-            None
-        };
-        if completion.is_some() || self.active.is_some() {
-            return Ok(completion);
+            match completion.result {
+                Ok(encoded) => {
+                    self.decoding = Some(PendingSoundDecode {
+                        handle: completion.handle,
+                        encoded,
+                    })
+                }
+                Err(error) => {
+                    engine.cancel_load(completion.handle);
+                    return Ok(Some(SoundLoadCompletion {
+                        handle: completion.handle,
+                        result: Err(error),
+                    }));
+                }
+            }
+        }
+        if let Some(decode) = &self.decoding {
+            let result = match engine.poll_load(cpu, decode.handle, &decode.encoded) {
+                Ok(None) => return Ok(None),
+                Ok(Some(playback)) => Ok(playback),
+                Err(error) => Err(error.into()),
+            };
+            let handle = decode.handle;
+            self.decoding = None;
+            return Ok(Some(SoundLoadCompletion { handle, result }));
+        }
+        if self.active.is_some() {
+            return Ok(None);
         }
         while self
             .queued
@@ -98,7 +137,7 @@ impl RuntimeSoundLoader {
             self.queued.pop_front();
         }
         let Some(request) = self.queued.front().cloned() else {
-            return Ok(completion);
+            return Ok(None);
         };
         let handle = request.handle();
         let assets = Arc::clone(&self.assets);
@@ -123,7 +162,7 @@ impl RuntimeSoundLoader {
             Err(CpuError::AtCapacity { .. }) => {}
             Err(error) => return Err(error.into()),
         }
-        Ok(completion)
+        Ok(None)
     }
 
     /// Cancels queued reservations and observes the active job before dropping assets.
@@ -137,7 +176,12 @@ impl RuntimeSoundLoader {
         if let Some(active) = &self.active {
             engine.cancel_load(active.handle);
         }
-        if let Some(completion) = self.finish_active()?
+        if let Some(decode) = self.decoding.take() {
+            engine.cancel_load(decode.handle);
+        }
+        let completion = self.finish_active();
+        engine.finish_cancelled_loads();
+        if let Some(completion) = completion
             && let Err(error) = completion.result
         {
             tracing::warn!(%error, "cancelled Glue audio read failed");
@@ -146,13 +190,17 @@ impl RuntimeSoundLoader {
     }
 
     /// Joins only after readiness or at explicit application shutdown.
-    fn finish_active(&mut self) -> Result<Option<SoundReadCompletion>, RuntimeSoundError> {
-        let Some(read) = self.active.take() else {
-            return Ok(None);
-        };
-        Ok(Some(SoundReadCompletion {
+    fn finish_active(&mut self) -> Option<SoundReadCompletion> {
+        let read = self.active.take()?;
+        Some(SoundReadCompletion {
             handle: read.handle,
-            result: read.task.join()?,
-        }))
+            // A worker failure still belongs to this reservation. Publishing
+            // it lets the coordinator retire the pending voice exactly once.
+            result: read
+                .task
+                .join()
+                .map_err(RuntimeSoundError::from)
+                .and_then(|result| result),
+        })
     }
 }

@@ -87,10 +87,37 @@ pressure retains the selected request for later admission. Replaced queued
 requests are skipped; an already running read remains owned and its result is
 observed even after cancellation. Application shutdown cancels queued requests
 and joins the active read before shutting down the pool. SDL resources remain
-on the output-owning thread. This moves WAV archive extraction off the frame
-thread; SDL admission, including its MP3 seek-table preparation, is still
-synchronous. Ordinary UI and world sound callers retain the immediate API,
-which uses the same selection, reservation, and completion rules.
+registered on the output-owning thread. The same bounded CPU executor then
+prepares a new decoder resource, including MP3 seek tables and any complete
+sample predecode. `SoundEngine::poll_load` keeps the selected reservation and
+payload while the pool is full or decoding is unfinished, then publishes the
+completed resource and starts its track with current gain settings. Reusable
+samples already in the registry complete without another worker submission;
+concurrent sample completions recheck that registry, while streamed voices keep
+their independent resources. Ordinary UI and world sound callers retain the
+immediate API, which uses the same selection, reservation, and completion rules.
+
+SDL documents audio loading, inspection, and destruction as safe from any
+thread; `MIX_Init` and `MIX_Quit` are not thread-safe. The pinned Rust wrapper
+marks its general `Mixer` and `Audio` types as non-transferable. Media therefore
+owns a narrow private transfer boundary: a worker receives only shared ownership
+of a memory mixer for `MIX_LoadAudio_IO`, and returns one exclusively owned,
+validated audio resource. The original mixer owner retains every task and joins
+them before releasing its own reference, keeping the final mixer/library
+destructor on the owning thread. No track or general mixer API crosses this
+boundary. Registry audio objects also drop before that initialization reference.
+Cancelled jobs remain owned until their results can be discarded; normal frame
+collection polls them, while explicit shutdown joins them. These lifetime and
+thread contracts are specified by SDL's
+[loading API](https://wiki.libsdl.org/SDL3_mixer/MIX_LoadAudio_IO),
+[audio destruction](https://wiki.libsdl.org/SDL3_mixer/MIX_DestroyAudio), and
+[library shutdown](https://wiki.libsdl.org/SDL3_mixer/MIX_Quit).
+
+External tests hold the worker queue at known capacity, cancel queued decodes,
+verify actual muted/unmuted PCM after asynchronous completion, check sample
+deduplication versus per-play streams, reject corrupt bytes, and drop an engine
+with outstanding work before reinitializing SDL. No elapsed-time assumption is
+needed to establish those ownership and admission outcomes.
 
 Output and track ownership remain separate at the adapter boundary.
 `SoundOutput` owns one explicitly selected default-device or memory mixer;

@@ -1,12 +1,15 @@
-//! Ordered sound selection separated from nonblocking archive reads.
+//! Ordered sound selection separated from nonblocking archive reads and decoding.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use solarity_asset::{AssetPath, AssetStore};
+use solarity_cpu::CpuExecutor;
 
 use crate::audio::backend::SoundVoicePriority;
 use crate::audio::cache::EncodedSound;
+use crate::audio::codec::{DecodedSoundHandle, SoundDecodeAdmission, SoundDecodeTicket};
 use crate::audio::engine::{AdvancedSoundInstanceId, SoundLoopMode, SoundResidencyPolicy};
 use crate::audio::selection::SoundVariationSelector;
 
@@ -61,6 +64,7 @@ pub(super) struct PendingVoice {
     priority: SoundVoicePriority,
     duck_source: Option<AdvancedSoundInstanceId>,
     residency: SoundResidencyPolicy,
+    pub(super) decode: Option<SoundDecodeTicket>,
 }
 
 impl SoundEngine<'_> {
@@ -163,6 +167,7 @@ impl SoundEngine<'_> {
             priority: request.priority(),
             duck_source: request.advanced_source(),
             residency: self.settings.residency(),
+            decode: None,
         };
         let load = pending.load.clone();
         self.pending_voices.push(pending);
@@ -212,6 +217,7 @@ impl SoundEngine<'_> {
             priority: SoundVoicePriority::DEFAULT,
             duck_source: None,
             residency: self.settings.residency(),
+            decode: None,
         });
         Ok(Some(load))
     }
@@ -228,10 +234,87 @@ impl SoundEngine<'_> {
     ///
     /// Already completed, foreign, and previously cancelled identities return false.
     pub fn cancel_load(&mut self, handle: SoundLoadHandle) -> bool {
-        let before = self.pending_voices.len();
-        self.pending_voices
-            .retain(|voice| voice.load.handle != handle);
-        self.pending_voices.len() != before
+        let Some(index) = self
+            .pending_voices
+            .iter()
+            .position(|voice| voice.load.handle == handle)
+        else {
+            return false;
+        };
+        let pending = self.pending_voices.remove(index);
+        if let Some(ticket) = pending.decode {
+            self.decoder.cancel_load(ticket);
+        }
+        true
+    }
+
+    /// Waits for already cancelled decoder jobs before application services shut down.
+    ///
+    /// Ordinary cancellation is nonblocking; this explicit lifecycle boundary
+    /// joins those jobs and discards their results while SDL remains initialized.
+    pub fn finish_cancelled_loads(&mut self) {
+        self.decoder.finish_cancelled_loads();
+    }
+
+    /// Polls nonblocking decode and playback admission for the exact selected payload.
+    ///
+    /// `None` means the CPU pool is full or the decode is still running. Keep
+    /// the selected bytes and call again, without another selection or random
+    /// draw. A cached sample can complete immediately. New SDL resources remain
+    /// owned by this engine even when the request is cancelled during a decode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SoundEngineError`] for mismatched bytes, worker/decode failure,
+    /// or playback admission failure. Every error retires the reservation.
+    pub fn poll_load(
+        &mut self,
+        cpu: &CpuExecutor,
+        handle: SoundLoadHandle,
+        encoded: &Arc<EncodedSound>,
+    ) -> Result<Option<SoundPlayback>, SoundEngineError> {
+        let Some(index) = self
+            .pending_voices
+            .iter()
+            .position(|voice| voice.load.handle == handle)
+        else {
+            return Ok(Some(SoundPlayback::Suppressed));
+        };
+        if encoded.path() != &self.pending_voices[index].load.path {
+            let expected = self.pending_voices[index].load.path.clone();
+            self.cancel_load(handle);
+            return Err(SoundEngineError::LoadPathMismatch {
+                expected,
+                actual: encoded.path().clone(),
+            });
+        }
+        let decoded = if let Some(ticket) = self.pending_voices[index].decode {
+            self.decoder.poll_load(ticket)
+        } else {
+            let mode = self.pending_voices[index]
+                .residency
+                .decode_mode(encoded.path(), encoded.bytes().len());
+            self.decoder
+                .begin_load(cpu, encoded, mode)
+                .map(|admission| match admission {
+                    SoundDecodeAdmission::Ready(sound) => Some(sound),
+                    SoundDecodeAdmission::Pending(ticket) => {
+                        self.pending_voices[index].decode = Some(ticket);
+                        None
+                    }
+                    SoundDecodeAdmission::AtCapacity => None,
+                })
+        };
+        let sound = match decoded {
+            Ok(Some(sound)) => sound,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                self.cancel_load(handle);
+                return Err(error.into());
+            }
+        };
+        let pending = self.pending_voices.remove(index);
+        self.start_decoded_voice(pending, sound).map(Some)
     }
 
     /// Admits the exact completed payload on the output-owning thread.
@@ -259,6 +342,9 @@ impl SoundEngine<'_> {
         };
         let pending = self.pending_voices.remove(index);
         if encoded.path() != &pending.load.path {
+            if let Some(ticket) = pending.decode {
+                self.decoder.cancel_load(ticket);
+            }
             return Err(SoundEngineError::LoadPathMismatch {
                 expected: pending.load.path,
                 actual: encoded.path().clone(),
@@ -268,8 +354,28 @@ impl SoundEngine<'_> {
         let decode_mode = pending
             .residency
             .decode_mode(encoded.path(), encoded.bytes().len());
-        let sound = self.decoder.load(encoded, decode_mode)?;
+        let sound = if let Some(ticket) = pending.decode {
+            self.decoder.finish_load(ticket)?
+        } else {
+            self.decoder.load(encoded, decode_mode)?
+        };
         let decode_elapsed = timing.map(|start| start.elapsed());
+        let playback = self.start_decoded_voice(pending, sound)?;
+        if let (Some(start), Some(decode_elapsed)) = (timing, decode_elapsed) {
+            tracing::info!(path = %encoded.path(), encoded_bytes = encoded.bytes().len(), ?decode_mode,
+                decode_ms = decode_elapsed.as_secs_f64() * 1_000.0,
+                backend_ms = (start.elapsed() - decode_elapsed).as_secs_f64() * 1_000.0,
+                "admitted sound resource");
+        }
+        Ok(playback)
+    }
+
+    /// Applies current output policy after either immediate or worker decoding.
+    fn start_decoded_voice(
+        &mut self,
+        pending: PendingVoice,
+        sound: DecodedSoundHandle,
+    ) -> Result<SoundPlayback, SoundEngineError> {
         let category = pending.channel.category();
         let gain = self.settings.category_gain(category).unwrap_or(0.0) * pending.source_gain;
         let playback = match self.backend.play(
@@ -285,12 +391,6 @@ impl SoundEngine<'_> {
                 return Err(error.into());
             }
         };
-        if let (Some(start), Some(decode_elapsed)) = (timing, decode_elapsed) {
-            tracing::info!(path = %encoded.path(), encoded_bytes = encoded.bytes().len(), ?decode_mode,
-                decode_ms = decode_elapsed.as_secs_f64() * 1_000.0,
-                backend_ms = (start.elapsed() - decode_elapsed).as_secs_f64() * 1_000.0,
-                "admitted sound resource");
-        }
         if let Some(stolen) = playback.stolen()
             && let Some(index) = self
                 .active_voices

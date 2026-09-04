@@ -1,5 +1,8 @@
 //! Nonblocking stock admission preserves selection, cancellation, and live gain.
 
+#[path = "worker_loading.rs"]
+mod worker_loading;
+
 use std::cell::Cell;
 use std::error::Error;
 

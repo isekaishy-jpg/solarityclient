@@ -1,17 +1,25 @@
 //! SDL3_mixer resource admission from archive-selected memory payloads.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sdl3::iostream::IOStream;
-use sdl3::mixer::{Audio, Mixer};
-use sdl3::sys::audio::{SDL_AUDIO_S16LE, SDL_AudioSpec};
+use sdl3::mixer::Audio;
 use solarity_asset::AssetPath;
+use solarity_cpu::CpuExecutor;
 
 use crate::audio::cache::EncodedSound;
 
+use super::loader::{PreparedSound, SoundDecodeTicket, SoundLoader};
 use super::status::SoundDecodeError;
 use super::types::{DecodedSoundHandle, DecodedSoundInfo, SoundDecodeMode};
+
+/// A retained sample is ready immediately; new resources use bounded CPU work.
+pub(in crate::audio) enum SoundDecodeAdmission {
+    Ready(DecodedSoundHandle),
+    Pending(SoundDecodeTicket),
+    AtCapacity,
+}
 
 /// Resource identity includes decode mode because it changes retained storage.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -36,11 +44,13 @@ struct DecodedSoundResource {
 /// per-play and is not inserted into that reusable sample map.
 pub struct SoundDecoder {
     decoder_id: u64,
-    mixer: Mixer,
     handles: HashMap<DecodedSoundKey, DecodedSoundHandle>,
     resources: Vec<Option<DecodedSoundResource>>,
     resource_count: usize,
     cached_sample_bytes: usize,
+    // Loaded Audio objects and pending worker results must retire before the
+    // memory mixer releases its SDL_mixer library initialization reference.
+    loader: SoundLoader,
 }
 
 impl SoundDecoder {
@@ -52,26 +62,13 @@ impl SoundDecoder {
     /// the memory mixer.
     pub fn new() -> Result<Self, SoundDecodeError> {
         static NEXT_DECODER_ID: AtomicU64 = AtomicU64::new(1);
-        const STOCK_OUTPUT_SAMPLE_RATE_HZ: i32 = 44_100;
-        const STOCK_OUTPUT_CHANNEL_COUNT: i32 = 2;
-
-        // The pinned wrapper currently forwards a null format that SDL rejects
-        // for memory mixers. Build 12340's Sound_OutputSampleRate defaults to
-        // 44.1 kHz, and its minimum supported output is 16-bit stereo.
-        let mix_format = SDL_AudioSpec {
-            format: SDL_AUDIO_S16LE,
-            channels: STOCK_OUTPUT_CHANNEL_COUNT,
-            freq: STOCK_OUTPUT_SAMPLE_RATE_HZ,
-        };
-        let mixer = Mixer::create_memory(Some(&mix_format))
-            .map_err(|source| SoundDecodeError::adapter("create memory audio mixer", source))?;
         Ok(Self {
             decoder_id: NEXT_DECODER_ID.fetch_add(1, Ordering::Relaxed),
-            mixer,
             handles: HashMap::new(),
             resources: Vec::new(),
             resource_count: 0,
             cached_sample_bytes: 0,
+            loader: SoundLoader::new()?,
         })
     }
 
@@ -109,8 +106,67 @@ impl SoundDecoder {
         encoded: &EncodedSound,
         mode: SoundDecodeMode,
     ) -> Result<DecodedSoundHandle, SoundDecodeError> {
+        if let Some(handle) = self.retain_sample(encoded.path(), mode)? {
+            return Ok(handle);
+        }
+        let prepared = self.loader.prepare(encoded, mode)?;
+        self.admit(prepared)
+    }
+
+    /// Starts decoding without blocking; an existing sample acquires its reference now.
+    pub(in crate::audio) fn begin_load(
+        &mut self,
+        cpu: &CpuExecutor,
+        encoded: &Arc<EncodedSound>,
+        mode: SoundDecodeMode,
+    ) -> Result<SoundDecodeAdmission, SoundDecodeError> {
+        if let Some(handle) = self.retain_sample(encoded.path(), mode)? {
+            return Ok(SoundDecodeAdmission::Ready(handle));
+        }
+        Ok(match self.loader.submit(cpu, Arc::clone(encoded), mode)? {
+            Some(ticket) => SoundDecodeAdmission::Pending(ticket),
+            None => SoundDecodeAdmission::AtCapacity,
+        })
+    }
+
+    /// Publishes only a finished worker result to the output-thread registry.
+    pub(in crate::audio) fn poll_load(
+        &mut self,
+        ticket: SoundDecodeTicket,
+    ) -> Result<Option<DecodedSoundHandle>, SoundDecodeError> {
+        self.loader
+            .poll(ticket)?
+            .map(|prepared| self.admit(prepared))
+            .transpose()
+    }
+
+    /// Joins an existing decode when a caller explicitly switches to synchronous completion.
+    pub(in crate::audio) fn finish_load(
+        &mut self,
+        ticket: SoundDecodeTicket,
+    ) -> Result<DecodedSoundHandle, SoundDecodeError> {
+        let prepared = self.loader.finish(ticket)?;
+        self.admit(prepared)
+    }
+
+    /// Preserves ownership of cancelled work until its result can be discarded.
+    pub(in crate::audio) fn cancel_load(&mut self, ticket: SoundDecodeTicket) {
+        self.loader.cancel(ticket);
+    }
+
+    /// Drains cancelled work at the runtime's explicit shutdown boundary.
+    pub(in crate::audio) fn finish_cancelled_loads(&mut self) {
+        self.loader.finish_cancelled();
+    }
+
+    /// Reuses samples only; streamed voices always retain their own resource.
+    fn retain_sample(
+        &mut self,
+        path: &AssetPath,
+        mode: SoundDecodeMode,
+    ) -> Result<Option<DecodedSoundHandle>, SoundDecodeError> {
         let key = DecodedSoundKey {
-            path: encoded.path().clone(),
+            path: path.clone(),
             mode,
         };
         if mode == SoundDecodeMode::Predecoded
@@ -125,43 +181,28 @@ impl SoundDecoder {
                 .references
                 .checked_add(1)
                 .ok_or(SoundDecodeError::Capacity)?;
+            return Ok(Some(handle));
+        }
+        Ok(None)
+    }
+
+    /// Admits completed bytes, rechecking a sample another request could have loaded.
+    fn admit(&mut self, prepared: PreparedSound) -> Result<DecodedSoundHandle, SoundDecodeError> {
+        let mode = prepared.info.mode();
+        if let Some(handle) = self.retain_sample(prepared.info.path(), mode)? {
             return Ok(handle);
         }
+        let key = DecodedSoundKey {
+            path: prepared.info.path().clone(),
+            mode,
+        };
         let slot =
             u32::try_from(self.resources.len()).map_err(|_source| SoundDecodeError::Capacity)?;
-        let stream = IOStream::from_bytes(encoded.bytes())
-            .map_err(|source| SoundDecodeError::adapter("open encoded sound memory", source))?;
-        let audio = self
-            .mixer
-            .load_audio_io(&stream, mode == SoundDecodeMode::Predecoded)
-            .map_err(|source| SoundDecodeError::adapter("decode encoded sound", source))?;
-        let format = audio
-            .format()
-            .map_err(|source| SoundDecodeError::adapter("inspect decoded sound format", source))?;
-        let invalid_format = || SoundDecodeError::InvalidFormat {
-            path: encoded.path().clone(),
-            sample_rate_hz: format.freq,
-            channel_count: format.channels,
-        };
-        let sample_rate_hz = u32::try_from(format.freq).map_err(|_source| invalid_format())?;
-        let channel_count = u8::try_from(format.channels).map_err(|_source| invalid_format())?;
-        if sample_rate_hz == 0 || channel_count == 0 {
-            return Err(invalid_format());
-        }
-        let duration = audio.duration();
-        let duration_frames = (duration >= 0).then_some(duration as u64);
-        let info = DecodedSoundInfo::new(
-            encoded.path().clone(),
-            mode,
-            sample_rate_hz,
-            channel_count,
-            duration_frames,
-        );
         let handle = DecodedSoundHandle {
             decoder_id: self.decoder_id,
             slot,
         };
-        let encoded_size_bytes = encoded.bytes().len();
+        let encoded_size_bytes = prepared.encoded_size_bytes;
         let next_cached_sample_bytes = if mode == SoundDecodeMode::Predecoded {
             self.cached_sample_bytes
                 .checked_add(encoded_size_bytes)
@@ -170,8 +211,8 @@ impl SoundDecoder {
             self.cached_sample_bytes
         };
         self.resources.push(Some(DecodedSoundResource {
-            audio,
-            info,
+            audio: prepared.audio,
+            info: prepared.info,
             encoded_size_bytes,
             references: 1,
         }));
@@ -215,6 +256,7 @@ impl SoundDecoder {
     ///
     /// Active samples remain resident even when they alone exceed the budget.
     pub fn trim_predecoded_cache(&mut self, maximum_bytes: usize) -> usize {
+        self.loader.collect_cancelled();
         let mut removed = 0;
         for slot in 0..self.resources.len() {
             if self.cached_sample_bytes <= maximum_bytes {

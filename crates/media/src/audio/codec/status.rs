@@ -1,11 +1,18 @@
 //! Stable failures at the encoded-audio adapter boundary.
 
 use solarity_asset::AssetPath;
+use solarity_cpu::CpuError;
 use thiserror::Error;
 
 /// Failure to admit one encoded stock sound into SDL3_mixer.
 #[derive(Debug, Error)]
 pub enum SoundDecodeError {
+    /// The bounded worker pool failed to admit or finish a decode.
+    #[error(transparent)]
+    Worker(#[from] CpuError),
+    /// A cancelled or consumed internal decoder ticket was used again.
+    #[error("sound decode request is no longer pending")]
+    UnknownLoad,
     /// SDL initialization, stream creation, decoding, or format inspection failed.
     #[error("{operation} failed: {message}")]
     Adapter {

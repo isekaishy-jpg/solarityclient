@@ -175,3 +175,16 @@ admission remain separate work. These local results improve recurrent input
 cost without closing the no-visible-stall requirement. Regression tests cover
 retained glyph capacity, exact stable draw ordering, and mixed texture updates;
 the installed-data Glue interaction validator and all 529 workspace tests pass.
+
+SDL decoder admission now also runs on the bounded CPU executor. In the next
+1,000-following-frame replay, the WotLK title MP3 took 37.7 ms to prepare on a
+worker. Aligning that completion log with the recorded presentation intervals
+shows approximately 65 frames across its decode window, with a 1.75 ms maximum;
+the previous synchronous 35.1 ms decode occupied one 37.0 ms frame. This is a
+phase-specific improvement: the complete login transition still reached
+45.3 ms and cold Human selection 67.7 ms in the new run. Cold archive extraction
+also varied substantially between runs. Following-frame means ranged from
+about 1,710 to 2,440 FPS, and warm selection maximum frames remained 7.7 and
+9.5 ms. Full scene readiness still waits for current audio admission. Decoder
+cancellation, capacity, residency, playback, and shutdown tests bring the
+passing workspace total to 535; formatting and Clippy also pass.

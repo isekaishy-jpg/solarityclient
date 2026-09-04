@@ -221,16 +221,8 @@ impl RuntimeSoundCoordinator {
                 );
             }
         }
-        if let Some(completion) = self.loader.poll(cpu, &self.engine)? {
+        if let Some(completion) = self.loader.poll(cpu, &mut self.engine)? {
             let playback = match completion.result {
-                Ok(encoded) => self.engine.complete_load(completion.handle, &encoded),
-                Err(error) => {
-                    self.engine.cancel_load(completion.handle);
-                    tracing::warn!(%error, "Glue audio payload was not loaded");
-                    Ok(SoundPlayback::Suppressed)
-                }
-            };
-            let playback = match playback {
                 Ok(playback) => playback,
                 Err(error) => {
                     tracing::warn!(%error, "Glue audio resource was not admitted");
