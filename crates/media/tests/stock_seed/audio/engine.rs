@@ -309,8 +309,11 @@ fn owned_engine_contains_the_track_to_mixer_lifetime() -> Result<(), Box<dyn Err
         SoundSoftwareChannelCount::new(1),
         settings(true)?,
     )?;
-    assert_eq!(engine.active_voice_count(), 0);
-    assert_eq!(engine.settings(), settings(true)?);
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 0);
+    assert_eq!(
+        engine.with_engine(|engine| engine.settings()),
+        settings(true)?
+    );
     Ok(())
 }
 

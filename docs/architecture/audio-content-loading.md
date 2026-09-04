@@ -123,9 +123,16 @@ Output and track ownership remain separate at the adapter boundary.
 `SoundOutput` owns one explicitly selected default-device or memory mixer;
 `SoundBackend` borrows that output and preallocates build 12340's hard 512
 virtual voices. `OwnedSoundEngine` contains their self-reference behind one
-tested safe boundary: a stable boxed mixer allocation outlives the engine
-field and Rust's field destruction order drops every track first. Runtime
-policy separately passes the authoritative `Sound_NumChannels` real software
+tested safe boundary: a stable shared output allocation outlives the engine
+field and Rust's field destruction order drops every track first. Its read and
+write callbacks must accept any output lifetime, and their result cannot carry
+that lifetime out of the callback. The owner exposes no `Deref` or `DerefMut`
+access to its internally retained engine. The earlier mutable exposure allowed
+safe callers to swap engines between output owners and then destroy an output
+still borrowed by the surviving engine. Compile-fail regression tests now
+reject that exchange, scoped exchanges, escaping references, and insertion of
+an engine borrowing a shorter-lived output. Runtime policy separately passes
+the authoritative `Sound_NumChannels` real software
 mix count, whose build-12340 default is 64 and whose executable clamp is
 12 through 128. The CVar is read only during sound initialization; a later
 change has no effect until the next initialization.

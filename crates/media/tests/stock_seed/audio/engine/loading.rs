@@ -33,38 +33,48 @@ fn nonblocking_selection_precedes_reads_and_respects_pending_admission()
         0
     };
     let capped = request(SoundChannel::new(7)?, SoundConcurrencyMode::Concurrent);
-    let first = required(engine.begin_load(capped, &mut random)?)?;
+    let first = required(engine.with_engine_mut(|engine| engine.begin_load(capped, &mut random))?)?;
     let consumed = calls.get();
     assert!(consumed > 0);
-    assert_eq!(engine.active_voice_count(), 0);
-    assert_eq!(engine.cached_sound_count(), 0);
-    assert_eq!(engine.decoded_sound_count(), 0);
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 0);
+    assert_eq!(engine.with_engine(|engine| engine.cached_sound_count()), 0);
+    assert_eq!(engine.with_engine(|engine| engine.decoded_sound_count()), 0);
     assert!(matches!(
-        engine.begin_load(capped, &mut random),
+        engine.with_engine_mut(|engine| engine.begin_load(capped, &mut random)),
         Err(SoundEngineError::ChannelCapacity {
             channel: 7,
             maximum: 1
         })
     ));
     assert!(matches!(
-        engine.play(&mut store, capped, &mut random),
+        engine.with_engine_mut(|engine| engine.play(&mut store, capped, &mut random)),
         Err(SoundEngineError::ChannelCapacity { .. })
     ));
     assert_eq!(calls.get(), consumed);
-    assert!(engine.cancel_load(first.handle()));
-    assert!(!engine.cancel_load(first.handle()));
+    assert!(engine.with_engine_mut(|engine| engine.cancel_load(first.handle())));
+    assert!(!engine.with_engine_mut(|engine| engine.cancel_load(first.handle())));
     let exclusive = request(SoundChannel::SFX, SoundConcurrencyMode::Entry);
-    let first = required(engine.begin_load(exclusive, &mut random)?)?;
+    let first =
+        required(engine.with_engine_mut(|engine| engine.begin_load(exclusive, &mut random))?)?;
     let consumed = calls.get();
     assert!(matches!(
-        engine.begin_load(exclusive, &mut random),
+        engine.with_engine_mut(|engine| engine.begin_load(exclusive, &mut random)),
         Err(SoundEngineError::ExclusiveEntryActive { entry_id: 77 })
     ));
     assert_eq!(calls.get(), consumed);
-    assert_eq!(engine.stop_category(SoundCategory::Sfx)?, 1);
-    assert!(!engine.is_load_pending(first.handle()));
-    engine.set_settings(settings(false)?)?;
-    assert!(engine.begin_load(exclusive, &mut random)?.is_none());
+    assert_eq!(
+        engine.with_engine_mut(|engine| engine.stop_category(SoundCategory::Sfx))?,
+        1
+    );
+    assert!(!engine.with_engine(|engine| engine.is_load_pending(first.handle())));
+    engine.with_engine_mut(|engine| -> Result<_, Box<dyn Error>> {
+        Ok(engine.set_settings(settings(false)?)?)
+    })?;
+    assert!(
+        engine
+            .with_engine_mut(|engine| engine.begin_load(exclusive, &mut random))?
+            .is_none()
+    );
     assert_eq!(calls.get(), consumed);
     Ok(())
 }
@@ -77,19 +87,21 @@ fn cancelled_foreign_and_duplicate_completions_cannot_start_voices() -> Result<(
     let mut engine = engine(&mut store)?;
     let path = AssetPath::new("Sound/Test/Tone.wav")?;
     let invalid = AssetPath::new("Sound/Test/Invalid.wav")?;
-    let load =
-        required(engine.begin_file_load(&invalid, SoundChannel::AMBIENCE, SoundLoopMode::Loop)?)?;
+    let load = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&invalid, SoundChannel::AMBIENCE, SoundLoopMode::Loop)
+    })?)?;
     let mut cache = SoundCache::new();
     let corrupt = cache.load(&mut store, &invalid)?;
-    engine.stop_category(SoundCategory::Ambience)?;
+    engine.with_engine_mut(|engine| engine.stop_category(SoundCategory::Ambience))?;
     assert_eq!(
-        engine.complete_load(load.handle(), &corrupt)?,
+        engine.with_engine_mut(|engine| engine.complete_load(load.handle(), &corrupt))?,
         SoundPlayback::Suppressed
     );
-    assert_eq!(engine.decoded_sound_count(), 0);
+    assert_eq!(engine.with_engine(|engine| engine.decoded_sound_count()), 0);
 
-    let load =
-        required(engine.begin_file_load(&path, SoundChannel::AMBIENCE, SoundLoopMode::Loop)?)?;
+    let load = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::AMBIENCE, SoundLoopMode::Loop)
+    })?)?;
     let encoded = cache.load(&mut store, &path)?;
     let mut foreign = OwnedSoundEngine::load(
         &mut store,
@@ -98,19 +110,21 @@ fn cancelled_foreign_and_duplicate_completions_cannot_start_voices() -> Result<(
         settings(true)?,
     )?;
     assert_eq!(
-        foreign.complete_load(load.handle(), &encoded)?,
+        foreign.with_engine_mut(|engine| engine.complete_load(load.handle(), &encoded))?,
         SoundPlayback::Suppressed
     );
-    assert!(engine.is_load_pending(load.handle()));
-    let SoundPlayback::Started(voice) = engine.complete_load(load.handle(), &encoded)? else {
+    assert!(engine.with_engine(|engine| engine.is_load_pending(load.handle())));
+    let SoundPlayback::Started(voice) =
+        engine.with_engine_mut(|engine| engine.complete_load(load.handle(), &encoded))?
+    else {
         return Err("live request was suppressed".into());
     };
     assert_eq!(
-        engine.complete_load(load.handle(), &encoded)?,
+        engine.with_engine_mut(|engine| engine.complete_load(load.handle(), &encoded))?,
         SoundPlayback::Suppressed
     );
-    assert_eq!(engine.active_voice_count(), 1);
-    engine.stop(voice)?;
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 1);
+    engine.with_engine_mut(|engine| engine.stop(voice))?;
     Ok(())
 }
 
@@ -123,36 +137,45 @@ fn failed_or_mismatched_loads_release_admission() -> Result<(), Box<dyn Error>> 
     let mut cache = SoundCache::new();
     let invalid = AssetPath::new("Sound/Test/Invalid.wav")?;
     let corrupt = cache.load(&mut store, &invalid)?;
-    let load =
-        required(engine.begin_file_load(&invalid, SoundChannel::SFX, SoundLoopMode::Once)?)?;
-    assert!(engine.complete_load(load.handle(), &corrupt).is_err());
-    assert!(!engine.is_load_pending(load.handle()));
-    let load = required(engine.begin_load(
-        request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
-        &mut || 0,
-    )?)?;
+    let load = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&invalid, SoundChannel::SFX, SoundLoopMode::Once)
+    })?)?;
+    assert!(
+        engine
+            .with_engine_mut(|engine| engine.complete_load(load.handle(), &corrupt))
+            .is_err()
+    );
+    assert!(!engine.with_engine(|engine| engine.is_load_pending(load.handle())));
+    let load = required(engine.with_engine_mut(|engine| {
+        engine.begin_load(
+            request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
+            &mut || 0,
+        )
+    })?)?;
     assert!(matches!(
-        engine.complete_load(load.handle(), &corrupt),
+        engine.with_engine_mut(|engine| engine.complete_load(load.handle(), &corrupt)),
         Err(SoundEngineError::LoadPathMismatch { .. })
     ));
-    assert!(!engine.is_load_pending(load.handle()));
+    assert!(!engine.with_engine(|engine| engine.is_load_pending(load.handle())));
     // The DBC's Missing.wav is intentionally absent; the immediate API must also
     // cancel its reservation after an exact archive failure.
     assert!(matches!(
-        engine.play(
+        engine.with_engine_mut(|engine| engine.play(
             &mut store,
             request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
             &mut || 0
-        ),
+        )),
         Err(SoundEngineError::Asset(_))
     ));
-    let retry = required(engine.begin_load(
-        request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
-        &mut || 0,
-    )?)?;
-    engine.cancel_load(retry.handle());
-    assert_eq!(engine.active_voice_count(), 0);
-    assert_eq!(engine.decoded_sound_count(), 0);
+    let retry = required(engine.with_engine_mut(|engine| {
+        engine.begin_load(
+            request(SoundChannel::SFX, SoundConcurrencyMode::Entry),
+            &mut || 0,
+        )
+    })?)?;
+    engine.with_engine_mut(|engine| engine.cancel_load(retry.handle()));
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 0);
+    assert_eq!(engine.with_engine(|engine| engine.decoded_sound_count()), 0);
     Ok(())
 }
 
@@ -163,20 +186,28 @@ fn accepted_load_uses_live_gain_at_completion() -> Result<(), Box<dyn Error>> {
     let _sdl = sdl_test_lock();
     let mut engine = engine(&mut store)?;
     let path = AssetPath::new("Sound/Test/Tone.wav")?;
-    let load = required(engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Loop)?)?;
-    engine.set_settings(settings(false)?)?;
+    let load = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Loop)
+    })?)?;
+    engine.with_engine_mut(|engine| -> Result<_, Box<dyn Error>> {
+        Ok(engine.set_settings(settings(false)?)?)
+    })?;
     let encoded = SoundCache::new().load(&mut store, &path)?;
-    let SoundPlayback::Started(voice) = engine.complete_load(load.handle(), &encoded)? else {
+    let SoundPlayback::Started(voice) =
+        engine.with_engine_mut(|engine| engine.complete_load(load.handle(), &encoded))?
+    else {
         return Err("accepted request was discarded on mute".into());
     };
     let mut pcm = [0xff; 4096];
-    engine.generate(&mut pcm)?;
+    engine.with_engine(|engine| engine.generate(&mut pcm))?;
     assert!(pcm.iter().all(|byte| *byte == 0));
-    engine.set_settings(settings(true)?)?;
-    engine.generate(&mut pcm)?;
+    engine.with_engine_mut(|engine| -> Result<_, Box<dyn Error>> {
+        Ok(engine.set_settings(settings(true)?)?)
+    })?;
+    engine.with_engine(|engine| engine.generate(&mut pcm))?;
     assert!(pcm.iter().any(|byte| *byte != 0));
-    assert_eq!(engine.active_voice_count(), 1);
-    engine.stop(voice)?;
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 1);
+    engine.with_engine_mut(|engine| engine.stop(voice))?;
     Ok(())
 }
 

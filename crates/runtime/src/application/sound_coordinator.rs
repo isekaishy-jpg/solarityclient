@@ -138,19 +138,20 @@ impl RuntimeSoundCoordinator {
     /// Returns the selected device and actual SDL output format.
     #[must_use]
     pub(crate) fn output_info(&self) -> SoundOutputInfo {
-        self.engine.output_info()
+        self.engine.with_engine(|engine| engine.output_info())
     }
 
     /// Returns the exact real software-mix count from `Sound_NumChannels`.
     #[must_use]
     pub(crate) fn software_channel_count(&self) -> usize {
-        self.engine.software_channel_count()
+        self.engine
+            .with_engine(|engine| engine.software_channel_count())
     }
 
     /// Returns build 12340's fixed logical FMOD voice pool.
     #[must_use]
     pub(crate) fn engine_voice_capacity(&self) -> usize {
-        self.engine.voice_capacity()
+        self.engine.with_engine(|engine| engine.voice_capacity())
     }
 
     /// Includes current music and ambience admission in complete-transition measurements.
@@ -166,8 +167,9 @@ impl RuntimeSoundCoordinator {
         samples: &[i16],
         volume: u32,
     ) -> Result<(), RuntimeSoundError> {
-        self.engine
-            .start_cinematic_audio(samples, volume as f32 / 255.0)?;
+        self.engine.with_engine_mut(|engine| {
+            engine.start_cinematic_audio(samples, volume as f32 / 255.0)
+        })?;
         Ok(())
     }
 
@@ -176,19 +178,22 @@ impl RuntimeSoundCoordinator {
         &mut self,
         samples: &[i16],
     ) -> Result<(), RuntimeSoundError> {
-        self.engine.queue_cinematic_audio(samples)?;
+        self.engine
+            .with_engine_mut(|engine| engine.queue_cinematic_audio(samples))?;
         Ok(())
     }
 
     /// Returns the output-consumed movie time used by stock as master clock.
     #[must_use]
     pub(crate) fn cinematic_playback_time(&self) -> Option<Duration> {
-        self.engine.cinematic_playback_time()
+        self.engine
+            .with_engine(|engine| engine.cinematic_playback_time())
     }
 
     /// Stops and releases movie audio when playback ends or is replaced.
     pub(crate) fn stop_cinematic_audio(&mut self) -> Result<(), RuntimeSoundError> {
-        self.engine.stop_cinematic_audio()?;
+        self.engine
+            .with_engine_mut(|engine| engine.stop_cinematic_audio())?;
         Ok(())
     }
 
@@ -205,8 +210,9 @@ impl RuntimeSoundCoordinator {
         random: &mut BlizzardRand,
         cpu: &CpuExecutor,
     ) -> Result<(), RuntimeSoundError> {
+        let settings = SoundPolicy::read(glue)?.settings;
         self.engine
-            .set_settings(SoundPolicy::read(glue)?.settings)?;
+            .with_engine_mut(|engine| engine.set_settings(settings))?;
         while let Some(action) = glue.take_media_action() {
             let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS")
                 .map(|_| (std::time::Instant::now(), format!("{action:?}")));
@@ -221,7 +227,10 @@ impl RuntimeSoundCoordinator {
                 );
             }
         }
-        if let Some(completion) = self.loader.poll(cpu, &mut self.engine)? {
+        if let Some(completion) = self
+            .engine
+            .with_engine_mut(|engine| self.loader.poll(cpu, engine))?
+        {
             let playback = match completion.result {
                 Ok(playback) => playback,
                 Err(error) => {
@@ -239,7 +248,8 @@ impl RuntimeSoundCoordinator {
                 }
             }
         }
-        self.engine.collect_unused_encoded();
+        self.engine
+            .with_engine_mut(|engine| engine.collect_unused_encoded());
         Ok(())
     }
 
@@ -251,7 +261,10 @@ impl RuntimeSoundCoordinator {
     ) -> Result<(), RuntimeSoundError> {
         match action {
             UiGlueMediaAction::PlaySound(name) => {
-                let Some(entry_id) = self.engine.script_sound_entry_id(&name) else {
+                let Some(entry_id) = self
+                    .engine
+                    .with_engine(|engine| engine.script_sound_entry_id(&name))
+                else {
                     tracing::debug!(sound = %name, "Glue UI sound name is absent from stock catalogs");
                     return Ok(());
                 };
@@ -262,19 +275,22 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Entry,
                     SoundConcurrencyMode::Entry,
                 );
-                self.engine
-                    .play(&mut self.assets.borrow_mut(), request, &mut || {
+                self.engine.with_engine_mut(|engine| {
+                    engine.play(&mut self.assets.borrow_mut(), request, &mut || {
                         random.next_u32()
-                    })?;
+                    })
+                })?;
             }
             UiGlueMediaAction::PlaySoundFile(path) => {
                 let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
-                self.engine.play_file(
-                    &mut self.assets.borrow_mut(),
-                    &path,
-                    SoundChannel::SCRIPT_SOUND,
-                    SoundLoopMode::Once,
-                )?;
+                self.engine.with_engine_mut(|engine| {
+                    engine.play_file(
+                        &mut self.assets.borrow_mut(),
+                        &path,
+                        SoundChannel::SCRIPT_SOUND,
+                        SoundLoopMode::Once,
+                    )
+                })?;
             }
             UiGlueMediaAction::PlayMusic(path) => {
                 let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
@@ -287,15 +303,16 @@ impl RuntimeSoundCoordinator {
                     return Ok(());
                 }
                 self.stop_glue_music()?;
-                let load = self.engine.begin_file_load(
-                    &path,
-                    SoundChannel::SCRIPT_MUSIC,
-                    SoundLoopMode::Loop,
-                )?;
+                let load = self.engine.with_engine_mut(|engine| {
+                    engine.begin_file_load(&path, SoundChannel::SCRIPT_MUSIC, SoundLoopMode::Loop)
+                })?;
                 self.glue_music = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::PlayGlueMusic(name) | UiGlueMediaAction::PlayCreditsMusic(name) => {
-                let Some(entry_id) = self.engine.internal_sound_entry_id(&name) else {
+                let Some(entry_id) = self
+                    .engine
+                    .with_engine(|engine| engine.internal_sound_entry_id(&name))
+                else {
                     tracing::debug!(sound = %name, "Glue music name is absent from SoundEntries.dbc");
                     return Ok(());
                 };
@@ -315,14 +332,19 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Loop,
                     SoundConcurrencyMode::Concurrent,
                 );
-                let load = self.engine.begin_load(request, &mut || random.next_u32())?;
+                let load = self.engine.with_engine_mut(|engine| {
+                    engine.begin_load(request, &mut || random.next_u32())
+                })?;
                 self.glue_music = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::PlayGlueAmbience {
                 name,
                 fade_seconds: _fade_seconds,
             } => {
-                let Some(entry_id) = self.engine.internal_sound_entry_id(&name) else {
+                let Some(entry_id) = self
+                    .engine
+                    .with_engine(|engine| engine.internal_sound_entry_id(&name))
+                else {
                     tracing::debug!(sound = %name, "Glue ambience name is absent from SoundEntries.dbc");
                     return Ok(());
                 };
@@ -342,7 +364,9 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Loop,
                     SoundConcurrencyMode::Concurrent,
                 );
-                let load = self.engine.begin_load(request, &mut || random.next_u32())?;
+                let load = self.engine.with_engine_mut(|engine| {
+                    engine.begin_load(request, &mut || random.next_u32())
+                })?;
                 self.glue_ambience = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::StopMusic => self.stop_glue_music()?,
@@ -350,7 +374,8 @@ impl RuntimeSoundCoordinator {
             UiGlueMediaAction::StopAllSfx {
                 fade_seconds: _fade_seconds,
             } => {
-                self.engine.stop_category(SoundCategory::Sfx)?;
+                self.engine
+                    .with_engine_mut(|engine| engine.stop_category(SoundCategory::Sfx))?;
             }
         }
         Ok(())
@@ -376,19 +401,22 @@ impl RuntimeSoundCoordinator {
     pub(crate) fn shutdown(&mut self) -> Result<(), RuntimeSoundError> {
         self.stop_glue_music()?;
         self.stop_glue_ambience()?;
-        self.loader.shutdown(&mut self.engine)
+        self.engine
+            .with_engine_mut(|engine| self.loader.shutdown(engine))
     }
 
     /// Stops the single process-owned Glue music generation.
     fn stop_glue_music(&mut self) -> Result<(), RuntimeSoundError> {
-        self.engine.stop_category(SoundCategory::Music)?;
+        self.engine
+            .with_engine_mut(|engine| engine.stop_category(SoundCategory::Music))?;
         self.glue_music = None;
         Ok(())
     }
 
     /// Stops the single process-owned Glue ambience generation.
     fn stop_glue_ambience(&mut self) -> Result<(), RuntimeSoundError> {
-        self.engine.stop_category(SoundCategory::Ambience)?;
+        self.engine
+            .with_engine_mut(|engine| engine.stop_category(SoundCategory::Ambience))?;
         self.glue_ambience = None;
         Ok(())
     }
@@ -412,11 +440,13 @@ impl RuntimeSoundCoordinator {
 
     /// Stops all resident world sounds and releases their terrain identity.
     pub(crate) fn disconnect(&mut self) -> Result<(), RuntimeSoundError> {
-        self.advanced.clear(&mut self.engine)?;
+        self.engine
+            .with_engine_mut(|engine| self.advanced.clear(engine))?;
         self.resident_tile = None;
         self.staged_emitters = None;
         self.last_update = Instant::now();
-        self.engine.collect_unused_encoded();
+        self.engine
+            .with_engine_mut(|engine| engine.collect_unused_encoded());
         Ok(())
     }
 
@@ -429,23 +459,27 @@ impl RuntimeSoundCoordinator {
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
-        self.engine.set_settings(policy.settings)?;
+        self.engine
+            .with_engine_mut(|engine| engine.set_settings(policy.settings))?;
 
         let listener = AdvancedSoundListener::from_world_camera(camera);
         if let Some(emitters) = self.staged_emitters.take() {
-            self.advanced.clear(&mut self.engine)?;
+            self.engine
+                .with_engine_mut(|engine| self.advanced.clear(engine))?;
             for emitter in emitters {
-                self.advanced.create(
-                    &mut self.assets.borrow_mut(),
-                    &mut self.engine,
-                    AdvancedSoundCreateRequest::new(
-                        emitter.advanced_sound_entry_id,
-                        emitter.position,
-                        emitter.cone_orientation,
-                    ),
-                    listener,
-                    &mut || random.next_u32(),
-                )?;
+                self.engine.with_engine_mut(|engine| {
+                    self.advanced.create(
+                        &mut self.assets.borrow_mut(),
+                        engine,
+                        AdvancedSoundCreateRequest::new(
+                            emitter.advanced_sound_entry_id,
+                            emitter.position,
+                            emitter.cone_orientation,
+                        ),
+                        listener,
+                        &mut || random.next_u32(),
+                    )
+                })?;
             }
         }
 
@@ -454,15 +488,18 @@ impl RuntimeSoundCoordinator {
         self.last_update = now;
         let elapsed_milliseconds = i32::try_from(elapsed.as_millis())
             .map_err(|_source| RuntimeSoundError::ElapsedTimeCapacity)?;
-        self.advanced.update(
-            &mut self.assets.borrow_mut(),
-            &mut self.engine,
-            elapsed_milliseconds,
-            clock.day_milliseconds(),
-            listener,
-            &mut || random.next_u32(),
-        )?;
-        self.engine.collect_unused_encoded();
+        self.engine.with_engine_mut(|engine| {
+            self.advanced.update(
+                &mut self.assets.borrow_mut(),
+                engine,
+                elapsed_milliseconds,
+                clock.day_milliseconds(),
+                listener,
+                &mut || random.next_u32(),
+            )
+        })?;
+        self.engine
+            .with_engine_mut(|engine| engine.collect_unused_encoded());
         Ok(())
     }
 
@@ -490,13 +527,15 @@ impl RuntimeSoundCoordinator {
                 SoundLoopMode::Once,
                 SoundConcurrencyMode::Entry,
             );
-            self.engine.play_positioned(
-                &mut self.assets.borrow_mut(),
-                request,
-                listener,
-                event.position(),
-                &mut || random.next_u32(),
-            )?;
+            self.engine.with_engine_mut(|engine| {
+                engine.play_positioned(
+                    &mut self.assets.borrow_mut(),
+                    request,
+                    listener,
+                    event.position(),
+                    &mut || random.next_u32(),
+                )
+            })?;
             tracing::trace!(
                 identifier = ?event.identifier(),
                 sound_entry_id = event.data(),

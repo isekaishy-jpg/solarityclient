@@ -2,7 +2,7 @@
 
 #![allow(unsafe_code)]
 
-use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 use solarity_asset::AssetStore;
 
@@ -13,11 +13,13 @@ use super::{SoundEngine, SoundEngineError, SoundEngineSettings, SoundSoftwareCha
 /// Movable owner of one output allocation and every track borrowing it.
 ///
 /// SDL's safe wrapper gives each track the lifetime of its parent mixer. The
-/// mixer therefore lives in a stable `Box`, while the engine is declared first
-/// so Rust destroys all tracks before destroying that mixer allocation.
+/// output therefore lives in a stable shared allocation, while the engine is
+/// declared first so Rust destroys all tracks before destroying the output.
+/// Scoped callbacks keep the internal output lifetime inaccessible to callers.
+#[doc = include_str!("../../../tests/compile_fail/owned_sound_engine.md")]
 pub struct OwnedSoundEngine {
     engine: SoundEngine<'static>,
-    _output: Box<SoundOutput>,
+    _output: Rc<SoundOutput>,
 }
 
 impl OwnedSoundEngine {
@@ -33,13 +35,15 @@ impl OwnedSoundEngine {
         software_channel_count: SoundSoftwareChannelCount,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
-        let output = Box::new(SoundOutput::open(target)?);
-        let output_pointer = &raw const *output;
-        // SAFETY: `output_pointer` points into a Box allocation whose address
-        // never changes. `output` is retained by the returned owner, and field
+        let output = Rc::new(SoundOutput::open(target)?);
+        let output_pointer = Rc::as_ptr(&output);
+        // SAFETY: `output_pointer` points into a stable shared allocation whose
+        // contents are never moved or mutably borrowed. The owner retains it; field
         // declaration order drops `engine` and all of its tracks first. No
-        // reference carrying this artificial lifetime can be moved out of the
-        // private engine field.
+        // reference carrying this artificial lifetime escapes the private field:
+        // callbacks are universally quantified over the output lifetime, with
+        // a result type independent of it. They cannot extract/swap an engine
+        // between owners or insert an engine borrowing a shorter-lived output.
         let output_reference = unsafe { &*output_pointer };
         let engine = SoundEngine::load(store, output_reference, software_channel_count, settings)?;
         Ok(Self {
@@ -47,18 +51,27 @@ impl OwnedSoundEngine {
             _output: output,
         })
     }
-}
 
-impl Deref for OwnedSoundEngine {
-    type Target = SoundEngine<'static>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.engine
+    /// Reads sound state while keeping the output lifetime inside this owner.
+    ///
+    /// The result can contain copied diagnostics or owned values, but cannot
+    /// borrow the engine or expose its internally retained output lifetime.
+    pub fn with_engine<R>(
+        &self,
+        operation: impl for<'output> FnOnce(&SoundEngine<'output>) -> R,
+    ) -> R {
+        operation(&self.engine)
     }
-}
 
-impl DerefMut for OwnedSoundEngine {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.engine
+    /// Runs sound operations without allowing engine/output ownership to escape.
+    ///
+    /// The callback may return an owned result, including an operation error.
+    /// It must work for any output lifetime, so it cannot exchange this engine
+    /// with one borrowing another owner's or a local output allocation.
+    pub fn with_engine_mut<R>(
+        &mut self,
+        operation: impl for<'output> FnOnce(&mut SoundEngine<'output>) -> R,
+    ) -> R {
+        operation(&mut self.engine)
     }
 }
