@@ -29,7 +29,7 @@ use crate::configuration::ConfigurationError;
 use crate::configuration::RuntimeConfiguration;
 use crate::input::{InputControl, InputFrameMotion};
 use crate::performance::FrameLimiter;
-use crate::platform::{PlatformError, PlatformEvent};
+use crate::platform::{MouseMotionEvent, PlatformError, PlatformEvent};
 
 /// A failure while constructing or stopping concrete client services.
 #[derive(Debug, Error)]
@@ -289,25 +289,39 @@ impl ClientApplication {
         let mut admitted_event_count = 0_u64;
         let mut frame_limiter = FrameLimiter::new();
         loop {
-            while let Some(event) = self.services.poll_platform_event() {
+            let mut pending_mouse_motion: Option<MouseMotionEvent> = None;
+            for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
+                let Some(event) = self.services.poll_platform_event() else {
+                    break;
+                };
                 admitted_event_count = admitted_event_count.saturating_add(1);
-                if let Some(exit_reason) = run::exit_reason(&event, primary_window) {
+                if let PlatformEvent::MouseMotion(motion) = event {
+                    if let Some(flushed) =
+                        run::coalesce_mouse_motion(&mut pending_mouse_motion, motion)
+                        && let Some(exit_reason) = self.dispatch_run_event(
+                            &PlatformEvent::MouseMotion(flushed),
+                            primary_window,
+                        )?
+                    {
+                        return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
+                    }
+                    continue;
+                }
+                if let Some(motion) = pending_mouse_motion.take()
+                    && let Some(exit_reason) = self
+                        .dispatch_run_event(&PlatformEvent::MouseMotion(motion), primary_window)?
+                {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
-                if let Err(error) = self.services.service_platform_event(&event)
-                    && !self.services.record_recoverable_error(&error)
-                {
-                    return Err(error);
+                if let Some(exit_reason) = self.dispatch_run_event(&event, primary_window)? {
+                    return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
-                if matches!(
-                    self.services.take_process_action(),
-                    Some(solarity_ui::UiProcessAction::Quit)
-                ) {
-                    return Ok(ApplicationRunReport::new(
-                        ApplicationExitReason::UiQuitRequested,
-                        admitted_event_count,
-                    ));
-                }
+            }
+            if let Some(motion) = pending_mouse_motion
+                && let Some(exit_reason) =
+                    self.dispatch_run_event(&PlatformEvent::MouseMotion(motion), primary_window)?
+            {
+                return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
             }
             if matches!(
                 self.services.take_process_action(),
@@ -330,6 +344,27 @@ impl ClientApplication {
             }
             frame_limiter.wait();
         }
+    }
+
+    /// Routes one event after any preceding motion run has been flushed.
+    fn dispatch_run_event(
+        &mut self,
+        event: &PlatformEvent,
+        primary_window: u32,
+    ) -> Result<Option<ApplicationExitReason>, ApplicationError> {
+        if let Some(exit_reason) = run::exit_reason(event, primary_window) {
+            return Ok(Some(exit_reason));
+        }
+        if let Err(error) = self.services.service_platform_event(event)
+            && !self.services.record_recoverable_error(&error)
+        {
+            return Err(error);
+        }
+        Ok(matches!(
+            self.services.take_process_action(),
+            Some(solarity_ui::UiProcessAction::Quit)
+        )
+        .then_some(ApplicationExitReason::UiQuitRequested))
     }
 
     /// Returns the physical adapter, queue, and swapchain selected at startup.

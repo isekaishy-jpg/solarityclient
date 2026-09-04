@@ -1,6 +1,36 @@
 //! Main-thread lifetime and termination decisions for the client process.
 
-use crate::platform::{PlatformEvent, WindowEvent};
+use crate::platform::{MouseMotionEvent, PlatformEvent, WindowEvent};
+
+/// Maximum translated SDL events admitted before presentation gets a turn.
+///
+/// Raw state is retained as each event is polled, while expensive UI routing
+/// happens below this boundary. A finite slice prevents an input producer from
+/// indefinitely starving animation and swapchain presentation.
+pub(super) const MAX_PLATFORM_EVENTS_PER_FRAME: usize = 256;
+
+/// Retains the last absolute cursor position for one consecutive motion run.
+///
+/// Relative deltas are preserved for any event consumer added after this
+/// boundary. Motion is never merged across windows or across a non-motion
+/// event, so pointer-button and focus ordering remains identical to SDL order.
+pub(super) fn coalesce_mouse_motion(
+    pending: &mut Option<MouseMotionEvent>,
+    next: MouseMotionEvent,
+) -> Option<MouseMotionEvent> {
+    let Some(current) = pending.as_mut() else {
+        *pending = Some(next);
+        return None;
+    };
+    if current.window_id != next.window_id {
+        return pending.replace(next);
+    }
+    current.x = next.x;
+    current.y = next.y;
+    current.delta_x += next.delta_x;
+    current.delta_y += next.delta_y;
+    None
+}
 
 /// Stock-relevant reason the persistent client loop stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,5 +91,54 @@ pub(super) fn exit_reason(
             Some(ApplicationExitReason::PrimaryWindowCloseRequested)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coalesce_mouse_motion;
+    use crate::platform::{MouseMotionEvent, WindowId};
+
+    #[test]
+    fn consecutive_motion_retains_last_position_and_total_delta() {
+        let mut pending = None;
+        assert_eq!(
+            coalesce_mouse_motion(&mut pending, motion(7, 10.0, 20.0, 2.0, -1.0)),
+            None
+        );
+        assert_eq!(
+            coalesce_mouse_motion(&mut pending, motion(7, 14.0, 25.0, 4.0, 5.0)),
+            None
+        );
+
+        assert_eq!(pending, Some(motion(7, 14.0, 25.0, 6.0, 4.0)));
+    }
+
+    #[test]
+    fn motion_from_another_window_flushes_before_replacement() {
+        let mut pending = Some(motion(7, 10.0, 20.0, 2.0, -1.0));
+        let next = motion(8, 30.0, 40.0, 5.0, 6.0);
+
+        assert_eq!(
+            coalesce_mouse_motion(&mut pending, next),
+            Some(motion(7, 10.0, 20.0, 2.0, -1.0))
+        );
+        assert_eq!(pending, Some(next));
+    }
+
+    const fn motion(
+        window_id: u32,
+        x: f32,
+        y: f32,
+        delta_x: f32,
+        delta_y: f32,
+    ) -> MouseMotionEvent {
+        MouseMotionEvent {
+            window_id: WindowId::new(window_id),
+            x,
+            y,
+            delta_x,
+            delta_y,
+        }
     }
 }
