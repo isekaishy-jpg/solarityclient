@@ -1982,6 +1982,73 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+/// Active-list compaction must not move a survivor to a different stock pool phase.
+#[test]
+fn m2_particle_pool_phase_survives_active_list_swap_removal() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 0x0ac..particle_offset + 0x0b0].copy_from_slice(&1.9_f32.to_le_bytes());
+    bytes[particle_offset + 0x160..particle_offset + 0x164].copy_from_slice(&0.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x164..particle_offset + 0x168].copy_from_slice(&1.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x168..particle_offset + 0x170]
+        .copy_from_slice(&render_f32_values(&[1.0, 1.0]));
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\StablePoolParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\StablePoolParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\StablePoolParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+    simulation.reserve_authored_capacity(emitter)?;
+
+    for _step in 0..100 {
+        let before = simulation
+            .particles()
+            .iter()
+            .enumerate()
+            .map(|(index, particle)| (particle.random_word(), index, particle.pool_address_phase()))
+            .collect::<Vec<_>>();
+        simulation.advance_planar(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)?;
+        let mut observed_swap = false;
+        for (after_index, particle) in simulation.particles().iter().enumerate() {
+            if let Some((_, before_index, before_phase)) = before
+                .iter()
+                .find(|(random_word, _, _)| *random_word == particle.random_word())
+                && *before_index != after_index
+            {
+                observed_swap = true;
+                assert_eq!(particle.pool_address_phase(), *before_phase);
+            }
+        }
+        if observed_swap {
+            return Ok(());
+        }
+    }
+    Err("fixture did not exercise active-list swap removal".into())
+}
+
 /// Flag `0x2` submits cards back-to-front without mutating simulation storage.
 #[test]
 fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {

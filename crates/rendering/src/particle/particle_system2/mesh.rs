@@ -532,11 +532,12 @@ impl M2ParticleMeshPlan {
                     let mut rotation =
                         M2ParticleRotationPose::sample(emitter, particle.random_word())
                             .angle_radians(particle.age_seconds());
-                    // `0x0097BE80` tests address bit `0x20` on the live
-                    // 32-byte particle record, so adjacent pool slots alternate
-                    // without consuming PRNG state or keying off particle data.
+                    // `0x0097BE80` tests address bit `0x20` on the fixed
+                    // 32-byte particle pool slot, so adjacent slots alternate
+                    // without consuming PRNG state or following active-list
+                    // swap removal.
                     if emitter.flags() & NEGATE_SPIN_RANDOMLY != 0
-                        && std::ptr::from_ref(particle).addr() & 0x20 != 0
+                        && particle.pool_address_phase() & 1 != 0
                     {
                         rotation = -rotation;
                     }

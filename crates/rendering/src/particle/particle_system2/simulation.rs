@@ -52,6 +52,9 @@ const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800;
 #[derive(Clone, Debug)]
 pub struct M2ParticleSimulation {
     particles: Vec<M2ParticleState>,
+    active_pool_slots: Vec<usize>,
+    free_pool_slots: Vec<usize>,
+    next_pool_slot: usize,
     capacity: usize,
     emission_remainder: f32,
     seed: u32,
@@ -110,6 +113,9 @@ impl M2ParticleSimulation {
     pub fn new(seed: u32) -> Self {
         Self {
             particles: Vec::new(),
+            active_pool_slots: Vec::new(),
+            free_pool_slots: Vec::new(),
+            next_pool_slot: 0,
             capacity: 0,
             emission_remainder: 0.0,
             seed,
@@ -133,6 +139,9 @@ impl M2ParticleSimulation {
     /// seed without changing placement ownership.
     pub fn reset(&mut self) {
         self.particles.clear();
+        self.active_pool_slots.clear();
+        self.free_pool_slots.clear();
+        self.next_pool_slot = 0;
         self.capacity = 0;
         self.emission_remainder = 0.0;
         self.random = M2ParticleRandom::new(self.seed);
@@ -471,7 +480,7 @@ impl M2ParticleSimulation {
             let requested = (self.emission_remainder + 0.5).floor().max(0.0) as usize;
             let admitted = requested.min(self.capacity.saturating_sub(self.particles.len()));
             for _ in 0..admitted {
-                let particle = match shape {
+                let mut particle = match shape {
                     EmitterShape::Plane => spawn_planar(
                         emitter,
                         pose,
@@ -489,7 +498,11 @@ impl M2ParticleSimulation {
                         inherited_velocity,
                     )?,
                 };
+                let pool_slot = self.allocate_pool_slot();
+                let pool_base_phase = (self.particles.as_ptr().addr() >> 5) & 0x7f;
+                particle.assign_pool_address_phase(((pool_base_phase + pool_slot) & 0x7f) as u8);
                 self.particles.push(particle);
+                self.active_pool_slots.push(pool_slot);
                 emitted += 1;
             }
             self.emission_remainder -= emitted as f32;
@@ -511,7 +524,7 @@ impl M2ParticleSimulation {
             let particle = &mut self.particles[index];
             particle.advance_age(elapsed_seconds)?;
             if !particle.is_alive(pose.lifespan(), emitter.lifespan_variation()) {
-                self.particles.swap_remove(index);
+                self.release_particle(index);
                 deaths += 1;
                 continue;
             }
@@ -529,7 +542,7 @@ impl M2ParticleSimulation {
                 && emitter.flags() & SPHERE_IMPLOSION_FILTER != 0
                 && (particle.position() - implosion_center).dot(displacement) > 0.0;
             if crossed_implosion_center {
-                self.particles.swap_remove(index);
+                self.release_particle(index);
                 deaths += 1;
             } else {
                 index += 1;
@@ -540,6 +553,24 @@ impl M2ParticleSimulation {
             deaths,
             live: self.particles.len(),
         })
+    }
+
+    /// Pops one fixed particle-pool slot, reusing released slots in stock's
+    /// LIFO free-list order before growing into the next sequential slot.
+    fn allocate_pool_slot(&mut self) -> usize {
+        self.free_pool_slots.pop().unwrap_or_else(|| {
+            let slot = self.next_pool_slot;
+            self.next_pool_slot += 1;
+            slot
+        })
+    }
+
+    /// Releases the fixed pool slot while swap-removing only the compact
+    /// active-list entry, matching `CParticleEmitter::Update` at `0x0097DD20`.
+    fn release_particle(&mut self, active_index: usize) {
+        self.particles.swap_remove(active_index);
+        let pool_slot = self.active_pool_slots.swap_remove(active_index);
+        self.free_pool_slots.push(pool_slot);
     }
 
     /// Returns live particles in the simulation's unstable stock storage order.
@@ -585,10 +616,7 @@ impl M2ParticleSimulation {
         }
         let required = estimate.round_ties_even() as usize;
         if required > self.capacity {
-            self.particles
-                .try_reserve_exact(required.saturating_sub(self.particles.len()))
-                .map_err(|_| M2ParticleSimulationError::Allocation)?;
-            self.capacity = required;
+            self.reserve_particle_storage(required)?;
         }
         Ok(())
     }
@@ -604,11 +632,33 @@ impl M2ParticleSimulation {
         }
         let required = estimate.ceil() as usize;
         if required > self.capacity {
-            self.particles
-                .try_reserve_exact(required.saturating_sub(self.particles.len()))
-                .map_err(|_| M2ParticleSimulationError::Allocation)?;
-            self.capacity = required;
+            self.reserve_particle_storage(required)?;
         }
+        Ok(())
+    }
+
+    /// Grows the fixed-slot storage and shifts every retained address phase if
+    /// its base allocation moves. The active list has separate ownership.
+    fn reserve_particle_storage(
+        &mut self,
+        required: usize,
+    ) -> Result<(), M2ParticleSimulationError> {
+        let old_base_phase = (!self.particles.is_empty())
+            .then(|| ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8);
+        self.particles
+            .try_reserve_exact(required.saturating_sub(self.particles.len()))
+            .map_err(|_| M2ParticleSimulationError::Allocation)?;
+        self.active_pool_slots
+            .try_reserve_exact(required.saturating_sub(self.active_pool_slots.len()))
+            .map_err(|_| M2ParticleSimulationError::Allocation)?;
+        if let Some(old_base_phase) = old_base_phase {
+            let new_base_phase = ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8;
+            let delta = new_base_phase.wrapping_sub(old_base_phase) & 0x7f;
+            for particle in &mut self.particles {
+                particle.shift_pool_address_phase(delta);
+            }
+        }
+        self.capacity = required;
         Ok(())
     }
 }

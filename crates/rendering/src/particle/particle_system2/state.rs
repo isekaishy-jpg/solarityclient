@@ -17,17 +17,28 @@ const VELOCITY_EPSILON: f32 = f32::from_bits(0x322b_cc77);
 /// Build 12340 appends tumbling and geometry-particle state for specialized
 /// paths. This prefix remains common: age, position, velocity, and one random
 /// word shared by lifetime variation and atlas selection.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct M2ParticleState {
     age_seconds: f32,
     position: Vec3,
     velocity: Vec3,
     random_word: u16,
+    pool_address_phase: u8,
+    has_pool_address_phase: bool,
 }
 
 // Twinkle phases shift stock's particle pointer by five; preserve the same
 // pool stride even though fields remain private and serialization-independent.
 const _: () = assert!(std::mem::size_of::<M2ParticleState>() == 32);
+
+impl PartialEq for M2ParticleState {
+    fn eq(&self, other: &Self) -> bool {
+        self.age_seconds == other.age_seconds
+            && self.position == other.position
+            && self.velocity == other.velocity
+            && self.random_word == other.random_word
+    }
+}
 
 impl M2ParticleState {
     /// Creates the common state written by one stock emitter spawn.
@@ -56,6 +67,8 @@ impl M2ParticleState {
             position,
             velocity,
             random_word,
+            pool_address_phase: 0,
+            has_pool_address_phase: false,
         })
     }
 
@@ -160,6 +173,32 @@ impl M2ParticleState {
     #[must_use]
     pub const fn random_word(self) -> u16 {
         self.random_word
+    }
+
+    /// Returns address bits 5 through 11 used by stock's presentation PRNG.
+    ///
+    /// Simulation-owned particles retain the phase of their fixed pool slot
+    /// even when the compact active-index list swap-removes another particle.
+    /// Standalone states use their current address for compatibility with the
+    /// stock render helpers.
+    #[must_use]
+    pub fn pool_address_phase(&self) -> u8 {
+        if self.has_pool_address_phase {
+            self.pool_address_phase
+        } else {
+            ((std::ptr::from_ref(self).addr() >> 5) & 0x7f) as u8
+        }
+    }
+
+    pub(super) fn assign_pool_address_phase(&mut self, phase: u8) {
+        self.pool_address_phase = phase & 0x7f;
+        self.has_pool_address_phase = true;
+    }
+
+    pub(super) fn shift_pool_address_phase(&mut self, delta: u8) {
+        if self.has_pool_address_phase {
+            self.pool_address_phase = self.pool_address_phase.wrapping_add(delta) & 0x7f;
+        }
     }
 
     /// Adds an authored acceleration impulse before ordinary ballistic motion.

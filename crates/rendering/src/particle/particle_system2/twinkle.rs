@@ -48,10 +48,10 @@ impl M2ParticleTwinkleTable {
         if !counter.is_finite() || counter < -2_147_483_648.0 || counter >= 2_147_483_648.0 {
             return Err(M2ParticleTwinkleError::PhaseCounter);
         }
-        // The original shifts a pointer to its 32-byte particle prefix. Using
-        // the current Rust storage address preserves pool relocation and
-        // swap-removal semantics without truncating this 64-bit process.
-        let pool_slot = (std::ptr::from_ref(particle).addr() >> 5) as u32;
+        // The original shifts the address of the fixed 32-byte particle pool
+        // slot. The active-index list may swap-remove, but a surviving
+        // particle's slot (and therefore its presentation phase) does not.
+        let pool_slot = u32::from(particle.pool_address_phase());
         let phase_index =
             pool_slot.wrapping_add(counter as i32 as u32) & (TWINKLE_PHASE_COUNT as u32 - 1);
         let phase = self.phases[phase_index as usize];
