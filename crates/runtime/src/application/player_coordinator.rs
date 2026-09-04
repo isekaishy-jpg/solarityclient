@@ -48,8 +48,6 @@ const NPC_EQUIPMENT_SLOTS: [PlayerEquipmentSlot; 11] = [
     PlayerEquipmentSlot::Tabard,
     PlayerEquipmentSlot::Back,
 ];
-const MAX_PENDING_GLUE_CHARACTERS: usize = 2;
-
 /// Failure while resolving the local player's authored presentation model.
 #[derive(Debug, Error)]
 pub enum RuntimePlayerError {
@@ -384,7 +382,8 @@ pub struct RuntimePlayerPresentation {
     requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
     glue_worker_cache: Arc<Mutex<GlueCharacterWorkerCache>>,
-    pending_glue_characters: Vec<PendingGlueCharacter>,
+    glue_worker_request: Arc<Mutex<Option<GlueCharacterWorkerRequest>>>,
+    pending_glue_character: Option<PendingGlueCharacter>,
     failed_glue_character: Option<ResidentGlueCharacterKey>,
 }
 
@@ -420,7 +419,8 @@ impl RuntimePlayerPresentation {
             requested_glue_character: None,
             glue_worker_catalog: None,
             glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
-            pending_glue_characters: Vec::new(),
+            glue_worker_request: Arc::new(Mutex::new(None)),
+            pending_glue_character: None,
             failed_glue_character: None,
         }
     }
@@ -490,8 +490,50 @@ impl RuntimePlayerPresentation {
             (Some(_), None) | (None, Some(_)) => true,
         };
         self.requested_glue_character = requested.clone();
+        *self
+            .glue_worker_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            requested.clone().map(|key| GlueCharacterWorkerRequest {
+                key,
+                component_texture_level: self.component_texture_level,
+            });
+
+        if self
+            .pending_glue_character
+            .as_ref()
+            .is_some_and(|pending| pending.task.is_finished())
+        {
+            let pending = self
+                .pending_glue_character
+                .take()
+                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
+            match pending.task.join()? {
+                Ok(Some(mut resident)) => {
+                    if let Some(current) = requested.as_ref()
+                        && resident.key.same_residency(current)
+                    {
+                        resident.apply_transform_key(current.clone());
+                        tracing::info!(
+                            residency_wait_ms =
+                                pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
+                            "published coalesced worker-prepared Glue character representation"
+                        );
+                        self.glue_character = Some(resident);
+                        return Ok(true);
+                    }
+                }
+                Ok(None) => {}
+                Err(source) => {
+                    if let Some(current) = requested {
+                        self.failed_glue_character = Some(current);
+                        return Err(source);
+                    }
+                    tracing::warn!(error = %source, "retired Glue character preparation failed");
+                }
+            }
+        };
         let Some(requested) = requested else {
-            self.pending_glue_characters.clear();
             self.failed_glue_character = None;
             return Ok(request_changed || self.glue_character.take().is_some());
         };
@@ -509,48 +551,7 @@ impl RuntimePlayerPresentation {
             return Ok(request_changed);
         }
         self.failed_glue_character = None;
-
-        if let Some(pending_index) = self
-            .pending_glue_characters
-            .iter()
-            .position(|pending| pending.key.same_residency(&requested))
-        {
-            if !self.pending_glue_characters[pending_index]
-                .task
-                .is_finished()
-            {
-                return Ok(request_changed);
-            }
-            let pending = self.pending_glue_characters.remove(pending_index);
-            let result = pending.task.join()?;
-            let mut resident = match result {
-                Ok(resident) => resident,
-                Err(source) => {
-                    self.failed_glue_character = Some(requested);
-                    return Err(source);
-                }
-            };
-            resident.apply_transform_key(requested);
-            tracing::info!(
-                residency_wait_ms = pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
-                "published worker-prepared Glue character representation"
-            );
-            self.glue_character = Some(resident);
-            return Ok(true);
-        }
-
-        while let Some(stale_index) = self
-            .pending_glue_characters
-            .iter()
-            .position(|pending| pending.task.is_finished())
-        {
-            let stale = self.pending_glue_characters.remove(stale_index);
-            if let Err(source) = stale.task.join()? {
-                tracing::warn!(error = %source, "stale Glue character preparation failed");
-            }
-        }
-
-        if self.pending_glue_characters.len() >= MAX_PENDING_GLUE_CHARACTERS {
+        if self.pending_glue_character.is_some() {
             return Ok(request_changed);
         }
 
@@ -560,15 +561,13 @@ impl RuntimePlayerPresentation {
             .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?
             .clone();
         let catalogs = self.shared_catalogs();
-        let component_texture_level = self.component_texture_level;
         let worker_cache = Arc::clone(&self.glue_worker_cache);
-        let task_key = requested.clone();
+        let worker_request = Arc::clone(&self.glue_worker_request);
         let task = match cpu.try_submit(move || {
-            prepare_glue_character_on_worker(
+            prepare_latest_glue_character_on_worker(
                 catalog,
                 catalogs,
-                component_texture_level,
-                task_key,
+                &worker_request,
                 &worker_cache,
             )
         }) {
@@ -576,8 +575,7 @@ impl RuntimePlayerPresentation {
             Err(CpuError::AtCapacity { .. }) => return Ok(request_changed),
             Err(source) => return Err(source.into()),
         };
-        self.pending_glue_characters.push(PendingGlueCharacter {
-            key: requested,
+        self.pending_glue_character = Some(PendingGlueCharacter {
             submitted_at: std::time::Instant::now(),
             task,
         });
@@ -590,7 +588,10 @@ impl RuntimePlayerPresentation {
             return false;
         }
         self.component_texture_level = level;
-        self.pending_glue_characters.clear();
+        *self
+            .glue_worker_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.failed_glue_character = None;
         self.requested_glue_character = None;
         self.resident = None;
@@ -1972,6 +1973,10 @@ impl RuntimePlayerPresentation {
         self.resident = None;
         self.glue_character = None;
         self.requested_glue_character = None;
+        *self
+            .glue_worker_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.creatures_resident.clear();
         self.remote_players.clear();
         self.models.collect_unused();
@@ -2020,7 +2025,8 @@ fn prepare_glue_character_on_worker(
         requested_glue_character: Some(key.clone()),
         glue_worker_catalog: None,
         glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
-        pending_glue_characters: Vec::new(),
+        glue_worker_request: Arc::new(Mutex::new(None)),
+        pending_glue_character: None,
         failed_glue_character: None,
     };
     let result = match &key {
@@ -2053,11 +2059,65 @@ fn prepare_glue_character_on_worker(
     character.ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
 }
 
+fn prepare_latest_glue_character_on_worker(
+    catalog: ArchiveCatalog,
+    catalogs: RuntimePlayerSharedCatalogs,
+    request: &Mutex<Option<GlueCharacterWorkerRequest>>,
+    worker_cache: &Mutex<GlueCharacterWorkerCache>,
+) -> Result<Option<ResidentGlueCharacterModel>, RuntimePlayerError> {
+    // A single finite worker owns the expensive archive/cache pipeline. While
+    // it runs, UI changes replace this shared slot instead of appending stale
+    // FIFO jobs. The worker discards an obsolete result and immediately folds
+    // the newest generation into its warm caches before returning.
+    loop {
+        let Some(work) = request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        else {
+            return Ok(None);
+        };
+        let result = prepare_glue_character_on_worker(
+            catalog.clone(),
+            catalogs.clone(),
+            work.component_texture_level,
+            work.key.clone(),
+            worker_cache,
+        );
+        let current = request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        match current {
+            Some(current) if current.same_residency(&work) => {
+                let mut resident = result?;
+                resident.apply_transform_key(current.key);
+                return Ok(Some(resident));
+            }
+            Some(_) => continue,
+            None => return Ok(None),
+        }
+    }
+}
+
 #[derive(Default)]
 struct GlueCharacterWorkerCache {
     store: Option<AssetStore>,
     models: M2ModelCache,
     textures: BlpTextureCache,
+}
+
+#[derive(Clone)]
+struct GlueCharacterWorkerRequest {
+    key: ResidentGlueCharacterKey,
+    component_texture_level: CharacterComponentTextureLevel,
+}
+
+impl GlueCharacterWorkerRequest {
+    fn same_residency(&self, other: &Self) -> bool {
+        self.component_texture_level == other.component_texture_level
+            && self.key.same_residency(&other.key)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2146,9 +2206,8 @@ impl ResidentGlueCharacterModel {
 }
 
 struct PendingGlueCharacter {
-    key: ResidentGlueCharacterKey,
     submitted_at: std::time::Instant,
-    task: CpuTask<Result<ResidentGlueCharacterModel, RuntimePlayerError>>,
+    task: CpuTask<Result<Option<ResidentGlueCharacterModel>, RuntimePlayerError>>,
 }
 
 struct ResidentGluePetModel {
