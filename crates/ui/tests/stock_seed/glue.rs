@@ -237,6 +237,143 @@ fn glue_manager_does_not_mask_fallback_mutations_with_typed_mutations() -> Resul
     Ok(())
 }
 
+/// A click merges hover and mouse mutations, then publishes dynamically created
+/// regions before the next hit test. Native PreClick/OnClick/PostClick order is
+/// shared with the existing pointer-order fixture below.
+#[test]
+fn glue_manager_reconciles_click_mutations_and_created_regions() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"ClickMutation.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\ClickMutation.xml",
+            bytes: br#"<Ui>
+<Button name="ClickMutation"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="ClickTexture" file="Interface\Glues\Click">
+      <Size x="40" y="20"/><Anchors><Anchor point="CENTER"/></Anchors>
+    </Texture>
+  </Layer></Layers>
+  <Scripts>
+    <OnEnter>ClickTexture:SetWidth(80)</OnEnter>
+    <OnMouseDown>ClickTexture:SetVertexColor(0.2, 0.4, 0.6, 1)</OnMouseDown>
+    <OnClick>
+      local child = CreateFrame("Button", "ClickCreated", self)
+      child:SetSize(60, 30)
+      child:SetPoint("CENTER", self, "CENTER")
+      child:SetScript("OnClick", function() CREATED_CLICKED = true end)
+    </OnClick>
+  </Scripts>
+</Button>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let bounds = manager
+        .geometry()
+        .region(0)
+        .ok_or("missing button")?
+        .presentation_bounds();
+    let position = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+    let snapshots = manager.runtime_snapshot_count();
+    manager.pointer_button(position, UiPointerButton::Left, true)?;
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    assert_close(
+        manager
+            .geometry()
+            .region(1)
+            .ok_or("missing texture")?
+            .logical_bounds()
+            .width(),
+        80.0,
+    );
+    let texture = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|member| member.object_index() == 1)
+        .ok_or("missing presented texture")?;
+    assert_eq!(texture.vertex_colors()[0], [0.2, 0.4, 0.6, 1.0]);
+
+    manager.pointer_button(position, UiPointerButton::Left, false)?;
+    assert_eq!(manager.runtime_snapshot_count(), snapshots + 1);
+    let child = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("ClickCreated"))
+        .ok_or("missing click-created button")?;
+    assert_close(
+        manager
+            .geometry()
+            .region(child)
+            .ok_or("missing created geometry")?
+            .logical_bounds()
+            .width(),
+        60.0,
+    );
+    manager.pointer_button(position, UiPointerButton::Left, true)?;
+    let release = manager.pointer_button(position, UiPointerButton::Left, false)?;
+    assert_eq!(release.object_index(), Some(child));
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("CREATED_CLICKED")?
+    );
+    Ok(())
+}
+
+/// Native button state and script visibility can affect unrelated subtrees in
+/// one dispatch; both must reach the actual retained draw batches.
+#[test]
+fn glue_manager_click_publishes_visibility_outside_button_subtree() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"ClickVisibility.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\ClickVisibility.xml",
+            bytes: br#"<Ui>
+<Button name="VisibilityButton"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnClick>OtherVisual:Hide()</OnClick></Scripts>
+</Button>
+<Frame name="OtherVisual"><Size x="40" y="20"/><Anchors><Anchor point="TOPLEFT"/></Anchors>
+  <Layers><Layer level="ARTWORK"><Texture file="Interface\Glues\Other"/></Layer></Layers>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let bounds = manager
+        .geometry()
+        .region(0)
+        .ok_or("missing button")?
+        .presentation_bounds();
+    let position = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+    assert_eq!(manager.render_plan().mesh().batches().len(), 1);
+    assert_eq!(manager.render_plan().mesh().batches()[0].opacity(), 1.0);
+    let snapshots = manager.runtime_snapshot_count();
+    manager.pointer_button(position, UiPointerButton::Left, true)?;
+    manager.pointer_button(position, UiPointerButton::Left, false)?;
+    assert_eq!(manager.render_plan().mesh().batches()[0].opacity(), 0.0);
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    Ok(())
+}
+
 /// Stock audio globals preserve invocation order and the two boolean-returning
 /// direct-file calls while transferring playback to the process media owner.
 #[test]
@@ -980,6 +1117,7 @@ fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn 
         Ok(())
     };
 
+    let snapshots = manager.runtime_snapshot_count();
     click(&mut manager, "CharacterCreateRaceButton2")?;
     let globals = manager.bundle().lua().globals();
     assert!(globals.get::<bool>("CLICK_SAW_CHECKED")?);
@@ -992,6 +1130,7 @@ fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn 
     assert!(get_checked.call::<bool>(independent.clone())?);
     click(&mut manager, "IndependentCheck")?;
     assert!(!get_checked.call::<bool>(independent)?);
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
     Ok(())
 }
 

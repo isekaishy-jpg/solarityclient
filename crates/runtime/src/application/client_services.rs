@@ -2,6 +2,8 @@
 
 #![allow(unsafe_code)]
 
+pub(super) mod glue_benchmark;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -105,6 +107,8 @@ pub(crate) struct ClientServices {
     /// for the old presentation. Process-ending actions are admitted only
     /// after the selected screen has crossed this presentation boundary.
     presented_glue_screen: Option<String>,
+    /// Whether the last presented Glue frame contained its entire requested scene.
+    last_glue_model_poll: RuntimeGlueModelPoll,
     ui_textures: BlpTextureCache,
     ui_texture_residency: RuntimeUiResidency,
     glue_gpu_texture_prewarm_pending: bool,
@@ -423,6 +427,7 @@ impl ClientServices {
                 pending_login_ui: None,
                 glue_ui_dirty: false,
                 presented_glue_screen,
+                last_glue_model_poll: RuntimeGlueModelPoll::Pending,
                 ui_textures,
                 ui_texture_residency,
                 glue_gpu_texture_prewarm_pending: false,
@@ -1247,6 +1252,7 @@ impl ClientServices {
         if model_poll == RuntimeGlueModelPoll::Ready {
             self.presented_glue_screen = Some(current_screen);
         }
+        self.last_glue_model_poll = model_poll;
         Ok(())
     }
 

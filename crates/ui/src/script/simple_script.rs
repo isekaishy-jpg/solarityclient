@@ -2064,7 +2064,7 @@ impl UiScriptRuntime {
         pressed: bool,
         activate_click: bool,
         activate_double_click: bool,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let phase = if pressed { "down" } else { "up" };
         let label = format!("Button object {object_index}:pointer-{phase}");
         if object_index >= self.registered_object_count() {
@@ -2075,6 +2075,7 @@ impl UiScriptRuntime {
             });
         }
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error(&label, error))?;
@@ -2087,9 +2088,15 @@ impl UiScriptRuntime {
         let state_locked = object
             .raw_get::<bool>(button_state_locked_key())
             .map_err(|error| execution_error(&label, error))?;
-        if !state_locked {
+        if !state_locked
+            && object
+                .raw_get::<bool>(button_pressed_key())
+                .map_err(|error| execution_error(&label, error))?
+                != (pressed && enabled)
+        {
             object
                 .raw_set(button_pressed_key(), pressed && enabled)
+                .and_then(|()| mark_object_state_changed(lua, &object, DIRTY_WIDGET))
                 .map_err(|error| execution_error(&label, error))?;
         }
 
@@ -2140,7 +2147,7 @@ impl UiScriptRuntime {
                     .map_err(|error| execution_error(&label, error))?;
             }
         }
-        Ok(())
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     /// Applies one native pointer-boundary transition before running the
@@ -3923,7 +3930,8 @@ fn apply_check_button_click(lua: &Lua, object: &Table) -> mlua::Result<()> {
     let group = name.as_deref().map_or(0, character_create_choice_group);
     if group == 0 {
         let checked = object.raw_get::<bool>(checked_key())?;
-        return object.raw_set(checked_key(), !checked);
+        object.raw_set(checked_key(), !checked)?;
+        return mark_object_state_changed(lua, object, DIRTY_WIDGET);
     }
     let parent = object.raw_get::<Option<usize>>(parent_key())?;
     let clicked_index = object.raw_get::<usize>(index_key())?;
@@ -3940,10 +3948,11 @@ fn apply_check_button_click(lua: &Lua, object: &Table) -> mlua::Result<()> {
             .as_deref()
             .is_some_and(|name| character_create_choice_group(name) == group)
         {
-            candidate.raw_set(
-                checked_key(),
-                candidate.raw_get::<usize>(index_key())? == clicked_index,
-            )?;
+            let checked = candidate.raw_get::<usize>(index_key())? == clicked_index;
+            if candidate.raw_get::<bool>(checked_key())? != checked {
+                candidate.raw_set(checked_key(), checked)?;
+                mark_object_state_changed(lua, &candidate, DIRTY_WIDGET)?;
+            }
         }
     }
     Ok(())

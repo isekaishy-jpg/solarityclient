@@ -83,3 +83,44 @@ cached admissions remained below 0.004 ms. These single-run measurements show
 that deferred submission can move work to a later presentation boundary. They
 do not establish the complete-frame target or eliminate the need to profile
 full character/customization transitions.
+
+## Complete Glue transition replay
+
+`benchmark_glue_transitions <following-frame-count> <output.csv>` followed by
+the normal runtime arguments drives stock screen events and actual pointer
+clicks through `ClientApplication`. It supplies an offline character directory,
+including an equipped hunter and pet, and exercises cold/warm selection,
+race/class changes, all five customization axes, and randomization. Use a
+separate profile with startup movies/legal dialogs disabled and `gxVsync 0`
+for uncapped measurements. It does not connect to authentication or realm
+servers. Closing the diagnostic window cancels the replay.
+
+Each CSV sample records input delivery time, elapsed time until the complete
+requested scene is presented, every transition frame interval, and the requested
+number of following frame intervals. Readiness requires the requested route
+and all requested model resources; an old resident scene cannot satisfy it.
+Measurements end at the normal Vulkan presentation call, not physical display
+scanout. The controlled replay excludes network polling and the frame limiter.
+
+The September 4 GTX 1070 comparison used 1280 by 720, audio enabled, and 1,000
+following frames per action. Pointer press/release previously took full Lua
+snapshots even for one changed checkbox. Those callbacks now use the same typed
+mutation journal as events, preserving callback order and a full publication
+when scripts create regions or make unclassified changes.
+
+| Interaction | Input before | Input after |
+| --- | --- | --- |
+| Customization arrows | 40–44 ms | 2.3–3.1 ms |
+| Race/class choices | 121–143 ms | 34–50 ms |
+| Warm selection | About 56 ms | 3.6–5.6 ms |
+
+These are individual local replay runs, not a hardware-independent guarantee.
+Following-frame means after the change ranged from about 1,350 to 2,080 FPS,
+with occasional 16–18 ms outliers. Warm selection still had 49–54 ms maximum
+transition frames, and race changes still rebuilt the complete UI mesh. The
+1,200 FPS target therefore does not establish stall-free transitions. Follow-up
+profiling identified full processing of roughly 32,000 retained glyph quads
+during otherwise small layout changes as remaining synchronous work.
+
+Regression coverage verifies native checked state, merged hover/click texture
+mutations, and immediate hit testing of a button created by an `OnClick` handler.

@@ -29,6 +29,10 @@ mod world_ui;
 
 pub use character_directory::CharacterProjectionError;
 pub use client::{ApplicationError, ClientApplication, StartupReport};
+pub use client_services::glue_benchmark::{
+    GlueBenchmarkAction, GlueBenchmarkError, GlueBenchmarkResult, GlueBenchmarkScreen,
+    GlueBenchmarkStep,
+};
 pub use environment_coordinator::{
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
     world_model_environment_emissive,

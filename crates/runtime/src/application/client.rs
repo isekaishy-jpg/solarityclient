@@ -346,6 +346,27 @@ impl ClientApplication {
         }
     }
 
+    /// Replays explicit offline Glue diagnostics through real input and presentation.
+    ///
+    /// Requires a fresh login scene and a separate diagnostic profile without
+    /// startup movies or legal dialogs. It supplies fixture entitlement and
+    /// directory state, performs no server operations, and measures both scene
+    /// publication and the following frames under the configured VSync policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`super::GlueBenchmarkError`] when a stimulus is unavailable,
+    /// the platform cancels, or the complete scene misses the supplied deadline.
+    pub fn benchmark_glue_steps(
+        &mut self,
+        steps: &[super::GlueBenchmarkStep],
+        following_frame_count: std::num::NonZeroUsize,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<super::GlueBenchmarkResult>, super::GlueBenchmarkError> {
+        self.services
+            .benchmark_glue_steps(steps, following_frame_count, timeout)
+    }
+
     /// Routes one event after any preceding motion run has been flushed.
     fn dispatch_run_event(
         &mut self,

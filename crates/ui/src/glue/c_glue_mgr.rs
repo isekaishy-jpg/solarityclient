@@ -1077,8 +1077,10 @@ impl GlueManager {
         started: std::time::Instant,
     ) -> Result<bool, UiEventError> {
         if !visual_objects.is_empty() {
-            self.runtime
-                .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+            // Script visibility/animation can target a different subtree than
+            // the content journal. Publish those draw slots as well as Lua
+            // state before the content path limits work to its own roots.
+            self.refresh_targeted_visual_objects(visual_objects)?;
         }
         let text_objects =
             self.runtime
@@ -1186,8 +1188,7 @@ impl GlueManager {
         started: std::time::Instant,
     ) -> Result<bool, UiEventError> {
         if !visual_objects.is_empty() {
-            self.runtime
-                .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+            self.refresh_targeted_visual_objects(visual_objects)?;
         }
         let text_objects =
             self.runtime
@@ -1480,7 +1481,7 @@ impl GlueManager {
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hover_hit);
-        let hover = self.update_pointer_hover(hover_hit)?;
+        let mut hover = self.update_pointer_hover(hover_hit)?;
         if !pressed || button == UiPointerButton::Left {
             self.edit_box_pointer_anchor = None;
         }
@@ -1494,7 +1495,7 @@ impl GlueManager {
         };
         let Some(object_index) = object_index else {
             if hover.changed {
-                self.refresh_live_state()?;
+                self.refresh_pointer_hover(hover)?;
             }
             return Ok(UiPointerDispatch::new(None, false));
         };
@@ -1507,18 +1508,19 @@ impl GlueManager {
             .ok_or_else(|| crate::UiScriptError::Plan {
                 message: format!("pointer target {object_index} lost its live frame state"),
             })?;
+        let mut button_dispatch = None;
         let click_activated = match kind {
             UiObjectKind::Button | UiObjectKind::CheckButton => {
                 let activate = (!pressed && hit == Some(object_index) || pressed)
                     && self.pointer.activates(object_index, button, pressed);
-                self.runtime.dispatch_button_pointer(
+                button_dispatch = Some(self.runtime.dispatch_button_pointer(
                     &self.bundle,
                     object_index,
                     button.script_name(),
                     pressed,
                     activate,
                     !pressed && activate && click_count >= 2,
-                )?;
+                )?);
                 activate
             }
             UiObjectKind::EditBox => {
@@ -1579,7 +1581,20 @@ impl GlueManager {
                 false
             }
         };
-        self.refresh_live_state()?;
+        if let Some(dispatch) = button_dispatch {
+            // Hover and click callbacks have already run in their original
+            // order. Merge their journals before one native publication.
+            hover.changed |= dispatch.changed;
+            hover.requires_full_refresh |=
+                dispatch.changed && !dispatch.targeted_visual && !dispatch.targeted_objects;
+            hover.visual_objects.extend(dispatch.visual_objects);
+            hover.dirty_objects.extend(dispatch.dirty_objects);
+            if hover.changed || !self.retained_object_topology_matches_runtime() {
+                self.refresh_pointer_hover(hover)?;
+            }
+        } else {
+            self.refresh_live_state()?;
+        }
         Ok(UiPointerDispatch::new(Some(object_index), click_activated))
     }
 
@@ -1746,10 +1761,26 @@ impl GlueManager {
         Ok(update)
     }
 
-    fn refresh_pointer_hover(&mut self, update: PointerHoverUpdate) -> Result<(), UiEventError> {
-        if update.requires_full_refresh {
+    fn refresh_pointer_hover(
+        &mut self,
+        mut update: PointerHoverUpdate,
+    ) -> Result<(), UiEventError> {
+        if update.requires_full_refresh || !self.retained_object_topology_matches_runtime() {
             return self.refresh_live_state();
         }
+        update.visual_objects.sort_unstable();
+        update.visual_objects.dedup();
+        update
+            .dirty_objects
+            .sort_unstable_by_key(|(index, _)| *index);
+        update.dirty_objects.dedup_by(|later, earlier| {
+            if later.0 == earlier.0 {
+                earlier.1 |= later.1;
+                true
+            } else {
+                false
+            }
+        });
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
         let mut button_owners = update.buttons.into_iter().flatten().collect::<Vec<_>>();
