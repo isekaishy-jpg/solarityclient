@@ -8,6 +8,9 @@ use super::wow_client_db::WdbcTable;
 const CHAR_SECTIONS_PATH: &str = "DBFilesClient\\CharSections.dbc";
 const HAIR_GEOSETS_PATH: &str = "DBFilesClient\\CharHairGeosets.dbc";
 const FACIAL_HAIR_PATH: &str = "DBFilesClient\\CharacterFacialHairStyles.dbc";
+const SECTION_FLAG_PLAYER: u32 = 0x01;
+const SECTION_FLAG_DEATH_KNIGHT: u32 = 0x04;
+const DEATH_KNIGHT_CLASS_ID: u8 = 6;
 
 /// One exact build-12340 character texture section.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -291,6 +294,84 @@ impl CharacterAppearanceCatalog {
         )
     }
 
+    /// Returns skin colors whose required skin and underwear sections are
+    /// selectable for one class.
+    #[must_use]
+    pub fn player_skin_colors_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 0)
+                .iter()
+                .filter(|section| {
+                    section.variation_index == 0
+                        && section_admits_class(section, class_id)
+                        && self
+                            .sections_for(race_id, gender_id, 4, 0, section.color_index)
+                            .iter()
+                            .any(|underwear| section_admits_class(underwear, class_id))
+                })
+                .map(|section| section.color_index),
+        )
+    }
+
+    /// Returns face variations with a class-admitted player section.
+    #[must_use]
+    pub fn player_faces_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        skin_color: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 1)
+                .iter()
+                .filter(|section| {
+                    section.color_index == skin_color && section_admits_class(section, class_id)
+                })
+                .map(|section| section.variation_index),
+        )
+    }
+
+    /// Returns hair styles with at least one class-admitted texture color.
+    #[must_use]
+    pub fn player_hair_styles_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 3)
+                .iter()
+                .filter(|section| section_admits_class(section, class_id))
+                .map(|section| section.variation_index),
+        )
+    }
+
+    /// Returns hair colors with a class-admitted player section.
+    #[must_use]
+    pub fn player_hair_colors_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        hair_style: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        distinct_values(
+            self.sections_for_kind(race_id, gender_id, 3)
+                .iter()
+                .filter(|section| {
+                    section.variation_index == hair_style && section_admits_class(section, class_id)
+                })
+                .map(|section| section.color_index),
+        )
+    }
+
     /// Returns facial-feature variations authored for one race and gender.
     ///
     /// Stock builds the selectable feature count from
@@ -323,6 +404,11 @@ impl CharacterAppearanceCatalog {
             .partition_point(|section| section.key() <= end_key);
         &self.sections[start..end]
     }
+}
+
+fn section_admits_class(section: &CharacterSection, class_id: u8) -> bool {
+    section.flags & SECTION_FLAG_PLAYER != 0
+        && (class_id == DEATH_KNIGHT_CLASS_ID || section.flags & SECTION_FLAG_DEATH_KNIGHT == 0)
 }
 
 fn distinct_values(values: impl Iterator<Item = u32>) -> Vec<u32> {

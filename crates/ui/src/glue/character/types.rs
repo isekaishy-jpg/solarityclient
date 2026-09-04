@@ -196,7 +196,7 @@ struct UiCreationRace {
     facial_hair_tokens: [String; 2],
     hair_token: String,
     required_expansion: u32,
-    appearances: [UiAppearanceChoices; 2],
+    appearances: Vec<[UiAppearanceChoices; 2]>,
 }
 
 impl UiCreationRace {
@@ -282,23 +282,35 @@ impl UiAppearanceChoices {
         catalog: &CharacterAppearanceCatalog,
         race_id: u8,
         gender_id: u8,
+        class_id: u8,
     ) -> Result<Self, AssetError> {
         let race = u32::from(race_id);
         let gender = u32::from(gender_id);
-        let skins = narrow_values(catalog.player_skin_colors(race, gender))?;
+        let skins = narrow_values(catalog.player_skin_colors_for_class(race, gender, class_id))?;
         let faces = skins
             .iter()
             .map(|skin| {
-                narrow_values(catalog.player_faces(race, gender, u32::from(*skin)))
-                    .map(|values| (*skin, values))
+                narrow_values(catalog.player_faces_for_class(
+                    race,
+                    gender,
+                    u32::from(*skin),
+                    class_id,
+                ))
+                .map(|values| (*skin, values))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let hair_styles = narrow_values(catalog.player_hair_styles(race, gender))?;
+        let hair_styles =
+            narrow_values(catalog.player_hair_styles_for_class(race, gender, class_id))?;
         let hair_colors = hair_styles
             .iter()
             .map(|style| {
-                narrow_values(catalog.player_hair_colors(race, gender, u32::from(*style)))
-                    .map(|values| (*style, values))
+                narrow_values(catalog.player_hair_colors_for_class(
+                    race,
+                    gender,
+                    u32::from(*style),
+                    class_id,
+                ))
+                .map(|values| (*style, values))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let facial_hair = narrow_values(catalog.player_facial_hair_styles(race, gender))?;
@@ -357,6 +369,22 @@ impl UiCharacterCreationCatalog {
         let factions = CharacterFactionCatalog::load(store)?;
         let appearances = CharacterAppearanceCatalog::load(store)?;
 
+        let creation_classes = classes
+            .physical_classes()
+            .map(|class| {
+                let id = narrow_id(class.id(), "ChrClasses.dbc class")?;
+                Ok(UiCreationClass {
+                    id,
+                    name: class.name().to_owned(),
+                    female_name: class.female_name().to_owned(),
+                    male_name: class.male_name().to_owned(),
+                    file_string: class.file_string().to_owned(),
+                    required_expansion: class.required_expansion(),
+                    roles: class_roles(id),
+                })
+            })
+            .collect::<Result<Vec<_>, AssetError>>()?;
+
         let mut creation_races = Vec::new();
         for side in [ALLIANCE, HORDE] {
             for race in races.physical_races() {
@@ -388,28 +416,18 @@ impl UiCharacterCreationCatalog {
                     ],
                     hair_token: race.hair_customization().to_owned(),
                     required_expansion: race.required_expansion(),
-                    appearances: [
-                        UiAppearanceChoices::load(&appearances, id, 0)?,
-                        UiAppearanceChoices::load(&appearances, id, 1)?,
-                    ],
+                    appearances: creation_classes
+                        .iter()
+                        .map(|class| {
+                            Ok([
+                                UiAppearanceChoices::load(&appearances, id, 0, class.id)?,
+                                UiAppearanceChoices::load(&appearances, id, 1, class.id)?,
+                            ])
+                        })
+                        .collect::<Result<Vec<_>, AssetError>>()?,
                 });
             }
         }
-        let creation_classes = classes
-            .physical_classes()
-            .map(|class| {
-                let id = narrow_id(class.id(), "ChrClasses.dbc class")?;
-                Ok(UiCreationClass {
-                    id,
-                    name: class.name().to_owned(),
-                    female_name: class.female_name().to_owned(),
-                    male_name: class.male_name().to_owned(),
-                    file_string: class.file_string().to_owned(),
-                    required_expansion: class.required_expansion(),
-                    roles: class_roles(id),
-                })
-            })
-            .collect::<Result<Vec<_>, AssetError>>()?;
         Ok(Self {
             races: creation_races,
             classes: creation_classes,
@@ -434,7 +452,7 @@ struct UiCharacterCreationInner {
     selected_class: usize,
     gender_id: u8,
     appearance: UiAppearance,
-    preferences: Vec<[UiPreference; 2]>,
+    preferences: Vec<Vec<[UiPreference; 2]>>,
     facing_degrees: f64,
 }
 
@@ -457,7 +475,8 @@ impl UiCharacterCreationState {
         random: Rc<RefCell<BlizzardRand>>,
     ) -> Result<Self, AssetError> {
         let catalog = UiCharacterCreationCatalog::load(store, streaming_trial)?;
-        let preferences = vec![[UiPreference::default(); 2]; catalog.races.len()];
+        let preferences =
+            vec![vec![[UiPreference::default(); 2]; catalog.classes.len()]; catalog.races.len()];
         Ok(Self {
             inner: Rc::new(RefCell::new(UiCharacterCreationInner {
                 catalog,
@@ -489,7 +508,9 @@ impl UiCharacterCreationState {
         // ResetCharCustomize clears the per-race/sex model cache but leaves
         // the current sex untouched. CharacterCreate enters with the authored
         // male default and immediately reapplies that same selection.
-        inner.preferences.fill([UiPreference::default(); 2]);
+        for race in &mut inner.preferences {
+            race.fill([UiPreference::default(); 2]);
+        }
         let eligible_races = inner
             .catalog
             .races
@@ -512,7 +533,8 @@ impl UiCharacterCreationState {
         choose_random_valid_class(&mut inner, &mut self.random.borrow_mut())?;
         randomize_appearance(&mut inner, &mut self.random.borrow_mut())?;
         let gender_index = usize::from(inner.gender_id);
-        inner.preferences[race_choice][gender_index] = UiPreference {
+        let class_index = inner.selected_class;
+        inner.preferences[race_choice][class_index][gender_index] = UiPreference {
             appearance: inner.appearance,
             initialized: true,
         };
@@ -615,8 +637,12 @@ impl UiCharacterCreationState {
                 class_id: class.id,
             });
         }
+        if inner.selected_class == class_index {
+            return Ok(());
+        }
+        save_preference(&mut inner);
         inner.selected_class = class_index;
-        Ok(())
+        restore_or_randomize_appearance(&mut inner, &mut self.random.borrow_mut())
     }
 
     /// Selects stock's male/two or female/three token and restores preferences.
@@ -843,21 +869,25 @@ impl UiCharacterCreationState {
 }
 
 fn appearance_choices(inner: &UiCharacterCreationInner) -> UiAppearanceChoices {
-    inner.catalog.races[inner.selected_race].appearances[usize::from(inner.gender_id)].clone()
+    inner.catalog.races[inner.selected_race].appearances[inner.selected_class]
+        [usize::from(inner.gender_id)]
+    .clone()
 }
 
 fn save_preference(inner: &mut UiCharacterCreationInner) {
-    inner.preferences[inner.selected_race][usize::from(inner.gender_id)] = UiPreference {
-        appearance: inner.appearance,
-        initialized: true,
-    };
+    inner.preferences[inner.selected_race][inner.selected_class][usize::from(inner.gender_id)] =
+        UiPreference {
+            appearance: inner.appearance,
+            initialized: true,
+        };
 }
 
 fn restore_or_randomize_appearance(
     inner: &mut UiCharacterCreationInner,
     random: &mut BlizzardRand,
 ) -> Result<(), UiCharacterCreationError> {
-    let preference = inner.preferences[inner.selected_race][usize::from(inner.gender_id)];
+    let preference =
+        inner.preferences[inner.selected_race][inner.selected_class][usize::from(inner.gender_id)];
     if preference.initialized {
         inner.appearance = preference.appearance;
         Ok(())

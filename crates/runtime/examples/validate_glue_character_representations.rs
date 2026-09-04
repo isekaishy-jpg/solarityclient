@@ -242,12 +242,13 @@ fn validate_bald_facial_hair_representation(
         .iter()
         .enumerate()
         .find(|(offset, class)| {
-            class.2
+            class.1.eq_ignore_ascii_case("DEATHKNIGHT")
+                && class.2
                 && one_based(*offset)
                     .is_ok_and(|index| creation.is_race_class_valid(race_index, index))
         })
         .map(|(offset, _class)| offset)
-        .ok_or_else(|| invalid_data("playable Gnome class is absent".to_owned()))?;
+        .ok_or_else(|| invalid_data("playable Gnome Death Knight is absent".to_owned()))?;
     creation.set_selected_class(one_based(class_offset)?)?;
     for (axis, target) in [7_u8, 0, 0, 8, 5].into_iter().enumerate() {
         for _attempt in 0..MAX_CUSTOMIZATION_VALUES {
