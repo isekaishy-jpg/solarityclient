@@ -1293,6 +1293,7 @@ impl ClientServices {
                                 RuntimeLoadingScreen::prepare(
                                     &mut self.renderer,
                                     &self.assets,
+                                    &mut self.ui_textures,
                                     &self.loading_directory,
                                     map_id,
                                     display_extent,
@@ -2010,6 +2011,7 @@ impl ClientServices {
             let loading = RuntimeLoadingScreen::prepare(
                 &mut self.renderer,
                 &self.assets,
+                &mut self.ui_textures,
                 &self.loading_directory,
                 Some(map_id),
                 display_extent,

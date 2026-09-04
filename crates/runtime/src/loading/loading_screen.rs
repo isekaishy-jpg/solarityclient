@@ -55,7 +55,8 @@ impl LoadingScreenDirectory {
 /// Independently retained loading card presented between Glue and World.
 pub(crate) struct RuntimeLoadingScreen {
     stage: RuntimeLoadingStage,
-    frames: Vec<PreparedUiFrame>,
+    plans: Vec<UiMeshPlan>,
+    frame: PreparedUiFrame,
     presented: bool,
     final_frame_presented: bool,
 }
@@ -74,6 +75,7 @@ impl RuntimeLoadingScreen {
     pub(crate) fn prepare(
         renderer: &mut VulkanRenderer,
         assets: &AssetStoreHandle,
+        textures: &mut BlpTextureCache,
         directory: &LoadingScreenDirectory,
         map_id: Option<u32>,
         display_extent: (u32, u32),
@@ -94,23 +96,27 @@ impl RuntimeLoadingScreen {
         if let Some(background) = &background {
             paths.push(background.path.clone());
         }
-        let uploaded = upload_textures(renderer, assets, &paths)?;
+        let uploaded = upload_textures(renderer, assets, textures, &paths)?;
         let background = background.as_ref().map(|background| {
             (
                 &background.path,
                 centered_aspect_fill_uv(logical_extent, background.authored_aspect),
             )
         });
-        let frames = RuntimeLoadingStage::ALL
+        let plans = RuntimeLoadingStage::ALL
             .into_iter()
-            .map(|stage| {
-                let plan = loading_mesh(logical_extent, background, stage.progress())?;
-                PreparedUiFrame::prepare(renderer, &plan, &uploaded.handles, None)
-            })
+            .map(|stage| loading_mesh(logical_extent, background, stage.progress()))
             .collect::<Result<Vec<_>, ApplicationError>>()?;
+        let frame = PreparedUiFrame::prepare(
+            renderer,
+            &plans[RuntimeLoadingStage::AwaitingWorld.index()],
+            &uploaded.handles,
+            None,
+        )?;
         Ok(Self {
             stage: RuntimeLoadingStage::AwaitingWorld,
-            frames,
+            plans,
+            frame,
             presented: false,
             final_frame_presented: false,
         })
@@ -127,7 +133,9 @@ impl RuntimeLoadingScreen {
         renderer: &mut VulkanRenderer,
         overlay: &[UiPreparedDraw],
     ) -> Result<(), ApplicationError> {
-        self.frames[self.stage.index()].present_with_overlay(renderer, overlay)?;
+        self.frame
+            .replace_mesh(renderer, &self.plans[self.stage.index()])?;
+        self.frame.present_with_overlay(renderer, overlay)?;
         self.presented = true;
         if self.stage == RuntimeLoadingStage::SceneReady {
             self.final_frame_presented = true;
@@ -182,9 +190,9 @@ fn resolve_background(
 fn upload_textures(
     renderer: &mut VulkanRenderer,
     assets: &AssetStoreHandle,
+    cache: &mut BlpTextureCache,
     paths: &[AssetPath],
 ) -> Result<UploadedLoadingTextures, ApplicationError> {
-    let mut cache = BlpTextureCache::new();
     let mut store = assets.borrow_mut();
     let sources = paths
         .iter()
