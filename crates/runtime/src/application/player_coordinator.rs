@@ -381,6 +381,7 @@ pub struct RuntimePlayerPresentation {
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
+    requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
     glue_worker_cache: Arc<Mutex<GlueCharacterWorkerCache>>,
     pending_glue_characters: Vec<PendingGlueCharacter>,
@@ -416,6 +417,7 @@ impl RuntimePlayerPresentation {
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
+            requested_glue_character: None,
             glue_worker_catalog: None,
             glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
             pending_glue_characters: Vec::new(),
@@ -482,23 +484,29 @@ impl RuntimePlayerPresentation {
         requested: Option<ResidentGlueCharacterKey>,
         cpu: &CpuExecutor,
     ) -> Result<bool, RuntimePlayerError> {
+        let request_changed = match (&self.requested_glue_character, &requested) {
+            (Some(current), Some(requested)) => !current.same_residency(requested),
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+        };
+        self.requested_glue_character = requested.clone();
         let Some(requested) = requested else {
             self.pending_glue_characters.clear();
             self.failed_glue_character = None;
-            return Ok(self.glue_character.take().is_some());
+            return Ok(request_changed || self.glue_character.take().is_some());
         };
         if let Some(resident) = self.glue_character.as_mut()
             && resident.key.same_residency(&requested)
         {
             resident.apply_transform_key(requested);
-            return Ok(false);
+            return Ok(request_changed);
         }
         if self
             .failed_glue_character
             .as_ref()
             .is_some_and(|failed| failed.same_residency(&requested))
         {
-            return Ok(false);
+            return Ok(request_changed);
         }
         self.failed_glue_character = None;
 
@@ -511,7 +519,7 @@ impl RuntimePlayerPresentation {
                 .task
                 .is_finished()
             {
-                return Ok(false);
+                return Ok(request_changed);
             }
             let pending = self.pending_glue_characters.remove(pending_index);
             let result = pending.task.join()?;
@@ -543,7 +551,7 @@ impl RuntimePlayerPresentation {
         }
 
         if self.pending_glue_characters.len() >= MAX_PENDING_GLUE_CHARACTERS {
-            return Ok(false);
+            return Ok(request_changed);
         }
 
         let catalog = self
@@ -565,7 +573,7 @@ impl RuntimePlayerPresentation {
             )
         }) {
             Ok(task) => task,
-            Err(CpuError::AtCapacity { .. }) => return Ok(false),
+            Err(CpuError::AtCapacity { .. }) => return Ok(request_changed),
             Err(source) => return Err(source.into()),
         };
         self.pending_glue_characters.push(PendingGlueCharacter {
@@ -573,7 +581,7 @@ impl RuntimePlayerPresentation {
             submitted_at: std::time::Instant::now(),
             task,
         });
-        Ok(false)
+        Ok(request_changed)
     }
 
     /// Applies the live component-texture level and invalidates affected models.
@@ -584,6 +592,7 @@ impl RuntimePlayerPresentation {
         self.component_texture_level = level;
         self.pending_glue_characters.clear();
         self.failed_glue_character = None;
+        self.requested_glue_character = None;
         self.resident = None;
         self.remote_players.clear();
         self.glue_character = None;
@@ -944,6 +953,11 @@ impl RuntimePlayerPresentation {
     pub(super) fn glue_character_frame_input(&self) -> Option<ResidentGlueCharacterFrameInput<'_>> {
         self.glue_character
             .as_ref()
+            .filter(|resident| {
+                self.requested_glue_character
+                    .as_ref()
+                    .is_some_and(|requested| resident.key.same_residency(requested))
+            })
             .map(ResidentGlueCharacterFrameInput::from_resident)
     }
 
@@ -1957,6 +1971,7 @@ impl RuntimePlayerPresentation {
     pub fn disconnect(&mut self) {
         self.resident = None;
         self.glue_character = None;
+        self.requested_glue_character = None;
         self.creatures_resident.clear();
         self.remote_players.clear();
         self.models.collect_unused();
@@ -2002,6 +2017,7 @@ fn prepare_glue_character_on_worker(
         creatures_resident: Vec::new(),
         remote_players: Vec::new(),
         glue_character: None,
+        requested_glue_character: Some(key.clone()),
         glue_worker_catalog: None,
         glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
         pending_glue_characters: Vec::new(),
