@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use solarity_asset::{AssetPath, AssetStore};
 use solarity_rendering::{
-    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiTextureAddressMode,
-    UiTextureResidency,
+    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform,
+    UiTextureAddressMode, UiTextureResidency,
 };
 
 use super::EditBoxTextLayout;
@@ -31,15 +31,13 @@ pub struct UiGlyphQuad {
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
     caret: bool,
+    opacity: f32,
+    transform: Option<(UiRenderTransform, [f32; 2], Option<[f32; 4]>)>,
 }
 
 impl UiGlyphQuad {
     pub(crate) const fn packet_key(&self) -> Option<UiPresentationPacketKey> {
         self.packet_key
-    }
-
-    pub(crate) const fn clip_object(&self) -> Option<usize> {
-        self.clip_object
     }
 
     /// Returns the owning static UI object index.
@@ -68,6 +66,16 @@ impl UiGlyphQuad {
 
     pub(crate) const fn is_caret(&self) -> bool {
         self.caret
+    }
+
+    pub(crate) const fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
+    pub(crate) const fn transform(
+        &self,
+    ) -> Option<(UiRenderTransform, [f32; 2], Option<[f32; 4]>)> {
+        self.transform
     }
 }
 
@@ -789,7 +797,9 @@ fn extend_retained_quads(
         let Some(state) = state else {
             continue;
         };
-        let resolved = resolve_quad_with_owner(quad, state.owner);
+        let mut resolved = resolve_quad_with_owner(quad, state.owner);
+        resolved.opacity = state.opacity;
+        resolved.transform = state.transform;
         output.extend(match state.clip {
             Some(viewport) => clip_quad_to_viewport(resolved, viewport),
             None => Some(resolved),
@@ -801,6 +811,8 @@ fn extend_retained_quads(
 struct RetainedGlyphState {
     owner: GlyphOwnerTransform,
     clip: Option<crate::UiScreenRect>,
+    opacity: f32,
+    transform: Option<(UiRenderTransform, [f32; 2], Option<[f32; 4]>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -821,8 +833,29 @@ fn retained_glyph_state(
         return None;
     }
     let owner = region.presentation_bounds();
-    let clip = match quad.clip_object {
-        Some(clip_object) if scroll_frames.state(clip_object).is_some() => None,
+    let (clip, transform) = match quad.clip_object {
+        Some(clip_object) if scroll_frames.state(clip_object).is_some() => {
+            let scroll = scroll_frames.state(clip_object)?;
+            let child_scale = geometry.region(scroll.child()?)?.effective_scale() as f32;
+            let viewport = geometry.region(clip_object)?.presentation_bounds();
+            let (horizontal, vertical) = scroll.offset();
+            (
+                None,
+                Some((
+                    UiRenderTransform::ScrollFrame(clip_object),
+                    [
+                        -(horizontal as f32) * child_scale,
+                        vertical as f32 * child_scale,
+                    ],
+                    Some([
+                        viewport.left() as f32,
+                        viewport.bottom() as f32,
+                        viewport.right() as f32,
+                        viewport.top() as f32,
+                    ]),
+                )),
+            )
+        }
         Some(clip_object) => {
             let clip = geometry.region(clip_object)?;
             if !clip.effectively_shown()
@@ -830,9 +863,9 @@ fn retained_glyph_state(
             {
                 return None;
             }
-            Some(clip.presentation_bounds())
+            (Some(clip.presentation_bounds()), None)
         }
-        None => None,
+        None => (None, None),
     };
     Some(RetainedGlyphState {
         owner: GlyphOwnerTransform {
@@ -841,6 +874,8 @@ fn retained_glyph_state(
             scale: region.effective_scale(),
         },
         clip,
+        opacity: region.effective_alpha() as f32,
+        transform,
     })
 }
 
@@ -1851,7 +1886,7 @@ fn resolve_quad_unclipped(
         .clip_object
         .and_then(|index| scroll_frames?.state(index))
         .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
-    Some(resolve_quad_with_owner_and_scroll(
+    let mut resolved = resolve_quad_with_owner_and_scroll(
         quad,
         GlyphOwnerTransform {
             left: owner.left(),
@@ -1859,7 +1894,9 @@ fn resolve_quad_unclipped(
             scale,
         },
         scroll,
-    ))
+    );
+    resolved.opacity = region.effective_alpha() as f32;
+    Some(resolved)
 }
 
 fn resolve_quad_with_owner(quad: &LocalGlyphQuad, owner: GlyphOwnerTransform) -> UiGlyphQuad {
@@ -1885,6 +1922,8 @@ fn resolve_quad_with_owner_and_scroll(
         texture_coordinates: quad.texture_coordinates,
         color: quad.color,
         caret: quad.caret,
+        opacity: 1.0,
+        transform: None,
     }
 }
 

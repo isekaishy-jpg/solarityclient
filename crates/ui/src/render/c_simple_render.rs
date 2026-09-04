@@ -75,15 +75,14 @@ impl UiRenderPlan {
             retained_glyphs
                 .into_iter()
                 .enumerate()
-                .filter_map(|(sequence, quad)| {
-                    let rendered =
-                        render_glyph_quad(glyphs.identity(), &quad, geometry, scroll_frames)?;
-                    Some((
+                .map(|(sequence, quad)| {
+                    let rendered = render_glyph_quad(glyphs.identity(), &quad);
+                    (
                         quad.packet_key(),
                         quad.object_index(),
                         texture_count + sequence,
                         rendered,
-                    ))
+                    )
                 }),
         );
         let glyphs_elapsed = started.elapsed();
@@ -370,14 +369,9 @@ fn slider_fraction(minimum: f64, maximum: f64, value: f64) -> f64 {
 }
 
 /// Converts one already clipped coverage glyph into a sampled UI quad.
-fn render_glyph_quad(
-    atlas_identity: u64,
-    glyph: &UiGlyphQuad,
-    geometry: &UiRegionGeometryPlan,
-    scroll_frames: &UiScrollFramePlan,
-) -> Option<UiRenderQuad> {
+fn render_glyph_quad(atlas_identity: u64, glyph: &UiGlyphQuad) -> UiRenderQuad {
     let color = glyph.color();
-    let quad = UiRenderQuad::new(
+    let mut quad = UiRenderQuad::new(
         glyph.object_index(),
         UiRenderSource::GlyphAtlas(atlas_identity),
         UiRenderBlend::Alpha,
@@ -389,17 +383,15 @@ fn render_glyph_quad(
         glyph.texture_coordinates(),
         [color; 4],
     )
-    .with_opacity(
-        geometry
-            .region(glyph.object_index())
-            .map_or(1.0, |region| region.effective_alpha() as f32),
-    );
-    let quad = attach_scroll_transform(quad, glyph.clip_object(), geometry, scroll_frames)?;
-    Some(if glyph.is_caret() {
+    .with_opacity(glyph.opacity());
+    if let Some((transform, translation, clip)) = glyph.transform() {
+        quad = quad.with_transform(transform, translation, clip);
+    }
+    if glyph.is_caret() {
         quad.with_state(UiRenderState::EditBoxCaret(glyph.object_index()))
     } else {
         quad
-    })
+    }
 }
 
 /// Converts one live texture region without disturbing its established order.
