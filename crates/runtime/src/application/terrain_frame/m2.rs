@@ -800,6 +800,7 @@ pub(in crate::application) struct M2Frame {
     visible_draws: Vec<M2PreparedDraw>,
     transparent_elements: Vec<M2TransparentElement>,
     model_distance_sort: Vec<bool>,
+    placement_topology_dirty: bool,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
     particle_sort_indices: Vec<usize>,
@@ -904,6 +905,7 @@ impl M2Frame {
             visible_draws: Vec::new(),
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
+            placement_topology_dirty: true,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -1022,6 +1024,7 @@ impl M2Frame {
 
     /// Drops renderer references owned only by the current transport.
     fn remove_transport(&mut self) {
+        self.placement_topology_dirty = true;
         let mut source_indices = Vec::new();
         self.placements.retain(|placement| {
             if matches!(placement.owner, M2GpuPlacementOwner::Transport { .. }) {
@@ -1122,6 +1125,7 @@ impl M2Frame {
             visible_draws: Vec::new(),
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
+            placement_topology_dirty: true,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -1709,6 +1713,7 @@ impl M2Frame {
 
     /// Drops local references to the previous player generation.
     fn remove_player(&mut self) {
+        self.placement_topology_dirty = true;
         let local_guid = self
             .placements
             .iter()
@@ -1745,6 +1750,7 @@ impl M2Frame {
 
     /// Drops local references to the previous visible-creature generation.
     fn remove_creatures(&mut self) {
+        self.placement_topology_dirty = true;
         let mut creature_sources = Vec::new();
         self.placements.retain(|placement| {
             if matches!(placement.owner, M2GpuPlacementOwner::CreatureBody { .. }) {
@@ -1763,6 +1769,7 @@ impl M2Frame {
 
     /// Drops remote character bodies and every child placement they own.
     fn remove_remote_players(&mut self) {
+        self.placement_topology_dirty = true;
         let remote_guids = self
             .placements
             .iter()
@@ -1906,59 +1913,75 @@ impl M2Frame {
         let effect_delta_seconds = elapsed_effect_seconds;
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
-        self.requested_items.clear();
-        self.requested_items
-            .extend(
+        if self.placement_topology_dirty {
+            self.requested_items.clear();
+            self.requested_items
+                .extend(
+                    self.placements
+                        .iter()
+                        .filter_map(|placement| match placement.owner {
+                            M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
+                            M2GpuPlacementOwner::Static(_)
+                            | M2GpuPlacementOwner::GlueModel { .. }
+                            | M2GpuPlacementOwner::GluePet
+                            | M2GpuPlacementOwner::PlayerBody { .. }
+                            | M2GpuPlacementOwner::PlayerMount { .. }
+                            | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                            | M2GpuPlacementOwner::RemotePlayerMount { .. }
+                            | M2GpuPlacementOwner::CreatureBody { .. }
+                            | M2GpuPlacementOwner::Transport { .. }
+                            | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
+                        }),
+                );
+            self.requested_visuals.clear();
+            self.requested_visuals
+                .extend(
+                    self.placements
+                        .iter()
+                        .filter_map(|placement| match placement.owner {
+                            M2GpuPlacementOwner::PlayerItemVisual {
+                                guid,
+                                item_point,
+                                effect_point,
+                            } => Some((guid, item_point, effect_point)),
+                            M2GpuPlacementOwner::Static(_)
+                            | M2GpuPlacementOwner::GlueModel { .. }
+                            | M2GpuPlacementOwner::GluePet
+                            | M2GpuPlacementOwner::PlayerBody { .. }
+                            | M2GpuPlacementOwner::PlayerMount { .. }
+                            | M2GpuPlacementOwner::RemotePlayerBody { .. }
+                            | M2GpuPlacementOwner::RemotePlayerMount { .. }
+                            | M2GpuPlacementOwner::CreatureBody { .. }
+                            | M2GpuPlacementOwner::Transport { .. }
+                            | M2GpuPlacementOwner::PlayerItem { .. } => None,
+                        }),
+                );
+            self.mounted_guids.clear();
+            self.mounted_guids
+                .extend(
+                    self.placements
+                        .iter()
+                        .filter_map(|placement| match placement.owner {
+                            M2GpuPlacementOwner::PlayerMount { guid }
+                            | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
+                            _ => None,
+                        }),
+                );
+            self.glue_attachment_ids.clear();
+            self.glue_attachment_ids.extend(
                 self.placements
                     .iter()
-                    .filter_map(|placement| match placement.owner {
-                        M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
-                        M2GpuPlacementOwner::Static(_)
-                        | M2GpuPlacementOwner::GlueModel { .. }
-                        | M2GpuPlacementOwner::GluePet
-                        | M2GpuPlacementOwner::PlayerBody { .. }
-                        | M2GpuPlacementOwner::PlayerMount { .. }
-                        | M2GpuPlacementOwner::RemotePlayerBody { .. }
-                        | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                        | M2GpuPlacementOwner::CreatureBody { .. }
-                        | M2GpuPlacementOwner::Transport { .. }
-                        | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
-                    }),
+                    .filter_map(|placement| placement.glue_parent_attachment),
             );
-        self.requested_visuals.clear();
-        self.requested_visuals
-            .extend(
-                self.placements
-                    .iter()
-                    .filter_map(|placement| match placement.owner {
-                        M2GpuPlacementOwner::PlayerItemVisual {
-                            guid,
-                            item_point,
-                            effect_point,
-                        } => Some((guid, item_point, effect_point)),
-                        M2GpuPlacementOwner::Static(_)
-                        | M2GpuPlacementOwner::GlueModel { .. }
-                        | M2GpuPlacementOwner::GluePet
-                        | M2GpuPlacementOwner::PlayerBody { .. }
-                        | M2GpuPlacementOwner::PlayerMount { .. }
-                        | M2GpuPlacementOwner::RemotePlayerBody { .. }
-                        | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                        | M2GpuPlacementOwner::CreatureBody { .. }
-                        | M2GpuPlacementOwner::Transport { .. }
-                        | M2GpuPlacementOwner::PlayerItem { .. } => None,
-                    }),
+            self.glue_attachment_ids.sort_unstable();
+            self.glue_attachment_ids.dedup();
+            update_model_distance_sort_flags(
+                &self.placements,
+                &self.sources,
+                &mut self.model_distance_sort,
             );
-        self.mounted_guids.clear();
-        self.mounted_guids
-            .extend(
-                self.placements
-                    .iter()
-                    .filter_map(|placement| match placement.owner {
-                        M2GpuPlacementOwner::PlayerMount { guid }
-                        | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
-                        _ => None,
-                    }),
-            );
+            self.placement_topology_dirty = false;
+        }
         self.rider_transforms.clear();
         self.rider_transforms.reserve(
             self.mounted_guids
@@ -1977,24 +2000,11 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.visual_transforms.capacity()),
         );
-        self.glue_attachment_ids.clear();
-        self.glue_attachment_ids.extend(
-            self.placements
-                .iter()
-                .filter_map(|placement| placement.glue_parent_attachment),
-        );
-        self.glue_attachment_ids.sort_unstable();
-        self.glue_attachment_ids.dedup();
         self.glue_attachment_transforms.clear();
         self.glue_attachment_transforms.reserve(
             self.glue_attachment_ids
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
-        );
-        update_model_distance_sort_flags(
-            &self.placements,
-            &self.sources,
-            &mut self.model_distance_sort,
         );
         self.character_animation_sync.clear();
         self.shoulder_animation_sync.clear();
