@@ -72,15 +72,15 @@ use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoa
 use crate::platform::{ButtonState, MouseButton, MouseWheelDirection, PlatformEvent, SdlPlatform};
 use crate::random::{BlizzardRand, CrtRand};
 
-const STOCK_CHARACTER_BACKDROPS: [&str; 10] = [
+// Build 12340 shares Dwarf/Gnome and Orc/Troll Glue backdrops. There are no
+// UI_Gnome.m2 or UI_Troll.m2 assets in the stock archive set.
+const STOCK_CHARACTER_BACKDROPS: [&str; 8] = [
     "Interface\\Glues\\Models\\UI_Human\\UI_Human.m2",
     "Interface\\Glues\\Models\\UI_Orc\\UI_Orc.m2",
     "Interface\\Glues\\Models\\UI_Dwarf\\UI_Dwarf.m2",
     "Interface\\Glues\\Models\\UI_NightElf\\UI_NightElf.m2",
     "Interface\\Glues\\Models\\UI_Scourge\\UI_Scourge.m2",
     "Interface\\Glues\\Models\\UI_Tauren\\UI_Tauren.m2",
-    "Interface\\Glues\\Models\\UI_Gnome\\UI_Gnome.m2",
-    "Interface\\Glues\\Models\\UI_Troll\\UI_Troll.m2",
     "Interface\\Glues\\Models\\UI_BloodElf\\UI_BloodElf.m2",
     "Interface\\Glues\\Models\\UI_Draenei\\UI_Draenei.m2",
 ];
@@ -2221,7 +2221,17 @@ impl Drop for ClientServices {
 
 #[cfg(test)]
 mod tests {
-    use super::glue_process_action_is_presented;
+    use super::{STOCK_CHARACTER_BACKDROPS, glue_process_action_is_presented};
+
+    #[test]
+    fn stock_backdrop_prewarm_uses_only_distinct_archive_models() {
+        assert_eq!(STOCK_CHARACTER_BACKDROPS.len(), 8);
+        assert!(
+            STOCK_CHARACTER_BACKDROPS
+                .iter()
+                .all(|path| !path.contains("UI_Gnome") && !path.contains("UI_Troll"))
+        );
+    }
 
     #[test]
     fn process_action_requires_the_selected_glue_screen_to_have_been_presented() {
