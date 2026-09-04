@@ -59,6 +59,13 @@ fn script_runtime_retains_frame_widget_state() -> Result<(), Box<dyn Error>> {
   </OnTextChanged></Scripts></EditBox>
   <Frame name="$parentCase"><Layers><Layer><Fontstring name="$parentCount"/></Layer></Layers></Frame>
 </Frames></Frame>
+<Frame name="AnchorOwner"><Size x="200" y="100"/><Frames>
+  <ScrollFrame name="AnchorScroller"><Anchors>
+    <Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/>
+  </Anchors><ScrollChild>
+    <Frame name="$parentChild"><Size x="225" y="160"/></Frame>
+  </ScrollChild></ScrollFrame>
+</Frames></Frame>
 </Ui>"#,
         },
         FixtureFile {
@@ -83,6 +90,13 @@ assert(OwnerScroller:GetHorizontalScrollRange() == 25)
 assert(OwnerScroller:GetVerticalScrollRange() == 60)
 assert(OwnerScroller:GetHorizontalScroll() == 25)
 assert(OwnerScroller:GetVerticalScroll() == 60)
+assert(AnchorScroller:GetWidth() == 200 and AnchorScroller:GetHeight() == 100)
+AnchorScroller:SetHorizontalScroll(30)
+AnchorScroller:SetVerticalScroll(90)
+assert(AnchorScroller:GetHorizontalScrollRange() == 25)
+assert(AnchorScroller:GetVerticalScrollRange() == 60)
+assert(AnchorScroller:GetHorizontalScroll() == 25)
+assert(AnchorScroller:GetVerticalScroll() == 60)
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, Owner))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, OwnerTexture))
 assert(not pcall(OwnerScroller.SetScrollChild, OwnerScroller, {}))
@@ -160,7 +174,7 @@ assert(dynamic:IsMovable() == 1)"#,
 
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
-    assert_eq!(runtime.registered_object_count(), 10);
+    assert_eq!(runtime.registered_object_count(), 13);
     Ok(())
 }
 

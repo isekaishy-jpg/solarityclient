@@ -1248,8 +1248,12 @@ pub(super) fn finite_region_number(
         .raw_get::<f64>(key)
         .map_err(|error| snapshot_error(format!("object {lua_index} {field}"), error))?;
     if !value.is_finite() {
+        let object_name = table
+            .raw_get::<Option<String>>(name_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} name"), error))?
+            .unwrap_or_else(|| "<unnamed>".to_owned());
         return Err(UiScriptError::Plan {
-            message: format!("live UI object {lua_index} has non-finite {field}"),
+            message: format!("live UI object {lua_index} ({object_name}) has non-finite {field}"),
         });
     }
     Ok(value)

@@ -294,6 +294,7 @@ impl Default for InitialTexture {
 /// concrete widget method tables extend this boundary in later stages.
 pub struct UiScriptRuntime {
     next_action: usize,
+    ui_extent: (f64, f64),
     object_metatables: Vec<RegistryKey>,
     font_metatable: RegistryKey,
     animation_metatables: UiAnimationMetatables,
@@ -1162,6 +1163,7 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
             next_action: 0,
+            ui_extent: environment.ui_extent(),
             object_metatables,
             font_metatable,
             animation_metatables,
@@ -1365,7 +1367,7 @@ impl UiScriptRuntime {
                     .raw_get::<f64>(vertical_scroll_range_key())
                     .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?,
             );
-            update_scroll_child_rect(&scroll_frame)
+            update_scroll_child_rect(lua, &scroll_frame, self.ui_extent)
                 .map_err(|error| execution_error("refresh SimpleHTML scroll range", error))?;
             let current = (
                 scroll_frame
@@ -2721,7 +2723,7 @@ impl UiScriptRuntime {
                 .raw_set(key, table.clone())
                 .map_err(|error| execution_error("object registration", error))?;
             if object.role() == UiObjectRole::ScrollChild {
-                update_scroll_child_rect(&owner)
+                update_scroll_child_rect(lua, &owner, self.ui_extent)
                     .map_err(|error| execution_error("object registration", error))?;
             }
             if object.role() == UiObjectRole::ButtonText
@@ -3824,7 +3826,7 @@ fn create_object_metatable(
         register_movie_frame_methods(lua, &methods, assets, media_intent)?;
     }
     if kind == UiObjectKind::ScrollFrame {
-        register_scroll_frame_methods(lua, &methods)?;
+        register_scroll_frame_methods(lua, &methods, ui_extent)?;
     }
     if kind == UiObjectKind::Slider {
         register_slider_methods(lua, &methods)?;
@@ -6145,7 +6147,11 @@ fn edit_box_usage(object: &Table, method: &str, arguments: &str) -> mlua::Error 
     mlua::Error::runtime(format!("Usage: {name}:{method}({arguments})"))
 }
 
-fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+fn register_scroll_frame_methods(
+    lua: &Lua,
+    methods: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<()> {
     methods.raw_set(
         "GetScrollChild",
         lua.create_function(|_, object: Table| {
@@ -6178,8 +6184,8 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     )?;
     methods.raw_set(
         "SetHorizontalScroll",
-        lua.create_function(|lua, (object, value): (Table, f64)| {
-            let (range, _) = refresh_scroll_ranges(&object)?;
+        lua.create_function(move |lua, (object, value): (Table, f64)| {
+            let (range, _) = refresh_scroll_ranges(lua, &object, ui_extent)?;
             let value = value.clamp(0.0, range);
             let previous = object.raw_get::<f64>(horizontal_scroll_key())?;
             if value == previous {
@@ -6196,8 +6202,8 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     )?;
     methods.raw_set(
         "SetVerticalScroll",
-        lua.create_function(|lua, (object, value): (Table, f64)| {
-            let (_, range) = refresh_scroll_ranges(&object)?;
+        lua.create_function(move |lua, (object, value): (Table, f64)| {
+            let (_, range) = refresh_scroll_ranges(lua, &object, ui_extent)?;
             let value = value.clamp(0.0, range);
             let previous = object.raw_get::<f64>(vertical_scroll_key())?;
             if value == previous {
@@ -6214,7 +6220,9 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
     )?;
     methods.raw_set(
         "UpdateScrollChildRect",
-        lua.create_function(|_, object: Table| update_scroll_child_rect(&object))?,
+        lua.create_function(move |lua, object: Table| {
+            update_scroll_child_rect(lua, &object, ui_extent)
+        })?,
     )?;
     Ok(())
 }
@@ -6225,8 +6233,8 @@ fn register_scroll_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
 /// publishes these ranges. The retained runtime resolves the same observable
 /// state eagerly because FrameXML construction runs without an intervening
 /// native frame tick.
-fn update_scroll_child_rect(object: &Table) -> mlua::Result<()> {
-    let (horizontal_range, vertical_range) = refresh_scroll_ranges(object)?;
+fn update_scroll_child_rect(lua: &Lua, object: &Table, ui_extent: (f64, f64)) -> mlua::Result<()> {
+    let (horizontal_range, vertical_range) = refresh_scroll_ranges(lua, object, ui_extent)?;
 
     let horizontal_scroll = object
         .raw_get::<f64>(horizontal_scroll_key())?
@@ -6239,17 +6247,15 @@ fn update_scroll_child_rect(object: &Table) -> mlua::Result<()> {
 }
 
 /// Publishes the range implied by the scroll frame's current live dimensions.
-fn refresh_scroll_ranges(object: &Table) -> mlua::Result<(f64, f64)> {
-    let frame_width = object.raw_get::<f64>(width_key())?;
-    let frame_height = object.raw_get::<f64>(height_key())?;
+fn refresh_scroll_ranges(
+    lua: &Lua,
+    object: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<(f64, f64)> {
+    let (frame_width, frame_height) = live_region_dimensions(lua, object, ui_extent)?;
     let (child_width, child_height) = object
         .raw_get::<Option<Table>>(scroll_child_key())?
-        .map(|child| {
-            Ok::<(f64, f64), mlua::Error>((
-                child.raw_get::<f64>(width_key())?,
-                child.raw_get::<f64>(height_key())?,
-            ))
-        })
+        .map(|child| live_region_dimensions(lua, &child, ui_extent))
         .transpose()?
         .unwrap_or((0.0, 0.0));
     let horizontal_range = (child_width - frame_width).max(0.0);
@@ -6572,11 +6578,15 @@ fn register_region_methods(
     )?;
     methods.raw_set(
         "GetWidth",
-        lua.create_function(|_, object: Table| object.raw_get::<f64>(width_key()))?,
+        lua.create_function(move |lua, object: Table| {
+            Ok(live_region_dimensions(lua, &object, ui_extent)?.0)
+        })?,
     )?;
     methods.raw_set(
         "GetHeight",
-        lua.create_function(|_, object: Table| object.raw_get::<f64>(height_key()))?,
+        lua.create_function(move |lua, object: Table| {
+            Ok(live_region_dimensions(lua, &object, ui_extent)?.1)
+        })?,
     )?;
     methods.raw_set(
         "SetWidth",
@@ -6612,11 +6622,8 @@ fn register_region_methods(
     )?;
     methods.raw_set(
         "GetSize",
-        lua.create_function(|_, object: Table| {
-            Ok((
-                object.raw_get::<f64>(width_key())?,
-                object.raw_get::<f64>(height_key())?,
-            ))
+        lua.create_function(move |lua, object: Table| {
+            live_region_dimensions(lua, &object, ui_extent)
         })?,
     )?;
     register_region_bounds_methods(lua, methods, ui_extent)?;
@@ -6801,6 +6808,24 @@ fn resolve_live_region_bounds(
         },
         &mut resolved,
         &mut visiting,
+    )
+}
+
+/// Returns stock's live unscaled region extent, including dimensions inferred
+/// from opposing anchors before the retained geometry snapshot is published.
+fn live_region_dimensions(
+    lua: &Lua,
+    object: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<(f64, f64)> {
+    let authored = (
+        object.raw_get::<f64>(width_key())?,
+        object.raw_get::<f64>(height_key())?,
+    );
+    Ok(
+        resolve_live_region_bounds(lua, object.clone(), ui_extent)?.map_or(authored, |bounds| {
+            (bounds.right - bounds.left, bounds.top - bounds.bottom)
+        }),
     )
 }
 
