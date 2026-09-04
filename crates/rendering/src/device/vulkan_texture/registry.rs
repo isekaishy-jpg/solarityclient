@@ -10,8 +10,8 @@ use super::types::{
     BlpColorSpace, BlpTextureHandle, BlpTextureResourceInfo, BlpTextureUploadRequest,
 };
 use super::upload::{
-    GpuBlpTexture, TextureUploadContext, upload_stock_m2_failure, upload_stock_m2_white,
-    upload_stock_world_model_green, upload_textures,
+    DeferredTextureTransfer, GpuBlpTexture, TextureUploadContext, upload_stock_m2_failure,
+    upload_stock_m2_white, upload_stock_world_model_green, upload_textures_deferred,
 };
 
 /// Image identity includes color interpretation because it fixes VkFormat.
@@ -31,6 +31,7 @@ pub(in crate::device) struct BlpTextureRegistry {
     registry_id: u64,
     handles: HashMap<BlpTextureKey, BlpTextureHandle>,
     resources: Vec<GpuBlpTexture>,
+    pending_transfers: Vec<DeferredTextureTransfer>,
     upload_submission_count: u64,
 }
 
@@ -43,6 +44,7 @@ impl Default for BlpTextureRegistry {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
             resources: Vec::new(),
+            pending_transfers: Vec::new(),
             upload_submission_count: 0,
         }
     }
@@ -76,6 +78,7 @@ impl BlpTextureRegistry {
         context: TextureUploadContext<'_>,
         requests: &[BlpTextureUploadRequest<'_>],
     ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
+        self.retire_completed_transfers(context)?;
         let mut pending_by_key = HashMap::<BlpTextureKey, usize>::new();
         let mut pending_keys = Vec::new();
         let mut pending_requests = Vec::new();
@@ -100,17 +103,9 @@ impl BlpTextureRegistry {
                 .ok_or(crate::device::VulkanError::BlpTextureCapacity)?;
             u32::try_from(final_len - 1)
                 .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
-            let mut resources = upload_textures(context, &pending_requests)?;
-            if resources.len() != pending_keys.len() {
-                for resource in resources.iter_mut().rev() {
-                    resource.destroy(context.device, context.allocator);
-                }
-                return Err(crate::device::VulkanError::operation(
-                    "finish BLP batch upload",
-                    "resource count does not match admitted identities",
-                )
-                .into());
-            }
+            // The private batch uploader constructs exactly one destination
+            // for each request before its sole submission.
+            let (resources, transfer) = upload_textures_deferred(context, &pending_requests)?;
             for (key, resource) in pending_keys.into_iter().zip(resources) {
                 let slot = u32::try_from(self.resources.len())
                     .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
@@ -120,6 +115,9 @@ impl BlpTextureRegistry {
                 };
                 self.resources.push(resource);
                 self.handles.insert(key, handle);
+            }
+            if let Some(transfer) = transfer {
+                self.pending_transfers.push(transfer);
             }
             self.upload_submission_count = self.upload_submission_count.saturating_add(1);
         }
@@ -140,6 +138,22 @@ impl BlpTextureRegistry {
                 })
             })
             .collect()
+    }
+
+    /// Reclaims staging storage without waiting for unfinished GPU work.
+    fn retire_completed_transfers(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<(), BlpTextureUploadError> {
+        let mut index = self.pending_transfers.len();
+        while index > 0 {
+            index -= 1;
+            if self.pending_transfers[index].is_complete(context.device)? {
+                let mut transfer = self.pending_transfers.swap_remove(index);
+                transfer.destroy(context.device, context.allocator);
+            }
+        }
+        Ok(())
     }
 
     /// Returns or creates stock's one renderer-local WMO placeholder image.
@@ -197,7 +211,7 @@ impl BlpTextureRegistry {
         Ok(handle)
     }
 
-    /// Returns the number of retired queue submissions used for texture admission.
+    /// Returns the number of queue submissions used for texture admission.
     pub(in crate::device) const fn upload_submission_count(&self) -> u64 {
         self.upload_submission_count
     }
@@ -232,6 +246,10 @@ impl BlpTextureRegistry {
         allocator: &vk_mem::Allocator,
     ) {
         self.handles.clear();
+        for transfer in self.pending_transfers.iter_mut().rev() {
+            transfer.destroy(device, allocator);
+        }
+        self.pending_transfers.clear();
         for mut resource in self.resources.drain(..).rev() {
             resource.destroy(device, allocator);
         }

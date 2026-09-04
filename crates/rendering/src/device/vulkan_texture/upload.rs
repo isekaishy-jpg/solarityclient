@@ -395,13 +395,18 @@ impl Drop for TextureTransfer<'_> {
     }
 }
 
-/// Uploads all requested sources through one staging allocation and submission.
-pub(super) fn upload_textures(
+/// Queues all requested sources through one staging allocation and submission.
+///
+/// Image views are complete before submission, allowing the returned resources
+/// to enter descriptor preparation immediately. Queue order establishes the
+/// transfer-to-sample dependency; the returned owner retains staging storage
+/// until its fence signals.
+pub(super) fn upload_textures_deferred(
     context: TextureUploadContext<'_>,
     requests: &[(&BlpTextureSource, BlpColorSpace)],
-) -> Result<Vec<GpuBlpTexture>, BlpTextureUploadError> {
+) -> Result<(Vec<GpuBlpTexture>, Option<DeferredTextureTransfer>), BlpTextureUploadError> {
     if requests.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
 
     let mut staging_byte_count = 0_usize;
@@ -515,7 +520,8 @@ pub(super) fn upload_textures(
         transfer.staging_buffer,
         &uploads,
     )?;
-    transfer.submit_and_wait(command_buffer)?;
+    // Complete every fallible host operation before queue submission. Once a
+    // transfer is executing, an error path must not destroy its destinations.
     for pending in &mut guard.textures {
         pending.image.view = create_sampled_image_view(
             context.device,
@@ -524,7 +530,8 @@ pub(super) fn upload_textures(
             pending.mip_levels,
         )?;
     }
-    Ok(guard.finish())
+    transfer.submit(command_buffer)?;
+    Ok((guard.finish(), Some(transfer.defer())))
 }
 
 /// Uploads stock's opaque 8x8 green WMO placeholder as an sRGB image.

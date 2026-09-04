@@ -899,7 +899,7 @@ impl VulkanRenderer {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.blp_textures.upload(
+        let handle = self.blp_textures.upload(
             TextureUploadContext {
                 device: &self.device,
                 allocator,
@@ -908,14 +908,18 @@ impl VulkanRenderer {
             },
             source,
             color_space,
-        )
+        )?;
+        // Authored uploads are submitted asynchronously and must force a
+        // device-idle wait before registry teardown even if no draw follows.
+        self.is_idle = false;
+        Ok(handle)
     }
 
     /// Uploads all newly encountered path/color-space identities together.
     ///
     /// Returned handles preserve request order and duplicates. Already resident
     /// identities cause no transfer; all remaining identities share one exact
-    /// staging allocation, command buffer, queue submission, and fence wait.
+    /// staging allocation, command buffer, and ordered queue submission.
     ///
     /// # Errors
     ///
@@ -928,7 +932,7 @@ impl VulkanRenderer {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.blp_textures.upload_batch(
+        let handles = self.blp_textures.upload_batch(
             TextureUploadContext {
                 device: &self.device,
                 allocator,
@@ -936,7 +940,9 @@ impl VulkanRenderer {
                 graphics_queue_family: self.report.graphics_queue_family,
             },
             requests,
-        )
+        )?;
+        self.is_idle = false;
+        Ok(handles)
     }
 
     /// Creates or retrieves stock's opaque 8x8 green WMO placeholder.
@@ -1011,7 +1017,7 @@ impl VulkanRenderer {
         self.blp_textures.info(handle)
     }
 
-    /// Returns retired queue submissions spent admitting BLP resources.
+    /// Returns queue submissions spent admitting BLP resources.
     #[must_use]
     pub const fn blp_texture_upload_submission_count(&self) -> u64 {
         self.blp_textures.upload_submission_count()
@@ -1059,7 +1065,7 @@ impl VulkanRenderer {
         self.character_atlas_textures.info(handle)
     }
 
-    /// Returns retired queue submissions spent admitting dynamic body atlases.
+    /// Returns queue submissions spent admitting dynamic body atlases.
     #[must_use]
     pub const fn character_atlas_upload_submission_count(&self) -> u64 {
         self.character_atlas_textures.upload_submission_count()

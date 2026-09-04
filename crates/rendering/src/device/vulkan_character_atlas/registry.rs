@@ -128,7 +128,7 @@ impl CharacterAtlasTextureRegistry {
             .map(|resource| resource.image.view())
     }
 
-    /// Returns retired queue submissions spent admitting dynamic atlases.
+    /// Returns queue submissions spent admitting dynamic atlases.
     pub(in crate::device) const fn upload_submission_count(&self) -> u64 {
         self.upload_submission_count
     }
