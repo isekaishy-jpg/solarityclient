@@ -29,6 +29,14 @@ pub enum UiMeshPlanError {
         /// Live UI object-arena identity.
         object_index: usize,
     },
+    /// Retained draw opacity must remain normalized and finite.
+    #[error("UI object {object_index} has invalid retained opacity {opacity}")]
+    InvalidOpacity {
+        /// Live UI object-arena identity.
+        object_index: usize,
+        /// Rejected opacity scalar.
+        opacity: f32,
+    },
     /// Vertex or index offsets exceed the renderer's unsigned 32-bit draw ABI.
     #[error("UI mesh exceeds the unsigned 32-bit {domain} capacity")]
     Capacity {

@@ -12,6 +12,7 @@ pub struct UiPreparedDraw {
     index_count: u32,
     base_vertex: i32,
     translation: [f32; 2],
+    opacity: f32,
     clip: Option<[f32; 4]>,
 }
 
@@ -26,6 +27,7 @@ impl UiPreparedDraw {
         index_count: u32,
         base_vertex: i32,
         translation: [f32; 2],
+        opacity: f32,
         clip: Option<[f32; 4]>,
     ) -> Self {
         Self {
@@ -36,6 +38,7 @@ impl UiPreparedDraw {
             index_count,
             base_vertex,
             translation,
+            opacity,
             clip,
         }
     }
@@ -82,6 +85,12 @@ impl UiPreparedDraw {
         self.translation
     }
 
+    /// Returns the inherited region opacity applied to vertex alpha.
+    #[must_use]
+    pub const fn opacity(self) -> f32 {
+        self.opacity
+    }
+
     /// Returns an optional bottom-left-origin logical clip rectangle.
     #[must_use]
     pub const fn clip(self) -> Option<[f32; 4]> {
@@ -89,8 +98,14 @@ impl UiPreparedDraw {
     }
 
     /// Rebinds only push-constant/scissor state for retained immutable geometry.
-    pub fn set_transform_state(&mut self, translation: [f32; 2], clip: Option<[f32; 4]>) {
+    pub fn set_transform_state(
+        &mut self,
+        translation: [f32; 2],
+        opacity: f32,
+        clip: Option<[f32; 4]>,
+    ) {
         self.translation = translation;
+        self.opacity = opacity;
         self.clip = clip;
     }
 }

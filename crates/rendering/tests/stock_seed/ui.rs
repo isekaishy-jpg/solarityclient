@@ -8,7 +8,7 @@ use solarity_rendering::{
     UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };
 
-/// Adjacent equal materials merge without changing quad or index order.
+/// Adjacent equal materials on one object merge without changing quad order.
 #[test]
 fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>> {
     let path = AssetPath::new("Interface\\Glues\\Shared.blp")?;
@@ -19,7 +19,7 @@ fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>>
             [0.0, 0.0, 10.0, 20.0],
         ),
         quad(
-            8,
+            4,
             UiRenderSource::Texture(path.clone()),
             [10.0, 0.0, 20.0, 20.0],
         ),
@@ -32,7 +32,7 @@ fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>>
     assert_eq!(mesh.logical_extent(), [800.0, 600.0]);
     assert_eq!(mesh.vertices().len(), 16);
     assert_eq!(mesh.indices().len(), 24);
-    assert_eq!(mesh.object_indices(), [4, 8, 12, 16]);
+    assert_eq!(mesh.object_indices(), [4, 4, 12, 16]);
     assert_eq!(mesh.indices()[0..12], [0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7]);
     assert_eq!(mesh.batches().len(), 3);
     assert_eq!(mesh.batches()[0].first_index(), 0);
@@ -50,6 +50,42 @@ fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>>
         mesh.vertices().len() * UiRenderVertex::BYTE_SIZE
     );
     assert_eq!(mesh.index_bytes().len(), mesh.indices().len() * 4);
+    Ok(())
+}
+
+/// Object-local batches keep inherited opacity independently addressable.
+#[test]
+fn ui_mesh_refreshes_object_opacity_without_replacing_geometry() -> Result<(), Box<dyn Error>> {
+    let path = AssetPath::new("Interface\\Glues\\Shared.blp")?;
+    let quads = vec![
+        quad(
+            4,
+            UiRenderSource::Texture(path.clone()),
+            [0.0, 0.0, 10.0, 20.0],
+        )
+        .with_opacity(0.75),
+        quad(8, UiRenderSource::Texture(path), [10.0, 0.0, 20.0, 20.0]).with_opacity(0.5),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+    let identity = mesh.geometry_identity();
+    let vertex_bytes = mesh.vertex_bytes().to_vec();
+    let index_bytes = mesh.index_bytes().to_vec();
+
+    assert_eq!(mesh.batches().len(), 2);
+    assert_eq!(mesh.batches()[0].opacity(), 0.75);
+    assert_eq!(mesh.batches()[1].opacity(), 0.5);
+
+    mesh.refresh_object_opacities(|object_index| match object_index {
+        4 => Some(0.25),
+        8 => Some(0.875),
+        _ => None,
+    })?;
+
+    assert_eq!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.vertex_bytes(), vertex_bytes);
+    assert_eq!(mesh.index_bytes(), index_bytes);
+    assert_eq!(mesh.batches()[0].opacity(), 0.25);
+    assert_eq!(mesh.batches()[1].opacity(), 0.875);
     Ok(())
 }
 

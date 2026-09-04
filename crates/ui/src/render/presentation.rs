@@ -94,6 +94,7 @@ pub struct UiTexturePresentation {
     bounds: UiScreenRect,
     tex_coords: [f32; 8],
     vertex_colors: [[f32; 4]; 4],
+    opacity: f32,
     horizontal_tiling: bool,
     vertical_tiling: bool,
     non_blocking: bool,
@@ -333,10 +334,16 @@ impl UiTexturePresentation {
         self.tex_coords
     }
 
-    /// Returns corner colors with effective object alpha already composed.
+    /// Returns authored corner colors before inherited region opacity.
     #[must_use]
     pub const fn vertex_colors(&self) -> [[f32; 4]; 4] {
         self.vertex_colors
+    }
+
+    /// Returns effective region opacity after parent composition.
+    #[must_use]
+    pub const fn opacity(&self) -> f32 {
+        self.opacity
     }
 
     /// Returns whether U coordinates wrap.
@@ -477,13 +484,10 @@ impl UiPresentationPlan {
                 draw_rank: draw_rank(texture.draw_layer, object.role),
                 draw_sub_level: texture.draw_sub_level,
             };
-            let mut vertex_colors = texture
+            let vertex_colors = texture
                 .vertex_colors
                 .map(|color| color.map(|value| value as f32));
             let effective_alpha = region.effective_alpha() as f32;
-            for color in &mut vertex_colors {
-                color[3] *= effective_alpha;
-            }
             keyed.push((
                 key,
                 UiTexturePresentation {
@@ -500,6 +504,7 @@ impl UiPresentationPlan {
                     bounds: region.presentation_bounds(),
                     tex_coords: texture.tex_coords.map(|value| value as f32),
                     vertex_colors,
+                    opacity: effective_alpha,
                     horizontal_tiling: texture.horizontal_tiling,
                     vertical_tiling: texture.vertical_tiling,
                     non_blocking: texture.non_blocking,
@@ -669,7 +674,8 @@ fn append_backdrop(
                 backdrop.blend_mode(),
                 background_bounds,
                 coords,
-                runtime_backdrop_color(object.backdrop_color, backdrop.color(), effective_alpha),
+                runtime_backdrop_color(object.backdrop_color, backdrop.color()),
+                effective_alpha,
                 backdrop.tiled(),
                 backdrop.tiled(),
                 strata,
@@ -688,11 +694,7 @@ fn append_backdrop(
     if edge <= 0.0 {
         return;
     }
-    let color = runtime_backdrop_color(
-        object.backdrop_border_color,
-        backdrop.border_color(),
-        effective_alpha,
-    );
+    let color = runtime_backdrop_color(object.backdrop_border_color, backdrop.border_color());
     let corners = [
         (
             4,
@@ -741,6 +743,7 @@ fn append_backdrop(
             corner_bounds,
             atlas_coords(slice, 1.0),
             color,
+            effective_alpha,
             false,
             false,
             strata,
@@ -756,6 +759,7 @@ fn append_backdrop(
         path,
         backdrop,
         color,
+        effective_alpha,
         strata,
         frame_level,
         0,
@@ -771,6 +775,7 @@ fn append_backdrop(
         path,
         backdrop,
         color,
+        effective_alpha,
         strata,
         frame_level,
         1,
@@ -786,6 +791,7 @@ fn append_backdrop(
         path,
         backdrop,
         color,
+        effective_alpha,
         strata,
         frame_level,
         2,
@@ -801,6 +807,7 @@ fn append_backdrop(
         path,
         backdrop,
         color,
+        effective_alpha,
         strata,
         frame_level,
         3,
@@ -819,6 +826,7 @@ fn append_vertical_edge(
     path: &AssetPath,
     backdrop: &UiBackdropState,
     color: [[f32; 4]; 4],
+    opacity: f32,
     strata: UiFrameStrata,
     frame_level: i32,
     slice: u8,
@@ -840,6 +848,7 @@ fn append_vertical_edge(
             UiScreenRect::from_edges(left, next, left + edge, cursor),
             atlas_coords(slice, (length / edge) as f32),
             color,
+            opacity,
             false,
             false,
             strata,
@@ -858,6 +867,7 @@ fn append_horizontal_edge(
     path: &AssetPath,
     backdrop: &UiBackdropState,
     color: [[f32; 4]; 4],
+    opacity: f32,
     strata: UiFrameStrata,
     frame_level: i32,
     slice: u8,
@@ -884,6 +894,7 @@ fn append_horizontal_edge(
             UiScreenRect::from_edges(cursor, bottom, cursor + length, bottom + edge),
             coords,
             color,
+            opacity,
             false,
             false,
             strata,
@@ -900,13 +911,8 @@ fn atlas_coords(slice: u8, fraction: f32) -> [f32; 8] {
     [left, 0.0, left, fraction, right, 0.0, right, fraction]
 }
 
-fn runtime_backdrop_color(
-    runtime: Option<[f64; 4]>,
-    authored: [f32; 4],
-    effective_alpha: f32,
-) -> [[f32; 4]; 4] {
-    let mut color = runtime.map_or(authored, |color| color.map(|value| value as f32));
-    color[3] *= effective_alpha;
+fn runtime_backdrop_color(runtime: Option<[f64; 4]>, authored: [f32; 4]) -> [[f32; 4]; 4] {
+    let color = runtime.map_or(authored, |color| color.map(|value| value as f32));
     [color; 4]
 }
 
@@ -920,6 +926,7 @@ fn push_backdrop_quad(
     bounds: UiScreenRect,
     tex_coords: [f32; 8],
     vertex_colors: [[f32; 4]; 4],
+    opacity: f32,
     horizontal_tiling: bool,
     vertical_tiling: bool,
     strata: UiFrameStrata,
@@ -945,6 +952,7 @@ fn push_backdrop_quad(
             bounds,
             tex_coords,
             vertex_colors,
+            opacity,
             horizontal_tiling,
             vertical_tiling,
             non_blocking: false,

@@ -96,8 +96,9 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         mutated.tex_coords(),
         [0.25, 0.0, 0.25, 1.0, 0.75, 0.0, 0.75, 1.0]
     );
-    assert!((mutated.vertex_colors()[0][3] - 0.45).abs() < 0.000_01);
-    assert!((mutated.vertex_colors()[1][3] - 0.2).abs() < 0.000_01);
+    assert!((mutated.vertex_colors()[0][3] - 0.9).abs() < 0.000_01);
+    assert!((mutated.vertex_colors()[1][3] - 0.4).abs() < 0.000_01);
+    assert!((mutated.opacity() - 0.5).abs() < 0.000_01);
 
     let disabled = &presentation.members(2).ok_or("missing disabled packet")?[0];
     assert_eq!(
@@ -156,6 +157,43 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         None,
         "the final solid-color batch has no invented image request"
     );
+    Ok(())
+}
+
+/// Alpha-only Glue updates patch retained draw state without rebuilding UI bytes.
+#[test]
+fn glue_alpha_updates_retain_the_existing_ui_mesh() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Fade.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Fade.xml",
+            bytes: br#"<Ui><Frame name="Fading" alpha="1">
+  <Size x="100" y="50"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="FadingTexture" file="Interface\Glues\Fade" setAllPoints="true"/>
+  </Layer></Layers>
+  <Scripts><OnUpdate>self:SetAlpha(self:GetAlpha() - elapsed)</OnUpdate></Scripts>
+</Frame></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let identity = manager.render_plan().mesh().geometry_identity();
+    let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
+    let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
+
+    assert!(manager.update(0.25)?);
+
+    let mesh = manager.render_plan().mesh();
+    assert_eq!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.vertex_bytes(), vertex_bytes);
+    assert_eq!(mesh.index_bytes(), index_bytes);
+    assert_eq!(mesh.batches().len(), 1);
+    assert!((mesh.batches()[0].opacity() - 0.75).abs() < 0.000_01);
     Ok(())
 }
 
@@ -405,14 +443,16 @@ fn glue_presentation_builds_stock_native_backdrop_quads() -> Result<(), Box<dyn 
     );
     assert!(background.horizontal_tiling());
     assert!(background.vertical_tiling());
-    assert_eq!(background.vertex_colors()[0], [0.2, 0.3, 0.4, 0.4]);
+    assert_eq!(background.vertex_colors()[0], [0.2, 0.3, 0.4, 0.8]);
+    assert_eq!(background.opacity(), 0.5);
 
     let border = presentation.members(1).ok_or("missing backdrop border")?;
     assert_eq!(
         border[0].tex_coords(),
         [0.5, 0.0, 0.5, 1.0, 0.625, 0.0, 0.625, 1.0]
     );
-    assert_eq!(border[0].vertex_colors()[0], [0.6, 0.7, 0.8, 0.3]);
+    assert_eq!(border[0].vertex_colors()[0], [0.6, 0.7, 0.8, 0.6]);
+    assert_eq!(border[0].opacity(), 0.5);
     assert!(border.iter().all(|quad| quad.object_index() == panel_index));
     assert!(border.iter().all(|quad| !quad.horizontal_tiling()));
     assert_eq!(manager.render_plan().mesh().vertices().len(), 52);

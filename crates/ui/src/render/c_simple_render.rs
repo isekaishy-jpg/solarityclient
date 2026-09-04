@@ -108,6 +108,20 @@ impl UiRenderPlan {
         &self.texture_assets
     }
 
+    /// Refreshes inherited alpha in retained draw packets without touching
+    /// vertex or index bytes.
+    pub(crate) fn refresh_opacities(
+        &mut self,
+        geometry: &UiRegionGeometryPlan,
+    ) -> Result<(), UiRenderError> {
+        self.mesh.refresh_object_opacities(|object_index| {
+            geometry
+                .region(object_index)
+                .map(|region| region.effective_alpha() as f32)
+        })?;
+        Ok(())
+    }
+
     /// Patches ScrollFrame and native thumb draw state without rebuilding mesh bytes.
     pub(crate) fn refresh_scroll_transforms(
         &mut self,
@@ -201,6 +215,11 @@ fn render_glyph_quad(
         glyph.bounds(),
         glyph.texture_coordinates(),
         [color; 4],
+    )
+    .with_opacity(
+        geometry
+            .region(glyph.object_index())
+            .map_or(1.0, |region| region.effective_alpha() as f32),
     );
     attach_scroll_transform(quad, glyph.clip_object(), geometry, scroll_frames)
 }
@@ -310,6 +329,7 @@ fn render_quad_parts(
         coordinates,
         colors,
     )
+    .with_opacity(texture.opacity())
 }
 
 /// Groups the flattened stock corner order for interpolation and upload.

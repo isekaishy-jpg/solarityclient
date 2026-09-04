@@ -206,6 +206,30 @@ impl UiMeshPlan {
         }
     }
 
+    /// Refreshes inherited opacity without changing immutable mesh identity.
+    ///
+    /// Batches never cross live-object boundaries, so one region fade remains
+    /// independently addressable even when adjacent objects share a texture.
+    pub fn refresh_object_opacities(
+        &mut self,
+        mut opacity: impl FnMut(usize) -> Option<f32>,
+    ) -> Result<(), UiMeshPlanError> {
+        for batch in &mut self.batches {
+            let object_index = batch.object_index();
+            let Some(value) = opacity(object_index) else {
+                continue;
+            };
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(UiMeshPlanError::InvalidOpacity {
+                    object_index,
+                    opacity: value,
+                });
+            }
+            batch.set_opacity(value);
+        }
+        Ok(())
+    }
+
     /// Serializes vertices without relying on Rust layout or unsafe casts.
     #[must_use]
     pub fn vertex_bytes(&self) -> &[u8] {
@@ -290,6 +314,13 @@ fn validate_quad(quad: &UiRenderQuad) -> Result<(), UiMeshPlanError> {
     let bounds = quad.bounds();
     validate_components(quad.object_index(), "bounds", &bounds)?;
     validate_components(quad.object_index(), "translation", &quad.translation())?;
+    let opacity = quad.opacity();
+    if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+        return Err(UiMeshPlanError::InvalidOpacity {
+            object_index: quad.object_index(),
+            opacity,
+        });
+    }
     if let Some(clip) = quad.clip() {
         validate_components(quad.object_index(), "clip", &clip)?;
         if clip[2] < clip[0] || clip[3] < clip[1] {

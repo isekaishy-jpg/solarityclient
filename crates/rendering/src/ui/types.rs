@@ -62,6 +62,7 @@ pub struct UiRenderQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     colors: [[f32; 4]; 4],
+    opacity: f32,
     transform: Option<UiRenderTransform>,
     translation: [f32; 2],
     clip: Option<[f32; 4]>,
@@ -94,10 +95,23 @@ impl UiRenderQuad {
             bounds,
             texture_coordinates,
             colors,
+            opacity: 1.0,
             transform: None,
             translation: [0.0, 0.0],
             clip: None,
         }
+    }
+
+    /// Applies inherited region alpha as retained draw state.
+    ///
+    /// Stock simple-render alpha belongs to the draw packet rather than the
+    /// immutable corner positions and texture coordinates. Keeping it outside
+    /// vertex colors lets a fade update one scalar without replacing every
+    /// glyph vertex owned by the region.
+    #[must_use]
+    pub const fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
     }
 
     /// Assigns immutable geometry to one small retained transform/scissor slot.
@@ -170,6 +184,10 @@ impl UiRenderQuad {
         self.translation
     }
 
+    pub(super) const fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
     pub(super) const fn clip(&self) -> Option<[f32; 4]> {
         self.clip
     }
@@ -231,6 +249,7 @@ impl UiRenderVertex {
 /// One maximal adjacent run sharing sampled-image and fixed material state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderBatch {
+    object_index: usize,
     source: UiRenderSource,
     blend: UiRenderBlend,
     horizontal_address: UiTextureAddressMode,
@@ -243,12 +262,14 @@ pub struct UiRenderBatch {
     quad_count: u32,
     transform: Option<UiRenderTransform>,
     translation: [f32; 2],
+    opacity: f32,
     clip: Option<[f32; 4]>,
 }
 
 impl UiRenderBatch {
     pub(super) fn from_quad(quad: &UiRenderQuad, first_index: u32, first_quad: u32) -> Self {
         Self {
+            object_index: quad.object_index(),
             source: quad.source().clone(),
             blend: quad.blend(),
             horizontal_address: quad.horizontal_address(),
@@ -261,12 +282,14 @@ impl UiRenderBatch {
             quad_count: 1,
             transform: quad.transform(),
             translation: quad.translation(),
+            opacity: quad.opacity(),
             clip: quad.clip(),
         }
     }
 
     pub(super) fn can_append(&self, quad: &UiRenderQuad) -> bool {
-        self.source == *quad.source()
+        self.object_index == quad.object_index()
+            && self.source == *quad.source()
             && self.blend == quad.blend()
             && self.horizontal_address == quad.horizontal_address()
             && self.vertical_address == quad.vertical_address()
@@ -274,12 +297,17 @@ impl UiRenderBatch {
             && self.desaturated == quad.desaturated()
             && self.transform == quad.transform()
             && self.translation == quad.translation()
+            && self.opacity == quad.opacity()
             && self.clip == quad.clip()
     }
 
     pub(super) fn append_quad(&mut self) {
         self.index_count += 6;
         self.quad_count += 1;
+    }
+
+    pub(super) const fn object_index(&self) -> usize {
+        self.object_index
     }
 
     /// Returns the sampled BLP or vertex-color-only source.
@@ -348,6 +376,7 @@ impl UiRenderBatch {
         clip: Option<[f32; 4]>,
     ) -> Self {
         Self {
+            object_index: 0,
             source,
             blend: UiRenderBlend::Alpha,
             horizontal_address: UiTextureAddressMode::Clamp,
@@ -360,6 +389,7 @@ impl UiRenderBatch {
             quad_count: 0,
             transform: None,
             translation: [0.0, 0.0],
+            opacity: 1.0,
             clip,
         }
     }
@@ -376,6 +406,12 @@ impl UiRenderBatch {
         self.translation
     }
 
+    /// Returns the inherited region opacity applied by the fragment stage.
+    #[must_use]
+    pub const fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
     /// Returns an optional bottom-left-origin logical scissor rectangle.
     #[must_use]
     pub const fn clip(&self) -> Option<[f32; 4]> {
@@ -384,5 +420,9 @@ impl UiRenderBatch {
 
     pub(super) fn set_translation(&mut self, translation: [f32; 2]) {
         self.translation = translation;
+    }
+
+    pub(super) fn set_opacity(&mut self, opacity: f32) {
+        self.opacity = opacity;
     }
 }

@@ -59,7 +59,7 @@ impl UiGlyphQuad {
         self.texture_coordinates
     }
 
-    /// Returns the inherited stock font color and effective alpha.
+    /// Returns the authored stock font color before inherited region opacity.
     #[must_use]
     pub const fn color(&self) -> [f32; 4] {
         self.color
@@ -1605,8 +1605,6 @@ fn resolve_quad_unclipped(
         .and_then(|index| scroll_frames?.state(index))
         .map_or((0.0, 0.0), crate::UiScrollFrameState::offset);
     let [left, bottom, right, top] = quad.bounds;
-    let mut color = quad.color;
-    color[3] *= region.effective_alpha() as f32;
     let resolved = UiGlyphQuad {
         packet_key: quad.packet_key,
         object_index: quad.object_index,
@@ -1618,7 +1616,7 @@ fn resolve_quad_unclipped(
             (owner.top() + (f64::from(top) + scroll.1) * scale) as f32,
         ],
         texture_coordinates: quad.texture_coordinates,
-        color,
+        color: quad.color,
     };
     Some(resolved)
 }

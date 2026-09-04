@@ -1230,16 +1230,38 @@ impl GlueManager {
     fn rebuild_visual_transform_state(&mut self) -> Result<(), UiEventError> {
         let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
         let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
-        let render_plan = UiRenderPlan::prepare_with_glyphs(
-            &presentation,
-            &self.glyphs,
-            &geometry,
-            &self.scroll_frames,
-            geometry.ui_extent(),
-        )?;
+        let positions_changed =
+            self.live
+                .objects()
+                .iter()
+                .enumerate()
+                .any(|(object_index, _object)| {
+                    match (
+                        self.geometry.region(object_index),
+                        geometry.region(object_index),
+                    ) {
+                        (Some(previous), Some(current)) => {
+                            previous.presentation_bounds() != current.presentation_bounds()
+                        }
+                        (None, None) => false,
+                        _ => true,
+                    }
+                });
+        if positions_changed {
+            self.render_plan = UiRenderPlan::prepare_with_glyphs(
+                &presentation,
+                &self.glyphs,
+                &geometry,
+                &self.scroll_frames,
+                geometry.ui_extent(),
+            )?;
+        } else {
+            // Build-12340 region alpha is retained draw state. A pure fade must
+            // not serialize and replace every vertex in a SimpleHTML document.
+            self.render_plan.refresh_opacities(&geometry)?;
+        }
         self.geometry = geometry;
         self.presentation = presentation;
-        self.render_plan = render_plan;
         Ok(())
     }
 }

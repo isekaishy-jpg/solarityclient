@@ -359,7 +359,7 @@ fn record_draw(
             layout,
             vk::ShaderStageFlags::VERTEX,
             0,
-            &draw_state_bytes(logical_extent, draw.translation()),
+            &draw_state_bytes(logical_extent, draw.translation(), draw.opacity()),
         );
         // Every UI quad has the same six-index pattern. Reuse the mesh's
         // canonical prefix for each batch and select its contiguous vertices
@@ -376,10 +376,15 @@ fn record_draw(
     Ok(())
 }
 
-/// Serializes the four-float canvas and retained-translation push constant.
-fn draw_state_bytes(extent: [f32; 2], translation: [f32; 2]) -> [u8; 16] {
-    let mut bytes = [0; 16];
-    for (index, value) in extent.into_iter().chain(translation).enumerate() {
+/// Serializes canvas, retained translation, and inherited opacity draw state.
+fn draw_state_bytes(extent: [f32; 2], translation: [f32; 2], opacity: f32) -> [u8; 20] {
+    let mut bytes = [0; 20];
+    for (index, value) in extent
+        .into_iter()
+        .chain(translation)
+        .chain([opacity])
+        .enumerate()
+    {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
     bytes

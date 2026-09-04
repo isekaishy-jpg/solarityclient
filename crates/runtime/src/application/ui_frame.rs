@@ -202,7 +202,7 @@ impl PreparedUiFrame {
             let Some(batch) = plan.batches().get(*batch_index) else {
                 return false;
             };
-            draw.set_transform_state(batch.translation(), batch.clip());
+            draw.set_transform_state(batch.translation(), batch.opacity(), batch.clip());
         }
         self.logical_extent = plan.logical_extent();
         true
