@@ -29,6 +29,10 @@ parallel work units.
 - The in-flight bound covers running and queued work. Submission returns an
   immediate typed capacity error instead of blocking the interactive producer
   or growing an unbounded queue.
+- Speculative callers query a stricter advisory admission boundary that keeps
+  one worker lane available on multi-worker pools. Interactive submission still
+  uses the configured hard bound, so background Glue residency cannot occupy
+  every FIFO position ahead of the character the user just selected.
 - Every admitted operation returns a single-owner completion handle. Dropping
   the handle discards only the result; executor shutdown still owns and drains
   the work.
@@ -48,9 +52,9 @@ asset work cannot serialize on the accounting boundary.
 
 ## Validation
 
-External tests cover result ownership, bounded admission, shutdown rejection,
-draining after result-handle disposal, task-panic recovery, and non-consuming
-completion observation:
+External tests cover result ownership, bounded admission, reserved interactive
+capacity, shutdown rejection, draining after result-handle disposal,
+task-panic recovery, and non-consuming completion observation:
 
 ```powershell
 cargo test -p solarity-cpu --all-targets

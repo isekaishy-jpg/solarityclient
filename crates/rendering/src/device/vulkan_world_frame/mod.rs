@@ -107,8 +107,9 @@ struct WorldFrameProfiler {
     wait_write_us: u128,
     acquire_us: u128,
     record_us: u128,
-    submit_present_us: u128,
-    maximum_us: [u128; 5],
+    queue_submit_us: u128,
+    queue_present_us: u128,
+    maximum_us: [u128; 6],
 }
 
 impl WorldFrameProfiler {
@@ -120,19 +121,21 @@ impl WorldFrameProfiler {
             wait_write_us: 0,
             acquire_us: 0,
             record_us: 0,
-            submit_present_us: 0,
-            maximum_us: [0; 5],
+            queue_submit_us: 0,
+            queue_present_us: 0,
+            maximum_us: [0; 6],
         })
     }
 
-    fn record(&mut self, phases: [std::time::Duration; 5]) {
+    fn record(&mut self, phases: [std::time::Duration; 6]) {
         let elapsed_us = phases.map(|elapsed| elapsed.as_micros());
         self.frame_count = self.frame_count.saturating_add(1);
         self.ensure_us = self.ensure_us.saturating_add(elapsed_us[0]);
         self.wait_write_us = self.wait_write_us.saturating_add(elapsed_us[1]);
         self.acquire_us = self.acquire_us.saturating_add(elapsed_us[2]);
         self.record_us = self.record_us.saturating_add(elapsed_us[3]);
-        self.submit_present_us = self.submit_present_us.saturating_add(elapsed_us[4]);
+        self.queue_submit_us = self.queue_submit_us.saturating_add(elapsed_us[4]);
+        self.queue_present_us = self.queue_present_us.saturating_add(elapsed_us[5]);
         for (maximum, elapsed) in self.maximum_us.iter_mut().zip(elapsed_us) {
             *maximum = (*maximum).max(elapsed);
         }
@@ -147,12 +150,14 @@ impl WorldFrameProfiler {
             wait_write_mean_us = self.wait_write_us as f64 / divisor,
             acquire_mean_us = self.acquire_us as f64 / divisor,
             record_mean_us = self.record_us as f64 / divisor,
-            submit_present_mean_us = self.submit_present_us as f64 / divisor,
+            queue_submit_mean_us = self.queue_submit_us as f64 / divisor,
+            queue_present_mean_us = self.queue_present_us as f64 / divisor,
             ensure_max_us = self.maximum_us[0],
             wait_write_max_us = self.maximum_us[1],
             acquire_max_us = self.maximum_us[2],
             record_max_us = self.maximum_us[3],
-            submit_present_max_us = self.maximum_us[4],
+            queue_submit_max_us = self.maximum_us[4],
+            queue_present_max_us = self.maximum_us[5],
             "profiled unified Vulkan frame phases"
         );
         self.window_started = std::time::Instant::now();
@@ -161,8 +166,9 @@ impl WorldFrameProfiler {
         self.wait_write_us = 0;
         self.acquire_us = 0;
         self.record_us = 0;
-        self.submit_present_us = 0;
-        self.maximum_us = [0; 5];
+        self.queue_submit_us = 0;
+        self.queue_present_us = 0;
+        self.maximum_us = [0; 6];
     }
 }
 
@@ -360,15 +366,24 @@ impl WorldFrameRenderer {
             image_index,
         })?;
         let record_elapsed = record_started.elapsed();
-        let submit_started = std::time::Instant::now();
-        submit_and_present(&context, slot, present_semaphore, image_index)?;
+        let submit_timings = submit_and_present(
+            &context,
+            slot,
+            present_semaphore,
+            image_index,
+            self.profiler.is_some(),
+        )?;
         if let Some(profiler) = self.profiler.as_mut() {
+            let submit_timings = submit_timings.ok_or_else(|| {
+                VulkanError::operation("profile world frame", "queue timings are unavailable")
+            })?;
             profiler.record([
                 ensure_elapsed,
                 wait_write_elapsed,
                 acquire_elapsed,
                 record_elapsed,
-                submit_started.elapsed(),
+                submit_timings.queue_submit,
+                submit_timings.queue_present,
             ]);
         }
         Ok(WorldFrameReport::new(
