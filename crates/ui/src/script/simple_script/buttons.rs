@@ -12,15 +12,16 @@ use crate::font::wrap_line;
 use crate::{FontDefinition, FontRasterization, FontSystem};
 
 use super::{
-    DynamicArenaState, OBJECT_REGISTRY, auto_text_height_key, auto_text_width_key,
-    button_pressed_key, button_state_locked_key, button_text_key, checked_key, clamped_color,
-    click_action_key, create_dynamic_region, disabled_font_key, disabled_text_color_key,
-    disabled_texture_key, drag_button_key, enabled_key, font_object_key, font_set_key,
-    font_shadow_offset_key, height_key, highlight_font_key, highlight_locked_key,
-    highlight_texture_key, lua_bool, lua_text, mark_live_state_changed, max_text_lines_key,
-    name_key, non_space_wrap_key, normal_font_key, normal_texture_key, object_script_function,
-    pushed_texture_key, resolve_font_object, spacing_key, text_key, texture_file_key,
-    texture_solid_color_key, type_key, width_key, word_wrap_key,
+    DIRTY_TEXT, DIRTY_TEXTURE, DIRTY_WIDGET, DynamicArenaState, OBJECT_REGISTRY,
+    auto_text_height_key, auto_text_width_key, button_pressed_key, button_state_locked_key,
+    button_text_key, checked_key, clamped_color, click_action_key, create_dynamic_region,
+    disabled_font_key, disabled_text_color_key, disabled_texture_key, drag_button_key, enabled_key,
+    font_object_key, font_set_key, font_shadow_offset_key, height_key, highlight_font_key,
+    highlight_locked_key, highlight_texture_key, lua_bool, lua_text, mark_live_state_changed,
+    mark_object_state_changed, max_text_lines_key, name_key, non_space_wrap_key, normal_font_key,
+    normal_texture_key, object_script_function, pushed_texture_key, resolve_font_object,
+    spacing_key, text_key, texture_file_key, texture_solid_color_key, type_key, width_key,
+    word_wrap_key,
 };
 
 #[derive(Clone, Copy)]
@@ -349,7 +350,7 @@ pub(super) fn register_button_methods(
                     disabled_text_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
                 )?;
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &button, DIRTY_TEXT)
             },
         )?,
     )?;
@@ -374,8 +375,8 @@ pub(super) fn register_button_methods(
             if let Some(measurement) = &font_string_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            button.raw_set(button_text_key(), font_string)?;
-            mark_live_state_changed(lua)
+            button.raw_set(button_text_key(), font_string.clone())?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)
         })?,
     )?;
     register_texture_pair(
@@ -489,7 +490,7 @@ pub(super) fn register_button_methods(
                 button.raw_set(button_pressed_key(), pushed)?;
                 button.raw_set(button_state_locked_key(), state_locked)?;
                 if changed {
-                    mark_live_state_changed(lua)?;
+                    mark_object_state_changed(lua, &button, DIRTY_WIDGET)?;
                 }
                 Ok(())
             },
@@ -500,7 +501,7 @@ pub(super) fn register_button_methods(
         lua.create_function(|lua, button: Table| {
             if !button.raw_get::<bool>(highlight_locked_key())? {
                 button.raw_set(highlight_locked_key(), true)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &button, DIRTY_WIDGET)?;
             }
             Ok(())
         })?,
@@ -510,7 +511,7 @@ pub(super) fn register_button_methods(
         lua.create_function(|lua, button: Table| {
             if button.raw_get::<bool>(highlight_locked_key())? {
                 button.raw_set(highlight_locked_key(), false)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &button, DIRTY_WIDGET)?;
             }
             Ok(())
         })?,
@@ -526,7 +527,7 @@ pub(super) fn register_button_methods(
                 action |= click_action(value.to_string_lossy().as_str());
             }
             button.raw_set(click_action_key(), action)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &button, DIRTY_WIDGET)
         })?,
     )?;
     methods.raw_set(
@@ -590,6 +591,7 @@ fn set_button_text(
         if let Some(measurement) = measurement {
             measurement.update_auto_font_string_size(&font_string)?;
         }
+        return mark_object_state_changed(lua, &font_string, DIRTY_TEXT);
     }
     mark_live_state_changed(lua)
 }
@@ -659,7 +661,7 @@ pub(super) fn register_check_button_methods(lua: &Lua, methods: &Table) -> mlua:
             };
             if button.raw_get::<bool>(checked_key())? != checked {
                 button.raw_set(checked_key(), checked)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &button, DIRTY_WIDGET)?;
             }
             Ok(())
         })?,
@@ -692,11 +694,12 @@ fn register_font_pair(
                 ))
             })?;
             button.raw_set(key, font.clone())?;
-            if propagate_button_text
-                && let Some(text) = button.raw_get::<Option<Table>>(button_text_key())?
-            {
-                text.raw_set(font_object_key(), font)?;
-                text.raw_set(font_set_key(), true)?;
+            if let Some(text) = button.raw_get::<Option<Table>>(button_text_key())? {
+                if propagate_button_text {
+                    text.raw_set(font_object_key(), font)?;
+                    text.raw_set(font_set_key(), true)?;
+                }
+                return mark_object_state_changed(lua, &text, DIRTY_TEXT);
             }
             mark_live_state_changed(lua)
         })?,
@@ -752,8 +755,8 @@ fn register_texture_pair(
                 }
                 _ => return Err(button_texture_usage(&button, setter)),
             };
-            button.raw_set(key, texture)?;
-            mark_live_state_changed(lua)
+            button.raw_set(key, texture.clone())?;
+            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)
         })?,
     )?;
     methods.raw_set(

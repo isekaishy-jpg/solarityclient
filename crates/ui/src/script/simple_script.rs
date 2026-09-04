@@ -39,13 +39,22 @@ pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const OBJECT_CHILDREN_REGISTRY: &str = "solarity.ui.object_children";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
+const FALLBACK_STATE_GENERATION_REGISTRY: &str = "solarity.ui.fallback_state_generation";
 const AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY: &str = "solarity.ui.auto_text_measurement_dirty";
+const OBJECT_STATE_GENERATION_REGISTRY: &str = "solarity.ui.object_state_generation";
+const DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.dirty_objects";
 const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
 const VISUAL_DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.visual_dirty_objects";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
 const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
 const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
 const FOCUSED_EDIT_BOX_REGISTRY: &str = "solarity.ui.focused_edit_box";
+pub(super) const DIRTY_TEXT: u32 = 1 << 0;
+pub(super) const DIRTY_TEXTURE: u32 = 1 << 1;
+pub(super) const DIRTY_WIDGET: u32 = 1 << 2;
+pub(super) const DIRTY_MODEL: u32 = 1 << 3;
+pub(super) const DIRTY_LAYOUT: u32 = 1 << 4;
+pub(super) const DIRTY_FRAME: u32 = 1 << 5;
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -350,6 +359,9 @@ pub(crate) struct UiScriptEventDispatch {
     pub(crate) changed: bool,
     pub(crate) targeted_visual: bool,
     pub(crate) visual_objects: Vec<usize>,
+    pub(crate) targeted_objects: bool,
+    pub(crate) dirty_objects: Vec<(usize, u32)>,
+    pub(crate) fallback_mutations: u64,
 }
 
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
@@ -985,10 +997,15 @@ impl UiScriptRuntime {
         .and_then(|()| lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize))
         .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
+            .and_then(|()| lua.set_named_registry_value(FALLBACK_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true))
             .and_then(|()| lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, 0_u64))
+            .and_then(|()| lua.set_named_registry_value(OBJECT_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| {
                 lua.set_named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY, lua.create_table()?)
+            })
+            .and_then(|()| {
+                lua.set_named_registry_value(DIRTY_OBJECTS_REGISTRY, lua.create_table()?)
             })
             .map_err(|error| execution_error("registry", error))?;
         let metatables = lua
@@ -1566,10 +1583,16 @@ impl UiScriptRuntime {
     ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let lua = bundle.lua();
         clear_visual_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
+        clear_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
         let generation =
             live_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let fallback_generation =
+            fallback_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let visual_generation =
             visual_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let object_generation =
+            object_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let object_count = self.registered_object_count();
         let globals = lua.globals();
         let previous_event = globals
             .raw_get::<Value>("event")
@@ -1609,21 +1632,38 @@ impl UiScriptRuntime {
         }?;
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let current_fallback_generation =
+            fallback_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let current_visual_generation =
             visual_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let current_object_generation =
+            object_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let mut visual_objects =
             take_visual_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
         visual_objects.sort_unstable();
         visual_objects.dedup();
+        let dirty_objects =
+            take_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
         let live_mutations = current_generation.wrapping_sub(generation);
+        let fallback_mutations = current_fallback_generation.wrapping_sub(fallback_generation);
         let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
+        let object_mutations = current_object_generation.wrapping_sub(object_generation);
+        let object_topology_unchanged = self.registered_object_count() == object_count;
         Ok(UiScriptEventDispatch {
             subscriber_count,
             changed: live_mutations != 0,
             targeted_visual: live_mutations != 0
+                && fallback_mutations == 0
+                && object_mutations == 0
                 && live_mutations == visual_mutations
                 && !visual_objects.is_empty(),
             visual_objects,
+            targeted_objects: live_mutations != 0
+                && fallback_mutations == 0
+                && object_topology_unchanged
+                && !dirty_objects.is_empty(),
+            dirty_objects,
+            fallback_mutations,
         })
     }
 
@@ -1748,6 +1788,27 @@ impl UiScriptRuntime {
         object_indices: &[usize],
     ) -> Result<(), UiScriptError> {
         super::runtime_state::refresh_runtime_visual_objects(bundle.lua(), live, object_indices)
+    }
+
+    /// Copies fields named by a topology-stable event mutation journal.
+    pub(crate) fn refresh_dirty_objects(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        dirty_objects: &[(usize, u32)],
+    ) -> Result<Vec<usize>, UiScriptError> {
+        let lua = bundle.lua();
+        let auto_text_dirty: bool = lua
+            .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
+            .map_err(|error| execution_error("automatic FontString extent", error))?;
+        if auto_text_dirty {
+            self.text_measurement
+                .synchronize_auto_font_strings(lua, self.registered_object_count())
+                .map_err(|error| execution_error("automatic FontString extent", error))?;
+            lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
+                .map_err(|error| execution_error("automatic FontString extent", error))?;
+        }
+        super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects)
     }
 
     pub(crate) fn refresh_button_texts(
@@ -4474,7 +4535,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &font_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
     )?;
@@ -4510,7 +4571,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &set_text_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
     )?;
@@ -4534,7 +4595,7 @@ fn register_font_string_methods(
                 if let Some(measurement) = &formatted_text_measurement {
                     measurement.update_auto_font_string_size(&font_string)?;
                 }
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
                 Ok(())
             },
         )?,
@@ -4554,7 +4615,7 @@ fn register_font_string_methods(
                     text_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
                 )?;
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &font_string, DIRTY_TEXT)
             },
         )?,
     )?;
@@ -4617,7 +4678,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &word_wrap_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
     )?;
@@ -4636,7 +4697,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &non_space_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
     )?;
@@ -4660,7 +4721,7 @@ fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
             }
             if object.raw_get::<f64>(spacing_key())? != spacing {
                 object.raw_set(spacing_key(), spacing)?;
-                mark_auto_text_measurement_changed(lua)?;
+                mark_auto_text_measurement_changed(lua, &object)?;
             }
             Ok(())
         })?,
@@ -4676,7 +4737,7 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
         "SetShadowOffset",
         lua.create_function(|lua, (object, x, y): (Table, f64, f64)| {
             object.raw_set(font_shadow_offset_key(), lua.create_sequence_from([x, y])?)?;
-            mark_auto_text_measurement_changed(lua)
+            mark_auto_text_measurement_changed(lua, &object)
         })?,
     )?;
     methods.raw_set(
@@ -4694,7 +4755,7 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
                     font_shadow_color_key(),
                     lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
                 )?;
-                mark_live_state_changed(lua)
+                mark_text_object_state_changed(lua, &object)
             },
         )?,
     )?;
@@ -4721,7 +4782,7 @@ fn register_font_string_justification_methods(lua: &Lua, methods: &Table) -> mlu
             })?;
             if font_string.raw_get::<String>(justify_h_key())? != value {
                 font_string.raw_set(justify_h_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             }
             Ok(())
         })?,
@@ -4740,7 +4801,7 @@ fn register_font_string_justification_methods(lua: &Lua, methods: &Table) -> mlu
             })?;
             if font_string.raw_get::<String>(justify_v_key())? != value {
                 font_string.raw_set(justify_v_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             }
             Ok(())
         })?,
@@ -4806,7 +4867,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 texture.raw_set(texture_file_key(), Option::<String>::None)?;
                 texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
                 texture.raw_set(texture_solid_color_key(), lua.create_sequence_from(color)?)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)?;
                 return Ok(());
             }
             let value = lua
@@ -4817,7 +4878,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             texture.raw_set(texture_file_key(), file)?;
             texture.raw_set(portrait_unit_key(), Option::<String>::None)?;
             texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)
         })?,
     )?;
     methods.raw_set(
@@ -4838,7 +4899,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
             };
             if texture.raw_get::<String>(texture_blend_mode_key())? != mode {
                 texture.raw_set(texture_blend_mode_key(), mode)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)?;
             }
             Ok(())
         })?,
@@ -4877,7 +4938,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 return Err(mlua::Error::runtime("TexCoord out of range"));
             }
             texture.raw_set(tex_coord_key(), lua.create_sequence_from(coords)?)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)
         })?,
     )?;
     methods.raw_set(
@@ -4915,7 +4976,7 @@ fn register_texture_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
                 texture_color_key(),
                 lua.create_sequence_from(color.into_iter().cycle().take(16))?,
             )?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)
         })?,
     )?;
     methods.raw_set(
@@ -4956,7 +5017,7 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
                 let enabled = enabled.unwrap_or(true);
                 if texture.raw_get::<bool>(key)? != enabled {
                     texture.raw_set(key, enabled)?;
-                    mark_live_state_changed(lua)?;
+                    mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)?;
                 }
                 Ok(())
             })?,
@@ -4981,7 +5042,7 @@ fn register_texture_flag_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
             };
             if texture.raw_get::<bool>(desaturated_key())? != enabled {
                 texture.raw_set(desaturated_key(), enabled)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &texture, DIRTY_TEXTURE)?;
             }
             Ok(1.0)
         })?,
@@ -5035,7 +5096,7 @@ fn set_texture_gradient(
         texture_color_key(),
         lua.create_sequence_from(colors.into_iter().flatten())?,
     )?;
-    mark_live_state_changed(lua)
+    mark_object_state_changed(lua, texture, DIRTY_TEXTURE)
 }
 
 fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
@@ -5084,7 +5145,7 @@ fn register_model_methods(
                 != Some(path.as_str())
             {
                 model.raw_set(model_file_key(), path.as_str())?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5102,7 +5163,7 @@ fn register_model_methods(
             let value = value as i32;
             if model.raw_get::<i32>(model_camera_key())? != value {
                 model.raw_set(model_camera_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5121,7 +5182,7 @@ fn register_model_methods(
             let value = value as u32;
             if model.raw_get::<u32>(model_sequence_key())? != value {
                 model.raw_set(model_sequence_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5137,7 +5198,7 @@ fn register_model_methods(
             })?;
             model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
             model.raw_set(model_sequence_time_key(), time as i32)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &model, DIRTY_MODEL)
         })?,
     )?;
     methods.raw_set(
@@ -5157,7 +5218,7 @@ fn register_model_methods(
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetModelScale(scale)"))?;
             if model.raw_get::<f64>(model_scale_key())? != value {
                 model.raw_set(model_scale_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5175,7 +5236,7 @@ fn register_model_methods(
                     model_fog_color_key(),
                     lua.create_sequence_from(color.into_iter().map(|value| value.clamp(0.0, 1.0)))?,
                 )?;
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)
             },
         )?,
     )?;
@@ -5185,7 +5246,7 @@ fn register_model_methods(
             let value = finite_model_number(lua, value, "fog near")?;
             if model.raw_get::<f64>(model_fog_near_key())? != value {
                 model.raw_set(model_fog_near_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5196,7 +5257,7 @@ fn register_model_methods(
             let value = finite_model_number(lua, value, "fog far")?;
             if model.raw_get::<f64>(model_fog_far_key())? != value {
                 model.raw_set(model_fog_far_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5209,7 +5270,7 @@ fn register_model_methods(
                 .is_some()
             {
                 model.raw_set(model_fog_color_key(), Option::<Table>::None)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5220,7 +5281,7 @@ fn register_model_methods(
             let value = finite_model_number(lua, value, "model glow")?;
             if model.raw_get::<f64>(model_glow_key())? != value {
                 model.raw_set(model_glow_key(), value)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())
         })?,
@@ -5229,7 +5290,7 @@ fn register_model_methods(
         "ResetLights",
         lua.create_function(|lua, model: Table| {
             reset_model_lights(&model)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &model, DIRTY_MODEL)
         })?,
     )?;
     register_model_light_method(
@@ -5349,7 +5410,7 @@ fn register_model_light_method(
             ])?;
             lights.raw_set(count + 1, light)?;
             model.raw_set(key, lights)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &model, DIRTY_MODEL)
         })?,
     )
 }
@@ -6202,6 +6263,7 @@ fn set_edit_box_text_at_cursor(
     object.raw_set(edit_selection_start_key(), cursor)?;
     object.raw_set(edit_selection_end_key(), cursor)?;
     reset_edit_box_caret(object)?;
+    mark_object_state_changed(lua, object, DIRTY_TEXT)?;
     if let Some(function) = object_script_function(lua, object, UiScriptHandler::TextChanged)? {
         call_boolean_object_handler(lua, &function, object.clone(), user_input)?;
     }
@@ -6838,7 +6900,7 @@ fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
             object.raw_set(slider_max_key(), maximum)?;
             let value = object.raw_get::<f64>(slider_value_key())?;
             object.raw_set(slider_value_key(), value.clamp(minimum, maximum))?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &object, DIRTY_WIDGET)
         })?,
     )?;
     Ok(())
@@ -6860,7 +6922,7 @@ fn set_range_value(lua: &Lua, object: Table, value: f64) -> mlua::Result<()> {
         return Ok(());
     }
     object.raw_set(slider_value_key(), value)?;
-    mark_live_state_changed(lua)?;
+    mark_object_state_changed(lua, &object, DIRTY_WIDGET)?;
     if let Some(function) = object_script_function(lua, &object, UiScriptHandler::ValueChanged)? {
         call_number_object_handler(lua, &function, object, value)?;
     }
@@ -6958,7 +7020,7 @@ fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> m
         lua.create_function(|lua, object: Table| {
             if !object.raw_get::<bool>(enabled_key())? {
                 object.raw_set(enabled_key(), true)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &object, DIRTY_WIDGET)?;
             }
             Ok(())
         })?,
@@ -6968,7 +7030,7 @@ fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> m
         lua.create_function(|lua, object: Table| {
             if object.raw_get::<bool>(enabled_key())? {
                 object.raw_set(enabled_key(), false)?;
-                mark_live_state_changed(lua)?;
+                mark_object_state_changed(lua, &object, DIRTY_WIDGET)?;
             }
             Ok(())
         })?,
@@ -7047,9 +7109,9 @@ fn register_region_methods(
             object.raw_set(width_key(), width)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
-                mark_auto_text_measurement_changed(lua)
+                mark_auto_text_measurement_changed(lua, &object)
             } else {
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
             }
         })?,
     )?;
@@ -7064,9 +7126,9 @@ fn register_region_methods(
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_height_key(), false)?;
-                mark_auto_text_measurement_changed(lua)
+                mark_auto_text_measurement_changed(lua, &object)
             } else {
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
             }
         })?,
     )?;
@@ -7087,9 +7149,9 @@ fn register_region_methods(
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
                 object.raw_set(auto_text_height_key(), false)?;
-                mark_auto_text_measurement_changed(lua)
+                mark_auto_text_measurement_changed(lua, &object)
             } else {
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
             }
         })?,
     )?;
@@ -7245,7 +7307,7 @@ fn register_region_methods(
         "ClearAllPoints",
         lua.create_function(|lua, object: Table| {
             object.raw_set(anchors_key(), lua.create_table()?)?;
-            mark_live_state_changed(lua)
+            mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
         })?,
     )?;
     register_region_vertex_color_methods(lua, methods)?;
@@ -7610,7 +7672,12 @@ fn register_region_vertex_color_methods(lua: &Lua, methods: &Table) -> mlua::Res
                 lua.create_sequence_from(color.into_iter().cycle().take(component_count))?,
             )?;
             object.raw_set(vertex_color_set_key(), true)?;
-            mark_live_state_changed(lua)
+            let flags = if kind == "Texture" {
+                DIRTY_TEXTURE
+            } else {
+                DIRTY_TEXT
+            };
+            mark_object_state_changed(lua, &object, flags)
         })?,
     )?;
     methods.raw_set(
@@ -7849,7 +7916,7 @@ fn set_all_region_points(lua: &Lua, object: &Table, relative: Option<Value>) -> 
     anchors.raw_set(point_index(UiPoint::TopLeft), top_left)?;
     anchors.raw_set(point_index(UiPoint::BottomRight), bottom_right)?;
     object.raw_set(anchors_key(), anchors)?;
-    mark_live_state_changed(lua)
+    mark_object_state_changed(lua, object, DIRTY_LAYOUT)
 }
 
 fn set_region_point(
@@ -7908,7 +7975,7 @@ fn set_region_point(
     let record = create_anchor_record(lua, point, target, relative_point, offset)?;
     let anchors: Table = object.raw_get(anchors_key())?;
     anchors.raw_set(point_index(point), record)?;
-    mark_live_state_changed(lua)
+    mark_object_state_changed(lua, object, DIRTY_LAYOUT)
 }
 
 fn resolve_region_name(lua: &Lua, object: &Table, source: &str) -> mlua::Result<String> {
@@ -8054,7 +8121,7 @@ fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
             |lua, (object, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
                 let color = clamped_color(red, green, blue, alpha);
                 object.raw_set(backdrop_color_key(), lua.create_sequence_from(color)?)?;
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &object, DIRTY_FRAME)
             },
         )?,
     )?;
@@ -8067,7 +8134,7 @@ fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<(
                     backdrop_border_color_key(),
                     lua.create_sequence_from(color)?,
                 )?;
-                mark_live_state_changed(lua)
+                mark_object_state_changed(lua, &object, DIRTY_FRAME)
             },
         )?,
     )?;
@@ -9118,8 +9185,26 @@ fn live_state_generation(lua: &Lua) -> mlua::Result<u64> {
     lua.named_registry_value(LIVE_STATE_GENERATION_REGISTRY)
 }
 
+fn fallback_state_generation(lua: &Lua) -> mlua::Result<u64> {
+    lua.named_registry_value(FALLBACK_STATE_GENERATION_REGISTRY)
+}
+
 fn visual_state_generation(lua: &Lua) -> mlua::Result<u64> {
     lua.named_registry_value(VISUAL_STATE_GENERATION_REGISTRY)
+}
+
+fn object_state_generation(lua: &Lua) -> mlua::Result<u64> {
+    lua.named_registry_value(OBJECT_STATE_GENERATION_REGISTRY)
+}
+
+pub(super) fn mark_object_state_changed(lua: &Lua, object: &Table, flags: u32) -> mlua::Result<()> {
+    let generation = object_state_generation(lua)?;
+    lua.set_named_registry_value(OBJECT_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))?;
+    let dirty: Table = lua.named_registry_value(DIRTY_OBJECTS_REGISTRY)?;
+    let object_index = object.raw_get::<usize>(index_key())?;
+    let current = dirty.raw_get::<Option<u32>>(object_index)?.unwrap_or(0);
+    dirty.raw_set(object_index, current | flags)?;
+    increment_live_state_generation(lua)
 }
 
 fn mark_visual_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
@@ -9130,12 +9215,20 @@ fn mark_visual_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
         dirty.raw_len() + 1,
         object.raw_get::<usize>(index_key())? - 1,
     )?;
-    mark_live_state_changed(lua)
+    increment_live_state_generation(lua)
 }
 
-fn mark_auto_text_measurement_changed(lua: &Lua) -> mlua::Result<()> {
+fn mark_text_object_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
+    if object.raw_get::<Option<usize>>(index_key())?.is_some() {
+        mark_object_state_changed(lua, object, DIRTY_TEXT)
+    } else {
+        mark_live_state_changed(lua)
+    }
+}
+
+fn mark_auto_text_measurement_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
     lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true)?;
-    mark_live_state_changed(lua)
+    mark_text_object_state_changed(lua, object)
 }
 
 fn clear_visual_dirty_objects(lua: &Lua) -> mlua::Result<()> {
@@ -9157,7 +9250,43 @@ fn take_visual_dirty_objects(lua: &Lua) -> mlua::Result<Vec<usize>> {
     Ok(values)
 }
 
+fn clear_dirty_objects(lua: &Lua) -> mlua::Result<()> {
+    let dirty: Table = lua.named_registry_value(DIRTY_OBJECTS_REGISTRY)?;
+    let keys = dirty
+        .clone()
+        .pairs::<usize, u32>()
+        .map(|entry| entry.map(|(key, _flags)| key))
+        .collect::<mlua::Result<Vec<_>>>()?;
+    for key in keys {
+        dirty.raw_set(key, Value::Nil)?;
+    }
+    Ok(())
+}
+
+fn take_dirty_objects(lua: &Lua) -> mlua::Result<Vec<(usize, u32)>> {
+    let dirty: Table = lua.named_registry_value(DIRTY_OBJECTS_REGISTRY)?;
+    let mut values = dirty
+        .clone()
+        .pairs::<usize, u32>()
+        .map(|entry| entry.map(|(index, flags)| (index - 1, flags)))
+        .collect::<mlua::Result<Vec<_>>>()?;
+    values.sort_unstable_by_key(|(index, _flags)| *index);
+    for (index, _flags) in &values {
+        dirty.raw_set(index + 1, Value::Nil)?;
+    }
+    Ok(values)
+}
+
 pub(crate) fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
+    let generation = fallback_state_generation(lua)?;
+    lua.set_named_registry_value(
+        FALLBACK_STATE_GENERATION_REGISTRY,
+        generation.wrapping_add(1),
+    )?;
+    increment_live_state_generation(lua)
+}
+
+fn increment_live_state_generation(lua: &Lua) -> mlua::Result<()> {
     let generation = live_state_generation(lua)?;
     lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))
 }

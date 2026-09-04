@@ -128,6 +128,115 @@ fn glue_manager_reconciles_visual_events_without_full_snapshots() -> Result<(), 
     Ok(())
 }
 
+/// Typed texture and layout mutations copy only their owning Lua objects.
+#[test]
+fn glue_manager_reconciles_typed_events_without_full_snapshots() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"TypedEvent.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\TypedEvent.xml",
+            bytes: br#"<Ui>
+<Frame name="TypedEventOwner"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Layers><Layer level="ARTWORK">
+<Texture name="TypedEventTexture" file="Interface\Glues\TypedEvent">
+  <Size x="48" y="24"/><Anchors><Anchor point="CENTER"/></Anchors>
+</Texture>
+</Layer></Layers><Scripts>
+  <OnLoad>self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+  <OnEvent>
+    TypedEventTexture:ClearAllPoints()
+    TypedEventTexture:SetPoint("CENTER", nil, "CENTER", 24, -12)
+    if arg1 == "charcreate" then
+      TypedEventTexture:SetWidth(96)
+      TypedEventTexture:SetTexCoord(0.25, 0.75, 0, 1)
+      TypedEventTexture:SetVertexColor(0.2, 0.4, 0.6, 0.8)
+    end
+  </OnEvent>
+</Scripts></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let texture = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("TypedEventTexture"))
+        .ok_or("missing typed-event texture")?;
+    let snapshots = manager.runtime_snapshot_count();
+
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+    )?;
+
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    assert_eq!(
+        manager
+            .geometry()
+            .region(texture)
+            .ok_or("missing typed-event geometry")?
+            .logical_bounds()
+            .width(),
+        96.0
+    );
+    let presented = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|member| member.object_index() == texture)
+        .ok_or("missing typed-event presentation")?;
+    assert_eq!(
+        presented.tex_coords(),
+        [0.25, 0.0, 0.25, 1.0, 0.75, 0.0, 0.75, 1.0]
+    );
+    assert_eq!(presented.vertex_colors()[0], [0.2, 0.4, 0.6, 0.8]);
+    Ok(())
+}
+
+/// Any unclassified event mutation preserves the complete-snapshot fallback.
+#[test]
+fn glue_manager_does_not_mask_fallback_mutations_with_typed_mutations() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"FallbackEvent.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\FallbackEvent.xml",
+            bytes: br#"<Ui>
+<Frame name="FallbackEventOwner"><Scripts>
+  <OnLoad>self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+  <OnEvent>
+    FallbackEventTexture:SetVertexColor(0.2, 0.4, 0.6, 1)
+    FallbackEventFrame:SetScale(arg1 == "charcreate" and 0.75 or 1)
+  </OnEvent>
+</Scripts></Frame>
+<Frame name="FallbackEventFrame"><Size x="80" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="ARTWORK"><Texture name="FallbackEventTexture" file="Interface\Glues\Fallback"/></Layer></Layers>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let snapshots = manager.runtime_snapshot_count();
+
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+    )?;
+
+    assert_eq!(manager.runtime_snapshot_count(), snapshots + 1);
+    Ok(())
+}
+
 /// Stock audio globals preserve invocation order and the two boolean-returning
 /// direct-file calls while transferring playback to the process media owner.
 #[test]

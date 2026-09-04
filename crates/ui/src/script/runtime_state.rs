@@ -3,6 +3,7 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
+    DIRTY_FRAME, DIRTY_LAYOUT, DIRTY_MODEL, DIRTY_TEXT, DIRTY_TEXTURE, DIRTY_WIDGET,
     OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key, backdrop_color_key,
     button_pressed_key, checked_key, click_action_key, desaturated_key, disabled_font_key,
     disabled_text_color_key, draw_layer_key, draw_sub_level_key, edit_caret_visible_key,
@@ -208,6 +209,29 @@ impl UiRuntimeObjectPlan {
         if let Some(object) = self.objects.get_mut(object_index) {
             object.width = width;
             object.height = height;
+        }
+    }
+
+    /// Replaces one object's compact anchor slice and repairs later offsets.
+    fn replace_anchors(&mut self, object_index: usize, anchors: Vec<UiRuntimeAnchor>) {
+        let Some(object) = self.objects.get(object_index) else {
+            return;
+        };
+        let first = object.first_anchor;
+        let old_count = object.anchor_count;
+        let new_count = anchors.len();
+        self.anchors.splice(first..first + old_count, anchors);
+        self.objects[object_index].anchor_count = new_count;
+        if new_count >= old_count {
+            let delta = new_count - old_count;
+            for object in &mut self.objects[object_index + 1..] {
+                object.first_anchor += delta;
+            }
+        } else {
+            let delta = old_count - new_count;
+            for object in &mut self.objects[object_index + 1..] {
+                object.first_anchor -= delta;
+            }
         }
     }
 
@@ -733,6 +757,170 @@ pub(super) fn refresh_runtime_visual_objects(
         }
     }
     Ok(())
+}
+
+/// Copies only fields named by the per-object mutation journal.
+///
+/// Object identity and arena topology are validated by the dispatcher before
+/// this path is selected. Layout still resolves globally because anchors may
+/// target any region, while Lua-to-native copying remains proportional to the
+/// actual mutation set.
+pub(super) fn refresh_runtime_dirty_objects(
+    lua: &Lua,
+    live: &mut UiRuntimeObjectPlan,
+    dirty_objects: &[(usize, u32)],
+) -> Result<Vec<usize>, UiScriptError> {
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    let object_count = live.objects.len();
+    let mut text_objects = Vec::new();
+    let mut text_button_owners = Vec::new();
+
+    for &(object_index, flags) in dirty_objects {
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        let Some(current) = live.objects.get(object_index) else {
+            return Err(UiScriptError::Plan {
+                message: format!("dirty UI object {lua_index} is outside the retained arena"),
+            });
+        };
+        let (kind, role, parent) = (current.kind, current.role, current.parent);
+
+        if flags & DIRTY_LAYOUT != 0 {
+            let width = finite_region_number(&table, width_key(), lua_index, "width")?;
+            let height = finite_region_number(&table, height_key(), lua_index, "height")?;
+            let scale = positive_region_number(&table, scale_key(), lua_index, "scale")?;
+            let mut anchors = Vec::new();
+            snapshot_anchors(lua_index, &table, object_count, &mut anchors)?;
+            live.objects[object_index].width = width;
+            live.objects[object_index].height = height;
+            live.objects[object_index].scale = scale;
+            live.replace_anchors(object_index, anchors);
+        }
+        if flags & DIRTY_TEXTURE != 0 && kind == UiObjectKind::Texture {
+            live.objects[object_index].texture = Some(snapshot_texture(lua_index, &table)?);
+        }
+        if flags & DIRTY_MODEL != 0 && matches!(kind, UiObjectKind::Model | UiObjectKind::ModelFfx)
+        {
+            live.objects[object_index].model = Some(snapshot_model(lua_index, &table)?);
+        }
+        if flags & DIRTY_FRAME != 0 {
+            live.objects[object_index].backdrop_color =
+                snapshot_optional_color(lua_index, &table, backdrop_color_key(), "backdrop color")?;
+            live.objects[object_index].backdrop_border_color = snapshot_optional_color(
+                lua_index,
+                &table,
+                backdrop_border_color_key(),
+                "backdrop border color",
+            )?;
+        }
+        if flags & DIRTY_WIDGET != 0 {
+            let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
+            if matches!(
+                kind,
+                UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::Slider
+            ) {
+                live.objects[object_index].enabled =
+                    Some(table.raw_get(enabled_key()).map_err(|error| {
+                        snapshot_error(format!("object {lua_index} enabled"), error)
+                    })?);
+            }
+            if kind == UiObjectKind::Slider {
+                live.objects[object_index].slider = Some(snapshot_slider(lua_index, &table)?);
+            }
+            if is_button {
+                live.objects[object_index].click_action =
+                    Some(table.raw_get(click_action_key()).map_err(|error| {
+                        snapshot_error(format!("object {lua_index} click action"), error)
+                    })?);
+                live.objects[object_index].highlighted = Some(
+                    table
+                        .raw_get::<bool>(highlight_locked_key())
+                        .and_then(|locked| {
+                            table
+                                .raw_get::<bool>(hovered_key())
+                                .map(|hovered| locked || hovered)
+                        })
+                        .map_err(|error| {
+                            snapshot_error(format!("object {lua_index} highlight"), error)
+                        })?,
+                );
+                live.objects[object_index].pushed =
+                    Some(table.raw_get(button_pressed_key()).map_err(|error| {
+                        snapshot_error(format!("object {lua_index} pushed"), error)
+                    })?);
+                if kind == UiObjectKind::CheckButton {
+                    live.objects[object_index].checked =
+                        Some(table.raw_get(checked_key()).map_err(|error| {
+                            snapshot_error(format!("object {lua_index} checked"), error)
+                        })?);
+                }
+                text_button_owners.push(object_index);
+            }
+        }
+        if flags & DIRTY_TEXT != 0 {
+            if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
+                let (presentation_font, presentation_color) =
+                    button_presentation_font(&registry, role, parent)?;
+                live.objects[object_index].width =
+                    finite_region_number(&table, width_key(), lua_index, "width")?;
+                live.objects[object_index].height =
+                    finite_region_number(&table, height_key(), lua_index, "height")?;
+                live.objects[object_index].text = snapshot_text(
+                    lua_index,
+                    kind,
+                    &table,
+                    presentation_font.as_ref(),
+                    presentation_color,
+                )?;
+                if kind == UiObjectKind::EditBox {
+                    live.objects[object_index].edit_focused =
+                        Some(table.raw_get(edit_focused_key()).map_err(|error| {
+                            snapshot_error(format!("object {lua_index} focus"), error)
+                        })?);
+                }
+                text_objects.push(object_index);
+            } else if matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton) {
+                text_button_owners.push(object_index);
+            }
+        }
+    }
+
+    text_button_owners.sort_unstable();
+    text_button_owners.dedup();
+    if !text_button_owners.is_empty() {
+        for object_index in 0..live.objects.len() {
+            let (kind, role, parent) = {
+                let object = &live.objects[object_index];
+                (object.kind, object.role, object.parent)
+            };
+            if role != UiObjectRole::ButtonText
+                || parent.is_none_or(|owner| text_button_owners.binary_search(&owner).is_err())
+            {
+                continue;
+            }
+            let lua_index = object_index + 1;
+            let table: Table = registry
+                .raw_get(lua_index)
+                .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+            let (presentation_font, presentation_color) =
+                button_presentation_font(&registry, role, parent)?;
+            live.objects[object_index].text = snapshot_text(
+                lua_index,
+                kind,
+                &table,
+                presentation_font.as_ref(),
+                presentation_color,
+            )?;
+            text_objects.push(object_index);
+        }
+    }
+    text_objects.sort_unstable();
+    text_objects.dedup();
+    Ok(text_objects)
 }
 
 /// Copies only the native hover/locked highlight selector for named buttons.

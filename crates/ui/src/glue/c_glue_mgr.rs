@@ -722,7 +722,7 @@ impl GlueManager {
         self.refresh_event_mutations(&dispatch)?;
         if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
             eprintln!(
-                "UI event {event}: script={:.3}ms publish={:.3}ms visual_objects={} targeted={}",
+                "UI event {event}: script={:.3}ms publish={:.3}ms visual_objects={} dirty_objects={} fallback_mutations={} visual_targeted={} objects_targeted={}",
                 script_elapsed.as_secs_f64() * 1_000.0,
                 started
                     .elapsed()
@@ -730,7 +730,10 @@ impl GlueManager {
                     .as_secs_f64()
                     * 1_000.0,
                 dispatch.visual_objects.len(),
+                dispatch.dirty_objects.len(),
+                dispatch.fallback_mutations,
                 dispatch.targeted_visual,
+                dispatch.targeted_objects,
             );
         }
         Ok(UiEventDispatch::new(dispatch.subscriber_count))
@@ -785,13 +788,126 @@ impl GlueManager {
         &mut self,
         dispatch: &crate::script::UiScriptEventDispatch,
     ) -> Result<(), UiEventError> {
-        if dispatch.targeted_visual && self.incremental_visual_updates {
+        if dispatch.targeted_objects {
+            self.refresh_targeted_objects(&dispatch.dirty_objects, &dispatch.visual_objects)
+        } else if dispatch.targeted_visual && self.incremental_visual_updates {
             self.refresh_targeted_visual_objects(&dispatch.visual_objects)
         } else if dispatch.changed {
             self.refresh_live_state()
         } else {
             Ok(())
         }
+    }
+
+    /// Publishes a topology-stable event from its typed mutation journal.
+    ///
+    /// Anchor dependencies still make geometry and draw ordering global, but
+    /// this avoids copying thousands of unchanged Lua tables and confines font
+    /// work to labels whose source state actually changed.
+    fn refresh_targeted_objects(
+        &mut self,
+        dirty_objects: &[(usize, u32)],
+        visual_objects: &[usize],
+    ) -> Result<(), UiEventError> {
+        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
+        let started = std::time::Instant::now();
+        self.deferred_slider_refresh = None;
+        if !visual_objects.is_empty() {
+            self.runtime
+                .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+        }
+        let text_objects =
+            self.runtime
+                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        let copied_elapsed = started.elapsed();
+        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        let geometry_elapsed = started.elapsed();
+        self.runtime
+            .publish_resolved_geometry(&self.bundle, &geometry)?;
+        synchronize_resolved_dimensions(&mut self.live, &geometry);
+        let published_elapsed = started.elapsed();
+        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
+        let scroll_elapsed = started.elapsed();
+        if !text_objects.is_empty() {
+            if self.glyphs.supports_live_text_objects(
+                &self.live,
+                self.glyph_logical_height,
+                text_objects.iter().copied(),
+            ) {
+                self.glyphs.refresh_live_text_objects(
+                    &self.live,
+                    &geometry,
+                    self.glyph_logical_height,
+                    &text_objects,
+                )?;
+            } else if self
+                .glyphs
+                .supports_live_text(&self.live, self.glyph_logical_height)
+            {
+                self.glyphs
+                    .refresh_live_text(&self.live, &geometry, self.glyph_logical_height)?;
+            } else {
+                self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                    self.runtime.simple_html(),
+                    &self.live,
+                    &geometry,
+                    &self.fonts,
+                    &mut self.assets.borrow_mut(),
+                    self.glyph_logical_height,
+                )?;
+            }
+        }
+        let glyph_elapsed = started.elapsed();
+        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let presentation_elapsed = started.elapsed();
+        let render_plan = UiRenderPlan::prepare_with_glyphs(
+            &presentation,
+            &self.glyphs,
+            &geometry,
+            &scroll_frames,
+            geometry.ui_extent(),
+        )?;
+        let render_elapsed = started.elapsed();
+        let (objects, child_indices) = build_live_hierarchy(&self.live)?;
+        let pointer = UiPointerPlan::from_live(&self.live);
+        let plans_elapsed = started.elapsed();
+        self.geometry = geometry;
+        self.scroll_frames = scroll_frames;
+        self.presentation = presentation;
+        self.render_plan = render_plan;
+        self.objects = objects;
+        self.child_indices = child_indices;
+        self.pointer = pointer;
+        if timings {
+            eprintln!(
+                "UI targeted publish: copy={:.3}ms geometry={:.3}ms writeback={:.3}ms scroll={:.3}ms glyphs={:.3}ms presentation={:.3}ms mesh={:.3}ms hierarchy={:.3}ms total={:.3}ms",
+                copied_elapsed.as_secs_f64() * 1_000.0,
+                geometry_elapsed
+                    .saturating_sub(copied_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                published_elapsed
+                    .saturating_sub(geometry_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                scroll_elapsed
+                    .saturating_sub(published_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                glyph_elapsed.saturating_sub(scroll_elapsed).as_secs_f64() * 1_000.0,
+                presentation_elapsed
+                    .saturating_sub(glyph_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                render_elapsed
+                    .saturating_sub(presentation_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                plans_elapsed.saturating_sub(render_elapsed).as_secs_f64() * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+        Ok(())
     }
 
     fn refresh_targeted_visual_objects(
