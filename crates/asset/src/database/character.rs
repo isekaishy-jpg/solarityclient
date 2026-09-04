@@ -10,6 +10,8 @@ const HAIR_GEOSETS_PATH: &str = "DBFilesClient\\CharHairGeosets.dbc";
 const FACIAL_HAIR_PATH: &str = "DBFilesClient\\CharacterFacialHairStyles.dbc";
 const SECTION_FLAG_PLAYER: u32 = 0x01;
 const SECTION_FLAG_DEATH_KNIGHT: u32 = 0x04;
+const SECTION_FLAG_NPC_SKIN: u32 = 0x08;
+const SECTION_FLAG_SHARED_DEATH_KNIGHT: u32 = 0x10;
 const DEATH_KNIGHT_CLASS_ID: u8 = 6;
 
 /// One exact build-12340 character texture section.
@@ -294,8 +296,10 @@ impl CharacterAppearanceCatalog {
         )
     }
 
-    /// Returns skin colors whose required skin and underwear sections are
-    /// selectable for one class.
+    /// Returns skin colors admitted by stock's class-specific creation filter.
+    ///
+    /// Build 12340 `0x004E7B80` counts the skin array itself; underwear is a
+    /// separate renderer input and cannot remove a customization choice.
     #[must_use]
     pub fn player_skin_colors_for_class(
         &self,
@@ -307,12 +311,7 @@ impl CharacterAppearanceCatalog {
             self.sections_for_kind(race_id, gender_id, 0)
                 .iter()
                 .filter(|section| {
-                    section.variation_index == 0
-                        && section_admits_class(section, class_id)
-                        && self
-                            .sections_for(race_id, gender_id, 4, 0, section.color_index)
-                            .iter()
-                            .any(|underwear| section_admits_class(underwear, class_id))
+                    section.variation_index == 0 && section_admits_class(section, class_id)
                 })
                 .map(|section| section.color_index),
         )
@@ -335,6 +334,30 @@ impl CharacterAppearanceCatalog {
                 })
                 .map(|section| section.variation_index),
         )
+    }
+
+    /// Returns skin neighbors that preserve the current face during cycling.
+    ///
+    /// Unlike random skin selection, `0x004EB150`/`0x004EB290` require eligible
+    /// skin, current-face, and underwear rows before accepting a neighbor.
+    #[must_use]
+    pub fn player_skin_colors_for_face(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        face: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        self.player_skin_colors_for_class(race_id, gender_id, class_id)
+            .into_iter()
+            .filter(|skin| {
+                [(1, face), (4, 0)].into_iter().all(|(kind, variation)| {
+                    self.sections_for(race_id, gender_id, kind, variation, *skin)
+                        .iter()
+                        .any(|section| section_admits_class(section, class_id))
+                })
+            })
+            .collect()
     }
 
     /// Returns hair styles with at least one class-admitted texture color.
@@ -388,6 +411,50 @@ impl CharacterAppearanceCatalog {
         )
     }
 
+    /// Returns class-admitted facial features for the current hair color.
+    ///
+    /// `0x004E7DF0` uses texture rows when that race/sex has facial textures,
+    /// and uses its geometry feature count only when the texture array is absent.
+    #[must_use]
+    pub fn player_facial_hair_styles_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        hair_color: u32,
+        class_id: u8,
+    ) -> Vec<u32> {
+        let sections = self.sections_for_kind(race_id, gender_id, 2);
+        if sections.is_empty() {
+            return self.player_facial_hair_styles(race_id, gender_id);
+        }
+        distinct_values(
+            sections
+                .iter()
+                .filter(|section| {
+                    section.color_index == hair_color && section_admits_class(section, class_id)
+                })
+                .map(|section| section.variation_index),
+        )
+    }
+
+    /// Borrows face texture declarations, including holes implied by their keys.
+    ///
+    /// Face cycling at `0x004EB710` uses each variation's allocated skin range
+    /// before filtering choices, so callers must retain ineligible declarations.
+    #[must_use]
+    pub fn face_sections(&self, race_id: u32, gender_id: u32) -> &[CharacterSection] {
+        self.sections_for_kind(race_id, gender_id, 1)
+    }
+
+    /// Borrows facial texture declarations, including holes implied by their keys.
+    ///
+    /// Creation distinguishes an absent style/color array range from a null
+    /// row inside that range (`0x004F3BA0`); filtered choices cannot encode it.
+    #[must_use]
+    pub fn facial_hair_sections(&self, race_id: u32, gender_id: u32) -> &[CharacterSection] {
+        self.sections_for_kind(race_id, gender_id, 2)
+    }
+
     fn sections_for_kind(
         &self,
         race_id: u32,
@@ -406,9 +473,16 @@ impl CharacterAppearanceCatalog {
     }
 }
 
+/// Replays creation selectors zero/one from `0x004F3A40` and `0x004F39A0`.
 fn section_admits_class(section: &CharacterSection, class_id: u8) -> bool {
-    section.flags & SECTION_FLAG_PLAYER != 0
-        && (class_id == DEATH_KNIGHT_CLASS_ID || section.flags & SECTION_FLAG_DEATH_KNIGHT == 0)
+    if section.flags & SECTION_FLAG_PLAYER == 0 || section.flags & SECTION_FLAG_NPC_SKIN != 0 {
+        return false;
+    }
+    if class_id == DEATH_KNIGHT_CLASS_ID {
+        section.flags & (SECTION_FLAG_DEATH_KNIGHT | SECTION_FLAG_SHARED_DEATH_KNIGHT) != 0
+    } else {
+        section.flags & SECTION_FLAG_DEATH_KNIGHT == 0
+    }
 }
 
 fn distinct_values(values: impl Iterator<Item = u32>) -> Vec<u32> {

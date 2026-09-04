@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use solarity_asset::{
     AssetError, AssetPath, AssetStore, CharacterAppearanceCatalog, CharacterBaseCatalog,
-    CharacterClassCatalog, CharacterFactionCatalog, CharacterRaceCatalog,
+    CharacterClassCatalog, CharacterFactionCatalog, CharacterRaceCatalog, CharacterSection,
 };
 use solarity_cpu::BlizzardRand;
 use thiserror::Error;
@@ -196,7 +196,8 @@ struct UiCreationRace {
     facial_hair_tokens: [String; 2],
     hair_token: String,
     required_expansion: u32,
-    appearances: Vec<[UiAppearanceChoices; 2]>,
+    /// Ordinary and death-knight selection filters, each indexed by sex.
+    appearances: [[UiAppearanceChoices; 2]; 2],
 }
 
 impl UiCreationRace {
@@ -268,13 +269,20 @@ impl UiCreationClassRoles {
     }
 }
 
+/// Precomputed ordinary or death-knight selectors for one race and sex.
 #[derive(Clone, Debug, Default)]
 struct UiAppearanceChoices {
     skins: Vec<u8>,
+    skins_by_face: Vec<(u8, Vec<u8>)>,
     faces: Vec<(u8, Vec<u8>)>,
+    face_skin_bounds: Vec<(u8, u32)>,
     hair_styles: Vec<u8>,
     hair_colors: Vec<(u8, Vec<u8>)>,
-    facial_hair: Vec<u8>,
+    hair_styles_by_color: Vec<(u8, Vec<u8>)>,
+    facial_hair: Vec<(u8, Vec<u8>)>,
+    facial_hair_styles: Vec<u8>,
+    facial_hair_color_bounds: Vec<(u8, u32)>,
+    facial_hair_geometry_count: u32,
 }
 
 impl UiAppearanceChoices {
@@ -299,6 +307,25 @@ impl UiAppearanceChoices {
                 .map(|values| (*skin, values))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut face_values = faces
+            .iter()
+            .flat_map(|(_skin, faces)| faces.iter().copied())
+            .collect::<Vec<_>>();
+        face_values.sort_unstable();
+        face_values.dedup();
+        let skins_by_face = face_values
+            .into_iter()
+            .map(|face| {
+                narrow_values(catalog.player_skin_colors_for_face(
+                    race,
+                    gender,
+                    u32::from(face),
+                    class_id,
+                ))
+                .map(|skins| (face, skins))
+            })
+            .collect::<Result<Vec<_>, AssetError>>()?;
+        let face_skin_bounds = section_color_bounds(catalog.face_sections(race, gender))?;
         let hair_styles =
             narrow_values(catalog.player_hair_styles_for_class(race, gender, class_id))?;
         let hair_colors = hair_styles
@@ -313,13 +340,67 @@ impl UiAppearanceChoices {
                 .map(|values| (*style, values))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let facial_hair = narrow_values(catalog.player_facial_hair_styles(race, gender))?;
+        let mut colors = hair_colors
+            .iter()
+            .flat_map(|(_style, colors)| colors.iter().copied())
+            .collect::<Vec<_>>();
+        let facial_hair_color_bounds =
+            section_color_bounds(catalog.facial_hair_sections(race, gender))?;
+        for section in catalog.facial_hair_sections(race, gender) {
+            let color = narrow_id(section.color_index(), "facial feature color")?;
+            colors.push(color);
+        }
+        // Fresh stock appearance records start with color zero even when its
+        // current style has no selectable colors.
+        colors.push(0);
+        colors.sort_unstable();
+        colors.dedup();
+        let hair_styles_by_color = colors
+            .iter()
+            .map(|color| {
+                let styles = hair_colors
+                    .iter()
+                    .filter(|(_style, colors)| colors.contains(color))
+                    .map(|(style, _colors)| *style)
+                    .collect();
+                (*color, styles)
+            })
+            .collect();
+        let facial_hair = colors
+            .iter()
+            .map(|color| {
+                narrow_values(catalog.player_facial_hair_styles_for_class(
+                    race,
+                    gender,
+                    u32::from(*color),
+                    class_id,
+                ))
+                .map(|styles| (*color, styles))
+            })
+            .collect::<Result<Vec<_>, AssetError>>()?;
+        let mut facial_hair_styles = facial_hair
+            .iter()
+            .flat_map(|(_color, styles)| styles.iter().copied())
+            .collect::<Vec<_>>();
+        facial_hair_styles.sort_unstable();
+        facial_hair_styles.dedup();
+        let facial_hair_geometry_count = catalog
+            .player_facial_hair_styles(race, gender)
+            .into_iter()
+            .max()
+            .map_or(0, |style| style + 1);
         Ok(Self {
             skins,
+            skins_by_face,
             faces,
+            face_skin_bounds,
             hair_styles,
             hair_colors,
+            hair_styles_by_color,
             facial_hair,
+            facial_hair_styles,
+            facial_hair_color_bounds,
+            facial_hair_geometry_count,
         })
     }
 
@@ -327,9 +408,67 @@ impl UiAppearanceChoices {
         keyed_values(&self.faces, skin)
     }
 
+    fn skins_for(&self, face: u8) -> &[u8] {
+        keyed_values(&self.skins_by_face, face)
+    }
+
     fn hair_colors_for(&self, style: u8) -> &[u8] {
         keyed_values(&self.hair_colors, style)
     }
+
+    fn hair_styles_for(&self, color: u8) -> &[u8] {
+        keyed_values(&self.hair_styles_by_color, color)
+    }
+
+    fn facial_hair_for(&self, color: u8) -> &[u8] {
+        keyed_values(&self.facial_hair, color)
+    }
+
+    /// Reproduces the range-presence output of ComponentGet at 0x004F3BA0.
+    fn has_facial_texture_range(&self, style: u8, color: u8) -> bool {
+        self.facial_hair_color_bounds
+            .iter()
+            .any(|(key, count)| *key == style && u32::from(color) < *count)
+    }
+
+    /// 0x004E7DF0 uses geometry count only when the whole texture array is absent.
+    fn facial_hair_choice_count(&self, color: u8) -> usize {
+        if self.facial_hair_color_bounds.is_empty() {
+            self.facial_hair_geometry_count as usize
+        } else {
+            self.facial_hair_for(color).len()
+        }
+    }
+
+    /// 0x004E80E0 maps an ordinal according to the current feature's array range.
+    fn facial_hair_choice(&self, appearance: UiAppearance, ordinal: usize) -> Option<u8> {
+        if !self.has_facial_texture_range(appearance.facial_hair, appearance.hair_color) {
+            return (ordinal < self.facial_hair_geometry_count as usize).then_some(ordinal as u8);
+        }
+        let choices = self.facial_hair_for(appearance.hair_color);
+        // This stock mapper bounds its scan by the filtered count, not the
+        // full texture-array extent. Do not compact holes before this scan.
+        choices
+            .iter()
+            .filter(|style| usize::from(**style) < choices.len())
+            .nth(ordinal)
+            .copied()
+    }
+}
+
+/// Preserves the allocated color extent independently of each row's eligibility.
+fn section_color_bounds(sections: &[CharacterSection]) -> Result<Vec<(u8, u32)>, AssetError> {
+    let mut bounds = Vec::<(u8, u32)>::new();
+    for section in sections {
+        let style = narrow_id(section.variation_index(), "appearance variation")?;
+        let color = narrow_id(section.color_index(), "appearance color")?;
+        if let Some((_, count)) = bounds.iter_mut().find(|(key, _)| *key == style) {
+            *count = (*count).max(u32::from(color) + 1);
+        } else {
+            bounds.push((style, u32::from(color) + 1));
+        }
+    }
+    Ok(bounds)
 }
 
 fn keyed_values(values: &[(u8, Vec<u8>)], key: u8) -> &[u8] {
@@ -416,15 +555,16 @@ impl UiCharacterCreationCatalog {
                     ],
                     hair_token: race.hair_customization().to_owned(),
                     required_expansion: race.required_expansion(),
-                    appearances: creation_classes
-                        .iter()
-                        .map(|class| {
-                            Ok([
-                                UiAppearanceChoices::load(&appearances, id, 0, class.id)?,
-                                UiAppearanceChoices::load(&appearances, id, 1, class.id)?,
-                            ])
-                        })
-                        .collect::<Result<Vec<_>, AssetError>>()?,
+                    appearances: [
+                        [
+                            UiAppearanceChoices::load(&appearances, id, 0, 0)?,
+                            UiAppearanceChoices::load(&appearances, id, 1, 0)?,
+                        ],
+                        [
+                            UiAppearanceChoices::load(&appearances, id, 0, 6)?,
+                            UiAppearanceChoices::load(&appearances, id, 1, 6)?,
+                        ],
+                    ],
                 });
             }
         }
@@ -452,7 +592,10 @@ struct UiCharacterCreationInner {
     selected_class: usize,
     gender_id: u8,
     appearance: UiAppearance,
-    preferences: Vec<Vec<[UiPreference; 2]>>,
+    /// Last explicit skin choice, used as the face selector's skin search origin.
+    face_skin_origin: u8,
+    /// `CharacterCreation.cpp` caches one appearance per race/sex, not class.
+    preferences: Vec<[UiPreference; 2]>,
     facing_degrees: f64,
 }
 
@@ -475,8 +618,7 @@ impl UiCharacterCreationState {
         random: Rc<RefCell<BlizzardRand>>,
     ) -> Result<Self, AssetError> {
         let catalog = UiCharacterCreationCatalog::load(store, streaming_trial)?;
-        let preferences =
-            vec![vec![[UiPreference::default(); 2]; catalog.classes.len()]; catalog.races.len()];
+        let preferences = vec![[UiPreference::default(); 2]; catalog.races.len()];
         Ok(Self {
             inner: Rc::new(RefCell::new(UiCharacterCreationInner {
                 catalog,
@@ -485,6 +627,7 @@ impl UiCharacterCreationState {
                 selected_class: 0,
                 gender_id: 0,
                 appearance: UiAppearance::default(),
+                face_skin_origin: 0,
                 preferences,
                 facing_degrees: 0.0,
             })),
@@ -505,39 +648,35 @@ impl UiCharacterCreationState {
     /// playable combination for the authenticated expansion.
     pub fn reset(&self) -> Result<(), UiCharacterCreationError> {
         let mut inner = self.inner.borrow_mut();
-        // ResetCharCustomize clears the per-race/sex model cache but leaves
-        // the current sex untouched. CharacterCreate enters with the authored
-        // male default and immediately reapplies that same selection.
-        for race in &mut inner.preferences {
-            race.fill([UiPreference::default(); 2]);
-        }
-        let eligible_races = inner
-            .catalog
-            .races
-            .iter()
-            .enumerate()
-            .filter(|(_index, race)| {
-                inner.expansion.admits(race.required_expansion)
-                    && inner.catalog.classes.iter().any(|class| {
-                        inner.expansion.admits(class.required_expansion)
-                            && inner.catalog.supports(race.id, class.id)
-                    })
-            })
-            .map(|(index, _race)| index)
-            .collect::<Vec<_>>();
+        let has_eligible_race = inner.catalog.races.iter().any(|race| {
+            inner.expansion.admits(race.required_expansion)
+                && inner.catalog.classes.iter().any(|class| {
+                    inner.expansion.admits(class.required_expansion)
+                        && inner.catalog.supports(race.id, class.id)
+                })
+        });
         let expansion = inner.expansion.0;
-        let race_choice = random_choice(&eligible_races, &mut self.random.borrow_mut())
-            .copied()
-            .ok_or(UiCharacterCreationError::NoPlayableRace { expansion })?;
-        inner.selected_race = race_choice;
-        choose_random_valid_class(&mut inner, &mut self.random.borrow_mut())?;
-        randomize_appearance(&mut inner, &mut self.random.borrow_mut())?;
-        let gender_index = usize::from(inner.gender_id);
-        let class_index = inner.selected_class;
-        inner.preferences[race_choice][class_index][gender_index] = UiPreference {
-            appearance: inner.appearance,
-            initialized: true,
-        };
+        if !has_eligible_race {
+            return Err(UiCharacterCreationError::NoPlayableRace { expansion });
+        }
+        let mut random = self.random.borrow_mut();
+        // 0x004DFF10 consumes sex first, then retries full-list race rolls
+        // until entitlement admits one. Prefiltering changes the random stream.
+        inner.gender_id = scaled_random_index(2, &mut random) as u8;
+        loop {
+            let race_choice = scaled_random_index(inner.catalog.races.len(), &mut random);
+            let race = &inner.catalog.races[race_choice];
+            if inner.expansion.admits(race.required_expansion) {
+                inner.selected_race = race_choice;
+                break;
+            }
+        }
+        // 0x004E1FD0 first creates an ordinary class-zero appearance, then
+        // chooses a class in CharBaseInfo order and validates that appearance.
+        initialize_appearance(&mut inner, 0, &mut random);
+        choose_random_valid_class(&mut inner, &mut random)?;
+        validate_appearance(&mut inner)?;
+        save_preference(&mut inner);
         Ok(())
     }
 
@@ -640,9 +779,10 @@ impl UiCharacterCreationState {
         if inner.selected_class == class_index {
             return Ok(());
         }
-        save_preference(&mut inner);
         inner.selected_class = class_index;
-        restore_or_randomize_appearance(&mut inner, &mut self.random.borrow_mut())
+        validate_appearance(&mut inner)?;
+        save_preference(&mut inner);
+        Ok(())
     }
 
     /// Selects stock's male/two or female/three token and restores preferences.
@@ -743,66 +883,51 @@ impl UiCharacterCreationState {
         delta: i32,
     ) -> Result<(), UiCharacterCreationError> {
         let mut inner = self.inner.borrow_mut();
+        // 0x004E01F0 treats delta as a direction and ignores zero.
+        if delta == 0 {
+            return Ok(());
+        }
+        let delta = delta.signum();
         let choices = appearance_choices(&inner);
+        let mut appearance = inner.appearance;
         match index {
             1 => {
-                inner.appearance.skin = cycle_value(
-                    &choices.skins,
-                    inner.appearance.skin,
-                    delta,
-                    &inner,
-                    "skin color",
-                )?;
-                inner.appearance.face = first_or_current(
-                    choices.faces_for(inner.appearance.skin),
-                    inner.appearance.face,
-                    &inner,
-                    "face",
-                )?;
+                appearance.skin =
+                    cycle_value(choices.skins_for(appearance.face), appearance.skin, delta);
             }
             2 => {
-                inner.appearance.face = cycle_value(
-                    choices.faces_for(inner.appearance.skin),
-                    inner.appearance.face,
-                    delta,
-                    &inner,
-                    "face",
-                )?;
+                cycle_face(&mut appearance, choices, inner.face_skin_origin, delta);
             }
             3 => {
-                inner.appearance.hair_style = cycle_value(
-                    &choices.hair_styles,
-                    inner.appearance.hair_style,
-                    delta,
-                    &inner,
-                    "hair style",
-                )?;
-                inner.appearance.hair_color = first_or_current(
-                    choices.hair_colors_for(inner.appearance.hair_style),
-                    inner.appearance.hair_color,
-                    &inner,
-                    "hair color",
-                )?;
+                appearance.hair_style =
+                    cycle_value(&choices.hair_styles, appearance.hair_style, delta);
+                let colors = choices.hair_colors_for(appearance.hair_style);
+                if !colors.contains(&appearance.hair_color)
+                    && let Some(color) = colors.first()
+                {
+                    // 0x004F0490/0x004F0630 choose the first eligible color
+                    // when a neighboring style cannot retain the current one.
+                    appearance.hair_color = *color;
+                    if let Some(feature) = choices.facial_hair_choice(appearance, 0) {
+                        appearance.facial_hair = feature;
+                    }
+                }
             }
             4 => {
-                inner.appearance.hair_color = cycle_value(
-                    choices.hair_colors_for(inner.appearance.hair_style),
-                    inner.appearance.hair_color,
+                appearance.hair_color = cycle_value(
+                    choices.hair_colors_for(appearance.hair_style),
+                    appearance.hair_color,
                     delta,
-                    &inner,
-                    "hair color",
-                )?;
+                );
             }
             5 => {
-                inner.appearance.facial_hair = cycle_value(
-                    &choices.facial_hair,
-                    inner.appearance.facial_hair,
-                    delta,
-                    &inner,
-                    "facial hair",
-                )?;
+                cycle_facial_hair(&mut appearance, choices, delta);
             }
             _ => return Err(UiCharacterCreationError::InvalidCustomizationIndex { index }),
+        }
+        inner.appearance = appearance;
+        if index == 1 {
+            inner.face_skin_origin = appearance.skin;
         }
         save_preference(&mut inner);
         Ok(())
@@ -811,7 +936,17 @@ impl UiCharacterCreationState {
     /// Randomizes the five appearance axes while retaining race/class/sex.
     pub fn randomize_customization(&self) -> Result<(), UiCharacterCreationError> {
         let mut inner = self.inner.borrow_mut();
-        randomize_appearance(&mut inner, &mut self.random.borrow_mut())?;
+        let choices = appearance_choices(&inner);
+        let mut appearance = inner.appearance;
+        let mut random = self.random.borrow_mut();
+        // 0x004E17F0 differs from fresh-model setup: face precedes hair color.
+        randomize_value(&mut appearance.skin, &choices.skins, &mut random);
+        let skin = appearance.skin;
+        randomize_value(&mut appearance.face, choices.faces_for(skin), &mut random);
+        randomize_hair(&mut appearance, choices, &mut random);
+        randomize_facial_hair(&mut appearance, choices, &mut random);
+        inner.appearance = appearance;
+        inner.face_skin_origin = appearance.skin;
         save_preference(&mut inner);
         Ok(())
     }
@@ -868,59 +1003,238 @@ impl UiCharacterCreationState {
     }
 }
 
-fn appearance_choices(inner: &UiCharacterCreationInner) -> UiAppearanceChoices {
-    inner.catalog.races[inner.selected_race].appearances[inner.selected_class]
-        [usize::from(inner.gender_id)]
-    .clone()
+/// Borrows the immutable choices for the selected race, sex, and class rules.
+fn appearance_choices(inner: &UiCharacterCreationInner) -> &UiAppearanceChoices {
+    let class_id = inner.catalog.classes[inner.selected_class].id;
+    appearance_choices_for_class(inner, class_id)
 }
 
+/// Class zero uses ordinary creation rules during the stock reset sequence.
+fn appearance_choices_for_class(
+    inner: &UiCharacterCreationInner,
+    class_id: u8,
+) -> &UiAppearanceChoices {
+    &inner.catalog.races[inner.selected_race].appearances[usize::from(class_id == 6)]
+        [usize::from(inner.gender_id)]
+}
+
+/// Saves the race/sex record reused independently of subsequent class selection.
 fn save_preference(inner: &mut UiCharacterCreationInner) {
-    inner.preferences[inner.selected_race][inner.selected_class][usize::from(inner.gender_id)] =
-        UiPreference {
-            appearance: inner.appearance,
-            initialized: true,
-        };
+    inner.preferences[inner.selected_race][usize::from(inner.gender_id)] = UiPreference {
+        appearance: inner.appearance,
+        initialized: true,
+    };
 }
 
 fn restore_or_randomize_appearance(
     inner: &mut UiCharacterCreationInner,
     random: &mut BlizzardRand,
 ) -> Result<(), UiCharacterCreationError> {
-    let preference =
-        inner.preferences[inner.selected_race][inner.selected_class][usize::from(inner.gender_id)];
+    let preference = inner.preferences[inner.selected_race][usize::from(inner.gender_id)];
     if preference.initialized {
         inner.appearance = preference.appearance;
-        Ok(())
+        validate_appearance(inner)
     } else {
-        randomize_appearance(inner, random)?;
+        let class_id = inner.catalog.classes[inner.selected_class].id;
+        initialize_appearance(inner, class_id, random);
         save_preference(inner);
         Ok(())
     }
 }
 
-fn randomize_appearance(
+/// 0x004E13A0 starts from zero and rolls skin, color, style, face, then features.
+fn initialize_appearance(
     inner: &mut UiCharacterCreationInner,
+    class_id: u8,
     random: &mut BlizzardRand,
+) {
+    let choices = appearance_choices_for_class(inner, class_id);
+    let mut appearance = UiAppearance::default();
+    randomize_value(&mut appearance.skin, &choices.skins, random);
+    randomize_hair(&mut appearance, choices, random);
+    randomize_value(
+        &mut appearance.face,
+        choices.faces_for(appearance.skin),
+        random,
+    );
+    randomize_facial_hair(&mut appearance, choices, random);
+    inner.appearance = appearance;
+    inner.face_skin_origin = appearance.skin;
+}
+
+/// Stock chooses color using the current style, then style using the new color.
+fn randomize_hair(
+    appearance: &mut UiAppearance,
+    choices: &UiAppearanceChoices,
+    random: &mut BlizzardRand,
+) {
+    randomize_value(
+        &mut appearance.hair_color,
+        choices.hair_colors_for(appearance.hair_style),
+        random,
+    );
+    randomize_value(
+        &mut appearance.hair_style,
+        choices.hair_styles_for(appearance.hair_color),
+        random,
+    );
+}
+
+/// Empty stock selectors leave their previous value intact and consume no roll.
+fn randomize_value(value: &mut u8, choices: &[u8], random: &mut BlizzardRand) {
+    if let Some(selected) = random_choice(choices, random) {
+        *value = *selected;
+    }
+}
+
+/// Facial randomization has separate count and current-array mapping branches.
+fn randomize_facial_hair(
+    appearance: &mut UiAppearance,
+    choices: &UiAppearanceChoices,
+    random: &mut BlizzardRand,
+) {
+    let count = choices.facial_hair_choice_count(appearance.hair_color);
+    let ordinal = if count == 0 {
+        0
+    } else {
+        scaled_random_index(count, random)
+    };
+    if let Some(feature) = choices.facial_hair_choice(*appearance, ordinal) {
+        appearance.facial_hair = feature;
+    }
+}
+
+/// 0x004EBCA0/0x004EBE80 distinguish geometry cycling from textured features.
+fn cycle_facial_hair(appearance: &mut UiAppearance, choices: &UiAppearanceChoices, delta: i32) {
+    if !choices.has_facial_texture_range(appearance.facial_hair, appearance.hair_color) {
+        let count = choices.facial_hair_geometry_count;
+        if count > 0 {
+            appearance.facial_hair = (i64::from(appearance.facial_hair) + i64::from(delta))
+                .rem_euclid(i64::from(count)) as u8;
+        }
+        return;
+    }
+    let feature = cycle_value(&choices.facial_hair_styles, appearance.facial_hair, delta);
+    if !choices
+        .facial_hair_for(appearance.hair_color)
+        .contains(&feature)
+        && let Some((color, _styles)) = choices
+            .facial_hair
+            .iter()
+            .find(|(_color, styles)| styles.contains(&feature))
+    {
+        appearance.hair_color = *color;
+    }
+    appearance.facial_hair = feature;
+}
+
+/// 0x004EB710/0x004EB990 scan faces across skins, retaining the explicit skin origin.
+fn cycle_face(
+    appearance: &mut UiAppearance,
+    choices: &UiAppearanceChoices,
+    origin: u8,
+    delta: i32,
+) {
+    let count = choices
+        .face_skin_bounds
+        .iter()
+        .map(|(face, _)| u32::from(*face) + 1)
+        .max()
+        .unwrap_or(0);
+    for offset in 1..count {
+        let face = (i64::from(appearance.face) + i64::from(delta) * i64::from(offset))
+            .rem_euclid(i64::from(count)) as u8;
+        let Some((_, skin_count)) = choices
+            .face_skin_bounds
+            .iter()
+            .find(|(key, _)| *key == face)
+        else {
+            continue;
+        };
+        let eligible = choices.skins_for(face);
+        let mut skin = 0;
+        while skin < *skin_count {
+            // The stock loop adds the origin on every iteration, then tests
+            // the incremented index against the allocated range's upper bound.
+            skin = (skin + u32::from(origin)) % skin_count;
+            if eligible.contains(&(skin as u8)) {
+                if !eligible.contains(&appearance.skin) {
+                    appearance.skin = skin as u8;
+                }
+                appearance.face = face;
+                return;
+            }
+            skin += 1;
+        }
+    }
+}
+
+/// Replays 0x004E9D50's deterministic repair after a class or cached-model change.
+fn validate_appearance(
+    inner: &mut UiCharacterCreationInner,
 ) -> Result<(), UiCharacterCreationError> {
     let choices = appearance_choices(inner);
-    inner.appearance.skin = required_random(&choices.skins, inner, "skin color", random)?;
-    inner.appearance.face = required_random(
-        choices.faces_for(inner.appearance.skin),
-        inner,
-        "face",
-        random,
-    )?;
-    inner.appearance.hair_style =
-        required_random(&choices.hair_styles, inner, "hair style", random)?;
-    inner.appearance.hair_color = required_random(
-        choices.hair_colors_for(inner.appearance.hair_style),
-        inner,
-        "hair color",
-        random,
-    )?;
-    inner.appearance.facial_hair =
-        required_random(&choices.facial_hair, inner, "facial hair", random)?;
+    let mut appearance = inner.appearance;
+    appearance.skin = validated_value(&choices.skins, appearance.skin);
+    appearance.face = validated_value(choices.faces_for(appearance.skin), appearance.face);
+    let styles = choices.hair_styles_for(appearance.hair_color);
+    if !styles.contains(&appearance.hair_style) {
+        if !styles.is_empty() {
+            appearance.hair_style = validated_value(styles, appearance.hair_style);
+        } else if choices.hair_styles.is_empty() {
+            appearance.hair_style = 0;
+            appearance.hair_color = 0;
+        } else {
+            // Stock scans actual style indices after taking the remainder by
+            // the number of styles having colors. Preserve that scan rather
+            // than treating an unavailable style index as a compact ordinal.
+            let candidate = usize::from(appearance.hair_style) % choices.hair_styles.len();
+            if let Some(style) = choices
+                .hair_styles
+                .iter()
+                .find(|style| usize::from(**style) == candidate)
+            {
+                appearance.hair_style = *style;
+            }
+            let colors = choices.hair_colors_for(appearance.hair_style);
+            if colors.is_empty() {
+                return Err(missing_axis(inner, "hair color"));
+            }
+            appearance.hair_color = validated_value(colors, appearance.hair_color);
+        }
+    }
+    let feature_valid = u32::from(appearance.facial_hair) <= choices.facial_hair_geometry_count
+        && (!choices.has_facial_texture_range(appearance.facial_hair, appearance.hair_color)
+            || choices
+                .facial_hair_for(appearance.hair_color)
+                .contains(&appearance.facial_hair));
+    if !feature_valid {
+        let count = choices.facial_hair_choice_count(appearance.hair_color);
+        appearance.facial_hair = if count == 0 {
+            0
+        } else {
+            let feature =
+                choices.facial_hair_choice(appearance, usize::from(appearance.facial_hair) % count);
+            let Some(feature) = feature else {
+                return Err(missing_axis(inner, "facial hair"));
+            };
+            feature
+        };
+    }
+    inner.appearance = appearance;
+    inner.face_skin_origin = appearance.skin;
     Ok(())
+}
+
+/// Invalid stock values become the same ordinal modulo the available count.
+fn validated_value(choices: &[u8], value: u8) -> u8 {
+    if choices.contains(&value) {
+        value
+    } else if choices.is_empty() {
+        0
+    } else {
+        choices[usize::from(value) % choices.len()]
+    }
 }
 
 fn choose_random_valid_class(
@@ -930,14 +1244,21 @@ fn choose_random_valid_class(
     let race_id = inner.catalog.races[inner.selected_race].id;
     let classes = inner
         .catalog
-        .classes
+        .combinations
         .iter()
-        .enumerate()
-        .filter(|(_index, class)| {
-            inner.expansion.admits(class.required_expansion)
-                && inner.catalog.supports(race_id, class.id)
+        .filter(|(race, _class)| *race == race_id)
+        .filter_map(|(_race, class_id)| {
+            inner
+                .catalog
+                .classes
+                .iter()
+                .position(|class| class.id == *class_id)
         })
-        .map(|(index, _class)| index)
+        .filter(|index| {
+            inner
+                .expansion
+                .admits(inner.catalog.classes[*index].required_expansion)
+        })
         .collect::<Vec<_>>();
     let Some(selected) = random_choice(&classes, random).copied() else {
         return Err(UiCharacterCreationError::InvalidRaceClass {
@@ -962,17 +1283,7 @@ fn ensure_valid_class(
     choose_random_valid_class(inner, random)
 }
 
-fn required_random(
-    values: &[u8],
-    inner: &UiCharacterCreationInner,
-    axis: &'static str,
-    random: &mut BlizzardRand,
-) -> Result<u8, UiCharacterCreationError> {
-    random_choice(values, random)
-        .copied()
-        .ok_or_else(|| missing_axis(inner, axis))
-}
-
+/// Uses the unsigned multiply-high range reduction at 0x004EB416.
 fn random_choice<'values, T>(
     values: &'values [T],
     random: &mut BlizzardRand,
@@ -980,47 +1291,31 @@ fn random_choice<'values, T>(
     if values.is_empty() {
         return None;
     }
-    let index = usize::try_from(random.next_u32()).ok()? % values.len();
+    let index = scaled_random_index(values.len(), random);
     values.get(index)
 }
 
-fn cycle_value(
-    values: &[u8],
-    current: u8,
-    delta: i32,
-    inner: &UiCharacterCreationInner,
-    axis: &'static str,
-) -> Result<u8, UiCharacterCreationError> {
-    if values.is_empty() {
-        return Err(missing_axis(inner, axis));
-    }
-    let current_index = values
-        .iter()
-        .position(|value| *value == current)
-        .unwrap_or(0);
-    let length = i64::try_from(values.len()).map_err(|_source| missing_axis(inner, axis))?;
-    let next = (i64::try_from(current_index).map_err(|_source| missing_axis(inner, axis))?
-        + i64::from(delta))
-    .rem_euclid(length);
-    values
-        .get(usize::try_from(next).map_err(|_source| missing_axis(inner, axis))?)
-        .copied()
-        .ok_or_else(|| missing_axis(inner, axis))
+/// Counts are bounded by the byte-sized creation catalog and never zero here.
+fn scaled_random_index(count: usize, random: &mut BlizzardRand) -> usize {
+    ((u64::from(random.next_u32()) * count as u64) >> 32) as usize
 }
 
-fn first_or_current(
-    values: &[u8],
-    current: u8,
-    inner: &UiCharacterCreationInner,
-    axis: &'static str,
-) -> Result<u8, UiCharacterCreationError> {
-    if values.contains(&current) {
-        return Ok(current);
-    }
-    values
-        .first()
-        .copied()
-        .ok_or_else(|| missing_axis(inner, axis))
+/// Scans sorted authored values in the requested direction and wraps once.
+/// An empty selector cannot change the current value in the stock setters.
+fn cycle_value(values: &[u8], current: u8, delta: i32) -> u8 {
+    let next = if delta > 0 {
+        values
+            .iter()
+            .find(|value| **value > current)
+            .or_else(|| values.first())
+    } else {
+        values
+            .iter()
+            .rev()
+            .find(|value| **value < current)
+            .or_else(|| values.last())
+    };
+    next.copied().unwrap_or(current)
 }
 
 fn missing_axis(inner: &UiCharacterCreationInner, axis: &'static str) -> UiCharacterCreationError {

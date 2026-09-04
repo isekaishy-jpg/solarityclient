@@ -33,7 +33,9 @@ These observations close the reported defects in the tested cases. Older
 handoff lists must not reopen them without a reproduction. Conversely, a
 commit title, API implementation, or passing narrow test does not establish
 complete parity. Character-creation randomization still needs comparison with
-stock, and previously unimplemented world features were not tested.
+stock beyond the recovered contracts in
+[character creation](character-creation.md), and previously unimplemented world
+features were not tested.
 
 ## Remaining evidence and implementation work
 

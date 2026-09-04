@@ -89,6 +89,71 @@ fn character_sections_do_not_leak_death_knight_rows_into_other_classes()
     Ok(())
 }
 
+/// 0x004F39A0 distinguishes ordinary, shared-DK, exclusive-DK, and NPC rows.
+#[test]
+fn creation_selectors_use_stock_class_flags_and_color_dependent_features()
+-> Result<(), Box<dyn Error>> {
+    let mut fields = Vec::new();
+    for (color, flags) in [0x01, 0x11, 0x05, 0x09, 0x19, 0x15].into_iter().enumerate() {
+        fields.extend_from_slice(&[color as u32 + 1, 1, 0, 0, 0, 0, 0, flags, 0, color as u32]);
+    }
+    for (style, flags) in [0x11, 0x01, 0x05, 0x09].into_iter().enumerate() {
+        fields.extend_from_slice(&[style as u32 + 10, 1, 0, 2, 0, 0, 0, flags, style as u32, 0]);
+    }
+    // No underwear is required to count authored skin choices. Facial texture
+    // rows exist for male/color zero only; females exercise the geometry branch.
+    let sections = create_wdbc(10, 10, &fields, b"\0");
+    let hair = create_wdbc(0, 6, &[], b"\0");
+    let facial = create_wdbc(
+        2,
+        8,
+        &[1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0],
+        b"\0",
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &sections,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    assert_eq!(catalog.player_skin_colors_for_class(1, 0, 1), [0, 1]);
+    assert_eq!(catalog.player_skin_colors_for_class(1, 0, 6), [1, 2, 5]);
+    assert_eq!(
+        catalog.player_facial_hair_styles_for_class(1, 0, 0, 1),
+        [0, 1]
+    );
+    assert_eq!(
+        catalog.player_facial_hair_styles_for_class(1, 0, 0, 6),
+        [0, 2]
+    );
+    assert!(
+        catalog
+            .player_facial_hair_styles_for_class(1, 0, 1, 1)
+            .is_empty()
+    );
+    assert_eq!(
+        catalog.player_facial_hair_styles_for_class(1, 1, 0, 1),
+        [0, 1]
+    );
+    Ok(())
+}
+
 fn create_wdbc(record_count: u32, field_count: u32, fields: &[u32], strings: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"WDBC");

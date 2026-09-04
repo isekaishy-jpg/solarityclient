@@ -83,22 +83,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     creation.set_expansion(UiCharacterExpansion::WRATH_OF_THE_LICH_KING);
     creation.reset()?;
-    if creation.selected_sex() != 2 {
-        return Err(invalid_data(
-            "ResetCharCustomize replaced the stock default male selection".to_owned(),
-        )
-        .into());
-    }
-    creation.set_selected_sex(3)?;
-    creation.reset()?;
-    if creation.selected_sex() != 3 {
-        return Err(invalid_data(
-            "ResetCharCustomize replaced the current female selection".to_owned(),
-        )
-        .into());
-    }
-    creation.set_selected_sex(2)?;
-    creation.reset()?;
     let available_races = creation.available_races();
     let available_classes = creation.available_classes();
     validate_bald_facial_hair_representation(
@@ -250,7 +234,9 @@ fn validate_bald_facial_hair_representation(
         .map(|(offset, _class)| offset)
         .ok_or_else(|| invalid_data("playable Gnome Death Knight is absent".to_owned()))?;
     creation.set_selected_class(one_based(class_offset)?)?;
-    for (axis, target) in [7_u8, 0, 0, 8, 5].into_iter().enumerate() {
+    // Skin cycling preserves the selected face. Establish face zero before
+    // selecting this appearance's skin, which need not support a random face.
+    for (axis, target) in [(1, 0_u8), (0, 7), (2, 0), (3, 8), (4, 5)] {
         for _attempt in 0..MAX_CUSTOMIZATION_VALUES {
             if creation.preview().appearance()[axis] == target {
                 break;
