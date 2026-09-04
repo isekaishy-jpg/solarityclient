@@ -124,3 +124,17 @@ during otherwise small layout changes as remaining synchronous work.
 
 Regression coverage verifies native checked state, merged hover/click texture
 mutations, and immediate hit testing of a button created by an `OnClick` handler.
+
+The subsequent icon-layout pass retains the pressed shadow and bevel geometry,
+including dependent texture anchors. The same replay measured race/class input
+at about 21–35 ms, with a 4.4 ms unchanged-class click; full content changes still
+rebuild the text mesh. Customization remained about 2.4–3.9 ms. The native
+checkbox dispatch correction and its executable evidence are described in
+[character creation](character-creation.md#native-choice-buttons).
+
+`SOLARITY_FRAME_TIMINGS` now also reports individual Glue audio action costs.
+The warm Night Elf and Human switches spent 46.4 and 39.6 ms respectively
+inside `PlayGlueAmbience`, accounting for most of their 53.8 and 49.3 ms
+maximum transition frames. Cold Tauren ambience admission took 141 ms in the
+same run. These synchronous audio operations remain to be moved off the frame
+path while preserving stock selection, residency, and action ordering.

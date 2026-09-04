@@ -1971,13 +1971,24 @@ impl UiScriptRuntime {
             })
     }
 
-    /// Reports whether one journal changes only retained content/state slots.
-    pub(crate) fn is_retained_content_journal(&self, dirty_objects: &[(usize, u32)]) -> bool {
-        let retained = DIRTY_TEXT | DIRTY_WIDGET | DIRTY_MODEL;
+    /// Reports whether a journal can try retained content or texture geometry.
+    /// The publisher verifies anchor-dependent movement and source topology.
+    pub(crate) fn is_retained_content_journal(
+        &self,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
+        dirty_objects: &[(usize, u32)],
+    ) -> bool {
+        let retained = DIRTY_TEXT | DIRTY_WIDGET | DIRTY_MODEL | DIRTY_LAYOUT;
         !dirty_objects.is_empty()
-            && dirty_objects
-                .iter()
-                .all(|&(_, flags)| flags != 0 && flags & !retained == 0)
+            && dirty_objects.iter().all(|&(index, flags)| {
+                flags != 0
+                    && flags & !retained == 0
+                    && (flags & DIRTY_LAYOUT == 0
+                        || live
+                            .objects()
+                            .get(index)
+                            .is_some_and(|object| object.kind == UiObjectKind::Texture))
+            })
     }
 
     pub(crate) fn refresh_button_texts(
@@ -2112,32 +2123,8 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error(&label, error))?;
         }
         if enabled && activate_click {
-            if object
-                .raw_get::<String>(type_key())
-                .map_err(|error| execution_error(&label, error))?
-                == "CheckButton"
-            {
-                apply_check_button_click(lua, &object)
-                    .map_err(|error| execution_error(&label, error))?;
-            }
-            for handler in [
-                UiScriptHandler::PreClick,
-                UiScriptHandler::Click,
-                UiScriptHandler::PostClick,
-            ] {
-                if let Some(function) = object_script_function(lua, &object, handler)
-                    .map_err(|error| execution_error(&label, error))?
-                {
-                    buttons::call_click_handler(
-                        lua,
-                        &function,
-                        object.clone(),
-                        mouse_button,
-                        pressed,
-                    )
-                    .map_err(|error| execution_error(&label, error))?;
-                }
-            }
+            buttons::dispatch_click(lua, &object, mouse_button, pressed)
+                .map_err(|error| execution_error(&label, error))?;
             if activate_double_click
                 && let Some(function) =
                     object_script_function(lua, &object, UiScriptHandler::DoubleClick)
@@ -3922,55 +3909,13 @@ fn call_object_handler(lua: &Lua, function: &mlua::Function, object: Table) -> m
     }
 }
 
-/// Applies CheckButton's native state mutation before `OnClick`. Character
-/// creation's three authored choice families are mutually exclusive; ordinary
-/// check buttons toggle independently.
+/// CSimpleCheckbox's click override (build 12340, 0x009623C0) flips only its
+/// own checked field through 0x00962340 before entering Button's script path.
+/// CharacterCreate.lua owns race/class/gender exclusivity through SetChecked.
 fn apply_check_button_click(lua: &Lua, object: &Table) -> mlua::Result<()> {
-    let name = object.raw_get::<Option<String>>(name_key())?;
-    let group = name.as_deref().map_or(0, character_create_choice_group);
-    if group == 0 {
-        let checked = object.raw_get::<bool>(checked_key())?;
-        object.raw_set(checked_key(), !checked)?;
-        return mark_object_state_changed(lua, object, DIRTY_WIDGET);
-    }
-    let parent = object.raw_get::<Option<usize>>(parent_key())?;
-    let clicked_index = object.raw_get::<usize>(index_key())?;
-    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    for index in 1..=objects.raw_len() {
-        let candidate: Table = objects.raw_get(index)?;
-        if candidate.raw_get::<String>(type_key())? != "CheckButton"
-            || candidate.raw_get::<Option<usize>>(parent_key())? != parent
-        {
-            continue;
-        }
-        let candidate_name = candidate.raw_get::<Option<String>>(name_key())?;
-        if candidate_name
-            .as_deref()
-            .is_some_and(|name| character_create_choice_group(name) == group)
-        {
-            let checked = candidate.raw_get::<usize>(index_key())? == clicked_index;
-            if candidate.raw_get::<bool>(checked_key())? != checked {
-                candidate.raw_set(checked_key(), checked)?;
-                mark_object_state_changed(lua, &candidate, DIRTY_WIDGET)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn character_create_choice_group(name: &str) -> u8 {
-    if name.starts_with("CharacterCreateRaceButton") {
-        1
-    } else if name.starts_with("CharacterCreateClassButton") {
-        2
-    } else if matches!(
-        name,
-        "CharacterCreateGenderButtonMale" | "CharacterCreateGenderButtonFemale"
-    ) {
-        3
-    } else {
-        0
-    }
+    let checked = object.raw_get::<bool>(checked_key())?;
+    object.raw_set(checked_key(), !checked)?;
+    mark_object_state_changed(lua, object, DIRTY_WIDGET)
 }
 
 /// Installs and restores build 12340's legacy global `this` around a callback

@@ -30,6 +30,45 @@ struct MeasuredCharacter {
     advance: f64,
 }
 
+/// Per-button native recursion guard; never exposed as a script property.
+static CLICK_ACTIVE_TOKEN: u8 = 0;
+
+/// Build 12340's script Click (0x00978260) enters the same virtual click as
+/// pointer input. Checkbox toggling (0x009623C0) precedes Button's enabled and
+/// recursion guards (0x0096FD70), including disabled or recursively clicked
+/// checkboxes. The guarded base path dispatches PreClick, OnClick, PostClick.
+pub(super) fn dispatch_click(
+    lua: &Lua,
+    button: &Table,
+    mouse_button: &str,
+    down: bool,
+) -> mlua::Result<()> {
+    if button.raw_get::<String>(type_key())? == "CheckButton" {
+        super::apply_check_button_click(lua, button)?;
+    }
+    let active_key = super::hidden_key(&CLICK_ACTIVE_TOKEN);
+    if !button.raw_get::<bool>(enabled_key())?
+        || button.raw_get::<Option<bool>>(active_key)?.unwrap_or(false)
+    {
+        return Ok(());
+    }
+    button.raw_set(active_key, true)?;
+    let result = (|| {
+        for handler in [
+            UiScriptHandler::PreClick,
+            UiScriptHandler::Click,
+            UiScriptHandler::PostClick,
+        ] {
+            if let Some(function) = object_script_function(lua, button, handler)? {
+                call_click_handler(lua, &function, button.clone(), mouse_button, down)?;
+            }
+        }
+        Ok(())
+    })();
+    let restore = button.raw_set(active_key, Value::Nil);
+    result.and(restore)
+}
+
 /// Archive-backed state required by the stock text-extent methods.
 #[derive(Clone)]
 pub(super) struct TextMeasurement {
@@ -534,21 +573,9 @@ pub(super) fn register_button_methods(
         "Click",
         lua.create_function(
             |lua, (button, mouse_button, down): (Table, Option<String>, Option<bool>)| {
-                if !button.raw_get::<bool>(enabled_key())? {
-                    return Ok(());
-                }
                 let mouse_button = mouse_button.unwrap_or_else(|| "LeftButton".to_owned());
                 let down = down.unwrap_or(false);
-                for handler in [
-                    UiScriptHandler::PreClick,
-                    UiScriptHandler::Click,
-                    UiScriptHandler::PostClick,
-                ] {
-                    if let Some(function) = object_script_function(lua, &button, handler)? {
-                        call_click_handler(lua, &function, button.clone(), &mouse_button, down)?;
-                    }
-                }
-                Ok(())
+                dispatch_click(lua, &button, &mouse_button, down)
             },
         )?,
     )?;
@@ -596,7 +623,7 @@ fn set_button_text(
     mark_live_state_changed(lua)
 }
 
-pub(super) fn call_click_handler(
+fn call_click_handler(
     lua: &Lua,
     function: &mlua::Function,
     button: Table,

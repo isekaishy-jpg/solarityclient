@@ -407,6 +407,9 @@ impl UiMeshPlan {
     /// plus glyph-atlas text). Material, draw-state, and source-local quad counts
     /// must remain unchanged. This lets bounded text replace only its atlas
     /// vertices without rebuilding decorations, unrelated batches, or indices.
+    /// Replacement bounds are absolute presentation coordinates: they replace
+    /// accumulated object translation, while retaining the source's scroll or
+    /// slider transform and any independently translated decorations.
     pub fn replace_object_source_quads(
         &mut self,
         object_index: usize,
@@ -450,6 +453,16 @@ impl UiMeshPlan {
             }
         }
 
+        // Every slot for this object/source was validated above. Its freshly
+        // resolved bounds supersede prior animation deltas; other sources
+        // still use their old vertices and therefore retain those deltas.
+        if let Some(batch_indices) = self.object_batches.get(&object_index) {
+            for &index in batch_indices {
+                if self.batches[index].source() == source {
+                    self.batches[index].reset_object_translation();
+                }
+            }
+        }
         let mut changed_vertices: Option<(usize, usize)> = None;
         for (slot, quad) in slots.iter().copied().zip(quads) {
             let [left, bottom, right, top] = quad.bounds();

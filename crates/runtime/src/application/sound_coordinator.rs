@@ -180,8 +180,17 @@ impl RuntimeSoundCoordinator {
         self.engine
             .set_settings(SoundPolicy::read(glue)?.settings)?;
         while let Some(action) = glue.take_media_action() {
+            let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS")
+                .map(|_| (std::time::Instant::now(), format!("{action:?}")));
             if let Err(error) = self.apply_glue_media_action(action, random) {
                 tracing::warn!(%error, "Glue audio action was not played");
+            }
+            if let Some((started, action)) = timing {
+                tracing::info!(
+                    action,
+                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                    "profiled Glue audio action"
+                );
             }
         }
         self.engine.collect_unused_encoded();

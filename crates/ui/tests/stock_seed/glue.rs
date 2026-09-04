@@ -374,6 +374,94 @@ fn glue_manager_click_publishes_visibility_outside_button_subtree() -> Result<()
     Ok(())
 }
 
+/// Build-12340 CharacterCreateIconButtonTemplate moves its bevel and resizes
+/// its shadow without changing either texture's material or draw order.
+#[test]
+fn glue_manager_retains_icon_button_layout_and_anchor_dependents() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"IconLayout.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\IconLayout.xml",
+            bytes: br#"<Ui>
+<CheckButton name="Icon"><Size x="38" y="38"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="BACKGROUND">
+    <Texture name="IconShadow" file="Interface\Glues\Shadow"><Size x="58" y="58"/><Anchors><Anchor point="CENTER"/></Anchors></Texture>
+  </Layer><Layer level="OVERLAY">
+    <Texture name="IconBevel" file="Interface\Glues\Bevel"><Size x="38" y="38"/><Anchors><Anchor point="CENTER"/></Anchors></Texture>
+  </Layer></Layers>
+  <Scripts>
+    <OnMouseDown>IconBevel:SetPoint("CENTER", self, "CENTER", 2, -2); IconShadow:SetSize(52, 52)</OnMouseDown>
+    <OnMouseUp>IconBevel:SetPoint("CENTER", self, "CENTER", 0, 0); IconShadow:SetSize(58, 58)</OnMouseUp>
+  </Scripts>
+</CheckButton>
+<Frame name="Unrelated"><Layers><Layer level="ARTWORK">
+  <Texture name="Dependent" file="Interface\Glues\Dependent"><Size x="10" y="10"/><Anchors><Anchor point="LEFT" relativeTo="IconShadow" relativePoint="RIGHT"/></Anchors></Texture>
+</Layer></Layers></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let bounds = manager
+        .geometry()
+        .region(0)
+        .ok_or("missing button")?
+        .presentation_bounds();
+    let position = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+    let indices = manager.render_plan().mesh().index_bytes().to_vec();
+    let batches = manager.render_plan().mesh().batches().to_vec();
+    let snapshots = manager.runtime_snapshot_count();
+    for pressed in [true, false, true, false] {
+        manager.pointer_button(position, UiPointerButton::Left, pressed)?;
+        for name in ["IconShadow", "IconBevel", "Dependent"] {
+            let object = manager
+                .objects()
+                .iter()
+                .position(|object| object.name() == Some(name))
+                .ok_or("missing texture")?;
+            let mesh = manager.render_plan().mesh();
+            let slot = mesh
+                .object_indices()
+                .iter()
+                .position(|&index| index == object)
+                .ok_or("missing texture quad")?;
+            let bounds = manager
+                .geometry()
+                .region(object)
+                .ok_or("missing texture geometry")?
+                .presentation_bounds();
+            assert_eq!(
+                mesh.vertices()[slot * 4].position(),
+                [bounds.left() as f32, bounds.top() as f32]
+            );
+            assert_eq!(
+                mesh.vertices()[slot * 4 + 3].position(),
+                [bounds.right() as f32, bounds.bottom() as f32]
+            );
+        }
+        assert_close(
+            manager
+                .geometry()
+                .region(1)
+                .ok_or("missing shadow")?
+                .logical_bounds()
+                .width(),
+            if pressed { 52.0 } else { 58.0 },
+        );
+        assert_eq!(manager.render_plan().mesh().index_bytes(), indices);
+        assert_eq!(manager.render_plan().mesh().batches(), batches);
+        assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    }
+    Ok(())
+}
+
 /// Stock audio globals preserve invocation order and the two boolean-returning
 /// direct-file calls while transferring playback to the process media owner.
 #[test]
@@ -1060,8 +1148,8 @@ fn glue_manager_retains_authored_hover_visibility() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-/// CheckButton mutates its native checked state before `OnClick`, including
-/// character creation's mutually exclusive race/class/gender groups.
+/// CSimpleCheckbox 0x009623C0 toggles only itself, independent of its name.
+/// CharacterCreate.lua's handlers select a group explicitly through SetChecked.
 #[test]
 fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
@@ -1081,6 +1169,10 @@ fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn 
   <Scripts><OnLoad>self:SetChecked(nil)</OnLoad><OnClick>
     CLICK_SAW_CHECKED = self:GetChecked()
     CLICK_SAW_FIRST = CharacterCreateRaceButton1:GetChecked()
+    if GROUP_SELECTION then
+      CharacterCreateRaceButton1:SetChecked(false)
+      self:SetChecked(true)
+    end
   </OnClick></Scripts>
 </CheckButton>
 <CheckButton name="IndependentCheck" enableMouse="true">
@@ -1121,9 +1213,19 @@ fn glue_manager_applies_native_check_button_click_state() -> Result<(), Box<dyn 
     click(&mut manager, "CharacterCreateRaceButton2")?;
     let globals = manager.bundle().lua().globals();
     assert!(globals.get::<bool>("CLICK_SAW_CHECKED")?);
-    assert!(!globals.get::<bool>("CLICK_SAW_FIRST")?);
+    assert!(globals.get::<bool>("CLICK_SAW_FIRST")?);
     click(&mut manager, "CharacterCreateRaceButton2")?;
-    assert!(globals.get::<bool>("CLICK_SAW_CHECKED")?);
+    assert!(!globals.get::<bool>("CLICK_SAW_CHECKED")?);
+    assert!(globals.get::<bool>("CLICK_SAW_FIRST")?);
+    globals.set("GROUP_SELECTION", true)?;
+    click(&mut manager, "CharacterCreateRaceButton2")?;
+    let first = globals.get::<mlua::Table>("CharacterCreateRaceButton1")?;
+    let get_first_checked = first.get::<mlua::Function>("GetChecked")?;
+    assert!(!get_first_checked.call::<bool>(first)?);
+    click(&mut manager, "CharacterCreateRaceButton2")?;
+    let second = globals.get::<mlua::Table>("CharacterCreateRaceButton2")?;
+    let get_second_checked = second.get::<mlua::Function>("GetChecked")?;
+    assert!(get_second_checked.call::<bool>(second)?);
     click(&mut manager, "IndependentCheck")?;
     let independent = globals.get::<mlua::Table>("IndependentCheck")?;
     let get_checked = independent.get::<mlua::Function>("GetChecked")?;

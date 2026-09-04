@@ -970,7 +970,9 @@ impl GlueManager {
                 return Ok(());
             }
         }
-        if self.runtime.is_retained_content_journal(dirty_objects)
+        if self
+            .runtime
+            .is_retained_content_journal(&self.live, dirty_objects)
             && self.refresh_retained_content(dirty_objects, visual_objects, started)?
         {
             return Ok(());
@@ -1070,6 +1072,9 @@ impl GlueManager {
         Ok(())
     }
 
+    /// Reuses content and texture-layout slots while material, packet order,
+    /// and source counts remain stable. Anchor-dependent non-texture movement
+    /// leaves the complete publisher responsible for rebuilding those regions.
     fn refresh_retained_content(
         &mut self,
         dirty_objects: &[(usize, u32)],
@@ -1096,6 +1101,41 @@ impl GlueManager {
             return Ok(false);
         }
         let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        // CharacterCreateIconButtonTemplate moves its bevel and resizes its
+        // shadow on mouse-down/up. Retain those texture slots, but account for
+        // anchors that can move objects outside the explicit mutation set.
+        let mut texture_objects = Vec::new();
+        for (index, object) in self.live.objects().iter().enumerate() {
+            let (Some(previous), Some(current)) =
+                (self.geometry.region(index), geometry.region(index))
+            else {
+                return Ok(false);
+            };
+            let old = previous.presentation_bounds();
+            let new = current.presentation_bounds();
+            // Dimension writeback can perturb f64 anchors by a few ulps. The
+            // renderer consumes f32 coordinates, so those identical payloads
+            // do not constitute movement of an unrelated region.
+            if [
+                old.left() as f32,
+                old.bottom() as f32,
+                old.right() as f32,
+                old.top() as f32,
+            ] == [
+                new.left() as f32,
+                new.bottom() as f32,
+                new.right() as f32,
+                new.top() as f32,
+            ] && previous.effective_scale() as f32 == current.effective_scale() as f32
+            {
+                continue;
+            }
+            if object.kind == UiObjectKind::Texture {
+                texture_objects.push(index);
+            } else if text_objects.binary_search(&index).is_err() {
+                return Ok(false);
+            }
+        }
         self.runtime
             .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
         synchronize_resolved_dimensions(&mut self.live, &geometry);
@@ -1128,6 +1168,14 @@ impl GlueManager {
         }
         let glyphs = started.elapsed();
         let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        if !self.render_plan.refresh_texture_objects(
+            &presentation,
+            &geometry,
+            &scroll_frames,
+            &texture_objects,
+        )? {
+            return Ok(false);
+        }
         let roots = dirty_objects
             .iter()
             .map(|&(object_index, _)| object_index)

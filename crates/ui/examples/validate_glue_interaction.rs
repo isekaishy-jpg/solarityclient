@@ -636,12 +636,37 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
             .filter(|glyph| glyph.object_index() == object)
             .map(|glyph| glyph.bounds())
             .collect::<Vec<_>>();
-        let glyph_top = glyph_bounds
+        // Some stock class-role descriptions consume almost all of the
+        // 220-unit viewport. Measure wrapping from the complete retained ink,
+        // then independently check clipping of the currently visible glyphs.
+        let mesh = manager.render_plan().mesh();
+        let mut retained_glyph_bounds = Vec::new();
+        for batch in mesh.batches() {
+            let translation = batch.translation();
+            let first = batch.first_quad() as usize;
+            let end = first + batch.quad_count() as usize;
+            for slot in first..end {
+                if mesh.object_indices()[slot] != object {
+                    continue;
+                }
+                let vertices = &mesh.vertices()[slot * 4..slot * 4 + 4];
+                if vertices.iter().all(|vertex| vertex.color()[3] == 0.0) {
+                    continue;
+                }
+                retained_glyph_bounds.push([
+                    vertices[0].position()[0] + translation[0],
+                    vertices[3].position()[1] + translation[1],
+                    vertices[3].position()[0] + translation[0],
+                    vertices[0].position()[1] + translation[1],
+                ]);
+            }
+        }
+        let glyph_top = retained_glyph_bounds
             .iter()
             .map(|glyph| glyph[3])
             .reduce(f32::max)
             .ok_or_else(|| invalid_data(format!("{name} has no glyphs")))?;
-        let glyph_bottom = glyph_bounds
+        let glyph_bottom = retained_glyph_bounds
             .iter()
             .map(|glyph| glyph[1])
             .reduce(f32::min)
@@ -658,12 +683,14 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
             ))
             .into());
         }
-        let overflow = glyph_bounds.iter().any(|glyph| {
+        // Glyph bearings can extend ink beyond the advance-based field. The
+        // viewport must clip that overhang rather than reject the stock font.
+        let overflow = glyph_bounds.iter().find(|glyph| {
             f64::from(glyph[0]) < bounds.left() - 2.0 || f64::from(glyph[2]) > bounds.right() + 2.0
         });
-        if overflow {
+        if let Some(glyph) = overflow {
             return Err(invalid_data(format!(
-                "{name} emitted wrapped glyphs outside its fixed-width field"
+                "{name} emitted wrapped glyph {glyph:?} outside its fixed-width field {bounds:?}"
             ))
             .into());
         }
@@ -672,6 +699,12 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
             .region(object_index(manager, scroll_name)?)
             .ok_or_else(|| invalid_data(format!("{scroll_name} has no geometry")))?
             .presentation_bounds();
+        if glyph_bounds.is_empty() {
+            return Err(invalid_data(format!(
+                "{name} has no glyphs in its stock viewport {viewport:?}"
+            ))
+            .into());
+        }
         let viewport_overflow = glyph_bounds.iter().find(|glyph| {
             f64::from(glyph[0]) < viewport.left() - 0.01
                 || f64::from(glyph[1]) < viewport.bottom() - 0.01

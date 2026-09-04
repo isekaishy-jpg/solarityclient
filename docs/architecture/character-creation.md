@@ -99,3 +99,32 @@ the complete selection equipment/pet case, including selection-to-world reuse.
 These checks establish composition coverage rather than visual or timing
 parity. Ordinary and death-knight choices are cached once per race/sex, and
 customization borrows those choices without cloning their nested vectors.
+
+## Native choice buttons
+
+The XML name `CheckButton` resolves through factory `0x00812630` to
+`CSimpleCheckbox`, whose constructor is `0x009620E0` and vtable is
+`0x00A9F988`. Its click override at `0x009623C0` toggles only its own checked
+field at offset `0x2F8` through `0x00962340`, then calls Button's dispatch at
+`0x0096FD70`. There is no native name-based group selection. The exact
+`Interface/GlueXML/CharacterCreate.lua` handlers enforce race/class/gender
+selection with `SetChecked` calls.
+
+Script `Click` at `0x00978260` enters this same virtual override. Checkbox
+toggling precedes the base enabled/recursion guards, so a disabled scripted
+checkbox click changes its checked state without running handlers. A recursive
+click on the same checkbox toggles again while the active script dispatch
+remains guarded. The guarded base callback at `0x0096F090` invokes PreClick,
+OnClick, and PostClick in order. Pointer and script clicks share this path in
+Solarity; deterministic tests cover ordering, disabled clicks, recursion,
+explicit Lua group selection, and guard cleanup after a handler error.
+
+`CharacterCreateIconButtonTemplate` in the exact `CharacterCreate.xml` moves
+its bevel by `(2, -2)` and resizes its shadow from 58 to 52 units on press,
+then restores both on release. These mutations now retain their texture slots
+and update dependent texture anchors. A non-texture dependency that cannot
+use its retained text slots still requires complete publication. Geometry
+comparison uses the renderer's `f32` coordinates to avoid treating `f64`
+dimension-writeback rounding as movement. Replacing an absolute source mesh
+also retires its prior object translation, preserving separate scroll offsets
+and any decorations whose vertices were not replaced.

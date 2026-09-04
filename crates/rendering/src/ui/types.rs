@@ -482,6 +482,11 @@ impl UiRenderBatch {
         self.object_translation[1] += delta[1];
     }
 
+    /// Newly resolved absolute vertices already include the region's movement.
+    pub(super) fn reset_object_translation(&mut self) {
+        self.object_translation = [0.0; 2];
+    }
+
     pub(super) fn set_clip(&mut self, clip: Option<[f32; 4]>) {
         self.clip = clip;
     }

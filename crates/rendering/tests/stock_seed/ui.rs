@@ -184,6 +184,33 @@ fn ui_mesh_replaces_one_object_source_without_rebuilding_topology() -> Result<()
     Ok(())
 }
 
+/// Absolute source replacement consumes animation movement only for the source
+/// being updated; independent decoration and scroll offsets remain intact.
+#[test]
+fn ui_mesh_replacing_translated_source_does_not_apply_movement_twice() -> Result<(), Box<dyn Error>>
+{
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let scroll = UiRenderTransform::ScrollFrame(1);
+    let mut mesh = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        vec![
+            quad(4, UiRenderSource::VertexColor, [0.0, 0.0, 40.0, 20.0]),
+            quad(4, atlas.clone(), [2.0, 2.0, 10.0, 18.0]).with_transform(scroll, [0.0, 6.0], None),
+            quad(8, atlas.clone(), [50.0, 2.0, 58.0, 18.0]),
+        ]
+        .into_iter(),
+    )?;
+    mesh.translate_object(4, [3.0, 2.0])?;
+    let replacement =
+        [quad(4, atlas.clone(), [5.0, 4.0, 13.0, 20.0]).with_transform(scroll, [0.0, 6.0], None)];
+    assert!(mesh.replace_object_source_quads(4, &atlas, &replacement)?);
+    assert_eq!(mesh.batches()[0].translation(), [3.0, 2.0]);
+    assert_eq!(mesh.batches()[1].translation(), [0.0, 6.0]);
+    assert_eq!(mesh.batches()[2].translation(), [0.0, 0.0]);
+    assert_eq!(mesh.vertices()[4].position(), [5.0, 20.0]);
+    Ok(())
+}
+
 /// An EditBox blink changes only its retained caret draw slot.
 #[test]
 fn ui_mesh_refreshes_caret_opacity_without_replacing_geometry() -> Result<(), Box<dyn Error>> {
