@@ -46,6 +46,29 @@ pub(in crate::device) struct UiOverlayRecordContext<'a> {
     pub(in crate::device) overlay: &'a [UiPreparedDraw],
 }
 
+/// Last dynamic-rendering bindings retained while recording one UI pass.
+struct UiCommandBindings {
+    pipeline: vk::Pipeline,
+    layout: vk::PipelineLayout,
+    vertex_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+    descriptor_set: vk::DescriptorSet,
+    scissor: vk::Rect2D,
+}
+
+impl UiCommandBindings {
+    fn new(scissor: vk::Rect2D) -> Self {
+        Self {
+            pipeline: vk::Pipeline::null(),
+            layout: vk::PipelineLayout::null(),
+            vertex_buffer: vk::Buffer::null(),
+            index_buffer: vk::Buffer::null(),
+            descriptor_set: vk::DescriptorSet::null(),
+            scissor,
+        }
+    }
+}
+
 /// Records attachment transitions, shared state, and ordered indexed draws.
 pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError> {
     let begin =
@@ -116,6 +139,7 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
+    let mut bindings = UiCommandBindings::new(render_area);
     for draw in context.draws.iter().copied() {
         record_draw(
             context.device,
@@ -126,6 +150,7 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             draw,
             context.logical_extent,
             context.extent,
+            &mut bindings,
         )?;
     }
     for draw in context.overlay.iter().copied() {
@@ -138,6 +163,7 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             draw,
             context.logical_extent,
             context.extent,
+            &mut bindings,
         )?;
     }
     // SAFETY: A matching dynamic-rendering scope is active.
@@ -208,6 +234,7 @@ pub(in crate::device) fn record_loaded_overlay(
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[render_area]);
     }
+    let mut bindings = UiCommandBindings::new(render_area);
     for draw in context.draws.iter().copied() {
         record_draw(
             context.device,
@@ -218,6 +245,7 @@ pub(in crate::device) fn record_loaded_overlay(
             draw,
             context.logical_extent,
             context.extent,
+            &mut bindings,
         )?;
     }
     for draw in context.overlay.iter().copied() {
@@ -230,6 +258,7 @@ pub(in crate::device) fn record_loaded_overlay(
             draw,
             context.logical_extent,
             context.extent,
+            &mut bindings,
         )?;
     }
     // SAFETY: A matching color-only dynamic-rendering scope is active.
@@ -244,8 +273,13 @@ fn record_mesh_updates(
     meshes: &UiMeshRegistry,
     draws: &[UiPreparedDraw],
 ) -> Result<(), VulkanError> {
+    let mut previous_mesh = None;
     for draw in draws {
         let mesh = draw.mesh();
+        if previous_mesh == Some(mesh) {
+            continue;
+        }
+        previous_mesh = Some(mesh);
         let updates = meshes.take_pending_updates(mesh)?;
         if let Some((buffer, offset, bytes)) = updates.vertex {
             record_buffer_update(
@@ -327,6 +361,7 @@ fn record_draw(
     draw: UiPreparedDraw,
     logical_extent: [f32; 2],
     physical_extent: (u32, u32),
+    bindings: &mut UiCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = pipelines
         .raw(draw.pipeline())
@@ -337,22 +372,41 @@ fn record_draw(
     // SAFETY: Prepared draws join compatible local handles and exact ranges.
     unsafe {
         let scissor = logical_scissor(draw.clip(), logical_extent, physical_extent);
-        device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
-        device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
-        device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT32);
+        if !same_rect(bindings.scissor, scissor) {
+            device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+            bindings.scissor = scissor;
+        }
+        let pipeline_changed = bindings.pipeline != pipeline;
+        if pipeline_changed {
+            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
+            bindings.pipeline = pipeline;
+            bindings.layout = layout;
+            bindings.descriptor_set = vk::DescriptorSet::null();
+        }
+        if bindings.vertex_buffer != vertex_buffer {
+            device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
+            bindings.vertex_buffer = vertex_buffer;
+        }
+        if bindings.index_buffer != index_buffer {
+            device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT32);
+            bindings.index_buffer = index_buffer;
+        }
         if let Some(texture_set) = draw.texture_set() {
             let descriptor = texture_sets
                 .raw(texture_set)
                 .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
-            device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                layout,
-                0,
-                &[descriptor],
-                &[],
-            );
+            if bindings.descriptor_set != descriptor || bindings.layout != layout {
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    0,
+                    &[descriptor],
+                    &[],
+                );
+                bindings.descriptor_set = descriptor;
+                bindings.layout = layout;
+            }
         }
         device.cmd_push_constants(
             command_buffer,
@@ -374,6 +428,13 @@ fn record_draw(
         );
     }
     Ok(())
+}
+
+fn same_rect(left: vk::Rect2D, right: vk::Rect2D) -> bool {
+    left.offset.x == right.offset.x
+        && left.offset.y == right.offset.y
+        && left.extent.width == right.extent.width
+        && left.extent.height == right.extent.height
 }
 
 /// Serializes canvas, retained translation, and inherited opacity draw state.
