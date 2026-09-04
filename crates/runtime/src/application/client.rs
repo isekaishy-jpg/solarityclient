@@ -28,6 +28,7 @@ use crate::application::world_ui::RuntimeWorldUiError;
 use crate::configuration::ConfigurationError;
 use crate::configuration::RuntimeConfiguration;
 use crate::input::{InputControl, InputFrameMotion};
+use crate::performance::FrameLimiter;
 use crate::platform::{PlatformError, PlatformEvent};
 
 /// A failure while constructing or stopping concrete client services.
@@ -286,6 +287,7 @@ impl ClientApplication {
     pub fn run(&mut self) -> Result<ApplicationRunReport, ApplicationError> {
         let primary_window = self.report.window_id;
         let mut admitted_event_count = 0_u64;
+        let mut frame_limiter = FrameLimiter::new();
         loop {
             while let Some(event) = self.services.poll_platform_event() {
                 admitted_event_count = admitted_event_count.saturating_add(1);
@@ -326,6 +328,7 @@ impl ClientApplication {
             {
                 return Err(error);
             }
+            frame_limiter.wait();
         }
     }
 
