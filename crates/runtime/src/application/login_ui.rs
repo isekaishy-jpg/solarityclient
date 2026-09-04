@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use solarity_asset::{AssetPath, BlpTextureCache};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, UiFrameReport, UiRenderSource,
-    VulkanRenderer,
+    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, UiFrameReport, UiGlyphTextureHandle,
+    UiRenderSource, VulkanRenderer,
 };
 use solarity_ui::{
     FrameManager, GlueManager, UiGlyphAtlasPlan, UiRenderPlan, UiTextureAssetBindings,
@@ -17,6 +17,8 @@ use crate::application::ui_frame::PreparedUiFrame;
 /// Prepared built-in UI generation retained across FIFO-paced presentation frames.
 pub(super) struct RuntimeUiFrame {
     frame: PreparedUiFrame,
+    textures: HashMap<AssetPath, BlpTextureHandle>,
+    glyph_textures: HashMap<u64, UiGlyphTextureHandle>,
 }
 
 impl RuntimeUiFrame {
@@ -64,7 +66,15 @@ impl RuntimeUiFrame {
         {
             return Ok(());
         }
-        *self = Self::prepare_source_with_mesh(renderer, source, cache, Some(self.frame.mesh()))?;
+        let frame = Self::prepare_source_with_resources(
+            renderer,
+            source,
+            cache,
+            Some(self.frame.mesh()),
+            &mut self.textures,
+            &mut self.glyph_textures,
+        )?;
+        self.frame = frame;
         Ok(())
     }
 
@@ -83,23 +93,38 @@ impl RuntimeUiFrame {
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_source_with_mesh(renderer, source, cache, None)
+        let mut textures = HashMap::new();
+        let mut glyph_textures = HashMap::new();
+        let frame = Self::prepare_source_with_resources(
+            renderer,
+            source,
+            cache,
+            None,
+            &mut textures,
+            &mut glyph_textures,
+        )?;
+        Ok(Self {
+            frame,
+            textures,
+            glyph_textures,
+        })
     }
 
-    /// Prepares material resources while optionally retaining geometry storage.
-    fn prepare_source_with_mesh(
+    /// Prepares material resources while retaining process-long sampled images.
+    fn prepare_source_with_resources(
         renderer: &mut VulkanRenderer,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
         retained_mesh: Option<solarity_rendering::UiMeshHandle>,
-    ) -> Result<Self, ApplicationError> {
+        textures: &mut HashMap<AssetPath, BlpTextureHandle>,
+        glyph_textures: &mut HashMap<u64, UiGlyphTextureHandle>,
+    ) -> Result<PreparedUiFrame, ApplicationError> {
         let started = std::time::Instant::now();
         let render_plan = source.render_plan();
         let mesh_plan = render_plan.mesh();
         let asset_started = std::time::Instant::now();
         let bindings = source.load_blocking_render_textures(cache)?;
         let asset_elapsed = asset_started.elapsed();
-        let mut textures = HashMap::<AssetPath, BlpTextureHandle>::new();
         let mut texture_paths = Vec::new();
         let mut texture_uploads = Vec::new();
         for (request_index, request) in render_plan.texture_assets().requests().iter().enumerate() {
@@ -108,6 +133,9 @@ impl RuntimeUiFrame {
                 // absent until the streaming owner publishes a resident image.
                 continue;
             };
+            if textures.contains_key(request.path()) {
+                continue;
+            }
             // Build 12340's fixed-function UI path samples color bytes linearly;
             // the BLP container itself carries no transfer-function metadata.
             texture_paths.push(request.path().clone());
@@ -125,10 +153,22 @@ impl RuntimeUiFrame {
             .batches()
             .iter()
             .any(|batch| matches!(batch.source(), UiRenderSource::GlyphAtlas(_)))
-            .then(|| {
-                let glyphs = source.glyphs();
-                renderer.upload_ui_glyph_texture(glyphs.identity(), glyphs.extent(), glyphs.rgba8())
-            })
+            .then(
+                || -> Result<UiGlyphTextureHandle, solarity_rendering::VulkanError> {
+                    let glyphs = source.glyphs();
+                    if let Some(texture) = glyph_textures.get(&glyphs.identity()).copied() {
+                        Ok(texture)
+                    } else {
+                        let texture = renderer.upload_ui_glyph_texture(
+                            glyphs.identity(),
+                            glyphs.extent(),
+                            glyphs.rgba8(),
+                        )?;
+                        glyph_textures.insert(glyphs.identity(), texture);
+                        Ok(texture)
+                    }
+                },
+            )
             .transpose()?;
         let glyph_elapsed = glyph_started.elapsed();
 
@@ -139,11 +179,11 @@ impl RuntimeUiFrame {
                 renderer,
                 mesh,
                 mesh_plan,
-                &textures,
+                textures,
                 glyph_texture,
             )?
         } else {
-            PreparedUiFrame::prepare(renderer, mesh_plan, &textures, glyph_texture)?
+            PreparedUiFrame::prepare(renderer, mesh_plan, textures, glyph_texture)?
         };
         let frame_elapsed = frame_started.elapsed();
         // Animated GlueXML can replace this mesh every presentation frame.
@@ -161,7 +201,7 @@ impl RuntimeUiFrame {
             total_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "prepared built-in UI generation"
         );
-        Ok(Self { frame })
+        Ok(frame)
     }
 
     /// Queues this Glue generation followed by an independent overlay.
