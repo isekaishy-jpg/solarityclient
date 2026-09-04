@@ -848,6 +848,37 @@ pub(super) fn refresh_runtime_dirty_objects(
         }
         if flags & DIRTY_WIDGET != 0 {
             let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
+            if kind == UiObjectKind::ScrollFrame {
+                let offset = (
+                    finite_region_number(
+                        &table,
+                        horizontal_scroll_key(),
+                        lua_index,
+                        "horizontal scroll",
+                    )?,
+                    finite_region_number(
+                        &table,
+                        vertical_scroll_key(),
+                        lua_index,
+                        "vertical scroll",
+                    )?,
+                );
+                let range = (
+                    finite_region_number(
+                        &table,
+                        horizontal_scroll_range_key(),
+                        lua_index,
+                        "horizontal scroll range",
+                    )?,
+                    finite_region_number(
+                        &table,
+                        vertical_scroll_range_key(),
+                        lua_index,
+                        "vertical scroll range",
+                    )?,
+                );
+                live.replace_scroll_state(object_index, offset, range);
+            }
             if matches!(
                 kind,
                 UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::Slider

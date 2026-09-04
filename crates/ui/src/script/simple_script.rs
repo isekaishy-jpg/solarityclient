@@ -1623,6 +1623,12 @@ impl UiScriptRuntime {
                 .set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
                 .map_err(|error| execution_error("automatic FontString extent", error))?;
         }
+        refresh_all_scroll_frame_ranges(
+            bundle.lua(),
+            self.registered_object_count(),
+            self.ui_extent,
+        )
+        .map_err(|error| execution_error("ScrollFrame content extent", error))?;
         let measurement_elapsed = started.elapsed();
         let snapshot = super::runtime_state::snapshot_runtime_objects(
             bundle.lua(),
@@ -4268,7 +4274,7 @@ fn create_object_metatable(
         register_edit_box_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::FontString {
-        register_font_string_methods(lua, &methods, text_measurement)?;
+        register_font_string_methods(lua, &methods, text_measurement, ui_extent)?;
     }
     if kind == UiObjectKind::SimpleHtml {
         register_simple_html_methods(lua, &methods)?;
@@ -4703,6 +4709,7 @@ fn register_font_string_methods(
     lua: &Lua,
     methods: &Table,
     measurement: Option<buttons::TextMeasurement>,
+    ui_extent: (f64, f64),
 ) -> mlua::Result<()> {
     let font_measurement = measurement.clone();
     methods.raw_set(
@@ -4722,6 +4729,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &font_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
             mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
@@ -4758,6 +4766,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &set_text_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
             mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
@@ -4782,6 +4791,7 @@ fn register_font_string_methods(
                 if let Some(measurement) = &formatted_text_measurement {
                     measurement.update_auto_font_string_size(&font_string)?;
                 }
+                refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
                 mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
                 Ok(())
             },
@@ -4865,6 +4875,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &word_wrap_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
             mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
@@ -4884,6 +4895,7 @@ fn register_font_string_methods(
             if let Some(measurement) = &non_space_measurement {
                 measurement.update_auto_font_string_size(&font_string)?;
             }
+            refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
             mark_object_state_changed(lua, &font_string, DIRTY_TEXT)?;
             Ok(())
         })?,
@@ -6966,7 +6978,7 @@ fn refresh_scroll_ranges(
     let (frame_width, frame_height) = live_region_dimensions(lua, object, ui_extent)?;
     let (child_width, child_height) = object
         .raw_get::<Option<Table>>(scroll_child_key())?
-        .map(|child| live_region_dimensions(lua, &child, ui_extent))
+        .map(|child| scroll_child_content_dimensions(lua, &child, ui_extent))
         .transpose()?
         .unwrap_or((0.0, 0.0));
     let horizontal_range = (child_width - frame_width).max(0.0);
@@ -6974,6 +6986,154 @@ fn refresh_scroll_ranges(
     object.raw_set(horizontal_scroll_range_key(), horizontal_range)?;
     object.raw_set(vertical_scroll_range_key(), vertical_range)?;
     Ok((horizontal_range, vertical_range))
+}
+
+/// Returns the top-left-origin content extent of a scroll child and all shown
+/// descendants. Build 12340 creation panes deliberately give the child frame
+/// a ten-pixel seed height while auto-sized FontStrings extend far below it;
+/// `CSimpleScrollFrame` includes those descendant region bounds in its range.
+fn scroll_child_content_dimensions(
+    lua: &Lua,
+    child: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<(f64, f64)> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
+    let screen = LiveRegionBounds {
+        left: 0.0,
+        bottom: 0.0,
+        right: ui_extent.0,
+        top: ui_extent.1,
+    };
+    let mut resolved = HashMap::new();
+    let mut visiting = Vec::new();
+    let Some(child_bounds) = resolve_live_region_bounds_inner(
+        &objects,
+        child.clone(),
+        screen,
+        &mut resolved,
+        &mut visiting,
+    )?
+    else {
+        return live_region_dimensions(lua, child, ui_extent);
+    };
+    let child_index = child.raw_get::<usize>(index_key())?;
+    let mut maximum_right = child_bounds.right;
+    let mut minimum_bottom = child_bounds.bottom;
+    let mut pending = vec![child_index];
+    while let Some(parent_index) = pending.pop() {
+        let Some(direct) = children.raw_get::<Option<Table>>(parent_index)? else {
+            continue;
+        };
+        for child_index in direct.sequence_values::<usize>() {
+            let child_index = child_index?;
+            let candidate: Table = objects.raw_get(child_index)?;
+            if !candidate.raw_get::<bool>(shown_key())? {
+                continue;
+            }
+            pending.push(child_index);
+            if let Some(bounds) = resolve_live_region_bounds_inner(
+                &objects,
+                candidate,
+                screen,
+                &mut resolved,
+                &mut visiting,
+            )? {
+                maximum_right = maximum_right.max(bounds.right);
+                minimum_bottom = minimum_bottom.min(bounds.bottom);
+            }
+        }
+    }
+    Ok((
+        (maximum_right - child_bounds.left).max(0.0),
+        (child_bounds.top - minimum_bottom).max(0.0),
+    ))
+}
+
+/// Recomputes the nearest owning ScrollFrame after an auto-sized FontString
+/// changes and emits the same range callback that stock's layout pass queues.
+fn refresh_owning_scroll_frame(
+    lua: &Lua,
+    region: &Table,
+    ui_extent: (f64, f64),
+) -> mlua::Result<()> {
+    let Some(scroll_frame) = owning_scroll_frame(lua, region)? else {
+        return Ok(());
+    };
+    let previous = (
+        scroll_frame.raw_get::<f64>(horizontal_scroll_range_key())?,
+        scroll_frame.raw_get::<f64>(vertical_scroll_range_key())?,
+    );
+    update_scroll_child_rect(lua, &scroll_frame, ui_extent)?;
+    let current = (
+        scroll_frame.raw_get::<f64>(horizontal_scroll_range_key())?,
+        scroll_frame.raw_get::<f64>(vertical_scroll_range_key())?,
+    );
+    if current == previous {
+        return Ok(());
+    }
+    mark_object_state_changed(lua, &scroll_frame, DIRTY_WIDGET)?;
+    if let Some(function) =
+        object_script_function(lua, &scroll_frame, UiScriptHandler::ScrollRangeChanged)?
+    {
+        call_two_number_object_handler(lua, &function, scroll_frame, current.0, current.1)?;
+    }
+    Ok(())
+}
+
+/// Reconciles every ScrollFrame after a full retained-layout pass. Descendants
+/// can be registered after the scroll-child relation itself, so construction
+/// needs one complete pass in addition to targeted dynamic-text updates.
+fn refresh_all_scroll_frame_ranges(
+    lua: &Lua,
+    object_count: usize,
+    ui_extent: (f64, f64),
+) -> mlua::Result<()> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    for lua_index in 1..=object_count {
+        let object: Table = objects.raw_get(lua_index)?;
+        if object.raw_get::<String>(type_key())? != "ScrollFrame" {
+            continue;
+        }
+        let previous = (
+            object.raw_get::<f64>(horizontal_scroll_range_key())?,
+            object.raw_get::<f64>(vertical_scroll_range_key())?,
+        );
+        update_scroll_child_rect(lua, &object, ui_extent)?;
+        let current = (
+            object.raw_get::<f64>(horizontal_scroll_range_key())?,
+            object.raw_get::<f64>(vertical_scroll_range_key())?,
+        );
+        if current != previous
+            && let Some(function) =
+                object_script_function(lua, &object, UiScriptHandler::ScrollRangeChanged)?
+        {
+            call_two_number_object_handler(lua, &function, object, current.0, current.1)?;
+        }
+    }
+    Ok(())
+}
+
+/// Finds the ScrollFrame whose assigned child subtree contains one region.
+fn owning_scroll_frame(lua: &Lua, region: &Table) -> mlua::Result<Option<Table>> {
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let mut descendant_index = region.raw_get::<usize>(index_key())?;
+    let mut parent_index = region.raw_get::<Option<usize>>(parent_key())?;
+    while let Some(index) = parent_index {
+        let parent: Table = objects.raw_get(index)?;
+        if parent.raw_get::<String>(type_key())? == "ScrollFrame"
+            && parent
+                .raw_get::<Option<Table>>(scroll_child_key())?
+                .is_some_and(|child| {
+                    child.raw_get::<usize>(index_key()).ok() == Some(descendant_index)
+                })
+        {
+            return Ok(Some(parent));
+        }
+        descendant_index = index;
+        parent_index = parent.raw_get::<Option<usize>>(parent_key())?;
+    }
+    Ok(None)
 }
 
 /// Applies the stock scroll-child ownership contract recovered from

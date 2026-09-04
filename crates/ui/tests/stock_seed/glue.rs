@@ -613,7 +613,9 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
   </OnMouseWheel><OnVerticalScroll>
     SCROLL_OFFSET = offset
   </OnVerticalScroll></Scripts>
-  <ScrollChild><Frame name="LegalText"><Size x="200" y="400"/></Frame></ScrollChild>
+  <ScrollChild><Frame name="LegalText"><Size x="200" y="10"/><Frames>
+    <Frame name="LegalContent"><Size x="200" y="400"/><Anchors><Anchor point="TOPLEFT"/></Anchors></Frame>
+  </Frames></Frame></ScrollChild>
 </ScrollFrame>
 </Ui>"#,
         },

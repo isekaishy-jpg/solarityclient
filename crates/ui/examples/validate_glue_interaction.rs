@@ -423,6 +423,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     validate_visible_font_string_extents(manager, "character creation")?;
     validate_character_creation_choice_layout(manager)?;
     validate_character_creation_text_layout(manager)?;
+    validate_character_creation_scrollbars(manager)?;
     validate_character_creation_class_tooltips(manager)?;
     let globals = manager.bundle().lua().globals();
     manager
@@ -683,6 +684,45 @@ fn validate_character_creation_text_layout(manager: &GlueManager) -> Result<(), 
             ))
             .into());
         }
+    }
+    Ok(())
+}
+
+/// Both stock creation-information panes route wheel input through their
+/// inherited GlueScrollFrameTemplate slider and back to the viewport offset.
+fn validate_character_creation_scrollbars(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
+    for scroll_name in [
+        "CharacterCreateRaceScrollFrame",
+        "CharacterCreateClassScrollFrame",
+    ] {
+        let scroll_index = object_index(manager, scroll_name)?;
+        let initial = manager
+            .scroll_frames()
+            .state(scroll_index)
+            .ok_or_else(|| invalid_data(format!("{scroll_name} has no live scroll state")))?;
+        let center = object_center(manager, scroll_index)?;
+        if initial.range().1 > 0.0 {
+            if manager.pointer_wheel(center, -1.0)? != Some(scroll_index) {
+                return Err(
+                    invalid_data(format!("{scroll_name} did not admit stock wheel input")).into(),
+                );
+            }
+            let advanced = manager
+                .scroll_frames()
+                .state(scroll_index)
+                .ok_or_else(|| invalid_data(format!("{scroll_name} lost its scroll state")))?;
+            if advanced.offset().1 <= initial.offset().1 {
+                return Err(invalid_data(format!(
+                    "{scroll_name} wheel input did not advance its viewport: initial={initial:?} advanced={advanced:?}"
+                ))
+                .into());
+            }
+        }
+        println!(
+            "{scroll_name}: offset={} range={}",
+            initial.offset().1,
+            initial.range().1
+        );
     }
     Ok(())
 }
