@@ -822,6 +822,7 @@ pub(in crate::application) struct M2Frame {
     shoulder_animation_sync: Vec<(u64, M2PlaybackSynchronization)>,
     recoverable_errors: Vec<String>,
     last_effect_time_ms: Option<f32>,
+    pending_glue_playback_advance: Option<M2PlaybackAdvance>,
 }
 
 /// Borrowed dynamic streams assembled for one unified world submission.
@@ -925,6 +926,7 @@ impl M2Frame {
             shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
+            pending_glue_playback_advance: None,
         })
     }
 
@@ -1142,6 +1144,7 @@ impl M2Frame {
             shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
+            pending_glue_playback_advance: None,
         })
     }
 
@@ -1861,9 +1864,10 @@ impl M2Frame {
             .playback
             .as_mut()
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        Ok(playback
-            .clock(&source.model, animation_time_ms, global_time_ms, random)?
-            .clock)
+        let advance = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+        let clock = advance.clock;
+        self.pending_glue_playback_advance = Some(advance);
+        Ok(clock)
     }
 
     /// Culls placements and builds their bone/material draw packets in place.
@@ -2134,8 +2138,14 @@ impl M2Frame {
             if let Some(synchronization) = synchronization {
                 playback.synchronize_from(&source.model, synchronization)?;
             }
-            let advance =
-                playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+            let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                self.pending_glue_playback_advance.take().map_or_else(
+                    || playback.clock(&source.model, animation_time_ms, global_time_ms, random),
+                    Ok,
+                )?
+            } else {
+                playback.clock(&source.model, animation_time_ms, global_time_ms, random)?
+            };
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = owner
             {
