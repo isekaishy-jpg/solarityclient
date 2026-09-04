@@ -143,7 +143,6 @@ impl RuntimeWorldUi {
         }
         let top_level_changed = zone.real_zone_text() != self.zone.real_zone_text();
         let sub_zone_changed = zone.sub_zone_text() != self.zone.sub_zone_text();
-        let minimap_changed = zone.minimap_zone_text() != self.zone.minimap_zone_text();
         self.world.set_zone(zone.clone());
         self.zone = zone;
         if top_level_changed {
@@ -154,10 +153,10 @@ impl RuntimeWorldUi {
             self.manager
                 .dispatch_event("ZONE_CHANGED", &UiEventPayload::empty())?;
         }
-        if minimap_changed {
-            self.manager
-                .dispatch_event("MINIMAP_ZONE_CHANGED", &UiEventPayload::empty())?;
-        }
+        // Build 12340's Minimap.xml subscribes to the same three ZONE_CHANGED
+        // events as the zone banner. There is no MINIMAP_ZONE_CHANGED native
+        // event in the executable registry; the minimap label is already
+        // refreshed by the top-level or sub-zone branch above.
         self.dirty = true;
         Ok(())
     }
