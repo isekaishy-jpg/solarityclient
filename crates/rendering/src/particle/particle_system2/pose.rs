@@ -124,13 +124,13 @@ impl M2ParticlePose {
         self.emission_rate
     }
 
-    /// Returns the animated plane width or spherical maximum radius.
+    /// Returns the animated plane width or spherical starting radius.
     #[must_use]
     pub const fn emission_area_width(self) -> f32 {
         self.emission_area_width
     }
 
-    /// Returns the animated plane length or spherical minimum radius.
+    /// Returns the animated plane length or spherical ending radius.
     #[must_use]
     pub const fn emission_area_length(self) -> f32 {
         self.emission_area_length

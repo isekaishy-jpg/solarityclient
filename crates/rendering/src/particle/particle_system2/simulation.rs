@@ -774,9 +774,13 @@ fn spawn_sphere(
 ) -> Result<M2ParticleState, M2ParticleSimulationError> {
     let age = random.next_unit() * elapsed_seconds;
     let random_word = random.next_u32() as u16;
-    let minimum_radius = pose.emission_area_length();
-    let radius =
-        minimum_radius + random.next_unit() * (pose.emission_area_width() - minimum_radius);
+    // CSphereParticleEmitter's setters at `0x00981490` and `0x009814B0`
+    // retain width at runtime `+0x234` and the span `length - width` at
+    // `+0x23C`. Its spawn path at `0x00981950` samples that directed interval;
+    // reversing the endpoints preserves the shell but changes every
+    // PRNG-correlated birth position.
+    let radius = pose.emission_area_width()
+        + random.next_unit() * (pose.emission_area_length() - pose.emission_area_width());
     let elevation = random.next_signed() * pose.vertical_range();
     let azimuth = random.next_signed() * pose.horizontal_range();
     let mut position = Vec3::new(

@@ -2298,7 +2298,7 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
     let simulate = |store: &mut AssetStore,
                     path: &str,
                     expected_deaths: usize|
-     -> Result<(M2ParticlePose, M2ParticleSimulation), Box<dyn Error>> {
+     -> Result<(M2ParticlePose, M2ParticleSimulation, Vec3), Box<dyn Error>> {
         let model = DecodedM2Model::load(store, &AssetPath::new(path)?)?;
         let emitter = model
             .animations()
@@ -2316,16 +2316,16 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
         assert_eq!(report.emitted(), 2);
         assert_eq!(report.deaths(), expected_deaths);
         assert_eq!(report.live(), 2 - expected_deaths);
-        Ok((pose, simulation))
+        Ok((pose, simulation, emitter.wind_vector()))
     };
-    let (vertical_pose, vertical) = simulate(
+    let (vertical_pose, vertical, vertical_wind) = simulate(
         &mut store,
         "Creature\\Solarity\\VerticalSphereParticle.m2",
         0,
     )?;
-    let (squirt_pose, squirt) =
+    let (squirt_pose, squirt, _) =
         simulate(&mut store, "Creature\\Solarity\\SquirtSphereParticle.m2", 0)?;
-    let (_, implosion) = simulate(
+    let (_, implosion, _) = simulate(
         &mut store,
         "Creature\\Solarity\\ImplosionSphereParticle.m2",
         0,
@@ -2337,6 +2337,38 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
         particle.velocity().truncate().length_squared() < f32::EPSILON
             && particle.velocity().z.is_finite()
     }));
+    let first_vertical = vertical
+        .particles()
+        .first()
+        .ok_or("first vertical sphere particle is absent")?;
+    let mut stock_random = M2ParticleRandom::new(0x0029_4823);
+    let _rate_variation = stock_random.next_signed();
+    let _initial_age = stock_random.next_unit();
+    let _particle_word = stock_random.next_u32();
+    let radius = vertical_pose.emission_area_width()
+        + stock_random.next_unit()
+            * (vertical_pose.emission_area_length() - vertical_pose.emission_area_width());
+    let elevation = stock_random.next_signed() * vertical_pose.vertical_range();
+    let azimuth = stock_random.next_signed() * vertical_pose.horizontal_range();
+    let shell = Vec3::new(
+        azimuth.cos() * elevation.cos(),
+        azimuth.sin() * elevation.cos(),
+        elevation.sin(),
+    ) * radius;
+    let speed = (stock_random.next_signed() * vertical_pose.speed_variation() + 1.0)
+        * vertical_pose.emission_speed();
+    let elapsed = 0.1;
+    let velocity = Vec3::Z * speed + vertical_wind * elapsed;
+    let expected_position =
+        shell + velocity * elapsed + vertical_pose.gravity() * elapsed * elapsed * 0.5;
+    assert!(
+        (first_vertical.position() - expected_position)
+            .abs()
+            .max_element()
+            < 0.0001,
+        "actual={:?}, expected={expected_position:?}",
+        first_vertical.position()
+    );
     assert!(
         squirt
             .particles()

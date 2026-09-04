@@ -314,13 +314,13 @@ impl M2ParticleEmitter {
         self.emission_rate_variation
     }
 
-    /// Returns animated plane width or sphere maximum radius.
+    /// Returns animated plane width or sphere starting radius.
     #[must_use]
     pub const fn emission_area_width(&self) -> &M2Track<f32> {
         &self.emission_area_width
     }
 
-    /// Returns animated plane length or sphere minimum radius.
+    /// Returns animated plane length or sphere ending radius.
     #[must_use]
     pub const fn emission_area_length(&self) -> &M2Track<f32> {
         &self.emission_area_length
