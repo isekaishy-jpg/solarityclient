@@ -181,6 +181,60 @@ impl UiMeshPlan {
         &self.object_indices
     }
 
+    /// Returns the smallest contiguous quad window intersecting a batch clip.
+    ///
+    /// ScrollFrame documents remain fully resident so scrolling never uploads
+    /// new vertices. The prepared draw can nevertheless skip off-screen pages
+    /// by selecting this translated, scissor-visible window with `baseVertex`.
+    /// Batches without a clip retain their authored complete range.
+    #[must_use]
+    pub fn clipped_batch_quad_range(&self, batch_index: usize) -> Option<(u32, u32)> {
+        let batch = self.batches.get(batch_index)?;
+        let Some([clip_left, clip_bottom, clip_right, clip_top]) = batch.clip() else {
+            return Some((batch.first_quad(), batch.quad_count()));
+        };
+        let [translate_x, translate_y] = batch.translation();
+        let first_quad = batch.first_quad() as usize;
+        let quad_count = batch.quad_count() as usize;
+        let mut first_visible = None;
+        let mut last_visible = 0;
+        for relative_quad in 0..quad_count {
+            let vertex = (first_quad + relative_quad) * 4;
+            let vertices = &self.vertices[vertex..vertex + 4];
+            let left = vertices
+                .iter()
+                .map(|vertex| vertex.position()[0])
+                .fold(f32::INFINITY, f32::min)
+                + translate_x;
+            let right = vertices
+                .iter()
+                .map(|vertex| vertex.position()[0])
+                .fold(f32::NEG_INFINITY, f32::max)
+                + translate_x;
+            let bottom = vertices
+                .iter()
+                .map(|vertex| vertex.position()[1])
+                .fold(f32::INFINITY, f32::min)
+                + translate_y;
+            let top = vertices
+                .iter()
+                .map(|vertex| vertex.position()[1])
+                .fold(f32::NEG_INFINITY, f32::max)
+                + translate_y;
+            if right <= clip_left || left >= clip_right || top <= clip_bottom || bottom >= clip_top
+            {
+                continue;
+            }
+            first_visible.get_or_insert(relative_quad);
+            last_visible = relative_quad + 1;
+        }
+        let first_visible = first_visible.unwrap_or(0);
+        Some((
+            batch.first_quad() + first_visible as u32,
+            (last_visible - first_visible) as u32,
+        ))
+    }
+
     /// Reports whether an object already owns at least one retained draw slot.
     #[must_use]
     pub fn contains_object(&self, object_index: usize) -> bool {

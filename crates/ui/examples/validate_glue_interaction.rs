@@ -11,6 +11,7 @@ use solarity_asset::{
     DecodedM2Model, Locale,
 };
 use solarity_cpu::BlizzardRand;
+use solarity_rendering::UiRenderTransform;
 use solarity_ui::{
     AddonCatalog, GlueInitialScreen, GlueManager, UiCharacterDirectory, UiCharacterEquipment,
     UiCharacterExpansion, UiCharacterInfo, UiCharacterPetPreview, UiEventArgument, UiEventPayload,
@@ -1653,6 +1654,14 @@ fn accept_notice(
         initial.offset().1,
         initial.range().1
     );
+    let (resident_quads, submitted_quads) = scroll_draw_quads(manager, scroll_index);
+    if initial.range().1 > 0.0 && (submitted_quads == 0 || submitted_quads >= resident_quads) {
+        return Err(invalid_data(format!(
+            "{scroll_name} did not select a visible draw window: resident={resident_quads}, submitted={submitted_quads}"
+        ))
+        .into());
+    }
+    println!("{scroll_name}: retained_quads={resident_quads}, submitted_quads={submitted_quads}");
     if initial.offset().1 < initial.range().1 {
         if manager.pointer_wheel(position, -1.0)? != Some(scroll_index) {
             return Err(
@@ -1733,6 +1742,22 @@ fn accept_notice(
         return Err(invalid_data(format!("{accept_name} did not persist {cvar}")).into());
     }
     Ok(())
+}
+
+fn scroll_draw_quads(manager: &GlueManager, scroll_index: usize) -> (u32, u32) {
+    let mesh = manager.render_plan().mesh();
+    mesh.batches()
+        .iter()
+        .enumerate()
+        .filter(|(_, batch)| {
+            batch.transform() == Some(UiRenderTransform::ScrollFrame(scroll_index))
+        })
+        .fold((0, 0), |(resident, submitted), (batch_index, batch)| {
+            let visible = mesh
+                .clipped_batch_quad_range(batch_index)
+                .map_or(0, |(_, count)| count);
+            (resident + batch.quad_count(), submitted + visible)
+        })
 }
 
 fn object_index(manager: &GlueManager, name: &str) -> Result<usize, IoError> {

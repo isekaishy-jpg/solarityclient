@@ -223,6 +223,43 @@ fn ui_mesh_batches_adjacent_glyph_atlas_quads() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A retained ScrollFrame submits only glyphs intersecting its translated clip.
+#[test]
+fn ui_mesh_selects_visible_window_from_retained_scroll_batch() -> Result<(), Box<dyn Error>> {
+    let transform = UiRenderTransform::ScrollFrame(3);
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let clip = Some([0.0, 0.0, 100.0, 20.0]);
+    let quads = vec![
+        quad(2, UiRenderSource::VertexColor, [0.0, 0.0, 10.0, 10.0]),
+        quad(4, atlas.clone(), [0.0, -30.0, 10.0, -20.0]).with_transform(
+            transform,
+            [0.0, 20.0],
+            clip,
+        ),
+        quad(4, atlas.clone(), [0.0, -20.0, 10.0, -10.0]).with_transform(
+            transform,
+            [0.0, 20.0],
+            clip,
+        ),
+        quad(4, atlas.clone(), [0.0, -10.0, 10.0, 0.0]).with_transform(
+            transform,
+            [0.0, 20.0],
+            clip,
+        ),
+        quad(4, atlas, [0.0, 0.0, 10.0, 10.0]).with_transform(transform, [0.0, 20.0], clip),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+
+    assert_eq!(mesh.clipped_batch_quad_range(0), Some((0, 1)));
+    assert_eq!(mesh.clipped_batch_quad_range(1), Some((2, 2)));
+    mesh.set_transform_translation(transform, [0.0, 30.0]);
+    assert_eq!(mesh.clipped_batch_quad_range(1), Some((1, 2)));
+    mesh.set_transform_translation(transform, [0.0, -30.0]);
+    assert_eq!(mesh.clipped_batch_quad_range(1), Some((1, 0)));
+    assert_eq!(mesh.clipped_batch_quad_range(2), None);
+    Ok(())
+}
+
 /// Scroll translation changes draw state without touching immutable mesh bytes.
 #[test]
 fn ui_mesh_retains_geometry_across_scroll_transforms() -> Result<(), Box<dyn Error>> {

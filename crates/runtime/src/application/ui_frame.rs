@@ -113,20 +113,24 @@ impl PreparedUiFrame {
             .collect();
         let resident_draws = batch_resources
             .into_iter()
-            .map(|(batch_index, pipeline, sampled_index)| {
-                renderer.prepare_ui_draw(
-                    mesh,
-                    pipeline,
-                    sampled_index.map(|index| texture_sets[index]),
-                    plan,
-                    batch_index,
-                )
-            })
+            .map(
+                |(batch_index, pipeline, sampled_index)| -> Result<_, ApplicationError> {
+                    let mut draw = renderer.prepare_ui_draw(
+                        mesh,
+                        pipeline,
+                        sampled_index.map(|index| texture_sets[index]),
+                        plan,
+                        batch_index,
+                    )?;
+                    apply_clipped_batch_range(&mut draw, plan, batch_index)?;
+                    Ok(draw)
+                },
+            )
             .collect::<Result<Vec<_>, _>>()?;
         let draws = resident_draws
             .iter()
             .copied()
-            .filter(|draw| draw.opacity() > 0.0)
+            .filter(|draw| draw.opacity() > 0.0 && draw.index_count() > 0)
             .collect();
         Ok(Self {
             mesh,
@@ -156,7 +160,7 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<(), ApplicationError> {
-        if self.refresh_retained_draw_state(plan) {
+        if self.refresh_retained_draw_state(plan)? {
             return Ok(());
         }
         if !self.can_replace_mesh(plan) {
@@ -184,6 +188,7 @@ impl PreparedUiFrame {
             for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
                 let batch = &plan.batches()[*batch_index];
                 draw.set_transform_state(batch.translation(), batch.opacity(), batch.clip());
+                apply_clipped_batch_range(draw, plan, *batch_index)?;
             }
         } else {
             for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
@@ -194,6 +199,7 @@ impl PreparedUiFrame {
                     plan,
                     *batch_index,
                 )?;
+                apply_clipped_batch_range(draw, plan, *batch_index)?;
             }
         }
         self.materials.clear();
@@ -211,7 +217,7 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<bool, ApplicationError> {
-        if self.refresh_retained_draw_state(plan) {
+        if self.refresh_retained_draw_state(plan)? {
             return Ok(true);
         }
         if !self.can_replace_mesh(plan) {
@@ -222,19 +228,23 @@ impl PreparedUiFrame {
     }
 
     /// Updates only push constants and scissors when CPU and GPU share geometry.
-    fn refresh_retained_draw_state(&mut self, plan: &UiMeshPlan) -> bool {
+    fn refresh_retained_draw_state(&mut self, plan: &UiMeshPlan) -> Result<bool, ApplicationError> {
         if self.mesh_identity != plan.geometry_identity() {
-            return false;
+            return Ok(false);
+        }
+        if self.materials.len() != plan.batches().len() {
+            return Ok(false);
         }
         for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
             let Some(batch) = plan.batches().get(*batch_index) else {
-                return false;
+                return Ok(false);
             };
             draw.set_transform_state(batch.translation(), batch.opacity(), batch.clip());
+            apply_clipped_batch_range(draw, plan, *batch_index)?;
         }
         self.refresh_visible_draws();
         self.logical_extent = plan.logical_extent();
-        true
+        Ok(true)
     }
 
     fn refresh_visible_draws(&mut self) {
@@ -243,7 +253,7 @@ impl PreparedUiFrame {
             self.resident_draws
                 .iter()
                 .copied()
-                .filter(|draw| draw.opacity() > 0.0),
+                .filter(|draw| draw.opacity() > 0.0 && draw.index_count() > 0),
         );
     }
 
@@ -268,6 +278,24 @@ impl PreparedUiFrame {
     pub(crate) const fn mesh(&self) -> UiMeshHandle {
         self.mesh
     }
+}
+
+fn apply_clipped_batch_range(
+    draw: &mut UiPreparedDraw,
+    plan: &UiMeshPlan,
+    batch_index: usize,
+) -> Result<(), ApplicationError> {
+    let Some((first_quad, quad_count)) = plan.clipped_batch_quad_range(batch_index) else {
+        return Err(VulkanError::UiDrawIndex {
+            requested: batch_index,
+            available: plan.batches().len(),
+        }
+        .into());
+    };
+    if !draw.set_quad_range(first_quad, quad_count) {
+        return Err(VulkanError::UiDrawIndexRange.into());
+    }
+    Ok(())
 }
 
 fn same_ui_material(left: &UiRenderBatch, right: &UiRenderBatch) -> bool {

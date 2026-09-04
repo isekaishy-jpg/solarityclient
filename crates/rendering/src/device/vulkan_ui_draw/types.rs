@@ -108,4 +108,36 @@ impl UiPreparedDraw {
         self.opacity = opacity;
         self.clip = clip;
     }
+
+    /// Selects a contiguous quad window from the already validated UI mesh.
+    ///
+    /// The mesh uses a canonical six-index prefix, so changing the window only
+    /// changes `baseVertex` and the submitted index count.
+    pub fn set_quad_range(&mut self, first_quad: u32, quad_count: u32) -> bool {
+        let Some((base_vertex, index_count)) = prepared_quad_range(first_quad, quad_count) else {
+            return false;
+        };
+        self.base_vertex = base_vertex;
+        self.index_count = index_count;
+        true
+    }
+}
+
+fn prepared_quad_range(first_quad: u32, quad_count: u32) -> Option<(i32, u32)> {
+    let base_vertex = u64::from(first_quad)
+        .checked_mul(4)
+        .and_then(|vertex| i32::try_from(vertex).ok())?;
+    Some((base_vertex, quad_count.checked_mul(6)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepared_draw_selects_a_retained_quad_window() {
+        assert_eq!(prepared_quad_range(20, 5), Some((80, 30)));
+        assert_eq!(prepared_quad_range(u32::MAX, 5), None);
+        assert_eq!(prepared_quad_range(20, u32::MAX), None);
+    }
 }
