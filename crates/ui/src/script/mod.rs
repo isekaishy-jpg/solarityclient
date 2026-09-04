@@ -34,6 +34,6 @@ pub(crate) use network_intent::UiGlueNetworkBridge;
 pub(crate) use process_intent::UiProcessBridge;
 pub(crate) use runtime_state::{
     UiRuntimeAnchor, UiRuntimeModelLight, UiRuntimeModelLightSets, UiRuntimeObject,
-    UiRuntimeObjectPlan, UiRuntimeText,
+    UiRuntimeObjectPlan, UiRuntimeText, UiRuntimeTextColorChange,
 };
 pub(crate) use simple_script::{OBJECT_REGISTRY, mark_live_state_changed};

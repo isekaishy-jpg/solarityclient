@@ -119,6 +119,16 @@ pub(crate) struct UiRuntimeText {
     pub(crate) highlight_color: [f64; 4],
 }
 
+/// A button-label font transition whose glyph metrics and atlas coverage are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiRuntimeTextColorChange {
+    pub(crate) object_index: usize,
+    pub(crate) previous_color: [f64; 4],
+    pub(crate) color: [f64; 4],
+    pub(crate) previous_shadow_color: [f64; 4],
+    pub(crate) shadow_color: [f64; 4],
+}
+
 /// Post-Lua model source and animation-selection properties.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiRuntimeModel {
@@ -645,7 +655,7 @@ pub(super) fn refresh_runtime_visual_transforms(
     Ok(())
 }
 
-/// Copies direct alpha only for objects named by the mutation journal.
+/// Copies presentation-only region state for objects named by the mutation journal.
 pub(super) fn refresh_runtime_visual_objects(
     lua: &Lua,
     live: &mut UiRuntimeObjectPlan,
@@ -660,8 +670,12 @@ pub(super) fn refresh_runtime_visual_objects(
             .raw_get(lua_index)
             .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
         let alpha = finite_region_number(&table, alpha_key(), lua_index, "alpha")?;
+        let shown = table
+            .raw_get::<bool>(shown_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} visibility"), error))?;
         if let Some(object) = live.objects.get_mut(object_index) {
             object.alpha = alpha;
+            object.shown = shown;
             if let Some(text) = object.text.as_mut()
                 && object.kind == UiObjectKind::EditBox
             {
@@ -702,6 +716,72 @@ pub(super) fn refresh_runtime_button_highlights(
         live.replace_button_highlight(object_index, highlighted);
     }
     Ok(())
+}
+
+/// Copies only the active presentation font for labels owned by named buttons.
+pub(super) fn refresh_runtime_button_texts(
+    lua: &Lua,
+    live: &mut UiRuntimeObjectPlan,
+    button_indices: impl IntoIterator<Item = usize>,
+) -> Result<(bool, Vec<UiRuntimeTextColorChange>), UiScriptError> {
+    let mut button_indices = button_indices.into_iter().collect::<Vec<_>>();
+    if button_indices.is_empty() {
+        return Ok((false, Vec::new()));
+    }
+    button_indices.sort_unstable();
+    button_indices.dedup();
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    let mut layout_changed = false;
+    let mut color_changes = Vec::new();
+    for object_index in 0..live.objects.len() {
+        let (kind, role, parent) = {
+            let object = &live.objects[object_index];
+            (object.kind, object.role, object.parent)
+        };
+        if role != UiObjectRole::ButtonText
+            || parent.is_none_or(|parent| button_indices.binary_search(&parent).is_err())
+        {
+            continue;
+        }
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        let (presentation_font, presentation_color) =
+            button_presentation_font(&registry, role, parent)?;
+        let text = snapshot_text(
+            lua_index,
+            kind,
+            &table,
+            presentation_font.as_ref(),
+            presentation_color,
+        )?;
+        if live.objects[object_index].text != text {
+            match (&live.objects[object_index].text, &text) {
+                (Some(previous), Some(current)) => {
+                    let mut normalized = current.clone();
+                    normalized.color = previous.color;
+                    normalized.shadow_color = previous.shadow_color;
+                    if normalized == *previous {
+                        color_changes.push(UiRuntimeTextColorChange {
+                            object_index,
+                            previous_color: previous.color,
+                            color: current.color,
+                            previous_shadow_color: previous.shadow_color,
+                            shadow_color: current.shadow_color,
+                        });
+                    } else {
+                        layout_changed = true;
+                    }
+                }
+                _ => layout_changed = true,
+            }
+        }
+        live.objects[object_index].text = text;
+    }
+    Ok((layout_changed, color_changes))
 }
 
 pub(super) fn snapshot_slider(

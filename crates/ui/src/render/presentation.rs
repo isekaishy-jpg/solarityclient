@@ -432,7 +432,7 @@ impl UiPresentationPlan {
         let Some(region) = geometry.region(object_index) else {
             return;
         };
-        let mut opacity = region.effective_alpha() as f32;
+        let mut opacity = region.effective_alpha() as f32 * f32::from(region.effectively_shown());
         if object.texture.is_some()
             && let Some(owner_index) = nearest_owning_frame(live, object)
             && let Some(owner) = live.objects().get(owner_index)
@@ -449,7 +449,8 @@ impl UiPresentationPlan {
             }
         }
         if let Some(Some(model_index)) = self.model_index_by_object.get(object_index) {
-            self.models[*model_index].alpha = region.effective_alpha() as f32;
+            self.models[*model_index].alpha =
+                region.effective_alpha() as f32 * f32::from(region.effectively_shown());
         }
     }
 
@@ -528,6 +529,7 @@ impl UiPresentationPlan {
                 continue;
             };
             member.opacity = region.effective_alpha() as f32
+                * f32::from(region.effectively_shown())
                 * f32::from(widget_role_is_active(
                     object.role,
                     owner,

@@ -616,6 +616,80 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
     Ok(())
 }
 
+/// Authored hover tooltips materialize once, then toggle through the visual journal.
+#[test]
+fn glue_manager_retains_authored_hover_visibility() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"HoverVisibility.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\HoverVisibility.xml",
+            bytes: br#"<Ui>
+<Button name="HoverVisibilityButton" enableMouse="true" frameStrata="DIALOG" frameLevel="2">
+  <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts>
+    <OnEnter>HoverVisibilityTip:Show()</OnEnter>
+    <OnLeave>HoverVisibilityTip:Hide()</OnLeave>
+  </Scripts>
+</Button>
+<Frame name="HoverVisibilityTip" hidden="true" frameStrata="TOOLTIP" frameLevel="4">
+  <Size x="120" y="40"/><Anchors><Anchor point="TOP" relativeTo="HoverVisibilityButton" relativePoint="BOTTOM"/></Anchors>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="$parentTexture" file="Interface\Glues\Hover"><Size x="120" y="40"/><Color r="0.8" g="0.2" b="0.1" a="1"/></Texture>
+  </Layer></Layers>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let button = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HoverVisibilityButton"))
+        .ok_or("missing hover button")?;
+    let texture = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HoverVisibilityTipTexture"))
+        .ok_or("missing tooltip texture")?;
+    let shown = |manager: &GlueManager| {
+        manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .any(|member| member.object_index() == texture && member.opacity() > 0.0)
+    };
+    let bounds = manager
+        .geometry()
+        .region(button)
+        .ok_or("missing button geometry")?
+        .presentation_bounds();
+    let center = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+    let snapshots = manager.runtime_snapshot_count();
+
+    assert!(!shown(&manager));
+    assert_eq!(manager.pointer_motion(center)?, Some(button));
+    assert!(shown(&manager));
+    assert_eq!(manager.pointer_motion((-1.0, -1.0))?, Some(button));
+    assert!(!shown(&manager));
+    let retained_identity = manager.render_plan().mesh().geometry_identity();
+    assert_eq!(manager.pointer_motion(center)?, Some(button));
+    assert!(shown(&manager));
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        retained_identity
+    );
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    Ok(())
+}
+
 /// CheckButton mutates its native checked state before `OnClick`, including
 /// character creation's mutually exclusive race/class/gender groups.
 #[test]

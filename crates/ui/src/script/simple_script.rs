@@ -1690,6 +1690,15 @@ impl UiScriptRuntime {
         super::runtime_state::refresh_runtime_visual_objects(bundle.lua(), live, object_indices)
     }
 
+    pub(crate) fn refresh_button_texts(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        button_indices: impl IntoIterator<Item = usize>,
+    ) -> Result<(bool, Vec<super::runtime_state::UiRuntimeTextColorChange>), UiScriptError> {
+        super::runtime_state::refresh_runtime_button_texts(bundle.lua(), live, button_indices)
+    }
+
     /// Delivers native movie completion to one live `MovieFrame`.
     pub(crate) fn dispatch_movie_finished(
         &mut self,
@@ -1845,12 +1854,15 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         entered: bool,
-    ) -> Result<(bool, bool), UiScriptError> {
+    ) -> Result<(bool, bool, bool, Vec<usize>), UiScriptError> {
         let phase = if entered { "enter" } else { "leave" };
         let label = format!("UI object {object_index}:pointer-{phase}");
         let lua = bundle.lua();
+        clear_visual_dirty_objects(lua).map_err(|error| execution_error(&label, error))?;
         let generation =
             live_state_generation(lua).map_err(|error| execution_error(&label, error))?;
+        let visual_generation =
+            visual_state_generation(lua).map_err(|error| execution_error(&label, error))?;
         let object = self.runtime_object(lua, object_index, &label)?;
         let kind = object
             .raw_get::<String>(type_key())
@@ -1877,9 +1889,25 @@ impl UiScriptRuntime {
             call_object_handler(lua, &function, object)
                 .map_err(|error| execution_error(&label, error))?;
         }
-        let mutated = live_state_generation(lua).map_err(|error| execution_error(&label, error))?
-            != generation;
-        Ok((is_button, mutated || has_state_font))
+        let current_generation =
+            live_state_generation(lua).map_err(|error| execution_error(&label, error))?;
+        let current_visual_generation =
+            visual_state_generation(lua).map_err(|error| execution_error(&label, error))?;
+        let live_mutations = current_generation.wrapping_sub(generation);
+        let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
+        let mut visual_objects =
+            take_visual_dirty_objects(lua).map_err(|error| execution_error(&label, error))?;
+        visual_objects.sort_unstable();
+        visual_objects.dedup();
+        let targeted_visual =
+            live_mutations != 0 && live_mutations == visual_mutations && !visual_objects.is_empty();
+        let requires_full_refresh = live_mutations != 0 && !targeted_visual;
+        Ok((
+            is_button,
+            has_state_font,
+            requires_full_refresh,
+            visual_objects,
+        ))
     }
 
     /// Delivers one normalized wheel delta to a live ScrollFrame handler.
@@ -7585,6 +7613,9 @@ fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Resul
 }
 
 fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> {
+    if object.raw_get::<bool>(shown_key())? == shown {
+        return Ok(());
+    }
     let root_index = object.raw_get::<usize>(index_key())?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
@@ -7602,7 +7633,7 @@ fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> 
     }
 
     object.raw_set(shown_key(), shown)?;
-    mark_live_state_changed(lua)?;
+    mark_visual_state_changed(lua, object)?;
     for (candidate, was_visible) in subtree {
         let is_visible = object_is_visible(lua, candidate.clone())?;
         if was_visible == is_visible || !is_script_frame_table(&candidate)? {

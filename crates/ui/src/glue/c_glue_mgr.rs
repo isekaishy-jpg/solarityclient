@@ -67,6 +67,8 @@ struct PointerHoverUpdate {
     changed: bool,
     requires_full_refresh: bool,
     buttons: [Option<usize>; 2],
+    font_buttons: [Option<usize>; 2],
+    visual_objects: Vec<usize>,
 }
 
 impl GlueManager {
@@ -1132,20 +1134,26 @@ impl GlueManager {
             ..PointerHoverUpdate::default()
         };
         if let Some(previous) = self.pointer_hover {
-            let (button, full) =
+            let (button, state_font, full, visual_objects) =
                 self.runtime
                     .dispatch_pointer_hover(&self.bundle, previous, false)?;
             update.requires_full_refresh |= full;
             update.buttons[0] = button.then_some(previous);
+            update.font_buttons[0] = state_font.then_some(previous);
+            update.visual_objects.extend(visual_objects);
         }
         self.pointer_hover = hit;
         if let Some(current) = hit {
-            let (button, full) =
+            let (button, state_font, full, visual_objects) =
                 self.runtime
                     .dispatch_pointer_hover(&self.bundle, current, true)?;
             update.requires_full_refresh |= full;
             update.buttons[1] = button.then_some(current);
+            update.font_buttons[1] = state_font.then_some(current);
+            update.visual_objects.extend(visual_objects);
         }
+        update.visual_objects.sort_unstable();
+        update.visual_objects.dedup();
         Ok(update)
     }
 
@@ -1158,10 +1166,151 @@ impl GlueManager {
             &mut self.live,
             update.buttons.into_iter().flatten(),
         )?;
+        let (button_text_layout_changed, button_text_color_changes) =
+            self.runtime.refresh_button_texts(
+                &self.bundle,
+                &mut self.live,
+                update.font_buttons.into_iter().flatten(),
+            )?;
+        if !update.visual_objects.is_empty() && self.incremental_visual_updates {
+            self.runtime.refresh_visual_objects(
+                &self.bundle,
+                &mut self.live,
+                &update.visual_objects,
+            )?;
+            self.collect_visual_subtrees(&update.visual_objects);
+            let changes = self
+                .geometry
+                .refresh_visual_regions(&self.live, &self.visual_indices);
+            if !self.current_visual_slots_are_resident() {
+                self.rebuild_visual_topology_from_live()?;
+            } else {
+                for change in &changes {
+                    self.presentation.refresh_visual_object(
+                        &self.live,
+                        &self.geometry,
+                        change.object_index,
+                        change.translation,
+                    );
+                }
+                self.render_plan.refresh_visual_objects(
+                    &changes,
+                    &self.geometry,
+                    &self.presentation,
+                    &self.scroll_frames,
+                    &self.live,
+                )?;
+            }
+            self.pointer = UiPointerPlan::from_live(&self.live);
+        }
         self.presentation
             .refresh_button_state_opacities(&self.live, &self.geometry);
         self.render_plan
             .refresh_button_state_opacities(&self.presentation)?;
+        if button_text_layout_changed {
+            self.rebuild_live_text_topology()?;
+        } else if !button_text_color_changes.is_empty() {
+            self.glyphs
+                .refresh_live_text_colors(&button_text_color_changes);
+            for change in button_text_color_changes {
+                let colors = self.glyphs.retained_object_colors(
+                    change.object_index,
+                    &self.geometry,
+                    &self.scroll_frames,
+                );
+                if !self
+                    .render_plan
+                    .refresh_glyph_colors(change.object_index, &colors)?
+                {
+                    self.rebuild_live_text_topology()?;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reports whether the currently visible targeted subtree owns retained draw slots.
+    fn current_visual_slots_are_resident(&self) -> bool {
+        self.visual_indices.iter().all(|&object_index| {
+            let Some(object) = self.live.objects().get(object_index) else {
+                return true;
+            };
+            let presented = self.geometry.region(object_index).is_some_and(|region| {
+                region.effectively_shown()
+                    && (region.effective_alpha() > 0.0 || region.animation_active())
+            });
+            if !presented {
+                return true;
+            }
+            let owns_quad = object.texture.is_some()
+                || object
+                    .text
+                    .as_ref()
+                    .is_some_and(|text| !text.content.is_empty())
+                || self.backdrops.state(object_index).is_some();
+            (!owns_quad || self.render_plan.mesh().contains_object(object_index))
+                && (object.model.is_none() || self.presentation.contains_model(object_index))
+        })
+    }
+
+    /// Materializes a newly revealed subtree from the already patched live arena.
+    /// Subsequent hide/show transitions retain and only toggle those slots.
+    fn rebuild_visual_topology_from_live(&mut self) -> Result<(), UiEventError> {
+        if self
+            .glyphs
+            .supports_live_text(&self.live, self.glyph_logical_height)
+        {
+            self.glyphs
+                .refresh_live_text(&self.live, &self.geometry, self.glyph_logical_height)?;
+        } else {
+            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                self.runtime.simple_html(),
+                &self.live,
+                &self.geometry,
+                &self.fonts,
+                &mut self.assets.borrow_mut(),
+                self.glyph_logical_height,
+            )?;
+        }
+        self.presentation =
+            UiPresentationPlan::resolve(&self.live, &self.geometry, &self.backdrops);
+        self.render_plan = UiRenderPlan::prepare_with_glyphs(
+            &self.presentation,
+            &self.glyphs,
+            &self.geometry,
+            &self.scroll_frames,
+            self.geometry.ui_extent(),
+        )?;
+        self.pointer = UiPointerPlan::from_live(&self.live);
+        Ok(())
+    }
+
+    /// Re-lays out native button labels without copying the complete Lua arena.
+    fn rebuild_live_text_topology(&mut self) -> Result<(), UiEventError> {
+        if self
+            .glyphs
+            .supports_live_text(&self.live, self.glyph_logical_height)
+        {
+            self.glyphs
+                .refresh_live_text(&self.live, &self.geometry, self.glyph_logical_height)?;
+        } else {
+            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                self.runtime.simple_html(),
+                &self.live,
+                &self.geometry,
+                &self.fonts,
+                &mut self.assets.borrow_mut(),
+                self.glyph_logical_height,
+            )?;
+        }
+        self.render_plan = UiRenderPlan::prepare_with_glyphs(
+            &self.presentation,
+            &self.glyphs,
+            &self.geometry,
+            &self.scroll_frames,
+            self.geometry.ui_extent(),
+        )?;
         Ok(())
     }
 

@@ -75,6 +75,43 @@ fn main() -> Result<(), Box<dyn Error>> {
         percentile(99),
         samples.last().copied().unwrap_or_default().as_secs_f64() * 1_000_000.0,
     );
+
+    let button = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("AccountLoginLoginButton"))
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "login button is absent"))?;
+    let bounds = manager
+        .geometry()
+        .region(button)
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "login button has no geometry"))?
+        .presentation_bounds();
+    let center = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+    let first_started = Instant::now();
+    black_box(manager.pointer_motion(center)?);
+    let first_enter = first_started.elapsed();
+    black_box(manager.pointer_motion((-1.0, -1.0))?);
+    let retained_indices = manager.render_plan().mesh().index_bytes().to_vec();
+    let retained_batches = manager.render_plan().mesh().batches().len();
+    let snapshots = manager.runtime_snapshot_count();
+    let repeat_count = 1_000_usize;
+    let repeated_started = Instant::now();
+    for _ in 0..repeat_count {
+        black_box(manager.pointer_motion(center)?);
+        black_box(manager.pointer_motion((-1.0, -1.0))?);
+    }
+    let repeated = repeated_started.elapsed();
+    println!(
+        "hover_first_enter_us={:.3} retained_toggle_mean_us={:.3} snapshots={} index_topology_retained={}",
+        first_enter.as_secs_f64() * 1_000_000.0,
+        repeated.as_secs_f64() * 1_000_000.0 / (repeat_count * 2) as f64,
+        manager.runtime_snapshot_count() - snapshots,
+        manager.render_plan().mesh().index_bytes() == retained_indices
+            && manager.render_plan().mesh().batches().len() == retained_batches,
+    );
     Ok(())
 }
 

@@ -225,6 +225,17 @@ impl UiRenderPlan {
         Ok(())
     }
 
+    /// Recolors one retained glyph object without rebuilding indices or batches.
+    pub(crate) fn refresh_glyph_colors(
+        &mut self,
+        object_index: usize,
+        colors: &[[[f32; 4]; 4]],
+    ) -> Result<bool, UiRenderError> {
+        self.mesh
+            .replace_object_quad_colors(object_index, colors)
+            .map_err(Into::into)
+    }
+
     /// Patches retained Button state slots without rebuilding geometry bytes.
     pub(crate) fn refresh_button_state_opacities(
         &mut self,

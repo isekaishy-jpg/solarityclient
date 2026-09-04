@@ -175,10 +175,13 @@ impl UiRegionGeometryPlan {
             let alpha = (object.alpha + object.animation_alpha_delta).clamp(0.0, 1.0);
             let effective_alpha =
                 alpha * parent_region.map_or(1.0, UiRegionGeometry::effective_alpha);
+            let effectively_shown =
+                object.shown && parent_region.is_none_or(UiRegionGeometry::effectively_shown);
             let animation_active = object.animation_active
                 || parent_region.is_some_and(UiRegionGeometry::animation_active);
             self.presentations[object_index] = presentation;
             self.regions[object_index].presentation_bounds = presentation_bounds;
+            self.regions[object_index].effectively_shown = effectively_shown;
             self.regions[object_index].effective_alpha = effective_alpha;
             self.regions[object_index].animation_active = animation_active;
             changes.push(UiRegionVisualChange {

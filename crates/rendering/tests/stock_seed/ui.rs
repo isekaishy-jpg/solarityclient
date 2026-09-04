@@ -89,6 +89,66 @@ fn ui_mesh_refreshes_object_opacity_without_replacing_geometry() -> Result<(), B
     Ok(())
 }
 
+/// Button font-state colors patch only their owned glyph vertices and retain indices.
+#[test]
+fn ui_mesh_recolors_one_object_without_rebuilding_topology() -> Result<(), Box<dyn Error>> {
+    let quads = vec![
+        quad(4, UiRenderSource::GlyphAtlas(7), [0.0, 0.0, 10.0, 20.0]),
+        quad(8, UiRenderSource::GlyphAtlas(7), [10.0, 0.0, 20.0, 20.0]),
+        quad(4, UiRenderSource::GlyphAtlas(7), [20.0, 0.0, 30.0, 20.0]),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+    let identity = mesh.geometry_identity();
+    let positions = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| vertex.position())
+        .collect::<Vec<_>>();
+    let texture_coordinates = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| vertex.texture_coordinates())
+        .collect::<Vec<_>>();
+    let indices = mesh.index_bytes().to_vec();
+    let gold = [1.0, 0.82, 0.0, 1.0];
+
+    assert!(mesh.replace_object_quad_colors(4, &[[gold; 4], [gold; 4]])?);
+
+    assert_ne!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.index_bytes(), indices);
+    assert_eq!(
+        mesh.vertices()
+            .iter()
+            .map(|vertex| vertex.position())
+            .collect::<Vec<_>>(),
+        positions
+    );
+    assert_eq!(
+        mesh.vertices()
+            .iter()
+            .map(|vertex| vertex.texture_coordinates())
+            .collect::<Vec<_>>(),
+        texture_coordinates
+    );
+    assert!(
+        mesh.vertices()[0..4]
+            .iter()
+            .all(|vertex| vertex.color() == gold)
+    );
+    assert!(
+        mesh.vertices()[4..8]
+            .iter()
+            .all(|vertex| vertex.color() == [1.0; 4])
+    );
+    assert!(
+        mesh.vertices()[8..12]
+            .iter()
+            .all(|vertex| vertex.color() == gold)
+    );
+    assert!(!mesh.replace_object_quad_colors(4, &[[gold; 4]])?);
+    Ok(())
+}
+
 /// An EditBox blink changes only its retained caret draw slot.
 #[test]
 fn ui_mesh_refreshes_caret_opacity_without_replacing_geometry() -> Result<(), Box<dyn Error>> {

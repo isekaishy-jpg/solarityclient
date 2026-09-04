@@ -261,6 +261,55 @@ impl UiMeshPlan {
         Ok(())
     }
 
+    /// Replaces only retained vertex colors for one object's existing quads.
+    ///
+    /// Returns `false` when the candidate quad count changes topology.
+    pub fn replace_object_quad_colors(
+        &mut self,
+        object_index: usize,
+        colors: &[[[f32; 4]; 4]],
+    ) -> Result<bool, UiMeshPlanError> {
+        let slot_count = self
+            .object_indices
+            .iter()
+            .filter(|owner| **owner == object_index)
+            .count();
+        if slot_count != colors.len() {
+            return Ok(false);
+        }
+        let mut changed = false;
+        for (slot, quad_colors) in self
+            .object_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, owner)| (*owner == object_index).then_some(slot))
+            .zip(colors)
+        {
+            for (corner, &color) in quad_colors.iter().enumerate() {
+                validate_components(object_index, "color", &color)?;
+                let vertex_index = slot * 4 + corner;
+                let previous = self.vertices[vertex_index];
+                if previous.color() == color {
+                    continue;
+                }
+                let vertex =
+                    UiRenderVertex::new(previous.position(), previous.texture_coordinates(), color);
+                self.vertices[vertex_index] = vertex;
+                let color_offset = vertex_index * UiRenderVertex::BYTE_SIZE + 16;
+                for (component, value) in color.into_iter().enumerate() {
+                    let offset = color_offset + component * size_of::<f32>();
+                    self.vertex_bytes[offset..offset + size_of::<f32>()]
+                        .copy_from_slice(&value.to_le_bytes());
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            self.identity = next_identity();
+        }
+        Ok(true)
+    }
+
     /// Replaces opacity for one independently retained draw-state slot.
     pub fn set_state_opacity(
         &mut self,

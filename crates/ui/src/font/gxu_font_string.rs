@@ -10,7 +10,7 @@ use solarity_rendering::{
 };
 
 use super::EditBoxTextLayout;
-use crate::script::{UiRuntimeObjectPlan, UiRuntimeText};
+use crate::script::{UiRuntimeObjectPlan, UiRuntimeText, UiRuntimeTextColorChange};
 use crate::widget::nearest_owning_scroll_frame;
 use crate::{
     FontCatalog, FontError, FontRasterization, FontSystem, RasterizedGlyph, UiObjectKind,
@@ -509,6 +509,54 @@ impl UiGlyphAtlasPlan {
         self.live_quads = layout.quads;
         self.edit_box_layouts = layout.edit_boxes;
         Ok(())
+    }
+
+    /// Recolors retained button-label face and shadow passes without laying out glyphs.
+    pub(crate) fn refresh_live_text_colors(&mut self, changes: &[UiRuntimeTextColorChange]) {
+        for change in changes {
+            let previous_color = change.previous_color.map(|component| component as f32);
+            let color = change.color.map(|component| component as f32);
+            let previous_shadow = change
+                .previous_shadow_color
+                .map(|component| component as f32);
+            let shadow = change.shadow_color.map(|component| component as f32);
+            for quad in self
+                .live_quads
+                .iter_mut()
+                .filter(|quad| quad.object_index == change.object_index)
+            {
+                if quad.color == previous_color {
+                    quad.color = color;
+                } else if quad.color == previous_shadow {
+                    quad.color = shadow;
+                }
+            }
+        }
+    }
+
+    /// Returns retained glyph corner colors for one live text object in mesh order.
+    pub(crate) fn retained_object_colors(
+        &self,
+        object_index: usize,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+    ) -> Vec<[[f32; 4]; 4]> {
+        self.live_quads
+            .iter()
+            .filter(|quad| quad.object_index == object_index)
+            .filter_map(|quad| {
+                if quad
+                    .clip_object
+                    .and_then(|clip| scroll_frames.state(clip))
+                    .is_some()
+                {
+                    resolve_quad_unclipped(quad, geometry, None)
+                } else {
+                    resolve_quad(quad, geometry, None)
+                }
+            })
+            .map(|quad| [quad.color(); 4])
+            .collect()
     }
 
     /// Maps one presentation-space pointer to the nearest UTF-8 insertion boundary.
