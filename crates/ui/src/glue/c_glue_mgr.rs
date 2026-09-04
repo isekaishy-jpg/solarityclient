@@ -300,22 +300,23 @@ impl GlueManager {
         report_phase("Lua runtime", &mut phase_started);
         runtime.execute_all(&bundle, &tree, &scripts)?;
         if let Some(initial_screen) = initial_screen {
-            runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
+            let _dispatch =
+                runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
             let initial_payload = UiEventPayload::new([UiEventArgument::String(
                 initial_screen.script_name().to_owned(),
             )])
             .map_err(|error| crate::UiScriptError::Plan {
                 message: format!("could not construct stock initial-screen event: {error}"),
             })?;
-            runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
+            let _dispatch =
+                runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }
         report_phase("Lua execution", &mut phase_started);
 
         let mut live = runtime.snapshot_objects(&bundle)?;
-        let mut geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
         runtime.publish_resolved_geometry(&bundle, &geometry)?;
-        live = runtime.snapshot_objects(&bundle)?;
-        geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        synchronize_resolved_dimensions(&mut live, &geometry);
         let scroll_frames = UiScrollFramePlan::from_live(&live);
         let glyphs = UiGlyphAtlasPlan::from_live_ui(
             runtime.simple_html(),
@@ -713,11 +714,26 @@ impl GlueManager {
             crate::event::canonical_glue_event(name).ok_or_else(|| UiEventError::Unknown {
                 name: name.to_owned(),
             })?;
-        let subscriber_count = self
+        let started = std::time::Instant::now();
+        let dispatch = self
             .runtime
             .dispatch_glue_event(&self.bundle, event, payload)?;
-        self.refresh_live_state()?;
-        Ok(UiEventDispatch::new(subscriber_count))
+        let script_elapsed = started.elapsed();
+        self.refresh_event_mutations(&dispatch)?;
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI event {event}: script={:.3}ms publish={:.3}ms visual_objects={} targeted={}",
+                script_elapsed.as_secs_f64() * 1_000.0,
+                started
+                    .elapsed()
+                    .saturating_sub(script_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                dispatch.visual_objects.len(),
+                dispatch.targeted_visual,
+            );
+        }
+        Ok(UiEventDispatch::new(dispatch.subscriber_count))
     }
 
     /// Delivers a stock FrameXML event to registered frames in creation order.
@@ -730,11 +746,11 @@ impl GlueManager {
             crate::event::canonical_frame_event(name).ok_or_else(|| UiEventError::Unknown {
                 name: name.to_owned(),
             })?;
-        let subscriber_count = self
+        let dispatch = self
             .runtime
             .dispatch_glue_event(&self.bundle, event, payload)?;
-        self.refresh_live_state()?;
-        Ok(UiEventDispatch::new(subscriber_count))
+        self.refresh_event_mutations(&dispatch)?;
+        Ok(UiEventDispatch::new(dispatch.subscriber_count))
     }
 
     /// Advances visible Glue `OnUpdate` handlers by one rendered-frame interval.
@@ -754,15 +770,43 @@ impl GlueManager {
         if update.targeted_visual && self.incremental_visual_updates {
             self.runtime
                 .apply_animation_transforms(&mut self.live, &update.animation_updates);
-            self.runtime.refresh_visual_objects(
-                &self.bundle,
-                &mut self.live,
-                &update.visual_objects,
-            )?;
-            self.collect_visual_subtrees(&update.visual_objects);
-            let changes = self
-                .geometry
-                .refresh_visual_regions(&self.live, &self.visual_indices);
+            self.refresh_targeted_visual_objects(&update.visual_objects)?;
+        } else if update.visual_only {
+            self.runtime
+                .refresh_visual_transforms(&self.bundle, &mut self.live)?;
+            self.rebuild_visual_transform_state()?;
+        } else if update.changed {
+            self.refresh_live_state()?;
+        }
+        Ok(update.changed)
+    }
+
+    fn refresh_event_mutations(
+        &mut self,
+        dispatch: &crate::script::UiScriptEventDispatch,
+    ) -> Result<(), UiEventError> {
+        if dispatch.targeted_visual && self.incremental_visual_updates {
+            self.refresh_targeted_visual_objects(&dispatch.visual_objects)
+        } else if dispatch.changed {
+            self.refresh_live_state()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn refresh_targeted_visual_objects(
+        &mut self,
+        visual_objects: &[usize],
+    ) -> Result<(), UiEventError> {
+        self.runtime
+            .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+        self.collect_visual_subtrees(visual_objects);
+        let changes = self
+            .geometry
+            .refresh_visual_regions(&self.live, &self.visual_indices);
+        if !self.current_visual_slots_are_resident() {
+            self.rebuild_visual_topology_from_live()?;
+        } else {
             for change in &changes {
                 self.presentation.refresh_visual_object(
                     &self.live,
@@ -778,14 +822,9 @@ impl GlueManager {
                 &self.scroll_frames,
                 &self.live,
             )?;
-        } else if update.visual_only {
-            self.runtime
-                .refresh_visual_transforms(&self.bundle, &mut self.live)?;
-            self.rebuild_visual_transform_state()?;
-        } else if update.changed {
-            self.refresh_live_state()?;
         }
-        Ok(update.changed)
+        self.pointer = UiPointerPlan::from_live(&self.live);
+        Ok(())
     }
 
     fn collect_visual_subtrees(&mut self, roots: &[usize]) {
@@ -1411,8 +1450,11 @@ impl GlueManager {
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
+        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
+        let started = std::time::Instant::now();
         self.deferred_slider_refresh = None;
         let mut live = self.runtime.snapshot_objects(&self.bundle)?;
+        let first_snapshot_elapsed = started.elapsed();
         if live == self.live {
             return Ok(());
         }
@@ -1431,6 +1473,7 @@ impl GlueManager {
             return self.refresh_button_state(live);
         }
         let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let first_geometry_elapsed = started.elapsed();
         let html_changed = self.runtime.refresh_simple_html_layout(
             &self.bundle,
             &live,
@@ -1445,8 +1488,8 @@ impl GlueManager {
         }
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
-        live = self.runtime.snapshot_objects(&self.bundle)?;
-        geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let published_elapsed = started.elapsed();
+        synchronize_resolved_dimensions(&mut live, &geometry);
         let scroll_frames = UiScrollFramePlan::from_live(&live);
         if !html_changed
             && self
@@ -1475,6 +1518,7 @@ impl GlueManager {
         )?;
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
+        let plans_elapsed = started.elapsed();
         self.live = live;
         self.geometry = geometry;
         self.scroll_frames = scroll_frames;
@@ -1483,6 +1527,25 @@ impl GlueManager {
         self.objects = objects;
         self.child_indices = child_indices;
         self.pointer = pointer;
+        if timings {
+            eprintln!(
+                "UI full publish: snapshot={:.3}ms geometry={:.3}ms writeback={:.3}ms plans={:.3}ms total={:.3}ms",
+                first_snapshot_elapsed.as_secs_f64() * 1_000.0,
+                first_geometry_elapsed
+                    .saturating_sub(first_snapshot_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                published_elapsed
+                    .saturating_sub(first_geometry_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                plans_elapsed
+                    .saturating_sub(published_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
         Ok(())
     }
 
@@ -1600,6 +1663,18 @@ impl GlueManager {
         self.geometry = geometry;
         self.presentation = presentation;
         Ok(())
+    }
+}
+
+fn synchronize_resolved_dimensions(
+    live: &mut crate::script::UiRuntimeObjectPlan,
+    geometry: &UiRegionGeometryPlan,
+) {
+    for object_index in 0..geometry.region_count() {
+        if let Some(region) = geometry.region(object_index) {
+            let bounds = region.logical_bounds();
+            live.replace_resolved_dimensions(object_index, bounds.width(), bounds.height());
+        }
     }
 }
 

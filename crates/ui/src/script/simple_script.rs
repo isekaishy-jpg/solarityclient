@@ -343,6 +343,14 @@ pub(crate) struct UiUpdateDispatch {
     pub(crate) visual_objects: Vec<usize>,
 }
 
+/// Mutation classification for one synchronous stock event dispatch.
+pub(crate) struct UiScriptEventDispatch {
+    pub(crate) subscriber_count: usize,
+    pub(crate) changed: bool,
+    pub(crate) targeted_visual: bool,
+    pub(crate) visual_objects: Vec<usize>,
+}
+
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
 pub struct UiScriptRuntimePlan<'plan, 'bundle> {
     tree: &'plan UiObjectTree<'bundle>,
@@ -1526,8 +1534,13 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         event: &'static str,
         payload: &UiEventPayload,
-    ) -> Result<usize, UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let lua = bundle.lua();
+        clear_visual_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
+        let generation =
+            live_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let visual_generation =
+            visual_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let globals = lua.globals();
         let previous_event = globals
             .raw_get::<Value>("event")
@@ -1560,11 +1573,29 @@ impl UiScriptRuntime {
 
         let dispatch = dispatch_subscribers(lua, self.registered_object_count(), event, &arguments);
         let restore = restore_event_globals(lua, previous_event, previous_arguments);
-        match (dispatch, restore) {
+        let subscriber_count = match (dispatch, restore) {
             (Ok(count), Ok(())) => Ok(count),
             (Err(error), _) => Err(execution_error(event, error)),
             (Ok(_), Err(error)) => Err(execution_error(event, error)),
-        }
+        }?;
+        let current_generation =
+            live_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let current_visual_generation =
+            visual_state_generation(lua).map_err(|error| execution_error(event, error))?;
+        let mut visual_objects =
+            take_visual_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
+        visual_objects.sort_unstable();
+        visual_objects.dedup();
+        let live_mutations = current_generation.wrapping_sub(generation);
+        let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
+        Ok(UiScriptEventDispatch {
+            subscriber_count,
+            changed: live_mutations != 0,
+            targeted_visual: live_mutations != 0
+                && live_mutations == visual_mutations
+                && !visual_objects.is_empty(),
+            visual_objects,
+        })
     }
 
     /// Delivers one rendered-frame elapsed interval to visible `OnUpdate`

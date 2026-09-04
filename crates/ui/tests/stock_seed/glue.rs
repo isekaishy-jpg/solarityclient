@@ -70,6 +70,64 @@ fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// Event-driven visibility changes stay on the retained mutation path.
+#[test]
+fn glue_manager_reconciles_visual_events_without_full_snapshots() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"VisualEvent.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\VisualEvent.xml",
+            bytes: br#"<Ui>
+<Frame name="VisualEventOwner"><Scripts>
+  <OnLoad>self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+  <OnEvent>
+    if arg1 == "charcreate" then VisualEventTarget:Show() else VisualEventTarget:Hide() end
+  </OnEvent>
+</Scripts></Frame>
+<Frame name="VisualEventTarget" hidden="true">
+  <Size x="80" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="$parentTexture" file="Interface\Glues\VisualEvent"/>
+  </Layer></Layers>
+</Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let texture = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("VisualEventTargetTexture"))
+        .ok_or("missing event-owned texture")?;
+    let presented = |manager: &GlueManager| {
+        manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .any(|member| member.object_index() == texture && member.opacity() > 0.0)
+    };
+    let snapshots = manager.runtime_snapshot_count();
+
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+    )?;
+    assert!(presented(&manager));
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    manager.dispatch_event(
+        "SET_GLUE_SCREEN",
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+    )?;
+    assert!(!presented(&manager));
+    assert_eq!(manager.runtime_snapshot_count(), snapshots);
+    Ok(())
+}
+
 /// Stock audio globals preserve invocation order and the two boolean-returning
 /// direct-file calls while transferring playback to the process media owner.
 #[test]

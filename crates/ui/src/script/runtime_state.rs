@@ -198,6 +198,19 @@ impl UiRuntimeObjectPlan {
         }
     }
 
+    /// Keeps the retained copy aligned with dimensions published back to Lua.
+    pub(crate) fn replace_resolved_dimensions(
+        &mut self,
+        object_index: usize,
+        width: f64,
+        height: f64,
+    ) {
+        if let Some(object) = self.objects.get_mut(object_index) {
+            object.width = width;
+            object.height = height;
+        }
+    }
+
     pub(crate) fn replace_scroll_state(
         &mut self,
         object_index: usize,

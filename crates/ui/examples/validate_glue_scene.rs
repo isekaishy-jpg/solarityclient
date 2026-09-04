@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &AddonCatalog::default(),
         Rc::new(RefCell::new(BlizzardRand::new(0))),
     )?;
+    let transition_started = std::time::Instant::now();
     match screen.as_str() {
         "login" => {}
         "charselect" => activate_character_selection(&mut manager)?,
@@ -55,6 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
         }
     }
+    let transition_elapsed = transition_started.elapsed();
     if manager.current_screen() != screen {
         return Err(argument_error(&format!(
             "requested Glue screen {screen}, but {} remained active",
@@ -67,11 +69,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "validated Glue screen {} with {} objects, {} packets, and {} models",
+        "validated Glue screen {} with {} objects, {} packets, and {} models in {:.3} ms",
         manager.current_screen(),
         manager.objects().len(),
         manager.presentation().packets().len(),
         manager.presentation().models().len(),
+        transition_elapsed.as_secs_f64() * 1_000.0,
     );
     for model in manager.presentation().models() {
         let background = model.background_lights().live().iter().flatten().count();
@@ -109,13 +112,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn activate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     manager.set_network_status(UiGlueNetworkStatus::new(None, true));
     manager.set_character_directory(UiCharacterDirectory::default());
+    let snapshots = manager.runtime_snapshot_count();
+    let screen_started = std::time::Instant::now();
     let screen_dispatch = manager.dispatch_event(
         "SET_GLUE_SCREEN",
         &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
     )?;
     println!(
-        "SET_GLUE_SCREEN subscribers: {}",
-        screen_dispatch.subscriber_count()
+        "SET_GLUE_SCREEN subscribers: {} in {:.3} ms ({} snapshots)",
+        screen_dispatch.subscriber_count(),
+        screen_started.elapsed().as_secs_f64() * 1_000.0,
+        manager.runtime_snapshot_count() - snapshots,
     );
     advance_fades(manager)?;
     let character = UiCharacterInfo::new(
@@ -140,13 +147,15 @@ fn activate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
         vec![character],
         "Human".to_owned(),
     ));
+    let directory_started = std::time::Instant::now();
     let directory_dispatch = manager.dispatch_event(
         "CHARACTER_LIST_UPDATE",
         &UiEventPayload::new([UiEventArgument::Integer(1)])?,
     )?;
     println!(
-        "CHARACTER_LIST_UPDATE subscribers: {}",
-        directory_dispatch.subscriber_count()
+        "CHARACTER_LIST_UPDATE subscribers: {} in {:.3} ms",
+        directory_dispatch.subscriber_count(),
+        directory_started.elapsed().as_secs_f64() * 1_000.0,
     );
     Ok(())
 }
@@ -155,13 +164,17 @@ fn activate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
 fn activate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn Error>> {
     manager.set_network_status(UiGlueNetworkStatus::new(None, true));
     manager.set_character_creation_expansion(UiCharacterExpansion::WRATH_OF_THE_LICH_KING);
+    let snapshots = manager.runtime_snapshot_count();
+    let screen_started = std::time::Instant::now();
     let screen_dispatch = manager.dispatch_event(
         "SET_GLUE_SCREEN",
         &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
     )?;
     println!(
-        "SET_GLUE_SCREEN subscribers: {}",
-        screen_dispatch.subscriber_count()
+        "SET_GLUE_SCREEN subscribers: {} in {:.3} ms ({} snapshots)",
+        screen_dispatch.subscriber_count(),
+        screen_started.elapsed().as_secs_f64() * 1_000.0,
+        manager.runtime_snapshot_count() - snapshots,
     );
     advance_fades(manager)?;
     Ok(())
