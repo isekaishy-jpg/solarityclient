@@ -12,6 +12,42 @@ use crate::{AssetError, AssetPath};
 /// Build-12340 flag that packs three five-bit texture indices into `texture_id`.
 const MULTI_TEXTURE_FLAG: u32 = 0x1000_0000;
 
+/// Stores each gravity key as two signed horizontal directions and a signed
+/// 16-bit magnitude instead of one downward scalar.
+const COMPRESSED_GRAVITY_FLAG: u32 = 0x0080_0000;
+
+/// Exact build-12340 compressed-gravity magnitude expansion.
+const COMPRESSED_GRAVITY_SCALE: f32 = f32::from_bits(0x3d2d_9d72);
+
+/// Animated acceleration representation selected by the emitter flags.
+#[derive(Clone, Debug, PartialEq)]
+pub enum M2ParticleGravity {
+    /// Conventional positive magnitude applied along local negative Z.
+    Scalar(M2Track<f32>),
+    /// Packed direction and signed magnitude expanded to a local vector.
+    Compressed(M2Track<Vec3>),
+}
+
+impl M2ParticleGravity {
+    /// Returns the conventional scalar track when that file representation is used.
+    #[must_use]
+    pub const fn scalar(&self) -> Option<&M2Track<f32>> {
+        match self {
+            Self::Scalar(track) => Some(track),
+            Self::Compressed(_) => None,
+        }
+    }
+
+    /// Returns the expanded vector track when compressed gravity is authored.
+    #[must_use]
+    pub const fn compressed(&self) -> Option<&M2Track<Vec3>> {
+        match self {
+            Self::Scalar(_) => None,
+            Self::Compressed(track) => Some(track),
+        }
+    }
+}
+
 /// One sequence-independent ramp sampled over a particle's normalized lifetime.
 ///
 /// Unlike [`M2Track`], this WotLK `FBlock` has no interpolation selector or
@@ -59,7 +95,7 @@ pub struct M2ParticleEmitter {
     speed_variation: M2Track<f32>,
     vertical_range: M2Track<f32>,
     horizontal_range: M2Track<f32>,
-    gravity: M2Track<f32>,
+    gravity: M2ParticleGravity,
     lifespan: M2Track<f32>,
     lifespan_variation: f32,
     emission_rate: M2Track<f32>,
@@ -250,7 +286,7 @@ impl M2ParticleEmitter {
 
     /// Returns animated gravity, including compressed values selected by flags.
     #[must_use]
-    pub const fn gravity(&self) -> &M2Track<f32> {
+    pub const fn gravity(&self) -> &M2ParticleGravity {
         &self.gravity
     }
 
@@ -525,7 +561,7 @@ pub(super) fn decode_particles(
                 sequences,
                 payloads,
             )?,
-            gravity: float_track(
+            gravity: decode_gravity_track(
                 path,
                 bytes,
                 offset + 0x084,
@@ -533,6 +569,7 @@ pub(super) fn decode_particles(
                 globals,
                 sequences,
                 payloads,
+                read_u32(path, bytes, offset + 4, &field("flags"))?,
             )?,
             lifespan: float_track(
                 path,
@@ -701,6 +738,52 @@ fn float_track(
     decode_track(
         path, bytes, offset, field, globals, sequences, payloads, 4, read_f32,
     )
+}
+
+/// Decodes the flag-selected scalar or packed-vector gravity representation.
+#[allow(clippy::too_many_arguments)]
+fn decode_gravity_track(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+    globals: &[u32],
+    sequences: &[M2Sequence],
+    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    flags: u32,
+) -> Result<M2ParticleGravity, AssetError> {
+    if flags & COMPRESSED_GRAVITY_FLAG == 0 {
+        return float_track(path, bytes, offset, field, globals, sequences, payloads)
+            .map(M2ParticleGravity::Scalar);
+    }
+    decode_track(
+        path,
+        bytes,
+        offset,
+        field,
+        globals,
+        sequences,
+        payloads,
+        4,
+        decode_compressed_gravity,
+    )
+    .map(M2ParticleGravity::Compressed)
+}
+
+/// Expands one stock 8:8:16 compressed acceleration key.
+fn decode_compressed_gravity(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<Vec3, AssetError> {
+    let horizontal = Vec2::new(
+        f32::from(read_u8(path, bytes, offset, field)? as i8) / 128.0,
+        f32::from(read_u8(path, bytes, offset + 1, field)? as i8) / 128.0,
+    );
+    let vertical = (1.0 - horizontal.length_squared()).max(0.0).sqrt();
+    let magnitude = f32::from(read_i16(path, bytes, offset + 2, field)?) * COMPRESSED_GRAVITY_SCALE;
+    Ok(Vec3::new(horizontal.x, horizontal.y, vertical) * magnitude)
 }
 
 /// Decodes one optional, complete C-string asset path.

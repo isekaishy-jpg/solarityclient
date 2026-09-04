@@ -18,7 +18,7 @@ pub use camera::M2Camera;
 pub use event::{M2Event, M2EventTrack};
 pub use light::{M2Light, M2LightKind};
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
-pub use particle::{M2ParticleEmitter, M2ParticleLifetimeTrack};
+pub use particle::{M2ParticleEmitter, M2ParticleGravity, M2ParticleLifetimeTrack};
 pub use ribbon::M2RibbonEmitter;
 
 /// Stock interpolation operation authored by one M2 track.

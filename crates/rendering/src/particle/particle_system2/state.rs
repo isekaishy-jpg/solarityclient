@@ -73,7 +73,7 @@ impl M2ParticleState {
     pub fn advance(
         &mut self,
         elapsed_seconds: f32,
-        gravity: f32,
+        gravity: Vec3,
         drag: f32,
     ) -> Result<(), M2ParticleStateError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
@@ -93,14 +93,19 @@ impl M2ParticleState {
     /// that slice's motion after emission. The ordinary old-particle pass has
     /// already run, so adding the full slice to age here would age every
     /// newborn twice.
-    pub(super) fn advance_newborn_motion(&mut self, elapsed_seconds: f32, gravity: f32, drag: f32) {
+    pub(super) fn advance_newborn_motion(
+        &mut self,
+        elapsed_seconds: f32,
+        gravity: Vec3,
+        drag: f32,
+    ) {
         self.advance_motion(elapsed_seconds, gravity, drag);
     }
 
-    fn advance_motion(&mut self, elapsed_seconds: f32, gravity: f32, drag: f32) {
+    fn advance_motion(&mut self, elapsed_seconds: f32, gravity: Vec3, drag: f32) {
         self.position += self.velocity * elapsed_seconds;
-        self.position.z -= gravity * elapsed_seconds * elapsed_seconds * 0.5;
-        self.velocity.z -= gravity * elapsed_seconds;
+        self.position += gravity * elapsed_seconds * elapsed_seconds * 0.5;
+        self.velocity += gravity * elapsed_seconds;
         if drag != 0.0 {
             let amount = (elapsed_seconds * drag).min(1.0);
             self.velocity -= self.velocity * amount;

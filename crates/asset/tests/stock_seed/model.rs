@@ -730,7 +730,15 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
         particle.horizontal_range().channels()[0].values(),
         &[0.5, 0.6]
     );
-    assert_eq!(particle.gravity().channels()[0].values(), &[9.0, 8.0]);
+    assert_eq!(
+        particle
+            .gravity()
+            .scalar()
+            .ok_or("scalar particle gravity is absent")?
+            .channels()[0]
+            .values(),
+        &[9.0, 8.0]
+    );
     assert_eq!(particle.lifespan().channels()[0].values(), &[1.0, 2.0]);
     assert_eq!(particle.lifespan_variation(), 0.25);
     assert_eq!(
@@ -794,6 +802,52 @@ fn m2_particle_emitters_decode_wotlk_record_and_channels() -> Result<(), Box<dyn
         ]
     );
     assert_eq!(particle.enabled().channels()[0].values(), &[1, 0]);
+    Ok(())
+}
+
+/// Flag `0x00800000` expands each packed 8:8:16 gravity key to a vector.
+#[test]
+fn m2_particle_compressed_gravity_expands_stock_direction() -> Result<(), Box<dyn Error>> {
+    let mut model = animated_particle_m2_bytes()?;
+    let particle_offset = m2_array_offset(&model, 0x128)?;
+    let flags = u32::from_le_bytes(model[particle_offset + 4..particle_offset + 8].try_into()?)
+        | 0x0080_0000;
+    model[particle_offset + 4..particle_offset + 8].copy_from_slice(&flags.to_le_bytes());
+    let value_channels = m2_array_offset(&model, particle_offset + 0x084 + 12)?;
+    let values = m2_array_offset(&model, value_channels)?;
+    model[values..values + 4].copy_from_slice(&[64, 0, 100, 0]);
+    model[values + 4..values + 8].copy_from_slice(&[0, 64, 200, 0]);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\CompressedGravity.m2",
+            bytes: &model,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature\\Solarity\\CompressedGravity00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\CompressedGravity.m2")?,
+    )?;
+    let gravity = model.animations().particles()[0]
+        .gravity()
+        .compressed()
+        .ok_or("compressed particle gravity is absent")?;
+    let values = gravity.channels()[0].values();
+    let magnitude = 100.0 * f32::from_bits(0x3d2d_9d72);
+    let expected = glam::Vec3::new(0.5, 0.0, 0.75_f32.sqrt()) * magnitude;
+    assert!((values[0] - expected).abs().max_element() < 0.000_001);
+    assert!(values[1].x.abs() < 0.000_001);
+    assert!(values[1].y > 4.0);
+    assert!(values[1].z > 7.0);
     Ok(())
 }
 

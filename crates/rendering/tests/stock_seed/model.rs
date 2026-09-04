@@ -871,7 +871,7 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
     assert_eq!(pose.speed_variation(), 0.3);
     assert_eq!(pose.vertical_range(), 0.6);
     assert!((pose.horizontal_range() - 0.9).abs() < f32::EPSILON * 2.0);
-    assert_eq!(pose.gravity(), 9.0);
+    assert_eq!(pose.gravity(), Vec3::new(0.0, 0.0, -9.0));
     assert_eq!(pose.lifespan(), 2.0);
     assert_eq!(pose.emission_rate(), 15.0);
     assert_eq!(pose.emission_area_width(), 6.0);
@@ -1288,8 +1288,8 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     expected_velocity += emitter.wind_vector() * 0.2;
     let mut expected_position =
         Vec3::new(local_x + 10.0, local_y + 20.0, 30.0) + expected_velocity * 0.2;
-    expected_position.z -= pose.gravity() * 0.2 * 0.2 * 0.5;
-    expected_velocity.z -= pose.gravity() * 0.2;
+    expected_position += pose.gravity() * 0.2 * 0.2 * 0.5;
+    expected_velocity += pose.gravity() * 0.2;
     expected_velocity -= expected_velocity * (0.2 * emitter.drag()).min(1.0);
     assert_eq!(first_particle.random_word(), random_word);
     // The existing-particle pass precedes emission. A newborn keeps only its
@@ -1626,7 +1626,7 @@ fn m2_particle_simulation_applies_follow_position() -> Result<(), Box<dyn Error>
     assert_eq!(simulation.particles().len(), before.len());
     for (before, after) in before.iter().zip(simulation.particles()) {
         let mut expected = before.position() + Vec3::new(10.0, 0.0, 0.0) + before.velocity() * 0.01;
-        expected.z -= pose.gravity() * 0.01 * 0.01 * 0.5;
+        expected += pose.gravity() * 0.01 * 0.01 * 0.5;
         assert!((after.position() - expected).abs().max_element() < 0.0001);
     }
     Ok(())
@@ -1697,7 +1697,7 @@ fn m2_particle_simulation_inherits_emitter_velocity() -> Result<(), Box<dyn Erro
     let inherit_variation = random.next_signed() * pose.speed_variation() + 1.0;
     let mut expected_velocity = Vec3::new(local_x, local_y, -pose.z_source()).normalize() * speed
         + inherited * inherit_variation;
-    expected_velocity.z -= pose.gravity() * 0.04;
+    expected_velocity += pose.gravity() * 0.04;
     assert!(
         (particle.velocity() - expected_velocity)
             .abs()

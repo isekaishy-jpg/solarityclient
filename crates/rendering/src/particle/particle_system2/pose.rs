@@ -1,8 +1,9 @@
 //! Immutable model-animation values sampled for one particle update.
 
-use solarity_asset::{M2AnimationSet, M2ParticleEmitter};
+use glam::Vec3;
+use solarity_asset::{M2AnimationSet, M2ParticleEmitter, M2ParticleGravity};
 
-use crate::model::m2_animation::sample::{sample_discrete, sample_scalar};
+use crate::model::m2_animation::sample::{sample_discrete, sample_scalar, sample_vec3};
 use crate::{M2AnimationClock, M2BonePoseError};
 
 /// One animation-clock sample of a build-12340 particle emitter.
@@ -15,7 +16,7 @@ pub struct M2ParticlePose {
     speed_variation: f32,
     vertical_range: f32,
     horizontal_range: f32,
-    gravity: f32,
+    gravity: Vec3,
     lifespan: f32,
     emission_rate: f32,
     emission_area_width: f32,
@@ -54,7 +55,17 @@ impl M2ParticlePose {
             speed_variation: scalar(emitter.speed_variation(), 0.0),
             vertical_range: scalar(emitter.vertical_range(), 0.0),
             horizontal_range: scalar(emitter.horizontal_range(), 0.0),
-            gravity: scalar(emitter.gravity(), 0.0),
+            gravity: match emitter.gravity() {
+                M2ParticleGravity::Scalar(track) => Vec3::NEG_Z * scalar(track, 0.0),
+                M2ParticleGravity::Compressed(track) => sample_vec3(
+                    animations,
+                    track,
+                    sequence,
+                    animation_time_ms,
+                    global_time_ms,
+                    Vec3::ZERO,
+                ),
+            },
             lifespan: scalar(emitter.lifespan(), 0.0),
             emission_rate: scalar(emitter.emission_rate(), 0.0),
             emission_area_width: scalar(emitter.emission_area_width(), 0.0),
@@ -95,9 +106,9 @@ impl M2ParticlePose {
         self.horizontal_range
     }
 
-    /// Returns the animated downward acceleration.
+    /// Returns the animated local acceleration vector.
     #[must_use]
-    pub const fn gravity(self) -> f32 {
+    pub const fn gravity(self) -> Vec3 {
         self.gravity
     }
 

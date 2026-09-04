@@ -34,7 +34,7 @@ fn particle_twinkle_table_reproduces_stock_stream() {
 #[test]
 fn particle_state_advances_stock_ballistics() -> Result<(), M2ParticleStateError> {
     let mut particle = M2ParticleState::new(0.0, Vec3::ZERO, Vec3::new(2.0, 4.0, 6.0), 0)?;
-    particle.advance(0.5, 8.0, 0.25)?;
+    particle.advance(0.5, Vec3::new(0.0, 0.0, -8.0), 0.25)?;
 
     assert_eq!(particle.age_seconds(), 0.5);
     assert_eq!(particle.position(), Vec3::new(1.0, 2.0, 2.0));
@@ -43,12 +43,23 @@ fn particle_state_advances_stock_ballistics() -> Result<(), M2ParticleStateError
     assert_eq!(particle.normalized_age(1.0, 0.5), 0.5);
     assert!(particle.is_alive(1.0, 0.5));
 
-    particle.advance(0.5, 8.0, 0.25)?;
+    particle.advance(0.5, Vec3::new(0.0, 0.0, -8.0), 0.25)?;
     assert!(!particle.is_alive(1.0, 0.5));
     assert_eq!(
-        particle.advance(-0.1, 8.0, 0.25),
+        particle.advance(-0.1, Vec3::new(0.0, 0.0, -8.0), 0.25),
         Err(M2ParticleStateError::ElapsedTime)
     );
+    Ok(())
+}
+
+/// Compressed gravity accelerates along all three decoded axes.
+#[test]
+fn particle_state_applies_vector_gravity() -> Result<(), M2ParticleStateError> {
+    let mut particle = M2ParticleState::new(0.0, Vec3::ZERO, Vec3::ZERO, 0)?;
+    particle.advance(0.5, Vec3::new(2.0, -4.0, 6.0), 0.0)?;
+
+    assert_eq!(particle.position(), Vec3::new(0.25, -0.5, 0.75));
+    assert_eq!(particle.velocity(), Vec3::new(1.0, -2.0, 3.0));
     Ok(())
 }
 
