@@ -118,6 +118,7 @@ pub struct UiRuntimeTemplateNode {
     resizable: bool,
     top_level: bool,
     dont_save_position: bool,
+    motion_scripts_while_disabled: bool,
     slider_orientation: String,
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
@@ -320,6 +321,9 @@ impl UiRuntimeTemplatePlan {
                     dont_save_position: frame_states
                         .state(local_index)
                         .is_some_and(crate::UiFrameState::position_persistence_disabled),
+                    motion_scripts_while_disabled: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::motion_scripts_while_disabled),
                     slider_orientation: slider_orientation(object),
                     script_targets,
                 });
@@ -505,6 +509,10 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("resizable", node.resizable)?;
                 record.raw_set("top_level", node.top_level)?;
                 record.raw_set("dont_save_position", node.dont_save_position)?;
+                record.raw_set(
+                    "motion_scripts_while_disabled",
+                    node.motion_scripts_while_disabled,
+                )?;
                 record.raw_set("slider_orientation", node.slider_orientation.as_str())?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {

@@ -19,12 +19,13 @@ use super::simple_script::{
     model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
     model_pet_light_ghost_key, model_pet_light_live_key, model_rotation_key, model_scale_key,
     model_sequence_key, model_sequence_time_key, model_sequence_time_sequence_key, model_unit_key,
-    mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key,
-    normal_font_key, parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key,
-    slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
-    spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
-    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
+    motion_scripts_while_disabled_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
+    non_blocking_key, non_space_wrap_key, normal_font_key, parent_key, parse_point, role_key,
+    scale_key, scroll_child_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key,
+    slider_step_key, slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertex_color_set_key, vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key,
+    width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transforms;
 use crate::{
@@ -69,6 +70,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) frame_strata: Option<UiFrameStrata>,
     pub(crate) keyboard_enabled: Option<bool>,
     pub(crate) mouse_enabled: Option<bool>,
+    pub(crate) motion_scripts_while_disabled: Option<bool>,
     pub(crate) mouse_wheel_enabled: Option<bool>,
     pub(crate) hit_rect_insets: Option<[f64; 4]>,
     pub(crate) scroll_offset: Option<(f64, f64)>,
@@ -612,6 +614,12 @@ pub(super) fn snapshot_runtime_objects(
                 .transpose()
                 .map_err(|error| {
                     snapshot_error(format!("object {lua_index} mouse input"), error)
+                })?,
+            motion_scripts_while_disabled: is_frame
+                .then(|| table.raw_get(motion_scripts_while_disabled_key()))
+                .transpose()
+                .map_err(|error| {
+                    snapshot_error(format!("object {lua_index} disabled motion scripts"), error)
                 })?,
             mouse_wheel_enabled: is_frame
                 .then(|| table.raw_get(mouse_wheel_enabled_key()))

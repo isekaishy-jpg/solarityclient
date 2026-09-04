@@ -201,6 +201,7 @@ static RESOLVED_TOP_TOKEN: u8 = 137;
 static RESOLVED_VISIBLE_TOKEN: u8 = 138;
 static MODEL_UNIT_TOKEN: u8 = 139;
 static MODEL_ROTATION_TOKEN: u8 = 140;
+static MOTION_SCRIPTS_WHILE_DISABLED_TOKEN: u8 = 141;
 
 const OBJECT_KINDS: [UiObjectKind; 24] = [
     UiObjectKind::Frame,
@@ -341,6 +342,7 @@ pub struct UiScriptRuntime {
     frame_strata: Vec<Option<&'static str>>,
     frame_keyboard_enabled: Vec<Option<bool>>,
     frame_mouse_enabled: Vec<Option<bool>>,
+    frame_motion_scripts_while_disabled: Vec<Option<bool>>,
     frame_clamped_to_screen: Vec<Option<bool>>,
     frame_movable: Vec<Option<bool>>,
     frame_resizable: Vec<Option<bool>>,
@@ -1238,6 +1240,13 @@ impl UiScriptRuntime {
         let frame_mouse_enabled = (0..plan.regions.state_count())
             .map(|index| plan.frames.state(index).map(|state| state.mouse_enabled()))
             .collect();
+        let frame_motion_scripts_while_disabled = (0..plan.regions.state_count())
+            .map(|index| {
+                plan.frames
+                    .state(index)
+                    .map(|state| state.motion_scripts_while_disabled())
+            })
+            .collect();
         let frame_clamped_to_screen = (0..plan.regions.state_count())
             .map(|index| {
                 plan.frames
@@ -1290,6 +1299,7 @@ impl UiScriptRuntime {
             frame_strata,
             frame_keyboard_enabled,
             frame_mouse_enabled,
+            frame_motion_scripts_while_disabled,
             frame_clamped_to_screen,
             frame_movable,
             frame_resizable,
@@ -2632,6 +2642,12 @@ impl UiScriptRuntime {
         } else {
             None
         };
+        let motion_scripts_while_disabled = resolved_frame_flag(
+            &self.frame_motion_scripts_while_disabled,
+            node_index,
+            object.kind(),
+            "motion-scripts-while-disabled",
+        )?;
         let clamped_to_screen = if is_frame_object(object.kind()) {
             Some(
                 self.frame_clamped_to_screen
@@ -2787,6 +2803,12 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(frame_strata_key(), frame_strata))
                 .and_then(|()| table.raw_set(keyboard_enabled_key(), keyboard_enabled))
                 .and_then(|()| table.raw_set(mouse_enabled_key(), mouse_enabled))
+                .and_then(|()| {
+                    table.raw_set(
+                        motion_scripts_while_disabled_key(),
+                        motion_scripts_while_disabled,
+                    )
+                })
                 .and_then(|()| {
                     table.raw_set(
                         mouse_wheel_enabled_key(),
@@ -3507,6 +3529,10 @@ fn create_dynamic_object(
         object.raw_set(
             frame_dont_save_position_key(),
             record.raw_get::<bool>("dont_save_position")?,
+        )?;
+        object.raw_set(
+            motion_scripts_while_disabled_key(),
+            record.raw_get::<bool>("motion_scripts_while_disabled")?,
         )?;
         object.raw_set(drag_button_key(), 0_u8)?;
         object.raw_set(
@@ -9323,6 +9349,10 @@ fn ignore_depth_key() -> LightUserData {
 
 pub(super) fn mouse_enabled_key() -> LightUserData {
     hidden_key(&MOUSE_ENABLED_TOKEN)
+}
+
+pub(super) fn motion_scripts_while_disabled_key() -> LightUserData {
+    hidden_key(&MOTION_SCRIPTS_WHILE_DISABLED_TOKEN)
 }
 
 pub(super) fn mouse_wheel_enabled_key() -> LightUserData {

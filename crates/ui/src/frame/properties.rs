@@ -38,6 +38,7 @@ pub struct UiFrameLayer {
     clamped_to_screen: Option<bool>,
     keyboard_enabled: Option<bool>,
     mouse_enabled: Option<bool>,
+    motion_scripts_while_disabled: Option<bool>,
     protected: Option<bool>,
     position_persistence_disabled: Option<bool>,
 }
@@ -97,6 +98,12 @@ impl UiFrameLayer {
         self.mouse_enabled
     }
 
+    /// Returns whether a disabled control retains pointer-motion scripts.
+    #[must_use]
+    pub const fn motion_scripts_while_disabled(self) -> Option<bool> {
+        self.motion_scripts_while_disabled
+    }
+
     /// Returns the explicit protected-frame flag.
     #[must_use]
     pub const fn protected(self) -> Option<bool> {
@@ -143,6 +150,7 @@ pub struct UiFrameState {
     clamped_to_screen: bool,
     keyboard_enabled: bool,
     mouse_enabled: bool,
+    motion_scripts_while_disabled: bool,
     protected: bool,
     position_persistence_disabled: bool,
 }
@@ -202,6 +210,12 @@ impl UiFrameState {
         self.mouse_enabled
     }
 
+    /// Returns whether a disabled control receives `OnEnter` and `OnLeave`.
+    #[must_use]
+    pub const fn motion_scripts_while_disabled(self) -> bool {
+        self.motion_scripts_while_disabled
+    }
+
     /// Returns whether protected-frame restrictions apply.
     #[must_use]
     pub const fn protected(self) -> bool {
@@ -231,6 +245,7 @@ impl UiFrameState {
                     | UiObjectKind::EditBox
                     | UiObjectKind::Slider
             ),
+            motion_scripts_while_disabled: false,
             protected: false,
             position_persistence_disabled: false,
         }
@@ -277,6 +292,9 @@ impl UiFrameState {
         }
         if let Some(value) = layer.mouse_enabled {
             self.mouse_enabled = value;
+        }
+        if let Some(value) = layer.motion_scripts_while_disabled {
+            self.motion_scripts_while_disabled = value;
         }
         if let Some(value) = layer.protected {
             self.protected = value;
@@ -462,6 +480,11 @@ fn parse_layer(
         clamped_to_screen: parse_optional_bool(path, element, "clampedToScreen")?,
         keyboard_enabled: parse_optional_bool(path, element, "enableKeyboard")?,
         mouse_enabled: parse_optional_bool(path, element, "enableMouse")?,
+        motion_scripts_while_disabled: parse_optional_bool(
+            path,
+            element,
+            "motionScriptsWhileDisabled",
+        )?,
         protected: parse_optional_bool(path, element, "protected")?,
         position_persistence_disabled: parse_optional_bool(path, element, "dontSavePosition")?,
     };
@@ -474,6 +497,7 @@ fn parse_layer(
         || layer.clamped_to_screen.is_some()
         || layer.keyboard_enabled.is_some()
         || layer.mouse_enabled.is_some()
+        || layer.motion_scripts_while_disabled.is_some()
         || layer.protected.is_some()
         || layer.position_persistence_disabled.is_some();
     Ok(present.then_some(layer))

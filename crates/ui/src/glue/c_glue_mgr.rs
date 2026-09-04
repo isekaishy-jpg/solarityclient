@@ -1256,10 +1256,11 @@ impl GlueManager {
         click_count: u8,
         modifiers: UiKeyboardModifiers,
     ) -> Result<UiPointerDispatch, UiEventError> {
+        let hover_hit = self.pointer.hover_hit_test(&self.geometry, position);
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);
-        self.environment.mouse_focus().set(hit);
-        let hover = self.update_pointer_hover(hit)?;
+        self.environment.mouse_focus().set(hover_hit);
+        let hover = self.update_pointer_hover(hover_hit)?;
         if !pressed || button == UiPointerButton::Left {
             self.edit_box_pointer_anchor = None;
         }
@@ -1392,7 +1393,7 @@ impl GlueManager {
         position: (f64, f64),
         defer_slider_refresh: bool,
     ) -> Result<Option<usize>, UiEventError> {
-        let hit = self.pointer.hit_test(&self.geometry, position);
+        let hit = self.pointer.hover_hit_test(&self.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
         let previous_hover = self.pointer_hover;

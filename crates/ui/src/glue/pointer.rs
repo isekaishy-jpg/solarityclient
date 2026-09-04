@@ -26,6 +26,7 @@ impl UiPointerPlan {
                     keyboard_enabled: object.keyboard_enabled?,
                     mouse_enabled: object.mouse_enabled?,
                     mouse_wheel_enabled: object.mouse_wheel_enabled?,
+                    motion_scripts_while_disabled: object.motion_scripts_while_disabled?,
                     enabled: object.enabled.unwrap_or(true),
                     hit_rect_insets: object.hit_rect_insets?,
                     click_action: object.click_action.unwrap_or(0),
@@ -71,6 +72,27 @@ impl UiPointerPlan {
         geometry: &UiRegionGeometryPlan,
         point: (f64, f64),
     ) -> Option<usize> {
+        self.hit_test_internal(geometry, point, true)
+    }
+
+    /// Returns the frontmost mouse target eligible for pointer-motion scripts.
+    ///
+    /// Build 12340 lets authored controls opt into `OnEnter`/`OnLeave` while
+    /// disabled through `motionScriptsWhileDisabled`.
+    pub(super) fn hover_hit_test(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        point: (f64, f64),
+    ) -> Option<usize> {
+        self.hit_test_internal(geometry, point, false)
+    }
+
+    fn hit_test_internal(
+        &self,
+        geometry: &UiRegionGeometryPlan,
+        point: (f64, f64),
+        require_enabled: bool,
+    ) -> Option<usize> {
         self.targets
             .iter()
             .enumerate()
@@ -78,7 +100,8 @@ impl UiPointerPlan {
                 let target = target.as_ref()?;
                 let region = geometry.region(index)?;
                 if !target.mouse_enabled
-                    || !target.enabled
+                    || (!target.enabled
+                        && (require_enabled || !target.motion_scripts_while_disabled))
                     || !region.effectively_shown()
                     || region.effective_alpha() <= 0.0
                 {
@@ -260,6 +283,7 @@ struct UiPointerTarget {
     keyboard_enabled: bool,
     mouse_enabled: bool,
     mouse_wheel_enabled: bool,
+    motion_scripts_while_disabled: bool,
     enabled: bool,
     hit_rect_insets: [f64; 4],
     click_action: u64,

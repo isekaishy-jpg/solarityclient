@@ -423,6 +423,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     validate_visible_font_string_extents(manager, "character creation")?;
     validate_character_creation_choice_layout(manager)?;
     validate_character_creation_text_layout(manager)?;
+    validate_character_creation_class_tooltips(manager)?;
     let globals = manager.bundle().lua().globals();
     manager
         .bundle()
@@ -502,6 +503,60 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
         request.gender_id(),
         request.appearance()
     );
+    Ok(())
+}
+
+fn validate_character_creation_class_tooltips(
+    manager: &mut GlueManager,
+) -> Result<(), Box<dyn Error>> {
+    let tooltip_index = object_index(manager, "CharacterCreateTooltip")?;
+    let text_index = object_index(manager, "CharacterCreateTooltipTextLeft1")?;
+    for class_index in 1..=10 {
+        let name = format!("CharacterCreateClassButton{class_index}");
+        let button_index = object_index(manager, &name)?;
+        let authored_tooltip = manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<mlua::Table>(name.as_str())?
+            .get::<Option<String>>("tooltip")?
+            .ok_or_else(|| invalid_data(format!("{name} has no authored tooltip")))?;
+        let center = object_center(manager, button_index)?;
+        if manager.pointer_motion(center)? != Some(button_index) {
+            return Err(invalid_data(format!(
+                "{name} did not receive hover while disabled or enabled"
+            ))
+            .into());
+        }
+        let globals = manager.bundle().lua().globals();
+        let text = globals.get::<mlua::Table>("CharacterCreateTooltipTextLeft1")?;
+        let shown_text = text
+            .get::<mlua::Function>("GetText")?
+            .call::<String>(text)?;
+        if !manager
+            .geometry()
+            .region(tooltip_index)
+            .is_some_and(solarity_ui::UiRegionGeometry::effectively_shown)
+            || shown_text != authored_tooltip
+            || !visible_glyph_owners(manager).contains(&text_index)
+        {
+            return Err(invalid_data(format!(
+                "{name} produced an incomplete tooltip: authored={authored_tooltip:?}, shown={shown_text:?}"
+            ))
+            .into());
+        }
+    }
+    manager.pointer_motion((-1.0, -1.0))?;
+    if manager
+        .geometry()
+        .region(tooltip_index)
+        .is_some_and(solarity_ui::UiRegionGeometry::effectively_shown)
+    {
+        return Err(invalid_data(
+            "character creation tooltip remained shown after pointer leave".to_owned(),
+        )
+        .into());
+    }
     Ok(())
 }
 

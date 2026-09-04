@@ -783,6 +783,70 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
     Ok(())
 }
 
+/// Disabled Buttons retain hover scripts for authored unavailable-choice help.
+#[test]
+fn glue_manager_hovers_disabled_buttons_without_activating_them() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"DisabledHover.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\DisabledHover.xml",
+            bytes: br#"<Ui><Button name="DisabledChoice" enableMouse="true"
+    motionScriptsWhileDisabled="true">
+  <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>DISABLED_LOG = ""; self:Disable()</OnLoad>
+    <OnEnter>DISABLED_LOG = DISABLED_LOG .. "enter;"</OnEnter>
+    <OnLeave>DISABLED_LOG = DISABLED_LOG .. "leave;"</OnLeave>
+    <OnClick>DISABLED_LOG = DISABLED_LOG .. "click;"</OnClick>
+  </Scripts>
+</Button></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let button = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("DisabledChoice"))
+        .ok_or("missing disabled choice")?;
+    let bounds = manager
+        .geometry()
+        .region(button)
+        .ok_or("missing disabled choice geometry")?
+        .presentation_bounds();
+    let center = (
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    );
+
+    assert_eq!(manager.pointer_motion(center)?, Some(button));
+    assert_eq!(
+        manager
+            .pointer_button(center, UiPointerButton::Left, true)?
+            .object_index(),
+        None
+    );
+    assert_eq!(
+        manager
+            .pointer_button(center, UiPointerButton::Left, false)?
+            .object_index(),
+        None
+    );
+    assert_eq!(manager.pointer_motion((-1.0, -1.0))?, Some(button));
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<String>("DISABLED_LOG")?,
+        "enter;leave;"
+    );
+    Ok(())
+}
+
 /// Authored hover tooltips materialize once, then toggle through the visual journal.
 #[test]
 fn glue_manager_retains_authored_hover_visibility() -> Result<(), Box<dyn Error>> {

@@ -171,7 +171,7 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
   <Frame name="Base" virtual="true" frameStrata="LOW" frameLevel="3" id="7"
          toplevel="true" movable="true" resizable="true" clampedToScreen="true"
          enableKeyboard="true" enableMouse="false" protected="true"
-         dontSavePosition="true"/>
+         dontSavePosition="true" motionScriptsWhileDisabled="true"/>
   <Button name="Login" inherits="Base" frameStrata="DIALOG" frameLevel="11"
           enableMouse="true"/>
   <Button name="NativeButton"/>
@@ -203,6 +203,7 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
     assert_eq!(layers[0].clamped_to_screen(), Some(true));
     assert_eq!(layers[0].keyboard_enabled(), Some(true));
     assert_eq!(layers[0].mouse_enabled(), Some(false));
+    assert_eq!(layers[0].motion_scripts_while_disabled(), Some(true));
     assert_eq!(layers[0].protected(), Some(true));
     assert_eq!(layers[0].position_persistence_disabled(), Some(true));
     assert_eq!(layers[1].strata(), Some(UiFrameStrata::Dialog));
@@ -219,6 +220,7 @@ fn frame_plan_preserves_stock_properties() -> Result<(), Box<dyn Error>> {
     assert!(state.clamped_to_screen());
     assert!(state.keyboard_enabled());
     assert!(state.mouse_enabled());
+    assert!(state.motion_scripts_while_disabled());
     assert!(state.protected());
     assert!(state.position_persistence_disabled());
     let native_button_index = tree
