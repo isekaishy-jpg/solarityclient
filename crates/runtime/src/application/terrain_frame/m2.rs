@@ -1,6 +1,6 @@
 //! Renderer-local resources for the shared resident placed-M2 scene.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::Mat4;
@@ -276,6 +276,80 @@ pub(in crate::application) struct M2CpuSource {
     mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
     particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
     ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
+}
+
+/// Driver pipeline work for one worker-prepared Glue M2 source.
+///
+/// SPIR-V compilation is already complete. Keeping a cursor over the remaining
+/// Vulkan pipelines lets the presentation owner admit one potentially costly
+/// driver creation per frame instead of one 20-30 ms burst when a character
+/// with several equipped models first becomes visible.
+pub(in crate::application) struct M2GluePipelineWarmup {
+    programs: VecDeque<M2GluePipelineProgram>,
+}
+
+enum M2GluePipelineProgram {
+    Mesh(M2SpirvProgram, M2ModelOrientation),
+    Particle(M2ParticleSpirvProgram),
+    Ribbon(M2RibbonSpirvProgram),
+}
+
+impl M2GluePipelineWarmup {
+    /// Captures immutable programs for one exact model orientation.
+    pub(in crate::application) fn new(
+        source: &M2CpuSource,
+        orientation: M2ModelOrientation,
+    ) -> Self {
+        let mut programs = VecDeque::with_capacity(
+            source.mesh_programs.len()
+                + source.particle_programs.len()
+                + source.ribbon_programs.len(),
+        );
+        programs.extend(
+            source
+                .mesh_programs
+                .values()
+                .cloned()
+                .map(|program| M2GluePipelineProgram::Mesh(program, orientation)),
+        );
+        programs.extend(
+            source
+                .particle_programs
+                .values()
+                .cloned()
+                .map(M2GluePipelineProgram::Particle),
+        );
+        programs.extend(
+            source
+                .ribbon_programs
+                .values()
+                .cloned()
+                .map(M2GluePipelineProgram::Ribbon),
+        );
+        Self { programs }
+    }
+
+    /// Creates at most one driver pipeline and reports full residency.
+    pub(in crate::application) fn service_one(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        let Some(program) = self.programs.pop_front() else {
+            return Ok(true);
+        };
+        match program {
+            M2GluePipelineProgram::Mesh(program, orientation) => {
+                renderer.prepare_precompiled_oriented_m2_pipeline(&program, orientation)?;
+            }
+            M2GluePipelineProgram::Particle(program) => {
+                renderer.prepare_precompiled_m2_particle_pipeline(&program)?;
+            }
+            M2GluePipelineProgram::Ribbon(program) => {
+                renderer.prepare_precompiled_m2_ribbon_pipeline(&program)?;
+            }
+        }
+        Ok(self.programs.is_empty())
+    }
 }
 
 /// Exact immutable CPU generation shared by Glue character placements.

@@ -11,9 +11,9 @@ use solarity_asset::{
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
     M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LocalLightCount,
-    M2LocalLightState, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight, TerrainSceneUniform,
-    VulkanError, VulkanRenderer, WorldFrameGlow, WorldFrameScene, WorldFrustum,
-    WorldModelSceneUniform, WorldScreenWindow, glue_character_sunlight,
+    M2LocalLightState, M2ModelOrientation, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight,
+    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameGlow, WorldFrameScene,
+    WorldFrustum, WorldModelSceneUniform, WorldScreenWindow, glue_character_sunlight,
     merge_wotlk_directional_lights, sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
@@ -23,7 +23,8 @@ use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::{
-    GlueM2Texture, M2CpuSource, M2Frame, M2GlueCpuSourceKey, prepare_m2_cpu_source,
+    GlueM2Texture, M2CpuSource, M2Frame, M2GlueCpuSourceKey, M2GluePipelineWarmup,
+    prepare_m2_cpu_source,
 };
 use crate::random::CrtRand;
 
@@ -181,29 +182,48 @@ struct PendingGlueCharacterSource {
     task: CpuTask<Result<PreparedGlueCpuSource, RuntimeTerrainFrameError>>,
 }
 
+/// One exact model/orientation whose driver pipelines are admitted gradually.
+struct PendingGlueCharacterPipelineWarmup {
+    key: (M2GlueCpuSourceKey, M2ModelOrientation),
+    warmup: M2GluePipelineWarmup,
+}
+
 /// Collects each distinct immutable model/light permutation in one preview.
 fn glue_character_cpu_models(
     input: &ResidentGlueCharacterFrameInput<'_>,
     character_light_count: M2LocalLightCount,
     pet_light_count: M2LocalLightCount,
-) -> Vec<(M2GlueCpuSourceKey, Arc<solarity_asset::DecodedM2Model>)> {
+) -> Vec<(
+    M2GlueCpuSourceKey,
+    Arc<solarity_asset::DecodedM2Model>,
+    M2ModelOrientation,
+)> {
     let mut seen = HashSet::new();
     let mut models = Vec::new();
-    let mut push = |model: &Arc<solarity_asset::DecodedM2Model>, light_count| {
+    let mut push = |model: &Arc<solarity_asset::DecodedM2Model>, light_count, orientation| {
         let key = M2GlueCpuSourceKey::new(model.path().clone(), light_count);
-        if seen.insert(key.clone()) {
-            models.push((key, Arc::clone(model)));
+        if seen.insert((key.clone(), orientation)) {
+            models.push((key, Arc::clone(model), orientation));
         }
     };
-    push(input.model(), character_light_count);
+    push(
+        input.model(),
+        character_light_count,
+        M2ModelOrientation::Authored,
+    );
     for attachment in input.attachments() {
-        push(attachment.model(), character_light_count);
+        let orientation = if attachment.is_model_mirrored() {
+            M2ModelOrientation::Mirrored
+        } else {
+            M2ModelOrientation::Authored
+        };
+        push(attachment.model(), character_light_count, orientation);
         for effect in attachment.visual_effects() {
-            push(effect.model(), character_light_count);
+            push(effect.model(), character_light_count, orientation);
         }
     }
     if let Some(pet) = input.pet() {
-        push(pet.model(), pet_light_count);
+        push(pet.model(), pet_light_count, M2ModelOrientation::Authored);
     }
     models
 }
@@ -472,6 +492,8 @@ pub(crate) struct RuntimeGlueModelScene {
     prepared: HashMap<GlueModelGenerationKey, PreparedGlueModel>,
     character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
     pending_character_sources: Vec<PendingGlueCharacterSource>,
+    pending_character_pipeline_warmups: VecDeque<PendingGlueCharacterPipelineWarmup>,
+    warmed_character_pipelines: HashSet<(M2GlueCpuSourceKey, M2ModelOrientation)>,
     character_replacement_required: bool,
     character_screen: Option<GlueCharacterScreen>,
     frame_profiler: Option<GlueFrameProfiler>,
@@ -550,6 +572,8 @@ impl RuntimeGlueModelScene {
             prepared: HashMap::new(),
             character_sources: HashMap::new(),
             pending_character_sources: Vec::new(),
+            pending_character_pipeline_warmups: VecDeque::new(),
+            warmed_character_pipelines: HashSet::new(),
             character_replacement_required: false,
             character_screen: None,
             frame_profiler: GlueFrameProfiler::from_environment(),
@@ -902,6 +926,7 @@ impl RuntimeGlueModelScene {
             false
         } else if self.character_replacement_required {
             self.ensure_character_cpu_sources(
+                renderer,
                 glue_character.as_ref(),
                 environment.character_light_count(),
                 environment.pet_light_count(),
@@ -1017,6 +1042,7 @@ impl RuntimeGlueModelScene {
     /// Reports whether every immutable CPU source for the current preview is resident.
     fn ensure_character_cpu_sources(
         &mut self,
+        renderer: &mut VulkanRenderer,
         input: Option<&ResidentGlueCharacterFrameInput<'_>>,
         character_light_count: M2LocalLightCount,
         pet_light_count: M2LocalLightCount,
@@ -1029,39 +1055,76 @@ impl RuntimeGlueModelScene {
         let models = glue_character_cpu_models(input, character_light_count, pet_light_count);
         if models
             .iter()
-            .all(|(key, _model)| self.character_sources.contains_key(key))
+            .any(|(key, _model, _orientation)| !self.character_sources.contains_key(key))
         {
-            return Ok(true);
+            let mut submitted_count = 0_usize;
+            for (key, model, _orientation) in &models {
+                if self.character_sources.contains_key(key)
+                    || self
+                        .pending_character_sources
+                        .iter()
+                        .any(|pending| pending.key == *key)
+                {
+                    continue;
+                }
+                let local_light_count = key.local_light_count();
+                let task_model = Arc::clone(model);
+                let task =
+                    cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
+                self.pending_character_sources
+                    .push(PendingGlueCharacterSource {
+                        key: key.clone(),
+                        submitted_at: std::time::Instant::now(),
+                        task,
+                    });
+                submitted_count += 1;
+            }
+            if submitted_count != 0 {
+                tracing::info!(
+                    model_count = submitted_count,
+                    "submitted parallel Glue character sources to bounded CPU executor"
+                );
+            }
+            return Ok(false);
         }
-        let mut submitted_count = 0_usize;
-        for (key, model) in models {
-            if self.character_sources.contains_key(&key)
+
+        let required = models
+            .iter()
+            .map(|(key, _model, orientation)| (key.clone(), *orientation))
+            .collect::<HashSet<_>>();
+        self.pending_character_pipeline_warmups
+            .retain(|pending| required.contains(&pending.key));
+        for key in &required {
+            if self.warmed_character_pipelines.contains(key)
                 || self
-                    .pending_character_sources
+                    .pending_character_pipeline_warmups
                     .iter()
-                    .any(|pending| pending.key == key)
+                    .any(|pending| pending.key == *key)
             {
                 continue;
             }
-            let local_light_count = key.local_light_count();
-            let task_model = Arc::clone(&model);
-            let task =
-                cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
-            self.pending_character_sources
-                .push(PendingGlueCharacterSource {
-                    key,
-                    submitted_at: std::time::Instant::now(),
-                    task,
+            let source = self
+                .character_sources
+                .get(&key.0)
+                .ok_or(RuntimeGlueModelError::PendingState)?;
+            self.pending_character_pipeline_warmups
+                .push_back(PendingGlueCharacterPipelineWarmup {
+                    key: key.clone(),
+                    warmup: M2GluePipelineWarmup::new(source, key.1),
                 });
-            submitted_count += 1;
         }
-        if submitted_count != 0 {
-            tracing::info!(
-                model_count = submitted_count,
-                "submitted parallel Glue character sources to bounded CPU executor"
-            );
+        if let Some(pending) = self.pending_character_pipeline_warmups.front_mut()
+            && pending.warmup.service_one(renderer)?
+        {
+            let complete = self
+                .pending_character_pipeline_warmups
+                .pop_front()
+                .ok_or(RuntimeGlueModelError::PendingState)?;
+            self.warmed_character_pipelines.insert(complete.key);
         }
-        Ok(false)
+        Ok(required
+            .iter()
+            .all(|key| self.warmed_character_pipelines.contains(key)))
     }
 
     /// Joins completed character tasks without ever waiting on the presentation thread.
