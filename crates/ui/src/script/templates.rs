@@ -118,6 +118,7 @@ pub struct UiRuntimeTemplateNode {
     resizable: bool,
     top_level: bool,
     dont_save_position: bool,
+    slider_orientation: String,
     script_targets: Vec<(UiScriptHandler, UiScriptTarget)>,
 }
 
@@ -319,6 +320,7 @@ impl UiRuntimeTemplatePlan {
                     dont_save_position: frame_states
                         .state(local_index)
                         .is_some_and(crate::UiFrameState::position_persistence_disabled),
+                    slider_orientation: slider_orientation(object),
                     script_targets,
                 });
             }
@@ -503,6 +505,7 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("resizable", node.resizable)?;
                 record.raw_set("top_level", node.top_level)?;
                 record.raw_set("dont_save_position", node.dont_save_position)?;
+                record.raw_set("slider_orientation", node.slider_orientation.as_str())?;
                 let scripts = lua.create_table()?;
                 for (handler, target) in &node.script_targets {
                     match target {
@@ -848,6 +851,16 @@ fn attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> 
         .iter()
         .find(|attribute| attribute.name() == name)
         .map(|attribute| attribute.value())
+}
+
+pub(super) fn slider_orientation(object: &crate::UiObjectNode<'_>) -> String {
+    object
+        .layers()
+        .iter()
+        .filter_map(|layer| attribute(layer.element(), "orientation"))
+        .next_back()
+        .unwrap_or("VERTICAL")
+        .to_ascii_uppercase()
 }
 
 fn object_kind_name(kind: UiObjectKind) -> &'static str {

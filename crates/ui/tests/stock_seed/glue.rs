@@ -751,6 +751,90 @@ fn glue_manager_routes_vertical_slider_click_and_drag() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// An inherited authored horizontal axis controls pointer values and thumb
+/// placement instead of silently retaining `CSimpleSlider`'s vertical default.
+#[test]
+fn glue_manager_honors_inherited_horizontal_slider_orientation() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Slider.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Slider.xml",
+            bytes: br#"<Ui>
+<Slider name="HorizontalSliderTemplate" orientation="HORIZONTAL" virtual="true">
+  <Size x="100" y="20"/><ThumbTexture><Size x="20" y="20"/></ThumbTexture>
+</Slider>
+<Slider name="HorizontalSlider" inherits="HorizontalSliderTemplate">
+  <Anchors><Anchor point="CENTER"/></Anchors>
+  <Scripts><OnLoad>self:SetMinMaxValues(0, 100)</OnLoad></Scripts>
+</Slider>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let slider_index = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("HorizontalSlider"))
+        .ok_or("missing horizontal slider")?;
+    let thumb_index = manager
+        .objects()
+        .iter()
+        .position(|object| {
+            object.parent() == Some(slider_index) && object.role() == UiObjectRole::ThumbTexture
+        })
+        .ok_or("missing horizontal slider thumb")?;
+    let track = manager
+        .geometry()
+        .region(slider_index)
+        .ok_or("missing horizontal slider geometry")?
+        .presentation_bounds();
+    let middle_y = (track.bottom() + track.top()) * 0.5;
+    let left = (track.left(), middle_y);
+    let right = (track.right(), middle_y);
+    assert_eq!(
+        manager
+            .pointer_button(left, UiPointerButton::Left, true)?
+            .object_index(),
+        Some(slider_index)
+    );
+    assert_eq!(manager.pointer_motion(right)?, Some(slider_index));
+    assert_eq!(
+        manager
+            .pointer_button(right, UiPointerButton::Left, false)?
+            .object_index(),
+        Some(slider_index)
+    );
+    let slider = manager
+        .bundle()
+        .lua()
+        .globals()
+        .get::<mlua::Table>("HorizontalSlider")?;
+    assert_eq!(
+        slider
+            .get::<mlua::Function>("GetOrientation")?
+            .call::<String>(slider.clone())?,
+        "HORIZONTAL"
+    );
+    assert_eq!(
+        slider
+            .get::<mlua::Function>("GetValue")?
+            .call::<f64>(slider)?,
+        100.0
+    );
+    let thumb = manager
+        .geometry()
+        .region(thumb_index)
+        .ok_or("missing horizontal thumb geometry")?
+        .presentation_bounds();
+    assert!((thumb.right() - track.right()).abs() < 0.001);
+    Ok(())
+}
+
 /// Stock login globals preserve action order and expose runtime-owned status.
 #[test]
 fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(), Box<dyn Error>> {

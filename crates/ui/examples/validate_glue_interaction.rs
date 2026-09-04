@@ -199,11 +199,113 @@ fn validate_login_secondary_frames(manager: &mut GlueManager) -> Result<(), Box<
     if !object_is_shown(manager, "OptionsSelectFrame")? {
         return Err(invalid_data("options selector did not become active".to_owned()).into());
     }
+    let video_button = object_index(
+        manager,
+        "OptionsSelectFrameBackgroundContainerVideoOptionsButton",
+    )?;
+    let video_button_center = object_center(manager, video_button)?;
+    manager.pointer_button(video_button_center, UiPointerButton::Left, true)?;
+    manager.pointer_button(video_button_center, UiPointerButton::Left, false)?;
+    let effects_button = object_index(manager, "VideoOptionsFrameCategoryFrameButton2")?;
+    let effects_button_center = object_center(manager, effects_button)?;
+    manager.pointer_button(effects_button_center, UiPointerButton::Left, true)?;
+    manager.pointer_button(effects_button_center, UiPointerButton::Left, false)?;
+    validate_video_options_slider(manager, "VideoOptionsEffectsPanelViewDistance")?;
+    let cancel = object_index(manager, "VideoOptionsFrameCancel")?;
+    let cancel_center = object_center(manager, cancel)?;
+    manager.pointer_button(cancel_center, UiPointerButton::Left, true)?;
+    manager.pointer_button(cancel_center, UiPointerButton::Left, false)?;
     manager
         .bundle()
         .lua()
         .load("OptionsSelectFrame:Hide()")
         .exec()?;
+    Ok(())
+}
+
+fn validate_video_options_slider(
+    manager: &mut GlueManager,
+    slider_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let slider_index = object_index(manager, slider_name)?;
+    let track = manager
+        .geometry()
+        .region(slider_index)
+        .filter(|geometry| geometry.effectively_shown())
+        .ok_or_else(|| invalid_data(format!("{slider_name} has no visible geometry")))?
+        .presentation_bounds();
+    let thumb_index = manager
+        .objects()
+        .iter()
+        .enumerate()
+        .find_map(|(index, object)| {
+            (object.parent() == Some(slider_index) && object.role() == UiObjectRole::ThumbTexture)
+                .then_some(index)
+        })
+        .ok_or_else(|| invalid_data(format!("{slider_name} has no stock thumb texture")))?;
+    let thumb = manager
+        .geometry()
+        .region(thumb_index)
+        .ok_or_else(|| invalid_data(format!("{slider_name} thumb has no geometry")))?
+        .presentation_bounds();
+    if (track.height() - 17.0).abs() > 0.001
+        || (thumb.width() - 32.0).abs() > 0.001
+        || (thumb.height() - 32.0).abs() > 0.001
+    {
+        return Err(invalid_data(format!(
+            "{slider_name} does not retain stock track/thumb geometry: track={track:?} thumb={thumb:?}"
+        ))
+        .into());
+    }
+
+    let slider = manager
+        .bundle()
+        .lua()
+        .globals()
+        .get::<mlua::Table>(slider_name)?;
+    let get_min_max = slider.get::<mlua::Function>("GetMinMaxValues")?;
+    let get_value = slider.get::<mlua::Function>("GetValue")?;
+    let (minimum, maximum) = get_min_max.call::<(f64, f64)>(slider.clone())?;
+    let center_y = track.bottom() + track.height() * 0.5;
+    let center = (track.left() + track.width() * 0.5, center_y);
+    let right = (track.right(), center_y);
+    let left = (track.left(), center_y);
+    let down = manager.pointer_button(center, UiPointerButton::Left, true)?;
+    let right_motion = manager.pointer_motion(right)?;
+    let right_value = get_value.call::<f64>(slider.clone())?;
+    let left_motion = manager.pointer_motion(left)?;
+    let left_value = get_value.call::<f64>(slider.clone())?;
+    let up = manager.pointer_button(left, UiPointerButton::Left, false)?;
+    if down.object_index() != Some(slider_index)
+        || right_motion != Some(slider_index)
+        || left_motion != Some(slider_index)
+        || up.object_index() != Some(slider_index)
+        || (right_value - maximum).abs() > 0.001
+        || (left_value - minimum).abs() > 0.001
+    {
+        return Err(invalid_data(format!(
+            "{slider_name} did not retain native horizontal drag: range=({minimum}, {maximum}) right={right_value} left={left_value} down={down:?} right_motion={right_motion:?} left_motion={left_motion:?} up={up:?}"
+        ))
+        .into());
+    }
+
+    for suffix in ["Low", "High"] {
+        let label_name = format!("{slider_name}{suffix}");
+        let label_index = object_index(manager, &label_name)?;
+        let colors = manager
+            .glyphs()
+            .quads_with_scroll(manager.geometry(), manager.scroll_frames())
+            .into_iter()
+            .filter(|glyph| glyph.object_index() == label_index)
+            .map(|glyph| glyph.color())
+            .collect::<Vec<_>>();
+        if !colors.contains(&[1.0, 1.0, 1.0, 1.0]) {
+            return Err(invalid_data(format!(
+                "{label_name} does not present stock's implicit white FontString vertex color: {colors:?}"
+            ))
+            .into());
+        }
+    }
     Ok(())
 }
 

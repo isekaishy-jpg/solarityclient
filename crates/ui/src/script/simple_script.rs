@@ -33,7 +33,7 @@ use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
 use super::handlers::handler_for;
 use super::runtime_state::{finite_region_number, snapshot_slider};
-use super::templates::TEMPLATE_REGISTRY;
+use super::templates::{TEMPLATE_REGISTRY, slider_orientation};
 
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
@@ -307,6 +307,7 @@ pub struct UiScriptRuntime {
     font_strings: Vec<InitialFont>,
     buttons: Vec<InitialButton>,
     textures: Vec<InitialTexture>,
+    slider_orientations: Vec<String>,
     simple_html: crate::UiSimpleHtmlPlan,
     frame_ids: Vec<Option<i32>>,
     frame_levels: Vec<Option<i32>>,
@@ -1156,6 +1157,7 @@ impl UiScriptRuntime {
         let font_strings = tree_font_strings(plan.tree, plan.fonts);
         let buttons = tree_buttons(plan.tree);
         let textures = tree_textures(plan.tree, plan.texture_states)?;
+        let slider_orientations = plan.tree.nodes().iter().map(slider_orientation).collect();
         register_create_frame(lua, dynamic_arena)
             .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
@@ -1173,6 +1175,7 @@ impl UiScriptRuntime {
             font_strings,
             buttons,
             textures,
+            slider_orientations,
             simple_html,
             frame_ids,
             frame_levels,
@@ -2526,7 +2529,12 @@ impl UiScriptRuntime {
         if object.kind() == UiObjectKind::Slider {
             table
                 .raw_set(slider_step_key(), 0.0)
-                .and_then(|()| table.raw_set(slider_orientation_key(), "VERTICAL"))
+                .and_then(|()| {
+                    table.raw_set(
+                        slider_orientation_key(),
+                        self.slider_orientations[node_index].as_str(),
+                    )
+                })
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::StatusBar {
@@ -3187,7 +3195,10 @@ fn create_dynamic_object(
     }
     if kind == "Slider" {
         object.raw_set(slider_step_key(), 0.0)?;
-        object.raw_set(slider_orientation_key(), "VERTICAL")?;
+        object.raw_set(
+            slider_orientation_key(),
+            record.raw_get::<String>("slider_orientation")?,
+        )?;
     }
     if kind == "StatusBar" {
         object.raw_set(
