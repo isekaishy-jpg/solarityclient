@@ -1069,8 +1069,17 @@ impl RuntimeGlueModelScene {
                 }
                 let local_light_count = key.local_light_count();
                 let task_model = Arc::clone(model);
-                let task =
-                    cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
+                let task = match cpu
+                    .try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))
+                {
+                    Ok(task) => task,
+                    // A preview can contain more equipment/effect models than
+                    // the bounded executor can admit at once. Preserve the
+                    // already-submitted prefix and retry the remainder during
+                    // the next non-blocking synchronization pass.
+                    Err(CpuError::AtCapacity { .. }) => break,
+                    Err(source) => return Err(source.into()),
+                };
                 self.pending_character_sources
                     .push(PendingGlueCharacterSource {
                         key: key.clone(),
