@@ -13,6 +13,7 @@ pub const UI_ACTION_SLOT_COUNT: usize = 144;
 pub struct UiActionBarState {
     page: Rc<Cell<u8>>,
     bonus_bar_offset: Rc<Cell<u8>>,
+    toggles: Rc<Cell<[bool; 4]>>,
     slots: Rc<RefCell<Option<Box<[u32; UI_ACTION_SLOT_COUNT]>>>>,
 }
 
@@ -22,6 +23,7 @@ impl Default for UiActionBarState {
             // Build 12340 initializes the primary action bar to page one.
             page: Rc::new(Cell::new(1)),
             bonus_bar_offset: Rc::new(Cell::new(0)),
+            toggles: Rc::new(Cell::new([false; 4])),
             // Wow.exe FUN_006D8750 reads and updates the process-lifetime
             // DAT_00AD9F6C array in place. Its BSS image is already 144 zero
             // slots before the first SMSG_ACTION_BUTTONS packet arrives.
@@ -65,6 +67,17 @@ impl UiActionBarState {
     #[must_use]
     pub fn bonus_bar_offset(&self) -> u8 {
         self.bonus_bar_offset.get()
+    }
+
+    /// Returns the four server-backed multi-action-bar visibility toggles.
+    #[must_use]
+    pub fn toggles(&self) -> [bool; 4] {
+        self.toggles.get()
+    }
+
+    /// Replaces the four multi-action-bar visibility toggles.
+    pub fn set_toggles(&self, toggles: [bool; 4]) {
+        self.toggles.set(toggles);
     }
 
     /// Publishes one complete packed server slot image.

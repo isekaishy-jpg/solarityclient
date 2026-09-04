@@ -245,8 +245,17 @@ impl GlueManager {
         manifest_kind: UiManifestKind,
         initial_screen: Option<super::GlueInitialScreen>,
     ) -> Result<Self, GlueError> {
+        let startup_started = std::time::Instant::now();
+        let mut phase_started = startup_started;
+        let report_phase = |name: &str, started: &mut std::time::Instant| {
+            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                eprintln!("UI startup {name}: {:.3}s", started.elapsed().as_secs_f64());
+            }
+            *started = std::time::Instant::now();
+        };
         let logical_extent = environment.logical_extent();
         let bundle = UiBundle::load(&mut assets.borrow_mut(), manifest_kind)?;
+        report_phase("bundle", &mut phase_started);
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
         let tree = UiObjectTree::from_catalog(&catalog, &fonts)?;
@@ -261,6 +270,7 @@ impl GlueManager {
         let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
         let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
         let animations = UiAnimationPlan::from_tree(&tree)?;
+        report_phase("static plans", &mut phase_started);
         let media_intent = environment.media_intent();
         let network = environment.network();
         let process = environment.process();
@@ -275,6 +285,7 @@ impl GlueManager {
             &texture_states,
         );
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
+        report_phase("Lua runtime", &mut phase_started);
         runtime.execute_all(&bundle, &tree, &scripts)?;
         if let Some(initial_screen) = initial_screen {
             runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
@@ -286,6 +297,7 @@ impl GlueManager {
             })?;
             runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }
+        report_phase("Lua execution", &mut phase_started);
 
         let mut live = runtime.snapshot_objects(&bundle)?;
         let mut geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
@@ -309,6 +321,7 @@ impl GlueManager {
             &scroll_frames,
             ui_extent,
         )?;
+        report_phase("live presentation", &mut phase_started);
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
         let report = GlueStartupReport::new(
@@ -325,6 +338,12 @@ impl GlueManager {
             runtime.executed_chunk_count(),
             runtime.executed_load_handler_count(),
         );
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI startup total: {:.3}s",
+                startup_started.elapsed().as_secs_f64()
+            );
+        }
         Ok(Self {
             runtime,
             scripts,

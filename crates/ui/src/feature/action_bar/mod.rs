@@ -16,6 +16,8 @@ pub(crate) fn register_globals(
     state: UiActionBarState,
 ) -> mlua::Result<()> {
     let change_state = state.clone();
+    let toggle_query = state.clone();
+    let toggle_update = state.clone();
     let bonus_bar_state = state.clone();
     let has_action = state.clone();
     let action_texture = state.clone();
@@ -33,6 +35,22 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetActionBarPage",
         lua.create_function(move |_, ()| Ok(state.page()))?,
+    )?;
+    globals.raw_set(
+        "GetActionBarToggles",
+        lua.create_function(move |_, ()| {
+            let [bottom_left, bottom_right, right, right_two] = toggle_query.toggles();
+            Ok((bottom_left, bottom_right, right, right_two))
+        })?,
+    )?;
+    globals.raw_set(
+        "SetActionBarToggles",
+        lua.create_function(
+            move |_, (bottom_left, bottom_right, right, right_two): (bool, bool, bool, bool)| {
+                toggle_update.set_toggles([bottom_left, bottom_right, right, right_two]);
+                Ok(())
+            },
+        )?,
     )?;
     // Build 12340 stores this native constant as the double 6.0. Multicast
     // buttons therefore address the seventh action-bar page region.

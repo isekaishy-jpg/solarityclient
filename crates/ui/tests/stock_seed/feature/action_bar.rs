@@ -22,6 +22,9 @@ fn primary_page_preserves_the_closed_stock_range() {
 #[test]
 fn action_slots_start_empty_and_accept_a_complete_server_image() {
     let state = UiActionBarState::new();
+    assert_eq!(state.toggles(), [false; 4]);
+    state.set_toggles([true, false, true, false]);
+    assert_eq!(state.toggles(), [true, false, true, false]);
     assert_eq!(state.packed_slot(1), Ok(0));
     assert_eq!(state.packed_slot(144), Ok(0));
 

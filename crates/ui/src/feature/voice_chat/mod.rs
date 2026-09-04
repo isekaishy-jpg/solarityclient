@@ -87,5 +87,9 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "IsVoiceChatEnabled",
         lua.create_function(move |_, ()| Ok(state.is_enabled().then_some(Value::Number(1.0))))?,
+    )?;
+    globals.raw_set(
+        "IsVoiceChatAllowedByServer",
+        lua.create_function(|_, ()| Ok(false))?,
     )
 }

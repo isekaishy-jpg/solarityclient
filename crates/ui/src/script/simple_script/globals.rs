@@ -209,6 +209,37 @@ fn register_frame_globals(
         })?,
     )?;
     globals.raw_set(
+        "GetArenaTeam",
+        lua.create_function(|_, _team_index: u32| Ok(MultiValue::new()))?,
+    )?;
+    globals.raw_set(
+        "GetNetStats",
+        lua.create_function(|_, ()| Ok((0.0_f64, 0.0_f64, 0_u32)))?,
+    )?;
+    globals.raw_set(
+        "GetWeaponEnchantInfo",
+        lua.create_function(|_, ()| {
+            Ok((
+                false,
+                Option::<u32>::None,
+                Option::<u32>::None,
+                false,
+                Option::<u32>::None,
+                Option::<u32>::None,
+            ))
+        })?,
+    )?;
+    let unit_classification = world.clone();
+    globals.raw_set(
+        "UnitClassification",
+        lua.create_function(move |_, unit: String| {
+            Ok(
+                (unit.eq_ignore_ascii_case("player") && unit_classification.player().is_some())
+                    .then_some("normal"),
+            )
+        })?,
+    )?;
+    globals.raw_set(
         "IsThreatWarningEnabled",
         lua.create_function(move |_, _unit: Option<String>| {
             let enabled = threat_warnings
@@ -1128,6 +1159,11 @@ fn register_client_runtime_globals(
         "GetTime",
         lua.create_function(move |_, ()| Ok(client_clock.seconds()))?,
     )?;
+    // Build 12340 exposes the Lua 5.1 calendar conversion as the global
+    // `time`, while the standard library keeps it under `os.time`.
+    let os: Table = globals.raw_get("os")?;
+    globals.raw_set("time", os.raw_get::<Function>("time")?)?;
+    globals.raw_set("date", os.raw_get::<Function>("date")?)?;
     let locale = environment.locale();
     globals.raw_set(
         "GetLocale",

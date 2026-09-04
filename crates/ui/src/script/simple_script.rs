@@ -36,6 +36,7 @@ use super::runtime_state::{finite_region_number, snapshot_slider};
 use super::templates::{TEMPLATE_REGISTRY, slider_orientation};
 
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
+const OBJECT_CHILDREN_REGISTRY: &str = "solarity.ui.object_children";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
 const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
@@ -946,6 +947,12 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
+        lua.set_named_registry_value(
+            OBJECT_CHILDREN_REGISTRY,
+            lua.create_table()
+                .map_err(|error| execution_error("registry", error))?,
+        )
+        .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(
             ON_UPDATE_OBJECTS_REGISTRY,
             lua.create_table()
@@ -2721,6 +2728,12 @@ impl UiScriptRuntime {
         objects
             .raw_set(node_index + 1, table.clone())
             .map_err(|error| execution_error("object registration", error))?;
+        register_child_relation(
+            lua,
+            node_index + 1,
+            object.parent().map(|parent| parent + 1),
+        )
+        .map_err(|error| execution_error("object registration", error))?;
         if is_frame_object(object.kind()) {
             let subscribed = object_has_script(&table, UiScriptHandler::Update)
                 .map_err(|error| execution_error("object registration", error))?;
@@ -3331,6 +3344,7 @@ fn create_dynamic_object(
     object.set_metatable(Some(metatables.raw_get(kind)?))?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     objects.raw_set(index, object.clone())?;
+    register_child_relation(lua, index, object.raw_get(parent_key())?)?;
     if !matches!(kind, "Texture" | "FontString") {
         let subscribed = object_has_script(&object, UiScriptHandler::Update)?;
         set_update_subscription(lua, &object, subscribed)?;
@@ -3849,6 +3863,9 @@ fn create_object_metatable(
     if kind == UiObjectKind::SimpleHtml {
         register_simple_html_methods(lua, &methods)?;
     }
+    if kind == UiObjectKind::ScrollingMessageFrame {
+        register_scrolling_message_frame_methods(lua, &methods)?;
+    }
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
     }
@@ -3879,6 +3896,18 @@ fn create_object_metatable(
     let metatable = lua.create_table()?;
     metatable.raw_set("__index", methods)?;
     Ok(metatable)
+}
+
+/// Installs the initial empty-history contract for stock message frames.
+fn register_scrolling_message_frame_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    methods.raw_set(
+        "AtBottom",
+        lua.create_function(|_, _object: Table| Ok(Some(1_u8)))?,
+    )?;
+    methods.raw_set(
+        "AtTop",
+        lua.create_function(|_, _object: Table| Ok(Some(1_u8)))?,
+    )
 }
 
 /// Installs the per-frame secure attribute store and wildcard lookup order.
@@ -5449,20 +5478,23 @@ fn set_frame_level(
 
     let root_index = object.raw_get::<usize>(index_key())?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    for index in 1..=objects.raw_len() {
-        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
-            continue;
-        };
-        if candidate.raw_get::<usize>(index_key())? == root_index
-            || candidate
-                .raw_get::<Option<i32>>(frame_level_key())?
-                .is_none()
-            || !object_is_descendant(&objects, &candidate, root_index)?
-        {
-            continue;
+    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
+    let mut pending = Vec::new();
+    if let Some(direct) = children.raw_get::<Option<Table>>(root_index)? {
+        for child in direct.sequence_values::<usize>() {
+            pending.push(child?);
         }
-        let level = candidate.raw_get::<i32>(frame_level_key())?;
-        candidate.raw_set(frame_level_key(), level.saturating_add(delta).max(0))?;
+    }
+    while let Some(index) = pending.pop() {
+        let candidate: Table = objects.raw_get(index)?;
+        if let Some(level) = candidate.raw_get::<Option<i32>>(frame_level_key())? {
+            candidate.raw_set(frame_level_key(), level.saturating_add(delta).max(0))?;
+        }
+        if let Some(direct) = children.raw_get::<Option<Table>>(index)? {
+            for child in direct.sequence_values::<usize>() {
+                pending.push(child?);
+            }
+        }
     }
     Ok(())
 }
@@ -6429,10 +6461,17 @@ fn set_scroll_child(lua: &Lua, object: &Table, requested: Value) -> mlua::Result
     // parenting the replacement. This relation is therefore stronger than a
     // cached getter value and must update the live region hierarchy as well.
     if let Some(previous) = object.raw_get::<Option<Table>>(scroll_child_key())? {
+        let previous_index = previous.raw_get::<usize>(index_key())?;
+        let previous_parent = previous.raw_get::<Option<usize>>(parent_key())?;
         previous.raw_set(parent_key(), Option::<usize>::None)?;
+        move_child_relation(lua, previous_index, previous_parent, None)?;
     }
     if let Some(child) = child.as_ref() {
-        child.raw_set(parent_key(), object.raw_get::<usize>(index_key())?)?;
+        let child_index = child.raw_get::<usize>(index_key())?;
+        let previous_parent = child.raw_get::<Option<usize>>(parent_key())?;
+        let next_parent = object.raw_get::<usize>(index_key())?;
+        child.raw_set(parent_key(), next_parent)?;
+        move_child_relation(lua, child_index, previous_parent, Some(next_parent))?;
     }
     object.raw_set(scroll_child_key(), child)
 }
@@ -6663,6 +6702,7 @@ fn register_region_methods(
         "SetParent",
         lua.create_function(|lua, (object, requested): (Table, Option<Table>)| {
             let object_index = object.raw_get::<usize>(index_key())?;
+            let previous_index = object.raw_get::<Option<usize>>(parent_key())?;
             let requested_index = requested
                 .as_ref()
                 .map(|parent| parent.raw_get::<usize>(index_key()))
@@ -6678,7 +6718,8 @@ fn register_region_methods(
                 let parent: Table = objects.raw_get(index)?;
                 cursor = parent.raw_get::<Option<usize>>(parent_key())?;
             }
-            object.raw_set(parent_key(), requested_index)
+            object.raw_set(parent_key(), requested_index)?;
+            move_child_relation(lua, object_index, previous_index, requested_index)
         })?,
     )?;
     methods.raw_set(
@@ -7306,14 +7347,17 @@ fn register_region_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Resul
 fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> {
     let root_index = object.raw_get::<usize>(index_key())?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
     let mut subtree = Vec::new();
-    for index in 1..=objects.raw_len() {
-        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
-            continue;
-        };
-        if object_is_descendant(&objects, &candidate, root_index)? {
-            let visible = object_is_visible(lua, candidate.clone())?;
-            subtree.push((candidate, visible));
+    let mut pending = vec![root_index];
+    while let Some(index) = pending.pop() {
+        let candidate: Table = objects.raw_get(index)?;
+        let visible = object_is_visible(lua, candidate.clone())?;
+        subtree.push((candidate, visible));
+        if let Some(direct_children) = children.raw_get::<Option<Table>>(index)? {
+            for child in direct_children.sequence_values::<usize>() {
+                pending.push(child?);
+            }
         }
     }
 
@@ -7334,22 +7378,51 @@ fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> 
     Ok(())
 }
 
-fn object_is_descendant(
-    objects: &Table,
-    candidate: &Table,
-    root_index: usize,
-) -> mlua::Result<bool> {
-    let mut cursor = Some(candidate.raw_get::<usize>(index_key())?);
-    while let Some(index) = cursor {
-        if index == root_index {
-            return Ok(true);
+fn register_child_relation(
+    lua: &Lua,
+    child_index: usize,
+    parent_index: Option<usize>,
+) -> mlua::Result<()> {
+    let Some(parent_index) = parent_index else {
+        return Ok(());
+    };
+    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
+    let direct = match children.raw_get::<Option<Table>>(parent_index)? {
+        Some(direct) => direct,
+        None => {
+            let direct = lua.create_table()?;
+            children.raw_set(parent_index, direct.clone())?;
+            direct
         }
-        let Some(object) = objects.raw_get::<Option<Table>>(index)? else {
-            return Ok(false);
-        };
-        cursor = object.raw_get::<Option<usize>>(parent_key())?;
+    };
+    direct.raw_set(direct.raw_len() + 1, child_index)
+}
+
+fn move_child_relation(
+    lua: &Lua,
+    child_index: usize,
+    previous_parent: Option<usize>,
+    next_parent: Option<usize>,
+) -> mlua::Result<()> {
+    if previous_parent == next_parent {
+        return Ok(());
     }
-    Ok(false)
+    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
+    if let Some(previous_parent) = previous_parent
+        && let Some(direct) = children.raw_get::<Option<Table>>(previous_parent)?
+    {
+        let length = direct.raw_len();
+        for position in 1..=length {
+            if direct.raw_get::<usize>(position)? == child_index {
+                if position != length {
+                    direct.raw_set(position, direct.raw_get::<usize>(length)?)?;
+                }
+                direct.raw_set(length, Value::Nil)?;
+                break;
+            }
+        }
+    }
+    register_child_relation(lua, child_index, next_parent)
 }
 
 fn is_script_frame_table(object: &Table) -> mlua::Result<bool> {
