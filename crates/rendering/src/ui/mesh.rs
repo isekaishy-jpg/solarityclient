@@ -20,7 +20,8 @@ pub struct UiMeshPlan {
 }
 
 impl UiMeshPlan {
-    /// Converts exact-size ordered quads into one shared vertex/index allocation.
+    /// Converts exact-size ordered quads into one shared vertex allocation and
+    /// a canonical quad-index prefix shared by every material batch.
     ///
     /// Positions remain in stock's bottom-left logical coordinate system. The
     /// Vulkan UI pipeline owns the single canvas-to-clip-space transform.
@@ -54,17 +55,17 @@ impl UiMeshPlan {
             .ok_or(UiMeshPlanError::Capacity {
                 domain: "vertex byte",
             })?;
-        let index_byte_capacity =
-            index_capacity
-                .checked_mul(size_of::<u32>())
-                .ok_or(UiMeshPlanError::Capacity {
-                    domain: "index byte",
-                })?;
+        let retained_index_capacity = index_capacity.min(256 * 6);
+        let index_byte_capacity = retained_index_capacity
+            .checked_mul(size_of::<u32>())
+            .ok_or(UiMeshPlanError::Capacity {
+                domain: "index byte",
+            })?;
         let mut plan = Self {
             identity: next_identity(),
             logical_extent,
             vertices: Vec::with_capacity(vertex_capacity),
-            indices: Vec::with_capacity(index_capacity),
+            indices: Vec::with_capacity(retained_index_capacity),
             vertex_bytes: Vec::with_capacity(vertex_byte_capacity),
             index_bytes: Vec::with_capacity(index_byte_capacity),
             batches: Vec::with_capacity(quad_count),
@@ -394,10 +395,6 @@ impl UiMeshPlan {
     /// Validates and appends one counter-clockwise two-triangle quad.
     fn push_quad(&mut self, quad: UiRenderQuad) -> Result<(), UiMeshPlanError> {
         validate_quad(&quad)?;
-        let base_vertex = u32::try_from(self.vertices.len())
-            .map_err(|_source| UiMeshPlanError::Capacity { domain: "vertex" })?;
-        let first_index = u32::try_from(self.indices.len())
-            .map_err(|_source| UiMeshPlanError::Capacity { domain: "index" })?;
         let first_quad = u32::try_from(self.object_indices.len())
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "quad" })?;
         let [left, bottom, right, top] = quad.bounds();
@@ -413,18 +410,6 @@ impl UiMeshPlan {
             vertex.append_bytes(&mut self.vertex_bytes);
             self.vertices.push(vertex);
         }
-        let indices = [
-            base_vertex,
-            base_vertex + 1,
-            base_vertex + 2,
-            base_vertex + 2,
-            base_vertex + 1,
-            base_vertex + 3,
-        ];
-        for index in indices {
-            self.index_bytes.extend_from_slice(&index.to_le_bytes());
-        }
-        self.indices.extend_from_slice(&indices);
         let appended = if let Some(batch) = self.batches.last_mut()
             && batch.can_append(&quad)
         {
@@ -432,9 +417,14 @@ impl UiMeshPlan {
             true
         } else {
             self.batches
-                .push(UiRenderBatch::from_quad(&quad, first_index, first_quad));
+                .push(UiRenderBatch::from_quad(&quad, 0, first_quad));
             false
         };
+        let required_quad_count = self
+            .batches
+            .last()
+            .map_or(0, |batch| batch.quad_count() as usize);
+        self.ensure_canonical_quad_indices(required_quad_count)?;
         if !appended {
             let object_index = quad.object_index();
             self.object_batches
@@ -443,6 +433,38 @@ impl UiMeshPlan {
                 .push(self.batches.len() - 1);
         }
         self.object_indices.push(quad.object_index());
+        Ok(())
+    }
+
+    /// Extends the reusable zero-based index prefix only when a larger
+    /// contiguous material run appears. Draws select their own vertex range
+    /// with `baseVertex`, so duplicating six absolute indices for every UI
+    /// quad wastes CPU serialization, upload bandwidth, and device memory.
+    fn ensure_canonical_quad_indices(
+        &mut self,
+        required_quad_count: usize,
+    ) -> Result<(), UiMeshPlanError> {
+        let current_quad_count = self.indices.len() / 6;
+        for quad_index in current_quad_count..required_quad_count {
+            let base_vertex = u32::try_from(
+                quad_index
+                    .checked_mul(4)
+                    .ok_or(UiMeshPlanError::Capacity { domain: "vertex" })?,
+            )
+            .map_err(|_source| UiMeshPlanError::Capacity { domain: "vertex" })?;
+            let indices = [
+                base_vertex,
+                base_vertex + 1,
+                base_vertex + 2,
+                base_vertex + 2,
+                base_vertex + 1,
+                base_vertex + 3,
+            ];
+            for index in indices {
+                self.index_bytes.extend_from_slice(&index.to_le_bytes());
+            }
+            self.indices.extend_from_slice(&indices);
+        }
         Ok(())
     }
 }

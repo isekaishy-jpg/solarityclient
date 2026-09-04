@@ -31,13 +31,15 @@ fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>>
 
     assert_eq!(mesh.logical_extent(), [800.0, 600.0]);
     assert_eq!(mesh.vertices().len(), 16);
-    assert_eq!(mesh.indices().len(), 24);
+    assert_eq!(mesh.indices().len(), 12);
     assert_eq!(mesh.object_indices(), [4, 4, 12, 16]);
-    assert_eq!(mesh.indices()[0..12], [0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7]);
+    assert_eq!(mesh.indices(), [0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7]);
     assert_eq!(mesh.batches().len(), 3);
     assert_eq!(mesh.batches()[0].first_index(), 0);
     assert_eq!(mesh.batches()[0].index_count(), 12);
     assert_eq!(mesh.batches()[0].quad_count(), 2);
+    assert_eq!(mesh.batches()[1].first_index(), 0);
+    assert_eq!(mesh.batches()[2].first_index(), 0);
     assert_eq!(mesh.batches()[1].first_quad(), 2);
     assert_eq!(mesh.batches()[2].first_quad(), 3);
     assert_eq!(

@@ -372,6 +372,9 @@ impl UiRenderBatch {
     }
 
     /// Returns the first unsigned 32-bit index submitted by this batch.
+    ///
+    /// Quad batches share the mesh's canonical zero-based index prefix; only
+    /// explicitly indexed developer meshes may use another offset.
     #[must_use]
     pub const fn first_index(&self) -> u32 {
         self.first_index
