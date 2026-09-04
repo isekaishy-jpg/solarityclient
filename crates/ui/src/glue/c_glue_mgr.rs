@@ -287,9 +287,11 @@ impl GlueManager {
             runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }
 
-        let live = runtime.snapshot_objects(&bundle)?;
-        let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        let mut live = runtime.snapshot_objects(&bundle)?;
+        let mut geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
         runtime.publish_resolved_geometry(&bundle, &geometry)?;
+        live = runtime.snapshot_objects(&bundle)?;
+        geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
         let scroll_frames = UiScrollFramePlan::from_live(&live);
         let glyphs = UiGlyphAtlasPlan::from_live_ui(
             runtime.simple_html(),
@@ -1146,6 +1148,9 @@ impl GlueManager {
         if live.is_visual_transform_only_update_from(&self.live) {
             return self.refresh_visual_transform_state(live);
         }
+        if live.is_button_state_only_update_from(&self.live) {
+            return self.refresh_button_state(live);
+        }
         let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let html_changed = self.runtime.refresh_simple_html_layout(
             &self.bundle,
@@ -1161,6 +1166,8 @@ impl GlueManager {
         }
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
+        live = self.runtime.snapshot_objects(&self.bundle)?;
+        geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
         let scroll_frames = UiScrollFramePlan::from_live(&live);
         if !html_changed
             && self
@@ -1214,6 +1221,16 @@ impl GlueManager {
             &mut self.presentation,
         );
         self.scroll_frames = UiScrollFramePlan::from_live(&live);
+        self.live = live;
+        Ok(())
+    }
+
+    /// Selects retained Button skins without rebuilding any immutable UI plan.
+    fn refresh_button_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
+        self.presentation
+            .refresh_button_state_opacities(&live, &self.geometry);
+        self.render_plan
+            .refresh_button_state_opacities(&self.presentation)?;
         self.live = live;
         Ok(())
     }

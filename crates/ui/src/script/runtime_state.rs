@@ -260,6 +260,34 @@ impl UiRuntimeObjectPlan {
         }
         changed
     }
+
+    /// Returns whether only mutually exclusive Button presentation state changed.
+    ///
+    /// These fields select already-authored state textures. They do not alter
+    /// geometry, text layout, hierarchy, texture residency, or pointer hit
+    /// admission, so the renderer can retain its complete mesh topology.
+    pub(crate) fn is_button_state_only_update_from(&self, previous: &Self) -> bool {
+        if self.anchors != previous.anchors || self.objects.len() != previous.objects.len() {
+            return false;
+        }
+
+        let mut changed = false;
+        for (current, previous) in self.objects.iter().zip(&previous.objects) {
+            if current == previous {
+                continue;
+            }
+
+            let mut normalized = current.clone();
+            normalized.checked = previous.checked;
+            normalized.highlighted = previous.highlighted;
+            normalized.pushed = previous.pushed;
+            if normalized != *previous {
+                return false;
+            }
+            changed = true;
+        }
+        changed
+    }
 }
 
 pub(super) fn snapshot_runtime_objects(

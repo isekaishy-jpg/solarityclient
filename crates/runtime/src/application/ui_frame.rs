@@ -16,6 +16,9 @@ pub(crate) struct PreparedUiFrame {
     mesh: UiMeshHandle,
     mesh_identity: u64,
     logical_extent: [f32; 2],
+    /// All resident packets, including inactive retained Button state skins.
+    resident_draws: Vec<UiPreparedDraw>,
+    /// Visible packets submitted for the current live state.
     draws: Vec<UiPreparedDraw>,
     /// Source batch index parallel to each resident renderer draw.
     draw_batches: Vec<usize>,
@@ -108,7 +111,7 @@ impl PreparedUiFrame {
             .iter()
             .map(|(batch_index, _pipeline, _sampled)| *batch_index)
             .collect();
-        let draws = batch_resources
+        let resident_draws = batch_resources
             .into_iter()
             .map(|(batch_index, pipeline, sampled_index)| {
                 renderer.prepare_ui_draw(
@@ -120,10 +123,16 @@ impl PreparedUiFrame {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let draws = resident_draws
+            .iter()
+            .copied()
+            .filter(|draw| draw.opacity() > 0.0)
+            .collect();
         Ok(Self {
             mesh,
             mesh_identity: plan.geometry_identity(),
             logical_extent: plan.logical_extent(),
+            resident_draws,
             draws,
             draw_batches,
             materials: plan.batches().to_vec(),
@@ -162,7 +171,7 @@ impl PreparedUiFrame {
             renderer.replace_ui_mesh(mesh, plan)?;
             self.mesh_identity = plan.geometry_identity();
         }
-        for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
+        for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
             *draw = renderer.prepare_ui_draw(
                 mesh,
                 draw.pipeline(),
@@ -171,6 +180,7 @@ impl PreparedUiFrame {
                 *batch_index,
             )?;
         }
+        self.refresh_visible_draws();
         self.logical_extent = plan.logical_extent();
         Ok(())
     }
@@ -198,14 +208,25 @@ impl PreparedUiFrame {
         if self.mesh_identity != plan.geometry_identity() {
             return false;
         }
-        for (draw, batch_index) in self.draws.iter_mut().zip(&self.draw_batches) {
+        for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
             let Some(batch) = plan.batches().get(*batch_index) else {
                 return false;
             };
             draw.set_transform_state(batch.translation(), batch.opacity(), batch.clip());
         }
+        self.refresh_visible_draws();
         self.logical_extent = plan.logical_extent();
         true
+    }
+
+    fn refresh_visible_draws(&mut self) {
+        self.draws.clear();
+        self.draws.extend(
+            self.resident_draws
+                .iter()
+                .copied()
+                .filter(|draw| draw.opacity() > 0.0),
+        );
     }
 
     fn can_replace_mesh(&self, plan: &UiMeshPlan) -> bool {

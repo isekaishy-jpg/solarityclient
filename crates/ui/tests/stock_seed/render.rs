@@ -61,8 +61,8 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
     let presentation = manager.presentation();
 
-    assert_eq!(presentation.member_count(), 5);
-    assert_eq!(presentation.packets().len(), 4);
+    assert_eq!(presentation.member_count(), 6);
+    assert_eq!(presentation.packets().len(), 5);
 
     let low_background = presentation.packets()[0];
     assert_eq!(low_background.key().strata(), UiFrameStrata::Low);
@@ -100,16 +100,23 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     assert!((mutated.vertex_colors()[1][3] - 0.4).abs() < 0.000_01);
     assert!((mutated.opacity() - 0.5).abs() < 0.000_01);
 
-    let disabled = &presentation.members(2).ok_or("missing disabled packet")?[0];
+    let normal = &presentation.members(2).ok_or("missing normal packet")?[0];
+    assert_eq!(
+        manager.objects()[normal.object_index()].name(),
+        Some("HighButtonNormal")
+    );
+    assert_eq!(normal.opacity(), 0.0);
+
+    let disabled = &presentation.members(3).ok_or("missing disabled packet")?[0];
     assert_eq!(
         manager.objects()[disabled.object_index()].name(),
         Some("HighButtonDisabled")
     );
-    assert_eq!(presentation.packets()[2].key().draw_rank(), 21);
+    assert_eq!(presentation.packets()[3].key().draw_rank(), 21);
     assert_eq!(disabled.bounds().width(), 80.0);
     assert_eq!(disabled.bounds().height(), 30.0);
 
-    let solid = &presentation.members(3).ok_or("missing solid packet")?[0];
+    let solid = &presentation.members(4).ok_or("missing solid packet")?[0];
     assert_eq!(
         manager.objects()[solid.object_index()].name(),
         Some("Solid")
@@ -119,15 +126,15 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         &UiTextureSource::SolidColor([0.2, 0.4, 0.6, 0.8])
     );
     assert_eq!(
-        presentation.packets()[3].key().strata(),
+        presentation.packets()[4].key().strata(),
         UiFrameStrata::High
     );
-    assert_eq!(presentation.packets()[3].key().draw_rank(), 40);
+    assert_eq!(presentation.packets()[4].key().draw_rank(), 40);
 
     let mesh = manager.render_plan().mesh();
     assert_eq!(mesh.logical_extent(), [1_365.333_4, 768.0]);
-    assert_eq!(mesh.vertices().len(), 20);
-    assert_eq!(mesh.indices().len(), 30);
+    assert_eq!(mesh.vertices().len(), 24);
+    assert_eq!(mesh.indices().len(), 36);
     assert_eq!(mesh.object_indices().len(), presentation.member_count());
     let mutated_path = solarity_asset::AssetPath::new("Interface\\Glues\\After.blp")?;
     let mutated_batch = mesh
@@ -151,7 +158,7 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let solid_vertex = mesh.vertices()[solid_quad * 4];
     assert_eq!(solid_vertex.color(), [0.2, 0.4, 0.6, 0.8]);
     let texture_assets = manager.render_plan().texture_assets();
-    assert_eq!(texture_assets.requests().len(), 4);
+    assert_eq!(texture_assets.requests().len(), 5);
     assert_eq!(
         texture_assets.request_for_batch(mesh.batches().len() - 1),
         None,
@@ -243,25 +250,30 @@ fn glue_presentation_selects_stock_button_state_textures() -> Result<(), Box<dyn
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
-    let names = manager
+    let opacities = manager
         .presentation()
         .members_in_draw_order()
         .iter()
-        .filter_map(|member| manager.objects()[member.object_index()].name())
-        .collect::<std::collections::BTreeSet<_>>();
+        .filter_map(|member| {
+            manager.objects()[member.object_index()]
+                .name()
+                .map(|name| (name, member.opacity()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
 
-    assert!(names.contains("NormalButtonNormal"));
-    assert!(!names.contains("NormalButtonPushed"));
-    assert!(names.contains("PushedButtonPushed"));
-    assert!(!names.contains("PushedButtonNormal"));
-    assert!(names.contains("DisabledButtonDisabled"));
-    assert!(!names.contains("DisabledButtonNormal"));
-    assert!(names.contains("FallbackButtonNormal"));
-    assert!(names.contains("CheckedButtonNormal"));
-    assert!(names.contains("CheckedButtonChecked"));
-    assert!(names.contains("DisabledCheckedButtonDisabledChecked"));
-    assert!(!names.contains("DisabledCheckedButtonDisabled"));
-    assert!(!names.contains("DisabledCheckedButtonNormal"));
+    let is_active = |name| opacities.get(name).is_some_and(|opacity| *opacity > 0.0);
+    assert!(is_active("NormalButtonNormal"));
+    assert!(!is_active("NormalButtonPushed"));
+    assert!(is_active("PushedButtonPushed"));
+    assert!(!is_active("PushedButtonNormal"));
+    assert!(is_active("DisabledButtonDisabled"));
+    assert!(!is_active("DisabledButtonNormal"));
+    assert!(is_active("FallbackButtonNormal"));
+    assert!(is_active("CheckedButtonNormal"));
+    assert!(is_active("CheckedButtonChecked"));
+    assert!(is_active("DisabledCheckedButtonDisabledChecked"));
+    assert!(!is_active("DisabledCheckedButtonDisabled"));
+    assert!(!is_active("DisabledCheckedButtonNormal"));
     Ok(())
 }
 

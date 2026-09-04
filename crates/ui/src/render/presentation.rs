@@ -410,6 +410,36 @@ impl UiPresentationPlan {
         }
     }
 
+    /// Selects among retained Button state skins without changing draw topology.
+    pub(crate) fn refresh_button_state_opacities(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+    ) {
+        let disabled_texture_owners = disabled_texture_owners(live);
+        for member in &mut self.members {
+            let object_index = member.object_index;
+            let Some(object) = live.objects().get(object_index) else {
+                continue;
+            };
+            let Some(owner_index) = nearest_owning_frame(live, object) else {
+                continue;
+            };
+            let Some(owner) = live.objects().get(owner_index) else {
+                continue;
+            };
+            let Some(region) = geometry.region(object_index) else {
+                continue;
+            };
+            member.opacity = region.effective_alpha() as f32
+                * f32::from(widget_role_is_active(
+                    object.role,
+                    owner,
+                    disabled_texture_owners[owner_index],
+                ));
+        }
+    }
+
     pub(crate) fn resolve(
         live: &UiRuntimeObjectPlan,
         geometry: &UiRegionGeometryPlan,
@@ -417,6 +447,7 @@ impl UiPresentationPlan {
     ) -> Self {
         let mut keyed = Vec::new();
         let mut models = Vec::new();
+        let disabled_texture_owners = disabled_texture_owners(live);
         for (object_index, object) in live.objects().iter().enumerate() {
             if let (Some(backdrop), Some(region), Some(strata), Some(frame_level)) = (
                 backdrops.state(object_index),
@@ -467,9 +498,6 @@ impl UiPresentationPlan {
             let (Some(strata), Some(frame_level)) = (owner.frame_strata, owner.frame_level) else {
                 continue;
             };
-            if !widget_role_is_presented(object.role, owner_index, owner, live) {
-                continue;
-            }
             let source = if let Some(path) = &texture.file {
                 UiTextureSource::Asset(path.clone())
             } else if let Some(color) = texture.solid_color {
@@ -487,7 +515,12 @@ impl UiPresentationPlan {
             let vertex_colors = texture
                 .vertex_colors
                 .map(|color| color.map(|value| value as f32));
-            let effective_alpha = region.effective_alpha() as f32;
+            let effective_alpha = region.effective_alpha() as f32
+                * f32::from(widget_role_is_active(
+                    object.role,
+                    owner,
+                    disabled_texture_owners[owner_index],
+                ));
             keyed.push((
                 key,
                 UiTexturePresentation {
@@ -973,11 +1006,23 @@ fn nearest_owning_frame(live: &UiRuntimeObjectPlan, object: &UiRuntimeObject) ->
     None
 }
 
-fn widget_role_is_presented(
+fn disabled_texture_owners(live: &UiRuntimeObjectPlan) -> Vec<bool> {
+    let mut owners = vec![false; live.objects().len()];
+    for object in live.objects() {
+        if object.role == UiObjectRole::DisabledTexture
+            && let Some(parent) = object.parent
+            && let Some(owner) = owners.get_mut(parent)
+        {
+            *owner = true;
+        }
+    }
+    owners
+}
+
+fn widget_role_is_active(
     role: UiObjectRole,
-    owner_index: usize,
     owner: &UiRuntimeObject,
-    live: &UiRuntimeObjectPlan,
+    has_disabled_texture: bool,
 ) -> bool {
     let enabled = owner.enabled != Some(false);
     let checked = owner.checked == Some(true);
@@ -987,14 +1032,7 @@ fn widget_role_is_presented(
         | UiObjectRole::ScrollChild
         | UiObjectRole::ButtonText
         | UiObjectRole::ThumbTexture => true,
-        UiObjectRole::NormalTexture => {
-            !pushed
-                && (enabled
-                    || !live.objects().iter().any(|candidate| {
-                        candidate.parent == Some(owner_index)
-                            && candidate.role == UiObjectRole::DisabledTexture
-                    }))
-        }
+        UiObjectRole::NormalTexture => !pushed && (enabled || !has_disabled_texture),
         UiObjectRole::PushedTexture => enabled && pushed,
         UiObjectRole::DisabledTexture => !enabled && !checked,
         UiObjectRole::HighlightTexture => owner.highlighted == Some(true),

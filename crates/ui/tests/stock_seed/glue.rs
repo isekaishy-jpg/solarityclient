@@ -547,10 +547,13 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
             .presentation()
             .members_in_draw_order()
             .iter()
-            .any(|member| member.object_index() == object_index)
+            .any(|member| member.object_index() == object_index && member.opacity() > 0.0)
     };
 
     assert!(!is_presented(&manager, highlight_index));
+    let mesh_identity = manager.render_plan().mesh().geometry_identity();
+    let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
+    let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
     let button_bounds = manager
         .geometry()
         .region(button_index)
@@ -564,6 +567,12 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
         Some(button_index)
     );
     assert!(is_presented(&manager, highlight_index));
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        mesh_identity
+    );
+    assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
+    assert_eq!(manager.render_plan().mesh().index_bytes(), index_bytes);
 
     let model_bounds = manager
         .geometry()
@@ -1508,6 +1517,7 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
         .presentation()
         .members_in_draw_order()
         .iter()
+        .filter(|member| member.opacity() > 0.0)
         .map(|member| member.object_index())
         .collect::<Vec<_>>();
     assert!(!presented.contains(&normal));
