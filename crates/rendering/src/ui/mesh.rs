@@ -12,8 +12,6 @@ pub struct UiMeshPlan {
     logical_extent: [f32; 2],
     vertices: Vec<UiRenderVertex>,
     indices: Vec<u32>,
-    vertex_bytes: Vec<u8>,
-    index_bytes: Vec<u8>,
     batches: Vec<UiRenderBatch>,
     object_indices: Vec<usize>,
     object_batches: HashMap<usize, Vec<usize>>,
@@ -50,13 +48,13 @@ impl UiMeshPlan {
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "index" })?;
         u32::try_from(quad_count)
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "quad" })?;
-        let vertex_byte_capacity = vertex_capacity
+        let _vertex_byte_capacity = vertex_capacity
             .checked_mul(UiRenderVertex::BYTE_SIZE)
             .ok_or(UiMeshPlanError::Capacity {
                 domain: "vertex byte",
             })?;
         let retained_index_capacity = index_capacity.min(256 * 6);
-        let index_byte_capacity = retained_index_capacity
+        let _index_byte_capacity = retained_index_capacity
             .checked_mul(size_of::<u32>())
             .ok_or(UiMeshPlanError::Capacity {
                 domain: "index byte",
@@ -66,8 +64,6 @@ impl UiMeshPlan {
             logical_extent,
             vertices: Vec::with_capacity(vertex_capacity),
             indices: Vec::with_capacity(retained_index_capacity),
-            vertex_bytes: Vec::with_capacity(vertex_byte_capacity),
-            index_bytes: Vec::with_capacity(index_byte_capacity),
             batches: Vec::with_capacity(quad_count),
             object_indices: Vec::with_capacity(quad_count),
             object_batches: HashMap::new(),
@@ -111,33 +107,23 @@ impl UiMeshPlan {
                 vertex_count,
             });
         }
-        let mut vertex_bytes = Vec::with_capacity(
-            vertices
-                .len()
-                .checked_mul(UiRenderVertex::BYTE_SIZE)
-                .ok_or(UiMeshPlanError::Capacity {
-                    domain: "vertex byte",
-                })?,
-        );
-        for vertex in &vertices {
-            vertex.append_bytes(&mut vertex_bytes);
-        }
-        let mut index_bytes =
-            Vec::with_capacity(indices.len().checked_mul(size_of::<u32>()).ok_or(
-                UiMeshPlanError::Capacity {
-                    domain: "index byte",
-                },
-            )?);
-        for index in &indices {
-            index_bytes.extend_from_slice(&index.to_le_bytes());
-        }
+        vertices
+            .len()
+            .checked_mul(UiRenderVertex::BYTE_SIZE)
+            .ok_or(UiMeshPlanError::Capacity {
+                domain: "vertex byte",
+            })?;
+        indices
+            .len()
+            .checked_mul(size_of::<u32>())
+            .ok_or(UiMeshPlanError::Capacity {
+                domain: "index byte",
+            })?;
         Ok(Self {
             identity: next_identity(),
             logical_extent,
             vertices,
             indices,
-            vertex_bytes,
-            index_bytes,
             batches: vec![super::UiRenderBatch::from_indexed(
                 source,
                 index_count,
@@ -296,12 +282,6 @@ impl UiMeshPlan {
                 let vertex =
                     UiRenderVertex::new(previous.position(), previous.texture_coordinates(), color);
                 self.vertices[vertex_index] = vertex;
-                let color_offset = vertex_index * UiRenderVertex::BYTE_SIZE + 16;
-                for (component, value) in color.into_iter().enumerate() {
-                    let offset = color_offset + component * size_of::<f32>();
-                    self.vertex_bytes[offset..offset + size_of::<f32>()]
-                        .copy_from_slice(&value.to_le_bytes());
-                }
                 changed = true;
             }
         }
@@ -383,13 +363,13 @@ impl UiMeshPlan {
     /// Serializes vertices without relying on Rust layout or unsafe casts.
     #[must_use]
     pub fn vertex_bytes(&self) -> &[u8] {
-        &self.vertex_bytes
+        bytemuck::cast_slice(&self.vertices)
     }
 
     /// Serializes direct unsigned 32-bit indices for Vulkan upload.
     #[must_use]
     pub fn index_bytes(&self) -> &[u8] {
-        &self.index_bytes
+        bytemuck::cast_slice(&self.indices)
     }
 
     /// Validates and appends one counter-clockwise two-triangle quad.
@@ -407,7 +387,6 @@ impl UiMeshPlan {
                 texture_coordinates[corner],
                 colors[corner],
             );
-            vertex.append_bytes(&mut self.vertex_bytes);
             self.vertices.push(vertex);
         }
         let appended = if let Some(batch) = self.batches.last_mut()
@@ -460,9 +439,6 @@ impl UiMeshPlan {
                 base_vertex + 1,
                 base_vertex + 3,
             ];
-            for index in indices {
-                self.index_bytes.extend_from_slice(&index.to_le_bytes());
-            }
             self.indices.extend_from_slice(&indices);
         }
         Ok(())

@@ -4294,6 +4294,7 @@ name = "solarity-rendering"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "bytemuck",
  "glam",
  "sdl3",
  "shaderc",

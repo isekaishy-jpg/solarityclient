@@ -214,7 +214,8 @@ impl UiRenderQuad {
 }
 
 /// Fixed 32-byte logical-screen UI vertex consumed by the future UI pipeline.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct UiRenderVertex {
     position: [f32; 2],
     texture_coordinates: [f32; 2],
@@ -251,18 +252,6 @@ impl UiRenderVertex {
     #[must_use]
     pub const fn color(self) -> [f32; 4] {
         self.color
-    }
-
-    pub(super) fn append_bytes(self, bytes: &mut Vec<u8>) {
-        for value in self.position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for value in self.texture_coordinates {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for value in self.color {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
     }
 }
 
