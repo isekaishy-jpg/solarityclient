@@ -147,6 +147,15 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns the local player's primary attributes after create projection.
+    #[must_use]
+    pub fn local_player_stats(&self) -> Option<crate::UnitStats> {
+        self.storage
+            .get::<&crate::UnitStats>(self.local_player)
+            .map(|stats| **stats)
+            .ok()
+    }
+
     /// Returns the server-validated local character name seeded at world entry.
     #[must_use]
     pub fn local_player_identity(&self) -> Option<PlayerIdentity> {

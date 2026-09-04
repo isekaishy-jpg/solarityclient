@@ -1,6 +1,6 @@
 //! Retained battlefield queue slots consumed by FrameXML.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use thiserror::Error;
@@ -15,6 +15,8 @@ pub const MAX_WORLD_PVP_QUEUES: usize = 1;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiBattlegroundType {
     pub(super) name: String,
+    pub(super) description: String,
+    pub(super) maximum_group_size: u32,
     pub(super) can_enter: bool,
     pub(super) holiday: bool,
     pub(super) random: bool,
@@ -33,11 +35,22 @@ impl UiBattlegroundType {
     ) -> Self {
         Self {
             name: name.into(),
+            description: String::new(),
+            maximum_group_size: 0,
             can_enter,
             holiday,
             random,
             battleground_id,
         }
+    }
+
+    /// Adds the localized description and maximum premade-group size used by
+    /// the battlefield-selection window.
+    #[must_use]
+    pub fn with_details(mut self, description: impl Into<String>, maximum_group_size: u32) -> Self {
+        self.description = description.into();
+        self.maximum_group_size = maximum_group_size;
+        self
     }
 }
 
@@ -174,6 +187,7 @@ pub struct UiBattlefieldQueueState {
     slots: Rc<RefCell<[UiBattlefieldSlot; MAX_BATTLEFIELD_QUEUES]>>,
     world_pvp: Rc<RefCell<UiWorldPvpQueueSlot>>,
     battleground_types: Rc<RefCell<Vec<UiBattlegroundType>>>,
+    selected_battleground: Rc<Cell<usize>>,
 }
 
 impl UiBattlefieldQueueState {
@@ -237,6 +251,7 @@ impl UiBattlefieldQueueState {
     /// Replaces the level-filtered battleground selection catalog.
     pub fn replace_battleground_types(&self, battleground_types: Vec<UiBattlegroundType>) {
         *self.battleground_types.borrow_mut() = battleground_types;
+        self.selected_battleground.set(0);
     }
 
     pub(super) fn battleground_type(&self, index: usize) -> Option<UiBattlegroundType> {
@@ -249,6 +264,17 @@ impl UiBattlefieldQueueState {
     #[must_use]
     pub fn battleground_type_count(&self) -> usize {
         self.battleground_types.borrow().len()
+    }
+
+    pub(super) fn set_selected_battleground(&self, index: usize) {
+        self.selected_battleground.set(index);
+    }
+
+    pub(super) fn selected_battleground(&self) -> Option<UiBattlegroundType> {
+        self.battleground_types
+            .borrow()
+            .get(self.selected_battleground.get())
+            .cloned()
     }
 }
 

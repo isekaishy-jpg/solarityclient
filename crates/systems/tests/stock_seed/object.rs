@@ -6,8 +6,8 @@ use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectFields, ObjectKind, ObjectPresentation,
     PlayerAppearance, PlayerEquipment, PlayerEquipmentSlot, PlayerMoney, PlayerProgression,
-    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
-    WorldBootstrap, WorldMapId,
+    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitStats,
+    UnitVitals, WorldBootstrap, WorldMapId,
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
@@ -39,6 +39,10 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
         (69, 14_307),
         (74, u32::from_le_bytes([1, 0, 0, 3])),
         (79, 0x0000_0001),
+        (84, 101),
+        (85, 202),
+        (89, 7.0_f32.to_bits()),
+        (94, (-3.0_f32).to_bits()),
         (122, u32::from_le_bytes([1, 0x20, 0, 0])),
         (153, u32::from_le_bytes([3, 4, 5, 6])),
         (154, u32::from_le_bytes([7, 0, 0, 2])),
@@ -85,6 +89,11 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     assert_eq!(flags.secondary(), 0x0000_0800);
     assert_eq!(flags.dynamic(), 0x0000_0001);
 
+    let stats = *world.storage().get::<&UnitStats>(player)?;
+    assert_eq!(stats.values(), [101, 202, 0, 0, 0]);
+    assert_eq!(stats.positive_modifiers(), [7, 0, 0, 0, 0]);
+    assert_eq!(stats.negative_modifiers(), [-3, 0, 0, 0, 0]);
+
     let appearance = *world.storage().get::<&PlayerAppearance>(player)?;
     assert_eq!(appearance.skin_id(), 3);
     assert_eq!(appearance.face_id(), 4);
@@ -116,6 +125,7 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     // remain intact just as they do in the authoritative dense table.
     let values_fields = [
         (24, 750),
+        (85, 303),
         (154, u32::from_le_bytes([9, 0, 0, 2])),
         (283, 50_101),
         (0x027A, 234_567),
@@ -126,6 +136,9 @@ fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box
     let vitals = *world.storage().get::<&UnitVitals>(player)?;
     assert_eq!(vitals.health(), 750);
     assert_eq!(vitals.max_health(), 1_500);
+    let stats = *world.storage().get::<&UnitStats>(player)?;
+    assert_eq!(stats.values(), [101, 303, 0, 0, 0]);
+    assert_eq!(stats.positive_modifiers(), [7, 0, 0, 0, 0]);
     let appearance = *world.storage().get::<&PlayerAppearance>(player)?;
     assert_eq!(appearance.skin_id(), 3);
     assert_eq!(appearance.facial_hair_style_id(), 9);

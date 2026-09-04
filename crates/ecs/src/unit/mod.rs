@@ -7,9 +7,11 @@
 mod unit_c;
 mod unit_flags;
 mod unit_presentation;
+mod unit_stats;
 mod unit_vitals;
 
 pub use unit_c::UnitIdentity;
 pub use unit_flags::UnitFlags;
 pub use unit_presentation::{UnitAnimationTier, UnitPresentation, UnitSheathState};
+pub use unit_stats::{UNIT_PRIMARY_STAT_COUNT, UnitStats};
 pub use unit_vitals::UnitVitals;

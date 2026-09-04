@@ -194,6 +194,47 @@ pub struct UiPlayerVitalsState {
     threat_situation: Option<u8>,
 }
 
+/// Primary attributes returned by build 12340's four-result `UnitStat` API.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UiPlayerStatsState {
+    values: [i32; 5],
+    positive_modifiers: [i32; 5],
+    negative_modifiers: [i32; 5],
+}
+
+impl UiPlayerStatsState {
+    /// Creates a complete Strength-through-Spirit projection.
+    #[must_use]
+    pub const fn new(
+        values: [i32; 5],
+        positive_modifiers: [i32; 5],
+        negative_modifiers: [i32; 5],
+    ) -> Self {
+        Self {
+            values,
+            positive_modifiers,
+            negative_modifiers,
+        }
+    }
+
+    /// Returns `(base, effective, positive, negative)` for a zero-based stat.
+    #[must_use]
+    pub const fn stat(self, index: usize) -> Option<(i32, i32, i32, i32)> {
+        if index >= self.values.len() {
+            return None;
+        }
+        let value = self.values[index];
+        // Build 12340's wrapper reads the current stat twice: once directly
+        // and once through the nonnegative accessor at FUN_005774B0.
+        Some((
+            value,
+            if value < 0 { 0 } else { value },
+            self.positive_modifiers[index],
+            self.negative_modifiers[index],
+        ))
+    }
+}
+
 impl UiPlayerVitalsState {
     /// Creates one complete live unit-bar projection.
     #[must_use]
@@ -537,6 +578,7 @@ struct UiWorldStateInner {
     player_race: RefCell<Option<UiPlayerRaceState>>,
     player_progression: Cell<Option<UiPlayerProgressionState>>,
     player_vitals: Cell<Option<UiPlayerVitalsState>>,
+    player_stats: Cell<Option<UiPlayerStatsState>>,
     player_faction: RefCell<Option<UiPlayerFactionState>>,
     player_default_language: RefCell<Option<UiPlayerLanguage>>,
     zone: RefCell<Option<UiZoneState>>,
@@ -584,6 +626,11 @@ impl UiWorldState {
     /// Publishes the latest complete local-player unit-bar projection.
     pub fn set_player_vitals(&self, vitals: UiPlayerVitalsState) {
         self.inner.player_vitals.set(Some(vitals));
+    }
+
+    /// Publishes the latest primary-attribute projection.
+    pub fn set_player_stats(&self, stats: UiPlayerStatsState) {
+        self.inner.player_stats.set(Some(stats));
     }
 
     /// Publishes the selected character identity for stock unit queries.
@@ -650,6 +697,7 @@ impl UiWorldState {
         *self.inner.player_race.borrow_mut() = None;
         self.inner.player_progression.set(None);
         self.inner.player_vitals.set(None);
+        self.inner.player_stats.set(None);
         *self.inner.player_faction.borrow_mut() = None;
         *self.inner.player_default_language.borrow_mut() = None;
         *self.inner.zone.borrow_mut() = None;
@@ -700,6 +748,12 @@ impl UiWorldState {
     #[must_use]
     pub fn player_vitals(&self) -> Option<UiPlayerVitalsState> {
         self.player().and_then(|_| self.inner.player_vitals.get())
+    }
+
+    /// Returns local-player attributes after the world has published them.
+    #[must_use]
+    pub fn player_stats(&self) -> Option<UiPlayerStatsState> {
+        self.player().and_then(|_| self.inner.player_stats.get())
     }
 
     /// Returns the local player's composed faction identity when available.

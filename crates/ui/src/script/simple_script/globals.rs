@@ -534,6 +534,23 @@ fn register_unit_relation_globals(
             Ok((power_type.id(), power_type.as_str()))
         })?,
     )?;
+    let unit_stats = world.clone();
+    globals.raw_set(
+        "UnitStat",
+        lua.create_function(move |_, (unit, index): (String, usize)| {
+            if !(1..=5).contains(&index) {
+                return Err(mlua::Error::runtime("Invalid stat index in UnitStat"));
+            }
+            Ok(if unit.eq_ignore_ascii_case("player") {
+                unit_stats
+                    .player_stats()
+                    .and_then(|stats| stats.stat(index - 1))
+                    .unwrap_or((0, 0, 0, 0))
+            } else {
+                (0, 0, 0, 0)
+            })
+        })?,
+    )?;
     let connected = world.clone();
     globals.raw_set(
         "UnitIsConnected",

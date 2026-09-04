@@ -20,6 +20,9 @@ pub(crate) fn register_globals(
     let battlefield_position_requests = state.clone();
     let battleground_count = state.clone();
     let battleground_info = state.clone();
+    let battlefield_count = state.clone();
+    let battlefield_selection = state.clone();
+    let battlefield_info = state.clone();
     globals.raw_set(
         "GetBattlefieldStatus",
         lua.create_function(move |_, index: usize| {
@@ -83,6 +86,34 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "GetNumBattlegroundTypes",
         lua.create_function(move |_, ()| Ok(battleground_count.battleground_type_count()))?,
+    )?;
+    globals.raw_set(
+        "GetNumBattlefields",
+        lua.create_function(move |_, ()| Ok(battlefield_count.battleground_type_count()))?,
+    )?;
+    globals.raw_set(
+        "SetSelectedBattlefield",
+        lua.create_function(move |_, index: usize| {
+            // The stock battlefield list is explicitly zero based.
+            battlefield_selection.set_selected_battleground(index);
+            Ok(())
+        })?,
+    )?;
+    globals.raw_set(
+        "GetBattlefieldInfo",
+        lua.create_function(move |lua, ()| {
+            let Some(battleground) = battlefield_info.selected_battleground() else {
+                return Ok(MultiValue::new());
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(&battleground.name)?),
+                Value::String(lua.create_string(&battleground.description)?),
+                Value::Integer(i64::from(battleground.maximum_group_size)),
+                Value::Boolean(battleground.can_enter),
+                Value::Boolean(battleground.holiday),
+                Value::Boolean(battleground.random),
+            ]))
+        })?,
     )?;
     globals.raw_set(
         "GetBattlegroundInfo",

@@ -12,5 +12,6 @@ pub use realm_time::{UiRealmTime, UiRealmTimeError};
 pub use state::{
     UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,
     UiPlayerIdentityState, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
-    UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
+    UiPlayerStatsState, UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZonePvpType,
+    UiZoneState,
 };

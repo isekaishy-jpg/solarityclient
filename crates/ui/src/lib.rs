@@ -100,8 +100,8 @@ pub use widget::{
 pub use world::{
     UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,
     UiPlayerIdentityState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState,
-    UiPlayerState, UiPlayerVitalsState, UiRealmDate, UiRealmDateError, UiRealmTime,
-    UiRealmTimeError, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
+    UiPlayerState, UiPlayerStatsState, UiPlayerVitalsState, UiRealmDate, UiRealmDateError,
+    UiRealmTime, UiRealmTimeError, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

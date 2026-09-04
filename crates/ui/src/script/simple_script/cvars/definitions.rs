@@ -196,6 +196,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("nameplateShowFriendlyGuardians", "1", 0.0, 1.0),
     ranged("nameplateShowFriendlyPets", "1", 0.0, 1.0),
     ranged("nameplateShowFriendlyTotems", "1", 0.0, 1.0),
+    // Registered by FUN_0051D9B0 with the stock false scalar at 0x009E14A0.
+    ranged("nameplateShowFriends", "0", 0.0, 1.0),
     ranged("partyStatusText", "0", 0.0, 1.0),
     ranged("partyBackgroundOpacity", "0.5", 0.0, 1.0),
     ranged("petMeleeDamage", "1", 0.0, 1.0),

@@ -551,6 +551,7 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(GetCVarBool("gxVSync"))
   assert(GetCVar("rotateMinimap") == "0")
   assert(GetCVarDefault("cameraSmoothStyle") == "4")
+  assert(GetCVarDefault("nameplateShowFriends") == "0")
   assert(GetCVar("conversationMode") == "popout")
   assert(GetCVar("chatStyle") == "im")
   assert(GetCVar("playerStatLeftDropdown") == "")

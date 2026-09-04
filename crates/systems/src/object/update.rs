@@ -3,7 +3,7 @@
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, PlayerAppearance,
     PlayerEquipment, PlayerMoney, PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity,
-    UnitPresentation, UnitSheathState, UnitVitals, VisibleEquipmentItem,
+    UnitPresentation, UnitSheathState, UnitStats, UnitVitals, VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -30,6 +30,12 @@ const UNIT_FIELD_NATIVE_DISPLAY_ID: u16 = 68;
 const UNIT_FIELD_MOUNT_DISPLAY_ID: u16 = 69;
 const UNIT_FIELD_BYTES_1: u16 = 74;
 const UNIT_DYNAMIC_FLAGS: u16 = 79;
+const UNIT_FIELD_STAT_START: u16 = 84;
+const UNIT_FIELD_STAT_END: u16 = 88;
+const UNIT_FIELD_POSITIVE_STAT_START: u16 = 89;
+const UNIT_FIELD_POSITIVE_STAT_END: u16 = 93;
+const UNIT_FIELD_NEGATIVE_STAT_START: u16 = 94;
+const UNIT_FIELD_NEGATIVE_STAT_END: u16 = 98;
 const UNIT_FIELD_BYTES_2: u16 = 122;
 const PLAYER_FIELD_BYTES: u16 = 153;
 const PLAYER_BYTES_2: u16 = 154;
@@ -154,6 +160,17 @@ where
     let mut max_health = unit_vitals_state.max_health();
     let mut powers = unit_vitals_state.powers();
     let mut max_powers = unit_vitals_state.max_powers();
+
+    let unit_stats = world
+        .storage()
+        .get::<&UnitStats>(entity)
+        .map(|component| **component)
+        .ok();
+    let mut stats_changed = false;
+    let unit_stats_state = unit_stats.unwrap_or_default();
+    let mut stats = unit_stats_state.values();
+    let mut positive_stats = unit_stats_state.positive_modifiers();
+    let mut negative_stats = unit_stats_state.negative_modifiers();
 
     let unit_presentation = world
         .storage()
@@ -293,6 +310,20 @@ where
                 dynamic_flags = value;
                 flags_changed = true;
             }
+            UNIT_FIELD_STAT_START..=UNIT_FIELD_STAT_END if is_unit(kind) => {
+                stats[usize::from(index - UNIT_FIELD_STAT_START)] = value as i32;
+                stats_changed = true;
+            }
+            UNIT_FIELD_POSITIVE_STAT_START..=UNIT_FIELD_POSITIVE_STAT_END if is_unit(kind) => {
+                positive_stats[usize::from(index - UNIT_FIELD_POSITIVE_STAT_START)] =
+                    f32::from_bits(value) as i32;
+                stats_changed = true;
+            }
+            UNIT_FIELD_NEGATIVE_STAT_START..=UNIT_FIELD_NEGATIVE_STAT_END if is_unit(kind) => {
+                negative_stats[usize::from(index - UNIT_FIELD_NEGATIVE_STAT_START)] =
+                    f32::from_bits(value) as i32;
+                stats_changed = true;
+            }
             UNIT_FIELD_BYTES_2 if is_unit(kind) => {
                 let state = value.to_le_bytes()[0];
                 sheath_state = UnitSheathState::try_from(state)
@@ -420,6 +451,12 @@ where
             world.storage_mut().add_component(
                 entity,
                 (player_money_update.unwrap_or(PlayerMoney::new(0)),),
+            );
+        }
+        if unit_stats.is_none() || stats_changed {
+            world.storage_mut().add_component(
+                entity,
+                (UnitStats::new(stats, positive_stats, negative_stats),),
             );
         }
         if player_progression.is_none() || progression_changed {

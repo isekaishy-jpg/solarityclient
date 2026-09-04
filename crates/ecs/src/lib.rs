@@ -26,7 +26,8 @@ pub use player::{
     PlayerEquipmentSlot, PlayerIdentity, PlayerMoney, PlayerProgression, VisibleEquipmentItem,
 };
 pub use unit::{
-    UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation, UnitSheathState, UnitVitals,
+    UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
+    UnitSheathState, UnitStats, UnitVitals,
 };
 pub use view::PlayerViewState;
 pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};

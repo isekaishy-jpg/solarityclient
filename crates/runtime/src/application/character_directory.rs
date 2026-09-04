@@ -10,7 +10,7 @@ use solarity_ui::{
     UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
     UiFactionGroup, UiPlayerClassState, UiPlayerFactionState, UiPlayerIdentityState,
     UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerState,
-    UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZoneState,
+    UiPlayerStatsState, UiPlayerVitalsState, UiUnitPowerType, UiWorldState, UiZoneState,
 };
 use thiserror::Error;
 
@@ -41,6 +41,7 @@ impl RuntimeCharacterMetadata {
             && active.local_player_money().is_some()
             && active.local_player_progression().is_some()
             && active.local_player_vitals().is_some()
+            && active.local_player_stats().is_some()
     }
 
     /// Projects every server row without substituting unknown custom metadata.
@@ -159,6 +160,9 @@ impl RuntimeCharacterMetadata {
         let vitals = active
             .local_player_vitals()
             .ok_or(CharacterProjectionError::MissingActiveVitals)?;
+        let stats = active
+            .local_player_stats()
+            .ok_or(CharacterProjectionError::MissingActiveStats)?;
         let race = self.races.race(u32::from(identity.race_id())).ok_or(
             CharacterProjectionError::UnknownRace {
                 id: u32::from(identity.race_id()),
@@ -216,6 +220,11 @@ impl RuntimeCharacterMetadata {
             powers[power_index],
             max_powers[power_index],
             power_type,
+        ));
+        target.set_player_stats(UiPlayerStatsState::new(
+            stats.values(),
+            stats.positive_modifiers(),
+            stats.negative_modifiers(),
         ));
         target.set_player_faction(UiPlayerFactionState::new(faction_group, faction.name()));
         // FUN_00500910 selects the active player's default language from the
@@ -323,6 +332,9 @@ pub enum CharacterProjectionError {
     /// FrameXML started before health and power fields arrived.
     #[error("active player has no projected vitals")]
     MissingActiveVitals,
+    /// FrameXML started before primary player attributes arrived.
+    #[error("active player has no projected primary attributes")]
+    MissingActiveStats,
     /// The local unit references a faction template absent from client DBCs.
     #[error("active player references unknown FactionTemplate identifier {id}")]
     UnknownFactionTemplate {

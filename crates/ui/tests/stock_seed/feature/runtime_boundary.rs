@@ -6,9 +6,9 @@ use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_ui::{
     FontCatalog, UiAccountExpansion, UiAnimationPlan, UiBattlegroundType, UiBundle, UiFramePlan,
     UiLayoutPlan, UiMailComposeState, UiManifestKind, UiObjectCatalog, UiObjectTree, UiPetAction,
-    UiPossessAction, UiRegionStatePlan, UiRune, UiRuneType, UiRuntimeTemplatePlan,
-    UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan, UiShapeshiftForm,
-    UiTexturePlan, UiTextureStatePlan, UiWorldStateIndicator,
+    UiPlayerState, UiPlayerStatsState, UiPossessAction, UiRegionStatePlan, UiRune, UiRuneType,
+    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
+    UiShapeshiftForm, UiTexturePlan, UiTextureStatePlan, UiWorldStateIndicator,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -64,6 +64,14 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
   assert(GetNumBattlegroundTypes() == 1)
   local bgName, canEnter, holiday, random, bgId = GetBattlegroundInfo(1)
   assert(bgName == "Warsong Gulch" and canEnter and holiday and not random and bgId == 2)
+  assert(GetNumBattlefields() == 1)
+  SetSelectedBattlefield(0)
+  local battlefieldName, battlefieldDescription, maximumGroup, battlefieldCanEnter,
+        battlefieldHoliday, battlefieldRandom = GetBattlefieldInfo()
+  assert(battlefieldName == "Warsong Gulch" and battlefieldDescription == "Capture the flag")
+  assert(maximumGroup == 10 and battlefieldCanEnter and battlefieldHoliday and not battlefieldRandom)
+  local baseStat, effectiveStat, positiveStat, negativeStat = UnitStat("player", 1)
+  assert(baseStat == 101 and effectiveStat == 101 and positiveStat == 7 and negativeStat == -3)
   local tab = CreateFrame("Button", "DynamicTab", self, "RuntimeButtonTemplate")
   assert(DynamicTabText:GetFontObject() == RuntimeFont)
   DynamicTabText:SetText("Tab")
@@ -102,6 +110,17 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
     let environment = UiScriptEnvironment::new(1280, 720, false)?;
 
     environment
+        .world_state()
+        .enter_player(UiPlayerState::new(0));
+    environment
+        .world_state()
+        .set_player_stats(UiPlayerStatsState::new(
+            [101, 202, 303, 404, 505],
+            [7, 0, 0, 0, 0],
+            [-3, 0, 0, 0, 0],
+        ));
+
+    environment
         .account_state()
         .set_expansion(UiAccountExpansion::WrathOfTheLichKing);
     let mail: UiMailComposeState = environment.mail_compose_state();
@@ -132,13 +151,10 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
             .with_extended_ui("CAPTUREPOINT", [3, 4, 5]),
     ]);
     let battlefield = environment.battlefield_state();
-    battlefield.replace_battleground_types(vec![UiBattlegroundType::new(
-        "Warsong Gulch",
-        true,
-        true,
-        false,
-        2,
-    )]);
+    battlefield.replace_battleground_types(vec![
+        UiBattlegroundType::new("Warsong Gulch", true, true, false, 2)
+            .with_details("Capture the flag", 10),
+    ]);
     assert_eq!(battlefield.battleground_type_count(), 1);
 
     let runtime_plan = UiScriptRuntimePlan::new(
