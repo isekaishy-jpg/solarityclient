@@ -1261,10 +1261,22 @@ impl ClientServices {
                             self.realm_directory_published = false;
                             self.authentication_prewarm_active = true;
                             authentication_started = true;
+                            let message = self
+                                .glue
+                                .localized_text("CSTATUS_CONNECTING")
+                                .map_err(GlueError::from)?;
+                            self.glue.dispatch_event(
+                                "OPEN_STATUS_DIALOG",
+                                &UiEventPayload::new([
+                                    UiEventArgument::String("CANCEL".to_owned()),
+                                    UiEventArgument::String(message),
+                                ])?,
+                            )?;
+                            self.glue_ui_dirty = true;
                         }
                         Err(RuntimeLoginError::AlreadyActive)
                         | Err(RuntimeLoginError::AlreadyAuthenticated) => {}
-                        Err(error) => self.publish_login_failure(error),
+                        Err(error) => self.publish_login_failure(error)?,
                     }
                 }
                 UiGlueNetworkAction::CancelLogin => {
@@ -1328,7 +1340,7 @@ impl ClientServices {
                     match self.login.refresh_realms(&handle) {
                         Ok(()) | Err(RuntimeLoginError::AlreadyActive) => {}
                         Err(RuntimeLoginError::NotAuthenticated) => {}
-                        Err(error) => self.publish_login_failure(error),
+                        Err(error) => self.publish_login_failure(error)?,
                     }
                 }
                 UiGlueNetworkAction::CancelRealmListQuery => {
@@ -1633,7 +1645,7 @@ impl ClientServices {
                 self.begin_pending_world(&handle);
             }
             Ok(RuntimeLoginPoll::RealmDirectoryCancelled) => {}
-            Err(error) => self.publish_login_failure(error),
+            Err(error) => self.publish_login_failure(error)?,
         }
         match self.world.poll() {
             Ok(RuntimeWorldPoll::Idle | RuntimeWorldPoll::Pending) => {}
@@ -2338,12 +2350,27 @@ const fn glue_pointer_button(button: MouseButton) -> Option<UiPointerButton> {
 }
 
 impl ClientServices {
-    fn publish_login_failure(&mut self, error: RuntimeLoginError) {
+    /// Restores the stock login-screen error dialog while retaining the typed
+    /// failure for embedding callers that consume the runtime diagnostic API.
+    fn publish_login_failure(&mut self, error: RuntimeLoginError) -> Result<(), ApplicationError> {
         self.authentication_prewarm_active = false;
         self.realm_directory_published = false;
         self.glue.set_network_status(UiGlueNetworkStatus::default());
         tracing::warn!(error = %error, "login exchange failed");
+        let message = self
+            .glue
+            .localized_text(error.message_token())
+            .map_err(GlueError::from)?;
+        self.glue.dispatch_event(
+            "OPEN_STATUS_DIALOG",
+            &UiEventPayload::new([
+                UiEventArgument::String("OKAY".to_owned()),
+                UiEventArgument::String(message),
+            ])?,
+        )?;
+        self.glue_ui_dirty = true;
         self.login_failures.push_back(error);
+        Ok(())
     }
 
     fn publish_world_failure(&mut self, error: RuntimeWorldError) {

@@ -3,7 +3,9 @@
 use std::error::Error;
 use std::net::Ipv4Addr;
 
-use solarity_network::{GruntLoginOptions, LoginLocale, TcpEndpoint};
+use solarity_network::{
+    GruntLoginOptions, LoginError, LoginFailure, LoginLocale, LoginStage, TcpEndpoint,
+};
 use solarity_runtime::{
     LoginConfiguration, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginState,
 };
@@ -67,4 +69,43 @@ fn login_coordinator_rejects_credentials_before_admission() -> Result<(), Box<dy
     assert!(matches!(result, Err(RuntimeLoginError::Login(_))));
     assert_eq!(coordinator.state(), RuntimeLoginState::Idle);
     Ok(())
+}
+
+/// Stock response translation at `0x006B02C0` remains typed and exhaustive.
+#[test]
+fn login_failures_select_stock_glue_message_tokens() {
+    let rejection_cases = [
+        (LoginFailure::Unknown0, "AUTH_FAILED"),
+        (LoginFailure::Unknown1, "AUTH_FAILED"),
+        (LoginFailure::Banned, "AUTH_BANNED"),
+        (LoginFailure::UnknownAccount, "AUTH_UNKNOWN_ACCOUNT"),
+        (LoginFailure::IncorrectPassword, "AUTH_INCORRECT_PASSWORD"),
+        (LoginFailure::AlreadyOnline, "AUTH_ALREADY_ONLINE"),
+        (LoginFailure::NoTime, "AUTH_NO_TIME"),
+        (LoginFailure::DatabaseBusy, "AUTH_DB_BUSY"),
+        (LoginFailure::VersionInvalid, "AUTH_VERSION_MISMATCH"),
+        (LoginFailure::DownloadFile, "AUTH_VERSION_MISMATCH"),
+        (LoginFailure::InvalidServer, "AUTH_LOGIN_SERVER_NOT_FOUND"),
+        (LoginFailure::Suspended, "AUTH_SUSPENDED"),
+        (LoginFailure::NoAccess, "AUTH_REJECT"),
+        (LoginFailure::Survey, "AUTH_REJECT"),
+        (LoginFailure::ParentalControl, "AUTH_PARENTAL_CONTROL"),
+        (LoginFailure::LockedEnforced, "AUTH_LOCKED_ENFORCED"),
+    ];
+    for (failure, expected) in rejection_cases {
+        let error = RuntimeLoginError::Login(LoginError::Rejected {
+            stage: LoginStage::Challenge,
+            failure,
+        });
+        assert_eq!(error.message_token(), expected);
+    }
+
+    let realm_error = RuntimeLoginError::Login(LoginError::Io {
+        stage: LoginStage::RealmList,
+        message: "closed".to_owned(),
+    });
+    assert_eq!(realm_error.message_token(), "REALM_LIST_FAILED");
+
+    let proof_error = RuntimeLoginError::Login(LoginError::ServerProofMismatch);
+    assert_eq!(proof_error.message_token(), "AUTH_BAD_SERVER_PROOF");
 }

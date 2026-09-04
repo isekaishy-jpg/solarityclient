@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use solarity_network::{
     AuthenticatedGrunt, Build12340WindowsIntegrity, GruntCredentials, GruntLogin, LoginError,
-    RealmDirectory, TcpTransport, TransportError,
+    LoginFailure, LoginStage, RealmDirectory, TcpTransport, TransportError,
 };
 
 use crate::configuration::LoginConfiguration;
@@ -65,6 +65,66 @@ pub enum RuntimeLoginError {
     /// The task ended without publishing its owned result.
     #[error("login task ended without publishing a result")]
     TaskEnded,
+}
+
+impl RuntimeLoginError {
+    /// Returns the build-12340 GlueStrings token presented for this result.
+    ///
+    /// Stock translates the connection response enum at `0x006B02C0` and
+    /// publishes the localized result through the Glue event pump at
+    /// `0x004DAB40`. Keeping the translation beside the typed protocol error
+    /// prevents the composition root from inspecting display text.
+    pub const fn message_token(&self) -> &'static str {
+        match self {
+            Self::AlreadyActive | Self::AlreadyAuthenticated => "AUTH_ALREADY_LOGGING_IN",
+            Self::NotAuthenticated => "REALM_LIST_FAILED",
+            Self::PasswordEncoding => "AUTH_INCORRECT_PASSWORD",
+            Self::Transport(_) => "RESPONSE_FAILED_TO_CONNECT",
+            Self::Login(LoginError::InvalidUsername { .. }) => "AUTH_UNKNOWN_ACCOUNT",
+            Self::Login(LoginError::InvalidPassword { .. }) => "AUTH_INCORRECT_PASSWORD",
+            Self::Login(
+                LoginError::Io {
+                    stage: LoginStage::RealmList,
+                    ..
+                }
+                | LoginError::Decode {
+                    stage: LoginStage::RealmList,
+                    ..
+                }
+                | LoginError::UnexpectedMessage {
+                    stage: LoginStage::RealmList,
+                    ..
+                },
+            ) => "REALM_LIST_FAILED",
+            Self::Login(LoginError::Io { .. }) => "RESPONSE_DISCONNECTED",
+            Self::Login(LoginError::ServerProofMismatch) => "AUTH_BAD_SERVER_PROOF",
+            Self::Login(LoginError::Rejected { failure, .. }) => match failure {
+                LoginFailure::Unknown0 | LoginFailure::Unknown1 => "AUTH_FAILED",
+                LoginFailure::Banned => "AUTH_BANNED",
+                LoginFailure::UnknownAccount => "AUTH_UNKNOWN_ACCOUNT",
+                LoginFailure::IncorrectPassword => "AUTH_INCORRECT_PASSWORD",
+                LoginFailure::AlreadyOnline => "AUTH_ALREADY_ONLINE",
+                LoginFailure::NoTime => "AUTH_NO_TIME",
+                LoginFailure::DatabaseBusy => "AUTH_DB_BUSY",
+                LoginFailure::VersionInvalid | LoginFailure::DownloadFile => {
+                    "AUTH_VERSION_MISMATCH"
+                }
+                LoginFailure::InvalidServer => "AUTH_LOGIN_SERVER_NOT_FOUND",
+                LoginFailure::Suspended => "AUTH_SUSPENDED",
+                LoginFailure::NoAccess | LoginFailure::Survey => "AUTH_REJECT",
+                LoginFailure::ParentalControl => "AUTH_PARENTAL_CONTROL",
+                LoginFailure::LockedEnforced => "AUTH_LOCKED_ENFORCED",
+            },
+            Self::Login(
+                LoginError::Decode { .. }
+                | LoginError::UnexpectedMessage { .. }
+                | LoginError::InvalidSrpParameters { .. }
+                | LoginError::Integrity { .. }
+                | LoginError::UnsupportedSecurity { .. },
+            ) => "AUTH_FAILED",
+            Self::TaskEnded => "RESPONSE_DISCONNECTED",
+        }
+    }
 }
 
 /// Authenticated realmd ownership retained until realm selection or disconnect.
