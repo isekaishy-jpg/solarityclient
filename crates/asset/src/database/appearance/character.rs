@@ -9,6 +9,9 @@ use crate::database::character::{
 use super::AppearanceError;
 
 const SECTION_FLAG_NPC_SKIN: u32 = 0x08;
+const SECTION_FLAG_PLAYER: u32 = 0x01;
+const SECTION_FLAG_DEATH_KNIGHT: u32 = 0x04;
+const DEATH_KNIGHT_CLASS_ID: u8 = 6;
 const STOCK_HAIR_GEOSET_FALLBACK: u32 = 1;
 
 /// The five `CharSections.dbc` component variation categories.
@@ -219,12 +222,39 @@ impl CharacterAppearanceCatalog {
         gender_id: u32,
         customization: CharacterCustomization,
     ) -> Result<CharacterModelAppearance<'_>, AppearanceError> {
+        self.resolve_player_internal(race_id, gender_id, customization, None)
+    }
+
+    /// Resolves a playable character using build-12340's class-aware section flags.
+    ///
+    /// Death Knights prefer player rows carrying flag `0x04` and fall back to
+    /// ordinary player rows. Every other class excludes those DK replacements.
+    /// This keeps duplicate NPC rows available to [`Self::resolve_player`]'s
+    /// existing creature-display consumers without leaking them into players.
+    pub fn resolve_player_for_class(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        class_id: u8,
+        customization: CharacterCustomization,
+    ) -> Result<CharacterModelAppearance<'_>, AppearanceError> {
+        self.resolve_player_internal(race_id, gender_id, customization, Some(class_id))
+    }
+
+    fn resolve_player_internal(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        customization: CharacterCustomization,
+        class_id: Option<u8>,
+    ) -> Result<CharacterModelAppearance<'_>, AppearanceError> {
         let skin = self.require_section(
             race_id,
             gender_id,
             CharacterSectionKind::Skin,
             0,
             customization.skin_id,
+            class_id,
         )?;
         let is_npc_skin = skin.flags() & SECTION_FLAG_NPC_SKIN != 0;
         let face = if is_npc_skin {
@@ -236,26 +266,27 @@ impl CharacterAppearanceCatalog {
                 CharacterSectionKind::Face,
                 customization.face_id,
                 customization.skin_id,
+                class_id,
             )?)
         };
         // Stock permits geometry-only facial features. CharSections supplies
         // an overlay only for authored style/color pairs; it does not define
         // the selectable feature set from CharacterFacialHairStyles.
-        let facial_hair = self
-            .sections_for(
-                race_id,
-                gender_id,
-                CharacterSectionKind::FacialHair.value(),
-                customization.facial_hair_style_id,
-                customization.hair_color_id,
-            )
-            .last();
+        let facial_hair = self.select_section(
+            race_id,
+            gender_id,
+            CharacterSectionKind::FacialHair.value(),
+            customization.facial_hair_style_id,
+            customization.hair_color_id,
+            class_id,
+        );
         let hair = self.require_section(
             race_id,
             gender_id,
             CharacterSectionKind::Hair,
             customization.hair_style_id,
             customization.hair_color_id,
+            class_id,
         )?;
         let underwear = if is_npc_skin {
             None
@@ -266,6 +297,7 @@ impl CharacterAppearanceCatalog {
                 CharacterSectionKind::Underwear,
                 0,
                 customization.skin_id,
+                class_id,
             )?)
         };
 
@@ -318,15 +350,16 @@ impl CharacterAppearanceCatalog {
         kind: CharacterSectionKind,
         variation_index: u32,
         color_index: u32,
+        class_id: Option<u8>,
     ) -> Result<&CharacterSection, AppearanceError> {
-        self.sections_for(
+        self.select_section(
             race_id,
             gender_id,
             kind.value(),
             variation_index,
             color_index,
+            class_id,
         )
-        .last()
         .ok_or(AppearanceError::MissingCharacterSection {
             race_id,
             gender_id,
@@ -334,5 +367,43 @@ impl CharacterAppearanceCatalog {
             variation_index,
             color_index,
         })
+    }
+
+    fn select_section(
+        &self,
+        race_id: u32,
+        gender_id: u32,
+        base_section: u32,
+        variation_index: u32,
+        color_index: u32,
+        class_id: Option<u8>,
+    ) -> Option<&CharacterSection> {
+        let sections = self.sections_for(
+            race_id,
+            gender_id,
+            base_section,
+            variation_index,
+            color_index,
+        );
+        let Some(class_id) = class_id else {
+            return sections.last();
+        };
+        let ordinary = || {
+            sections.iter().find(|section| {
+                section.flags() & SECTION_FLAG_PLAYER != 0
+                    && section.flags() & SECTION_FLAG_DEATH_KNIGHT == 0
+            })
+        };
+        if class_id == DEATH_KNIGHT_CLASS_ID {
+            sections
+                .iter()
+                .find(|section| {
+                    section.flags() & SECTION_FLAG_PLAYER != 0
+                        && section.flags() & SECTION_FLAG_DEATH_KNIGHT != 0
+                })
+                .or_else(ordinary)
+        } else {
+            ordinary()
+        }
     }
 }

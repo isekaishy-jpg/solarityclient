@@ -6,7 +6,6 @@ use solarity_ecs::PlayerEquipmentSlot;
 use super::{CharacterEquipmentItem, CharacterGeosetPlanError};
 
 const DEATH_KNIGHT_CLASS_ID: u8 = 6;
-const FACE_FLAG_GLOWING_EYES: u32 = 0x04;
 const CHARACTER_GEOSET_SLOT_COUNT: usize = 19;
 const EQUIPMENT_GEOSET_SLOT_COUNT: usize = 11;
 const BASE_GEOSETS: [u32; CHARACTER_GEOSET_SLOT_COUNT] = [
@@ -200,11 +199,12 @@ fn apply_helmet_visibility(
 }
 
 /// Applies the final eye slot substitution performed after helmet masking.
-fn apply_eye_glow(visible: &mut Vec<u32>, appearance: &CharacterModelAppearance<'_>, class_id: u8) {
-    let face_has_glowing_eyes = appearance
-        .face()
-        .is_some_and(|face| face.flags() & FACE_FLAG_GLOWING_EYES != 0);
-    if class_id == DEATH_KNIGHT_CLASS_ID || face_has_glowing_eyes {
+fn apply_eye_glow(
+    visible: &mut Vec<u32>,
+    _appearance: &CharacterModelAppearance<'_>,
+    class_id: u8,
+) {
+    if class_id == DEATH_KNIGHT_CLASS_ID {
         hide_group(visible, 17);
         show(visible, 1703);
     }
