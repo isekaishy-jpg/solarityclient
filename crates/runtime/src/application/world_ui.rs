@@ -204,8 +204,8 @@ impl RuntimeWorldUi {
         renderer: &mut VulkanRenderer,
     ) -> Result<(), ApplicationError> {
         if self.dirty {
-            self.frame =
-                RuntimeUiFrame::prepare_frame(renderer, &self.manager, &mut self.texture_cache)?;
+            self.frame
+                .refresh_frame(renderer, &self.manager, &mut self.texture_cache)?;
             self.dirty = false;
         }
         Ok(())

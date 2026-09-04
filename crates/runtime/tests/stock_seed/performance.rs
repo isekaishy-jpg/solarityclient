@@ -66,11 +66,11 @@ fn frame_rate_counter_resets_at_published_completion() {
     );
 }
 
-/// The SolCL 300 FPS ceiling retains phase across ordinary scheduler jitter.
+/// The 1200 FPS idle ceiling retains phase across ordinary scheduler jitter.
 #[test]
 fn frame_limiter_uses_absolute_deadlines_without_drift() {
     let start = Instant::now();
-    let interval = Duration::from_nanos(1_000_000_000 / 300);
+    let interval = Duration::from_nanos(1_000_000_000 / 1_200);
     let limiter = RefCell::new(FrameLimiter::new());
 
     let first_delay = run_limiter_wait(&limiter, [start, start + interval]);
@@ -85,7 +85,7 @@ fn frame_limiter_uses_absolute_deadlines_without_drift() {
 #[test]
 fn frame_limiter_reschedules_after_a_complete_overrun() {
     let start = Instant::now();
-    let interval = Duration::from_nanos(1_000_000_000 / 300);
+    let interval = Duration::from_nanos(1_000_000_000 / 1_200);
     let limiter = RefCell::new(FrameLimiter::new());
     assert_eq!(
         run_limiter_wait(&limiter, [start, start + interval]),

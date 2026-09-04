@@ -455,6 +455,67 @@ pub(crate) struct RuntimeGlueModelScene {
     character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
     pending_character_sources: Vec<PendingGlueCharacterSource>,
     character_replacement_required: bool,
+    frame_profiler: Option<GlueFrameProfiler>,
+}
+
+struct GlueFrameProfiler {
+    window_started: std::time::Instant,
+    frame_count: u64,
+    prepare_total: std::time::Duration,
+    prepare_max: std::time::Duration,
+    present_total: std::time::Duration,
+    present_max: std::time::Duration,
+}
+
+impl GlueFrameProfiler {
+    fn from_environment() -> Option<Self> {
+        std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_value| Self {
+            window_started: std::time::Instant::now(),
+            frame_count: 0,
+            prepare_total: std::time::Duration::ZERO,
+            prepare_max: std::time::Duration::ZERO,
+            present_total: std::time::Duration::ZERO,
+            present_max: std::time::Duration::ZERO,
+        })
+    }
+
+    fn record(
+        &mut self,
+        prepare: std::time::Duration,
+        present: std::time::Duration,
+        draw_count: usize,
+        bone_count: usize,
+        particle_vertex_count: usize,
+    ) {
+        self.frame_count = self.frame_count.saturating_add(1);
+        self.prepare_total += prepare;
+        self.prepare_max = self.prepare_max.max(prepare);
+        self.present_total += present;
+        self.present_max = self.present_max.max(present);
+        let elapsed = self.window_started.elapsed();
+        if elapsed < std::time::Duration::from_secs(2) {
+            return;
+        }
+        let divisor = self.frame_count.max(1) as f64;
+        tracing::info!(
+            measured_fps = self.frame_count as f64 / elapsed.as_secs_f64(),
+            frame_count = self.frame_count,
+            prepare_mean_us = self.prepare_total.as_secs_f64() * 1_000_000.0 / divisor,
+            prepare_max_us = self.prepare_max.as_secs_f64() * 1_000_000.0,
+            present_mean_us = self.present_total.as_secs_f64() * 1_000_000.0 / divisor,
+            present_max_us = self.present_max.as_secs_f64() * 1_000_000.0,
+            draw_count,
+            bone_count,
+            particle_vertex_count,
+            "profiled retained Glue model frame"
+        );
+        self.window_started = std::time::Instant::now();
+        self.frame_count = 0;
+        self.prepare_total = std::time::Duration::ZERO;
+        self.prepare_max = std::time::Duration::ZERO;
+        self.present_total = std::time::Duration::ZERO;
+        self.present_max = std::time::Duration::ZERO;
+    }
 }
 
 impl RuntimeGlueModelScene {
@@ -471,6 +532,7 @@ impl RuntimeGlueModelScene {
             character_sources: HashMap::new(),
             pending_character_sources: Vec::new(),
             character_replacement_required: false,
+            frame_profiler: GlueFrameProfiler::from_environment(),
         }
     }
 
@@ -1129,6 +1191,7 @@ impl RuntimeGlueModelScene {
         let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
+        let prepare_started = std::time::Instant::now();
         let visible = active.frame.prepare_visible_draws(
             renderer,
             frustum,
@@ -1234,6 +1297,11 @@ impl RuntimeGlueModelScene {
                 visible.particle_vertex_capacity,
                 visible.particle_index_capacity,
             );
+        let prepare_elapsed = prepare_started.elapsed();
+        let draw_count = visible.draws.len();
+        let bone_count = visible.bone_transforms.len();
+        let particle_vertex_count = visible.particle_vertices.len();
+        let present_started = std::time::Instant::now();
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
             renderer.present_world_frame_with_ui_layers_and_glow(
                 scene,
@@ -1269,6 +1337,15 @@ impl RuntimeGlueModelScene {
                 ui.draws(),
                 overlay,
             )?;
+        }
+        if let Some(profiler) = self.frame_profiler.as_mut() {
+            profiler.record(
+                prepare_elapsed,
+                present_started.elapsed(),
+                draw_count,
+                bone_count,
+                particle_vertex_count,
+            );
         }
         Ok(true)
     }

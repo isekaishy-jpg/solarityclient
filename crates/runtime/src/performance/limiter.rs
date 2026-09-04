@@ -4,8 +4,12 @@
 
 use std::time::{Duration, Instant};
 
-/// SolCL's intentional safety ceiling for presentation with VSync disabled.
-const FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 300);
+/// Idle presentation ceiling with VSync disabled.
+///
+/// This remains finite so an empty/minimized scene cannot become an accidental
+/// unbounded spin loop, but it leaves enough headroom to expose work that does
+/// not fit the 300 Hz performance floor.
+const FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 1_200);
 
 /// Retains one monotonic deadline without accumulating ordinary wait jitter.
 pub(crate) struct FrameLimiter {

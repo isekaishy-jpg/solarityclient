@@ -38,13 +38,33 @@ impl RuntimeUiFrame {
         glue: &GlueManager,
         cache: &mut BlpTextureCache,
     ) -> Result<(), ApplicationError> {
+        self.refresh_source(renderer, glue, cache)
+    }
+
+    /// Refreshes one live FrameXML generation through the same retained mesh
+    /// and material path as GlueXML.
+    pub(super) fn refresh_frame(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        frame: &FrameManager,
+        cache: &mut BlpTextureCache,
+    ) -> Result<(), ApplicationError> {
+        self.refresh_source(renderer, frame, cache)
+    }
+
+    fn refresh_source(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        source: &impl RuntimeUiSource,
+        cache: &mut BlpTextureCache,
+    ) -> Result<(), ApplicationError> {
         if self
             .frame
-            .try_replace_compatible_mesh(renderer, glue.render_plan().mesh())?
+            .try_replace_compatible_mesh(renderer, source.render_plan().mesh())?
         {
             return Ok(());
         }
-        *self = Self::prepare_source_with_mesh(renderer, glue, cache, Some(self.frame.mesh()))?;
+        *self = Self::prepare_source_with_mesh(renderer, source, cache, Some(self.frame.mesh()))?;
         Ok(())
     }
 
