@@ -1,7 +1,7 @@
 //! Batched UI mesh generation recovered from `CSimpleRender.cpp`.
 
 use solarity_rendering::{
-    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform,
+    UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderState, UiRenderTransform,
     UiTextureAddressMode, UiTextureResidency,
 };
 
@@ -116,6 +116,7 @@ impl UiRenderPlan {
         &mut self,
         previous: &UiRegionGeometryPlan,
         current: &UiRegionGeometryPlan,
+        presentation: &UiPresentationPlan,
         scroll_frames: &UiScrollFramePlan,
     ) -> Result<bool, UiRenderError> {
         if previous.region_count() != current.region_count() {
@@ -147,9 +148,11 @@ impl UiRenderPlan {
             self.mesh.translate_object(object_index, translation)?;
         }
         self.mesh.refresh_object_opacities(|object_index| {
-            current
-                .region(object_index)
-                .map(|region| region.effective_alpha() as f32)
+            presentation.object_opacity(object_index).or_else(|| {
+                current
+                    .region(object_index)
+                    .map(|region| region.effective_alpha() as f32)
+            })
         })?;
         for object_index in 0..current.region_count() {
             if scroll_frames.state(object_index).is_none() {
@@ -170,6 +173,56 @@ impl UiRenderPlan {
             )?;
         }
         Ok(true)
+    }
+
+    /// Patches only draw slots owned by animation-affected regions.
+    pub(crate) fn refresh_visual_objects(
+        &mut self,
+        changes: &[crate::region::UiRegionVisualChange],
+        geometry: &UiRegionGeometryPlan,
+        presentation: &UiPresentationPlan,
+        scroll_frames: &UiScrollFramePlan,
+        live: &UiRuntimeObjectPlan,
+    ) -> Result<(), UiRenderError> {
+        for change in changes {
+            self.mesh
+                .translate_object(change.object_index, change.translation)?;
+            let opacity = presentation
+                .object_opacity(change.object_index)
+                .or_else(|| {
+                    geometry
+                        .region(change.object_index)
+                        .map(|region| region.effective_alpha() as f32)
+                })
+                .unwrap_or(1.0);
+            self.mesh.set_object_opacity(change.object_index, opacity)?;
+            if let Some(text) = live
+                .objects()
+                .get(change.object_index)
+                .and_then(|object| object.text.as_ref())
+                && live.objects()[change.object_index].kind == crate::UiObjectKind::EditBox
+            {
+                self.mesh.set_state_opacity(
+                    UiRenderState::EditBoxCaret(change.object_index),
+                    opacity * f32::from(text.caret_visible),
+                )?;
+            }
+            if scroll_frames.state(change.object_index).is_some()
+                && let Some(viewport) = geometry.region(change.object_index)
+            {
+                let viewport = viewport.presentation_bounds();
+                self.mesh.set_transform_clip(
+                    UiRenderTransform::ScrollFrame(change.object_index),
+                    Some([
+                        viewport.left() as f32,
+                        viewport.bottom() as f32,
+                        viewport.right() as f32,
+                        viewport.top() as f32,
+                    ]),
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Patches retained Button state slots without rebuilding geometry bytes.
@@ -294,7 +347,12 @@ fn render_glyph_quad(
             .region(glyph.object_index())
             .map_or(1.0, |region| region.effective_alpha() as f32),
     );
-    attach_scroll_transform(quad, glyph.clip_object(), geometry, scroll_frames)
+    let quad = attach_scroll_transform(quad, glyph.clip_object(), geometry, scroll_frames)?;
+    Some(if glyph.is_caret() {
+        quad.with_state(UiRenderState::EditBoxCaret(glyph.object_index()))
+    } else {
+        quad
+    })
 }
 
 /// Converts one live texture region without disturbing its established order.

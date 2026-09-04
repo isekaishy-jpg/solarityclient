@@ -123,6 +123,7 @@ impl UiRegionGeometry {
 pub struct UiRegionGeometryPlan {
     ui_extent: (f64, f64),
     regions: Vec<UiRegionGeometry>,
+    presentations: Vec<Affine2>,
 }
 
 impl UiRegionGeometryPlan {
@@ -133,6 +134,70 @@ impl UiRegionGeometryPlan {
             region.presentation_bounds = region.presentation_bounds.translated(delta);
         }
     }
+
+    /// Recomputes presentation-only state for a parent-before-child list.
+    ///
+    /// Animation alpha and translation never affect anchor resolution or
+    /// logical bounds. Retaining each composed affine transform therefore lets
+    /// the frame tick patch only the animated ownership subtrees.
+    pub(crate) fn refresh_visual_regions(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        object_indices: &[usize],
+    ) -> Vec<UiRegionVisualChange> {
+        let mut changes = Vec::with_capacity(object_indices.len());
+        for &object_index in object_indices {
+            let Some(object) = live.objects().get(object_index) else {
+                continue;
+            };
+            let Some(previous) = self.regions.get(object_index).copied() else {
+                continue;
+            };
+            let parent_region = object
+                .parent
+                .and_then(|index| self.regions.get(index))
+                .copied();
+            let parent_transform = object
+                .parent
+                .and_then(|index| self.presentations.get(index))
+                .copied()
+                .unwrap_or(Affine2::IDENTITY);
+            let logical_bounds = previous.logical_bounds;
+            let scale_transform = Affine2::scale_about(
+                object.scale,
+                (logical_bounds.left + logical_bounds.right) * 0.5,
+                (logical_bounds.bottom + logical_bounds.top) * 0.5,
+            );
+            let local = Affine2::translation(object.animation_offset.0, object.animation_offset.1)
+                .compose(scale_transform);
+            let presentation = parent_transform.compose(local);
+            let presentation_bounds = presentation.bounds(logical_bounds);
+            let alpha = (object.alpha + object.animation_alpha_delta).clamp(0.0, 1.0);
+            let effective_alpha =
+                alpha * parent_region.map_or(1.0, UiRegionGeometry::effective_alpha);
+            let animation_active = object.animation_active
+                || parent_region.is_some_and(UiRegionGeometry::animation_active);
+            self.presentations[object_index] = presentation;
+            self.regions[object_index].presentation_bounds = presentation_bounds;
+            self.regions[object_index].effective_alpha = effective_alpha;
+            self.regions[object_index].animation_active = animation_active;
+            changes.push(UiRegionVisualChange {
+                object_index,
+                translation: [
+                    (presentation_bounds.left() - previous.presentation_bounds.left()) as f32,
+                    (presentation_bounds.bottom() - previous.presentation_bounds.bottom()) as f32,
+                ],
+            });
+        }
+        changes
+    }
+}
+
+/// One retained region slot affected by an animation-owner subtree update.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiRegionVisualChange {
+    pub(crate) object_index: usize,
+    pub(crate) translation: [f32; 2],
 }
 
 impl UiRegionGeometryPlan {
@@ -164,17 +229,23 @@ impl UiRegionGeometryPlan {
         for index in 0..live.objects().len() {
             resolver.resolve(index)?;
         }
-        let regions = resolver
+        let resolved = resolver
             .resolved
             .into_iter()
             .enumerate()
             .map(|(index, region)| {
-                region.map(|region| region.public).ok_or_else(|| {
+                region.ok_or_else(|| {
                     resolution_error(format!("live region {index} remained unresolved"))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { ui_extent, regions })
+        let regions = resolved.iter().map(|region| region.public).collect();
+        let presentations = resolved.iter().map(|region| region.presentation).collect();
+        Ok(Self {
+            ui_extent,
+            regions,
+            presentations,
+        })
     }
 
     /// Returns the stock aspect-compensated logical canvas extent.

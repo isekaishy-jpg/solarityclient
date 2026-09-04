@@ -11,6 +11,6 @@ mod types;
 pub use mesh::UiMeshPlan;
 pub use status::UiMeshPlanError;
 pub use types::{
-    UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform, UiRenderVertex,
-    UiTextureAddressMode, UiTextureResidency,
+    UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderState, UiRenderTransform,
+    UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };

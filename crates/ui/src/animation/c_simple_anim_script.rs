@@ -491,23 +491,26 @@ fn animation_tables(group: &Table) -> mlua::Result<Vec<Table>> {
 /// Build 12340's `CSimpleAnimGroup` tick at `0x0049C350` advances one order
 /// band at a time, while `CSimpleAnim` at `0x004985F0` swaps delays in reverse
 /// playback and applies smoothing only to the active interval.
-pub(crate) fn advance_animations(lua: &Lua, elapsed_seconds: f64) -> mlua::Result<bool> {
+pub(crate) fn advance_animations(
+    lua: &Lua,
+    elapsed_seconds: f64,
+) -> mlua::Result<Vec<(usize, UiAnimationTransform)>> {
     if elapsed_seconds == 0.0 {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let groups: Table = lua.named_registry_value(ANIMATION_GROUP_REGISTRY)?;
     let retained = groups
         .sequence_values::<Table>()
         .collect::<mlua::Result<Vec<_>>>()?;
-    let mut changed = false;
-    for group in retained {
+    let mut changed_owners = Vec::new();
+    for group in &retained {
         if !group.raw_get::<bool>(playing_key())? {
             continue;
         }
-        changed = true;
-        let total = group_duration(&group)?;
+        changed_owners.push(group.raw_get::<usize>(owner_index_key())?);
+        let total = group_duration(group)?;
         if total <= f64::EPSILON {
-            finish_naturally(lua, &group)?;
+            finish_naturally(lua, group)?;
             continue;
         }
 
@@ -536,12 +539,33 @@ pub(crate) fn advance_animations(lua: &Lua, elapsed_seconds: f64) -> mlua::Resul
         };
         group.raw_set(elapsed_key(), elapsed)?;
         group.raw_set(progress_key(), group_progress.clamp(0.0, 1.0))?;
-        update_group_contribution(&group, timeline_time)?;
+        update_group_contribution(group, timeline_time)?;
         if finished {
-            finish_naturally(lua, &group)?;
+            finish_naturally(lua, group)?;
         }
     }
-    Ok(changed)
+    changed_owners.sort_unstable();
+    changed_owners.dedup();
+    if changed_owners.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut transforms = changed_owners
+        .iter()
+        .copied()
+        .map(|owner| (owner, UiAnimationTransform::default()))
+        .collect::<Vec<_>>();
+    for group in retained {
+        let owner = group.raw_get::<usize>(owner_index_key())?;
+        let Ok(slot) = changed_owners.binary_search(&owner) else {
+            continue;
+        };
+        let transform = &mut transforms[slot].1;
+        transform.active |= group.raw_get::<bool>(playing_key())?;
+        transform.alpha_delta += group.raw_get::<f64>(alpha_delta_key())?;
+        transform.offset.0 += group.raw_get::<f64>(translation_x_key())?;
+        transform.offset.1 += group.raw_get::<f64>(translation_y_key())?;
+    }
+    Ok(transforms)
 }
 
 /// Returns the temporary alpha delta and translation for one owner.

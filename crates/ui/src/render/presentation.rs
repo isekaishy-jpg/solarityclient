@@ -398,16 +398,66 @@ pub struct UiPresentationPlan {
     packets: Vec<UiPresentationPacket>,
     members: Vec<UiTexturePresentation>,
     models: Vec<UiModelPresentation>,
+    member_indices_by_object: Vec<Vec<usize>>,
+    model_index_by_object: Vec<Option<usize>>,
+    disabled_texture_owners: Vec<bool>,
 }
 
 impl UiPresentationPlan {
     /// Moves every presentation quad owned by one transform-only region.
     pub(crate) fn translate_object(&mut self, object_index: usize, delta: [f32; 2]) {
-        for member in &mut self.members {
-            if member.object_index == object_index {
-                member.bounds = member.bounds.translated(delta);
+        if let Some(member_indices) = self.member_indices_by_object.get(object_index) {
+            for &member_index in member_indices {
+                self.members[member_index].bounds =
+                    self.members[member_index].bounds.translated(delta);
             }
         }
+        if let Some(Some(model_index)) = self.model_index_by_object.get(object_index) {
+            self.models[*model_index].bounds = self.models[*model_index].bounds.translated(delta);
+        }
+    }
+
+    /// Patches bounds and inherited opacity for one retained visual slot.
+    pub(crate) fn refresh_visual_object(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+        translation: [f32; 2],
+    ) {
+        self.translate_object(object_index, translation);
+        let Some(object) = live.objects().get(object_index) else {
+            return;
+        };
+        let Some(region) = geometry.region(object_index) else {
+            return;
+        };
+        let mut opacity = region.effective_alpha() as f32;
+        if object.texture.is_some()
+            && let Some(owner_index) = nearest_owning_frame(live, object)
+            && let Some(owner) = live.objects().get(owner_index)
+        {
+            opacity *= f32::from(widget_role_is_active(
+                object.role,
+                owner,
+                self.disabled_texture_owners[owner_index],
+            ));
+        }
+        if let Some(member_indices) = self.member_indices_by_object.get(object_index) {
+            for &member_index in member_indices {
+                self.members[member_index].opacity = opacity;
+            }
+        }
+        if let Some(Some(model_index)) = self.model_index_by_object.get(object_index) {
+            self.models[*model_index].alpha = region.effective_alpha() as f32;
+        }
+    }
+
+    pub(crate) fn object_opacity(&self, object_index: usize) -> Option<f32> {
+        self.member_indices_by_object
+            .get(object_index)
+            .and_then(|indices| indices.first())
+            .map(|&index| self.members[index].opacity)
     }
 
     /// Selects among retained Button state skins without changing draw topology.
@@ -566,10 +616,21 @@ impl UiPresentationPlan {
             members.push(member);
         }
         models.sort_by_key(|model| (model.strata, model.frame_level, model.object_index));
+        let mut member_indices_by_object = vec![Vec::new(); live.objects().len()];
+        for (member_index, member) in members.iter().enumerate() {
+            member_indices_by_object[member.object_index].push(member_index);
+        }
+        let mut model_index_by_object = vec![None; live.objects().len()];
+        for (model_index, model) in models.iter().enumerate() {
+            model_index_by_object[model.object_index] = Some(model_index);
+        }
         Self {
             packets,
             members,
             models,
+            member_indices_by_object,
+            model_index_by_object,
+            disabled_texture_owners,
         }
     }
 

@@ -49,6 +49,9 @@ pub struct GlueManager {
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
     deferred_slider_refresh: Option<usize>,
+    visual_indices: Vec<usize>,
+    visual_work: Vec<usize>,
+    incremental_visual_updates: bool,
     glyph_logical_height: u32,
     report: GlueStartupReport,
     environment: UiScriptEnvironment,
@@ -374,6 +377,10 @@ impl GlueManager {
             edit_box_pointer_anchor: None,
             pointer_hover: None,
             deferred_slider_refresh: None,
+            visual_indices: Vec::new(),
+            visual_work: Vec::new(),
+            incremental_visual_updates: std::env::var_os("SOLARITY_UI_FULL_VISUAL_REFRESH")
+                .is_none(),
             glyph_logical_height: logical_extent.1,
             report,
             environment,
@@ -738,17 +745,74 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the interval is invalid, a visible update
     /// handler fails, or its mutations cannot form valid presentation state.
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
-        let (_handler_count, changed, visual_only) = self
+        let update = self
             .runtime
             .dispatch_updates(&self.bundle, elapsed_seconds)?;
-        if visual_only {
+        let _handler_count = update.handler_count;
+        if update.targeted_visual && self.incremental_visual_updates {
+            self.runtime
+                .apply_animation_transforms(&mut self.live, &update.animation_updates);
+            self.runtime.refresh_visual_objects(
+                &self.bundle,
+                &mut self.live,
+                &update.visual_objects,
+            )?;
+            self.collect_visual_subtrees(&update.visual_objects);
+            let changes = self
+                .geometry
+                .refresh_visual_regions(&self.live, &self.visual_indices);
+            for change in &changes {
+                self.presentation.refresh_visual_object(
+                    &self.live,
+                    &self.geometry,
+                    change.object_index,
+                    change.translation,
+                );
+            }
+            self.render_plan.refresh_visual_objects(
+                &changes,
+                &self.geometry,
+                &self.presentation,
+                &self.scroll_frames,
+                &self.live,
+            )?;
+        } else if update.visual_only {
             self.runtime
                 .refresh_visual_transforms(&self.bundle, &mut self.live)?;
             self.rebuild_visual_transform_state()?;
-        } else if changed {
+        } else if update.changed {
             self.refresh_live_state()?;
         }
-        Ok(changed)
+        Ok(update.changed)
+    }
+
+    fn collect_visual_subtrees(&mut self, roots: &[usize]) {
+        self.visual_indices.clear();
+        self.visual_work.clear();
+        for &root in roots.iter().rev() {
+            let mut parent = self.live.objects()[root].parent;
+            let mut nested = false;
+            while let Some(index) = parent {
+                if roots.binary_search(&index).is_ok() {
+                    nested = true;
+                    break;
+                }
+                parent = self.live.objects()[index].parent;
+            }
+            if !nested {
+                self.visual_work.push(root);
+            }
+        }
+        while let Some(object_index) = self.visual_work.pop() {
+            self.visual_indices.push(object_index);
+            if let Some(object) = self.objects.get(object_index) {
+                let first = object.first_child();
+                let end = first + object.child_count();
+                for child_index in (first..end).rev() {
+                    self.visual_work.push(self.child_indices[child_index]);
+                }
+            }
+        }
     }
 
     /// Delivers native decode completion to the owning stock `MovieFrame`.
@@ -1311,6 +1375,7 @@ impl GlueManager {
         if !self.render_plan.refresh_visual_states(
             &self.geometry,
             &geometry,
+            &presentation,
             &self.scroll_frames,
         )? {
             self.render_plan = UiRenderPlan::prepare_with_glyphs(

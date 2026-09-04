@@ -211,6 +211,18 @@ impl UiRuntimeObjectPlan {
         }
     }
 
+    pub(crate) fn replace_animation_transform(
+        &mut self,
+        object_index: usize,
+        transform: crate::animation::UiAnimationTransform,
+    ) {
+        if let Some(object) = self.objects.get_mut(object_index) {
+            object.animation_alpha_delta = transform.alpha_delta;
+            object.animation_offset = transform.offset;
+            object.animation_active = transform.active;
+        }
+    }
+
     /// Returns whether the only live presentation mutations are scroll offsets
     /// and Slider values. Those values move clipped content and native thumb
     /// geometry, but cannot invalidate text layout, object ownership, or input
@@ -603,6 +615,38 @@ pub(super) fn refresh_runtime_visual_transforms(
         object.animation_alpha_delta = animation.alpha_delta;
         object.animation_offset = animation.offset;
         object.animation_active = animation.active;
+    }
+    Ok(())
+}
+
+/// Copies direct alpha only for objects named by the mutation journal.
+pub(super) fn refresh_runtime_visual_objects(
+    lua: &Lua,
+    live: &mut UiRuntimeObjectPlan,
+    object_indices: &[usize],
+) -> Result<(), UiScriptError> {
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    for &object_index in object_indices {
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        let alpha = finite_region_number(&table, alpha_key(), lua_index, "alpha")?;
+        if let Some(object) = live.objects.get_mut(object_index) {
+            object.alpha = alpha;
+            if let Some(text) = object.text.as_mut()
+                && object.kind == UiObjectKind::EditBox
+            {
+                text.caret_visible =
+                    table
+                        .raw_get::<bool>(edit_caret_visible_key())
+                        .map_err(|error| {
+                            snapshot_error(format!("object {lua_index} caret visibility"), error)
+                        })?;
+            }
+        }
     }
     Ok(())
 }

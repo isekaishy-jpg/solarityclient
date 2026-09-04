@@ -4,8 +4,8 @@ use std::error::Error;
 
 use solarity_asset::AssetPath;
 use solarity_rendering::{
-    UiMeshPlan, UiMeshPlanError, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderTransform,
-    UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
+    UiMeshPlan, UiMeshPlanError, UiRenderBlend, UiRenderQuad, UiRenderSource, UiRenderState,
+    UiRenderTransform, UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };
 
 /// Adjacent equal materials on one object merge without changing quad order.
@@ -86,6 +86,26 @@ fn ui_mesh_refreshes_object_opacity_without_replacing_geometry() -> Result<(), B
     assert_eq!(mesh.index_bytes(), index_bytes);
     assert_eq!(mesh.batches()[0].opacity(), 0.25);
     assert_eq!(mesh.batches()[1].opacity(), 0.875);
+    Ok(())
+}
+
+/// An EditBox blink changes only its retained caret draw slot.
+#[test]
+fn ui_mesh_refreshes_caret_opacity_without_replacing_geometry() -> Result<(), Box<dyn Error>> {
+    let caret = UiRenderState::EditBoxCaret(8);
+    let quads = vec![
+        quad(8, UiRenderSource::GlyphAtlas(7), [0.0, 0.0, 10.0, 20.0]),
+        quad(8, UiRenderSource::GlyphAtlas(7), [10.0, 0.0, 12.0, 20.0]).with_state(caret),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+    let identity = mesh.geometry_identity();
+
+    assert_eq!(mesh.batches().len(), 2);
+    mesh.set_state_opacity(caret, 0.0)?;
+
+    assert_eq!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.batches()[0].opacity(), 1.0);
+    assert_eq!(mesh.batches()[1].opacity(), 0.0);
     Ok(())
 }
 

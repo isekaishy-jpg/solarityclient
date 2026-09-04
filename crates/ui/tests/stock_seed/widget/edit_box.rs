@@ -71,6 +71,8 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     assert_eq!(manager.focused_edit_box(), Some(account_index));
     let caret_vertex_count = manager.render_plan().mesh().vertices().len();
     let caret_batch_count = manager.render_plan().mesh().batches().len();
+    let mesh_identity = manager.render_plan().mesh().geometry_identity();
+    let snapshot_count = manager.runtime_snapshot_count();
     assert!(manager.update(0.5)?);
     assert_eq!(
         manager.render_plan().mesh().vertices().len(),
@@ -80,6 +82,11 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
         manager.render_plan().mesh().batches().len(),
         caret_batch_count
     );
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        mesh_identity
+    );
+    assert_eq!(manager.runtime_snapshot_count(), snapshot_count);
     assert!(!manager.update(0.25)?);
     assert!(manager.update(0.25)?);
     assert_eq!(
@@ -90,6 +97,7 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
         manager.render_plan().mesh().batches().len(),
         caret_batch_count
     );
+    assert_eq!(manager.runtime_snapshot_count(), snapshot_count);
     assert_eq!(manager.text_input("Alice")?, Some(account_index));
     let account: mlua::Table = globals.get("Account")?;
     let get_account_text: mlua::Function = account.get("GetText")?;

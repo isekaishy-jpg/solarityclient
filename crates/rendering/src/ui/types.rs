@@ -38,6 +38,13 @@ pub enum UiRenderTransform {
     Slider(usize),
 }
 
+/// Independently mutable visibility owned by immutable UI geometry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UiRenderState {
+    /// The insertion cell retained by one EditBox text layout.
+    EditBoxCaret(usize),
+}
+
 /// A UI batch either samples one archive BLP or uses vertex color alone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UiRenderSource {
@@ -64,6 +71,7 @@ pub struct UiRenderQuad {
     colors: [[f32; 4]; 4],
     opacity: f32,
     transform: Option<UiRenderTransform>,
+    state: Option<UiRenderState>,
     translation: [f32; 2],
     clip: Option<[f32; 4]>,
 }
@@ -97,6 +105,7 @@ impl UiRenderQuad {
             colors,
             opacity: 1.0,
             transform: None,
+            state: None,
             translation: [0.0, 0.0],
             clip: None,
         }
@@ -125,6 +134,13 @@ impl UiRenderQuad {
         self.transform = Some(transform);
         self.translation = translation;
         self.clip = clip;
+        self
+    }
+
+    /// Assigns this quad to one independently mutable draw-state slot.
+    #[must_use]
+    pub const fn with_state(mut self, state: UiRenderState) -> Self {
+        self.state = Some(state);
         self
     }
 
@@ -178,6 +194,10 @@ impl UiRenderQuad {
 
     pub(super) const fn transform(&self) -> Option<UiRenderTransform> {
         self.transform
+    }
+
+    pub(super) const fn state(&self) -> Option<UiRenderState> {
+        self.state
     }
 
     pub(super) const fn translation(&self) -> [f32; 2] {
@@ -261,6 +281,7 @@ pub struct UiRenderBatch {
     first_quad: u32,
     quad_count: u32,
     transform: Option<UiRenderTransform>,
+    state: Option<UiRenderState>,
     transform_translation: [f32; 2],
     object_translation: [f32; 2],
     opacity: f32,
@@ -282,6 +303,7 @@ impl UiRenderBatch {
             first_quad,
             quad_count: 1,
             transform: quad.transform(),
+            state: quad.state(),
             transform_translation: quad.translation(),
             object_translation: [0.0, 0.0],
             opacity: quad.opacity(),
@@ -298,6 +320,7 @@ impl UiRenderBatch {
             && self.residency == quad.residency()
             && self.desaturated == quad.desaturated()
             && self.transform == quad.transform()
+            && self.state == quad.state()
             && self.transform_translation == quad.translation()
             && self.opacity == quad.opacity()
             && self.clip == quad.clip()
@@ -390,6 +413,7 @@ impl UiRenderBatch {
             first_quad: 0,
             quad_count: 0,
             transform: None,
+            state: None,
             transform_translation: [0.0, 0.0],
             object_translation: [0.0, 0.0],
             opacity: 1.0,
@@ -401,6 +425,12 @@ impl UiRenderBatch {
     #[must_use]
     pub const fn transform(&self) -> Option<UiRenderTransform> {
         self.transform
+    }
+
+    /// Returns the independently mutable state slot for this batch.
+    #[must_use]
+    pub const fn state(&self) -> Option<UiRenderState> {
+        self.state
     }
 
     /// Returns the logical translation applied by the vertex shader.

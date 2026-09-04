@@ -13,6 +13,7 @@ mod status;
 pub use c_script_region::{
     UiAnchor, UiDimensions, UiLayoutLayer, UiLayoutPlan, UiNodeLayout, UiPoint,
 };
+pub(crate) use geometry::UiRegionVisualChange;
 pub use geometry::{UiRegionGeometry, UiRegionGeometryPlan, UiScreenRect};
 pub use resolution::{UiAnchorTarget, UiRegionAnchor, UiRegionState, UiRegionStatePlan};
 pub use status::UiLayoutError;

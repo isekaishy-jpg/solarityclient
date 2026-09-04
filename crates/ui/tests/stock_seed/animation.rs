@@ -171,7 +171,10 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
   <Scripts><OnLoad>self:SetAlpha(.8)</OnLoad></Scripts>
   <Frames><Frame name="$parentChild"><Size x="20" y="20"/>
     <Anchors><Anchor point="CENTER"/></Anchors>
-  </Frame></Frames>
+  </Frame><Button name="$parentButton"><Size x="40" y="20"/>
+    <NormalTexture name="$parentNormal" file="Interface\Glues\Normal"/>
+    <PushedTexture name="$parentPushed" file="Interface\Glues\Pushed"/>
+  </Button></Frames>
 </Frame>
 <Frame name="Fade" alpha="0"><Size x="20" y="20"/>
   <Layers><Layer><Texture name="$parentTexture" file="Interface\Glues\Fade"/></Layer></Layers>
@@ -197,6 +200,11 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
         .iter()
         .position(|object| object.name() == Some("FadeTexture"))
         .ok_or("FadeTexture fixture texture is absent")?;
+    let pushed_texture = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("RootButtonPushed"))
+        .ok_or("RootButtonPushed fixture texture is absent")?;
     let initial_member_count = manager.presentation().member_count();
     assert!(
         manager
@@ -208,6 +216,19 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
 
     assert!(manager.update(0.25)?);
     assert_eq!(manager.presentation().member_count(), initial_member_count);
+    assert!(
+        manager
+            .render_plan()
+            .mesh()
+            .batches()
+            .iter()
+            .filter(|batch| {
+                manager.render_plan().mesh().object_indices()[batch.first_quad() as usize]
+                    == pushed_texture
+            })
+            .all(|batch| batch.opacity() == 0.0),
+        "animation refresh made an inactive pushed texture visible"
+    );
     let root_geometry = manager
         .geometry()
         .region(root)

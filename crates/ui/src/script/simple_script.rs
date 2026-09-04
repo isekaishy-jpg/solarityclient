@@ -40,6 +40,7 @@ const OBJECT_CHILDREN_REGISTRY: &str = "solarity.ui.object_children";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
 const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
+const VISUAL_DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.visual_dirty_objects";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
 const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
 const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
@@ -331,6 +332,15 @@ pub struct UiScriptRuntime {
     executed_chunks: usize,
     executed_load_handlers: usize,
     snapshot_count: Cell<usize>,
+}
+
+pub(crate) struct UiUpdateDispatch {
+    pub(crate) handler_count: usize,
+    pub(crate) changed: bool,
+    pub(crate) visual_only: bool,
+    pub(crate) targeted_visual: bool,
+    pub(crate) animation_updates: Vec<(usize, crate::animation::UiAnimationTransform)>,
+    pub(crate) visual_objects: Vec<usize>,
 }
 
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
@@ -967,6 +977,9 @@ impl UiScriptRuntime {
         .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
             .and_then(|()| lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, 0_u64))
+            .and_then(|()| {
+                lua.set_named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY, lua.create_table()?)
+            })
             .map_err(|error| execution_error("registry", error))?;
         let metatables = lua
             .create_table()
@@ -1560,13 +1573,14 @@ impl UiScriptRuntime {
         &mut self,
         bundle: &UiBundle,
         elapsed_seconds: f64,
-    ) -> Result<(usize, bool, bool), UiScriptError> {
+    ) -> Result<UiUpdateDispatch, UiScriptError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
             return Err(UiScriptError::Plan {
                 message: format!("invalid Glue update interval {elapsed_seconds}"),
             });
         }
         let lua = bundle.lua();
+        clear_visual_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let visual_generation = visual_state_generation(lua)
@@ -1574,7 +1588,7 @@ impl UiScriptRuntime {
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
-        let animation_changed = advance_animations(lua, elapsed_seconds)
+        let animation_updates = advance_animations(lua, elapsed_seconds)
             .map_err(|error| execution_error("FrameXML animation update", error))?;
         advance_edit_box_caret(lua, &objects, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
@@ -1623,11 +1637,28 @@ impl UiScriptRuntime {
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let current_visual_generation = visual_state_generation(lua)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let mut visual_objects = take_visual_dirty_objects(lua)
+            .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let live_mutations = current_generation.wrapping_sub(generation);
         let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
-        let changed = animation_changed || live_mutations != 0;
+        let changed = !animation_updates.is_empty() || live_mutations != 0;
         let visual_only = changed && live_mutations == visual_mutations;
-        Ok((dispatched, changed, visual_only))
+        visual_objects.extend(
+            animation_updates
+                .iter()
+                .map(|(object_index, _)| *object_index),
+        );
+        visual_objects.sort_unstable();
+        visual_objects.dedup();
+        let targeted_visual = visual_only && !visual_objects.is_empty();
+        Ok(UiUpdateDispatch {
+            handler_count: dispatched,
+            changed,
+            visual_only,
+            targeted_visual,
+            animation_updates,
+            visual_objects,
+        })
     }
 
     /// Refreshes direct alpha and temporary animation fields without copying
@@ -1638,6 +1669,25 @@ impl UiScriptRuntime {
         live: &mut super::runtime_state::UiRuntimeObjectPlan,
     ) -> Result<(), UiScriptError> {
         super::runtime_state::refresh_runtime_visual_transforms(bundle.lua(), live)
+    }
+
+    pub(crate) fn apply_animation_transforms(
+        &self,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        updates: &[(usize, crate::animation::UiAnimationTransform)],
+    ) {
+        for &(object_index, transform) in updates {
+            live.replace_animation_transform(object_index, transform);
+        }
+    }
+
+    pub(crate) fn refresh_visual_objects(
+        &self,
+        bundle: &UiBundle,
+        live: &mut super::runtime_state::UiRuntimeObjectPlan,
+        object_indices: &[usize],
+    ) -> Result<(), UiScriptError> {
+        super::runtime_state::refresh_runtime_visual_objects(bundle.lua(), live, object_indices)
     }
 
     /// Delivers native movie completion to one live `MovieFrame`.
@@ -6201,7 +6251,7 @@ fn advance_edit_box_caret(lua: &Lua, objects: &Table, elapsed_seconds: f64) -> m
         }
     }
     if changed {
-        mark_live_state_changed(lua)?;
+        mark_visual_state_changed(lua, &object)?;
     }
     Ok(())
 }
@@ -6872,7 +6922,7 @@ fn register_region_methods(
             let alpha = alpha.clamp(0.0, 1.0);
             if object.raw_get::<f64>(alpha_key())? != alpha {
                 object.raw_set(alpha_key(), alpha)?;
-                mark_visual_state_changed(lua)?;
+                mark_visual_state_changed(lua, &object)?;
             }
             Ok(())
         })?,
@@ -8811,10 +8861,34 @@ fn visual_state_generation(lua: &Lua) -> mlua::Result<u64> {
     lua.named_registry_value(VISUAL_STATE_GENERATION_REGISTRY)
 }
 
-fn mark_visual_state_changed(lua: &Lua) -> mlua::Result<()> {
+fn mark_visual_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
     let generation = visual_state_generation(lua)?;
     lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))?;
+    let dirty: Table = lua.named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY)?;
+    dirty.raw_set(
+        dirty.raw_len() + 1,
+        object.raw_get::<usize>(index_key())? - 1,
+    )?;
     mark_live_state_changed(lua)
+}
+
+fn clear_visual_dirty_objects(lua: &Lua) -> mlua::Result<()> {
+    let dirty: Table = lua.named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY)?;
+    for slot in (1..=dirty.raw_len()).rev() {
+        dirty.raw_set(slot, Value::Nil)?;
+    }
+    Ok(())
+}
+
+fn take_visual_dirty_objects(lua: &Lua) -> mlua::Result<Vec<usize>> {
+    let dirty: Table = lua.named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY)?;
+    let values = dirty
+        .sequence_values::<usize>()
+        .collect::<mlua::Result<Vec<_>>>()?;
+    for slot in (1..=dirty.raw_len()).rev() {
+        dirty.raw_set(slot, Value::Nil)?;
+    }
+    Ok(values)
 }
 
 pub(crate) fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {

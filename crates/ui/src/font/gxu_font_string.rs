@@ -30,6 +30,7 @@ pub struct UiGlyphQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
+    caret: bool,
 }
 
 impl UiGlyphQuad {
@@ -63,6 +64,10 @@ impl UiGlyphQuad {
     #[must_use]
     pub const fn color(&self) -> [f32; 4] {
         self.color
+    }
+
+    pub(crate) const fn is_caret(&self) -> bool {
+        self.caret
     }
 }
 
@@ -636,6 +641,7 @@ struct LocalGlyphQuad {
     bounds: [f32; 4],
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
+    caret: bool,
 }
 
 /// Contiguous glyphs from one immutable `SimpleHTML` line.
@@ -1255,6 +1261,7 @@ fn layout_live_quads(
                         ],
                         texture_coordinates: solid_coordinates(extent),
                         color: text.highlight_color.map(|component| component as f32),
+                        caret: false,
                     });
                 }
                 if glyph.width() > 0 && glyph.height() > 0 {
@@ -1280,6 +1287,7 @@ fn layout_live_quads(
                         bounds: [left as f32, bottom as f32, right as f32, top as f32],
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color: presented.color.unwrap_or(color),
+                        caret: false,
                     });
                 }
                 pen_x += advance;
@@ -1291,10 +1299,6 @@ fn layout_live_quads(
                 // final quad while the blink is dark so a half-cycle changes
                 // four color vertices instead of the complete material and
                 // draw topology of the Glue frame.
-                let mut caret_color = color;
-                if !text.caret_visible {
-                    caret_color[3] = 0.0;
-                }
                 caret_quads.push(LocalGlyphQuad {
                     packet_key,
                     object_index,
@@ -1306,7 +1310,8 @@ fn layout_live_quads(
                         line_top as f32,
                     ],
                     texture_coordinates: solid_coordinates(extent),
-                    color: caret_color,
+                    color,
+                    caret: true,
                 });
             }
         }
@@ -1360,6 +1365,7 @@ fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) 
         bounds: offset_bounds(source.bounds, offset),
         texture_coordinates: source.texture_coordinates,
         color,
+        caret: source.caret,
     }
 }
 
@@ -1562,6 +1568,7 @@ fn layout_quads(
                         bounds,
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color,
+                        caret: false,
                     });
                 }
                 pen_x_26_6 += glyph.advance_x_26_6();
@@ -1617,6 +1624,7 @@ fn resolve_quad_unclipped(
         ],
         texture_coordinates: quad.texture_coordinates,
         color: quad.color,
+        caret: quad.caret,
     };
     Some(resolved)
 }

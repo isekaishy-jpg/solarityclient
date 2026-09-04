@@ -1,6 +1,8 @@
 //! Allocation-conscious conversion from ordered UI quads to indexed mesh runs.
 
+use super::UiRenderState;
 use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderTransform, UiRenderVertex};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upload-ready UI geometry with adjacent compatible quads already batched.
@@ -14,6 +16,7 @@ pub struct UiMeshPlan {
     index_bytes: Vec<u8>,
     batches: Vec<UiRenderBatch>,
     object_indices: Vec<usize>,
+    object_batches: HashMap<usize, Vec<usize>>,
 }
 
 impl UiMeshPlan {
@@ -66,6 +69,7 @@ impl UiMeshPlan {
             index_bytes: Vec::with_capacity(index_byte_capacity),
             batches: Vec::with_capacity(quad_count),
             object_indices: Vec::with_capacity(quad_count),
+            object_batches: HashMap::new(),
         };
         for quad in quads {
             plan.push_quad(quad)?;
@@ -139,6 +143,7 @@ impl UiMeshPlan {
                 clip,
             )],
             object_indices: Vec::new(),
+            object_batches: HashMap::from([(0, vec![0])]),
         })
     }
 
@@ -216,14 +221,57 @@ impl UiMeshPlan {
         delta: [f32; 2],
     ) -> Result<(), UiMeshPlanError> {
         validate_components(object_index, "visual translation", &delta)?;
-        for batch in &mut self.batches {
-            if batch.object_index() != object_index {
-                continue;
-            }
+        let Some(batch_indices) = self.object_batches.get(&object_index) else {
+            return Ok(());
+        };
+        for &batch_index in batch_indices {
+            let batch = &mut self.batches[batch_index];
             let current = batch.object_translation();
             let next = [current[0] + delta[0], current[1] + delta[1]];
             validate_components(object_index, "visual translation", &next)?;
             batch.translate_object(delta);
+        }
+        Ok(())
+    }
+
+    /// Replaces inherited opacity for only one retained UI object.
+    pub fn set_object_opacity(
+        &mut self,
+        object_index: usize,
+        opacity: f32,
+    ) -> Result<(), UiMeshPlanError> {
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(UiMeshPlanError::InvalidOpacity {
+                object_index,
+                opacity,
+            });
+        }
+        let Some(batch_indices) = self.object_batches.get(&object_index) else {
+            return Ok(());
+        };
+        for &batch_index in batch_indices {
+            self.batches[batch_index].set_opacity(opacity);
+        }
+        Ok(())
+    }
+
+    /// Replaces opacity for one independently retained draw-state slot.
+    pub fn set_state_opacity(
+        &mut self,
+        state: UiRenderState,
+        opacity: f32,
+    ) -> Result<(), UiMeshPlanError> {
+        let UiRenderState::EditBoxCaret(object_index) = state;
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(UiMeshPlanError::InvalidOpacity {
+                object_index,
+                opacity,
+            });
+        }
+        for batch in &mut self.batches {
+            if batch.state() == Some(state) {
+                batch.set_opacity(opacity);
+            }
         }
         Ok(())
     }
@@ -322,13 +370,22 @@ impl UiMeshPlan {
             self.index_bytes.extend_from_slice(&index.to_le_bytes());
         }
         self.indices.extend_from_slice(&indices);
-        if let Some(batch) = self.batches.last_mut()
+        let appended = if let Some(batch) = self.batches.last_mut()
             && batch.can_append(&quad)
         {
             batch.append_quad();
+            true
         } else {
             self.batches
                 .push(UiRenderBatch::from_quad(&quad, first_index, first_quad));
+            false
+        };
+        if !appended {
+            let object_index = quad.object_index();
+            self.object_batches
+                .entry(object_index)
+                .or_default()
+                .push(self.batches.len() - 1);
         }
         self.object_indices.push(quad.object_index());
         Ok(())
