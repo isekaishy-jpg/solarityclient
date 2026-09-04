@@ -297,7 +297,9 @@ fn appearance_tables() -> AppearanceTables {
         hair,
         hair_lower,
         hair_upper,
-        18,
+        // Preserve the fixture's extra flags while marking this hair row as
+        // player-eligible for the class-aware component lookup.
+        19,
         4,
         5,
         14,

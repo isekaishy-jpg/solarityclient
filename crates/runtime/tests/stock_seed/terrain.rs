@@ -756,10 +756,16 @@ struct CharacterSectionTables {
 fn character_section_tables() -> CharacterSectionTables {
     let mut strings = vec![0_u8];
     let skin = append_string(&mut strings, "Character\\Human\\Male\\Skin.blp");
-    let fields = [
+    let mut fields = [
         10, 1, 0, 0, skin, 0, 0, 8, 0, 0, 11, 1, 0, 1, 0, 0, 0, 0, 0, 0, 12, 1, 0, 2, 0, 0, 0, 0,
         0, 0, 13, 1, 0, 3, 0, 0, 0, 0, 0, 0, 14, 1, 0, 4, 0, 0, 0, 0, 0, 0,
     ];
+    // Remote players use the class-aware component path. Every synthetic
+    // section must carry stock's player-eligible flag, including this fixture's
+    // NPC-style skin, which deliberately omits face and underwear overlays.
+    for section in fields.as_chunks_mut::<10>().0 {
+        section[7] |= 0x01;
+    }
     CharacterSectionTables {
         sections: create_wdbc_fixture(5, 10, &fields, &strings),
         hair_geosets: create_wdbc_fixture(0, 6, &[], b"\0"),
