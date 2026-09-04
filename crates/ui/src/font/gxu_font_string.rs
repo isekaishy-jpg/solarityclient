@@ -545,10 +545,7 @@ impl UiGlyphAtlasPlan {
             self.extent,
             object_indices.iter().copied(),
         )?;
-        self.live_quads
-            .retain(|quad| object_indices.binary_search(&quad.object_index).is_err());
-        self.live_quads.extend(layout.quads);
-        self.live_quads.sort_by_key(|quad| quad.object_index);
+        replace_sorted_live_quads(&mut self.live_quads, layout.quads, object_indices);
         for &object_index in object_indices {
             if let (Some(target), Some(source)) = (
                 self.edit_box_layouts.get_mut(object_index),
@@ -716,6 +713,61 @@ impl UiGlyphAtlasPlan {
         );
         resolved
     }
+}
+
+/// Replaces object-local glyph ranges while preserving the arena's stable order.
+///
+/// Both layout producers walk object indices in ascending order. Merging their
+/// already-sorted output avoids comparison-sorting the complete Glue glyph set
+/// when an edit caret or one label changes.
+fn replace_sorted_live_quads(
+    existing: &mut Vec<LocalGlyphQuad>,
+    replacements: Vec<LocalGlyphQuad>,
+    object_indices: &[usize],
+) {
+    debug_assert!(object_indices.windows(2).all(|pair| pair[0] < pair[1]));
+    debug_assert!(
+        replacements
+            .windows(2)
+            .all(|pair| pair[0].object_index <= pair[1].object_index)
+    );
+
+    let existing_count = existing.len();
+    let mut dirty_index = 0;
+    let retained = std::mem::take(existing)
+        .into_iter()
+        .filter(|quad| {
+            while object_indices
+                .get(dirty_index)
+                .is_some_and(|dirty| *dirty < quad.object_index)
+            {
+                dirty_index += 1;
+            }
+            object_indices.get(dirty_index) != Some(&quad.object_index)
+        })
+        .peekable();
+    let replacement_count = replacements.len();
+    let mut replacements = replacements.into_iter().peekable();
+    let mut retained = retained;
+    let mut merged = Vec::with_capacity(existing_count + replacement_count);
+    while retained.peek().is_some() || replacements.peek().is_some() {
+        let take_retained = match (retained.peek(), replacements.peek()) {
+            (Some(retained), Some(replacement)) => {
+                retained.object_index <= replacement.object_index
+            }
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        if take_retained {
+            if let Some(quad) = retained.next() {
+                merged.push(quad);
+            }
+        } else if let Some(quad) = replacements.next() {
+            merged.push(quad);
+        }
+    }
+    *existing = merged;
 }
 
 /// Resolves object-sorted local glyphs while looking up inherited geometry
@@ -1912,6 +1964,43 @@ mod tests {
             advance_x_26_6: advance * 64,
             coverage: vec![255],
         }
+    }
+
+    fn local_quad(object_index: usize, caret: bool) -> LocalGlyphQuad {
+        LocalGlyphQuad {
+            packet_key: None,
+            object_index,
+            clip_object: None,
+            bounds: [0.0; 4],
+            texture_coordinates: [[0.0; 2]; 4],
+            color: [1.0; 4],
+            caret,
+        }
+    }
+
+    #[test]
+    fn object_glyph_refresh_linearly_replaces_adds_and_removes_sorted_ranges() {
+        let mut existing = vec![
+            local_quad(0, false),
+            local_quad(0, false),
+            local_quad(2, false),
+            local_quad(4, false),
+        ];
+        let replacements = vec![
+            local_quad(1, true),
+            local_quad(1, true),
+            local_quad(4, true),
+        ];
+
+        replace_sorted_live_quads(&mut existing, replacements, &[1, 2, 4]);
+
+        assert_eq!(
+            existing
+                .iter()
+                .map(|quad| (quad.object_index, quad.caret))
+                .collect::<Vec<_>>(),
+            [(0, false), (0, false), (1, true), (1, true), (4, true),]
+        );
     }
 
     #[test]
