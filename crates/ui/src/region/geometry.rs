@@ -121,6 +121,7 @@ impl UiRegionGeometry {
 }
 
 /// Dense geometry parallel to the live Glue object arena.
+#[derive(Clone)]
 pub struct UiRegionGeometryPlan {
     ui_extent: (f64, f64),
     regions: Vec<UiRegionGeometry>,
@@ -194,6 +195,101 @@ impl UiRegionGeometryPlan {
             });
         }
         changes
+    }
+
+    /// Re-solves the transitive geometry island rooted at changed objects.
+    ///
+    /// Parent inheritance and authored anchor targets are the only edges that
+    /// can carry a region mutation to another object. Keeping every unrelated
+    /// resolved slot as a seed avoids walking the complete Glue arena for a
+    /// tooltip or another small dynamic layout island.
+    pub(crate) fn refresh_dependency_regions(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        root_indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Vec<usize>, UiLayoutError> {
+        if live.objects().len() != self.regions.len()
+            || self.presentations.len() != self.regions.len()
+        {
+            return Err(resolution_error(
+                "live and retained geometry arenas have different sizes",
+            ));
+        }
+        let mut affected = vec![false; self.regions.len()];
+        for object_index in root_indices {
+            let Some(slot) = affected.get_mut(object_index) else {
+                return Err(resolution_error(format!(
+                    "geometry refresh root {object_index} is outside the arena"
+                )));
+            };
+            *slot = true;
+        }
+        loop {
+            let mut added = false;
+            for (object_index, object) in live.objects().iter().enumerate() {
+                if affected[object_index] {
+                    continue;
+                }
+                let depends_on_changed = object.parent.is_some_and(|parent| affected[parent])
+                    || live
+                        .anchors_for(object)
+                        .iter()
+                        .any(|anchor| anchor.target.is_some_and(|target| affected[target]));
+                if depends_on_changed {
+                    affected[object_index] = true;
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        let object_indices = affected
+            .iter()
+            .enumerate()
+            .filter_map(|(object_index, affected)| affected.then_some(object_index))
+            .collect::<Vec<_>>();
+        if object_indices.is_empty() {
+            return Ok(object_indices);
+        }
+        let screen = UiScreenRect {
+            left: 0.0,
+            bottom: 0.0,
+            right: self.ui_extent.0,
+            top: self.ui_extent.1,
+        };
+        let resolved = self
+            .regions
+            .iter()
+            .copied()
+            .zip(self.presentations.iter().copied())
+            .enumerate()
+            .map(|(object_index, (public, presentation))| {
+                (!affected[object_index]).then_some(ResolvedRegion {
+                    public,
+                    presentation,
+                })
+            })
+            .collect();
+        let mut resolver = GeometryResolver {
+            live,
+            screen,
+            resolved,
+            visiting: vec![false; live.objects().len()],
+        };
+        for &object_index in &object_indices {
+            resolver.resolve(object_index)?;
+        }
+        for &object_index in &object_indices {
+            let resolved = resolver.resolved[object_index].ok_or_else(|| {
+                resolution_error(format!(
+                    "refreshed live region {object_index} remained unresolved"
+                ))
+            })?;
+            self.regions[object_index] = resolved.public;
+            self.presentations[object_index] = resolved.presentation;
+        }
+        Ok(object_indices)
     }
 }
 

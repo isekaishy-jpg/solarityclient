@@ -415,6 +415,77 @@ pub struct UiPresentationPlan {
 }
 
 impl UiPresentationPlan {
+    /// Rebuilds one retained frame backdrop without walking unrelated objects.
+    ///
+    /// Dynamic tooltips resize their frame and text on every new owner. The
+    /// backdrop's packet key and material topology remain fixed, so its
+    /// presentation members can be replaced in their existing ordered slots.
+    pub(crate) fn refresh_backdrop_object(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        backdrops: &UiBackdropStatePlan,
+        object_index: usize,
+    ) -> bool {
+        let Some(object) = live.objects().get(object_index) else {
+            return false;
+        };
+        let (Some(backdrop), Some(region), Some(strata), Some(frame_level)) = (
+            backdrops.state(object_index),
+            geometry.region(object_index),
+            object.frame_strata,
+            object.frame_level,
+        ) else {
+            return false;
+        };
+        let mut keyed = Vec::new();
+        if (region.effectively_shown()
+            && (region.effective_alpha() > 0.0 || region.animation_active()))
+            || strata == UiFrameStrata::Tooltip
+        {
+            append_backdrop(
+                &mut keyed,
+                backdrop,
+                BackdropPresentationContext {
+                    object_index,
+                    object,
+                    clip_object: nearest_owning_scroll_frame(live, object_index),
+                    bounds: region.presentation_bounds(),
+                    effective_alpha: region.effective_alpha() as f32
+                        * f32::from(region.effectively_shown()),
+                    effective_scale: region.effective_scale(),
+                    strata,
+                    frame_level,
+                },
+            );
+        }
+        keyed.sort_by_key(|(key, member)| (*key, member.object_index));
+        let replacements = keyed
+            .into_iter()
+            .map(|(_, member)| member)
+            .collect::<Vec<_>>();
+        let Some(member_indices) = self.member_indices_by_object.get(object_index) else {
+            return replacements.is_empty();
+        };
+        if member_indices.len() != replacements.len()
+            || member_indices.iter().copied().zip(&replacements).any(
+                |(member_index, replacement)| {
+                    self.members.get(member_index).is_none_or(|current| {
+                        current.key != replacement.key
+                            || current.source != replacement.source
+                            || current.blend_mode != replacement.blend_mode
+                    })
+                },
+            )
+        {
+            return false;
+        }
+        for (member_index, replacement) in member_indices.iter().copied().zip(replacements) {
+            self.members[member_index] = replacement;
+        }
+        true
+    }
+
     /// Copies one Texture's authored corner colors into its retained packet.
     ///
     /// A Texture normally owns exactly one presentation member. No members is

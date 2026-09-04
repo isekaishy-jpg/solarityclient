@@ -1192,6 +1192,7 @@ impl GlueManager {
         let text_objects =
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        let copied = started.elapsed();
         if text_objects.is_empty()
             || !self.glyphs.supports_live_text_objects(
                 &self.live,
@@ -1201,48 +1202,73 @@ impl GlueManager {
         {
             return Ok(false);
         }
-        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
-        self.runtime
-            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
-        synchronize_resolved_dimensions(&mut self.live, &geometry);
-        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
+        let previous_geometry = self.geometry.clone();
+        let changed_regions = self.geometry.refresh_dependency_regions(
+            &self.live,
+            dirty_objects.iter().map(|&(object_index, _)| object_index),
+        )?;
+        let resolved = started.elapsed();
+        self.runtime.publish_changed_resolved_geometry(
+            &self.bundle,
+            &previous_geometry,
+            &self.geometry,
+        )?;
+        synchronize_resolved_dimensions_for(
+            &mut self.live,
+            &self.geometry,
+            changed_regions.iter().copied(),
+        );
+        let published = started.elapsed();
         self.glyphs.refresh_live_text_objects(
             &self.live,
-            &geometry,
+            &self.geometry,
             self.glyph_logical_height,
             &text_objects,
         )?;
-        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let laid_out = started.elapsed();
+        if !self.presentation.refresh_backdrop_object(
+            &self.live,
+            &self.geometry,
+            &self.backdrops,
+            tooltip_owner,
+        ) {
+            return Ok(false);
+        }
+        let presented = started.elapsed();
         let glyphs_retained = self.render_plan.refresh_glyph_objects(
             &self.glyphs,
             &self.live,
-            &geometry,
-            &scroll_frames,
+            &self.geometry,
+            &self.scroll_frames,
             &text_objects,
         )?;
         let backdrop_retained = self.render_plan.refresh_texture_objects(
-            &presentation,
-            &geometry,
-            &scroll_frames,
+            &self.presentation,
+            &self.geometry,
+            &self.scroll_frames,
             &[tooltip_owner],
         )?;
+        let rendered = started.elapsed();
         if !glyphs_retained || !backdrop_retained {
             return Ok(false);
         }
         self.collect_visual_subtrees(&[tooltip_owner]);
         self.render_plan.refresh_region_opacities(
-            &presentation,
-            &geometry,
+            &self.presentation,
+            &self.geometry,
             &self.visual_indices,
         )?;
-        self.geometry = geometry;
-        self.scroll_frames = scroll_frames;
-        self.presentation = presentation;
-        self.pointer = UiPointerPlan::from_live(&self.live);
         if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
             eprintln!(
-                "UI retained tooltip patch: owner={tooltip_owner} text_objects={} total={:.3}ms",
+                "UI retained tooltip patch: owner={tooltip_owner} text_objects={} copy={:.3}ms geometry={:.3}ms publish={:.3}ms glyphs={:.3}ms presentation={:.3}ms vertices={:.3}ms final={:.3}ms total={:.3}ms",
                 text_objects.len(),
+                copied.as_secs_f64() * 1_000.0,
+                resolved.saturating_sub(copied).as_secs_f64() * 1_000.0,
+                published.saturating_sub(resolved).as_secs_f64() * 1_000.0,
+                laid_out.saturating_sub(published).as_secs_f64() * 1_000.0,
+                presented.saturating_sub(laid_out).as_secs_f64() * 1_000.0,
+                rendered.saturating_sub(presented).as_secs_f64() * 1_000.0,
+                started.elapsed().saturating_sub(rendered).as_secs_f64() * 1_000.0,
                 started.elapsed().as_secs_f64() * 1_000.0,
             );
         }
@@ -2314,6 +2340,19 @@ fn synchronize_resolved_dimensions(
     geometry: &UiRegionGeometryPlan,
 ) {
     for object_index in 0..geometry.region_count() {
+        if let Some(region) = geometry.region(object_index) {
+            let bounds = region.logical_bounds();
+            live.replace_resolved_dimensions(object_index, bounds.width(), bounds.height());
+        }
+    }
+}
+
+fn synchronize_resolved_dimensions_for(
+    live: &mut crate::script::UiRuntimeObjectPlan,
+    geometry: &UiRegionGeometryPlan,
+    object_indices: impl IntoIterator<Item = usize>,
+) {
+    for object_index in object_indices {
         if let Some(region) = geometry.region(object_index) {
             let bounds = region.logical_bounds();
             live.replace_resolved_dimensions(object_index, bounds.width(), bounds.height());
