@@ -283,7 +283,7 @@ impl ClientServices {
             blizzard_rand.clone(),
         )?;
         glue.set_realm_directory(realm_metadata.empty_directory());
-        let sound = RuntimeSoundCoordinator::start(
+        let mut sound = RuntimeSoundCoordinator::start(
             assets.clone(),
             &glue,
             SoundOutputTarget::DefaultDevice,
@@ -389,8 +389,13 @@ impl ClientServices {
             } else {
                 &[]
             };
-            if !glue_model.present(&mut renderer, &glue, &frame, 0.0, &mut crt_rand, overlay)? {
+            let model_presented =
+                glue_model.present(&mut renderer, &glue, &frame, 0.0, &mut crt_rand, overlay)?;
+            if !model_presented {
                 frame.present_with_overlay(&mut renderer, overlay)?;
+            }
+            if let Some((camera, events)) = glue_model.drain_sound_events() {
+                sound.play_m2_events(&events, camera, &mut blizzard_rand.borrow_mut())?;
             }
             if let Some(fps) = fps.as_mut() {
                 fps.record_presented(&mut renderer, std::time::Instant::now())?;
@@ -1221,15 +1226,20 @@ impl ClientServices {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
         let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
-        if !self.glue_model.present(
+        let model_presented = self.glue_model.present(
             &mut self.renderer,
             &self.glue,
             frame,
             global_time_ms,
             &mut self.crt_rand,
             &self.runtime_overlay_draws,
-        )? {
+        )?;
+        if !model_presented {
             frame.present_with_overlay(&mut self.renderer, &self.runtime_overlay_draws)?;
+        }
+        if let Some((camera, events)) = self.glue_model.drain_sound_events() {
+            self.sound
+                .play_m2_events(&events, camera, &mut self.blizzard_rand.borrow_mut())?;
         }
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;

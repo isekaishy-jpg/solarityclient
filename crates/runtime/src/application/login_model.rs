@@ -12,9 +12,9 @@ use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
     M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LocalLightCount,
     M2LocalLightState, M2ModelOrientation, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight,
-    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldFrameGlow, WorldFrameScene,
-    WorldFrustum, WorldModelSceneUniform, WorldScreenWindow, glue_character_sunlight,
-    merge_wotlk_directional_lights, sample_m2_camera_frame,
+    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldCameraFrame, WorldFrameGlow,
+    WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
+    glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
@@ -23,7 +23,7 @@ use crate::application::login_ui::RuntimeUiFrame;
 use crate::application::player_coordinator::ResidentGlueCharacterFrameInput;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::application::terrain_frame::m2::{
-    GlueM2Texture, M2CpuSource, M2Frame, M2GlueCpuSourceKey, M2GluePipelineWarmup,
+    GlueM2Texture, M2CpuSource, M2Frame, M2GlueCpuSourceKey, M2GluePipelineWarmup, RuntimeM2Event,
     prepare_m2_cpu_source,
 };
 use crate::random::CrtRand;
@@ -498,6 +498,7 @@ pub(crate) struct RuntimeGlueModelScene {
     warmed_character_pipelines: HashSet<(M2GlueCpuSourceKey, M2ModelOrientation)>,
     character_replacement_required: bool,
     character_screen: Option<GlueCharacterScreen>,
+    sound_camera: Option<WorldCameraFrame>,
     frame_profiler: Option<GlueFrameProfiler>,
 }
 
@@ -578,6 +579,7 @@ impl RuntimeGlueModelScene {
             warmed_character_pipelines: HashSet::new(),
             character_replacement_required: false,
             character_screen: None,
+            sound_camera: None,
             frame_profiler: GlueFrameProfiler::from_environment(),
         }
     }
@@ -826,6 +828,10 @@ impl RuntimeGlueModelScene {
             effect_scale,
             random,
         )?;
+        // The covered login model advances to keep visual effects current,
+        // but its callbacks are not audible through the cinematic.
+        active.frame.drain_triggered_events();
+        self.sound_camera = None;
         Ok(())
     }
 
@@ -861,6 +867,7 @@ impl RuntimeGlueModelScene {
             }
             self.active = None;
             self.character_screen = character_screen;
+            self.sound_camera = None;
             return Ok(RuntimeGlueModelPoll::Ready);
         };
         if visible.next().is_some() {
@@ -1306,6 +1313,7 @@ impl RuntimeGlueModelScene {
         })?;
         let camera =
             sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        self.sound_camera = Some(camera);
         let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
@@ -1466,6 +1474,13 @@ impl RuntimeGlueModelScene {
             );
         }
         Ok(true)
+    }
+
+    /// Transfers visible Glue-model audio callbacks with their sampled listener.
+    pub(crate) fn drain_sound_events(&mut self) -> Option<(WorldCameraFrame, Vec<RuntimeM2Event>)> {
+        let camera = self.sound_camera?;
+        let events = self.active.as_mut()?.frame.drain_triggered_events();
+        (!events.is_empty()).then_some((camera, events))
     }
 }
 
