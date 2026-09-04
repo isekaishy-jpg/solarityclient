@@ -2975,11 +2975,13 @@ fn particle_emitter_transform(
             })?,
         None => Mat4::IDENTITY,
     };
-    let bone_transform = placement_transform * bone;
-    Ok((
-        bone_transform * Mat4::from_translation(emitter.position()),
-        bone_transform.transform_point3(glam::Vec3::ZERO),
-    ))
+    let emitter_transform = placement_transform * bone * Mat4::from_translation(emitter.position());
+    // Build 12340 and SolCL evaluate particle distance LOD from the authored
+    // emitter origin, after both the animated bone and placement transforms.
+    // Using the bone origin here makes large backdrop effects fade according
+    // to an unrelated point even though their births render in the right place.
+    let emitter_origin = emitter_transform.transform_point3(glam::Vec3::ZERO);
+    Ok((emitter_transform, emitter_origin))
 }
 
 /// Applies stock's camera-distance multiplier to the global particle density.
