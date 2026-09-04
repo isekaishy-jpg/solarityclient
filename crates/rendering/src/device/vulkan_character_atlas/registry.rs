@@ -9,7 +9,9 @@ use crate::device::vulkan_texture::{
     GpuSampledImage, Rgba8MipUpload, TextureUploadContext, upload_rgba8_mip_chain,
 };
 use crate::device::{BlpColorSpace, VulkanError};
-use crate::model::{CharacterAtlasTexture, CharacterComponentTextureLevel};
+use crate::model::{
+    CharacterAtlasTexture, CharacterAtlasTextureKey, CharacterComponentTextureLevel,
+};
 
 use super::types::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 
@@ -22,7 +24,7 @@ struct GpuCharacterAtlasTexture {
 /// Owns placement-specific body atlases without assigning archive identities.
 pub(in crate::device) struct CharacterAtlasTextureRegistry {
     registry_id: u64,
-    handles: HashMap<CharacterAtlasTexture, CharacterAtlasTextureHandle>,
+    handles: HashMap<CharacterAtlasTextureKey, CharacterAtlasTextureHandle>,
     resources: Vec<GpuCharacterAtlasTexture>,
     upload_submission_count: u64,
 }
@@ -48,7 +50,7 @@ impl CharacterAtlasTextureRegistry {
         context: TextureUploadContext<'_>,
         atlas: &CharacterAtlasTexture,
     ) -> Result<CharacterAtlasTextureHandle, VulkanError> {
-        if let Some(handle) = self.handles.get(atlas) {
+        if let Some(handle) = self.handles.get(atlas.key()) {
             return Ok(*handle);
         }
         let (mips, byte_count) = validate_mips(atlas)?;
@@ -73,7 +75,7 @@ impl CharacterAtlasTextureRegistry {
                 byte_count,
             ),
         });
-        self.handles.insert(atlas.clone(), handle);
+        self.handles.insert(atlas.key().clone(), handle);
         self.upload_submission_count = self.upload_submission_count.saturating_add(1);
         Ok(handle)
     }

@@ -68,7 +68,7 @@ impl Default for CharacterComponentTextureLevel {
 }
 
 /// One of the ten non-overlapping regions in stock's 256-unit base layout.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CharacterAtlasRegion {
     /// Upper arm surface.
     ArmUpper,
@@ -204,15 +204,32 @@ impl CharacterAtlasMip {
 }
 
 /// Complete CPU-side mip chain for the dynamic stock character body texture.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CharacterAtlasTexture {
+    key: CharacterAtlasTextureKey,
     mips: Vec<CharacterAtlasMip>,
 }
 
 impl CharacterAtlasTexture {
     /// Wraps the fixed complete mip chain after composition.
-    pub(super) fn new(mips: Vec<CharacterAtlasMip>) -> Self {
-        Self { mips }
+    pub(super) fn new(
+        level: CharacterComponentTextureLevel,
+        layers: Vec<CharacterAtlasLayer>,
+        mips: Vec<CharacterAtlasMip>,
+    ) -> Self {
+        Self {
+            key: CharacterAtlasTextureKey { level, layers },
+            mips,
+        }
+    }
+
+    /// Returns the compact deterministic composition identity used by the GPU cache.
+    ///
+    /// Atlas pixels are a pure function of the mounted archive, component
+    /// level, and ordered source layers. The renderer can therefore retain the
+    /// recipe instead of hashing and cloning another 1.4 MiB pixel payload.
+    pub(crate) const fn key(&self) -> &CharacterAtlasTextureKey {
+        &self.key
     }
 
     /// Returns all destination mips from the selected top extent through 1-by-1.
@@ -228,8 +245,15 @@ impl CharacterAtlasTexture {
     }
 }
 
+/// Exact source recipe for one composed character atlas.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct CharacterAtlasTextureKey {
+    level: CharacterComponentTextureLevel,
+    layers: Vec<CharacterAtlasLayer>,
+}
+
 /// The semantic source of one stock character atlas layer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CharacterAtlasLayerKind {
     /// Opaque base skin copied into body regions.
     Skin,
@@ -260,7 +284,7 @@ impl fmt::Display for CharacterAtlasLayerKind {
 }
 
 /// One archive texture paste in stock region-local render-preparation order.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CharacterAtlasLayer {
     kind: CharacterAtlasLayerKind,
     region: CharacterAtlasRegion,

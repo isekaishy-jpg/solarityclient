@@ -64,7 +64,11 @@ impl CharacterTexturePlan {
             let source_paste = select_source_paste(layer, source, level)?;
             paste_layer(layer, source, source_paste, level, &mut decoded, &mut atlas)?;
         }
-        Ok(CharacterAtlasTexture::new(atlas))
+        Ok(CharacterAtlasTexture::new(
+            level,
+            self.atlas_layers().to_vec(),
+            atlas,
+        ))
     }
 }
 

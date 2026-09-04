@@ -26,6 +26,7 @@ pub use status::{
     CharacterAttachmentPlanError, CharacterGeosetPlanError, CharacterTextureComposeError,
     CharacterTexturePlanError,
 };
+pub(crate) use types::CharacterAtlasTextureKey;
 pub use types::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterComponentTextureLevel,

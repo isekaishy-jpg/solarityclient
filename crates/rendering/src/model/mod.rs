@@ -10,6 +10,7 @@ pub(crate) mod m2_animation;
 mod m2_scene;
 mod world_model_scene;
 
+pub(crate) use character_component::CharacterAtlasTextureKey;
 pub use character_component::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,
