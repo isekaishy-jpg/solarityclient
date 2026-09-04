@@ -8,12 +8,12 @@ use super::simple_script::{
     backdrop_color_key, button_pressed_key, checked_key, click_action_key, desaturated_key,
     disabled_font_key, disabled_text_color_key, draw_layer_key, draw_sub_level_key,
     edit_caret_visible_key, edit_cursor_key, edit_focused_key, edit_highlight_color_key,
-    edit_multi_line_key, edit_password_key, edit_selection_end_key, edit_selection_start_key,
-    edit_text_insets_key, enabled_key, font_face_key, font_flags_key, font_height_key,
-    font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key, frame_level_key,
-    frame_strata_key, height_key, highlight_font_key, highlight_locked_key, hit_rect_insets_key,
-    horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key, hovered_key,
-    index_key, justify_h_key, justify_v_key, keyboard_enabled_key, max_text_lines_key,
+    edit_max_letters_key, edit_multi_line_key, edit_password_key, edit_selection_end_key,
+    edit_selection_start_key, edit_text_insets_key, enabled_key, font_face_key, font_flags_key,
+    font_height_key, font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key,
+    frame_level_key, frame_strata_key, height_key, highlight_font_key, highlight_locked_key,
+    hit_rect_insets_key, horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key,
+    hovered_key, index_key, justify_h_key, justify_v_key, keyboard_enabled_key, max_text_lines_key,
     model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
     model_character_light_ghost_key, model_character_light_live_key, model_file_key,
     model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
@@ -108,6 +108,7 @@ pub(crate) struct UiRuntimeText {
     pub(crate) word_wrap: bool,
     pub(crate) non_space_wrap: bool,
     pub(crate) max_lines: u32,
+    pub(crate) max_letters: u32,
     pub(crate) horizontal: HorizontalJustification,
     pub(crate) vertical: VerticalJustification,
     pub(crate) draw_layer: UiDrawLayer,
@@ -1311,6 +1312,13 @@ fn snapshot_text(
         max_lines: table
             .raw_get(max_text_lines_key())
             .map_err(|error| snapshot_error(format!("object {lua_index} maximum lines"), error))?,
+        max_letters: if is_edit_box {
+            table.raw_get(edit_max_letters_key()).map_err(|error| {
+                snapshot_error(format!("object {lua_index} maximum letters"), error)
+            })?
+        } else {
+            0
+        },
         horizontal: parse_horizontal_justification(&horizontal).ok_or_else(|| {
             UiScriptError::Plan {
                 message: format!(

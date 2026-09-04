@@ -315,6 +315,25 @@ impl UiRenderBatch {
             && self.clip == quad.clip()
     }
 
+    /// Reports whether one existing slot can accept replacement vertices.
+    ///
+    /// Opacity is intentionally excluded: it is mutable retained draw state
+    /// (not vertex topology), and an EditBox caret can be blink-hidden while
+    /// its text geometry changes.
+    pub(super) fn can_replace(&self, quad: &UiRenderQuad) -> bool {
+        self.object_index == quad.object_index()
+            && self.source == *quad.source()
+            && self.blend == quad.blend()
+            && self.horizontal_address == quad.horizontal_address()
+            && self.vertical_address == quad.vertical_address()
+            && self.residency == quad.residency()
+            && self.desaturated == quad.desaturated()
+            && self.transform == quad.transform()
+            && self.state == quad.state()
+            && self.transform_translation == quad.translation()
+            && self.clip == quad.clip()
+    }
+
     pub(super) fn append_quad(&mut self) {
         self.index_count += 6;
         self.quad_count += 1;

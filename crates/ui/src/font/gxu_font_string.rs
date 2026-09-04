@@ -20,6 +20,8 @@ use crate::{
 
 const ATLAS_ROW_WIDTH: u32 = 512;
 const GLYPH_PADDING: u32 = 1;
+const DEFAULT_RETAINED_EDIT_BOX_LETTERS: usize = 256;
+const MAX_RETAINED_EDIT_BOX_LETTERS: usize = 4_096;
 
 /// One positioned glyph sampling the current immutable coverage atlas.
 #[derive(Clone, Debug, PartialEq)]
@@ -698,6 +700,31 @@ impl UiGlyphAtlasPlan {
         resolved
     }
 
+    /// Resolves only named live-text owners, including their retained edit slots.
+    pub(crate) fn retained_live_object_quads(
+        &self,
+        object_indices: &[usize],
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+    ) -> Vec<UiGlyphQuad> {
+        let mut resolved = Vec::new();
+        for &object_index in object_indices {
+            let first = self
+                .live_quads
+                .partition_point(|quad| quad.object_index < object_index);
+            let end = self
+                .live_quads
+                .partition_point(|quad| quad.object_index <= object_index);
+            extend_retained_quads(
+                &mut resolved,
+                &self.live_quads[first..end],
+                geometry,
+                scroll_frames,
+            );
+        }
+        resolved
+    }
+
     fn resolve_quads(
         &self,
         geometry: &UiRegionGeometryPlan,
@@ -717,6 +744,7 @@ impl UiGlyphAtlasPlan {
         resolved.extend(
             self.live_quads
                 .iter()
+                .filter(|quad| !quad.reserved)
                 .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
         );
         resolved
@@ -739,6 +767,26 @@ fn replace_sorted_live_quads(
             .windows(2)
             .all(|pair| pair[0].object_index <= pair[1].object_index)
     );
+
+    let topology_stable = object_indices.iter().all(|&object_index| {
+        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
+        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
+        let replacement_first =
+            replacements.partition_point(|quad| quad.object_index < object_index);
+        let replacement_end =
+            replacements.partition_point(|quad| quad.object_index <= object_index);
+        existing_end - existing_first == replacement_end - replacement_first
+    });
+    if topology_stable {
+        for (target, replacement) in existing
+            .iter_mut()
+            .filter(|quad| object_indices.binary_search(&quad.object_index).is_ok())
+            .zip(replacements)
+        {
+            *target = replacement;
+        }
+        return;
+    }
 
     let existing_count = existing.len();
     let mut dirty_index = 0;
@@ -800,9 +848,25 @@ fn extend_retained_quads(
         let mut resolved = resolve_quad_with_owner(quad, state.owner);
         resolved.opacity = state.opacity;
         resolved.transform = state.transform;
-        output.extend(match state.clip {
-            Some(viewport) => clip_quad_to_viewport(resolved, viewport),
-            None => Some(resolved),
+        output.extend(if quad.reserved {
+            Some(resolved)
+        } else {
+            match state.clip {
+                Some(viewport) => clip_quad_to_viewport(resolved.clone(), viewport).or_else(|| {
+                    (quad.clip_object == Some(quad.object_index)).then(|| {
+                        let mut hidden = resolved;
+                        hidden.bounds = [
+                            state.owner.left as f32,
+                            (state.owner.top - state.owner.scale) as f32,
+                            (state.owner.left + state.owner.scale) as f32,
+                            state.owner.top as f32,
+                        ];
+                        hidden.color = [0.0; 4];
+                        hidden
+                    })
+                }),
+                None => Some(resolved),
+            }
         });
     }
 }
@@ -889,6 +953,7 @@ struct LocalGlyphQuad {
     texture_coordinates: [[f32; 2]; 4],
     color: [f32; 4],
     caret: bool,
+    reserved: bool,
 }
 
 /// Contiguous glyphs from one immutable `SimpleHTML` line.
@@ -1340,9 +1405,7 @@ fn layout_live_quads_for_objects(
         let Some(text) = &object.text else {
             continue;
         };
-        if text.content.is_empty()
-            && !(object.kind == UiObjectKind::EditBox && object.edit_focused.unwrap_or(false))
-        {
+        if text.content.is_empty() && object.kind != UiObjectKind::EditBox {
             continue;
         }
         let Some(region) = geometry.region(object_index) else {
@@ -1537,6 +1600,7 @@ fn layout_live_quads_for_objects(
                         texture_coordinates: solid_coordinates(extent),
                         color: text.highlight_color.map(|component| component as f32),
                         caret: false,
+                        reserved: false,
                     });
                 }
                 if glyph.width() > 0 && glyph.height() > 0 {
@@ -1563,6 +1627,7 @@ fn layout_live_quads_for_objects(
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color: presented.color.unwrap_or(color),
                         caret: false,
+                        reserved: false,
                     });
                 }
                 pen_x += advance;
@@ -1587,12 +1652,14 @@ fn layout_live_quads_for_objects(
                     texture_coordinates: solid_coordinates(extent),
                     color,
                     caret: true,
+                    reserved: false,
                 });
             }
         }
         // GxuFontString draws material passes in outline, shadow, then face
         // order. Keeping these as separate quads restores the black edging
         // and offset shadow that make Glue labels legible over animated M2s.
+        let regular_start = quads.len();
         quads.extend(selection_quads);
         let outline = text.outline_width as f32;
         if outline > 0.0 {
@@ -1621,6 +1688,41 @@ fn layout_live_quads_for_objects(
             );
         }
         quads.extend(primary_quads);
+        if object.kind == UiObjectKind::EditBox {
+            let letters = if text.max_letters == 0 {
+                DEFAULT_RETAINED_EDIT_BOX_LETTERS
+            } else {
+                text.max_letters as usize
+            }
+            .min(MAX_RETAINED_EDIT_BOX_LETTERS);
+            let regular_passes = 2
+                + usize::from(outline > 0.0) * 8
+                + usize::from(shadow_offset != [0.0, 0.0] && text.shadow_color[3] > 0.0);
+            let regular_capacity = letters.saturating_mul(regular_passes);
+            let used = quads.len() - regular_start;
+            quads.extend((used..regular_capacity).map(|_| LocalGlyphQuad {
+                packet_key,
+                object_index,
+                clip_object,
+                bounds: [0.0, -1.0, 1.0, 0.0],
+                texture_coordinates: solid_coordinates(extent),
+                color: [0.0; 4],
+                caret: false,
+                reserved: true,
+            }));
+            if caret_quads.is_empty() {
+                caret_quads.push(LocalGlyphQuad {
+                    packet_key,
+                    object_index,
+                    clip_object,
+                    bounds: [0.0, -1.0, 1.0, 0.0],
+                    texture_coordinates: solid_coordinates(extent),
+                    color: [0.0; 4],
+                    caret: true,
+                    reserved: true,
+                });
+            }
+        }
         quads.extend(caret_quads);
         edit_boxes[object_index] = edit_box_layout;
     }
@@ -1641,6 +1743,7 @@ fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) 
         texture_coordinates: source.texture_coordinates,
         color,
         caret: source.caret,
+        reserved: source.reserved,
     }
 }
 
@@ -1844,6 +1947,7 @@ fn layout_quads(
                         texture_coordinates: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
                         color,
                         caret: false,
+                        reserved: false,
                     });
                 }
                 pen_x_26_6 += glyph.advance_x_26_6();
@@ -2014,6 +2118,7 @@ mod tests {
             texture_coordinates: [[0.0; 2]; 4],
             color: [1.0; 4],
             caret,
+            reserved: false,
         }
     }
 
@@ -2066,6 +2171,7 @@ mod tests {
             word_wrap: false,
             non_space_wrap: false,
             max_lines: 0,
+            max_letters: 0,
             horizontal: crate::HorizontalJustification::Left,
             vertical: crate::VerticalJustification::Middle,
             draw_layer: crate::UiDrawLayer::Artwork,

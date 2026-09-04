@@ -1403,6 +1403,9 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
     let account_index = object_index(manager, "AccountLoginAccountEdit")?;
     let password_index = object_index(manager, "AccountLoginPasswordEdit")?;
     let label_index = object_index(manager, "AccountLoginAccountEditLabel")?;
+    let snapshot_count = manager.runtime_snapshot_count();
+    let index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
+    let object_indices = manager.render_plan().mesh().object_indices().to_vec();
     if !visible_glyph_owners(manager).contains(&label_index) {
         return Err(
             invalid_data("stock account label produced no visible glyphs".to_owned()).into(),
@@ -1430,6 +1433,15 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
     if manager.glyphs().identity() != atlas_identity {
         return Err(invalid_data(
             "baseline account input unnecessarily rebuilt the glyph atlas".to_owned(),
+        )
+        .into());
+    }
+    if manager.runtime_snapshot_count() != snapshot_count
+        || manager.render_plan().mesh().index_bytes() != index_bytes
+        || manager.render_plan().mesh().object_indices() != object_indices
+    {
+        return Err(invalid_data(
+            "stock account input rebuilt the retained UI arena or index topology".to_owned(),
         )
         .into());
     }
@@ -1518,6 +1530,9 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         );
     }
     const VALIDATION_PASSWORD: &str = "validation-pass";
+    let password_snapshot_count = manager.runtime_snapshot_count();
+    let password_index_bytes = manager.render_plan().mesh().index_bytes().to_vec();
+    let password_object_indices = manager.render_plan().mesh().object_indices().to_vec();
     manager.text_input(VALIDATION_PASSWORD)?;
     let password_glyphs = visible_glyph_owners(manager)
         .into_iter()
@@ -1527,6 +1542,15 @@ fn validate_login_input(manager: &mut GlueManager) -> Result<(), Box<dyn Error>>
         return Err(invalid_data(format!(
             "password EditBox produced {password_glyphs} masked glyphs"
         ))
+        .into());
+    }
+    if manager.runtime_snapshot_count() != password_snapshot_count
+        || manager.render_plan().mesh().index_bytes() != password_index_bytes
+        || manager.render_plan().mesh().object_indices() != password_object_indices
+    {
+        return Err(invalid_data(
+            "stock password input rebuilt the retained UI arena or index topology".to_owned(),
+        )
         .into());
     }
     manager.keyboard_key("ENTER", true, UiKeyboardModifiers::default())?;

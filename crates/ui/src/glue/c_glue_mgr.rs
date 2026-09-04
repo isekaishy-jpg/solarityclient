@@ -70,6 +70,7 @@ struct PointerHoverUpdate {
     buttons: [Option<usize>; 2],
     font_buttons: [Option<usize>; 2],
     visual_objects: Vec<usize>,
+    dirty_objects: Vec<(usize, u32)>,
 }
 
 impl GlueManager {
@@ -923,7 +924,43 @@ impl GlueManager {
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
         self.deferred_slider_refresh = None;
-        if !visual_objects.is_empty() {
+        if timings {
+            let journal = dirty_objects
+                .iter()
+                .map(|&(object_index, flags)| {
+                    let object = &self.live.objects()[object_index];
+                    format!(
+                        "{}:{:?}:{flags:#04x}",
+                        object.name.as_deref().unwrap_or("<anonymous>"),
+                        object.kind,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!("UI targeted journal: {journal}");
+        }
+        let edit_box_text_journal = self
+            .runtime
+            .is_edit_box_text_journal(&self.live, dirty_objects);
+        let mut visual_objects_refreshed = false;
+        if edit_box_text_journal {
+            if !visual_objects.is_empty() {
+                self.refresh_targeted_visual_objects(visual_objects)?;
+                visual_objects_refreshed = true;
+            }
+            if self.refresh_retained_edit_box_text(dirty_objects)? {
+                if timings {
+                    eprintln!(
+                        "UI retained EditBox patch: objects={} visuals={} total={:.3}ms",
+                        dirty_objects.len(),
+                        visual_objects.len(),
+                        started.elapsed().as_secs_f64() * 1_000.0,
+                    );
+                }
+                return Ok(());
+            }
+        }
+        if !visual_objects_refreshed && !visual_objects.is_empty() {
             self.runtime
                 .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
         }
@@ -1016,6 +1053,56 @@ impl GlueManager {
             );
         }
         Ok(())
+    }
+
+    fn refresh_retained_edit_box_text(
+        &mut self,
+        dirty_objects: &[(usize, u32)],
+    ) -> Result<bool, UiEventError> {
+        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
+        let started = std::time::Instant::now();
+        let text_objects =
+            self.runtime
+                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        let copied = started.elapsed();
+        if text_objects.is_empty()
+            || !self.glyphs.supports_live_text_objects(
+                &self.live,
+                self.glyph_logical_height,
+                text_objects.iter().copied(),
+            )
+        {
+            return Ok(false);
+        }
+        self.glyphs.refresh_live_text_objects(
+            &self.live,
+            &self.geometry,
+            self.glyph_logical_height,
+            &text_objects,
+        )?;
+        let laid_out = started.elapsed();
+        if !self.render_plan.refresh_glyph_objects(
+            &self.glyphs,
+            &self.live,
+            &self.geometry,
+            &self.scroll_frames,
+            &text_objects,
+        )? {
+            return Ok(false);
+        }
+        let rendered = started.elapsed();
+        self.pointer
+            .refresh_edit_box_focus(&self.live, &text_objects);
+        if timings {
+            eprintln!(
+                "UI retained EditBox stages: copy={:.3}ms layout={:.3}ms vertices={:.3}ms pointer={:.3}ms",
+                copied.as_secs_f64() * 1_000.0,
+                laid_out.saturating_sub(copied).as_secs_f64() * 1_000.0,
+                rendered.saturating_sub(laid_out).as_secs_f64() * 1_000.0,
+                started.elapsed().saturating_sub(rendered).as_secs_f64() * 1_000.0,
+            );
+        }
+        Ok(true)
     }
 
     fn refresh_targeted_visual_objects(
@@ -1397,26 +1484,44 @@ impl GlueManager {
             ..PointerHoverUpdate::default()
         };
         if let Some(previous) = self.pointer_hover {
-            let (button, state_font, full, visual_objects) =
+            let (button, state_font, dispatch) =
                 self.runtime
                     .dispatch_pointer_hover(&self.bundle, previous, false)?;
-            update.requires_full_refresh |= full;
+            update.requires_full_refresh |=
+                dispatch.changed && !dispatch.targeted_visual && !dispatch.targeted_objects;
             update.buttons[0] = button.then_some(previous);
             update.font_buttons[0] = state_font.then_some(previous);
-            update.visual_objects.extend(visual_objects);
+            update.visual_objects.extend(dispatch.visual_objects);
+            update.dirty_objects.extend(dispatch.dirty_objects);
         }
         self.pointer_hover = hit;
         if let Some(current) = hit {
-            let (button, state_font, full, visual_objects) =
+            let (button, state_font, dispatch) =
                 self.runtime
                     .dispatch_pointer_hover(&self.bundle, current, true)?;
-            update.requires_full_refresh |= full;
+            update.requires_full_refresh |=
+                dispatch.changed && !dispatch.targeted_visual && !dispatch.targeted_objects;
             update.buttons[1] = button.then_some(current);
             update.font_buttons[1] = state_font.then_some(current);
-            update.visual_objects.extend(visual_objects);
+            update.visual_objects.extend(dispatch.visual_objects);
+            update.dirty_objects.extend(dispatch.dirty_objects);
         }
         update.visual_objects.sort_unstable();
         update.visual_objects.dedup();
+        update
+            .dirty_objects
+            .sort_unstable_by_key(|(index, _)| *index);
+        let mut merged = Vec::<(usize, u32)>::with_capacity(update.dirty_objects.len());
+        for (object_index, flags) in update.dirty_objects.drain(..) {
+            if let Some((last_index, last_flags)) = merged.last_mut()
+                && *last_index == object_index
+            {
+                *last_flags |= flags;
+            } else {
+                merged.push((object_index, flags));
+            }
+        }
+        update.dirty_objects = merged;
         Ok(update)
     }
 
@@ -1438,7 +1543,9 @@ impl GlueManager {
                 &mut self.live,
                 update.font_buttons.into_iter().flatten(),
             )?;
-        if !update.visual_objects.is_empty() && self.incremental_visual_updates {
+        if !update.dirty_objects.is_empty() {
+            self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
+        } else if !update.visual_objects.is_empty() && self.incremental_visual_updates {
             self.runtime.refresh_visual_objects(
                 &self.bundle,
                 &mut self.live,
@@ -1608,9 +1715,10 @@ impl GlueManager {
         let Some(object_index) = self.focused_edit_box() else {
             return Ok(None);
         };
-        self.runtime
+        let dispatch = self
+            .runtime
             .dispatch_edit_text(&self.bundle, object_index, text)?;
-        self.refresh_live_state()?;
+        self.refresh_event_mutations(&dispatch)?;
         Ok(Some(object_index))
     }
 
@@ -1623,9 +1731,10 @@ impl GlueManager {
         let Some(object_index) = self.focused_edit_box() else {
             return Ok(None);
         };
-        self.runtime
+        let dispatch = self
+            .runtime
             .dispatch_edit_composition(&self.bundle, object_index, text)?;
-        self.refresh_live_state()?;
+        self.refresh_event_mutations(&dispatch)?;
         Ok(Some(object_index))
     }
 
@@ -1647,9 +1756,14 @@ impl GlueManager {
         let Some(object_index) = target else {
             return Ok(None);
         };
-        self.runtime
-            .dispatch_keyboard_key(&self.bundle, object_index, key, pressed, modifiers)?;
-        self.refresh_live_state()?;
+        let dispatch = self.runtime.dispatch_keyboard_key(
+            &self.bundle,
+            object_index,
+            key,
+            pressed,
+            modifiers,
+        )?;
+        self.refresh_event_mutations(&dispatch)?;
         Ok(Some(object_index))
     }
 

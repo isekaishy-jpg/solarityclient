@@ -387,6 +387,15 @@ pub(crate) struct UiScriptEventDispatch {
     pub(crate) fallback_mutations: u64,
 }
 
+#[derive(Clone, Copy)]
+struct UiMutationBaseline {
+    live_generation: u64,
+    fallback_generation: u64,
+    visual_generation: u64,
+    object_generation: u64,
+    object_count: usize,
+}
+
 impl UiScriptEventDispatch {
     /// Reports whether every typed mutation is a retained texture-color patch.
     pub(crate) fn texture_vertex_colors_only(&self) -> bool {
@@ -1930,6 +1939,22 @@ impl UiScriptRuntime {
         super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects)
     }
 
+    /// Reports whether a journal can use the fixed-slot EditBox glyph path.
+    pub(crate) fn is_edit_box_text_journal(
+        &self,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
+        dirty_objects: &[(usize, u32)],
+    ) -> bool {
+        !dirty_objects.is_empty()
+            && dirty_objects.iter().all(|&(object_index, flags)| {
+                flags == DIRTY_TEXT
+                    && live
+                        .objects()
+                        .get(object_index)
+                        .is_some_and(|object| object.kind == UiObjectKind::EditBox)
+            })
+    }
+
     pub(crate) fn refresh_button_texts(
         &self,
         bundle: &UiBundle,
@@ -2094,15 +2119,11 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         entered: bool,
-    ) -> Result<(bool, bool, bool, Vec<usize>), UiScriptError> {
+    ) -> Result<(bool, bool, UiScriptEventDispatch), UiScriptError> {
         let phase = if entered { "enter" } else { "leave" };
         let label = format!("UI object {object_index}:pointer-{phase}");
         let lua = bundle.lua();
-        clear_visual_dirty_objects(lua).map_err(|error| execution_error(&label, error))?;
-        let generation =
-            live_state_generation(lua).map_err(|error| execution_error(&label, error))?;
-        let visual_generation =
-            visual_state_generation(lua).map_err(|error| execution_error(&label, error))?;
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let object = self.runtime_object(lua, object_index, &label)?;
         let kind = object
             .raw_get::<String>(type_key())
@@ -2125,29 +2146,19 @@ impl UiScriptRuntime {
         };
         let function = object_script_function(lua, &object, handler)
             .map_err(|error| execution_error(&label, error))?;
+        let subscriber_count = usize::from(function.is_some());
         if let Some(function) = function {
             call_object_handler(lua, &function, object)
                 .map_err(|error| execution_error(&label, error))?;
         }
-        let current_generation =
-            live_state_generation(lua).map_err(|error| execution_error(&label, error))?;
-        let current_visual_generation =
-            visual_state_generation(lua).map_err(|error| execution_error(&label, error))?;
-        let live_mutations = current_generation.wrapping_sub(generation);
-        let visual_mutations = current_visual_generation.wrapping_sub(visual_generation);
-        let mut visual_objects =
-            take_visual_dirty_objects(lua).map_err(|error| execution_error(&label, error))?;
-        visual_objects.sort_unstable();
-        visual_objects.dedup();
-        let targeted_visual =
-            live_mutations != 0 && live_mutations == visual_mutations && !visual_objects.is_empty();
-        let requires_full_refresh = live_mutations != 0 && !targeted_visual;
-        Ok((
-            is_button,
-            has_state_font,
-            requires_full_refresh,
-            visual_objects,
-        ))
+        let dispatch = finish_mutation_dispatch(
+            lua,
+            self.registered_object_count(),
+            baseline,
+            subscriber_count,
+            &label,
+        )?;
+        Ok((is_button, has_state_font, dispatch))
     }
 
     /// Delivers one normalized wheel delta to a live ScrollFrame handler.
@@ -2232,6 +2243,7 @@ impl UiScriptRuntime {
             .and_then(|()| object.raw_set(edit_selection_start_key(), anchor))
             .and_then(|()| object.raw_set(edit_selection_end_key(), cursor))
             .and_then(|()| reset_edit_box_caret(&object))
+            .and_then(|()| mark_object_state_changed(bundle.lua(), &object, DIRTY_TEXT))
             .map_err(|error| execution_error(&label, error))
     }
 
@@ -2241,9 +2253,10 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         text: &str,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let label = format!("EditBox object {object_index}:text-input");
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let object = self.runtime_object(lua, object_index, &label)?;
         if object
             .raw_get::<String>(type_key())
@@ -2274,7 +2287,7 @@ impl UiScriptRuntime {
                     .map_err(|error| execution_error(&label, error))?;
             }
         }
-        Ok(())
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     /// Delivers an in-progress input-method composition without committing it.
@@ -2283,17 +2296,25 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         text: &str,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let label = format!("EditBox object {object_index}:composition");
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let object = self.runtime_object(lua, object_index, &label)?;
         let Some(function) = object_script_function(lua, &object, UiScriptHandler::CharComposition)
             .map_err(|error| execution_error(&label, error))?
         else {
-            return Ok(());
+            return finish_mutation_dispatch(
+                lua,
+                self.registered_object_count(),
+                baseline,
+                0,
+                &label,
+            );
         };
         call_string_object_handler(lua, &function, object, text)
-            .map_err(|error| execution_error(&label, error))
+            .map_err(|error| execution_error(&label, error))?;
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     /// Delivers one key transition to a focused EditBox or keyboard frame.
@@ -2304,10 +2325,11 @@ impl UiScriptRuntime {
         key: &str,
         pressed: bool,
         modifiers: UiKeyboardModifiers,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let phase = if pressed { "down" } else { "up" };
         let label = format!("UI object {object_index}:key-{phase}");
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let object = self.runtime_object(lua, object_index, &label)?;
         let handler = if pressed {
             UiScriptHandler::KeyDown
@@ -2327,8 +2349,10 @@ impl UiScriptRuntime {
         if pressed && is_edit_box {
             dispatch_edit_box_key(lua, &object, key, modifiers)
                 .map_err(|error| execution_error(&label, error))?;
+            mark_object_state_changed(lua, &object, DIRTY_TEXT)
+                .map_err(|error| execution_error(&label, error))?;
         }
-        Ok(())
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     /// Delivers pointer handlers for non-button mouse-enabled frames.
@@ -6622,6 +6646,7 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
         if was_focused {
             object.raw_set(edit_focused_key(), false)?;
             reset_edit_box_caret(object)?;
+            mark_object_state_changed(lua, object, DIRTY_TEXT)?;
             if lua.named_registry_value::<usize>(FOCUSED_EDIT_BOX_REGISTRY)? == object_index {
                 lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize)?;
             }
@@ -6635,11 +6660,13 @@ fn set_edit_box_focus(lua: &Lua, object: &Table, focused: bool) -> mlua::Result<
         let candidate = objects.raw_get::<Table>(previous)?;
         candidate.raw_set(edit_focused_key(), false)?;
         reset_edit_box_caret(&candidate)?;
+        mark_object_state_changed(lua, &candidate, DIRTY_TEXT)?;
         call_optional_object_handler(lua, &candidate, UiScriptHandler::EditFocusLost)?;
     }
     if !was_focused {
         object.raw_set(edit_focused_key(), true)?;
         reset_edit_box_caret(object)?;
+        mark_object_state_changed(lua, object, DIRTY_TEXT)?;
         lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, object_index)?;
         call_optional_object_handler(lua, object, UiScriptHandler::EditFocusGained)?;
     }
@@ -8922,7 +8949,7 @@ fn edit_history_key() -> LightUserData {
     hidden_key(&EDIT_HISTORY_TOKEN)
 }
 
-fn edit_max_letters_key() -> LightUserData {
+pub(super) fn edit_max_letters_key() -> LightUserData {
     hidden_key(&EDIT_MAX_LETTERS_TOKEN)
 }
 
@@ -9372,6 +9399,69 @@ fn script_handlers_key() -> LightUserData {
 
 fn button_text_key() -> LightUserData {
     hidden_key(&BUTTON_TEXT_TOKEN)
+}
+
+fn begin_mutation_dispatch(
+    lua: &Lua,
+    object_count: usize,
+    label: &str,
+) -> Result<UiMutationBaseline, UiScriptError> {
+    clear_visual_dirty_objects(lua).map_err(|error| execution_error(label, error))?;
+    clear_dirty_objects(lua).map_err(|error| execution_error(label, error))?;
+    Ok(UiMutationBaseline {
+        live_generation: live_state_generation(lua)
+            .map_err(|error| execution_error(label, error))?,
+        fallback_generation: fallback_state_generation(lua)
+            .map_err(|error| execution_error(label, error))?,
+        visual_generation: visual_state_generation(lua)
+            .map_err(|error| execution_error(label, error))?,
+        object_generation: object_state_generation(lua)
+            .map_err(|error| execution_error(label, error))?,
+        object_count,
+    })
+}
+
+fn finish_mutation_dispatch(
+    lua: &Lua,
+    object_count: usize,
+    baseline: UiMutationBaseline,
+    subscriber_count: usize,
+    label: &str,
+) -> Result<UiScriptEventDispatch, UiScriptError> {
+    let live_generation =
+        live_state_generation(lua).map_err(|error| execution_error(label, error))?;
+    let fallback_generation =
+        fallback_state_generation(lua).map_err(|error| execution_error(label, error))?;
+    let visual_generation =
+        visual_state_generation(lua).map_err(|error| execution_error(label, error))?;
+    let object_generation =
+        object_state_generation(lua).map_err(|error| execution_error(label, error))?;
+    let mut visual_objects =
+        take_visual_dirty_objects(lua).map_err(|error| execution_error(label, error))?;
+    visual_objects.sort_unstable();
+    visual_objects.dedup();
+    let dirty_objects = take_dirty_objects(lua).map_err(|error| execution_error(label, error))?;
+    let live_mutations = live_generation.wrapping_sub(baseline.live_generation);
+    let fallback_mutations = fallback_generation.wrapping_sub(baseline.fallback_generation);
+    let visual_mutations = visual_generation.wrapping_sub(baseline.visual_generation);
+    let object_mutations = object_generation.wrapping_sub(baseline.object_generation);
+    let object_topology_unchanged = object_count == baseline.object_count;
+    Ok(UiScriptEventDispatch {
+        subscriber_count,
+        changed: live_mutations != 0,
+        targeted_visual: live_mutations != 0
+            && fallback_mutations == 0
+            && object_mutations == 0
+            && live_mutations == visual_mutations
+            && !visual_objects.is_empty(),
+        visual_objects,
+        targeted_objects: live_mutations != 0
+            && fallback_mutations == 0
+            && object_topology_unchanged
+            && !dirty_objects.is_empty(),
+        dirty_objects,
+        fallback_mutations,
+    })
 }
 
 fn live_state_generation(lua: &Lua) -> mlua::Result<u64> {

@@ -256,6 +256,48 @@ impl UiRenderPlan {
             .map_err(Into::into)
     }
 
+    /// Patches complete retained glyph vertices for named live-text owners.
+    pub(crate) fn refresh_glyph_objects(
+        &mut self,
+        glyphs: &UiGlyphAtlasPlan,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        scroll_frames: &UiScrollFramePlan,
+        object_indices: &[usize],
+    ) -> Result<bool, UiRenderError> {
+        let quads = glyphs.retained_live_object_quads(object_indices, geometry, scroll_frames);
+        let source = UiRenderSource::GlyphAtlas(glyphs.identity());
+        for &object_index in object_indices {
+            let first = quads.partition_point(|quad| quad.object_index() < object_index);
+            let end = quads.partition_point(|quad| quad.object_index() <= object_index);
+            let rendered = quads[first..end]
+                .iter()
+                .map(|quad| render_glyph_quad(glyphs.identity(), quad))
+                .collect::<Vec<_>>();
+            if !self
+                .mesh
+                .replace_object_source_quads(object_index, &source, &rendered)?
+            {
+                return Ok(false);
+            }
+            if let Some(text) = live
+                .objects()
+                .get(object_index)
+                .and_then(|object| object.text.as_ref())
+            {
+                let opacity = geometry.region(object_index).map_or(0.0, |region| {
+                    region.effective_alpha() as f32
+                        * f32::from(region.effectively_shown())
+                        * f32::from(live.objects()[object_index].edit_focused.unwrap_or(false))
+                        * f32::from(text.caret_visible)
+                });
+                self.mesh
+                    .set_state_opacity(UiRenderState::EditBoxCaret(object_index), opacity)?;
+            }
+        }
+        Ok(true)
+    }
+
     /// Recolors one retained Texture quad without rebuilding layout, packets,
     /// material runs, indices, or unrelated vertex payloads.
     pub(crate) fn refresh_texture_vertex_colors(

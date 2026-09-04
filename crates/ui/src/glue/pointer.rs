@@ -46,6 +46,25 @@ impl UiPointerPlan {
         Self { targets }
     }
 
+    /// Refreshes EditBox focus without recopied hit-test state for every frame.
+    pub(super) fn refresh_edit_box_focus(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        object_indices: &[usize],
+    ) {
+        for &object_index in object_indices {
+            let Some(object) = live.objects().get(object_index) else {
+                continue;
+            };
+            let Some(target) = self.targets.get_mut(object_index).and_then(Option::as_mut) else {
+                continue;
+            };
+            if target.kind == UiObjectKind::EditBox {
+                target.edit_focused = object.edit_focused.unwrap_or(false);
+            }
+        }
+    }
+
     /// Returns the frontmost enabled mouse target containing one UI point.
     pub(super) fn hit_test(
         &self,

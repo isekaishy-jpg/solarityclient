@@ -149,6 +149,7 @@ fn focused_edit_box_routes_native_login_input() -> Result<(), Box<dyn Error>> {
     assert!(log.contains("text:true;char:A;"));
     assert!(log.contains("compose:候補;"));
     assert!(log.contains("account-loss;password-gain;"));
+    assert_eq!(manager.runtime_snapshot_count(), snapshot_count);
 
     let account_position = object_center(&manager, account_index)?;
     assert_eq!(

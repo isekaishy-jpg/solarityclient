@@ -151,6 +151,39 @@ fn ui_mesh_recolors_one_object_without_rebuilding_topology() -> Result<(), Box<d
     Ok(())
 }
 
+/// EditBox text replaces only glyph slots when the same object owns a backdrop.
+#[test]
+fn ui_mesh_replaces_one_object_source_without_rebuilding_topology() -> Result<(), Box<dyn Error>> {
+    let backdrop = AssetPath::new("Interface\\Glues\\EditBox.blp")?;
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let quads = vec![
+        quad(4, UiRenderSource::Texture(backdrop), [0.0, 0.0, 40.0, 20.0]),
+        quad(4, atlas.clone(), [2.0, 2.0, 10.0, 18.0]),
+        quad(8, atlas.clone(), [50.0, 2.0, 58.0, 18.0]),
+        quad(4, atlas.clone(), [10.0, 2.0, 12.0, 18.0]).with_state(UiRenderState::EditBoxCaret(4)),
+    ];
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], quads.into_iter())?;
+    mesh.set_state_opacity(UiRenderState::EditBoxCaret(4), 0.0)?;
+    let identity = mesh.geometry_identity();
+    let indices = mesh.index_bytes().to_vec();
+    let batches = mesh.batches().to_vec();
+    let backdrop_vertices = mesh.vertices()[0..4].to_vec();
+    let replacement = vec![
+        quad(4, atlas.clone(), [4.0, 2.0, 14.0, 18.0]),
+        quad(4, atlas.clone(), [14.0, 2.0, 16.0, 18.0]).with_state(UiRenderState::EditBoxCaret(4)),
+    ];
+
+    assert!(mesh.replace_object_source_quads(4, &atlas, &replacement)?);
+    assert_ne!(mesh.geometry_identity(), identity);
+    assert_eq!(mesh.index_bytes(), indices);
+    assert_eq!(mesh.batches(), batches);
+    assert_eq!(&mesh.vertices()[0..4], backdrop_vertices);
+    assert_eq!(mesh.vertices()[4].position(), [4.0, 18.0]);
+    assert_eq!(mesh.vertices()[12].position(), [14.0, 18.0]);
+    assert!(!mesh.replace_object_source_quads(4, &atlas, &replacement[..1])?);
+    Ok(())
+}
+
 /// An EditBox blink changes only its retained caret draw slot.
 #[test]
 fn ui_mesh_refreshes_caret_opacity_without_replacing_geometry() -> Result<(), Box<dyn Error>> {

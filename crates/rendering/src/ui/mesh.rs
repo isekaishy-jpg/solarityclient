@@ -1,7 +1,9 @@
 //! Allocation-conscious conversion from ordered UI quads to indexed mesh runs.
 
 use super::UiRenderState;
-use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderTransform, UiRenderVertex};
+use super::{
+    UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderSource, UiRenderTransform, UiRenderVertex,
+};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -343,6 +345,101 @@ impl UiMeshPlan {
             });
         }
         Ok(true)
+    }
+
+    /// Replaces complete vertices for one object's topology-stable source slots.
+    ///
+    /// Objects may own several sources at once (for example, an EditBox backdrop
+    /// plus glyph-atlas text). Material, draw-state, and source-local quad counts
+    /// must remain unchanged. This lets bounded text replace only its atlas
+    /// vertices without rebuilding decorations, unrelated batches, or indices.
+    pub fn replace_object_source_quads(
+        &mut self,
+        object_index: usize,
+        source: &UiRenderSource,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        let Some(object_slots) = self.object_quads.get(&object_index) else {
+            return Ok(quads.is_empty());
+        };
+        let slots = object_slots
+            .iter()
+            .copied()
+            .filter(|&slot| {
+                self.batch_for_slot(slot)
+                    .is_some_and(|batch| batch.source() == source)
+            })
+            .collect::<Vec<_>>();
+        if slots.len() != quads.len() {
+            return Ok(false);
+        }
+        let mut batch_index = 0;
+        for (slot, quad) in slots.iter().copied().zip(quads) {
+            validate_quad(quad)?;
+            if quad.object_index() != object_index || quad.source() != source {
+                return Ok(false);
+            }
+            while self.batches.get(batch_index).is_some_and(|batch| {
+                slot >= batch.first_quad() as usize + batch.quad_count() as usize
+            }) {
+                batch_index += 1;
+            }
+            let Some(batch) = self.batches.get(batch_index) else {
+                return Ok(false);
+            };
+            if slot < batch.first_quad() as usize || !batch.can_replace(quad) {
+                return Ok(false);
+            }
+        }
+
+        let mut changed_vertices: Option<(usize, usize)> = None;
+        for (slot, quad) in slots.iter().copied().zip(quads) {
+            let [left, bottom, right, top] = quad.bounds();
+            let positions = [[left, top], [left, bottom], [right, top], [right, bottom]];
+            let coordinates = quad.texture_coordinates();
+            let colors = quad.colors();
+            for corner in 0..4 {
+                let vertex_index = slot * 4 + corner;
+                let vertex =
+                    UiRenderVertex::new(positions[corner], coordinates[corner], colors[corner]);
+                if self.vertices[vertex_index] == vertex {
+                    continue;
+                }
+                self.vertices[vertex_index] = vertex;
+                changed_vertices = Some(
+                    changed_vertices.map_or((vertex_index, vertex_index + 1), |(start, end)| {
+                        (start.min(vertex_index), end.max(vertex_index + 1))
+                    }),
+                );
+            }
+        }
+        if let Some((start, end)) = changed_vertices {
+            let previous = self.identity;
+            let current = next_identity();
+            self.identity = current;
+            if self.vertex_revisions.len() == RETAINED_VERTEX_REVISION_LIMIT {
+                self.vertex_revisions.pop_front();
+            }
+            self.vertex_revisions.push_back(UiVertexRevision {
+                from: previous,
+                to: current,
+                byte_range: (
+                    start * UiRenderVertex::BYTE_SIZE,
+                    end * UiRenderVertex::BYTE_SIZE,
+                ),
+            });
+        }
+        Ok(true)
+    }
+
+    fn batch_for_slot(&self, slot: usize) -> Option<&UiRenderBatch> {
+        let batch_index = self.batches.partition_point(|batch| {
+            batch.first_quad() as usize + batch.quad_count() as usize <= slot
+        });
+        self.batches.get(batch_index).filter(|batch| {
+            slot >= batch.first_quad() as usize
+                && slot < batch.first_quad() as usize + batch.quad_count() as usize
+        })
     }
 
     /// Replaces opacity for one independently retained draw-state slot.
