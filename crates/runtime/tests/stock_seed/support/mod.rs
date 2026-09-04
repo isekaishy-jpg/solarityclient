@@ -98,6 +98,9 @@ fn build_archive(
             builder.add_file_data(realm_configuration_dbc(), "DBFilesClient\\Cfg_Configs.dbc");
         builder = builder.add_file_data(empty_wdbc(69), "DBFilesClient\\ChrRaces.dbc");
         builder = builder.add_file_data(empty_wdbc(60), "DBFilesClient\\ChrClasses.dbc");
+        builder = builder.add_file_data(empty_wdbc_layout(2, 2), "DBFilesClient\\CharBaseInfo.dbc");
+        builder = builder.add_file_data(empty_wdbc(14), "DBFilesClient\\FactionTemplate.dbc");
+        builder = builder.add_file_data(empty_wdbc(20), "DBFilesClient\\FactionGroup.dbc");
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");

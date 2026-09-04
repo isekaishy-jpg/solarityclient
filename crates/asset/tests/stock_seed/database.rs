@@ -698,11 +698,8 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
     assert_eq!(appearance.skin().id(), 10);
     assert_eq!(appearance.face().map(|section| section.id()), Some(11));
     assert_eq!(
-        appearance
-            .facial_hair()
-            .expect("fixture authors a facial-feature texture")
-            .id(),
-        12
+        appearance.facial_hair().map(|section| section.id()),
+        Some(12)
     );
     assert_eq!(appearance.hair().id(), 13);
     assert_eq!(appearance.underwear().map(|section| section.id()), Some(14));
