@@ -1491,7 +1491,33 @@ impl GlueManager {
         let published_elapsed = started.elapsed();
         synchronize_resolved_dimensions(&mut live, &geometry);
         let scroll_frames = UiScrollFramePlan::from_live(&live);
-        if !html_changed
+        let scroll_elapsed = started.elapsed();
+        let text_changes = (!html_changed)
+            .then(|| live.text_layout_changes_from(&self.live))
+            .flatten();
+        if timings {
+            eprintln!(
+                "UI retained text changes: {}",
+                text_changes.as_ref().map_or_else(
+                    || "incompatible".to_owned(),
+                    |changes| changes.len().to_string()
+                )
+            );
+        }
+        if let Some(text_changes) = text_changes.as_ref()
+            && self.glyphs.supports_live_text_objects(
+                &live,
+                self.glyph_logical_height,
+                text_changes.iter().copied(),
+            )
+        {
+            self.glyphs.refresh_live_text_objects(
+                &live,
+                &geometry,
+                self.glyph_logical_height,
+                text_changes,
+            )?;
+        } else if !html_changed
             && self
                 .glyphs
                 .supports_live_text(&live, self.glyph_logical_height)
@@ -1508,7 +1534,9 @@ impl GlueManager {
                 self.glyph_logical_height,
             )?;
         }
+        let glyph_elapsed = started.elapsed();
         let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
+        let presentation_elapsed = started.elapsed();
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,
@@ -1516,6 +1544,7 @@ impl GlueManager {
             &scroll_frames,
             geometry.ui_extent(),
         )?;
+        let render_elapsed = started.elapsed();
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
         let plans_elapsed = started.elapsed();
@@ -1529,7 +1558,7 @@ impl GlueManager {
         self.pointer = pointer;
         if timings {
             eprintln!(
-                "UI full publish: snapshot={:.3}ms geometry={:.3}ms writeback={:.3}ms plans={:.3}ms total={:.3}ms",
+                "UI full publish: snapshot={:.3}ms geometry={:.3}ms writeback={:.3}ms scroll={:.3}ms glyphs={:.3}ms presentation={:.3}ms mesh={:.3}ms hierarchy={:.3}ms total={:.3}ms",
                 first_snapshot_elapsed.as_secs_f64() * 1_000.0,
                 first_geometry_elapsed
                     .saturating_sub(first_snapshot_elapsed)
@@ -1539,10 +1568,20 @@ impl GlueManager {
                     .saturating_sub(first_geometry_elapsed)
                     .as_secs_f64()
                     * 1_000.0,
-                plans_elapsed
+                scroll_elapsed
                     .saturating_sub(published_elapsed)
                     .as_secs_f64()
                     * 1_000.0,
+                glyph_elapsed.saturating_sub(scroll_elapsed).as_secs_f64() * 1_000.0,
+                presentation_elapsed
+                    .saturating_sub(glyph_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                render_elapsed
+                    .saturating_sub(presentation_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                plans_elapsed.saturating_sub(render_elapsed).as_secs_f64() * 1_000.0,
                 started.elapsed().as_secs_f64() * 1_000.0,
             );
         }

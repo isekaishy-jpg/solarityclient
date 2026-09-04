@@ -211,6 +211,37 @@ impl UiRuntimeObjectPlan {
         }
     }
 
+    /// Returns changed live-text owners when local layout and packet ancestry
+    /// remain compatible with an object-scoped glyph refresh.
+    pub(crate) fn text_layout_changes_from(&self, previous: &Self) -> Option<Vec<usize>> {
+        if self.anchors != previous.anchors || self.objects.len() != previous.objects.len() {
+            return None;
+        }
+        let mut changed = Vec::new();
+        for (object_index, (current, previous)) in
+            self.objects.iter().zip(&previous.objects).enumerate()
+        {
+            let text_changed = current.text != previous.text
+                || current.edit_focused != previous.edit_focused
+                || current.width != previous.width
+                || current.height != previous.height;
+            let text_owns_dimension_change = current.text.is_some() || previous.text.is_some();
+            if (current.width != previous.width || current.height != previous.height)
+                && !text_owns_dimension_change
+                || current.parent != previous.parent
+                || current.frame_level != previous.frame_level
+                || current.frame_strata != previous.frame_strata
+                || current.scroll_child != previous.scroll_child
+            {
+                return None;
+            }
+            if text_changed {
+                changed.push(object_index);
+            }
+        }
+        Some(changed)
+    }
+
     pub(crate) fn replace_scroll_state(
         &mut self,
         object_index: usize,

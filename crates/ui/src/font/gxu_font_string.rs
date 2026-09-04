@@ -474,8 +474,21 @@ impl UiGlyphAtlasPlan {
         live: &UiRuntimeObjectPlan,
         logical_height: u32,
     ) -> bool {
+        self.supports_live_text_objects(live, logical_height, 0..live.objects().len())
+    }
+
+    /// Returns whether retained coverage supports the named live-text owners.
+    pub(crate) fn supports_live_text_objects(
+        &self,
+        live: &UiRuntimeObjectPlan,
+        logical_height: u32,
+        object_indices: impl IntoIterator<Item = usize>,
+    ) -> bool {
         let pixels_per_ui_unit = f64::from(logical_height) / 768.0;
-        live.objects().iter().all(|object| {
+        object_indices.into_iter().all(|object_index| {
+            let Some(object) = live.objects().get(object_index) else {
+                return false;
+            };
             object.text.as_ref().is_none_or(|text| {
                 runtime_font_key(text, pixels_per_ui_unit).is_ok_and(|font| {
                     presented_characters(text)
@@ -508,6 +521,42 @@ impl UiGlyphAtlasPlan {
         )?;
         self.live_quads = layout.quads;
         self.edit_box_layouts = layout.edit_boxes;
+        Ok(())
+    }
+
+    /// Relays out only named text owners while retaining every other glyph run.
+    pub(crate) fn refresh_live_text_objects(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        logical_height: u32,
+        object_indices: &[usize],
+    ) -> Result<(), FontError> {
+        if object_indices.is_empty() {
+            return Ok(());
+        }
+        let layout = layout_live_quads_for_objects(
+            live,
+            geometry,
+            f64::from(logical_height) / 768.0,
+            &self.glyphs,
+            &self.placements,
+            &self.metrics,
+            self.extent,
+            object_indices.iter().copied(),
+        )?;
+        self.live_quads
+            .retain(|quad| object_indices.binary_search(&quad.object_index).is_err());
+        self.live_quads.extend(layout.quads);
+        self.live_quads.sort_by_key(|quad| quad.object_index);
+        for &object_index in object_indices {
+            if let (Some(target), Some(source)) = (
+                self.edit_box_layouts.get_mut(object_index),
+                layout.edit_boxes.get(object_index),
+            ) {
+                target.clone_from(source);
+            }
+        }
         Ok(())
     }
 
@@ -1107,9 +1156,37 @@ fn layout_live_quads(
     metrics: &HashMap<LineFontKey, FontMetrics>,
     extent: (u32, u32),
 ) -> Result<LiveTextLayout, FontError> {
+    layout_live_quads_for_objects(
+        live,
+        geometry,
+        pixels_per_ui_unit,
+        glyphs,
+        placements,
+        metrics,
+        extent,
+        0..live.objects().len(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_live_quads_for_objects(
+    live: &UiRuntimeObjectPlan,
+    geometry: &UiRegionGeometryPlan,
+    pixels_per_ui_unit: f64,
+    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
+    placements: &HashMap<GlyphKey, AtlasPlacement>,
+    metrics: &HashMap<LineFontKey, FontMetrics>,
+    extent: (u32, u32),
+    object_indices: impl IntoIterator<Item = usize>,
+) -> Result<LiveTextLayout, FontError> {
     let mut quads = Vec::new();
     let mut edit_boxes = vec![None; live.objects().len()];
-    for (object_index, object) in live.objects().iter().enumerate() {
+    for object_index in object_indices {
+        let Some(object) = live.objects().get(object_index) else {
+            return Err(FontError::Presentation {
+                message: format!("live text object {object_index} is unavailable"),
+            });
+        };
         let Some(text) = &object.text else {
             continue;
         };

@@ -39,6 +39,7 @@ pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const OBJECT_CHILDREN_REGISTRY: &str = "solarity.ui.object_children";
 const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
+const AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY: &str = "solarity.ui.auto_text_measurement_dirty";
 const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
 const VISUAL_DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.visual_dirty_objects";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
@@ -984,6 +985,7 @@ impl UiScriptRuntime {
         .and_then(|()| lua.set_named_registry_value(FOCUSED_EDIT_BOX_REGISTRY, 0_usize))
         .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
+            .and_then(|()| lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true))
             .and_then(|()| lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| {
                 lua.set_named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY, lua.create_table()?)
@@ -1488,11 +1490,38 @@ impl UiScriptRuntime {
         &self,
         bundle: &UiBundle,
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
+        let started = std::time::Instant::now();
         self.snapshot_count.set(self.snapshot_count.get() + 1);
-        self.text_measurement
-            .synchronize_auto_font_strings(bundle.lua(), self.registered_object_count())
+        let auto_text_dirty: bool = bundle
+            .lua()
+            .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
             .map_err(|error| execution_error("automatic FontString extent", error))?;
-        super::runtime_state::snapshot_runtime_objects(bundle.lua(), self.registered_object_count())
+        if auto_text_dirty {
+            self.text_measurement
+                .synchronize_auto_font_strings(bundle.lua(), self.registered_object_count())
+                .map_err(|error| execution_error("automatic FontString extent", error))?;
+            bundle
+                .lua()
+                .set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
+                .map_err(|error| execution_error("automatic FontString extent", error))?;
+        }
+        let measurement_elapsed = started.elapsed();
+        let snapshot = super::runtime_state::snapshot_runtime_objects(
+            bundle.lua(),
+            self.registered_object_count(),
+        )?;
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI Lua snapshot: auto_text={:.3}ms object_copy={:.3}ms",
+                measurement_elapsed.as_secs_f64() * 1_000.0,
+                started
+                    .elapsed()
+                    .saturating_sub(measurement_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+            );
+        }
+        Ok(snapshot)
     }
 
     /// Returns the number of complete Lua-object arena copies performed.
@@ -4631,7 +4660,7 @@ fn register_font_spacing_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
             }
             if object.raw_get::<f64>(spacing_key())? != spacing {
                 object.raw_set(spacing_key(), spacing)?;
-                mark_live_state_changed(lua)?;
+                mark_auto_text_measurement_changed(lua)?;
             }
             Ok(())
         })?,
@@ -4647,7 +4676,7 @@ fn register_font_shadow_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> 
         "SetShadowOffset",
         lua.create_function(|lua, (object, x, y): (Table, f64, f64)| {
             object.raw_set(font_shadow_offset_key(), lua.create_sequence_from([x, y])?)?;
-            mark_live_state_changed(lua)
+            mark_auto_text_measurement_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -7018,8 +7047,10 @@ fn register_region_methods(
             object.raw_set(width_key(), width)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
+                mark_auto_text_measurement_changed(lua)
+            } else {
+                mark_live_state_changed(lua)
             }
-            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -7033,8 +7064,10 @@ fn register_region_methods(
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_height_key(), false)?;
+                mark_auto_text_measurement_changed(lua)
+            } else {
+                mark_live_state_changed(lua)
             }
-            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -7054,8 +7087,10 @@ fn register_region_methods(
             if kind == UiObjectKind::FontString {
                 object.raw_set(auto_text_width_key(), false)?;
                 object.raw_set(auto_text_height_key(), false)?;
+                mark_auto_text_measurement_changed(lua)
+            } else {
+                mark_live_state_changed(lua)
             }
-            mark_live_state_changed(lua)
         })?,
     )?;
     methods.raw_set(
@@ -9095,6 +9130,11 @@ fn mark_visual_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
         dirty.raw_len() + 1,
         object.raw_get::<usize>(index_key())? - 1,
     )?;
+    mark_live_state_changed(lua)
+}
+
+fn mark_auto_text_measurement_changed(lua: &Lua) -> mlua::Result<()> {
+    lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true)?;
     mark_live_state_changed(lua)
 }
 
