@@ -466,7 +466,11 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(self:HasScript("OnUpdate"))
   assert(type(self:GetScript("OnUpdate")) == "function")
 </OnLoad><OnUpdate>self.elapsed = elapsed</OnUpdate></Scripts></Button>
-<Frame name="First"><Frames>
+<Frame name="First"><Attributes>
+  <Attribute name="WIDTH" type="number" value="384"/>
+  <Attribute name="ENABLED" type="boolean" value="true"/>
+  <Attribute name="LABEL" type="string" value="stock"/>
+</Attributes><Frames>
   <Button name="$parentChild"><Size x="40" y="20"/><Scripts><OnLoad>
     LOAD_ORDER = (LOAD_ORDER or "") .. self:GetName() .. ";"
     assert(self:GetObjectType() == "Button")
@@ -490,6 +494,9 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
 </Frames><Scripts><OnLoad>
   self:RegisterForDrag("LeftButton", "RightButton")
   LOAD_ORDER = LOAD_ORDER .. self:GetName() .. ";"
+  assert(self:GetAttribute("WIDTH") == 384)
+  assert(self:GetAttribute("ENABLED") == true)
+  assert(self:GetAttribute("LABEL") == "stock")
   assert(GetScreenHeight() == 768)
   assert(bit.tobit(4294967295) == -1)
   assert(bit.bnot(0) == -1)

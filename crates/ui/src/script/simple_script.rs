@@ -19,7 +19,7 @@ use crate::{
     FontCatalog, FontDefinition, FontOutline, FontShadow, HorizontalJustification, UiAnchorTarget,
     UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
     UiFrameStrata, UiKeyboardModifiers, UiLoadAction, UiManifestKind, UiObjectBatch, UiObjectKind,
-    UiObjectRole, UiObjectTree, UiPoint, UiRegionGeometryPlan, UiRegionStatePlan,
+    UiObjectNode, UiObjectRole, UiObjectTree, UiPoint, UiRegionGeometryPlan, UiRegionStatePlan,
     UiResourceContent, UiRuntimeTemplatePlan, UiScriptError, UiScriptHandler, UiScriptPlan,
     UiScriptTarget, UiTextureFile, UiTextureStatePlan, VerticalJustification, XmlContent,
 };
@@ -2326,6 +2326,10 @@ impl UiScriptRuntime {
         let table = lua
             .create_table()
             .map_err(|error| execution_error("object registration", error))?;
+        let initial_attributes = is_frame_object(object.kind())
+            .then(|| initial_frame_attributes(lua, object))
+            .transpose()
+            .map_err(|error| execution_error("object attributes", error))?;
         table
             .raw_set(name_key(), object.name())
             .and_then(|()| table.raw_set(type_key(), object_type_name(object.kind())))
@@ -2431,7 +2435,14 @@ impl UiScriptRuntime {
                 })
                 .and_then(|()| table.raw_set(frame_depth_key(), 0.0))
                 .and_then(|()| table.raw_set(ignore_depth_key(), false))
-                .and_then(|()| table.raw_set(attributes_key(), lua.create_table()?))
+                .and_then(|()| {
+                    table.raw_set(
+                        attributes_key(),
+                        initial_attributes
+                            .clone()
+                            .ok_or_else(|| mlua::Error::runtime("frame attributes are absent"))?,
+                    )
+                })
                 .and_then(|()| table.raw_set(script_handlers_key(), script_handlers))
                 .map_err(|error| execution_error("object registration", error))?;
         }
@@ -3918,6 +3929,76 @@ fn register_frame_attribute_methods(lua: &Lua, methods: &Table) -> mlua::Result<
             }
         })?,
     )
+}
+
+/// Applies inherited and concrete XML `<Attributes>` in declaration order.
+fn initial_frame_attributes(lua: &Lua, object: &UiObjectNode<'_>) -> mlua::Result<Table> {
+    let attributes = lua.create_table()?;
+    for layer in object.layers() {
+        for content in layer.element().content() {
+            let XmlContent::Element(index) = content else {
+                continue;
+            };
+            let Some(container) = layer.document().element(*index) else {
+                return Err(mlua::Error::runtime(
+                    "frame Attributes child is outside the XML arena",
+                ));
+            };
+            if !container.name().eq_ignore_ascii_case("Attributes") {
+                continue;
+            }
+            for content in container.content() {
+                let XmlContent::Element(index) = content else {
+                    continue;
+                };
+                let Some(attribute) = layer.document().element(*index) else {
+                    return Err(mlua::Error::runtime(
+                        "frame Attribute is outside the XML arena",
+                    ));
+                };
+                if !attribute.name().eq_ignore_ascii_case("Attribute") {
+                    continue;
+                }
+                let name = xml_attribute(attribute, "name")
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| mlua::Error::runtime("frame Attribute has no name"))?;
+                let source = xml_attribute(attribute, "value").unwrap_or("");
+                let value = match xml_attribute(attribute, "type").unwrap_or("string") {
+                    kind if kind.eq_ignore_ascii_case("number") => {
+                        let value = source.parse::<f64>().map_err(|_| {
+                            mlua::Error::runtime(format!(
+                                "frame Attribute {name} has invalid number {source}"
+                            ))
+                        })?;
+                        if !value.is_finite() {
+                            return Err(mlua::Error::runtime(format!(
+                                "frame Attribute {name} has non-finite number"
+                            )));
+                        }
+                        Value::Number(value)
+                    }
+                    kind if kind.eq_ignore_ascii_case("boolean") => {
+                        Value::Boolean(stock_xml_bool(source).ok_or_else(|| {
+                            mlua::Error::runtime(format!(
+                                "frame Attribute {name} has invalid boolean {source}"
+                            ))
+                        })?)
+                    }
+                    kind if kind.eq_ignore_ascii_case("nil") => Value::Nil,
+                    kind if kind.eq_ignore_ascii_case("string") => {
+                        Value::String(lua.create_string(source)?)
+                    }
+                    kind => {
+                        return Err(mlua::Error::runtime(format!(
+                            "frame Attribute {name} has unsupported type {kind}"
+                        )));
+                    }
+                };
+                attributes.raw_set(name, value)?;
+            }
+        }
+    }
+    Ok(attributes)
 }
 
 /// Coerces a native attribute-name argument using Lua 5.1 string semantics.
