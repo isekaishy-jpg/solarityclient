@@ -301,7 +301,7 @@ impl ClientServices {
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
-        let mut glue_model = RuntimeGlueModelScene::new();
+        let mut glue_model = RuntimeGlueModelScene::new(backdrop_catalog);
         let login_model = glue
             .configured_model_presentation("AccountLogin")
             .map_err(GlueError::from)?;
@@ -319,12 +319,7 @@ impl ClientServices {
         if initial_screen == GlueInitialScreen::Movie
             && let Some(login_model) = login_model.as_ref()
         {
-            glue_model.prewarm(
-                login_model.path().clone(),
-                background_light_count,
-                &assets,
-                &cpu,
-            )?;
+            glue_model.prewarm(login_model.path().clone(), background_light_count, &cpu)?;
             // AccountLogin's immutable resources and live effect owner must
             // both exist before the movie starts. The movie then advances that
             // hidden owner until EULA reveals the already-current scene.
@@ -339,7 +334,6 @@ impl ClientServices {
             let _initial_model_poll = glue_model.synchronize(
                 &mut renderer,
                 &glue,
-                &assets,
                 &cpu,
                 &mut crt_rand,
                 Arc::clone(&particle_twinkle),
@@ -355,7 +349,7 @@ impl ClientServices {
             .into_iter()
             .map(AssetPath::new)
             .collect::<Result<Vec<_>, _>>()?;
-        glue_model.prewarm_backdrops(backdrop_catalog, backdrop_paths, &cpu)?;
+        glue_model.prewarm_backdrops(backdrop_paths, &cpu)?;
         let configured_texture_paths = glue.configured_texture_paths();
         let pending_glue_texture_prewarm = if configured_texture_paths.is_empty() {
             None
@@ -1199,7 +1193,6 @@ impl ClientServices {
         let model_poll = self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,
-            &self.assets,
             &self.cpu,
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),

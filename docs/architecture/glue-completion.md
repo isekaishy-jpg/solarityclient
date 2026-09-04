@@ -188,3 +188,47 @@ about 1,710 to 2,440 FPS, and warm selection maximum frames remained 7.7 and
 9.5 ms. Full scene readiness still waits for current audio admission. Decoder
 cancellation, capacity, residency, playback, and shutdown tests bring the
 passing workspace total to 535; formatting and Clippy also pass.
+
+## Shared backdrop archive residency
+
+Cold selection still synchronously loaded its backdrop M2, primary SKIN, and
+BLPs through the presentation owner's archive store, even when the separate
+racial prewarm worker had decoded that path. The measured Human and Night Elf
+archive phases took about 19 and 14 ms respectively.
+
+Selected and speculative backdrop requests now share a worker-private archive
+owner and a result cache. That owner mounts the discovered archive catalog once,
+retains decode caches, and processes one finite model request at a time. A new
+selection preserves the active request's eventual result and takes priority
+before the next optional path. Queue pressure returns a pending scene without
+blocking or discarding completed assets. Shader preparation remains on the CPU
+pool; Vulkan admission and complete scene publication remain on the presentation
+thread. The hidden login prewarm before movie playback retains its explicit
+startup wait so the cinematic still advances the existing login effects.
+
+The scene retains character replacement intent across archive waits and keeps
+the previous complete presentation until the requested generation is ready.
+Missing optional backdrop models do not prevent other racial prewarms. Exact
+model failures are retained for demand, while authored BLPs and stock white/green
+texture fallback resolution use the existing loader contract. Regression tests
+cover capacity refusal without a main-thread mount, changed selection, exact
+failure retention, and reuse of decoded models and textures. All 542 workspace
+tests, formatting, and Clippy pass.
+
+The next isolated GTX 1070 replay at 1280 by 720, with audio and 1,000 following
+frames per action, recorded these maximum transition intervals:
+
+| Cold selection | Previous | Shared worker assets |
+| --- | --- | --- |
+| Human | 67.7 ms | 49.3 ms |
+| Night Elf | 27.9 ms | 16.7 ms |
+| Blood Elf | 37.3 ms | 13.5 ms |
+
+The log records one archive job for each of the login and eight racial
+backdrops, all reused by subsequent selection. Warm selection remained at
+8.7 and 10.6 ms maximum frames; following-frame means ranged from about 1,570
+to 2,420 FPS. Human complete readiness still took 633 ms, including the stock
+screen transition, and creation entry reached a 33.7 ms frame. These single-run
+results establish removal of duplicate backdrop reads, not stall-free Glue.
+A second complete replay with one CPU worker and capacity one also passed all
+28 actions, exercising deferred admission through real installed assets.

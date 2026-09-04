@@ -261,6 +261,7 @@ enum M2ResolvedTexture<'source> {
 }
 
 /// One Glue-environment M2 texture after stock loader fallback resolution.
+#[derive(Clone)]
 pub(in crate::application) enum GlueM2Texture {
     /// A shared authored BLP selected through archive precedence.
     Authored(Arc<BlpTextureSource>),
