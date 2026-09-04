@@ -427,7 +427,11 @@ impl UiMeshPlan {
         if slots.len() != quads.len() {
             return Ok(false);
         }
-        let mut batch_index = 0;
+        let mut batch_index = slots.first().map_or(0, |&first_slot| {
+            self.batches.partition_point(|batch| {
+                batch.first_quad() as usize + batch.quad_count() as usize <= first_slot
+            })
+        });
         for (slot, quad) in slots.iter().copied().zip(quads) {
             validate_quad(quad)?;
             if quad.object_index() != object_index || quad.source() != source {

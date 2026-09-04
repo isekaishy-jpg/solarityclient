@@ -23,6 +23,7 @@ const GLYPH_PADDING: u32 = 1;
 const DEFAULT_RETAINED_EDIT_BOX_LETTERS: usize = 256;
 const MAX_RETAINED_EDIT_BOX_LETTERS: usize = 4_096;
 const RETAINED_GLUE_TOOLTIP_LETTERS: usize = 128;
+const RETAINED_EMPTY_FONT_STRING_LETTERS: usize = 64;
 
 /// One positioned glyph sampling the current immutable coverage atlas.
 #[derive(Clone, Debug, PartialEq)]
@@ -556,7 +557,10 @@ impl UiGlyphAtlasPlan {
             self.extent,
             object_indices.iter().copied(),
         )?;
-        replace_sorted_live_quads(&mut self.live_quads, layout.quads, object_indices);
+        if !replace_within_retained_live_quads(&mut self.live_quads, &layout.quads, object_indices)
+        {
+            replace_sorted_live_quads(&mut self.live_quads, layout.quads, object_indices);
+        }
         for &object_index in object_indices {
             if let (Some(target), Some(source)) = (
                 self.edit_box_layouts.get_mut(object_index),
@@ -825,6 +829,45 @@ fn replace_sorted_live_quads(
         }
     }
     *existing = merged;
+}
+
+/// Replaces bounded glyph runs in place and clears their unused tail slots.
+fn replace_within_retained_live_quads(
+    existing: &mut [LocalGlyphQuad],
+    replacements: &[LocalGlyphQuad],
+    object_indices: &[usize],
+) -> bool {
+    let fits = object_indices.iter().all(|&object_index| {
+        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
+        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
+        let replacement_first =
+            replacements.partition_point(|quad| quad.object_index < object_index);
+        let replacement_end =
+            replacements.partition_point(|quad| quad.object_index <= object_index);
+        existing_end - existing_first >= replacement_end - replacement_first
+            && (existing_end > existing_first || replacement_end == replacement_first)
+    });
+    if !fits {
+        return false;
+    }
+    for &object_index in object_indices {
+        let existing_first = existing.partition_point(|quad| quad.object_index < object_index);
+        let existing_end = existing.partition_point(|quad| quad.object_index <= object_index);
+        let replacement_first =
+            replacements.partition_point(|quad| quad.object_index < object_index);
+        let replacement_end =
+            replacements.partition_point(|quad| quad.object_index <= object_index);
+        let replacement_count = replacement_end - replacement_first;
+        existing[existing_first..existing_first + replacement_count]
+            .clone_from_slice(&replacements[replacement_first..replacement_end]);
+        for reserved in &mut existing[existing_first + replacement_count..existing_end] {
+            reserved.bounds = [0.0, -1.0, 1.0, 0.0];
+            reserved.color = [0.0; 4];
+            reserved.caret = false;
+            reserved.reserved = true;
+        }
+    }
+    true
 }
 
 /// Resolves object-sorted local glyphs while looking up inherited geometry
@@ -1417,7 +1460,14 @@ fn layout_live_quads_for_objects(
         let packet_key = UiPresentationPacketKey::for_text(live, object_index);
         let retained_tooltip =
             packet_key.is_some_and(|key| key.strata() == crate::UiFrameStrata::Tooltip);
-        if text.content.is_empty() && object.kind != UiObjectKind::EditBox && !retained_tooltip {
+        let retained_empty_font_string = text.content.is_empty()
+            && object.kind == UiObjectKind::FontString
+            && packet_key.is_some();
+        if text.content.is_empty()
+            && object.kind != UiObjectKind::EditBox
+            && !retained_tooltip
+            && !retained_empty_font_string
+        {
             continue;
         }
         let font = runtime_font_key(text, pixels_per_ui_unit)?;
@@ -1696,9 +1746,11 @@ fn layout_live_quads_for_objects(
             );
         }
         quads.extend(primary_quads);
-        if object.kind == UiObjectKind::EditBox || retained_tooltip {
+        if object.kind == UiObjectKind::EditBox || retained_tooltip || retained_empty_font_string {
             let letters = if retained_tooltip {
                 RETAINED_GLUE_TOOLTIP_LETTERS
+            } else if retained_empty_font_string {
+                RETAINED_EMPTY_FONT_STRING_LETTERS
             } else if text.max_letters == 0 {
                 DEFAULT_RETAINED_EDIT_BOX_LETTERS
             } else {
@@ -2156,6 +2208,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(0, false), (0, false), (1, true), (1, true), (4, true),]
         );
+    }
+
+    #[test]
+    fn bounded_glyph_refresh_clears_unused_slots_without_changing_topology() {
+        let mut existing = vec![
+            local_quad(1, false),
+            local_quad(2, false),
+            local_quad(2, false),
+            local_quad(2, false),
+            local_quad(4, false),
+        ];
+        let replacements = vec![local_quad(2, true)];
+
+        assert!(replace_within_retained_live_quads(
+            &mut existing,
+            &replacements,
+            &[2]
+        ));
+        assert_eq!(existing.len(), 5);
+        assert!(existing[1].caret);
+        assert!(existing[2].reserved);
+        assert!(existing[3].reserved);
+        assert_eq!(existing[2].color, [0.0; 4]);
+        assert!(!replace_within_retained_live_quads(
+            &mut existing,
+            &[
+                local_quad(2, false),
+                local_quad(2, false),
+                local_quad(2, false),
+                local_quad(2, false),
+            ],
+            &[2]
+        ));
     }
 
     #[test]

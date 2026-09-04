@@ -970,6 +970,11 @@ impl GlueManager {
                 return Ok(());
             }
         }
+        if self.runtime.is_retained_content_journal(dirty_objects)
+            && self.refresh_retained_content(dirty_objects, visual_objects, started)?
+        {
+            return Ok(());
+        }
         if !visual_objects_refreshed && !visual_objects.is_empty() {
             self.runtime
                 .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
@@ -1063,6 +1068,92 @@ impl GlueManager {
             );
         }
         Ok(())
+    }
+
+    fn refresh_retained_content(
+        &mut self,
+        dirty_objects: &[(usize, u32)],
+        visual_objects: &[usize],
+        started: std::time::Instant,
+    ) -> Result<bool, UiEventError> {
+        if !visual_objects.is_empty() {
+            self.runtime
+                .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
+        }
+        let text_objects =
+            self.runtime
+                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        let copied = started.elapsed();
+        if !text_objects.is_empty()
+            && !self.glyphs.supports_live_text_objects(
+                &self.live,
+                self.glyph_logical_height,
+                text_objects.iter().copied(),
+            )
+        {
+            return Ok(false);
+        }
+        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        self.runtime
+            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
+        synchronize_resolved_dimensions(&mut self.live, &geometry);
+        let scroll_frames = UiScrollFramePlan::from_live(&self.live);
+        let resolved = started.elapsed();
+        if !text_objects.is_empty() {
+            self.glyphs.refresh_live_text_objects(
+                &self.live,
+                &geometry,
+                self.glyph_logical_height,
+                &text_objects,
+            )?;
+            let laid_out = started.elapsed();
+            if !self.render_plan.refresh_glyph_objects(
+                &self.glyphs,
+                &self.live,
+                &geometry,
+                &scroll_frames,
+                &text_objects,
+            )? {
+                return Ok(false);
+            }
+            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                eprintln!(
+                    "UI retained content glyphs: layout={:.3}ms vertices={:.3}ms",
+                    laid_out.saturating_sub(resolved).as_secs_f64() * 1_000.0,
+                    started.elapsed().saturating_sub(laid_out).as_secs_f64() * 1_000.0,
+                );
+            }
+        }
+        let glyphs = started.elapsed();
+        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let roots = dirty_objects
+            .iter()
+            .map(|&(object_index, _)| object_index)
+            .collect::<Vec<_>>();
+        self.collect_visual_subtrees(&roots);
+        self.render_plan.refresh_region_opacities(
+            &presentation,
+            &geometry,
+            &self.visual_indices,
+        )?;
+        let rendered = started.elapsed();
+        self.geometry = geometry;
+        self.scroll_frames = scroll_frames;
+        self.presentation = presentation;
+        self.pointer = UiPointerPlan::from_live(&self.live);
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI retained content patch: objects={} text_objects={} copy={:.3}ms resolve={:.3}ms glyphs={:.3}ms presentation={:.3}ms total={:.3}ms",
+                dirty_objects.len(),
+                text_objects.len(),
+                copied.as_secs_f64() * 1_000.0,
+                resolved.saturating_sub(copied).as_secs_f64() * 1_000.0,
+                glyphs.saturating_sub(resolved).as_secs_f64() * 1_000.0,
+                rendered.saturating_sub(glyphs).as_secs_f64() * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+        Ok(true)
     }
 
     fn retained_tooltip_journal_owner(&self, dirty_objects: &[(usize, u32)]) -> Option<usize> {

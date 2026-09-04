@@ -1965,6 +1965,15 @@ impl UiScriptRuntime {
             })
     }
 
+    /// Reports whether one journal changes only retained content/state slots.
+    pub(crate) fn is_retained_content_journal(&self, dirty_objects: &[(usize, u32)]) -> bool {
+        let retained = DIRTY_TEXT | DIRTY_WIDGET | DIRTY_MODEL;
+        !dirty_objects.is_empty()
+            && dirty_objects
+                .iter()
+                .all(|&(_, flags)| flags != 0 && flags & !retained == 0)
+    }
+
     pub(crate) fn refresh_button_texts(
         &self,
         bundle: &UiBundle,
