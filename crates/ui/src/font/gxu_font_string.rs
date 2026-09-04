@@ -828,7 +828,8 @@ fn retained_glyph_state(
     scroll_frames: &UiScrollFramePlan,
 ) -> Option<RetainedGlyphState> {
     let region = geometry.region(quad.object_index)?;
-    if region.effective_alpha() <= 0.0 && !region.animation_active() {
+    if !region.effectively_shown() || region.effective_alpha() <= 0.0 && !region.animation_active()
+    {
         return None;
     }
     let owner = region.presentation_bounds();
@@ -857,7 +858,9 @@ fn retained_glyph_state(
         }
         Some(clip_object) => {
             let clip = geometry.region(clip_object)?;
-            if clip.effective_alpha() <= 0.0 && !clip.animation_active() {
+            if !clip.effectively_shown()
+                || clip.effective_alpha() <= 0.0 && !clip.animation_active()
+            {
                 return None;
             }
             (Some(clip.presentation_bounds()), None)
@@ -871,7 +874,7 @@ fn retained_glyph_state(
             scale: region.effective_scale(),
         },
         clip,
-        opacity: region.effective_alpha() as f32 * f32::from(region.effectively_shown()),
+        opacity: region.effective_alpha() as f32,
         transform,
     })
 }
@@ -913,7 +916,9 @@ impl LocalGlyphRun {
         let Some(region) = geometry.region(quad.object_index) else {
             return false;
         };
-        if region.effective_alpha() <= 0.0 && !region.animation_active() {
+        if !region.effectively_shown()
+            || region.effective_alpha() <= 0.0 && !region.animation_active()
+        {
             return false;
         }
         let Some(clip_object) = quad.clip_object else {
@@ -922,7 +927,7 @@ impl LocalGlyphRun {
         let Some(clip) = geometry.region(clip_object) else {
             return false;
         };
-        if clip.effective_alpha() <= 0.0 && !clip.animation_active() {
+        if !clip.effectively_shown() || clip.effective_alpha() <= 0.0 && !clip.animation_active() {
             return false;
         }
         let owner = region.presentation_bounds();
@@ -1871,7 +1876,8 @@ fn resolve_quad_unclipped(
     scroll_frames: Option<&UiScrollFramePlan>,
 ) -> Option<UiGlyphQuad> {
     let region = geometry.region(quad.object_index)?;
-    if region.effective_alpha() <= 0.0 && !region.animation_active() {
+    if !region.effectively_shown() || region.effective_alpha() <= 0.0 && !region.animation_active()
+    {
         return None;
     }
     let owner = region.presentation_bounds();
@@ -1889,7 +1895,7 @@ fn resolve_quad_unclipped(
         },
         scroll,
     );
-    resolved.opacity = region.effective_alpha() as f32 * f32::from(region.effectively_shown());
+    resolved.opacity = region.effective_alpha() as f32;
     Some(resolved)
 }
 
@@ -1931,7 +1937,7 @@ fn clip_quad(
         return Some(quad);
     };
     let clip = geometry.region(clip_object)?;
-    if clip.effective_alpha() <= 0.0 && !clip.animation_active() {
+    if !clip.effectively_shown() || clip.effective_alpha() <= 0.0 && !clip.animation_active() {
         return None;
     }
     clip_quad_to_viewport(quad, clip.presentation_bounds())

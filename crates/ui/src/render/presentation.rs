@@ -606,7 +606,8 @@ impl UiPresentationPlan {
                 geometry.region(object_index),
                 object.frame_strata,
                 object.frame_level,
-            ) && (region.effective_alpha() > 0.0 || region.animation_active())
+            ) && region.effectively_shown()
+                && (region.effective_alpha() > 0.0 || region.animation_active())
             {
                 append_backdrop(
                     &mut keyed,
@@ -616,24 +617,19 @@ impl UiPresentationPlan {
                         object,
                         clip_object: nearest_owning_scroll_frame(live, object_index),
                         bounds: region.presentation_bounds(),
-                        effective_alpha: region.effective_alpha() as f32
-                            * f32::from(region.effectively_shown()),
+                        effective_alpha: region.effective_alpha() as f32,
                         effective_scale: region.effective_scale(),
                         strata,
                         frame_level,
                     },
                 );
             }
-            if let Some(mut model) = Self::configured_model(live, geometry, object_index)
+            if let Some(model) = Self::configured_model(live, geometry, object_index)
                 && geometry.region(object_index).is_some_and(|region| {
-                    region.effective_alpha() > 0.0 || region.animation_active()
+                    region.effectively_shown()
+                        && (region.effective_alpha() > 0.0 || region.animation_active())
                 })
             {
-                model.alpha *= f32::from(
-                    geometry
-                        .region(object_index)
-                        .is_some_and(crate::UiRegionGeometry::effectively_shown),
-                );
                 models.push(model);
             }
             let Some(texture) = &object.texture else {
@@ -642,7 +638,9 @@ impl UiPresentationPlan {
             let Some(region) = geometry.region(object_index) else {
                 continue;
             };
-            if region.effective_alpha() <= 0.0 && !region.animation_active() {
+            if !region.effectively_shown()
+                || region.effective_alpha() <= 0.0 && !region.animation_active()
+            {
                 continue;
             }
             let Some(owner_index) = nearest_owning_frame(live, object) else {
@@ -670,7 +668,6 @@ impl UiPresentationPlan {
                 .vertex_colors
                 .map(|color| color.map(|value| value as f32));
             let effective_alpha = region.effective_alpha() as f32
-                * f32::from(region.effectively_shown())
                 * f32::from(widget_role_is_active(
                     object.role,
                     owner,

@@ -335,8 +335,8 @@ fn glue_presentation_retains_stock_model_ffx_state() -> Result<(), Box<dyn Error
     Ok(())
 }
 
-/// A model assigned by stock `OnLoad` retains a zero-opacity presentation slot
-/// while another Glue screen hides it.
+/// A model assigned by stock `OnLoad` remains discoverable while another Glue
+/// screen hides it from the render presentation.
 #[test]
 fn glue_retains_hidden_model_source_for_prewarm() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
@@ -364,10 +364,7 @@ fn glue_retains_hidden_model_source_for_prewarm() -> Result<(), Box<dyn Error>> 
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1600, 900), false)?;
 
-    let models = manager.presentation().models();
-    assert_eq!(models.len(), 1);
-    assert_eq!(models[0].alpha(), 0.0);
-    assert_eq!(manager.presentation().visible_models().count(), 0);
+    assert!(manager.presentation().models().is_empty());
     let (path, light_count) = manager
         .configured_model_source("AccountLogin")?
         .ok_or("missing hidden AccountLogin model source")?;
