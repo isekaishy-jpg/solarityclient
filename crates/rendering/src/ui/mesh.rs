@@ -2,8 +2,17 @@
 
 use super::UiRenderState;
 use super::{UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderTransform, UiRenderVertex};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+const RETAINED_VERTEX_REVISION_LIMIT: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UiVertexRevision {
+    from: u64,
+    to: u64,
+    byte_range: (usize, usize),
+}
 
 /// Upload-ready UI geometry with adjacent compatible quads already batched.
 #[derive(Clone, Debug, PartialEq)]
@@ -16,6 +25,7 @@ pub struct UiMeshPlan {
     object_indices: Vec<usize>,
     object_quads: HashMap<usize, Vec<usize>>,
     object_batches: HashMap<usize, Vec<usize>>,
+    vertex_revisions: VecDeque<UiVertexRevision>,
 }
 
 impl UiMeshPlan {
@@ -69,6 +79,7 @@ impl UiMeshPlan {
             object_indices: Vec::with_capacity(quad_count),
             object_quads: HashMap::new(),
             object_batches: HashMap::new(),
+            vertex_revisions: VecDeque::new(),
         };
         for quad in quads {
             plan.push_quad(quad)?;
@@ -134,6 +145,7 @@ impl UiMeshPlan {
             object_indices: Vec::new(),
             object_quads: HashMap::new(),
             object_batches: HashMap::from([(0, vec![0])]),
+            vertex_revisions: VecDeque::new(),
         })
     }
 
@@ -182,6 +194,36 @@ impl UiMeshPlan {
     #[must_use]
     pub const fn geometry_identity(&self) -> u64 {
         self.identity
+    }
+
+    /// Returns the merged vertex byte span changed since a retained generation.
+    ///
+    /// The bounded journal is an optimization hint: a renderer falls back to
+    /// comparing complete payloads when the requested ancestor has expired or
+    /// came from an independently built plan.
+    pub(crate) fn vertex_update_range_since(&self, identity: u64) -> Option<(usize, usize)> {
+        let first = self
+            .vertex_revisions
+            .iter()
+            .position(|revision| revision.from == identity)?;
+        let mut cursor = identity;
+        let mut range: Option<(usize, usize)> = None;
+        for revision in self.vertex_revisions.iter().skip(first) {
+            if revision.from != cursor {
+                return None;
+            }
+            range = Some(range.map_or(revision.byte_range, |range| {
+                (
+                    range.0.min(revision.byte_range.0),
+                    range.1.max(revision.byte_range.1),
+                )
+            }));
+            cursor = revision.to;
+            if cursor == self.identity {
+                return range;
+            }
+        }
+        None
     }
 
     /// Changes one retained draw translation without touching serialized mesh bytes.
@@ -265,7 +307,7 @@ impl UiMeshPlan {
         if slots.len() != colors.len() {
             return Ok(false);
         }
-        let mut changed = false;
+        let mut changed_vertices: Option<(usize, usize)> = None;
         for (&slot, quad_colors) in slots.iter().zip(colors) {
             for (corner, &color) in quad_colors.iter().enumerate() {
                 validate_components(object_index, "color", &color)?;
@@ -277,11 +319,28 @@ impl UiMeshPlan {
                 let vertex =
                     UiRenderVertex::new(previous.position(), previous.texture_coordinates(), color);
                 self.vertices[vertex_index] = vertex;
-                changed = true;
+                changed_vertices = Some(
+                    changed_vertices.map_or((vertex_index, vertex_index + 1), |(start, end)| {
+                        (start.min(vertex_index), end.max(vertex_index + 1))
+                    }),
+                );
             }
         }
-        if changed {
-            self.identity = next_identity();
+        if let Some((start, end)) = changed_vertices {
+            let previous = self.identity;
+            let current = next_identity();
+            self.identity = current;
+            if self.vertex_revisions.len() == RETAINED_VERTEX_REVISION_LIMIT {
+                self.vertex_revisions.pop_front();
+            }
+            self.vertex_revisions.push_back(UiVertexRevision {
+                from: previous,
+                to: current,
+                byte_range: (
+                    start * UiRenderVertex::BYTE_SIZE,
+                    end * UiRenderVertex::BYTE_SIZE,
+                ),
+            });
         }
         Ok(true)
     }

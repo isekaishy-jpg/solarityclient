@@ -55,6 +55,13 @@ Precompiled character driver pipelines are admitted one at a time while the
 previous complete scene remains visible; this replaces the measured 22-27 ms
 first-use pipeline burst with bounded individual frames.
 
+Object-local color changes carry a bounded mesh-revision journal from the UI
+plan into renderer residency. The renderer copies and records only the merged
+changed vertex span when its retained identity is an ancestor of the current
+plan; independently rebuilt or expired generations safely fall back to a full
+payload comparison. This removes the hidden whole-mesh byte scan that remained
+after Lua and layout had already reduced hover updates to one object.
+
 A recoverable Lua callback is also contained inside the UI frame boundary.
 The failing `OnUpdate` member is retired and reported once through the bounded
 developer-console mailbox, while healthy callbacks, retained mutation

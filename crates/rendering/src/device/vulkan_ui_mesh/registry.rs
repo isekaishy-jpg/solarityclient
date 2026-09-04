@@ -97,7 +97,17 @@ impl UiMeshRegistry {
             return Ok(());
         }
 
-        if let Some(range) = replace_payload(&mut resource.vertex_bytes, vertex_bytes) {
+        let retained_identity = resource.info.plan_identity();
+        let vertex_update = if resource.vertex_bytes.len() == vertex_bytes.len() {
+            plan.vertex_update_range_since(retained_identity)
+                .and_then(|range| {
+                    replace_payload_range(&mut resource.vertex_bytes, vertex_bytes, range)
+                })
+                .or_else(|| replace_payload(&mut resource.vertex_bytes, vertex_bytes))
+        } else {
+            replace_payload(&mut resource.vertex_bytes, vertex_bytes)
+        };
+        if let Some(range) = vertex_update {
             resource
                 .pending_vertex_update
                 .set(merge_update(resource.pending_vertex_update.get(), range));
@@ -238,6 +248,20 @@ fn replace_payload(current: &mut Vec<u8>, candidate: &[u8]) -> Option<(usize, us
     } else {
         None
     }
+}
+
+/// Copies one journal-proven changed span without scanning the full mesh.
+fn replace_payload_range(
+    current: &mut [u8],
+    candidate: &[u8],
+    range: (usize, usize),
+) -> Option<(usize, usize)> {
+    let (start, end) = range;
+    if start >= end || end > current.len() || end > candidate.len() {
+        return None;
+    }
+    current[start..end].copy_from_slice(&candidate[start..end]);
+    Some(range)
 }
 
 fn merge_update(
