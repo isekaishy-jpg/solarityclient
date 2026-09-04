@@ -57,6 +57,18 @@ impl BlpTextureCache {
         Ok(texture)
     }
 
+    /// Adopts immutable sources prepared by another single-threaded cache.
+    ///
+    /// Existing entries retain authority so merging a speculative worker
+    /// generation cannot replace a source already selected by this owner.
+    pub fn merge(&mut self, prepared: Self) -> usize {
+        let before = self.textures.len();
+        for (path, texture) in prepared.textures {
+            self.textures.entry(path).or_insert(texture);
+        }
+        self.textures.len() - before
+    }
+
     /// Releases entries held only by the cache and returns the removal count.
     ///
     /// Texture users that still hold an [`Arc`] survive collection. No guessed

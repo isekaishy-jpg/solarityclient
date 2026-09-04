@@ -91,7 +91,14 @@ The current retained implementation already avoids idle snapshots, coalesces
 character requests, keeps encountered hidden presentation slots resident,
 directly patches hover colors, retains compatible prepared Vulkan draws and
 command bindings, defers character texture transfers, and reserves CPU capacity
-for interactive residency. The next structural slices are:
+for interactive residency. It also enumerates every configured Glue texture
+assignment after script initialization and decodes those sources in a private
+worker cache while the movie/authentication cover is active. Completed sources
+are adopted without replacing newer owner state, and individual missing files
+cannot discard the rest of the speculative generation. This is the transition
+step toward setter-time subscriptions; dynamic assignments still need to enter
+the same residency journal when their setters run. The next structural slices
+are:
 
 1. Replace whole-arena geometry resolution with indexed dependency-island
    publication and remove resolved engine state from Lua shadow fields.

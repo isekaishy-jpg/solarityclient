@@ -1,6 +1,7 @@
 //! Persistent ownership of the built-in login and character UI.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use solarity_asset::{AssetStore, AssetStoreHandle, BlpTextureCache};
@@ -673,6 +674,41 @@ impl GlueManager {
     #[must_use]
     pub const fn textures(&self) -> &UiTexturePlan {
         &self.textures
+    }
+
+    /// Returns every currently assigned Glue BLP independently of visibility.
+    ///
+    /// Stock resource assignment is a residency request; hiding a screen does
+    /// not defer its archive work until the first visible frame.
+    pub fn configured_texture_paths(&self) -> Vec<solarity_asset::AssetPath> {
+        let mut seen = HashSet::new();
+        let mut paths = Vec::new();
+        let mut push = |path: &solarity_asset::AssetPath| {
+            if seen.insert(path.clone()) {
+                paths.push(path.clone());
+            }
+        };
+        for object in self.live.objects() {
+            if let Some(path) = object
+                .texture
+                .as_ref()
+                .and_then(|texture| texture.file.as_ref())
+            {
+                push(path);
+            }
+        }
+        for object_index in 0..self.backdrops.state_count() {
+            let Some(backdrop) = self.backdrops.state(object_index) else {
+                continue;
+            };
+            if let Some(path) = backdrop.background() {
+                push(path);
+            }
+            if let Some(path) = backdrop.edge() {
+                push(path);
+            }
+        }
+        paths
     }
 
     /// Returns declaration-resolved startup state for static texture objects.
