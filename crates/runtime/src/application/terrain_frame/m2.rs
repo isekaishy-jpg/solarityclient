@@ -10,22 +10,24 @@ use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
     M2DrawCall, M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose,
-    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement,
-    M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose,
-    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler,
-    M2ParticleSpirvProgram, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram,
-    M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan,
-    M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram,
-    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
-    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
+    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ModelOrientation,
+    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
+    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
+    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
+    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
+    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2SpirvKey, M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
+    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
+    m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
+    triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
-    ResidentGlueCharacterFrameInput, ResidentPlayerFrameInput, ResidentPlayerTexture,
+    ResidentGlueCharacterFrameInput, ResidentPlayerAttachment, ResidentPlayerFrameInput,
+    ResidentPlayerTexture,
 };
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
@@ -128,6 +130,10 @@ struct M2GpuPlacement {
     /// Placement-local transform retained across animated parent resolution.
     local_transform: Mat4,
     transform: Mat4,
+    /// Local reflection paired with the source's Vulkan front-face state.
+    orientation: M2ModelOrientation,
+    /// Stock item-display sequence relationship to another placed model.
+    animation_binding: M2AnimationBinding,
     /// Stock parent attachment used by Glue character preview models.
     glue_parent_attachment: Option<u32>,
     owner: M2GpuPlacementOwner,
@@ -138,6 +144,20 @@ struct M2GpuPlacement {
     playback: Option<M2Playback>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
+}
+
+/// Sequence source selected by build-12340 item-display component flags.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum M2AnimationBinding {
+    /// Advance the model's own animation selection.
+    #[default]
+    Independent,
+    /// Follow the owning character's active animation and variation.
+    Character,
+    /// Attachment six follows the sibling installed at attachment five.
+    OppositeShoulder,
+    /// Follow attachment five, or the character when that sibling is absent.
+    OppositeShoulderOrCharacter,
 }
 
 /// One placement-local simulation plus an unsupported-path containment latch.
@@ -488,6 +508,16 @@ struct M2ExpiredVariation {
     event_window: M2EventTimeWindow,
 }
 
+/// Cross-model animation identity copied by stock equipment components.
+#[derive(Clone, Copy)]
+struct M2PlaybackSynchronization {
+    animation_id: u16,
+    variation_index: u16,
+    cycle_count: u32,
+    cycle_started_ms: f32,
+    previous_global_event_elapsed_ms: f32,
+}
+
 impl M2Playback {
     /// Selects one base animation and consumes its authored cycle-count roll.
     fn new(
@@ -657,6 +687,59 @@ impl M2Playback {
         self.event_timeline_started = true;
         window
     }
+
+    /// Captures the stock sequence identity shared with an equipment model.
+    fn synchronization(&self, model: &DecodedM2Model) -> M2PlaybackSynchronization {
+        let variation_index = model
+            .animations()
+            .sequences()
+            .get(self.sequence)
+            .map_or(0, |sequence| sequence.variation_index());
+        M2PlaybackSynchronization {
+            animation_id: self.animation_id,
+            variation_index,
+            cycle_count: self.cycle_count,
+            cycle_started_ms: self.cycle_started_ms,
+            previous_global_event_elapsed_ms: self.previous_global_event_elapsed_ms,
+        }
+    }
+
+    /// Maps another model's active sequence identity onto this model's table.
+    fn synchronize_from(
+        &mut self,
+        model: &DecodedM2Model,
+        source: M2PlaybackSynchronization,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let sequence = model
+            .animations()
+            .select_sequence(source.animation_id, Some(source.variation_index), 0)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
+                model: model.path().clone(),
+                animation_id: source.animation_id,
+            })?;
+        let identity_changed = self.animation_id != source.animation_id
+            || self.sequence != sequence
+            || self.cycle_started_ms != source.cycle_started_ms;
+        self.animation_id = source.animation_id;
+        self.sequence = sequence;
+        self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
+        self.cycle_count = source.cycle_count;
+        self.cycle_started_ms = source.cycle_started_ms;
+        self.has_variations = model
+            .animations()
+            .available_variation_count(source.animation_id)
+            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
+                model: model.path().clone(),
+                animation_id: source.animation_id,
+            })?
+            > 1;
+        if identity_changed {
+            self.previous_event_elapsed_ms = 0.0;
+            self.previous_global_event_elapsed_ms = source.previous_global_event_elapsed_ms;
+            self.event_timeline_started = false;
+        }
+        Ok(())
+    }
 }
 
 /// One generic authored M2 callback resolved into world space.
@@ -737,6 +820,8 @@ pub(in crate::application) struct M2Frame {
     visual_transforms: Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
     glue_attachment_ids: Vec<u32>,
     glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
+    character_animation_sync: Vec<(u64, M2PlaybackSynchronization)>,
+    shoulder_animation_sync: Vec<(u64, M2PlaybackSynchronization)>,
     recoverable_errors: Vec<String>,
     last_effect_time_ms: Option<f32>,
 }
@@ -797,6 +882,8 @@ impl M2Frame {
                 source_index: placement.source_index(),
                 local_transform: placement.transform(),
                 transform: placement.transform(),
+                orientation: M2ModelOrientation::Authored,
+                animation_binding: M2AnimationBinding::Independent,
                 glue_parent_attachment: None,
                 owner: M2GpuPlacementOwner::Static(placement.owner()),
                 flags: placement.flags(),
@@ -836,6 +923,8 @@ impl M2Frame {
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
+            character_animation_sync: Vec::new(),
+            shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
         })
@@ -974,6 +1063,7 @@ impl M2Frame {
             None,
             local_light_count,
             cpu_source,
+            M2ModelOrientation::Authored,
         )?;
         Ok(M2GlueGpuSource {
             source,
@@ -1013,6 +1103,8 @@ impl M2Frame {
                 source_index: 0,
                 local_transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
                 transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
+                orientation: M2ModelOrientation::Authored,
+                animation_binding: M2AnimationBinding::Independent,
                 glue_parent_attachment: None,
                 owner: M2GpuPlacementOwner::GlueModel { object_index },
                 flags: 0,
@@ -1048,6 +1140,8 @@ impl M2Frame {
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
+            character_animation_sync: Vec::new(),
+            shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
         })
@@ -1092,6 +1186,7 @@ impl M2Frame {
             Some(M2GeosetSelection::Character(input.geosets())),
             character_light_count,
             cpu_sources,
+            M2ModelOrientation::Authored,
         )?;
         let transform = stock_glue_character_local_transform(input.facing_radians());
         let mut placement = unit_gpu_placement(
@@ -1132,6 +1227,11 @@ impl M2Frame {
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
+            let orientation = if attachment.is_model_mirrored() {
+                M2ModelOrientation::Mirrored
+            } else {
+                M2ModelOrientation::Authored
+            };
             let source = prepare_glue_character_gpu_source(
                 renderer,
                 attachment.model(),
@@ -1139,8 +1239,9 @@ impl M2Frame {
                 None,
                 character_light_count,
                 cpu_sources,
+                orientation,
             )?;
-            let placement = unit_gpu_placement(
+            let mut placement = unit_gpu_placement(
                 0,
                 transform,
                 M2GpuPlacementOwner::PlayerItem {
@@ -1152,6 +1253,8 @@ impl M2Frame {
                 attachment.particle_colors().cloned(),
                 random,
             )?;
+            placement.orientation = orientation;
+            placement.animation_binding = equipment_animation_binding(attachment);
             prepared.push((source, placement));
             for effect in attachment.visual_effects() {
                 let resolved = effect
@@ -1178,6 +1281,7 @@ impl M2Frame {
                     None,
                     character_light_count,
                     cpu_sources,
+                    orientation,
                 )?;
                 let placement = unit_gpu_placement(
                     0,
@@ -1220,6 +1324,7 @@ impl M2Frame {
                 pet.geosets().map(M2GeosetSelection::from),
                 pet_light_count,
                 cpu_sources,
+                M2ModelOrientation::Authored,
             )?;
             let transform = Mat4::from_scale(glam::Vec3::splat(pet.model_scale()));
             let mut placement = unit_gpu_placement(
@@ -1381,6 +1486,7 @@ impl M2Frame {
                 &resolved,
                 input.geosets().map(M2GeosetSelection::from),
                 M2LocalLightCount::Zero,
+                M2ModelOrientation::Authored,
             )?;
             let transform =
                 unit_placement_transform(input.world_transform(), input.object_scale())?;
@@ -1888,6 +1994,30 @@ impl M2Frame {
             &self.sources,
             &mut self.model_distance_sort,
         );
+        self.character_animation_sync.clear();
+        self.shoulder_animation_sync.clear();
+        // Stock installs attachment six before attachment five, so the former
+        // observes the latter's retained identity from the preceding frame.
+        for placement in &self.placements {
+            let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner else {
+                continue;
+            };
+            if point != CharacterAttachmentPoint::ShoulderLeft {
+                continue;
+            }
+            let Some(source) = self
+                .sources
+                .get(placement.source_index)
+                .and_then(Option::as_ref)
+            else {
+                continue;
+            };
+            let Some(playback) = placement.playback.as_ref() else {
+                continue;
+            };
+            self.shoulder_animation_sync
+                .push((guid, playback.synchronization(&source.model)));
+        }
         for (placement_index, placement) in self.placements.iter_mut().enumerate() {
             if let Some(attachment_id) = placement.glue_parent_attachment {
                 let parent = self
@@ -1940,7 +2070,7 @@ impl M2Frame {
                 let Some(transform) = transform else {
                     continue;
                 };
-                placement.transform = transform;
+                placement.transform = transform * placement.orientation.local_transform();
             }
             if let M2GpuPlacementOwner::PlayerItemVisual {
                 guid,
@@ -1978,11 +2108,42 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
+            let owner = placement.owner;
+            let animation_binding = placement.animation_binding;
+            let character_source = || {
+                let guid = placement_owner_guid(owner)?;
+                self.character_animation_sync
+                    .iter()
+                    .find_map(|(owner, state)| (*owner == guid).then_some(*state))
+            };
+            let shoulder_source = || {
+                let guid = placement_owner_guid(owner)?;
+                self.shoulder_animation_sync
+                    .iter()
+                    .find_map(|(owner, state)| (*owner == guid).then_some(*state))
+            };
+            let synchronization = match animation_binding {
+                M2AnimationBinding::Independent => None,
+                M2AnimationBinding::Character => character_source(),
+                M2AnimationBinding::OppositeShoulder => shoulder_source(),
+                M2AnimationBinding::OppositeShoulderOrCharacter => {
+                    shoulder_source().or_else(character_source)
+                }
+            };
             let Some(playback) = placement.playback.as_mut() else {
                 continue;
             };
+            if let Some(synchronization) = synchronization {
+                playback.synchronize_from(&source.model, synchronization)?;
+            }
             let advance =
                 playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+            if let M2GpuPlacementOwner::PlayerBody { guid }
+            | M2GpuPlacementOwner::RemotePlayerBody { guid } = owner
+            {
+                self.character_animation_sync
+                    .push((guid, playback.synchronization(&source.model)));
+            }
             if let Some(expired) = advance.expired_variation {
                 self.bone_pose_scratch
                     .recompose_with_model_view_and_orientation_mask(
@@ -2526,6 +2687,7 @@ fn prepare_glue_character_gpu_source(
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
     cpu_sources: &HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
+    orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     let key = M2GlueCpuSourceKey::new(model.path().clone(), local_light_count);
     let cpu_source =
@@ -2542,6 +2704,7 @@ fn prepare_glue_character_gpu_source(
         geosets,
         local_light_count,
         cpu_source,
+        orientation,
     )
 }
 
@@ -2763,6 +2926,7 @@ fn prepare_character_gpu(
             &resolved,
             None,
             M2LocalLightCount::Zero,
+            M2ModelOrientation::Authored,
         )?;
         let owner = match body_owner {
             M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
@@ -2801,6 +2965,7 @@ fn prepare_character_gpu(
         &resolved,
         Some(M2GeosetSelection::Character(input.geosets())),
         M2LocalLightCount::Zero,
+        M2ModelOrientation::Authored,
     )?;
     let body = unit_gpu_placement(
         0,
@@ -2834,14 +2999,20 @@ fn prepare_character_gpu(
                 ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
             })
             .collect::<Vec<_>>();
+        let orientation = if attachment.is_model_mirrored() {
+            M2ModelOrientation::Mirrored
+        } else {
+            M2ModelOrientation::Authored
+        };
         let source = prepare_gpu_source(
             renderer,
             attachment.model(),
             &resolved,
             None,
             M2LocalLightCount::Zero,
+            orientation,
         )?;
-        let placement = unit_gpu_placement(
+        let mut placement = unit_gpu_placement(
             0,
             world_transform,
             M2GpuPlacementOwner::PlayerItem {
@@ -2853,6 +3024,8 @@ fn prepare_character_gpu(
             attachment.particle_colors().cloned(),
             random,
         )?;
+        placement.orientation = orientation;
+        placement.animation_binding = equipment_animation_binding(attachment);
         prepared.push((source, placement));
         for effect in attachment.visual_effects() {
             let resolved = effect
@@ -2876,6 +3049,7 @@ fn prepare_character_gpu(
                 &resolved,
                 None,
                 M2LocalLightCount::Zero,
+                orientation,
             )?;
             let placement = unit_gpu_placement(
                 0,
@@ -2918,6 +3092,8 @@ fn unit_gpu_placement(
         source_index,
         local_transform: transform,
         transform,
+        orientation: M2ModelOrientation::Authored,
+        animation_binding: M2AnimationBinding::Independent,
         glue_parent_attachment: None,
         owner,
         flags: 0,
@@ -2928,6 +3104,21 @@ fn unit_gpu_placement(
         particles,
         ribbons,
     })
+}
+
+/// Resolves stock's ordered ItemDisplayInfo animation-flag overrides.
+fn equipment_animation_binding(attachment: &ResidentPlayerAttachment) -> M2AnimationBinding {
+    if attachment.mirrors_opposite_shoulder_animation() {
+        if attachment.inherits_character_animation() {
+            M2AnimationBinding::OppositeShoulderOrCharacter
+        } else {
+            M2AnimationBinding::OppositeShoulder
+        }
+    } else if attachment.inherits_character_animation() {
+        M2AnimationBinding::Character
+    } else {
+        M2AnimationBinding::Independent
+    }
 }
 
 /// Constructs every placement-local emitter with stock's fixed PRNG seed.
@@ -3243,6 +3434,7 @@ fn prepare_source(
         None,
         M2LocalLightCount::Zero,
         source.cpu_source(),
+        M2ModelOrientation::Authored,
     )?))
 }
 
@@ -3253,6 +3445,7 @@ fn prepare_gpu_source(
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
+    orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
     prepare_gpu_source_with_plan(
@@ -3263,6 +3456,7 @@ fn prepare_gpu_source(
         local_light_count,
         plan,
         None,
+        orientation,
     )
 }
 
@@ -3275,6 +3469,7 @@ fn prepare_gpu_source_from_cpu(
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
     cpu_source: &M2CpuSource,
+    orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     prepare_gpu_source_with_plan(
         renderer,
@@ -3284,6 +3479,7 @@ fn prepare_gpu_source_from_cpu(
         local_light_count,
         Arc::clone(&cpu_source.plan),
         Some(cpu_source),
+        orientation,
     )
 }
 
@@ -3297,6 +3493,7 @@ fn prepare_gpu_source_with_plan(
     local_light_count: M2LocalLightCount,
     plan: Arc<M2MeshPlan>,
     cpu_source: Option<&M2CpuSource>,
+    orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
@@ -3395,9 +3592,9 @@ fn prepare_gpu_source_with_plan(
                         model: model.path().clone(),
                         domain: "mesh",
                     })?;
-                renderer.prepare_precompiled_m2_pipeline(program)?
+                renderer.prepare_precompiled_oriented_m2_pipeline(program, orientation)?
             }
-            None => renderer.prepare_m2_pipeline(shader, permutation)?,
+            None => renderer.prepare_oriented_m2_pipeline(shader, permutation, orientation)?,
         };
         let material = M2MaterialState::from_material(draw.material());
         let runtime_fade_pipeline = if material.blend_enabled() {
@@ -3413,9 +3610,9 @@ fn prepare_gpu_source_with_plan(
                             model: model.path().clone(),
                             domain: "runtime-fade mesh",
                         })?;
-                    renderer.prepare_precompiled_m2_pipeline(program)?
+                    renderer.prepare_precompiled_oriented_m2_pipeline(program, orientation)?
                 }
-                None => renderer.prepare_m2_pipeline(fade, permutation)?,
+                None => renderer.prepare_oriented_m2_pipeline(fade, permutation, orientation)?,
             })
         };
         pipelines.push((draw_index, pipeline, runtime_fade_pipeline));

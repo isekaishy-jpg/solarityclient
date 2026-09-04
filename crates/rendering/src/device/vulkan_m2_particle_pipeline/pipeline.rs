@@ -109,12 +109,8 @@ pub(super) fn create_pipeline(
         .scissor_count(1);
     let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
-        .cull_mode(if material.cull_enabled() {
-            vk::CullModeFlags::BACK
-        } else {
-            vk::CullModeFlags::NONE
-        })
-        // Particle indices remain counter-clockwise after the world viewport.
+        // Build 12340 particle cards remain visible from both sides.
+        .cull_mode(vk::CullModeFlags::NONE)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()

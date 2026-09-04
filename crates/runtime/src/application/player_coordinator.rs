@@ -2373,6 +2373,9 @@ pub(super) struct ResidentPlayerAttachment {
     textures: Vec<ResidentPlayerTexture>,
     visual_effects: Vec<ResidentPlayerItemVisualEffect>,
     particle_colors: Option<M2ParticleColorReplacement>,
+    inherits_character_animation: bool,
+    mirrors_opposite_shoulder_animation: bool,
+    model_mirrored: bool,
 }
 
 impl ResidentPlayerAttachment {
@@ -2394,6 +2397,18 @@ impl ResidentPlayerAttachment {
 
     pub(super) const fn particle_colors(&self) -> Option<&M2ParticleColorReplacement> {
         self.particle_colors.as_ref()
+    }
+
+    pub(super) const fn inherits_character_animation(&self) -> bool {
+        self.inherits_character_animation
+    }
+
+    pub(super) const fn mirrors_opposite_shoulder_animation(&self) -> bool {
+        self.mirrors_opposite_shoulder_animation
+    }
+
+    pub(super) const fn is_model_mirrored(&self) -> bool {
+        self.model_mirrored
     }
 }
 
@@ -3094,6 +3109,9 @@ fn load_player_attachments(
                 particle_colors,
                 attachment.particle_color_id(),
             ),
+            inherits_character_animation: attachment.inherits_character_animation(),
+            mirrors_opposite_shoulder_animation: attachment.mirrors_opposite_shoulder_animation(),
+            model_mirrored: attachment.is_model_mirrored(),
         });
     }
     Ok(attachments)

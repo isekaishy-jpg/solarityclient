@@ -19,15 +19,15 @@ use solarity_rendering::{
     CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale, M2DrawPushConstants,
     M2EffectOrder, M2EventTimeWindow, M2FogMode, M2LocalLightCount, M2LocalLightState,
     M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
-    M2ParticleColorReplacement, M2ParticleLifetimePose, M2ParticleLifetimePoseError,
-    M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom, M2ParticleRotationPose,
-    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleState, M2ParticleTwinkleTable,
-    M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2SceneUniform,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
-    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
-    VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame,
-    sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    M2ModelOrientation, M2ParticleColorReplacement, M2ParticleLifetimePose,
+    M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom,
+    M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleState,
+    M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
+    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform,
+    VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
     triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
@@ -1334,7 +1334,10 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     assert!(
         mesh.vertices()
             .iter()
-            .all(|vertex| vertex.normal() == Vec3::NEG_X.to_array())
+            .map(|vertex| Vec3::from_array(vertex.normal()))
+            .all(|normal| normal.is_finite()
+                && (normal.length() - 1.0).abs() < 0.0001
+                && normal.dot(Vec3::NEG_X) >= 0.0)
     );
     assert_eq!(mesh.vertex_bytes().len(), 24 * 36);
 
@@ -2888,6 +2891,17 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         renderer.prepare_m2_pipeline(specialized, lit_permutation)?,
         pipeline
     );
+    let mirrored_pipeline =
+        renderer.prepare_precompiled_oriented_m2_pipeline(&spirv, M2ModelOrientation::Mirrored)?;
+    assert_ne!(mirrored_pipeline, pipeline);
+    assert_eq!(
+        renderer.prepare_oriented_m2_pipeline(
+            specialized,
+            lit_permutation,
+            M2ModelOrientation::Mirrored,
+        )?,
+        mirrored_pipeline
+    );
     let pipeline_info = renderer
         .m2_pipeline_info(pipeline)
         .ok_or("uploaded M2 pipeline handle did not resolve")?;
@@ -3601,10 +3615,12 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
     let shoulder_one_texture = append_string(&mut strings, "ShoulderOneBlue");
     let mut helmet = item_display_model_fields(91_001, helmet_model, helmet_texture, 701, 801);
     helmet[2] = 0;
+    helmet[10] = 0x1C0;
     let mut shoulder =
         item_display_model_fields(91_002, shoulder_zero_model, shoulder_zero_texture, 702, 802);
     shoulder[2] = shoulder_one_model;
     shoulder[4] = shoulder_one_texture;
+    shoulder[10] = 0x1C0;
     let displays = create_wdbc(
         2,
         25,
@@ -3667,6 +3683,9 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
                 attachment.point(),
                 attachment.model().as_str(),
                 attachment.texture().map(AssetPath::as_str),
+                attachment.inherits_character_animation(),
+                attachment.mirrors_opposite_shoulder_animation(),
+                attachment.is_model_mirrored(),
             )
         })
         .collect::<Vec<_>>();
@@ -3677,16 +3696,25 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
                 CharacterAttachmentPoint::Helmet,
                 "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELM_TEST_HUF.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\HEAD\\HELMTEXTURE.BLP"),
+                true,
+                false,
+                true,
             ),
             (
                 CharacterAttachmentPoint::ShoulderRight,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZERO.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZEROBLUE.BLP"),
+                true,
+                true,
+                true,
             ),
             (
                 CharacterAttachmentPoint::ShoulderLeft,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONE.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONEBLUE.BLP"),
+                true,
+                false,
+                true,
             ),
         ]
     );
@@ -3782,6 +3810,9 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
             ),
         ]
     );
+    assert!(melee.attachments()[0].inherits_character_animation());
+    assert!(!melee.attachments()[0].is_model_mirrored());
+    assert!(melee.attachments()[1].is_model_mirrored());
 
     let unarmed = CharacterAttachmentPlan::held_items(
         equipment,
@@ -4275,16 +4306,12 @@ fn held_equipment_tables() -> EquipmentTables {
     let bow_green = append_string(&mut strings, "BowGreen");
     let mut fields = Vec::with_capacity(100);
     fields.extend(item_display_model_fields(61_000, dirty, 0, 700, 800));
-    fields.extend(item_display_model_fields(
-        61_001, sword, sword_red, 701, 801,
-    ));
-    fields.extend(item_display_model_fields(
-        61_002,
-        shield,
-        shield_blue,
-        702,
-        802,
-    ));
+    let mut sword_display = item_display_model_fields(61_001, sword, sword_red, 701, 801);
+    sword_display[10] = 0x140;
+    fields.extend(sword_display);
+    let mut shield_display = item_display_model_fields(61_002, shield, shield_blue, 702, 802);
+    shield_display[10] = 0x100;
+    fields.extend(shield_display);
     fields.extend(item_display_model_fields(61_003, bow, bow_green, 703, 803));
     EquipmentTables {
         definitions,

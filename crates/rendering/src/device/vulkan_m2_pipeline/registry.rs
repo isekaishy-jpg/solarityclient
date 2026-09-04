@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ash::{Device, vk};
 
-use crate::device::VulkanError;
+use crate::device::{M2ModelOrientation, VulkanError};
 use crate::shader::{
     M2ShaderPermutation, M2ShaderPlan, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram,
 };
@@ -26,7 +26,7 @@ pub(in crate::device) struct M2PipelineRegistry {
     registry_id: u64,
     compiler: Option<M2SpirvCompiler>,
     layout: M2PipelineLayout,
-    handles: HashMap<M2SpirvKey, M2PipelineHandle>,
+    handles: HashMap<(M2SpirvKey, M2ModelOrientation), M2PipelineHandle>,
     resources: Vec<GpuM2Pipeline>,
 }
 
@@ -93,6 +93,7 @@ impl M2PipelineRegistry {
     }
 
     /// Returns an existing pipeline or compiles and creates one exact variant.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::device) fn prepare(
         &mut self,
         device: &Device,
@@ -101,9 +102,10 @@ impl M2PipelineRegistry {
         depth_format: vk::Format,
         plan: M2ShaderPlan,
         permutation: M2ShaderPermutation,
+        orientation: M2ModelOrientation,
     ) -> Result<M2PipelineHandle, VulkanError> {
         let key = M2SpirvKey::new(plan, permutation);
-        if let Some(handle) = self.handles.get(&key) {
+        if let Some(handle) = self.handles.get(&(key, orientation)) {
             return Ok(*handle);
         }
         let compiler = match self.compiler.as_ref() {
@@ -116,7 +118,14 @@ impl M2PipelineRegistry {
             }
         };
         let program = compiler.compile(plan, permutation).map_err(shader_error)?;
-        self.prepare_precompiled(device, pipeline_cache, color_format, depth_format, &program)
+        self.prepare_precompiled(
+            device,
+            pipeline_cache,
+            color_format,
+            depth_format,
+            &program,
+            orientation,
+        )
     }
 
     /// Creates a pipeline from worker-compiled bytecode after identity validation.
@@ -127,9 +136,10 @@ impl M2PipelineRegistry {
         color_format: vk::Format,
         depth_format: vk::Format,
         program: &M2SpirvProgram,
+        orientation: M2ModelOrientation,
     ) -> Result<M2PipelineHandle, VulkanError> {
         let key = program.key();
-        if let Some(handle) = self.handles.get(&key) {
+        if let Some(handle) = self.handles.get(&(key, orientation)) {
             return Ok(*handle);
         }
         let plan = key.plan();
@@ -145,6 +155,7 @@ impl M2PipelineRegistry {
             depth_format,
             plan.material(),
             program,
+            orientation,
         )?;
         let handle = M2PipelineHandle {
             registry_id: self.registry_id,
@@ -160,7 +171,7 @@ impl M2PipelineRegistry {
                 permutation,
             ),
         });
-        self.handles.insert(key, handle);
+        self.handles.insert((key, orientation), handle);
         Ok(handle)
     }
 

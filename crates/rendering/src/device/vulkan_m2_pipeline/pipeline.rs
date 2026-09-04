@@ -4,7 +4,7 @@
 
 use ash::{Device, vk};
 
-use crate::device::VulkanError;
+use crate::device::{M2ModelOrientation, VulkanError};
 use crate::model::M2RenderVertex;
 use crate::shader::{M2BlendFactor, M2MaterialState, M2SpirvProgram};
 
@@ -149,6 +149,7 @@ fn descriptor_binding(
 }
 
 /// Translates compiled modules and immutable stock material state to Vulkan.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn create_pipeline(
     device: &Device,
     pipeline_cache: vk::PipelineCache,
@@ -157,6 +158,7 @@ pub(super) fn create_pipeline(
     depth_format: vk::Format,
     material: M2MaterialState,
     program: &M2SpirvProgram,
+    orientation: M2ModelOrientation,
 ) -> Result<vk::Pipeline, VulkanError> {
     let modules = ShaderModules::create(device, program)?;
     let vertex_data = specialization_bytes(&program.vertex_specialization());
@@ -202,8 +204,12 @@ pub(super) fn create_pipeline(
         } else {
             vk::CullModeFlags::NONE
         })
-        // Stock M2 indices remain counter-clockwise after the world viewport.
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        // ItemDisplayInfo flag 0x100 reflects attached geometry across local X.
+        // Its negative determinant reverses the authored triangle winding.
+        .front_face(match orientation {
+            M2ModelOrientation::Authored => vk::FrontFace::COUNTER_CLOCKWISE,
+            M2ModelOrientation::Mirrored => vk::FrontFace::CLOCKWISE,
+        })
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);

@@ -75,6 +75,7 @@ pub struct CharacterItemAttachment {
     item_visual_id: u32,
     enchantment_word: u32,
     particle_color_id: u32,
+    display_flags: u32,
 }
 
 impl CharacterItemAttachment {
@@ -130,6 +131,34 @@ impl CharacterItemAttachment {
     #[must_use]
     pub const fn particle_color_id(&self) -> u32 {
         self.particle_color_id
+    }
+
+    /// Returns whether this component follows the character's active sequence.
+    ///
+    /// Build 12340 assigns this behavior to `ItemDisplayInfo.flags` bit `0x40`.
+    #[must_use]
+    pub const fn inherits_character_animation(&self) -> bool {
+        self.display_flags & 0x40 != 0
+    }
+
+    /// Returns whether the attachment-six shoulder follows attachment five.
+    ///
+    /// Build 12340 applies `ItemDisplayInfo.flags` bit `0x80` only to the
+    /// component installed at character attachment six.
+    #[must_use]
+    pub const fn mirrors_opposite_shoulder_animation(&self) -> bool {
+        self.point.id() == CharacterAttachmentPoint::ShoulderRight.id()
+            && self.display_flags & 0x80 != 0
+    }
+
+    /// Returns whether stock reflects this attached model across local X.
+    ///
+    /// Build 12340 applies `ItemDisplayInfo.flags` bit `0x100` to every
+    /// attachment except the right-hand link (identifier one).
+    #[must_use]
+    pub const fn is_model_mirrored(&self) -> bool {
+        self.point.id() != CharacterAttachmentPoint::HandRight.id()
+            && self.display_flags & 0x100 != 0
     }
 }
 
@@ -360,6 +389,7 @@ fn push_helmet(
             .unwrap_or(display.item_visual_id()),
         enchantment_word: item.visible().enchantment_word(),
         particle_color_id: display.particle_color_id(),
+        display_flags: display.flags(),
     });
     Ok(())
 }
@@ -393,6 +423,7 @@ fn push_shoulders(
                 .unwrap_or(display.item_visual_id()),
             enchantment_word: item.visible().enchantment_word(),
             particle_color_id: display.particle_color_id(),
+            display_flags: display.flags(),
         });
     }
     Ok(())
@@ -430,6 +461,7 @@ fn push_held_item(
             .unwrap_or(display.item_visual_id()),
         enchantment_word: item.visible().enchantment_word(),
         particle_color_id: display.particle_color_id(),
+        display_flags: display.flags(),
     });
     Ok(())
 }
@@ -461,6 +493,7 @@ fn push_selection_held_item(
             .unwrap_or(display.item_visual_id()),
         enchantment_word: 0,
         particle_color_id: display.particle_color_id(),
+        display_flags: display.flags(),
     });
     Ok(())
 }
@@ -483,6 +516,7 @@ fn push_selection_quiver(
         item_visual_id: 0,
         enchantment_word: 0,
         particle_color_id: quiver.display.particle_color_id(),
+        display_flags: quiver.display.flags(),
     });
     Ok(())
 }

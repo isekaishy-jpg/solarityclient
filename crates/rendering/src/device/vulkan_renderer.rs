@@ -91,7 +91,7 @@ use crate::device::vulkan_world_model_texture_set::{
     WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo,
     WorldModelTextureSetRegistry,
 };
-use crate::device::{VulkanBootstrap, VulkanError};
+use crate::device::{M2ModelOrientation, VulkanBootstrap, VulkanError};
 use crate::model::{CharacterAtlasTexture, M2MaterialUniform, M2MeshPlan, WorldModelMeshPlan};
 use crate::model::{M2EffectOrder, M2SceneUniform};
 use crate::shader::{M2ShaderPermutation, M2ShaderPlan, TerrainLayerCount};
@@ -1365,6 +1365,21 @@ impl VulkanRenderer {
         plan: M2ShaderPlan,
         permutation: M2ShaderPermutation,
     ) -> Result<M2PipelineHandle, VulkanError> {
+        self.prepare_oriented_m2_pipeline(plan, permutation, M2ModelOrientation::Authored)
+    }
+
+    /// Creates or retrieves an M2 pipeline with one explicit model orientation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same conditions as
+    /// [`Self::prepare_m2_pipeline`].
+    pub fn prepare_oriented_m2_pipeline(
+        &mut self,
+        plan: M2ShaderPlan,
+        permutation: M2ShaderPermutation,
+        orientation: M2ModelOrientation,
+    ) -> Result<M2PipelineHandle, VulkanError> {
         self.m2_pipelines.prepare(
             &self.device,
             self.pipeline_cache,
@@ -1372,6 +1387,7 @@ impl VulkanRenderer {
             self.depth_format,
             plan,
             permutation,
+            orientation,
         )
     }
 
@@ -1385,12 +1401,27 @@ impl VulkanRenderer {
         &mut self,
         program: &M2SpirvProgram,
     ) -> Result<M2PipelineHandle, VulkanError> {
+        self.prepare_precompiled_oriented_m2_pipeline(program, M2ModelOrientation::Authored)
+    }
+
+    /// Creates an explicitly oriented M2 pipeline from worker-compiled SPIR-V.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] under the same conditions as
+    /// [`Self::prepare_precompiled_m2_pipeline`].
+    pub fn prepare_precompiled_oriented_m2_pipeline(
+        &mut self,
+        program: &M2SpirvProgram,
+        orientation: M2ModelOrientation,
+    ) -> Result<M2PipelineHandle, VulkanError> {
         self.m2_pipelines.prepare_precompiled(
             &self.device,
             self.pipeline_cache,
             self.color_format,
             self.depth_format,
             program,
+            orientation,
         )
     }
 
