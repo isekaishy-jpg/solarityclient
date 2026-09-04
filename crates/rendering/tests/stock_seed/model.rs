@@ -1966,7 +1966,7 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     )?];
     let table = solarity_rendering::M2ParticleTwinkleTable::new(0x0029_4823);
     let pool_slot = (std::ptr::from_ref(&particles[0]).addr() >> 5) as u8 & 0x7f;
-    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")? * 1.5;
+    let expected_scale = 0.5 + table.phase(pool_slot).ok_or("twinkle phase is absent")?;
     assert_eq!(table.sample(emitter, &particles[0])?, Some(expected_scale));
     assert_eq!(
         M2ParticleMeshPlan::prepare(
@@ -1988,6 +1988,67 @@ fn m2_particle_mesh_applies_stock_twinkle_phase() -> Result<(), Box<dyn Error>> 
     )?;
     assert_eq!(mesh.vertices().len(), 8);
     assert_eq!(mesh.indices().len(), 12);
+    Ok(())
+}
+
+/// Equal M2 twinkle endpoints are the identity range used by Glue particles.
+#[test]
+fn m2_particle_mesh_preserves_identity_twinkle_endpoints() -> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+    let particle_offset = usize::try_from(u32::from_le_bytes(bytes[0x12c..0x130].try_into()?))?;
+    bytes[particle_offset + 0x164..particle_offset + 0x168].copy_from_slice(&1.0_f32.to_le_bytes());
+    bytes[particle_offset + 0x168..particle_offset + 0x170]
+        .copy_from_slice(&render_f32_values(&[1.0, 1.0]));
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\IdentityTwinkleParticle.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\IdentityTwinkleParticle00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\IdentityTwinkleParticle.m2")?,
+    )?;
+    let emitter = model
+        .animations()
+        .particles()
+        .first()
+        .ok_or("particle emitter is absent")?;
+    let pose = M2ParticlePose::sample(
+        model.animations(),
+        emitter,
+        M2AnimationClock::new(0, 500.0, 0.0),
+    )?;
+    let particles = [M2ParticleState::new(
+        0.5,
+        Vec3::new(10.0, 20.0, 30.0),
+        Vec3::ZERO,
+        0x2483,
+    )?];
+    let mesh = M2ParticleMeshPlan::prepare(
+        emitter,
+        pose,
+        &particles,
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?,
+        1.0,
+    )?;
+    let appearance = M2ParticleLifetimePose::sample(
+        emitter,
+        particles[0].normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+        particles[0].random_word(),
+    )?;
+    let height = Vec3::from_array(mesh.vertices()[0].position())
+        .distance(Vec3::from_array(mesh.vertices()[1].position()));
+
+    assert!((height - appearance.scale().y * 2.0).abs() < 0.0001);
     Ok(())
 }
 

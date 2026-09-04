@@ -442,7 +442,8 @@ impl M2ParticleMeshPlan {
         if unsupported != 0 {
             return Err(M2ParticleMeshPlanError::BehaviorFlags(unsupported));
         }
-        let twinkle_active = emitter.twinkle_percent() < 1.0 || emitter.twinkle_scale().y != 0.0;
+        let twinkle_active = emitter.twinkle_percent() < 1.0
+            || emitter.twinkle_scale().y != emitter.twinkle_scale().x;
         if twinkle_active && twinkle_table.is_none() {
             return Err(M2ParticleMeshPlanError::TwinkleTable);
         }
