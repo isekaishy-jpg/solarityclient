@@ -193,11 +193,11 @@ fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanErr
         let particle_key = context
             .particle_draws
             .get(next_particle)
-            .map(|draw| (draw.scene_order(), 3_u8));
+            .map(|draw| (draw.scene_order(), 4_u8));
         let ribbon_key = context
             .ribbon_draws
             .get(next_ribbon)
-            .map(|draw| (draw.scene_order(), 4_u8));
+            .map(|draw| (draw.scene_order(), 3_u8));
         let next = [
             m2_key.map(|key| (key, 0_u8)),
             particle_key.map(|key| (key, 1_u8)),

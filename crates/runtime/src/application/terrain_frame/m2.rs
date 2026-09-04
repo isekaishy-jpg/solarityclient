@@ -2436,7 +2436,7 @@ impl M2Frame {
                         instance_identity,
                         0,
                     )
-                    .with_scene_element(3, effect_order),
+                    .with_scene_element(4, effect_order),
                     draw: M2TransparentDrawIndex::Particle(prepared_index),
                 });
                 tracing::trace!(
@@ -2592,7 +2592,7 @@ impl M2Frame {
                             instance_identity,
                             0,
                         )
-                        .with_scene_element(4, effect_order),
+                        .with_scene_element(3, effect_order),
                         draw: M2TransparentDrawIndex::Ribbon(prepared_index),
                     });
                 }

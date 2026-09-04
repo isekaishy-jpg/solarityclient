@@ -100,7 +100,7 @@ fn transparent_effects_share_the_stock_mesh_queue() {
     let mut keys = [
         (
             "near low-plane particle",
-            M2TransparentSortKey::new(10.0, false, -20, 10.0, 4, 0).with_scene_element(3, 1),
+            M2TransparentSortKey::new(10.0, false, -20, 10.0, 4, 0).with_scene_element(4, 1),
         ),
         (
             "far high-plane mesh",
@@ -108,11 +108,11 @@ fn transparent_effects_share_the_stock_mesh_queue() {
         ),
         (
             "tied particle",
-            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(3, 3),
+            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(4, 3),
         ),
         (
             "tied ribbon",
-            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(4, 4),
+            M2TransparentSortKey::new(15.0, false, 0, 15.0, 4, 0).with_scene_element(3, 4),
         ),
         (
             "tied mesh",
@@ -125,8 +125,8 @@ fn transparent_effects_share_the_stock_mesh_queue() {
         [
             "far high-plane mesh",
             "tied mesh",
-            "tied particle",
             "tied ribbon",
+            "tied particle",
             "near low-plane particle",
         ]
     );

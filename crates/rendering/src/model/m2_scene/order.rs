@@ -111,8 +111,8 @@ impl M2TransparentSortKey {
 
     /// Adds the stock scene-element discriminator and its producer-local tie.
     ///
-    /// Build 12340 assigns mesh types `0..=2`, particles type `3`, and ribbons
-    /// type `4` before sorting the common transparent queue.
+    /// Build 12340 assigns mesh types `0..=2`, ribbons type `3`, and particles
+    /// type `4` before sorting the common transparent queue at `0x00821A20`.
     #[must_use]
     pub const fn with_scene_element(mut self, element_type: u8, producer_order: u32) -> Self {
         self.element_type = element_type;
