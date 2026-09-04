@@ -524,12 +524,17 @@ impl RuntimePlayerPresentation {
                     }
                 }
                 Ok(None) => {}
-                Err(source) => {
-                    if let Some(current) = requested {
-                        self.failed_glue_character = Some(current);
-                        return Err(source);
+                Err(failure) => {
+                    if let Some(current) = requested.as_ref()
+                        && failure.key.same_residency(current)
+                    {
+                        self.failed_glue_character = Some(current.clone());
+                        return Err(failure.source);
                     }
-                    tracing::warn!(error = %source, "retired Glue character preparation failed");
+                    tracing::warn!(
+                        error = %failure.source,
+                        "retired obsolete Glue character preparation failure"
+                    );
                 }
             }
         };
@@ -2064,7 +2069,7 @@ fn prepare_latest_glue_character_on_worker(
     catalogs: RuntimePlayerSharedCatalogs,
     request: &Mutex<Option<GlueCharacterWorkerRequest>>,
     worker_cache: &Mutex<GlueCharacterWorkerCache>,
-) -> Result<Option<ResidentGlueCharacterModel>, RuntimePlayerError> {
+) -> Result<Option<ResidentGlueCharacterModel>, GlueCharacterWorkerFailure> {
     // A single finite worker owns the expensive archive/cache pipeline. While
     // it runs, UI changes replace this shared slot instead of appending stale
     // FIFO jobs. The worker discards an obsolete result and immediately folds
@@ -2090,7 +2095,10 @@ fn prepare_latest_glue_character_on_worker(
             .clone();
         match current {
             Some(current) if current.same_residency(&work) => {
-                let mut resident = result?;
+                let mut resident = result.map_err(|source| GlueCharacterWorkerFailure {
+                    key: work.key,
+                    source,
+                })?;
                 resident.apply_transform_key(current.key);
                 return Ok(Some(resident));
             }
@@ -2207,7 +2215,13 @@ impl ResidentGlueCharacterModel {
 
 struct PendingGlueCharacter {
     submitted_at: std::time::Instant,
-    task: CpuTask<Result<Option<ResidentGlueCharacterModel>, RuntimePlayerError>>,
+    task: CpuTask<Result<Option<ResidentGlueCharacterModel>, GlueCharacterWorkerFailure>>,
+}
+
+/// One failed worker generation tagged before the shared request can advance.
+struct GlueCharacterWorkerFailure {
+    key: ResidentGlueCharacterKey,
+    source: RuntimePlayerError,
 }
 
 struct ResidentGluePetModel {

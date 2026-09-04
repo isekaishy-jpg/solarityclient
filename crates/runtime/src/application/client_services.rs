@@ -960,20 +960,29 @@ impl ClientServices {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
         let current_screen = self.glue.current_screen();
-        let glue_character_changed = match current_screen.as_str() {
+        let glue_character_result = match current_screen.as_str() {
             "charcreate" => {
                 let preview = self.glue.character_creation_preview();
                 self.player
-                    .synchronize_character_creation_async(preview.as_ref(), &self.cpu)?
+                    .synchronize_character_creation_async(preview.as_ref(), &self.cpu)
             }
             "charselect" => {
                 let preview = self.glue.character_selection_preview();
                 self.player
-                    .synchronize_character_selection_async(preview.as_ref(), &self.cpu)?
+                    .synchronize_character_selection_async(preview.as_ref(), &self.cpu)
             }
             _ => self
                 .player
-                .synchronize_character_creation_async(None, &self.cpu)?,
+                .synchronize_character_creation_async(None, &self.cpu),
+        };
+        let glue_character_changed = match glue_character_result {
+            Ok(changed) => changed,
+            Err(error) => {
+                let message = error.to_string();
+                tracing::error!(error = %message, "contained Glue character preparation error");
+                self.developer_console.record_error(&message);
+                false
+            }
         };
         let glue_character = self.player.glue_character_frame_input();
         self.glue_model.synchronize(

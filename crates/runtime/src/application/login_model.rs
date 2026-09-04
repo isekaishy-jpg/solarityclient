@@ -120,6 +120,13 @@ struct ActiveGlueModel {
     frame: M2Frame,
 }
 
+/// Glue route that owns the optional character embedded in the backdrop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GlueCharacterScreen {
+    Selection,
+    Creation,
+}
+
 /// Exact immutable backdrop variant selected by its external-light contract.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct GlueModelGenerationKey {
@@ -455,6 +462,7 @@ pub(crate) struct RuntimeGlueModelScene {
     character_sources: HashMap<M2GlueCpuSourceKey, Arc<M2CpuSource>>,
     pending_character_sources: Vec<PendingGlueCharacterSource>,
     character_replacement_required: bool,
+    character_screen: Option<GlueCharacterScreen>,
     frame_profiler: Option<GlueFrameProfiler>,
 }
 
@@ -532,6 +540,7 @@ impl RuntimeGlueModelScene {
             character_sources: HashMap::new(),
             pending_character_sources: Vec::new(),
             character_replacement_required: false,
+            character_screen: None,
             frame_profiler: GlueFrameProfiler::from_environment(),
         }
     }
@@ -797,6 +806,29 @@ impl RuntimeGlueModelScene {
         glue_character_changed: bool,
     ) -> Result<(), RuntimeGlueModelError> {
         let mut visible = glue.presentation().visible_models();
+        let character_screen = match glue.current_screen().as_str() {
+            "charselect" => Some(GlueCharacterScreen::Selection),
+            "charcreate" => Some(GlueCharacterScreen::Creation),
+            _ => None,
+        };
+        let character_screen_changed = self.character_screen != character_screen;
+        self.character_screen = character_screen;
+        // CharacterSelect and CharacterCreate are separate native owners. If
+        // the new owner's generation is not ready, remove the prior route's
+        // body even while its backdrop Model is still hidden or loading.
+        if character_screen_changed && glue_character.is_none() {
+            if let Some(active) = self.active.as_mut() {
+                active.frame.replace_glue_character(
+                    renderer,
+                    None,
+                    active.environment.character_light_count(),
+                    active.environment.pet_light_count(),
+                    &self.character_sources,
+                    random,
+                )?;
+            }
+            self.character_replacement_required = false;
+        }
         let Some(presentation) = visible.next() else {
             // CharacterSelect briefly owns an empty directory before its
             // asynchronous enumeration arrives. Keep the last fully rendered
@@ -866,7 +898,7 @@ impl RuntimeGlueModelScene {
                     == maximum_glue_light_count(&active.model, external_directional_light)
         });
         if !active_matches {
-            self.character_replacement_required = glue_character.is_some();
+            self.character_replacement_required |= glue_character.is_some();
         }
         let character_sources_ready = if self.character_replacement_required {
             self.ensure_character_cpu_sources(
