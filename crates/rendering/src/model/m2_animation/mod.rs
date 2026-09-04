@@ -8,7 +8,7 @@ mod pose;
 pub(crate) mod sample;
 mod status;
 
-pub use camera::{M2CameraFrameError, sample_m2_camera_frame};
+pub use camera::{M2CameraEffectScale, M2CameraFrameError, sample_m2_camera_frame};
 pub use event::{M2EventTimeWindow, triggered_m2_event_indices};
 pub use light::{
     M2SampledLights, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,

@@ -724,6 +724,7 @@ impl TerrainFrame {
             light.fog_color(),
             local_animation_time_ms,
             global_animation_time_ms,
+            solarity_rendering::M2CameraEffectScale::EXTERNAL_CAMERA,
             random,
         )?;
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)

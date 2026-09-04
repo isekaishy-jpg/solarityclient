@@ -20,9 +20,9 @@ pub use character_component::{
     CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
 };
 pub use m2_animation::{
-    M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraFrameError, M2EventTimeWindow,
-    M2MaterialPose, M2MaterialPoseError, M2SampledLights, sample_m2_camera_frame,
-    sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraEffectScale, M2CameraFrameError,
+    M2EventTimeWindow, M2MaterialPose, M2MaterialPoseError, M2SampledLights,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
     triggered_m2_event_indices,
 };
 pub use m2_scene::{

@@ -10,11 +10,11 @@ use solarity_asset::{
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
-    M2CameraFrameError, M2DirectionalLight, M2LocalLightCount, M2LocalLightState,
-    M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight, TerrainSceneUniform, VulkanError,
-    VulkanRenderer, WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform,
-    WorldScreenWindow, glue_character_sunlight, merge_wotlk_directional_lights,
-    sample_m2_camera_frame,
+    M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LocalLightCount,
+    M2LocalLightState, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight, TerrainSceneUniform,
+    VulkanError, VulkanRenderer, WorldFrameGlow, WorldFrameScene, WorldFrustum,
+    WorldModelSceneUniform, WorldScreenWindow, glue_character_sunlight,
+    merge_wotlk_directional_lights, sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
@@ -698,6 +698,7 @@ impl RuntimeGlueModelScene {
         })?;
         let camera =
             sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
         active.frame.prepare_visible_draws(
@@ -707,6 +708,7 @@ impl RuntimeGlueModelScene {
             active.environment.fog_color,
             animation_time_ms,
             global_time_ms,
+            effect_scale,
             random,
         )?;
         Ok(())
@@ -1124,6 +1126,7 @@ impl RuntimeGlueModelScene {
         })?;
         let camera =
             sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
         let visible = active.frame.prepare_visible_draws(
@@ -1133,6 +1136,7 @@ impl RuntimeGlueModelScene {
             active.environment.fog_color,
             animation_time_ms,
             global_time_ms,
+            effect_scale,
             random,
         )?;
         let sunlight = active

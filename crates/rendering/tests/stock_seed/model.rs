@@ -16,18 +16,19 @@ use solarity_rendering::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterComponentTextureLevel,
     CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTexturePlan, CharacterWeaponState,
-    CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawPushConstants, M2EffectOrder,
-    M2EventTimeWindow, M2FogMode, M2LocalLightCount, M2LocalLightState, M2MaterialPose,
-    M2MaterialState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ParticleColorReplacement,
-    M2ParticleLifetimePose, M2ParticleLifetimePoseError, M2ParticleMeshPlan, M2ParticlePose,
-    M2ParticleRandom, M2ParticleRotationPose, M2ParticleSimulation, M2ParticleSpirvCompiler,
-    M2ParticleState, M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPose, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture,
-    M2SceneLightBank, M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader,
-    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
-    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    sample_m2_lights_into, triggered_m2_event_indices,
+    CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale, M2DrawPushConstants,
+    M2EffectOrder, M2EventTimeWindow, M2FogMode, M2LocalLightCount, M2LocalLightState,
+    M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
+    M2ParticleColorReplacement, M2ParticleLifetimePose, M2ParticleLifetimePoseError,
+    M2ParticleMeshPlan, M2ParticlePose, M2ParticleRandom, M2ParticleRotationPose,
+    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleState, M2ParticleTwinkleTable,
+    M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose, M2RibbonRenderVertex,
+    M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2SceneUniform,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform, VulkanBootstrap,
+    VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform, sample_m2_camera_frame,
+    sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -78,6 +79,12 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
     assert!((frame.up() - Vec3::Z).abs().max_element() < 0.000_01);
     let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
     assert!((frame.camera().vertical_field_of_view_radians() - expected_fov).abs() < 0.0001);
+    let expected_effect_scale = 1.0_f32.hypot(4.0 / 3.0) / 1.0_f32.hypot(aspect);
+    assert!(
+        (M2CameraEffectScale::from_native_camera(&frame).factor() - expected_effect_scale).abs()
+            < 0.000_001
+    );
+    assert_eq!(M2CameraEffectScale::EXTERNAL_CAMERA.factor(), 1.0);
     Ok(())
 }
 

@@ -8,19 +8,19 @@ use solarity_asset::{AssetPath, BlpTextureSource, DecodedM2Model, M2ParticleEmit
 use solarity_ecs::WorldTransform;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
-    CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2DrawCall,
-    M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose, M2MaterialState,
-    M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement, M2ParticleMeshPlan,
-    M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
-    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
-    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
-    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
-    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail,
-    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
-    M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame,
-    WorldFrustum, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
-    sample_m2_lights_into, triggered_m2_event_indices,
+    CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
+    M2DrawCall, M2EffectOrder, M2EventTimeWindow, M2LocalLightCount, M2MaterialPose,
+    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ParticleColorReplacement,
+    M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose,
+    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler,
+    M2ParticleSpirvProgram, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
+    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram,
+    M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan,
+    M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram,
+    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -1772,6 +1772,7 @@ impl M2Frame {
         fog_color: glam::Vec3,
         animation_time_ms: f32,
         global_time_ms: f32,
+        effect_scale: M2CameraEffectScale,
         random: &mut CrtRand,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.bone_transforms.clear();
@@ -2225,10 +2226,11 @@ impl M2Frame {
                 } else {
                     Mat4::IDENTITY
                 };
-                // Build 12340 `0x0097AC20` derives flag-`0x20` card scale
-                // solely from the first axis of the animated emitter matrix.
-                // Projection aspect never enters this value.
-                let inherited_scale = emitter_transform.x_axis.truncate().length();
+                // Build 12340 `0x0097AC20` retains the complete view-model and
+                // animated-emitter axis length. Its later flag-`0x20` card path
+                // consequently includes native M2 camera aspect correction.
+                let inherited_scale =
+                    emitter_transform.x_axis.truncate().length() * effect_scale.factor();
                 let first_vertex =
                     u32::try_from(self.particle_vertices.len()).map_err(|_source| {
                         solarity_rendering::VulkanError::M2ParticleDrawVertexRange
@@ -2294,6 +2296,7 @@ impl M2Frame {
                 bone_pose,
                 clock,
                 effect_delta_seconds,
+                effect_scale,
             )?;
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
@@ -3007,6 +3010,7 @@ fn advance_ribbons(
     bone_pose: &M2BonePose,
     clock: M2AnimationClock,
     delta_seconds: f32,
+    effect_scale: M2CameraEffectScale,
 ) -> Result<(), RuntimeTerrainFrameError> {
     let emitters = model.animations().ribbons();
     if placement.ribbons.len() != emitters.len() {
@@ -3036,7 +3040,7 @@ fn advance_ribbons(
         let transform = placement.transform * bone * Mat4::from_translation(emitter.position());
         let control = M2RibbonControlPoint::new(
             transform.w_axis.truncate(),
-            transform.y_axis.truncate(),
+            transform.y_axis.truncate() * effect_scale.factor(),
             transform.z_axis.truncate(),
         );
         let pose = M2RibbonPose::sample(model.animations(), emitter, clock)?;

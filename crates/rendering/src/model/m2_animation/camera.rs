@@ -9,6 +9,34 @@ use crate::{WorldCamera, WorldCameraError, WorldCameraFrame};
 use super::sample::{sample_angle_radians, sample_vec3};
 use super::{M2AnimationClock, M2BonePoseError};
 
+/// View-model scale inherited by native-camera M2 particles and ribbons.
+///
+/// Build 12340 authors M2 camera FOV against a 4:3 diagonal and carries the
+/// viewport correction in its native-camera view-model matrix. Dynamic M2
+/// effects therefore inherit this scale even though ordinary model geometry
+/// does not. External world and character cameras have an identity factor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct M2CameraEffectScale(f32);
+
+impl M2CameraEffectScale {
+    /// Identity scale for M2s viewed through an external world camera.
+    pub const EXTERNAL_CAMERA: Self = Self(1.0);
+
+    /// Recovers the native-camera view-model scale for a validated frame.
+    #[must_use]
+    pub fn from_native_camera(frame: &WorldCameraFrame) -> Self {
+        const AUTHORED_ASPECT_RATIO: f32 = 4.0 / 3.0;
+
+        Self(1.0_f32.hypot(AUTHORED_ASPECT_RATIO) / 1.0_f32.hypot(frame.aspect_ratio()))
+    }
+
+    /// Returns the finite positive multiplier applied to effect axes.
+    #[must_use]
+    pub const fn factor(self) -> f32 {
+        self.0
+    }
+}
+
 /// A decoded M2 camera cannot form its stock presentation frame.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum M2CameraFrameError {
