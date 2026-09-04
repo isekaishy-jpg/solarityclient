@@ -56,6 +56,8 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         logical_extent: (f64, f64),
     ) -> Result<Self, UiRenderError> {
+        let profile = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
+        let started = std::time::Instant::now();
         let mut ordered = presentation
             .members_in_draw_order()
             .iter()
@@ -65,10 +67,12 @@ impl UiRenderPlan {
                 Some((Some(texture.key()), texture.object_index(), sequence, quad))
             })
             .collect::<Vec<_>>();
+        let textures_elapsed = started.elapsed();
         let texture_count = ordered.len();
+        let retained_glyphs = glyphs.retained_scroll_quads(geometry, scroll_frames);
+        let glyph_count = retained_glyphs.len();
         ordered.extend(
-            glyphs
-                .retained_scroll_quads(geometry, scroll_frames)
+            retained_glyphs
                 .into_iter()
                 .enumerate()
                 .filter_map(|(sequence, quad)| {
@@ -82,14 +86,31 @@ impl UiRenderPlan {
                     ))
                 }),
         );
+        let glyphs_elapsed = started.elapsed();
         ordered.sort_by_key(|(key, object_index, sequence, _)| {
             (key.is_none(), *key, *object_index, *sequence)
         });
+        let sort_elapsed = started.elapsed();
         let mesh = UiMeshPlan::prepare(
             [logical_extent.0 as f32, logical_extent.1 as f32],
             ordered.into_iter().map(|(_, _, _, quad)| quad),
         )?;
+        let mesh_elapsed = started.elapsed();
         let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
+        if profile {
+            eprintln!(
+                "UI mesh prepare: textures={texture_count} glyphs={glyph_count} texture_resolve={:.3}ms glyph_resolve={:.3}ms sort={:.3}ms serialize={:.3}ms assets={:.3}ms total={:.3}ms",
+                textures_elapsed.as_secs_f64() * 1_000.0,
+                glyphs_elapsed
+                    .saturating_sub(textures_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                sort_elapsed.saturating_sub(glyphs_elapsed).as_secs_f64() * 1_000.0,
+                mesh_elapsed.saturating_sub(sort_elapsed).as_secs_f64() * 1_000.0,
+                started.elapsed().saturating_sub(mesh_elapsed).as_secs_f64() * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
         Ok(Self {
             mesh,
             texture_assets,

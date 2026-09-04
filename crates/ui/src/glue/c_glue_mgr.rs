@@ -931,7 +931,7 @@ impl GlueManager {
         self.pointer = pointer;
         if timings {
             eprintln!(
-                "UI targeted publish: copy={:.3}ms geometry={:.3}ms writeback={:.3}ms scroll={:.3}ms glyphs={:.3}ms presentation={:.3}ms mesh={:.3}ms hierarchy={:.3}ms total={:.3}ms",
+                "UI targeted publish: copy={:.3}ms geometry={:.3}ms writeback={:.3}ms scroll={:.3}ms glyphs={:.3}ms presentation={:.3}ms mesh={:.3}ms pointer={:.3}ms total={:.3}ms",
                 copied_elapsed.as_secs_f64() * 1_000.0,
                 geometry_elapsed
                     .saturating_sub(copied_elapsed)
