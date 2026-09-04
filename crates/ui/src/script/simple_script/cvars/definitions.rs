@@ -45,6 +45,9 @@ const fn ranged(
 pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("accountName", ""),
     value("accountList", ""),
+    // AccountLogin.lua's native GetServerName bridge exposes the last realm
+    // restored from this process CVar before any connection exists.
+    value("realmName", ""),
     ranged("playIntroMovie", "1", 0.0, 1.0),
     // Enabled by default in build 12340's native performance display.
     ranged("showfps", "1", 0.0, 1.0),

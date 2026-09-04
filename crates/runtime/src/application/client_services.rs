@@ -1348,7 +1348,7 @@ impl ClientServices {
                 }
                 UiGlueNetworkAction::ChangeRealm { realm_id } => {
                     self.pending_realm_id = Some(realm_id);
-                    self.begin_pending_world(&handle);
+                    self.begin_pending_world(&handle)?;
                 }
                 UiGlueNetworkAction::SetPreferredRealmInfo {
                     category_index,
@@ -1642,7 +1642,7 @@ impl ClientServices {
                     .dispatch_event("CLOSE_STATUS_DIALOG", &UiEventPayload::empty())?;
                 self.publish_realm_directory("OPEN_REALM_LIST", UiEventPayload::empty())?;
                 self.realm_directory_published = true;
-                self.begin_pending_world(&handle);
+                self.begin_pending_world(&handle)?;
             }
             Ok(RuntimeLoginPoll::RealmDirectoryCancelled) => {}
             Err(error) => self.publish_login_failure(error)?,
@@ -2387,12 +2387,17 @@ impl ClientServices {
         self.world_failures.push_back(error);
     }
 
-    fn begin_pending_world(&mut self, runtime: &tokio::runtime::Handle) {
+    /// Transfers the chosen realmd identity into world authentication and
+    /// persists stock's last-realm label once that transfer is admitted.
+    fn begin_pending_world(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+    ) -> Result<(), ApplicationError> {
         let Some(realm_id) = self.pending_realm_id else {
-            return;
+            return Ok(());
         };
         let Ok(realm_id) = u8::try_from(realm_id) else {
-            return;
+            return Ok(());
         };
         let Some(realm) = self
             .login
@@ -2400,10 +2405,10 @@ impl ClientServices {
             .and_then(|authenticated| authenticated.realms().by_id(realm_id))
             .cloned()
         else {
-            return;
+            return Ok(());
         };
         let Some(authenticated) = self.login.take_authenticated() else {
-            return;
+            return Ok(());
         };
         let selected = SelectedRealmFacts::new(&self.realm_metadata, &realm);
         match self
@@ -2415,10 +2420,13 @@ impl ClientServices {
                 self.character_screen_published = false;
                 self.character_directory_published = false;
                 self.glue.set_network_status(selected.status(false, false));
+                self.startup_profile
+                    .persist_cvars(&[("realmName".to_owned(), selected.name.clone())])?;
                 self.selected_realm = Some(selected);
             }
             Err(error) => self.publish_world_failure(error),
         }
+        Ok(())
     }
 
     fn publish_realm_directory(

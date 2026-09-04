@@ -1185,12 +1185,21 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let manager = GlueManager::start_shared_with_initial_screen_and_cvars(
+        AssetStoreHandle::new(AssetStore::mount(catalog)?),
+        (1920, 1080),
+        false,
+        GlueInitialScreen::Login,
+        &[("realmName".to_owned(), "Remembered Realm".to_owned())],
+    )?;
     let globals = manager.bundle().lua().globals();
     let server_name = globals.get::<mlua::Function>("GetServerName")?;
     let connected = globals.get::<mlua::Function>("IsConnectedToServer")?;
 
-    assert_eq!(server_name.call::<Option<String>>(())?, None);
+    assert_eq!(
+        server_name.call::<Option<String>>(())?.as_deref(),
+        Some("Remembered Realm")
+    );
     assert!(!connected.call::<bool>(())?);
     let UiGlueNetworkAction::Login(request) = manager
         .take_network_action()

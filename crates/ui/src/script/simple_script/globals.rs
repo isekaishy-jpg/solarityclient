@@ -2264,13 +2264,19 @@ fn register_glue_network_globals(
         })?,
     )?;
     let network = environment.network();
+    let cvars = environment.cvars();
     globals.raw_set(
         "GetServerName",
         lua.create_function(move |_, ()| {
             let network = network.borrow();
             let status = network.status();
+            let server_name = status.server_name().map(str::to_owned).or_else(|| {
+                cvars
+                    .get("realmName")
+                    .filter(|remembered| !remembered.is_empty())
+            });
             Ok((
-                status.server_name().map(str::to_owned),
+                server_name,
                 status.player_killing_allowed().then_some(1.0_f64),
                 status.roleplaying().then_some(1.0_f64),
                 status.is_server_down().then_some(1.0_f64),
