@@ -47,6 +47,7 @@ const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generat
 const VISUAL_DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.visual_dirty_objects";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
 const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
+const RETAINED_UPDATE_FAILURE_LIMIT: usize = 64;
 const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
 const FOCUSED_EDIT_BOX_REGISTRY: &str = "solarity.ui.focused_edit_box";
 pub(super) const DIRTY_TEXT: u32 = 1 << 0;
@@ -344,6 +345,7 @@ pub struct UiScriptRuntime {
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
+    update_failures: VecDeque<String>,
     snapshot_count: Cell<usize>,
 }
 
@@ -1275,8 +1277,14 @@ impl UiScriptRuntime {
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
+            update_failures: VecDeque::new(),
             snapshot_count: Cell::new(0),
         })
+    }
+
+    /// Takes the oldest authored `OnUpdate` failure contained by this runtime.
+    pub(crate) fn take_update_failure(&mut self) -> Option<String> {
+        self.update_failures.pop_front()
     }
 
     /// Executes one expanded bundle action and advances the stock load cursor.
@@ -1796,8 +1804,22 @@ impl UiScriptRuntime {
             else {
                 continue;
             };
-            call_number_object_handler(lua, &function, object, elapsed_seconds)
-                .map_err(|error| execution_error("Glue OnUpdate", error))?;
+            if let Err(error) = call_number_object_handler(lua, &function, object, elapsed_seconds)
+            {
+                // A recoverable authored callback must not cancel swapchain
+                // presentation and then fail again on every main-loop pass.
+                // Remove only this handler from the active update set and keep
+                // the remaining UI animation transaction moving forward.
+                update_members
+                    .raw_set(index, false)
+                    .map_err(|error| execution_error("Glue OnUpdate containment", error))?;
+                let failure = execution_error("Glue OnUpdate", error).to_string();
+                if self.update_failures.len() == RETAINED_UPDATE_FAILURE_LIMIT {
+                    self.update_failures.pop_front();
+                }
+                self.update_failures.push_back(failure);
+                continue;
+            }
             dispatched += 1;
         }
         let current_generation =

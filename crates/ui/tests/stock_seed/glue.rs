@@ -1899,6 +1899,77 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// One broken authored handler is retired without preventing healthy handlers
+/// or the retained presentation transaction from advancing.
+#[test]
+fn glue_manager_contains_failing_on_update_handler() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Update.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Update.xml",
+            bytes: br#"<Ui>
+<Frame name="FaultyUpdate"><Scripts>
+  <OnLoad>FAULTY_UPDATE_CALLS = 0</OnLoad>
+  <OnUpdate>FAULTY_UPDATE_CALLS = FAULTY_UPDATE_CALLS + 1 error("fixture failure")</OnUpdate>
+</Scripts></Frame>
+<Frame name="HealthyUpdate"><Scripts>
+  <OnLoad>HEALTHY_UPDATE_CALLS = 0</OnLoad>
+  <OnUpdate>HEALTHY_UPDATE_CALLS = HEALTHY_UPDATE_CALLS + 1</OnUpdate>
+</Scripts></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+
+    manager.update(0.0)?;
+    let failure = manager
+        .take_update_failure()
+        .ok_or("failing update was not reported")?;
+    assert!(failure.contains("fixture failure"));
+    assert!(manager.take_update_failure().is_none());
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("FAULTY_UPDATE_CALLS")?,
+        1
+    );
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("HEALTHY_UPDATE_CALLS")?,
+        1
+    );
+
+    assert!(!manager.update(0.0)?);
+    assert!(manager.take_update_failure().is_none());
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("FAULTY_UPDATE_CALLS")?,
+        1
+    );
+    assert_eq!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<u32>("HEALTHY_UPDATE_CALLS")?,
+        2
+    );
+    Ok(())
+}
+
 fn assert_close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 0.000_001,

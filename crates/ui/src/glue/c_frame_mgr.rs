@@ -94,9 +94,15 @@ impl FrameManager {
     /// # Errors
     ///
     /// Returns [`UiEventError`] when the interval or resulting live state is
-    /// invalid, or an authored handler fails.
+    /// invalid. Individual authored handler failures are isolated and
+    /// available through [`Self::take_update_failure`].
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
         self.owner.update(elapsed_seconds)
+    }
+
+    /// Takes one authored `OnUpdate` failure isolated from frame presentation.
+    pub fn take_update_failure(&mut self) -> Option<String> {
+        self.owner.take_update_failure()
     }
 
     /// Routes one logical UI pointer-button transition.

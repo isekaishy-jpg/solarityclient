@@ -844,6 +844,10 @@ impl ClientServices {
             if self.glue.update(glue_elapsed)? {
                 self.glue_ui_dirty = true;
             }
+            while let Some(message) = self.glue.take_update_failure() {
+                tracing::error!(error = %message, "contained failing GlueXML OnUpdate handler");
+                self.developer_console.record_error(&message);
+            }
             let current_screen = self.glue.current_screen();
             if self.glue_ui_dirty
                 && glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref())
@@ -914,6 +918,10 @@ impl ClientServices {
             self.glue_update_clock = update_time;
             if let Some(world_ui) = self.world_ui.as_mut() {
                 world_ui.update(ui_elapsed)?;
+                while let Some(message) = world_ui.take_update_failure() {
+                    tracing::error!(error = %message, "contained failing FrameXML OnUpdate handler");
+                    self.developer_console.record_error(&message);
+                }
                 world_ui.refresh(&mut self.renderer)?;
                 self.platform
                     .set_text_input_active(world_ui.has_focused_edit_box());
