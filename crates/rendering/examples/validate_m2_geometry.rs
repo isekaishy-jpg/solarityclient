@@ -281,8 +281,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         println!(
-            "particle={particle_index} id={} emitter_type={} particle_type={} head_or_tail={} blend={} flags={:#010X} priority={} position={:?} animated_position={animated_position:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} scale={:?}/{:?} twinkle={}/{:?} wind={:?} drag={} spin={}+/-{} textures={textures:?}",
+            "particle={particle_index} id={} bone={:?} emitter_type={} particle_type={} head_or_tail={} blend={} flags={:#010X} priority={} position={:?} animated_position={animated_position:?} atlas={}x{} speed={} gravity={} life={} rate={} area={}x{} scale={:?}/{:?} twinkle={}/{:?} wind={:?} drag={} spin={}+/-{} textures={textures:?}",
             particle.id(),
+            particle.bone_index(),
             particle.emitter_type(),
             particle.particle_type(),
             particle.head_or_tail(),
