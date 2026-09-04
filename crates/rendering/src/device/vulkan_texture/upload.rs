@@ -81,6 +81,13 @@ struct ImageUpload<'mips> {
     mips: &'mips [UploadMip],
 }
 
+/// Owned staging representation of a validated RGBA8 mip chain.
+struct PackedRgba8Mips {
+    extent: (u32, u32),
+    bytes: Vec<u8>,
+    mips: Vec<UploadMip>,
+}
+
 /// Device-local image/view pair owned by the renderer texture registry.
 pub(super) struct GpuBlpTexture {
     image: GpuSampledImage,
@@ -196,6 +203,18 @@ struct TextureTransfer<'a> {
     fence: vk::Fence,
 }
 
+/// Submitted staging resources retained until their transfer fence signals.
+///
+/// A later graphics submission on the same queue can sample the destination
+/// without a host wait: queue order plus the recorded image barriers establish
+/// the dependency. Only staging destruction must be deferred.
+pub(in crate::device) struct DeferredTextureTransfer {
+    staging_buffer: vk::Buffer,
+    staging_allocation: Option<vk_mem::Allocation>,
+    command_pool: vk::CommandPool,
+    fence: vk::Fence,
+}
+
 impl<'a> TextureTransfer<'a> {
     /// Allocates and fills exact-size sequential upload memory.
     fn create(context: TextureUploadContext<'a>, bytes: &[u8]) -> Result<Self, VulkanError> {
@@ -287,19 +306,7 @@ impl<'a> TextureTransfer<'a> {
 
     /// Submits and synchronously retires the transfer source.
     fn submit_and_wait(&self, command_buffer: vk::CommandBuffer) -> Result<(), VulkanError> {
-        let command_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
-        let command_infos = [command_info];
-        let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_infos);
-        // SAFETY: The executable command and every resource it references stay
-        // live through the fence wait immediately below.
-        unsafe {
-            self.context.device.queue_submit2(
-                self.context.graphics_queue,
-                &[submit_info],
-                self.fence,
-            )
-        }
-        .map_err(|source| VulkanError::operation("submit BLP texture transfer", source))?;
+        self.submit(command_buffer)?;
         // SAFETY: The fence belongs to this exact submitted work.
         unsafe {
             self.context
@@ -307,6 +314,62 @@ impl<'a> TextureTransfer<'a> {
                 .wait_for_fences(&[self.fence], true, u64::MAX)
         }
         .map_err(|source| VulkanError::operation("wait for BLP texture transfer", source))
+    }
+
+    /// Queues the transfer without stalling the host presentation thread.
+    fn submit(&self, command_buffer: vk::CommandBuffer) -> Result<(), VulkanError> {
+        let command_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
+        let command_infos = [command_info];
+        let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_infos);
+        // SAFETY: The executable command and every resource it references are
+        // retained either through the immediate wait or a deferred owner.
+        unsafe {
+            self.context.device.queue_submit2(
+                self.context.graphics_queue,
+                &[submit_info],
+                self.fence,
+            )
+        }
+        .map_err(|source| VulkanError::operation("submit BLP texture transfer", source))
+    }
+
+    /// Transfers staging lifetime to a renderer registry after submission.
+    fn defer(mut self) -> DeferredTextureTransfer {
+        DeferredTextureTransfer {
+            staging_buffer: std::mem::replace(&mut self.staging_buffer, vk::Buffer::null()),
+            staging_allocation: self.staging_allocation.take(),
+            command_pool: std::mem::replace(&mut self.command_pool, vk::CommandPool::null()),
+            fence: std::mem::replace(&mut self.fence, vk::Fence::null()),
+        }
+    }
+}
+
+impl DeferredTextureTransfer {
+    /// Reports whether the GPU has retired this staging generation.
+    pub(in crate::device) fn is_complete(&self, device: &Device) -> Result<bool, VulkanError> {
+        // SAFETY: The fence remains owned by this pending transfer.
+        unsafe { device.get_fence_status(self.fence) }
+            .map_err(|source| VulkanError::operation("poll deferred texture transfer", source))
+    }
+
+    /// Releases a completed transfer's command and staging resources.
+    pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        // SAFETY: Callers retire only signaled transfers or invoke this after
+        // renderer-wide device idle during shutdown.
+        unsafe {
+            if self.fence != vk::Fence::null() {
+                device.destroy_fence(self.fence, None);
+                self.fence = vk::Fence::null();
+            }
+            if self.command_pool != vk::CommandPool::null() {
+                device.destroy_command_pool(self.command_pool, None);
+                self.command_pool = vk::CommandPool::null();
+            }
+            if let Some(mut allocation) = self.staging_allocation.take() {
+                allocator.destroy_buffer(self.staging_buffer, &mut allocation);
+                self.staging_buffer = vk::Buffer::null();
+            }
+        }
     }
 }
 
@@ -541,12 +604,21 @@ pub(in crate::device) fn upload_rgba8_image(
     upload_rgba8_image_with_color_space(context, extent, bytes, BlpColorSpace::Linear)
 }
 
-/// Uploads one complete tightly packed RGBA8 mip chain for a non-BLP owner.
-pub(in crate::device) fn upload_rgba8_mip_chain(
+/// Queues one complete RGBA8 mip chain and returns its staging retirement owner.
+///
+/// The image may enter descriptor and draw preparation immediately when those
+/// draws are submitted to the same graphics queue after this transfer.
+pub(in crate::device) fn upload_rgba8_mip_chain_deferred(
     context: TextureUploadContext<'_>,
     source_mips: &[Rgba8MipUpload<'_>],
     color_space: BlpColorSpace,
-) -> Result<GpuSampledImage, VulkanError> {
+) -> Result<(GpuSampledImage, DeferredTextureTransfer), VulkanError> {
+    let packed = pack_rgba8_mips(source_mips)?;
+    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
+    upload_sampled_image_deferred(context, format, packed.extent, &packed.bytes, &packed.mips)
+}
+
+fn pack_rgba8_mips(source_mips: &[Rgba8MipUpload<'_>]) -> Result<PackedRgba8Mips, VulkanError> {
     let top = source_mips.first().ok_or_else(|| {
         VulkanError::operation("validate RGBA8 mip chain", "image has no mip pixels")
     })?;
@@ -578,8 +650,11 @@ pub(in crate::device) fn upload_rgba8_mip_chain(
         });
         bytes.extend_from_slice(source.bytes);
     }
-    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
-    upload_sampled_image(context, format, (top.width, top.height), &bytes, &mips)
+    Ok(PackedRgba8Mips {
+        extent: (top.width, top.height),
+        bytes,
+        mips,
+    })
 }
 
 fn upload_rgba8_image_with_color_space(
@@ -661,6 +736,57 @@ fn upload_sampled_image(
     })?;
     sampled_image.view = view;
     guard.finish()
+}
+
+fn upload_sampled_image_deferred(
+    context: TextureUploadContext<'_>,
+    format: vk::Format,
+    extent: (u32, u32),
+    bytes: &[u8],
+    mips: &[UploadMip],
+) -> Result<(GpuSampledImage, DeferredTextureTransfer), VulkanError> {
+    let mip_levels = u32::try_from(mips.len())
+        .map_err(|source| VulkanError::operation("convert sampled image mip count", source))?;
+    if mip_levels == 0 || bytes.is_empty() {
+        return Err(VulkanError::operation(
+            "validate sampled image",
+            "image has no mip pixels",
+        ));
+    }
+    let image = allocate_sampled_image(context, format, extent, mip_levels)?;
+    let mut guard = TextureGuard {
+        device: context.device,
+        allocator: context.allocator,
+        texture: Some(image),
+    };
+    let transfer = TextureTransfer::create(context, bytes)?;
+    let command_buffer = transfer.command_buffer()?;
+    let image_handle = guard
+        .texture
+        .as_ref()
+        .ok_or_else(|| {
+            VulkanError::operation("record sampled image upload", "image is unavailable")
+        })?
+        .image;
+    record_uploads(
+        context.device,
+        command_buffer,
+        transfer.staging_buffer,
+        &[ImageUpload {
+            image: image_handle,
+            mip_levels,
+            mips,
+        }],
+    )?;
+    // Complete all fallible host setup before submission. An error must never
+    // destroy an image whose transfer is already executing.
+    let view = create_sampled_image_view(context.device, image_handle, format, mip_levels)?;
+    let sampled_image = guard.texture.as_mut().ok_or_else(|| {
+        VulkanError::operation("retain sampled image view", "image is unavailable")
+    })?;
+    sampled_image.view = view;
+    transfer.submit(command_buffer)?;
+    Ok((guard.finish()?, transfer.defer()))
 }
 
 /// Allocates one device-local sampled transfer destination without a view.

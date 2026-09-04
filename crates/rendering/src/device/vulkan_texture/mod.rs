@@ -12,6 +12,6 @@ pub use types::{
     BlpTextureStorage, BlpTextureUploadRequest,
 };
 pub(in crate::device) use upload::{
-    GpuSampledImage, Rgba8MipUpload, TextureUploadContext, upload_rgba8_image,
-    upload_rgba8_mip_chain,
+    DeferredTextureTransfer, GpuSampledImage, Rgba8MipUpload, TextureUploadContext,
+    upload_rgba8_image, upload_rgba8_mip_chain_deferred,
 };

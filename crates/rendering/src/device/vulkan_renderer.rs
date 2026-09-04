@@ -1034,7 +1034,7 @@ impl VulkanRenderer {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.character_atlas_textures.upload(
+        let handle = self.character_atlas_textures.upload(
             TextureUploadContext {
                 device: &self.device,
                 allocator,
@@ -1042,7 +1042,12 @@ impl VulkanRenderer {
                 graphics_queue_family: self.report.graphics_queue_family,
             },
             atlas,
-        )
+        )?;
+        // The atlas registry may have submitted a deferred transfer. Marking
+        // the device busy unconditionally is harmless for a cache hit and
+        // guarantees shutdown waits before retiring pending staging owners.
+        self.is_idle = false;
+        Ok(handle)
     }
 
     /// Returns immutable diagnostics for one live composed body atlas.

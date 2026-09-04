@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::vk;
 
 use crate::device::vulkan_texture::{
-    GpuSampledImage, Rgba8MipUpload, TextureUploadContext, upload_rgba8_mip_chain,
+    DeferredTextureTransfer, GpuSampledImage, Rgba8MipUpload, TextureUploadContext,
+    upload_rgba8_mip_chain_deferred,
 };
 use crate::device::{BlpColorSpace, VulkanError};
 use crate::model::{
@@ -26,6 +27,7 @@ pub(in crate::device) struct CharacterAtlasTextureRegistry {
     registry_id: u64,
     handles: HashMap<CharacterAtlasTextureKey, CharacterAtlasTextureHandle>,
     resources: Vec<GpuCharacterAtlasTexture>,
+    pending_transfers: Vec<DeferredTextureTransfer>,
     upload_submission_count: u64,
 }
 
@@ -38,6 +40,7 @@ impl Default for CharacterAtlasTextureRegistry {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
             resources: Vec::new(),
+            pending_transfers: Vec::new(),
             upload_submission_count: 0,
         }
     }
@@ -50,6 +53,7 @@ impl CharacterAtlasTextureRegistry {
         context: TextureUploadContext<'_>,
         atlas: &CharacterAtlasTexture,
     ) -> Result<CharacterAtlasTextureHandle, VulkanError> {
+        self.retire_completed_transfers(context)?;
         if let Some(handle) = self.handles.get(atlas.key()) {
             return Ok(*handle);
         }
@@ -58,7 +62,8 @@ impl CharacterAtlasTextureRegistry {
             .map_err(|_source| VulkanError::CharacterAtlasTextureCapacity)?;
         // The atlas occupies an ordinary M2 texture stage after composition;
         // preserve the same fixed-function byte-space sampling as authored BLPs.
-        let image = upload_rgba8_mip_chain(context, &mips, BlpColorSpace::Linear)?;
+        let (image, transfer) =
+            upload_rgba8_mip_chain_deferred(context, &mips, BlpColorSpace::Linear)?;
         let top = mips.first().ok_or_else(|| {
             VulkanError::operation("admit character atlas", "validated mip chain is empty")
         })?;
@@ -75,9 +80,26 @@ impl CharacterAtlasTextureRegistry {
                 byte_count,
             ),
         });
+        self.pending_transfers.push(transfer);
         self.handles.insert(atlas.key().clone(), handle);
         self.upload_submission_count = self.upload_submission_count.saturating_add(1);
         Ok(handle)
+    }
+
+    /// Reclaims staging storage without waiting for unfinished GPU work.
+    fn retire_completed_transfers(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<(), VulkanError> {
+        let mut index = self.pending_transfers.len();
+        while index > 0 {
+            index -= 1;
+            if self.pending_transfers[index].is_complete(context.device)? {
+                let mut transfer = self.pending_transfers.swap_remove(index);
+                transfer.destroy(context.device, context.allocator);
+            }
+        }
+        Ok(())
     }
 
     /// Returns stable allocation facts without exposing Vulkan handles.
@@ -118,6 +140,10 @@ impl CharacterAtlasTextureRegistry {
         allocator: &vk_mem::Allocator,
     ) {
         self.handles.clear();
+        for transfer in self.pending_transfers.iter_mut().rev() {
+            transfer.destroy(device, allocator);
+        }
+        self.pending_transfers.clear();
         for mut resource in self.resources.drain(..).rev() {
             resource.image.destroy(device, allocator);
         }
