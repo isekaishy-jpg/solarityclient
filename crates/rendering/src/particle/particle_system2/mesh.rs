@@ -473,7 +473,6 @@ impl M2ParticleMeshPlan {
         let columns = u32::from(emitter.texture_columns());
         let rows = f32::from(emitter.texture_rows());
         let cell_size = Vec2::new(1.0 / columns as f32, rows.recip());
-        let normal = -camera.forward();
         let sorted_particle_indices = if emitter.flags() & SORT_PARTICLES != 0 {
             // CM2Model's recovered render path sorts a temporary presentation
             // list; simulation slots and their address-derived twinkle phases
@@ -561,6 +560,7 @@ impl M2ParticleMeshPlan {
                         )
                     }
                 };
+                let normal = quad_normal(positions, camera);
                 push_quad(
                     vertices,
                     indices,
@@ -613,6 +613,7 @@ impl M2ParticleMeshPlan {
                         billboard_up,
                     )
                 };
+                let normal = quad_normal(positions, camera);
                 push_quad(
                     vertices,
                     indices,
@@ -649,6 +650,26 @@ impl M2ParticleMeshPlan {
             bytes.extend_from_slice(&vertex.to_bytes());
         }
         bytes
+    }
+}
+
+/// Resolves the shaded card normal from its final stock presentation plane.
+///
+/// Camera-facing heads reduce to `-camera.forward()`. Local-orientation heads
+/// and velocity tails may occupy another plane, so build 12340 lights their
+/// completed card basis and flips the result toward the camera.
+fn quad_normal(positions: [Vec3; 4], camera: WorldCameraFrame) -> Vec3 {
+    let camera_facing = -camera.forward();
+    let normal = (positions[1] - positions[0]).cross(positions[2] - positions[0]);
+    let length_squared = normal.length_squared();
+    if !length_squared.is_finite() || length_squared <= DIRECTION_THRESHOLD_SQUARED {
+        return camera_facing;
+    }
+    let normal = normal / length_squared.sqrt();
+    if normal.dot(camera_facing) < 0.0 {
+        -normal
+    } else {
+        normal
     }
 }
 

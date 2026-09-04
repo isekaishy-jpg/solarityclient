@@ -2378,6 +2378,25 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
         + particle_to_world.transform_vector3(Vec3::Y) * appearance.scale().y;
     let actual = Vec3::from_array(mesh.vertices()[0].position());
     assert!((actual - expected).abs().max_element() < 0.0001);
+    let positions = [
+        Vec3::from_array(mesh.vertices()[0].position()),
+        Vec3::from_array(mesh.vertices()[1].position()),
+        Vec3::from_array(mesh.vertices()[2].position()),
+        Vec3::from_array(mesh.vertices()[3].position()),
+    ];
+    let mut expected_normal = (positions[1] - positions[0])
+        .cross(positions[2] - positions[0])
+        .normalize();
+    if expected_normal.dot(-camera.forward()) < 0.0 {
+        expected_normal = -expected_normal;
+    }
+    assert!(mesh.vertices()[..4].iter().all(|vertex| {
+        (Vec3::from_array(vertex.normal()) - expected_normal)
+            .abs()
+            .max_element()
+            < 0.0001
+    }));
+    assert!((expected_normal - -camera.forward()).abs().max_element() > 0.5);
     Ok(())
 }
 
