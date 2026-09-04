@@ -16,6 +16,7 @@ pub(crate) fn register_globals(
     state: UiBattlefieldQueueState,
 ) -> mlua::Result<()> {
     let battlefield = state.clone();
+    let active_arena = state.clone();
     let battleground_count = state.clone();
     let battleground_info = state.clone();
     globals.raw_set(
@@ -35,6 +36,16 @@ pub(crate) fn register_globals(
                 slot.team_size(),
                 slot.registered_match(),
             ))
+        })?,
+    )?;
+    globals.raw_set(
+        "IsActiveBattlefieldArena",
+        lua.create_function(move |_, ()| {
+            Ok((1..=MAX_BATTLEFIELD_QUEUES).any(|index| {
+                active_arena.slot(index).is_ok_and(|slot| {
+                    slot.status() == UiBattlefieldQueueStatus::Active && slot.team_size() != 0
+                })
+            }))
         })?,
     )?;
     globals.raw_set(

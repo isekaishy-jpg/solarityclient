@@ -771,6 +771,7 @@ fn register_addon_globals(
             ]))
         })?,
     )?;
+    let addon_loaded = addons.clone();
     globals.raw_set(
         "IsAddOnLoaded",
         lua.create_function(move |_, identifier: Value| {
@@ -780,13 +781,13 @@ fn register_addon_globals(
                     let Some(index) = index.filter(|index| *index > 0) else {
                         return Err(mlua::Error::runtime(format!(
                             "AddOn index must be in the range of 1 to {}",
-                            addons.addon_count()
+                            addon_loaded.addon_count()
                         )));
                     };
-                    addons.status_by_index(index).ok_or_else(|| {
+                    addon_loaded.status_by_index(index).ok_or_else(|| {
                         mlua::Error::runtime(format!(
                             "AddOn index must be in the range of 1 to {}",
-                            addons.addon_count()
+                            addon_loaded.addon_count()
                         ))
                     })?
                 }
@@ -797,17 +798,17 @@ fn register_addon_globals(
                     else {
                         return Err(mlua::Error::runtime(format!(
                             "AddOn index must be in the range of 1 to {}",
-                            addons.addon_count()
+                            addon_loaded.addon_count()
                         )));
                     };
-                    addons.status_by_index(index).ok_or_else(|| {
+                    addon_loaded.status_by_index(index).ok_or_else(|| {
                         mlua::Error::runtime(format!(
                             "AddOn index must be in the range of 1 to {}",
-                            addons.addon_count()
+                            addon_loaded.addon_count()
                         ))
                     })?
                 }
-                Value::String(name) => addons
+                Value::String(name) => addon_loaded
                     .status_by_name(name.to_str()?.as_ref())
                     .unwrap_or((false, false)),
                 _ => {
@@ -820,6 +821,22 @@ fn register_addon_globals(
                 status.0.then_some(Value::Number(1.0)),
                 status.1.then_some(Value::Number(1.0)),
             ))
+        })?,
+    )?;
+    globals.raw_set(
+        "LoadAddOn",
+        lua.create_function(move |_, name: String| {
+            let Some((loaded, finished)) = addons.status_by_name(&name) else {
+                return Ok((None::<bool>, Some("MISSING")));
+            };
+            if loaded && finished {
+                Ok((Some(true), None::<&'static str>))
+            } else {
+                // The catalog is authoritative even before the execution host
+                // gains load-on-demand publication. Report a contained stock
+                // failure tuple so callers continue their event transaction.
+                Ok((None, Some("DISABLED")))
+            }
         })?,
     )
 }

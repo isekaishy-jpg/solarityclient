@@ -43,7 +43,8 @@ fn battlefield_status_reads_authoritative_two_slot_state() -> Result<(), Box<dyn
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1024, 768, false)?;
-    environment.battlefield_state().set_slot(
+    let battlefield = environment.battlefield_state();
+    battlefield.set_slot(
         1,
         UiBattlefieldSlot::active(
             UiBattlefieldQueueStatus::Confirm,
@@ -75,6 +76,20 @@ fn battlefield_status_reads_authoritative_two_slot_state() -> Result<(), Box<dyn
     runtime.execute_all(&bundle, &tree, &scripts)?;
 
     let globals = bundle.lua().globals();
+    let is_active_arena = globals.get::<mlua::Function>("IsActiveBattlefieldArena")?;
+    assert!(!is_active_arena.call::<bool>(())?);
+    battlefield.set_slot(
+        1,
+        UiBattlefieldSlot::active(
+            UiBattlefieldQueueStatus::Active,
+            "Nagrand Arena",
+            17,
+            (70, 80),
+            3,
+            true,
+        )?,
+    )?;
+    assert!(is_active_arena.call::<bool>(())?);
     assert_eq!(globals.get::<String>("STATUS1")?, "confirm");
     assert_eq!(globals.get::<String>("MAP1")?, "Nagrand Arena");
     assert_eq!(globals.get::<u32>("INSTANCE1")?, 17);
