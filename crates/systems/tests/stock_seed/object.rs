@@ -266,6 +266,75 @@ fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<
     Ok(())
 }
 
+/// Consumed sequence seeks remain consumed until a fresh upper-word update.
+#[test]
+fn game_object_sequence_progress_consumes_the_dense_word_without_replaying_sparse_updates()
+-> Result<(), Box<dyn Error>> {
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        1,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let fields = [
+        (8, 42),
+        (14, 0x8000_A55A),
+        (17, u32::from_le_bytes([1, 0, 7, 100])),
+    ];
+    let entity = world.create_object(42, ObjectKind::GameObject, None, fields)?;
+    project_object_fields(&mut world, 42, fields)?;
+    let presentation = world
+        .game_object_presentation(42)
+        .ok_or("missing typed object")?;
+    assert_eq!(presentation.sequence_progress(), Some(0x8000));
+    assert_eq!(presentation.animation_progress(), 100);
+    assert_eq!(
+        world.consume_game_object_sequence_progress(42)?,
+        Some(0x8000)
+    );
+    assert_eq!(
+        world
+            .storage()
+            .get::<&solarity_ecs::ObjectFields>(entity)?
+            .get(14),
+        0xFFFF_A55A
+    );
+    assert_eq!(
+        world
+            .game_object_presentation(42)
+            .ok_or("lost typed object")?
+            .sequence_progress(),
+        None
+    );
+    let unrelated = [(9, 0x80), (3, 17)];
+    world.update_fields(42, unrelated)?;
+    project_object_fields(&mut world, 42, unrelated)?;
+    let presentation = world
+        .game_object_presentation(42)
+        .ok_or("lost sparse state")?;
+    assert_eq!(presentation.dynamic_word(), 0xFFFF_A55A);
+    assert_eq!(presentation.animation_progress(), 100);
+    assert_eq!(world.consume_game_object_sequence_progress(42)?, None);
+    for progress in [0_u16, 0x8000, 0xFFFE, 0xFFFF] {
+        let update = [(14, (u32::from(progress) << 16) | 0x1234)];
+        world.update_fields(42, update)?;
+        project_object_fields(&mut world, 42, update)?;
+        assert_eq!(
+            world.consume_game_object_sequence_progress(42)?,
+            (progress != u16::MAX).then_some(progress)
+        );
+        assert_eq!(
+            world
+                .storage()
+                .get::<&solarity_ecs::ObjectFields>(entity)?
+                .get(14),
+            0xFFFF_1234
+        );
+    }
+    Ok(())
+}
+
 /// Projection rejects a pre-seeded player until its create type arrives.
 #[test]
 fn projection_requires_the_stock_create_type() -> Result<(), Box<dyn Error>> {

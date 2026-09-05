@@ -2,6 +2,10 @@
 
 use solarity_asset::{M2ModelAnimationMode, M2Sequence};
 
+#[cfg(test)]
+#[path = "../../../tests/support/sequence_completion.rs"]
+mod completion_tests;
+
 /// Whether sequence setup runs inside the scene's current update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2SequenceStartPhase {
@@ -151,6 +155,38 @@ impl M2ModelSequenceTimer {
     #[must_use]
     pub const fn cycle_count(self) -> u32 {
         self.cycle_count
+    }
+
+    /// Moves the native primary/secondary deadlines while the model is paused.
+    /// Pose sampling still uses the current scene tick (`0x0082F0F0`).
+    pub fn shift_scene_time(&mut self, delta_ms: u32) {
+        self.start_ms = self.start_ms.wrapping_add(delta_ms);
+        self.end_ms = self.end_ms.wrapping_add(delta_ms);
+    }
+
+    /// Returns whether native completion finishes this timer permanently.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        !self.loops
+    }
+
+    /// Finds a user sequence callback, including a terminal sequence's deadline.
+    ///
+    /// The owner must suppress repeated terminal callbacks after dispatch.
+    /// Native `0x00832260` also dispatches an already overdue terminal timer;
+    /// unlike a loop boundary, its deadline need not follow the previous tick.
+    #[must_use]
+    pub fn next_completion_ms(self, previous_ms: u32, current_ms: u32) -> Option<u32> {
+        if self.loops {
+            self.next_loop_boundary_ms(previous_ms, current_ms)
+        } else {
+            (self.direction != 0
+                && self.duration_ms != 0
+                && previous_ms != current_ms
+                && tick_at_or_after(current_ms, previous_ms)
+                && tick_at_or_after(current_ms, self.end_ms))
+            .then_some(self.end_ms)
+        }
     }
 
     /// Returns the first looping-sequence completion crossed by this scene interval.

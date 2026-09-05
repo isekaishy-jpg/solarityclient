@@ -47,6 +47,22 @@ impl M2AnimationSet {
         self.lookup_sequence(animation_id).is_some()
     }
 
+    /// Returns the first authored variation's duration after Model fallback.
+    ///
+    /// GameObject seeks use `0x0082CED0` with variation ordinal zero. This is
+    /// the lookup head, independently of its variation ID, payload alias,
+    /// external-data availability, and the variation selected for playback.
+    #[must_use]
+    pub fn model_animation_duration_ms(
+        &self,
+        catalog: &AnimationDataCatalog,
+        requested_animation: u32,
+    ) -> Option<u32> {
+        let resolved = self.resolve_model_animation(catalog, requested_animation)?;
+        let index = self.lookup_sequence(resolved.animation_id())?;
+        Some(self.sequences.get(index)?.duration_ms())
+    }
+
     /// Selects the variation requested by the Model Lua bridge (`0x00832AB0`).
     ///
     /// Its unspecified-variation argument always runs `0x00826E60`, even if

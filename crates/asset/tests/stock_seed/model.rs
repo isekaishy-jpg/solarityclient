@@ -20,6 +20,9 @@ use wow_m2::{M2Model, M2Version, OldSkin};
 
 use crate::support::{Fixture, FixtureFile};
 
+#[path = "model_sequence_duration.rs"]
+mod sequence_duration;
+
 /// HD model packs replace the same M2 and SKIN names through MPQ priority.
 #[test]
 fn higher_priority_model_pack_replaces_stock_paths_without_an_hd_type() -> Result<(), Box<dyn Error>>

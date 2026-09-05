@@ -405,6 +405,38 @@ impl ActiveWorld {
         Ok(())
     }
 
+    /// Consumes the native GameObject sequence seek in both typed and raw views.
+    ///
+    /// `0x0070D1E0` writes the upper half of absolute word 14 to `0xFFFF`
+    /// without notifying another field update. The low dynamic flags survive.
+    ///
+    /// # Errors
+    /// Returns [`WorldStateError`] for an absent object or missing field views.
+    pub fn consume_game_object_sequence_progress(
+        &self,
+        guid: u64,
+    ) -> Result<Option<u16>, WorldStateError> {
+        let entity = self.require_entity(guid)?;
+        let mut presentation = self
+            .storage
+            .get::<&mut GameObjectPresentation>(entity)
+            .map_err(|_| WorldStateError::MissingGameObjectPresentation { guid })?;
+        let mut fields = self
+            .storage
+            .get::<&mut ObjectFields>(entity)
+            .map_err(|_| WorldStateError::MissingObjectFields { guid })?;
+        let dynamic = fields.get(14);
+        let progress = (dynamic >> 16) as u16;
+        let consumed = dynamic | 0xFFFF_0000;
+        **presentation = presentation.with_dynamic_word(consumed);
+        if progress != u16::MAX {
+            fields.apply([(14, consumed)]);
+            Ok(Some(progress))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Replaces the authoritative transform for an existing object.
     ///
     /// # Errors
@@ -463,6 +495,12 @@ impl ActiveWorld {
 /// Invalid application of an authoritative object update.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum WorldStateError {
+    /// A GameObject sequence consumer lacks its projected presentation fields.
+    #[error("world object {guid:#018X} has no GameObject presentation")]
+    MissingGameObjectPresentation {
+        /// Object whose typed fields have not been projected.
+        guid: u64,
+    },
     /// A packet referenced an object that has not been created.
     #[error("world update references unknown object {guid:#018X}")]
     UnknownObject {

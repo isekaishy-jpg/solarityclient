@@ -96,6 +96,43 @@ fn sequence_blend_uses_secondary_completion_flags_and_wrapping_smoothstep()
     Ok(())
 }
 
+/// Paused models shift both pose clocks while the scene and blend envelope advance.
+#[test]
+fn paused_sequence_timers_preserve_pose_and_move_completion() -> Result<(), Box<dyn Error>> {
+    let model = model(true)?;
+    let mut timer = M2ModelSequenceTimer::new(
+        &model.animations().sequences()[0],
+        M2ModelAnimationMode::Forward,
+        u32::MAX - 100,
+        250,
+        0,
+        M2SequenceStartPhase::DuringSceneUpdate,
+    );
+    let tick = u32::MAX - 50;
+    let pose = timer.animation_time_ms(tick);
+    let end = timer.end_time_ms();
+    let mut blend = M2ModelSequenceBlend::new(1, timer, tick, 400);
+    let clock = M2AnimationClock::new(0, 0.0, 0.0);
+    let before = blend.apply_to_clock(clock, tick);
+    timer.shift_scene_time(100);
+    blend.shift_pose_time(100);
+    let after_tick = tick.wrapping_add(100);
+    assert_eq!(timer.animation_time_ms(after_tick), pose);
+    assert_eq!(timer.end_time_ms(), end.wrapping_add(100));
+    assert_eq!(
+        timer.next_completion_ms(after_tick, timer.end_time_ms()),
+        Some(timer.end_time_ms())
+    );
+    let after = blend.apply_to_clock(clock, after_tick);
+    assert_eq!(before, clock.with_secondary_sequence(1, pose as f32, 1.0));
+    assert_eq!(
+        after,
+        clock.with_secondary_sequence(1, pose as f32, 0.84375)
+    );
+    assert_eq!(blend.weight(after_tick), 0.84375);
+    Ok(())
+}
+
 /// 0x00826B00 retains signed seeks; 0x0082F0F0 wraps or holds according to flag 1.
 #[test]
 fn sequence_timer_samples_native_seek_reverse_hold_and_tick_wrap() -> Result<(), Box<dyn Error>> {

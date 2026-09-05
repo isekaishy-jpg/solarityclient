@@ -46,6 +46,12 @@ impl M2ModelSequenceBlend {
         (3.0 - (fraction + fraction)) * fraction * fraction
     }
 
+    /// Pauses the secondary pose while retaining the original blend envelope.
+    /// Native `0x0082F0F0` shifts the copied timer but not the blend deadline.
+    pub fn shift_pose_time(&mut self, delta_ms: u32) {
+        self.timer.shift_scene_time(delta_ms);
+    }
+
     /// Adds the old sequence's independently advancing pose to the new clock.
     #[must_use]
     pub fn apply_to_clock(self, clock: M2AnimationClock, scene_time_ms: u32) -> M2AnimationClock {

@@ -24,8 +24,11 @@ Generic behavior initialization/field refresh `0x0070D600` reads the cached
 GameObject state and the upper half of absolute update word 14,
 `GAMEOBJECT_DYNAMIC`. That ushort is a sequence progress fraction; `0xFFFF`
 means no supplied fraction. It is distinct from the byte in `GAMEOBJECT_BYTES_1`.
-The fraction currently remains in the dense field table and needs a typed
-consumer that preserves field-update events and native consumption semantics.
+`GameObjectPresentation::sequence_progress` projects this ushort separately from
+the BYTES_1 animation byte. `ActiveWorld::consume_game_object_sequence_progress`
+sets it to `0xFFFF` in both the dense and typed views, retaining the low dynamic
+flags and issuing no notification. Runtime behavior has not yet wired that
+consumer into native field notification order.
 
 | Replicated state | No supplied fraction | Supplied fraction |
 | --- | --- | --- |
@@ -38,9 +41,18 @@ The first eight animation IDs in native table `0x00ADA938` are
 0 through 7. `0x0070D1E0` selects animations with model-dependent fallbacks,
 including frozen endpoint sequences when authored open/close clips are missing.
 It consumes supplied progress using the float constant at `0x00A339E0`
-(`1.5259021893143654e-05`), starts at the resulting sequence offset, and sets a
-completion clock. It also handles the animation clock flag in `GAMEOBJECT_FLAGS`.
-This requires actual model sequence metadata and the retained playback clock.
+(`1.5259021893143654e-05`), starts at the resulting sequence offset, and records
+an estimated wall-clock deadline. That deadline does not dispatch completion.
+`GameObjectAnimationState` implements the initial, changed, and completed state
+tables. The seek and reversal helpers preserve the native x87 arithmetic,
+including the single-precision spill and ties-to-even integer conversion.
+
+State notifications use a different table (`0x0070D690`) from initialization.
+Closed-to-open always enters Opening, even without progress; open-to-closed
+enters Closing. Closed-to-destroyed enters Destroying; destroyed-to-closed enters
+Rebuilding unless supplied progress forces Closing. A progress notification
+(`0x0070FD10`) reselects the current internal state's animation instead of
+recomputing an initial state.
 
 Completion callback `0x0070D7E0` advances internal 2 to 3, 4/7 to 1, and 5 to 6.
 Stable states 1/3/6 re-enter sequence selection. `0x0070D510` handles animation
@@ -49,6 +61,64 @@ override `0x0070D8D0` sets collision eligibility only when internal state is 1;
 its initial eligibility virtual `0x00712550` uses the same predicate. A closing
 door with supplied progress is therefore not solid until completion reaches 1.
 Checking only replicated state byte 1 would make it solid too soon.
+
+## Model callbacks, metadata, and pause clocks
+
+`0x00712F30` installs callback `0x0070CB10` through `CM2Model::0x00823FE0`.
+Ordinary completion enters behavior virtual `+0x48` (`0x0070D7E0`); interruption
+enters `+0x44` (`0x0070C430`). The callback clears the last-started state before
+selecting the next state or restarting a stable state.
+
+The model scan `0x00832260` queues looping callbacks at the final millisecond
+of each authored duration and terminal callbacks at the primary timer's end.
+An already overdue terminal timer still receives its first callback. Held or
+zero-duration sequences do not receive this scan's callbacks. `0x00831FC0`
+marks terminal timers finished before invoking the user callback. Automatic
+weighted variation selection follows only if the callback leaves the primary
+sequence index and start tick unchanged, the sequence loops, and variations
+are enabled. Stable GameObjects therefore still receive callbacks when a model
+has only one sequence. A behavior callback starts its replacement at the current
+scene tick, without the outside-update one-millisecond adjustment or automatic
+variation's carried overdue offset.
+
+Progress metadata comes from `0x0082CED0` with variation ordinal zero. The asset
+API `model_animation_duration_ms` applies Model fallback and reads the authored
+lookup head's duration. It does not choose the weighted playback variation,
+search for variation-ID zero, or follow an alias to its track payload duration.
+External payload availability does not affect this metadata lookup.
+
+`GAMEOBJECT_FLAGS & 0x80` pauses only transition states 2/4/5/7. Sequence setup
+and the flags notification (`0x0070D160`) store the current scene tick, or 1 when
+that tick is zero, in model `+0x64`. A nonzero value suppresses callback scanning.
+Pose update `0x0082F0F0` advances that pause marker and shifts both primary and
+secondary timer start/end ticks by the elapsed pause duration. The global scene
+clock and secondary blend envelope continue advancing. Timer APIs now support
+these shifts and terminal completion lookup; runtime ownership and dispatch are
+still pending.
+
+## Field notification order
+
+`0x004D73A0` processes the entire update packet in two passes. `0x004D7050`
+applies raw creates/values first, then the packet cursor is restored and
+`0x004D7100` dispatches post-initialization and field notifications. This is not
+an immediate callback after each individual raw word or update block.
+
+`0x004D53C0` saves watched old values in the mirror and applies the raw update.
+The notification pass (`0x004D5550`) walks update words in ascending order and
+calls `0x004D5150` for touched words. That function compares the watched byte
+range in the current raw fields against its mirror at dispatch time. Handler
+flag `+0x2E` skips the comparison. `0x007140A0` registers the GameObject state
+handler with this flag set; the flags and sequence-progress handlers compare
+their watched values normally.
+
+Consequently flags (absolute word 9) precede sequence progress (upper word 14),
+which precedes state (byte zero of word 17). Progress consumption by one handler
+is visible to the later state handler. `0x00711050` additionally compares the
+current replicated state with cached state `+0x204`, except for type 15, which
+always enters the state virtual. Multiple update blocks and packets must retain
+their notification boundaries and the mirror values used for comparison. A
+renderer-only comparison of the final per-frame presentation cannot reproduce
+this behavior or its random-number consumption.
 
 `0x00710460` is a separate behavior controlling a WMO handle and passenger
 detachment. It selects Close/Open (146/148), changes the retained collision flag,
@@ -81,6 +151,16 @@ request, sequence metadata, and final application endpoint; it does not test
 completion deadlines or transition progress. Portable tests compare requests,
 frozen state, and preservation decisions. Runtime archive tests additionally
 check DBC fallback, timer offsets, held endpoints, and RNG order.
+
+`game-object-transition-native.txt` adds 232 original-code cases for the initial
+and changed state tables, progress offsets, and reversed fractions. Field tests
+verify consumed fractions remain consumed after unrelated sparse updates.
+`native_sequence_completions.txt` adds 1,080 original `0x00832260` scan cases for
+looping and terminal sequences, seeks, held speed, paused/finished owners,
+zero/one-millisecond durations, overdue timers, and scene-tick wrap. Its harness
+isolates authored-event enumeration and queue insertion; it does not test the
+GameObject user callback or the full scene traversal. Rendering tests separately
+check that pause shifts preserve pose while advancing the blend envelope.
 
 Shared resource residency and fresh object lifetimes are implemented in
 [GameObject placement](game-object-placement.md). Retained behavior and animation

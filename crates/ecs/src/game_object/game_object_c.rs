@@ -8,6 +8,7 @@ pub struct GameObjectPresentation {
     display_id: u32,
     flags: u32,
     bytes_1: u32,
+    dynamic: u32,
 }
 
 impl GameObjectPresentation {
@@ -24,6 +25,7 @@ impl GameObjectPresentation {
             display_id,
             flags,
             bytes_1,
+            dynamic: 0,
         }
     }
 
@@ -67,5 +69,31 @@ impl GameObjectPresentation {
     #[must_use]
     pub const fn animation_progress(self) -> u8 {
         (self.bytes_1 >> 24) as u8
+    }
+
+    /// Supplies absolute update word 14, independently of the packed state bytes.
+    #[must_use]
+    pub const fn with_dynamic_word(mut self, dynamic: u32) -> Self {
+        self.dynamic = dynamic;
+        self
+    }
+
+    /// Returns the exact `GAMEOBJECT_DYNAMIC` word, including its low flags.
+    #[must_use]
+    pub const fn dynamic_word(self) -> u32 {
+        self.dynamic
+    }
+
+    /// Returns the supplied sequence fraction; `0xFFFF` means no supplied seek.
+    ///
+    /// This ushort is distinct from byte three of `GAMEOBJECT_BYTES_1`.
+    #[must_use]
+    pub const fn sequence_progress(self) -> Option<u16> {
+        let progress = (self.dynamic >> 16) as u16;
+        if progress == u16::MAX {
+            None
+        } else {
+            Some(progress)
+        }
     }
 }
