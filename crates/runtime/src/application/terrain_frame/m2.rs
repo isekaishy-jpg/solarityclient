@@ -675,6 +675,7 @@ impl M2Playback {
         catalog: &AnimationDataCatalog,
         requested_animation: u32,
         time_offset_ms: i32,
+        scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         // 0x00832840 refuses to clear bone zero. The -1 animation sentinel
@@ -702,7 +703,9 @@ impl M2Playback {
         let timer = M2ModelSequenceTimer::new(
             &animations.sequences()[sequence],
             resolved.mode(),
-            self.scene_time_ms,
+            // 0x00826B00 reads the owning scene clock at the request, even
+            // when this model has not been sampled while its widget is hidden.
+            scene_time_ms,
             time_offset_ms,
             random.next_u15(),
             M2SequenceStartPhase::BeforeSceneUpdate,
@@ -2114,6 +2117,7 @@ impl M2Frame {
         time_offset_ms: i32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let scene_time_ms = self.animation_time_ms() as u32;
         let placement = self
             .placements
             .iter_mut()
@@ -2133,6 +2137,7 @@ impl M2Frame {
             catalog,
             animation_id,
             time_offset_ms,
+            scene_time_ms,
             random,
         )?;
         self.pending_glue_playback_advance = None;

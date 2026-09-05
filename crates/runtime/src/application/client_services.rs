@@ -328,15 +328,9 @@ impl ClientServices {
         {
             glue_model.prewarm(login_model.path().clone(), background_light_count, &cpu)?;
             glue_model.synchronize_script_models(&glue, &cpu, &mut crt_rand)?;
-            // AccountLogin's immutable resources and live effect owner must
-            // both exist before the movie starts. The movie then advances that
-            // hidden owner until EULA reveals the already-current scene.
-            glue_model.finish_prewarm(
-                &mut renderer,
-                login_model,
-                &mut crt_rand,
-                Arc::clone(&particle_twinkle),
-            )?;
+            // OnLoad assigns the source while hidden. OnShow starts sequence
+            // zero when login appears, after the movie has finished.
+            glue_model.finish_prewarm(&mut renderer, login_model)?;
         }
         if initial_screen != GlueInitialScreen::Movie {
             let _initial_model_poll = glue_model.synchronize(
@@ -888,6 +882,9 @@ impl ClientServices {
             self.persist_active_cvars()?;
             profile.mark("CVar persistence");
             let movie = self.glue.media_intent().movie().cloned();
+            if movie.is_some() {
+                self.glue_model.hide();
+            }
             let cinematic_overlay = (!self.runtime_overlay_draws.is_empty()).then_some((
                 self.developer_console.logical_extent(),
                 self.runtime_overlay_draws.as_slice(),
@@ -899,12 +896,6 @@ impl ClientServices {
                 cinematic_overlay,
             )? {
                 RuntimeCinematicPoll::Presented => {
-                    let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
-                    self.glue_model.advance_hidden(
-                        &self.renderer,
-                        global_time_ms,
-                        &mut self.crt_rand,
-                    )?;
                     if let Some(fps) = self.fps.as_mut() {
                         fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
                     }

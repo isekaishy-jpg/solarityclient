@@ -71,6 +71,22 @@ including negative-offset behavior. Lua animation conversion preserves the
 low 32 bits after the x87 integer conversion; the time argument follows
 the SSE2 `_ftol2` path at `0x0088B9C0`.
 
+Resident Glue requests now sample the owning clock when the command executes,
+instead of reusing the model's last rendered tick. This matters after a hidden
+interval: `Interface/GlueXML/AccountLogin.lua` calls `SetSequence(0)` in
+`AccountLogin_OnShow`, so the next visible frame begins a fresh sequence.
+Its `OnHide` calls `StopAllSFX(1.0)`; the sound engine cancels pending SFX as
+well as active voices. Cinematic preparation retains immutable GPU resources
+without activating or advancing the hidden login model. Entering a movie
+retires any visible Glue effect frame, as other screens without a Model do.
+
+The deterministic playback regression leaves the model unsampled for one
+minute, issues the show request, and verifies time zero, no expired variation
+callbacks, no accumulated sound events, and the first authored sound at its
+new sequence-relative timestamp. Native deferred-load requests also carry a
+scene timestamp at `0x00832AB0`; exact replay-time handling of that timestamp
+remains a separate research gap in the FIFO loading path.
+
 The automatic callback at `0x00831FC0` retains the portion of the frame after
 a crossed boundary. `0x00832260` places looping callbacks at the last tick of
 each authored cycle independently of the primary timer's total cycle count.

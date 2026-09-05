@@ -629,18 +629,15 @@ impl RuntimeGlueModelScene {
         Ok(())
     }
 
-    /// Completes and activates a hidden prewarm before the cinematic presents.
+    /// Completes immutable GPU preparation before the cinematic presents.
     ///
     /// Vulkan resource ownership stays on the presentation thread, while the
     /// mesh plan and shader compilation are joined from the bounded CPU pool.
-    /// Playback begins here so the cinematic can advance the same live effects
-    /// that EULA reveals, rather than constructing an empty instance afterward.
+    /// AccountLogin_OnShow starts playback when login actually becomes visible.
     pub(crate) fn finish_prewarm(
         &mut self,
         renderer: &mut VulkanRenderer,
         presentation: &UiModelPresentation,
-        random: &mut CrtRand,
-        particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
         let key = GlueModelKey::from_presentation(presentation);
         let environment = GlueModelEnvironment::from_presentation(
@@ -670,15 +667,6 @@ impl RuntimeGlueModelScene {
                 "could not checkpoint startup Vulkan pipeline cache"
             );
         }
-        self.activate_prepared(
-            renderer,
-            generation,
-            key,
-            environment,
-            None,
-            random,
-            particle_twinkle,
-        )?;
         Ok(())
     }
 
@@ -800,49 +788,11 @@ impl RuntimeGlueModelScene {
         Ok(complete)
     }
 
-    /// Advances the resident login model while the cinematic covers it.
-    ///
-    /// This performs no swapchain submission. It only keeps animation,
-    /// particle, ribbon, material, and light state current for the first EULA
-    /// frame that follows the movie.
-    pub(crate) fn advance_hidden(
-        &mut self,
-        renderer: &VulkanRenderer,
-        global_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeGlueModelError> {
-        let Some(active) = self.active.as_mut() else {
-            return Ok(());
-        };
-        let animation_time_ms = active.frame.animation_time_ms();
-        let clock =
-            active
-                .frame
-                .advance_glue_animation_clock(animation_time_ms, global_time_ms, random)?;
-        let (camera, effect_scale) = sample_m2_ui_camera_frame(
-            active.model.animations(),
-            active.environment.camera,
-            clock,
-            active.environment.camera_viewport,
-            active.frame.glue_model_transform()?,
-        )?;
-        let frustum =
-            WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
-        active.frame.prepare_visible_draws(
-            renderer,
-            frustum,
-            camera,
-            active.environment.fog_color,
-            animation_time_ms,
-            global_time_ms,
-            effect_scale,
-            random,
-        )?;
-        // The covered login model advances to keep visual effects current,
-        // but its callbacks are not audible through the cinematic.
-        active.frame.drain_triggered_events();
+    /// Retires visible effects when Glue hides its Model, retaining widget playback.
+    /// AccountLogin_OnHide stops its SFX; no hidden frame may emit new callbacks.
+    pub(crate) fn hide(&mut self) {
+        self.retire_active_script_model();
         self.sound_camera = None;
-        Ok(())
     }
 
     /// Rebuilds GPU state only when Glue changes the selected model generation.

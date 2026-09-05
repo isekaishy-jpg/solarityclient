@@ -1096,9 +1096,26 @@ verified 102 complete camera keys and 95 sampled frames across the Northrend,
 Night Elf, and Blood Elf backdrops. Login and Soap captures were inspected;
 the complete 31-step selection/customization replay finished without errors.
 
-The user's subsequent movie/back-out report identifies a separate lifecycle
-defect: hidden login playback advances during cinematic presentation, and
-explicit sequence requests use the last sampled scene time. Stock
-`AccountLogin_OnShow` calls `SetSequence(0)` and `AccountLogin_OnHide` calls
-`StopAllSFX(1.0)`. Correct command-time anchoring and hidden ownership remain
-the next correction; typed key decoding does not resolve them.
+## Login visibility and sequence restart
+
+The movie/back-out defect had two independent causes: cinematic presentation
+explicitly advanced the hidden login model, and sequence requests reused its
+last sampled scene time. Stock `AccountLogin_OnShow` calls `SetSequence(0)`;
+`0x00826B00` anchors that request to the owning scene's current clock.
+Resident requests now read that clock when applied, including after a long
+hidden interval. Movie preparation retains immutable resources, and movie
+presentation retires visible model effects without advancing hidden playback.
+
+`AccountLogin_OnHide` already issues `StopAllSFX(1.0)`. The sound engine cancels
+pending loads as well as active SFX, so delayed load completion cannot revive
+the old dragon sound. The requested one-second fade remains unimplemented;
+the current stop is immediate.
+
+Formatting, Clippy, and all 582 workspace tests pass. The new deterministic
+regression verifies a restart after one minute hidden, no accumulated sound
+or variation callbacks, and the first sound on its new timeline. An offline
+32-step production renderer replay completed selection, customization, and
+return to login without errors; both login captures were inspected.
+The optimized startup run prepared login resources before the movie but did
+not activate its model until after cinematic playback stopped. That path was
+verified in runtime logs; desktop automation was unavailable for visual QA.

@@ -151,6 +151,7 @@ impl RuntimeGlueModelScene {
                     &self.animations,
                     animation_id,
                     time_offset_ms,
+                    (entry.started_at.elapsed().as_secs_f32() * 1_000.0) as u32,
                     random,
                 )?;
             }
