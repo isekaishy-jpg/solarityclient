@@ -36,7 +36,8 @@ pub use protocol::{
     WORLD_ACTION_BUTTON_COUNT, WorldActionButtonPacketError, WorldActionButtonUpdate,
     WorldActionButtons, WorldEntryPacketError, WorldLivenessPacketError, WorldLocation,
     WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket,
-    WorldTimePacketError, WorldTimeSpeed,
+    WorldTimePacketError, WorldTimeSpeed, WorldTransfer, WorldTransferPacketError,
+    WorldTransferTransport,
 };
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};

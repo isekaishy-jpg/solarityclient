@@ -309,10 +309,7 @@ impl GlueManager {
                 runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;
             let initial_payload = UiEventPayload::new([UiEventArgument::String(
                 initial_screen.script_name().to_owned(),
-            )])
-            .map_err(|error| crate::UiScriptError::Plan {
-                message: format!("could not construct stock initial-screen event: {error}"),
-            })?;
+            )]);
             let _dispatch =
                 runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }

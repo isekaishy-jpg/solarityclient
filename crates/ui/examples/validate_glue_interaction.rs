@@ -186,7 +186,7 @@ fn validate_login_secondary_frames(manager: &mut GlueManager) -> Result<(), Box<
     }
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())]),
     )?;
     for _frame in 0..120 {
         manager.update(1.0 / 60.0)?;
@@ -332,11 +332,11 @@ fn validate_initial_empty_character_selection(
     manager.set_character_directory(UiCharacterDirectory::new(Vec::new(), "Orc".to_owned()));
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
     )?;
     manager.dispatch_event(
         "CHARACTER_LIST_UPDATE",
-        &UiEventPayload::new([UiEventArgument::Integer(0)])?,
+        &UiEventPayload::new([UiEventArgument::Integer(0)]),
     )?;
     manager.update(0.25)?;
     manager.update(0.25)?;
@@ -392,7 +392,7 @@ fn validate_initial_empty_character_selection(
     );
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())]),
     )?;
     manager.update(0.25)?;
     manager.update(0.25)?;
@@ -408,7 +408,7 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     if manager.current_screen() != "charcreate" {
         manager.dispatch_event(
             "SET_GLUE_SCREEN",
-            &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+            &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())]),
         )?;
         manager.update(0.25)?;
         manager.update(0.25)?;
@@ -792,7 +792,7 @@ fn validate_empty_character_selection(manager: &mut GlueManager) -> Result<(), B
     manager.set_character_directory(UiCharacterDirectory::new(Vec::new(), "Orc".to_owned()));
     manager.dispatch_event(
         "CHARACTER_LIST_UPDATE",
-        &UiEventPayload::new([UiEventArgument::Integer(0)])?,
+        &UiEventPayload::new([UiEventArgument::Integer(0)]),
     )?;
     validate_visible_font_string_extents(manager, "empty character selection")?;
 
@@ -1306,11 +1306,11 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
     ));
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
     )?;
     manager.dispatch_event(
         "CHARACTER_LIST_UPDATE",
-        &UiEventPayload::new([UiEventArgument::Integer(1)])?,
+        &UiEventPayload::new([UiEventArgument::Integer(1)]),
     )?;
     let quarter_changed = manager.update(0.25)?;
     if !quarter_changed || manager.current_screen() != "login" {

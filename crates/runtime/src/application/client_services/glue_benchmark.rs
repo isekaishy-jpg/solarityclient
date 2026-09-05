@@ -245,8 +245,7 @@ impl ClientServices {
             }
             GlueBenchmarkAction::Screen(screen) => {
                 let payload =
-                    UiEventPayload::new([UiEventArgument::String(screen.token().to_owned())])
-                        .map_err(ApplicationError::from)?;
+                    UiEventPayload::new([UiEventArgument::String(screen.token().to_owned())]);
                 self.glue
                     .dispatch_event("SET_GLUE_SCREEN", &payload)
                     .map_err(ApplicationError::from)?;
@@ -254,8 +253,7 @@ impl ClientServices {
             GlueBenchmarkAction::Directory(directory) => {
                 let count = directory.characters().len() as i64;
                 self.glue.set_character_directory(directory.clone());
-                let payload = UiEventPayload::new([UiEventArgument::Integer(count)])
-                    .map_err(ApplicationError::from)?;
+                let payload = UiEventPayload::new([UiEventArgument::Integer(count)]);
                 self.glue
                     .dispatch_event("CHARACTER_LIST_UPDATE", &payload)
                     .map_err(ApplicationError::from)?;
@@ -315,8 +313,7 @@ impl ClientServices {
         profile.mark("platform events");
         while let Some(action) = self.glue.take_network_action() {
             if let UiGlueNetworkAction::SelectCharacter { index } = action {
-                let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))])
-                    .map_err(ApplicationError::from)?;
+                let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))]);
                 self.glue
                     .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)
                     .map_err(ApplicationError::from)?;

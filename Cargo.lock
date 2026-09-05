@@ -4336,6 +4336,9 @@ dependencies = [
  "wow-m2",
  "wow-mpq",
  "wow-wdt",
+ "wow_login_messages",
+ "wow_srp",
+ "wow_world_messages",
 ]
 
 [[package]]

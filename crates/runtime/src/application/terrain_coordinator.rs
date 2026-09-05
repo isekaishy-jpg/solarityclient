@@ -191,6 +191,18 @@ pub struct RuntimeTerrainCoordinator {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Checks the exact Map.dbc membership before a transfer callback is admitted.
+    #[must_use]
+    pub fn contains_map(&self, map_id: u32) -> bool {
+        self.maps.map(map_id).is_some()
+    }
+
+    /// Returns the authored map display name used in transfer-denial messages.
+    #[must_use]
+    pub fn map_name(&self, map_id: u32) -> Option<&str> {
+        self.maps.map(map_id).map(MapDefinition::name)
+    }
+
     /// Creates an empty terrain owner over the process-wide asset stack.
     #[must_use]
     pub fn new(assets: AssetStoreHandle, maps: MapCatalog) -> Self {
@@ -246,7 +258,7 @@ impl RuntimeTerrainCoordinator {
             return Ok(false);
         }
         if let Some(pending) = self.pending.as_mut() {
-            if pending.request == request {
+            if pending.eligible_for_publication && pending.request == request {
                 pending.retain_without_world = true;
                 return Ok(false);
             }
@@ -268,6 +280,7 @@ impl RuntimeTerrainCoordinator {
             request,
             submitted_at: std::time::Instant::now(),
             retain_without_world: true,
+            eligible_for_publication: true,
             task,
         });
         tracing::debug!(
@@ -379,7 +392,7 @@ impl RuntimeTerrainCoordinator {
             if let Some(worker) = completion.worker {
                 self.worker = Some(worker);
             }
-            if pending_request == request {
+            if pending.eligible_for_publication && pending_request == request {
                 match completion.result {
                     Ok(active) => {
                         let global_world_model = active.global_world_model.is_some();
@@ -426,6 +439,7 @@ impl RuntimeTerrainCoordinator {
             request,
             submitted_at: std::time::Instant::now(),
             retain_without_world: false,
+            eligible_for_publication: true,
             task,
         });
         Ok(RuntimeTerrainPoll::Pending { map_id })
@@ -1009,6 +1023,10 @@ impl RuntimeTerrainCoordinator {
         self.prefetched = None;
         if let Some(pending) = self.pending.as_mut() {
             pending.retain_without_world = false;
+            // A same-map NEW_WORLD is a new ownership generation. Recover
+            // the worker's archive handle when it finishes, but never publish
+            // that retired generation just because its tile key still matches.
+            pending.eligible_for_publication = false;
         }
         self.failed_request = None;
         self.textures.collect_unused();
@@ -1036,6 +1054,8 @@ struct PendingTerrainGeneration {
     request: TerrainRequest,
     submitted_at: std::time::Instant,
     retain_without_world: bool,
+    /// Cleared when a world replacement retires the job's ownership generation.
+    eligible_for_publication: bool,
     task: CpuTask<TerrainWorkerCompletion>,
 }
 

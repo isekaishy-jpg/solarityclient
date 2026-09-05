@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 pub(super) mod glue_benchmark;
+mod world_transfer;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -70,6 +71,7 @@ use crate::application::world_coordinator::{
     RuntimeCharacterScreenRequests, RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll,
     RuntimeWorldState,
 };
+use crate::application::world_transfer::RuntimeWorldTransferCoordinator;
 use crate::application::world_ui::RuntimeWorldUi;
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
@@ -128,6 +130,7 @@ pub(crate) struct ClientServices {
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
     gameplay: RuntimeGameplayCoordinator,
+    world_transfer: RuntimeWorldTransferCoordinator,
     environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
     transport: RuntimeTransportPresentation,
@@ -444,6 +447,7 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
+                world_transfer: RuntimeWorldTransferCoordinator::new(),
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
@@ -553,7 +557,7 @@ impl ClientServices {
                 .set_text_input_active(self.developer_console.is_visible());
             return Ok(());
         }
-        if self.loading_screen.is_some() {
+        if self.loading_screen.is_some() || self.world_transfer.is_entering_world() {
             return Ok(());
         }
         if self.gameplay.world().is_some() {
@@ -849,6 +853,9 @@ impl ClientServices {
             if let Some(fps) = self.fps.as_mut() {
                 fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
             }
+            return Ok(());
+        }
+        if self.world_transfer.is_entering_world() {
             return Ok(());
         }
         if self.gameplay.world().is_none() {
@@ -1297,7 +1304,7 @@ impl ClientServices {
                                 &UiEventPayload::new([
                                     UiEventArgument::String("CANCEL".to_owned()),
                                     UiEventArgument::String(message),
-                                ])?,
+                                ]),
                             )?;
                             self.glue_ui_dirty = true;
                         }
@@ -1330,6 +1337,7 @@ impl ClientServices {
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
+                    self.world_transfer.disconnect();
                     self.environment.disconnect();
                     self.player.disconnect();
                     self.terrain.disconnect();
@@ -1361,7 +1369,7 @@ impl ClientServices {
                         let payload = UiEventPayload::new([
                             UiEventArgument::String("CANCEL".to_owned()),
                             UiEventArgument::String(status_message),
-                        ])?;
+                        ]);
                         self.glue.dispatch_event("OPEN_STATUS_DIALOG", &payload)?;
                     }
                     match self.login.refresh_realms(&handle) {
@@ -1431,7 +1439,7 @@ impl ClientServices {
                                 &UiEventPayload::new([
                                     UiEventArgument::String("CANCEL".to_owned()),
                                     UiEventArgument::String(message),
-                                ])?,
+                                ]),
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
@@ -1450,7 +1458,7 @@ impl ClientServices {
                                 &UiEventPayload::new([
                                     UiEventArgument::String("CANCEL".to_owned()),
                                     UiEventArgument::String(message),
-                                ])?,
+                                ]),
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
@@ -1470,7 +1478,7 @@ impl ClientServices {
                                 &UiEventPayload::new([
                                     UiEventArgument::String("OKAY".to_owned()),
                                     UiEventArgument::String(message),
-                                ])?,
+                                ]),
                             )?;
                             continue;
                         }
@@ -1490,7 +1498,7 @@ impl ClientServices {
                                 &UiEventPayload::new([
                                     UiEventArgument::String("CANCEL".to_owned()),
                                     UiEventArgument::String(message),
-                                ])?,
+                                ]),
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
@@ -1507,18 +1515,17 @@ impl ClientServices {
                         &UiEventPayload::new([
                             UiEventArgument::String("OKAY".to_owned()),
                             UiEventArgument::String(message),
-                        ])?,
+                        ]),
                     )?;
                 }
                 UiGlueNetworkAction::ForceCharacterRename { message_token } => {
                     self.glue.dispatch_event(
                         "FORCE_RENAME_CHARACTER",
-                        &UiEventPayload::new([UiEventArgument::String(message_token.to_owned())])?,
+                        &UiEventPayload::new([UiEventArgument::String(message_token.to_owned())]),
                     )?;
                 }
                 UiGlueNetworkAction::SelectCharacter { index } => {
-                    let payload =
-                        UiEventPayload::new([UiEventArgument::Integer(i64::from(index))])?;
+                    let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))]);
                     self.glue
                         .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)?;
                 }
@@ -1659,7 +1666,7 @@ impl ClientServices {
                         message: source.to_string(),
                     }
                 })?;
-                let payload = UiEventPayload::new([UiEventArgument::Integer(category_count)])?;
+                let payload = UiEventPayload::new([UiEventArgument::Integer(category_count)]);
                 self.publish_realm_directory("GET_PREFERRED_REALM_INFO", payload)?;
                 self.realm_directory_published = true;
             }
@@ -1697,7 +1704,7 @@ impl ClientServices {
                 self.glue.set_character_directory(Default::default());
                 self.glue.dispatch_event(
                     "SET_GLUE_SCREEN",
-                    &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+                    &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
                 )?;
                 self.glue_ui_dirty = true;
             }
@@ -1717,7 +1724,7 @@ impl ClientServices {
                     self.glue.set_character_directory(characters);
                     self.glue.dispatch_event(
                         "CHARACTER_LIST_UPDATE",
-                        &UiEventPayload::new([UiEventArgument::Integer(count)])?,
+                        &UiEventPayload::new([UiEventArgument::Integer(count)]),
                     )?;
                     self.glue_ui_dirty = true;
                 }
@@ -1733,7 +1740,7 @@ impl ClientServices {
                         .dispatch_event("SELECT_LAST_CHARACTER", &UiEventPayload::empty())?;
                     self.glue.dispatch_event(
                         "SET_GLUE_SCREEN",
-                        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+                        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
                     )?;
                 } else {
                     let message = self
@@ -1745,7 +1752,7 @@ impl ClientServices {
                         &UiEventPayload::new([
                             UiEventArgument::String("OKAY".to_owned()),
                             UiEventArgument::String(message),
-                        ])?,
+                        ]),
                     )?;
                 }
                 self.glue_ui_dirty = true;
@@ -1769,7 +1776,7 @@ impl ClientServices {
                         &UiEventPayload::new([
                             UiEventArgument::String("OKAY".to_owned()),
                             UiEventArgument::String(message),
-                        ])?,
+                        ]),
                     )?;
                 }
                 self.glue_ui_dirty = true;
@@ -1791,7 +1798,7 @@ impl ClientServices {
                         &UiEventPayload::new([
                             UiEventArgument::String("OKAY".to_owned()),
                             UiEventArgument::String(message),
-                        ])?,
+                        ]),
                     )?;
                 }
                 self.glue_ui_dirty = true;
@@ -1799,7 +1806,8 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::CharacterOperationCancelled) => {}
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
-                    self.gameplay.begin(&handle, entry)?;
+                    let (session, setup_packets) = entry.into_parts();
+                    self.gameplay.begin(&handle, session, setup_packets)?;
                     tracing::info!("selected character entered the active world");
                 }
             }
@@ -1821,7 +1829,7 @@ impl ClientServices {
                     self.character_directory_published = true;
                     self.glue.dispatch_event(
                         "CHARACTER_LIST_UPDATE",
-                        &UiEventPayload::new([UiEventArgument::Integer(count)])?,
+                        &UiEventPayload::new([UiEventArgument::Integer(count)]),
                     )?;
                     self.glue_ui_dirty = true;
                 }
@@ -1837,14 +1845,14 @@ impl ClientServices {
                     &UiEventPayload::new([
                         UiEventArgument::String("OKAY".to_owned()),
                         UiEventArgument::String(message),
-                    ])?,
+                    ]),
                 )?;
                 self.glue_ui_dirty = true;
             }
             Err(error) => self.publish_world_failure(error),
         }
         self.service_loading_screen_prewarm()?;
-        self.gameplay.service()?;
+        self.service_world_transfers()?;
         // Stock continues world/UI initialization while the loading card owns
         // presentation. Start immutable terrain generation first so FrameXML,
         // character, and transport preparation overlap its worker execution.
@@ -2076,12 +2084,25 @@ impl ClientServices {
             }
         }
         self.synchronize_world_ui_zone()?;
+        self.complete_world_transfer_map()?;
+        if self.player.resident_frame_input().is_some()
+            && self.terrain_frame.is_some()
+            && self.environment.current().is_some()
+            && self.transport.is_ready()
+            && self.world_ui.is_some()
+            && self.world_transfer.complete_player()
+            && let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world())
+        {
+            ui.enter_replacement_world(&self.character_metadata, active)?;
+        }
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {
-                world_accepted: self.gameplay.world().is_some(),
+                world_accepted: self.gameplay.world().is_some()
+                    && !self.world_transfer.is_awaiting_destination(),
                 environment_ready: self.environment.current().is_some(),
                 player_ready: self.player.resident_frame_input().is_some(),
-                scene_ready: self.terrain_frame.is_some(),
+                scene_ready: self.terrain_frame.is_some()
+                    && !self.world_transfer.holds_loading_card(),
                 ui_ready: self.world_ui.is_some(),
                 transport_resource_ready: self.transport.is_ready(),
             };
@@ -2205,6 +2226,7 @@ impl ClientServices {
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
+        self.world_transfer.disconnect();
         self.environment.disconnect();
         self.player.disconnect();
         self.transport.disconnect();
@@ -2395,7 +2417,7 @@ impl ClientServices {
             &UiEventPayload::new([
                 UiEventArgument::String("OKAY".to_owned()),
                 UiEventArgument::String(message),
-            ])?,
+            ]),
         )?;
         self.glue_ui_dirty = true;
         self.login_failures.push_back(error);
@@ -2496,7 +2518,7 @@ impl ClientServices {
             let payload = UiEventPayload::new([
                 UiEventArgument::Integer(i64::from(category_index)),
                 UiEventArgument::Integer(i64::from(realm_index)),
-            ])?;
+            ]);
             self.glue.dispatch_event("SUGGEST_REALM", &payload)?;
         } else {
             self.glue

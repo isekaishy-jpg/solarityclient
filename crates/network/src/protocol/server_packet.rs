@@ -6,7 +6,7 @@ use super::{
     CharacterRenameError, CharacterRenameResult, ObjectUpdateError, WorldActionButtonPacketError,
     WorldActionButtons, WorldAddonManifest, WorldAddonPolicy, WorldEntryPacketError,
     WorldLivenessPacketError, WorldLocation, WorldObjectUpdateBatch, WorldTimePacketError,
-    WorldTimeSpeed,
+    WorldTimeSpeed, WorldTransfer, WorldTransferPacketError,
 };
 
 const SMSG_CHAR_CREATE: u16 = 0x003A;
@@ -45,6 +45,9 @@ impl WorldServerPacket {
             SMSG_CHAR_CREATE => Some("SMSG_CHAR_CREATE"),
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             SMSG_CHAR_DELETE => Some("SMSG_CHAR_DELETE"),
+            0x003E => Some("SMSG_NEW_WORLD"),
+            0x003F => Some("SMSG_TRANSFER_PENDING"),
+            0x0040 => Some("SMSG_TRANSFER_ABORTED"),
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
             SMSG_LOGIN_SETTIMESPEED => Some("SMSG_LOGIN_SETTIMESPEED"),
             0x00A9 => Some("SMSG_UPDATE_OBJECT"),
@@ -64,6 +67,18 @@ impl WorldServerPacket {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Decodes an active-world transfer or returns `None` for another opcode.
+    ///
+    /// Initial character login consumes verify-world before reaching this
+    /// boundary; an active session gives that opcode its same-map guard.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldTransferPacketError`] when the wire fields are malformed.
+    pub fn world_transfer(&self) -> Result<Option<WorldTransfer>, WorldTransferPacketError> {
+        WorldTransfer::decode(self.opcode, &self.payload)
     }
 
     /// Decodes `SMSG_CHAR_ENUM`, or returns `None` for another retained opcode.

@@ -1723,8 +1723,9 @@ impl UiScriptRuntime {
         let previous_event = globals
             .raw_get::<Value>("event")
             .map_err(|error| execution_error(event, error))?;
-        let mut previous_arguments = Vec::with_capacity(crate::event::MAX_EVENT_ARGUMENTS);
-        for index in 1..=crate::event::MAX_EVENT_ARGUMENTS {
+        let mut previous_arguments =
+            Vec::with_capacity(crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS);
+        for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
             previous_arguments.push(
                 globals
                     .raw_get::<Value>(format!("arg{index}"))
@@ -1740,7 +1741,7 @@ impl UiScriptRuntime {
         globals
             .raw_set("event", event)
             .map_err(|error| execution_error(event, error))?;
-        for index in 1..=crate::event::MAX_EVENT_ARGUMENTS {
+        for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
             globals
                 .raw_set(
                     format!("arg{index}"),

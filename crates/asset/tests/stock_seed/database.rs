@@ -9,11 +9,46 @@ use solarity_asset::{
     CharacterBaseCatalog, CharacterClassCatalog, CharacterCustomization, CharacterFactionCatalog,
     CharacterRaceCatalog, ClientDataRoot, CreatureCatalog, HelmetGeosetVisibilityCatalog,
     InventoryType, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, LightCatalog,
-    Locale, M2TextureKind, MapCatalog, MapKind, PaperDollItemFrameCatalog, ParticleColorCatalog,
-    SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError, exterior_light_direction,
+    Locale, M2TextureKind, MapCatalog, MapDifficultyCatalog, MapKind, PaperDollItemFrameCatalog,
+    ParticleColorCatalog, SoundEntryCatalog, WdbcTable, WorldLightQuery, WorldLightSampleError,
+    exterior_light_direction,
 };
 
 use crate::support::{Fixture, FixtureFile};
+
+/// 0x00634950 searches one map's contiguous run for an exact difficulty;
+/// 0x00403910 distinguishes an empty authored message from absent map data.
+#[test]
+fn map_difficulty_messages_preserve_exact_matches_and_empty_text() -> Result<(), Box<dyn Error>> {
+    let mut rows = Vec::new();
+    for (id, map, difficulty, message) in [
+        (1, 530, 0, 1),
+        (2, 530, 1, 0),
+        (3, 571, 0, 7),
+        (4, 530, 2, 1),
+    ] {
+        let mut row = [0_u32; 23];
+        row[..4].copy_from_slice(&[id, map, difficulty, message]);
+        rows.extend_from_slice(&row);
+    }
+    let table = create_wdbc(4, 23, &rows, b"\0first\0second\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\MapDifficulty.dbc",
+        bytes: &table,
+    }])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let difficulties = MapDifficultyCatalog::load(&mut store)?;
+    assert_eq!(difficulties.message(530, 0), Some("first"));
+    assert_eq!(difficulties.message(530, 1), Some(""));
+    assert_eq!(difficulties.message(571, 0), Some("second"));
+    assert_eq!(difficulties.message(530, 2), None);
+    assert_eq!(difficulties.message(571, 1), None);
+    assert_eq!(difficulties.message(999, 0), None);
+    Ok(())
+}
 
 /// WDBC parsing begins only after ordinary stock archive resolution completes.
 #[test]

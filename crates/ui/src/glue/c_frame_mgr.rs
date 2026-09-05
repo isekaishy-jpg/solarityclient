@@ -19,6 +19,24 @@ pub struct FrameManager {
 }
 
 impl FrameManager {
+    /// Resolves a native message token, preserving missing or empty stock text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::UiScriptError`] if Lua cannot read the localization global.
+    pub fn localized_text(&self, token: &str) -> Result<Option<String>, crate::UiScriptError> {
+        self.owner
+            .bundle()
+            .lua()
+            .globals()
+            .raw_get::<Option<String>>(token)
+            .map(|text| text.filter(|text| !text.is_empty()))
+            .map_err(|error| crate::UiScriptError::Execution {
+                label: format!("localization token {token}"),
+                message: error.to_string(),
+            })
+    }
+
     /// Loads, executes, and retains the stock FrameXML manifest.
     ///
     /// The supplied environment must already contain the selected character's

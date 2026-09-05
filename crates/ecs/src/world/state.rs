@@ -24,6 +24,16 @@ impl ActiveWorld {
     /// Creates the active map and its initial local-player entity.
     #[must_use]
     pub fn enter(bootstrap: WorldBootstrap) -> Self {
+        Self::enter_with_view(bootstrap, PlayerViewState::default())
+    }
+
+    /// Creates fresh replicated ownership with the session's retained camera view.
+    ///
+    /// World replacement detaches the old camera anchor (`0x006066E0`) and
+    /// changes its base transform (`0x00607BD0`); it does not reconstruct the
+    /// persistent camera or select the initial saved view again.
+    #[must_use]
+    pub fn enter_with_view(bootstrap: WorldBootstrap, view: PlayerViewState) -> Self {
         let (map_id, player_guid, player_name, position, orientation) = bootstrap.into_parts();
         let mut storage = World::new();
         let local_player = storage.add_entity((
@@ -31,7 +41,7 @@ impl ActiveWorld {
             PlayerIdentity::new(player_name),
             LocalPlayer,
             WorldTransform::new(position, orientation),
-            PlayerViewState::default(),
+            view,
             ObjectFields::default(),
         ));
         let mut objects = ObjectRegistry::default();

@@ -37,6 +37,9 @@ windows-sys = { workspace = true, features = [
 workspace = true
 
 [dev-dependencies]
+wow_srp.workspace = true
+wow_login_messages.workspace = true
+wow_world_messages.workspace = true
 wow-adt.workspace = true
 wow-m2.workspace = true
 wow-mpq.workspace = true

@@ -26,6 +26,12 @@ pub enum RuntimeWorldUiError {
     /// Running server clock state could not enter the FrameXML time type.
     #[error(transparent)]
     RealmTime(#[from] UiRealmTimeError),
+    /// A localized transfer message uses a format outside the recovered stock corpus.
+    #[error("unsupported transfer message format {format}")]
+    TransferMessageFormat {
+        /// The authored format requiring an additional formatter capability.
+        format: String,
+    },
 }
 
 /// Retained FrameXML runtime paired with its current renderer generation.
@@ -38,10 +44,81 @@ pub(super) struct RuntimeWorldUi {
     zone: UiZoneState,
     action_bar: UiActionBarState,
     action_slots: [u32; 144],
+    /// Stock ChatFrame.cpp's monotonic line identifier for admitted messages.
+    chat_line_id: u32,
     dirty: bool,
 }
 
 impl RuntimeWorldUi {
+    /// Delivers the transfer handler's localized system chat event before card dismissal.
+    pub(super) fn transfer_aborted(
+        &mut self,
+        map_name: &str,
+        reason: u8,
+        argument: Option<u8>,
+        difficulty_message: Option<&str>,
+    ) -> Result<(), ApplicationError> {
+        let format = if let Some(message) = difficulty_message.filter(|message| !message.is_empty())
+        {
+            Some(message.to_owned())
+        } else if let Some(token) = transfer_abort_token(reason, argument) {
+            self.manager
+                .localized_text(&token)
+                .map_err(GlueError::from)?
+        } else {
+            None
+        };
+        let Some(format) = format else {
+            return Ok(());
+        };
+        let message = format_transfer_message(&format, map_name)?;
+        self.chat_line_id = self.chat_line_id.wrapping_add(1);
+        // 0x00403910 calls 0x00509DD0 with chat type zero and all other
+        // parameters zero. 0x004FDBC0 emits thirteen values; Languages.dbc
+        // has no ID-zero row, so its language name is the empty string.
+        self.dirty = true;
+        self.manager.dispatch_event(
+            "CHAT_MSG_SYSTEM",
+            &UiEventPayload::new([
+                UiEventArgument::String(message),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::Integer(0),
+                UiEventArgument::Integer(0),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::Integer(0),
+                UiEventArgument::Integer(i64::from(self.chat_line_id)),
+                UiEventArgument::String(String::new()),
+                UiEventArgument::Integer(0),
+            ]),
+        )?;
+        Ok(())
+    }
+
+    /// Delivers the live-world exit event without reconstructing FrameXML.
+    pub(super) fn leave_world(&mut self) -> Result<(), ApplicationError> {
+        self.dirty = true;
+        self.manager
+            .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())?;
+        Ok(())
+    }
+
+    /// Refreshes the new replicated player before the repeatable entry event.
+    pub(super) fn enter_replacement_world(
+        &mut self,
+        metadata: &RuntimeCharacterMetadata,
+        active: &ActiveWorld,
+    ) -> Result<(), ApplicationError> {
+        metadata.publish_active_player(active, &self.world)?;
+        self.dirty = true;
+        self.manager
+            .dispatch_event("PLAYER_ENTERING_WORLD", &UiEventPayload::empty())?;
+        Ok(())
+    }
+
     /// Constructs FrameXML behind an already-presented loading card and
     /// publishes stock's first-login event sequence before its first draw.
     #[allow(clippy::too_many_arguments)]
@@ -119,6 +196,7 @@ impl RuntimeWorldUi {
                 zone,
                 action_bar,
                 action_slots: slots,
+                chat_line_id: 0,
                 dirty: false,
             },
             startup_errors,
@@ -182,7 +260,7 @@ impl RuntimeWorldUi {
             }
             self.manager.dispatch_event(
                 "ACTIONBAR_SLOT_CHANGED",
-                &UiEventPayload::new([UiEventArgument::Integer((index + 1) as i64)])?,
+                &UiEventPayload::new([UiEventArgument::Integer((index + 1) as i64)]),
             )?;
         }
         self.dirty = true;
@@ -316,6 +394,54 @@ impl RuntimeWorldUi {
     pub(super) fn draws(&self) -> &[UiPreparedDraw] {
         self.frame.draws()
     }
+}
+
+/// Selects the exact localization branch at 0x00403910. Reason eight's DBC
+/// message is resolved first by the caller, before its numbered-token arm.
+fn transfer_abort_token(reason: u8, argument: Option<u8>) -> Option<String> {
+    Some(match reason {
+        1 => "TRANSFER_ABORT_ERROR".to_owned(),
+        2 => "TRANSFER_ABORT_MAX_PLAYERS".to_owned(),
+        3 | 12..=14 => "TRANSFER_ABORT_NOT_FOUND".to_owned(),
+        4 => "TRANSFER_ABORT_TOO_MANY_INSTANCES".to_owned(),
+        6 => "TRANSFER_ABORT_ZONE_IN_COMBAT".to_owned(),
+        7 => format!("TRANSFER_ABORT_INSUF_EXPAN_LVL{}", argument?),
+        8 => format!("TRANSFER_ABORT_DIFFICULTY{}", u32::from(argument?) + 1),
+        9 => format!("TRANSFER_ABORT_UNIQUE_MESSAGE{}", argument?),
+        10 => "TRANSFER_ABORT_TOO_MANY_REALM_INSTANCES".to_owned(),
+        11 => "TRANSFER_ABORT_NEED_GROUP".to_owned(),
+        15 => "TRANSFER_ABORT_REALM_ONLY".to_owned(),
+        16 => "TRANSFER_ABORT_MAP_NOT_ALLOWED".to_owned(),
+        _ => return None,
+    })
+}
+
+/// Formats the single map-name argument used by stock transfer messages.
+/// The pinned enUS token corpus uses plain text or one `%s`; `%%` retains
+/// printf's literal-percent semantics without evaluating any Lua/AddOn code.
+fn format_transfer_message(format: &str, map_name: &str) -> Result<String, RuntimeWorldUiError> {
+    let mut text = String::with_capacity(format.len() + map_name.len());
+    let mut characters = format.chars();
+    let mut map_substituted = false;
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            text.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('%') => text.push('%'),
+            Some('s') if !map_substituted => {
+                text.push_str(map_name);
+                map_substituted = true;
+            }
+            _ => {
+                return Err(RuntimeWorldUiError::TransferMessageFormat {
+                    format: format.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(text)
 }
 
 /// Publishes either the realm clock or the native BSS values visible before

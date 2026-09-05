@@ -3,29 +3,32 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use solarity_ecs::{ActiveWorld, WorldStateError};
+use glam::Vec3;
+use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};
 use solarity_network::{
     InWorldSession, WorldActionButtonPacketError, WorldActionButtons, WorldLivenessPacketError,
-    WorldPacketReader, WorldPacketWriter, WorldServerPacket, WorldSessionError,
-    WorldTimePacketError,
+    WorldLocation, WorldPacketReader, WorldPacketWriter, WorldServerPacket, WorldSessionError,
+    WorldTimePacketError, WorldTransfer,
 };
 use solarity_systems::{WorldEntryGroundContact, WorldEntryGroundContactError};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::{self, Receiver, error::TryRecvError};
+use tokio::sync::mpsc::{
+    self, Receiver,
+    error::{TryRecvError, TrySendError},
+};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::application::gameplay_session::{
     GameplaySession, GameplayUpdateError, apply_object_updates,
 };
-use crate::application::world_coordinator::RuntimeWorldEntry;
 use crate::time::RealmClock;
 
 const PACKET_CHANNEL_CAPACITY: usize = 256;
-const LIVENESS_CHANNEL_CAPACITY: usize = 32;
+const WRITER_CHANNEL_CAPACITY: usize = 32;
 const MAX_RETAINED_UNHANDLED_PACKETS: usize = 4_096;
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -62,6 +65,9 @@ pub enum RuntimeGameplayError {
     /// The network task ended without publishing its terminal result.
     #[error("active-world network task ended unexpectedly")]
     TaskEnded,
+    /// A destination replacement lost the selected character's durable identity.
+    #[error("world replacement has no selected player identity")]
+    MissingPlayerIdentity,
     /// Unsupported packets exceeded the explicit retention boundary.
     #[error("active world retained more than {maximum} unhandled packets")]
     UnhandledPacketLimit {
@@ -78,6 +84,8 @@ pub struct RuntimeGameplayCoordinator {
     action_buttons: Option<WorldActionButtons>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     world_entry_grounded: bool,
+    /// Packet dispatch yields to the composition root at each transfer packet.
+    transfer: Option<WorldTransfer>,
 }
 
 impl RuntimeGameplayCoordinator {
@@ -91,6 +99,7 @@ impl RuntimeGameplayCoordinator {
             action_buttons: None,
             unhandled_packets: VecDeque::new(),
             world_entry_grounded: false,
+            transfer: None,
         }
     }
 
@@ -103,12 +112,12 @@ impl RuntimeGameplayCoordinator {
     pub fn begin(
         &mut self,
         runtime: &Handle,
-        entry: RuntimeWorldEntry,
+        network: InWorldSession<TcpStream>,
+        setup_packets: Vec<WorldServerPacket>,
     ) -> Result<(), RuntimeGameplayError> {
         if self.active.is_some() || self.world.is_some() {
             return Err(RuntimeGameplayError::AlreadyActive);
         }
-        let (network, setup_packets) = entry.into_parts();
         let setup_packet_count = setup_packets.len();
         let mut gameplay = GameplaySession::enter(network);
         let mut retained = VecDeque::new();
@@ -126,8 +135,18 @@ impl RuntimeGameplayCoordinator {
         let (network, world) = gameplay.into_parts();
         let map_id = world.map_id().value();
         let (sender, receiver) = mpsc::channel(PACKET_CHANNEL_CAPACITY);
-        let task = runtime.spawn(pump_world_packets(network, sender));
-        self.active = Some(ActiveGameplayNetwork { receiver, task });
+        let (commands, command_receiver) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
+        let task = runtime.spawn(pump_world_packets(
+            network,
+            sender,
+            commands.clone(),
+            command_receiver,
+        ));
+        self.active = Some(ActiveGameplayNetwork {
+            receiver,
+            commands,
+            task,
+        });
         self.world = Some(world);
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
@@ -149,6 +168,9 @@ impl RuntimeGameplayCoordinator {
     ///
     /// Returns a network, decode, retention, or ECS update failure.
     pub fn service(&mut self) -> Result<usize, RuntimeGameplayError> {
+        if self.transfer.is_some() {
+            return Ok(0);
+        }
         let Some(mut active) = self.active.take() else {
             return Ok(0);
         };
@@ -160,6 +182,20 @@ impl RuntimeGameplayCoordinator {
         loop {
             match active.receiver.try_recv() {
                 Ok(Ok(packet)) => {
+                    match packet.world_transfer() {
+                        Ok(Some(transfer)) => {
+                            self.transfer = Some(transfer);
+                            self.active = Some(active);
+                            break;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            // 0x00403D10 diagnoses a malformed destination and
+                            // returns without scheduling or disconnecting.
+                            tracing::warn!(%error, "discarded malformed world-transfer packet");
+                            continue;
+                        }
+                    }
                     match dispatch_world_packet(
                         world,
                         packet,
@@ -201,6 +237,66 @@ impl RuntimeGameplayCoordinator {
             }
         }
         Ok(applied)
+    }
+
+    /// Takes the transfer packet that paused main-thread dispatch.
+    pub fn take_world_transfer(&mut self) -> Option<WorldTransfer> {
+        self.transfer.take()
+    }
+
+    /// Replaces replicated ECS ownership while preserving the live connection.
+    ///
+    /// Stock 0x00403B70 destroys the old object manager before loading the
+    /// destination. The selected identity seeds only a placeholder; all old
+    /// replicated fields, remote objects, movement, and player effects expire.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeGameplayError`] if the selected player identity is absent.
+    pub fn replace_world(&mut self, location: WorldLocation) -> Result<(), RuntimeGameplayError> {
+        let world = self
+            .world
+            .as_ref()
+            .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?;
+        let identity = world
+            .local_player_identity()
+            .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?;
+        let bootstrap = WorldBootstrap::new(
+            WorldMapId::new(location.map_id()),
+            world.local_player_guid()?,
+            identity.name(),
+            Vec3::new(location.x(), location.y(), location.z()),
+            location.orientation(),
+        );
+        self.world = Some(ActiveWorld::enter_with_view(
+            bootstrap,
+            world.local_player_view()?,
+        ));
+        self.world_entry_grounded = false;
+        Ok(())
+    }
+
+    /// Admits one map-completion ACK to the sole encrypted writer.
+    ///
+    /// `false` means bounded queue backpressure; the caller retains its map
+    /// completion obligation until admission succeeds on a later frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeGameplayError::TaskEnded`] if the active writer is gone.
+    pub fn acknowledge_world_transfer(&self) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active
+            .commands
+            .try_send(WorldWriterCommand::WorldportAcknowledgement)
+        {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
     }
 
     /// Returns the authoritative active ECS world.
@@ -273,6 +369,7 @@ impl RuntimeGameplayCoordinator {
         self.action_buttons = None;
         self.unhandled_packets.clear();
         self.world_entry_grounded = false;
+        self.transfer = None;
     }
 }
 
@@ -290,18 +387,20 @@ impl Drop for RuntimeGameplayCoordinator {
 
 struct ActiveGameplayNetwork {
     receiver: Receiver<Result<WorldServerPacket, RuntimeGameplayError>>,
+    commands: mpsc::Sender<WorldWriterCommand>,
     task: JoinHandle<()>,
 }
 
 async fn pump_world_packets(
     session: InWorldSession<TcpStream>,
     sender: mpsc::Sender<Result<WorldServerPacket, RuntimeGameplayError>>,
+    commands: mpsc::Sender<WorldWriterCommand>,
+    command_receiver: Receiver<WorldWriterCommand>,
 ) {
     let (mut reader, mut writer) = session.split();
-    let (liveness_sender, liveness_receiver) = mpsc::channel(LIVENESS_CHANNEL_CAPACITY);
     let result = tokio::select! {
-        result = receive_world_packets(&mut reader, &sender, liveness_sender) => result,
-        result = service_world_liveness(&mut writer, liveness_receiver) => result,
+        result = receive_world_packets(&mut reader, &sender, commands) => result,
+        result = service_world_writer(&mut writer, command_receiver) => result,
     };
     if let Err(error) = result {
         let _send_result = sender.send(Err(error)).await;
@@ -311,7 +410,7 @@ async fn pump_world_packets(
 async fn receive_world_packets<R>(
     reader: &mut WorldPacketReader<R>,
     sender: &mpsc::Sender<Result<WorldServerPacket, RuntimeGameplayError>>,
-    liveness_sender: mpsc::Sender<WorldLivenessEvent>,
+    liveness_sender: mpsc::Sender<WorldWriterCommand>,
 ) -> Result<(), RuntimeGameplayError>
 where
     R: AsyncRead + Unpin + Send,
@@ -320,7 +419,7 @@ where
         let packet = reader.receive_packet().await?;
         if let Some(sequence) = packet.pong_sequence()? {
             if liveness_sender
-                .send(WorldLivenessEvent::Pong(sequence))
+                .send(WorldWriterCommand::Pong(sequence))
                 .await
                 .is_err()
             {
@@ -330,7 +429,7 @@ where
         }
         if let Some(counter) = packet.time_sync_counter()? {
             if liveness_sender
-                .send(WorldLivenessEvent::TimeSync(counter))
+                .send(WorldWriterCommand::TimeSync(counter))
                 .await
                 .is_err()
             {
@@ -344,9 +443,10 @@ where
     }
 }
 
-async fn service_world_liveness<W>(
+/// Serializes application commands and liveness without cancelling partial writes.
+async fn service_world_writer<W>(
     writer: &mut WorldPacketWriter<W>,
-    mut receiver: Receiver<WorldLivenessEvent>,
+    mut receiver: Receiver<WorldWriterCommand>,
 ) -> Result<(), RuntimeGameplayError>
 where
     W: AsyncWrite + Unpin + Send,
@@ -368,7 +468,7 @@ where
                     return Ok(());
                 };
                 match event {
-                    WorldLivenessEvent::Pong(received) => {
+                    WorldWriterCommand::Pong(received) => {
                         if let Some((expected, sent_at)) = pending_ping
                             && received == expected
                         {
@@ -376,13 +476,16 @@ where
                             pending_ping = None;
                         }
                     }
-                    WorldLivenessEvent::TimeSync(counter) => {
+                    WorldWriterCommand::TimeSync(counter) => {
                         writer
                             .send_time_sync_response(
                                 counter,
                                 duration_millis_u32(process_start.elapsed()),
                             )
                             .await?;
+                    }
+                    WorldWriterCommand::WorldportAcknowledgement => {
+                        writer.send_worldport_acknowledgement().await?;
                     }
                 }
             }
@@ -397,9 +500,11 @@ fn duration_millis_u32(duration: Duration) -> u32 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WorldLivenessEvent {
+/// All writes share one queue and one continuously owned cipher half.
+enum WorldWriterCommand {
     Pong(u32),
     TimeSync(u32),
+    WorldportAcknowledgement,
 }
 
 fn dispatch_setup_packet<S>(

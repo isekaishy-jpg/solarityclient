@@ -115,13 +115,13 @@ fn glue_manager_reconciles_visual_events_without_full_snapshots() -> Result<(), 
 
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())]),
     )?;
     assert!(presented(&manager));
     assert_eq!(manager.runtime_snapshot_count(), snapshots);
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("login".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("login".to_owned())]),
     )?;
     assert!(!presented(&manager));
     assert_eq!(manager.runtime_snapshot_count(), snapshots);
@@ -171,7 +171,7 @@ fn glue_manager_reconciles_typed_events_without_full_snapshots() -> Result<(), B
 
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())]),
     )?;
 
     assert_eq!(manager.runtime_snapshot_count(), snapshots);
@@ -230,7 +230,7 @@ fn glue_manager_does_not_mask_fallback_mutations_with_typed_mutations() -> Resul
 
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())]),
     )?;
 
     assert_eq!(manager.runtime_snapshot_count(), snapshots + 1);
@@ -2036,6 +2036,44 @@ fn glue_manager_rejects_live_anchor_cycles() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Stock 0x004FDBC0 emits thirteen chat arguments through 0x0081AC90. Callback
+/// varargs must remain complete even though the legacy globals stop at arg9.
+#[test]
+fn ui_event_callbacks_receive_more_arguments_than_legacy_globals() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Arguments.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Arguments.xml",
+            bytes: br##"<Ui><Frame name="Arguments"><Scripts>
+<OnLoad>
+  self:RegisterEvent("CHARACTER_LIST_UPDATE")
+  arg9 = 90
+  arg10 = 100
+</OnLoad>
+<OnEvent>
+  assert(select("#", ...) == 13)
+  assert(select(13, ...) == 13)
+  assert(arg9 == 9 and arg10 == 100)
+  COMPLETE_EVENT_ARGUMENTS = true
+</OnEvent>
+</Scripts></Frame></Ui>"##,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let payload = UiEventPayload::new((1..=13).map(UiEventArgument::Integer));
+    manager.dispatch_event("CHARACTER_LIST_UPDATE", &payload)?;
+    let globals = manager.bundle().lua().globals();
+    assert!(globals.get::<bool>("COMPLETE_EVENT_ARGUMENTS")?);
+    assert_eq!(globals.get::<i64>("arg9")?, 90);
+    assert_eq!(globals.get::<i64>("arg10")?, 100);
+    Ok(())
+}
+
 /// Registered `OnEvent` handlers receive stock globals and creation ordering.
 #[test]
 fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
@@ -2080,7 +2118,7 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
     let payload = UiEventPayload::new([
         UiEventArgument::String("login".to_owned()),
         UiEventArgument::Integer(7),
-    ])?;
+    ]);
     assert_eq!(manager.presentation().member_count(), 1);
     let mesh_identity = manager.render_plan().mesh().geometry_identity();
     let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
@@ -2113,15 +2151,17 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
         manager.dispatch_event("NOT_A_GLUE_EVENT", &UiEventPayload::empty()),
         Err(UiEventError::Unknown { .. })
     ));
-    assert!(matches!(
-        UiEventPayload::new((0..10).map(UiEventArgument::Integer)),
-        Err(UiEventError::PayloadTooLarge { .. })
-    ));
+    assert_eq!(
+        UiEventPayload::new((0..13).map(UiEventArgument::Integer))
+            .arguments()
+            .len(),
+        13
+    );
 
     let reveal_payload = UiEventPayload::new([
         UiEventArgument::String("charselect".to_owned()),
         UiEventArgument::Integer(8),
-    ])?;
+    ]);
     manager.dispatch_event("SET_GLUE_SCREEN", &reveal_payload)?;
     assert_eq!(
         manager.presentation().members_in_draw_order()[0].opacity(),
@@ -2323,7 +2363,7 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
 
     manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
     )?;
     assert!(manager.update(0.25)?);
     assert_eq!(

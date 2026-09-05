@@ -9,7 +9,7 @@ use solarity_network::{
     CharacterClass, CharacterCreation, CharacterCreationResult, CharacterDeletionResult,
     CharacterGender, CharacterLoginProgress, CharacterLoginRejectionReason, CharacterRace,
     CharacterRename, WorldAddon, WorldAddonManifest, WorldAuthProgress, WorldConnection,
-    WorldObjectKind, WorldObjectUpdate,
+    WorldObjectKind, WorldObjectUpdate, WorldTransfer,
 };
 use tokio::io::DuplexStream;
 use wow_srp::normalized_string::NormalizedString;
@@ -391,6 +391,8 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
             .send_time_sync_response(0x1122_3344, 0x5566_7788)
             .await?;
         writer.send_ping(7, 41).await?;
+        writer.send_worldport_acknowledgement().await?;
+        writer.send_worldport_acknowledgement().await?;
         let pong = reader.receive_packet().await?;
         assert_eq!(pong.name(), Some("SMSG_PONG"));
         assert_eq!(pong.pong_sequence()?, Some(7));
@@ -650,7 +652,147 @@ async fn emulate_character_screen(
         message => return Err(format!("unexpected latency probe: {message}").into()),
     }
     write_encrypted_raw(&mut stream, &mut crypto, 0x01DD, &7_u32.to_le_bytes()).await?;
+    // Stock sends one empty ACK per completed NEW_WORLD callback. Consecutive
+    // acknowledgements also prove the writer advances its cipher correctly.
+    for _ in 0..2 {
+        let acknowledgement =
+            ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+        assert!(matches!(
+            acknowledgement,
+            ClientOpcodeMessage::MSG_MOVE_WORLDPORT_ACK
+        ));
+    }
     Ok(())
+}
+
+/// Exercises stock transfer fields through actual encrypted framing rather
+/// than constructing packet wrappers through a test-only production API.
+#[test]
+fn encrypted_world_transfers_preserve_destinations_transport_and_abort_arguments()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    runtime()?.block_on(async {
+        let (identity, realm, session_key) = authenticated_identity_and_realm().await?;
+        let (client, mut server) = tokio::io::duplex(4_096);
+        let server_task = tokio::spawn(async move {
+            let mut crypto = authenticate_worldserver(&mut server, session_key).await?;
+            for (opcode, body) in transfer_packet_corpus() {
+                write_encrypted_raw(&mut server, &mut crypto, opcode, &body).await?;
+            }
+            Ok::<(), Box<dyn Error + Send + Sync>>(())
+        });
+        let mut session = match WorldConnection::authenticate(
+            client,
+            identity,
+            &realm,
+            WorldAddonManifest::empty(),
+        )
+        .await?
+        {
+            WorldAuthProgress::Authenticated(session) => session,
+            WorldAuthProgress::Queued(_) => return Err("fixture world unexpectedly queued".into()),
+        };
+        let packet = session.receive_packet().await?;
+        assert_eq!(packet.name(), Some("SMSG_TRANSFER_PENDING"));
+        assert_eq!(
+            packet.world_transfer()?,
+            Some(WorldTransfer::Pending {
+                map_id: 530,
+                transport: None
+            })
+        );
+        let packet = session.receive_packet().await?;
+        let Some(WorldTransfer::Pending {
+            map_id,
+            transport: Some(transport),
+        }) = packet.world_transfer()?
+        else {
+            return Err("missing transfer transport".into());
+        };
+        assert_eq!(
+            (map_id, transport.entry(), transport.source_map_id()),
+            (530, 176495, 0)
+        );
+        for expected_name in ["SMSG_NEW_WORLD", "SMSG_LOGIN_VERIFY_WORLD"] {
+            let packet = session.receive_packet().await?;
+            assert_eq!(packet.name(), Some(expected_name));
+            let location = match packet.world_transfer()? {
+                Some(WorldTransfer::NewWorld(location)) if expected_name == "SMSG_NEW_WORLD" => {
+                    location
+                }
+                Some(WorldTransfer::VerifyWorld(location))
+                    if expected_name == "SMSG_LOGIN_VERIFY_WORLD" =>
+                {
+                    location
+                }
+                _ => return Err("wrong transfer destination kind".into()),
+            };
+            assert_eq!(location.map_id(), 1);
+            assert_eq!(
+                [
+                    location.x(),
+                    location.y(),
+                    location.z(),
+                    location.orientation()
+                ],
+                [12.5, -8.0, 41.25, 1.5]
+            );
+        }
+        for reason in [1, 7, 8, 9, 255] {
+            let packet = session.receive_packet().await?;
+            assert_eq!(
+                packet.world_transfer()?,
+                Some(WorldTransfer::Aborted {
+                    map_id: 530,
+                    reason,
+                    argument: matches!(reason, 7..=9).then_some(2),
+                })
+            );
+        }
+        for _ in 0..8 {
+            assert!(session.receive_packet().await?.world_transfer().is_err());
+        }
+        assert!(session.receive_packet().await?.world_transfer()?.is_none());
+        server_task.await??;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    })
+}
+
+/// Wire examples bounded by handlers 0x401480, 0x403910, and 0x403D10.
+fn transfer_packet_corpus() -> Vec<(u16, Vec<u8>)> {
+    let map = 530_u32.to_le_bytes().to_vec();
+    let mut transport = map.clone();
+    transport.extend_from_slice(&176495_u32.to_le_bytes());
+    transport.extend_from_slice(&0_u32.to_le_bytes());
+    let mut location = 1_u32.to_le_bytes().to_vec();
+    for value in [12.5_f32, -8.0, 41.25, 1.5] {
+        location.extend_from_slice(&value.to_le_bytes());
+    }
+    let mut packets = vec![
+        (0x3F, map.clone()),
+        (0x3F, transport),
+        (0x3E, location.clone()),
+        (0x236, location),
+    ];
+    for reason in [1, 7, 8, 9, 255] {
+        let mut body = map.clone();
+        body.push(reason);
+        if matches!(reason, 7..=9) {
+            body.push(2);
+        }
+        packets.push((0x40, body));
+    }
+    packets.extend([
+        (0x3F, vec![0; 3]),
+        (0x3F, vec![0; 8]),
+        (0x3F, vec![0; 13]),
+        (0x3E, vec![0; 19]),
+        (0x3E, vec![0; 21]),
+        (0x236, vec![0; 19]),
+        (0x40, vec![0; 4]),
+        (0x40, vec![0, 0, 0, 0, 7]),
+        (0x123, vec![0; 4]),
+    ]);
+    packets
 }
 
 async fn emulate_character_creation(

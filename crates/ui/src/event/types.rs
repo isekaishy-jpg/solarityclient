@@ -31,14 +31,6 @@ pub enum UiEventError {
         /// Caller-supplied event name.
         name: String,
     },
-    /// The legacy client exposes no more than nine event argument globals.
-    #[error("UI event payload has {count} arguments; stock supports at most {maximum}")]
-    PayloadTooLarge {
-        /// Supplied argument count.
-        count: usize,
-        /// Maximum stock argument count.
-        maximum: usize,
-    },
     /// A subscribed Lua handler failed.
     #[error(transparent)]
     Script(#[from] UiScriptError),

@@ -116,7 +116,7 @@ fn activate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
     let screen_started = std::time::Instant::now();
     let screen_dispatch = manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charselect".to_owned())]),
     )?;
     println!(
         "SET_GLUE_SCREEN subscribers: {} in {:.3} ms ({} snapshots)",
@@ -150,7 +150,7 @@ fn activate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
     let directory_started = std::time::Instant::now();
     let directory_dispatch = manager.dispatch_event(
         "CHARACTER_LIST_UPDATE",
-        &UiEventPayload::new([UiEventArgument::Integer(1)])?,
+        &UiEventPayload::new([UiEventArgument::Integer(1)]),
     )?;
     println!(
         "CHARACTER_LIST_UPDATE subscribers: {} in {:.3} ms",
@@ -168,7 +168,7 @@ fn activate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     let screen_started = std::time::Instant::now();
     let screen_dispatch = manager.dispatch_event(
         "SET_GLUE_SCREEN",
-        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())])?,
+        &UiEventPayload::new([UiEventArgument::String("charcreate".to_owned())]),
     )?;
     println!(
         "SET_GLUE_SCREEN subscribers: {} in {:.3} ms ({} snapshots)",

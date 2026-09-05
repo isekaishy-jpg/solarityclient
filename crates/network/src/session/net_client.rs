@@ -7,6 +7,7 @@ use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 use wow_world_messages::wrath::{
     CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_PING, CMSG_PLAYER_LOGIN,
     CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
+    MSG_MOVE_WORLDPORT_ACK,
 };
 
 use crate::connection::{
@@ -296,6 +297,24 @@ impl<W> WorldPacketWriter<W>
 where
     W: AsyncWrite + Unpin + Send,
 {
+    /// Acknowledges a loaded destination with stock's empty opcode `0x00DC`.
+    ///
+    /// The application calls this after map loading, before waiting for the
+    /// replacement player (`0x00403B70`). It is not a loading-card dismissal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn send_worldport_acknowledgement(&mut self) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(MSG_MOVE_WORLDPORT_ACK {})
+            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
+    }
+
     /// Sends stock's periodic encrypted latency probe.
     ///
     /// # Errors

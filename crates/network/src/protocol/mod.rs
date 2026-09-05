@@ -16,6 +16,7 @@ mod object_update;
 mod server_packet;
 mod world_entry;
 mod world_time;
+mod world_transfer;
 mod wow_svcs_client_services;
 
 pub use action_buttons::{
@@ -44,3 +45,4 @@ pub use world_entry::{
     CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,
 };
 pub use world_time::{WorldTimePacketError, WorldTimeSpeed};
+pub use world_transfer::{WorldTransfer, WorldTransferPacketError, WorldTransferTransport};

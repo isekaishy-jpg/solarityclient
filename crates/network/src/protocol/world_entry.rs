@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Authoritative initial map and transform from `SMSG_LOGIN_VERIFY_WORLD`.
+/// Authoritative map and transform from login verification or world replacement.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldLocation {
     map_id: u32,
@@ -17,7 +17,7 @@ impl WorldLocation {
         if payload.len() != 20 {
             return Err(WorldEntryPacketError::new(
                 payload.len(),
-                "login world location must contain exactly 20 bytes",
+                "world location must contain exactly 20 bytes",
             ));
         }
         Ok(Self {
@@ -35,25 +35,25 @@ impl WorldLocation {
         self.map_id
     }
 
-    /// Returns the initial world X coordinate.
+    /// Returns the authoritative world X coordinate.
     #[must_use]
     pub const fn x(self) -> f32 {
         self.x
     }
 
-    /// Returns the initial world Y coordinate.
+    /// Returns the authoritative world Y coordinate.
     #[must_use]
     pub const fn y(self) -> f32 {
         self.y
     }
 
-    /// Returns the initial world Z coordinate.
+    /// Returns the authoritative world Z coordinate.
     #[must_use]
     pub const fn z(self) -> f32 {
         self.z
     }
 
-    /// Returns the initial facing orientation in radians.
+    /// Returns the authoritative facing orientation in radians.
     #[must_use]
     pub const fn orientation(self) -> f32 {
         self.orientation

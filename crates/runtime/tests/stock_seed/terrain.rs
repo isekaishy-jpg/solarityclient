@@ -195,7 +195,10 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     assert!(!visible.is_empty());
 
     terrain.disconnect();
-    let cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("invalid admission bound")?,
+    ))?;
     assert!(terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert_eq!(
@@ -232,6 +235,30 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         terrain.synchronize_async(Some(&world), &cpu)?,
         RuntimeTerrainPoll::Current { map_id: 571, tile }
     );
+
+    // Queue an old-world job behind a controlled worker barrier, retire its
+    // world, and let it finish before requesting the identical map/tile. Stock
+    // NEW_WORLD replaces ownership even when the destination ID is unchanged.
+    terrain.disconnect();
+    let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let worker_started = std::sync::Arc::clone(&started);
+    let (release, wait) = std::sync::mpsc::channel();
+    let blocker = cpu.try_submit(move || {
+        worker_started.wait();
+        wait.recv()
+    })?;
+    started.wait();
+    assert!(terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
+    terrain.disconnect();
+    release.send(())?;
+    blocker.join()??;
+    // The sole worker's FIFO marker proves the retired terrain job has ended.
+    cpu.try_submit(|| ())?.join()?;
+    assert_eq!(
+        terrain.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTerrainPoll::Pending { map_id: 571 },
+    );
+    assert!(terrain.resident_tile().is_none());
 
     assert_eq!(terrain.synchronize(None)?, RuntimeTerrainPoll::Idle);
     assert_eq!(player.synchronize(None)?, RuntimePlayerPoll::Idle);

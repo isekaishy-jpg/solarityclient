@@ -14,5 +14,5 @@ pub use payload::{UiEventArgument, UiEventPayload};
 pub use types::{UiEventDispatch, UiEventError};
 
 pub(crate) use frame_registry::canonical_frame_event;
-pub(crate) use payload::MAX_EVENT_ARGUMENTS;
+pub(crate) use payload::LEGACY_EVENT_ARGUMENT_GLOBALS;
 pub(crate) use registry::canonical_glue_event;

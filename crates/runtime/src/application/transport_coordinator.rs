@@ -227,7 +227,7 @@ impl RuntimeTransportPresentation {
             if let Some(worker) = completion.worker {
                 self.worker = Some(worker);
             }
-            if pending_request == request {
+            if pending.eligible_for_publication && pending_request == request {
                 match completion.result {
                     Ok(resource) => {
                         self.resident = Some(ResidentTransport {
@@ -275,6 +275,7 @@ impl RuntimeTransportPresentation {
         self.pending = Some(PendingTransportGeneration {
             request: request.clone(),
             submitted_at: std::time::Instant::now(),
+            eligible_for_publication: true,
             task,
         });
         Ok(RuntimeTransportPoll::Pending {
@@ -567,6 +568,10 @@ impl RuntimeTransportPresentation {
     /// Releases the active-world generation during ordered client shutdown.
     pub fn disconnect(&mut self) {
         self.clear();
+        self.failed_request = None;
+        if let Some(pending) = self.pending.as_mut() {
+            pending.eligible_for_publication = false;
+        }
         self.readiness = true;
     }
 
@@ -595,6 +600,8 @@ struct RequestedTransport {
 struct PendingTransportGeneration {
     request: TransportRequest,
     submitted_at: std::time::Instant,
+    /// A retired world's job may return its worker but never publish instances.
+    eligible_for_publication: bool,
     task: CpuTask<TransportWorkerCompletion>,
 }
 

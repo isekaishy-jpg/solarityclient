@@ -1,8 +1,6 @@
 //! Owned values crossing from client state into Lua event callbacks.
 
-use crate::UiEventError;
-
-pub(crate) const MAX_EVENT_ARGUMENTS: usize = 9;
+pub(crate) const LEGACY_EVENT_ARGUMENT_GLOBALS: usize = 9;
 
 /// One Lua-visible stock event argument.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,7 +17,11 @@ pub enum UiEventArgument {
     String(String),
 }
 
-/// A bounded event argument sequence in stock `arg1` through `arg9` order.
+/// The complete positional argument sequence passed to a stock `OnEvent` handler.
+///
+/// Legacy `arg1` through `arg9` globals expose only the first nine values. The
+/// callback receives every value: `0x004FDBC0`, for example, sends thirteen
+/// chat arguments through the unbounded format walk at `0x0081AC90`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiEventPayload {
     arguments: Vec<UiEventArgument>,
@@ -34,20 +36,12 @@ impl UiEventPayload {
         }
     }
 
-    /// Copies an argument sequence after enforcing the stock global limit.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UiEventError::PayloadTooLarge`] for more than nine values.
-    pub fn new(arguments: impl IntoIterator<Item = UiEventArgument>) -> Result<Self, UiEventError> {
-        let arguments = arguments.into_iter().collect::<Vec<_>>();
-        if arguments.len() > MAX_EVENT_ARGUMENTS {
-            return Err(UiEventError::PayloadTooLarge {
-                count: arguments.len(),
-                maximum: MAX_EVENT_ARGUMENTS,
-            });
+    /// Owns every callback argument without truncating it to legacy globals.
+    #[must_use]
+    pub fn new(arguments: impl IntoIterator<Item = UiEventArgument>) -> Self {
+        Self {
+            arguments: arguments.into_iter().collect(),
         }
-        Ok(Self { arguments })
     }
 
     /// Returns arguments in Lua-visible order.

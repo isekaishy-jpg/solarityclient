@@ -26,6 +26,7 @@ mod terrain_frame;
 mod transport_coordinator;
 pub(crate) mod ui_frame;
 mod world_coordinator;
+mod world_transfer;
 mod world_ui;
 
 pub use character_directory::CharacterProjectionError;
@@ -62,5 +63,9 @@ pub use transport_coordinator::{
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,
+};
+pub use world_transfer::{
+    RuntimeWorldReplacement, RuntimeWorldTransferCoordinator, RuntimeWorldTransferEffect,
+    RuntimeWorldTransferError,
 };
 pub use world_ui::RuntimeWorldUiError;
