@@ -646,3 +646,34 @@ customization transition maxima are 3.6–4.7 ms; Blood Elf creation still reach
 event polling and charges about 2.5 million thread cycles across the entire
 frame. The UI residency improvement does not resolve that platform pause or
 establish the complete no-stall requirement.
+
+## Platform-pause scheduling evidence
+
+An attempted Windows CPU trace did not start. Xperf rejected the kernel
+flags, and the built-in WPR CPU profile returned `0xc5585011`, reporting that
+it could not enable the system-performance profiling policy. No trace logger
+remained active. This prevents the context-switch stack trace needed to
+identify the complete wait/scheduling chain in this environment.
+
+A separate diagnostic launched the benchmark directly and retained its exact
+primary thread ID. It sampled `NtQuerySystemInformation` thread metadata
+using the installed Windows SDK layouts, without suspending the process or
+changing its priority. The 31-action replay completed with 20,355 snapshots.
+Query duration was 1.0 ms at the median, 3.0 ms at p99, and 42.9 ms maximum;
+this diagnostic overhead makes the run unsuitable for throughput comparison.
+
+At `03:54:18.422702Z`, an empty native SDL poll took 23.60 ms while charging
+75,190 thread cycles. One overlapping snapshot observed the primary thread
+in state 1, Ready: runnable rather than waiting on a resource. The state
+vocabulary is documented in Microsoft's
+[thread-state reference](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.threadstate).
+Other long frames overlapped gaps in the sampler itself: a 24.20 ms frame
+overlapped its 42.88 ms query, and a 17.44 ms native poll had no overlapping
+snapshot. A sparse observation does not establish the state throughout an
+interval, and wait-reason values are not interpreted outside the waiting
+state.
+
+These observations are consistent with broader scheduling delays and do not
+isolate a blocking SDL function. They do not justify changing event delivery,
+thread priority, or stock timing policy. The platform-pause requirement stays
+open; ordinary synchronous UI and model publication remain independent work.
