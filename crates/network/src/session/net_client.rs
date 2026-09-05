@@ -1,6 +1,6 @@
 //! Owned encrypted packet I/O recovered from `NetClient.cpp`.
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
@@ -14,7 +14,7 @@ use crate::connection::{
     CharacterLogin, CharacterLoginProgress, InWorldSession, WorldPacketReader, WorldPacketWriter,
     WorldSession,
 };
-use crate::protocol::{CharacterCreation, CharacterEntry, WorldServerPacket};
+use crate::protocol::{CharacterCreation, CharacterEntry, WorldMovementMessage, WorldServerPacket};
 
 use super::{WorldSessionError, WorldSessionStage};
 
@@ -297,6 +297,35 @@ impl<W> WorldPacketWriter<W>
 where
     W: AsyncWrite + Unpin + Send,
 {
+    /// Sends a validated event-time movement image through this cipher owner.
+    ///
+    /// As with other encrypted writes, the session owner must keep the future
+    /// alive through partial I/O or terminate the connection when cancelling it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] if the encrypted packet cannot be written.
+    pub async fn send_movement(
+        &mut self,
+        message: &WorldMovementMessage,
+    ) -> Result<(), WorldSessionError> {
+        let body = message.body();
+        // Six header bytes plus the proven 97-byte maximum movement body.
+        let mut packet = [0_u8; 103];
+        let header = self
+            .encrypter
+            .encrypt_client_header((body.len() + 4) as u16, message.kind() as u32);
+        packet[..6].copy_from_slice(&header);
+        packet[6..6 + body.len()].copy_from_slice(body);
+        self.stream
+            .write_all(&packet[..6 + body.len()])
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
+    }
+
     /// Acknowledges a loaded destination with stock's empty opcode `0x00DC`.
     ///
     /// The application calls this after map loading, before waiting for the

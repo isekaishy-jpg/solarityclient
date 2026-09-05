@@ -5,7 +5,7 @@ use std::error::Error;
 use solarity_network::{
     CharacterLoginProgress, InWorldSession, WorldAddonManifest, WorldAuthProgress, WorldConnection,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -22,11 +22,20 @@ use super::transfer_authentication::authenticated_identity_and_realm;
 
 pub type TestError = Box<dyn Error + Send + Sync>;
 
+pub type RawClientPacket = (u32, Vec<u8>);
+
+/// Reply decoding is chosen by the test so native wire assertions need not
+/// inherit a third-party message schema's interpretation of individual fields.
+enum ExchangeReply {
+    Decoded(oneshot::Sender<Result<Vec<ClientOpcodeMessage>, TestError>>),
+    Raw(oneshot::Sender<Result<Vec<RawClientPacket>, TestError>>),
+}
+
 /// A controlled publish operation and the exact responses expected afterward.
 struct Exchange {
     packets: Vec<(u16, Vec<u8>)>,
     response_count: usize,
-    complete: oneshot::Sender<Result<Vec<ClientOpcodeMessage>, TestError>>,
+    complete: ExchangeReply,
 }
 
 /// Owns the server task; dropping the fixture closes all pending I/O.
@@ -108,7 +117,26 @@ impl WorldServer {
             .send(Exchange {
                 packets,
                 response_count,
-                complete,
+                complete: ExchangeReply::Decoded(complete),
+            })
+            .await?;
+        Ok(receiver)
+    }
+
+    /// Captures complete native client bodies after decrypting only the header.
+    // Shared by independent integration-test binaries; not every binary needs raw replies.
+    #[allow(dead_code)]
+    pub async fn exchange_raw(
+        &self,
+        packets: Vec<(u16, Vec<u8>)>,
+        response_count: usize,
+    ) -> Result<oneshot::Receiver<Result<Vec<RawClientPacket>, TestError>>, TestError> {
+        let (complete, receiver) = oneshot::channel();
+        self.commands
+            .send(Exchange {
+                packets,
+                response_count,
+                complete: ExchangeReply::Raw(complete),
             })
             .await?;
         Ok(receiver)
@@ -140,13 +168,34 @@ async fn serve_exchanges(
         for (opcode, body) in exchange.packets {
             write_packet(&mut stream, &mut crypto, opcode, &body).await?;
         }
-        let mut responses = Vec::new();
-        for _ in 0..exchange.response_count {
-            responses.push(
-                ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?,
-            );
+        match exchange.complete {
+            ExchangeReply::Decoded(complete) => {
+                let mut responses = Vec::new();
+                for _ in 0..exchange.response_count {
+                    responses.push(
+                        ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter())
+                            .await?,
+                    );
+                }
+                let _receiver_closed = complete.send(Ok(responses));
+            }
+            ExchangeReply::Raw(complete) => {
+                let mut responses = Vec::new();
+                for _ in 0..exchange.response_count {
+                    let mut header = [0_u8; 6];
+                    stream.read_exact(&mut header).await?;
+                    let header = crypto.decrypter().decrypt_client_header(header);
+                    let size = header
+                        .size
+                        .checked_sub(4)
+                        .ok_or("invalid client frame size")?;
+                    let mut body = vec![0_u8; usize::from(size)];
+                    stream.read_exact(&mut body).await?;
+                    responses.push((header.opcode, body));
+                }
+                let _receiver_closed = complete.send(Ok(responses));
+            }
         }
-        let _receiver_closed = exchange.complete.send(Ok(responses));
     }
     Ok(())
 }

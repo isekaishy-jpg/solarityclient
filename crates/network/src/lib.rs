@@ -35,7 +35,8 @@ pub use protocol::{
     ObjectFieldUpdate, ObjectMovementContext, ObjectMovementFall, ObjectMovementSpeeds,
     ObjectMovementTransport, ObjectMovementUpdate, ObjectUpdateError, WORLD_ACTION_BUTTON_COUNT,
     WorldActionButtonPacketError, WorldActionButtonUpdate, WorldActionButtons,
-    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldObjectKind,
+    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldMovementEncodeError,
+    WorldMovementField, WorldMovementKind, WorldMovementMessage, WorldObjectKind,
     WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
     WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
 };

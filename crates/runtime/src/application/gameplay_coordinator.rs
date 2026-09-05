@@ -7,8 +7,8 @@ use glam::Vec3;
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};
 use solarity_network::{
     InWorldSession, WorldActionButtonPacketError, WorldActionButtons, WorldLivenessPacketError,
-    WorldLocation, WorldPacketReader, WorldPacketWriter, WorldServerPacket, WorldSessionError,
-    WorldTimePacketError, WorldTransfer,
+    WorldLocation, WorldMovementMessage, WorldPacketReader, WorldPacketWriter, WorldServerPacket,
+    WorldSessionError, WorldTimePacketError, WorldTransfer,
 };
 use solarity_systems::{WorldEntryGroundContact, WorldEntryGroundContactError};
 use thiserror::Error;
@@ -299,6 +299,33 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
+    /// Admits one frozen movement event to the sole encrypted writer.
+    ///
+    /// A `false` result is bounded queue backpressure: the movement owner must
+    /// retain this exact message and its ordering obligation until admitted.
+    /// The writer never reads a later ECS transform to reconstruct the event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeGameplayError::TaskEnded`] if the active writer is gone.
+    pub fn send_movement(
+        &self,
+        message: WorldMovementMessage,
+    ) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active
+            .commands
+            .try_send(WorldWriterCommand::Movement(message))
+        {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns the authoritative active ECS world.
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
@@ -487,6 +514,9 @@ where
                     WorldWriterCommand::WorldportAcknowledgement => {
                         writer.send_worldport_acknowledgement().await?;
                     }
+                    WorldWriterCommand::Movement(message) => {
+                        writer.send_movement(&message).await?;
+                    }
                 }
             }
         }
@@ -505,6 +535,7 @@ enum WorldWriterCommand {
     Pong(u32),
     TimeSync(u32),
     WorldportAcknowledgement,
+    Movement(WorldMovementMessage),
 }
 
 fn dispatch_setup_packet<S>(
