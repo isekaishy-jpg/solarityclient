@@ -512,10 +512,14 @@ fn validate_character_creation_class_tooltips(
 ) -> Result<(), Box<dyn Error>> {
     let tooltip_index = object_index(manager, "CharacterCreateTooltip")?;
     let text_index = object_index(manager, "CharacterCreateTooltipTextLeft1")?;
-    let retained_indices = manager.render_plan().mesh().index_bytes().to_vec();
-    let retained_objects = manager.render_plan().mesh().object_indices().to_vec();
+    let unrelated_vertices = tooltip_unrelated_vertices(manager, tooltip_index, text_index);
+    let mut warmed_topology = None;
     let mut longest_tooltip = 0;
-    for class_index in 1..=10 {
+    // First pass grows the text owner's minimal source run as needed. A
+    // repeated pass must reuse its observed capacity and leave all other
+    // vertex payloads intact throughout both passes.
+    for step in 0..20 {
+        let class_index = step % 10 + 1;
         let name = format!("CharacterCreateClassButton{class_index}");
         let button_index = object_index(manager, &name)?;
         let authored_tooltip = manager
@@ -550,13 +554,22 @@ fn validate_character_creation_class_tooltips(
             ))
             .into());
         }
-        if manager.render_plan().mesh().index_bytes() != retained_indices
-            || manager.render_plan().mesh().object_indices() != retained_objects
-        {
+        if tooltip_unrelated_vertices(manager, tooltip_index, text_index) != unrelated_vertices {
             return Err(invalid_data(format!(
-                "{name} rebuilt shared UI topology while changing its tooltip"
+                "{name} changed unrelated UI vertices while changing its tooltip"
             ))
             .into());
+        }
+        let mesh = manager.render_plan().mesh();
+        if let Some((indices, objects)) = &warmed_topology {
+            if mesh.index_bytes() != indices || mesh.object_indices() != objects {
+                return Err(invalid_data(format!(
+                    "{name} discarded warmed tooltip glyph capacity"
+                ))
+                .into());
+            }
+        } else if step == 9 {
+            warmed_topology = Some((mesh.index_bytes().to_vec(), mesh.object_indices().to_vec()));
         }
     }
     manager.pointer_motion((-1.0, -1.0))?;
@@ -572,6 +585,21 @@ fn validate_character_creation_class_tooltips(
     }
     println!("character creation class tooltips: max_characters={longest_tooltip}");
     Ok(())
+}
+
+/// Captures payloads outside the changing tooltip backdrop and its text run.
+fn tooltip_unrelated_vertices(
+    manager: &GlueManager,
+    tooltip_index: usize,
+    text_index: usize,
+) -> Vec<solarity_rendering::UiRenderVertex> {
+    let mesh = manager.render_plan().mesh();
+    mesh.object_indices()
+        .iter()
+        .zip(mesh.vertices().as_chunks::<4>().0)
+        .filter(|(owner, _)| **owner != tooltip_index && **owner != text_index)
+        .flat_map(|(_, vertices)| vertices.iter().copied())
+        .collect()
 }
 
 fn validate_character_creation_choice_layout(manager: &GlueManager) -> Result<(), Box<dyn Error>> {

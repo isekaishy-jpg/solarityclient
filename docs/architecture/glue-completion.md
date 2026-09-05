@@ -607,3 +607,42 @@ to 2,997 FPS; creation entry reaches 29.7 ms and a later customization frame
 reaches 36.5 ms. This is decode/admission evidence, not a measured speedup;
 the slower throughput versus the preceding quiet replay and the remaining
 long frames still need attribution.
+
+## Empty-label glyph residency
+
+The follow-up UI trace separates creation entry into 9.1 ms of authored
+script work and 12.1 ms of publication. Publication resolves and serializes
+34,475 glyph quads; mesh preparation alone takes 7.8 ms. Hidden tooltip
+templates reserve 128 letters per text field, and other empty FontStrings
+reserve 64, multiplying that capacity by outline and shadow passes. These
+unused slots are processed again on unrelated screen publications.
+
+Empty labels now seed a minimal source run. The existing source-run mesh
+replacement expands it when text first needs more glyphs, preserves unrelated
+vertex payloads, and retains that owner's observed peak for later shorter
+text. Only EditBoxes reserve their existing typing capacity and caret slot.
+No visible glyph, text limit, wrapping, outline, or shadow rule changes.
+
+The installed interaction validator checks every class tooltip twice. Both
+passes must show the authored text and preserve vertices outside the tooltip;
+the second pass must retain the warmed shared topology. First-run agreements,
+login input, character selection, creation layout, and scrollbars also pass.
+All 554 workspace tests, Clippy, and formatting pass.
+
+The matching UI diagnostic replay completes all 31 actions. Creation entry
+now resolves 9,892 glyph quads; glyph resolution takes 1.56 ms, serialization
+1.11 ms, and mesh preparation 2.92 ms. Its complete UI publication takes
+6.82 ms. Initial creation randomizes race/class, so different model work and
+resource history prevent treating the total ready duration as a controlled
+before/after comparison. The reduced unused glyph residency is directly
+observed in the mesh count and publication trace.
+
+The separate 31-action, 6,000-following-frame replay disables UI timing output
+and retains slow-frame phase attribution. Creation entry reaches a 17.4 ms
+transition frame, compared with 26.6 ms in the preceding replay with the same
+logging filter. Following throughput ranges from 2,023 to 2,894 FPS. Ordinary
+customization transition maxima are 3.6–4.7 ms; Blood Elf creation still reaches
+16.7 ms. A separate 40.9 ms following-frame outlier spends 40.1 ms in platform
+event polling and charges about 2.5 million thread cycles across the entire
+frame. The UI residency improvement does not resolve that platform pause or
+establish the complete no-stall requirement.

@@ -22,8 +22,6 @@ const ATLAS_ROW_WIDTH: u32 = 512;
 const GLYPH_PADDING: u32 = 1;
 const DEFAULT_RETAINED_EDIT_BOX_LETTERS: usize = 256;
 const MAX_RETAINED_EDIT_BOX_LETTERS: usize = 4_096;
-const RETAINED_GLUE_TOOLTIP_LETTERS: usize = 128;
-const RETAINED_EMPTY_FONT_STRING_LETTERS: usize = 64;
 
 /// One positioned glyph sampling the current immutable coverage atlas.
 #[derive(Clone, Debug, PartialEq)]
@@ -1686,10 +1684,14 @@ fn layout_live_quads_for_objects(
         }
         quads.extend(primary_quads);
         if object.kind == UiObjectKind::EditBox || retained_tooltip || retained_empty_font_string {
-            let letters = if retained_tooltip {
-                RETAINED_GLUE_TOOLTIP_LETTERS
-            } else if retained_empty_font_string {
-                RETAINED_EMPTY_FONT_STRING_LETTERS
+            // Empty labels need a source run that can grow in place, not a
+            // fixed text-length budget. Tooltip templates instantiate many
+            // unused lines; padding each to 128 letters made every unrelated
+            // screen publication resolve and serialize thousands of blanks.
+            // replace_live_object_quads retains each owner's observed peak,
+            // and the mesh's source-run replacement preserves other owners.
+            let letters = if object.kind != UiObjectKind::EditBox {
+                1
             } else if text.max_letters == 0 {
                 DEFAULT_RETAINED_EDIT_BOX_LETTERS
             } else {
@@ -1712,7 +1714,7 @@ fn layout_live_quads_for_objects(
                 caret: false,
                 reserved: true,
             }));
-            if caret_quads.is_empty() {
+            if object.kind == UiObjectKind::EditBox && caret_quads.is_empty() {
                 caret_quads.push(LocalGlyphQuad {
                     packet_key,
                     object_index,
