@@ -310,6 +310,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         ),
         M2SceneUniform::new(
             visible.view_projection(),
+            visible.view(),
             visible.camera().position(),
             Vec3::new(0.25, 0.3, 0.35),
             Vec3::new(0.75, 0.7, 0.65),

@@ -98,6 +98,7 @@ fn new_meshes_present_in_submission_order_and_retire_without_a_final_draw()
     );
     let scene = M2SceneUniform::new(
         Mat4::IDENTITY,
+        Mat4::IDENTITY,
         Vec3::ZERO,
         Vec3::ONE,
         Vec3::ZERO,

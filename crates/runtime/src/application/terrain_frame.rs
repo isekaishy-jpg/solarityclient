@@ -691,6 +691,7 @@ impl TerrainFrame {
         );
         let m2_scene = M2SceneUniform::new(
             camera.view_projection(),
+            camera.view(),
             camera.camera().position(),
             light.ambient_color(),
             light.diffuse_color(),

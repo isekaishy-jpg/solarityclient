@@ -28,6 +28,7 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     vec4 shadow_fade_plane;
     vec4 shadow_light_direction;
     vec4 shadow_filter_offsets[8];
+    vec4 view_depth_plane;
 } scene;
 
 layout(std430, set = 1, binding = 0) readonly buffer M2BoneTransforms {

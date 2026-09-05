@@ -70,17 +70,21 @@ pub struct M2SceneUniform {
     fog_color: Vec3,
     local_lights: [M2LocalLightState; 4],
     shadow: M2ShadowState,
+    /// Positive eye depth, independent of perspective or parallel projection.
+    view_depth_plane: Vec4,
 }
 
 impl M2SceneUniform {
     /// Byte size of the exact std140 scene descriptor block.
-    pub const BYTE_SIZE: usize = 768;
+    pub const BYTE_SIZE: usize = 784;
 
-    /// Creates one bounded scene-lighting and fog snapshot.
+    /// Creates one bounded scene-lighting and fog snapshot. `view` is the
+    /// right-handed world-to-eye transform used to build `view_projection`.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub const fn new(
+    pub fn new(
         view_projection: Mat4,
+        view: Mat4,
         camera_position: Vec3,
         ambient_light: Vec3,
         diffuse_light: Vec3,
@@ -100,6 +104,7 @@ impl M2SceneUniform {
             fog_color,
             local_lights,
             shadow: M2ShadowState::disabled(),
+            view_depth_plane: -view.row(2),
         }
     }
 
@@ -144,6 +149,7 @@ impl M2SceneUniform {
             light.write_bytes(&mut bytes, &mut offset);
         }
         self.shadow.write_bytes(&mut bytes, &mut offset);
+        write_vec4(&mut bytes, &mut offset, self.view_depth_plane);
         bytes
     }
 }

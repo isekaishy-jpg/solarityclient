@@ -1119,3 +1119,44 @@ return to login without errors; both login captures were inspected.
 The optimized startup run prepared login resources before the movie but did
 not activate its model until after cinematic playback stopped. That path was
 verified in runtime logs; desktop automation was unavailable for visual QA.
+
+## Original particle shaders and depth fog
+
+The installed archive's `Shaders/Effects/Particle.wfx` selects `CDiffuse_T1`
+for lit particles, `Color_T1` for unlit particles, and `Combiners_Mod` for
+both pixel paths. These original shader programs provide direct evidence
+beyond the native material dispatcher at `0x008214E0`:
+
+- `Shaders/Vertex/VS_3_0/CDiffuse_T1.bls` permutations 1, 3, and 9 clamp the
+  aggregate lighting before multiplying the vertex color. Multiple point
+  lights accumulate before that clamp. The gear appearance difference does
+  not justify an extra intensity multiplier.
+- `Shaders/Vertex/VS_3_0/Color_T1.bls` permutation 0 and those lit variants
+  compute fog from eye depth and vertex constant c30, apply its exponent,
+  then clamp visibility to one. The previous particle shader used Euclidean
+  camera distance and omitted the exponent.
+- `Shaders/Pixel/PS_3_0/Combiners_Mod.bls` permutation 8 multiplies texture
+  and vertex color, applies the alpha reference, and blends RGB with fog.
+
+Particles now carry a world-to-eye depth plane in the shared M2 scene
+descriptor. This preserves the shader's depth rule for perspective and
+orthographic cameras. The other M2 descriptor layouts retain the same prefix;
+their lighting and fog calculations are unchanged by this correction.
+
+The framebuffer regression exercises lit/unlit particles at two lateral
+positions, two fog exponents, and both camera projections. The old shader
+fails the off-axis case (red 121 instead of 127.5); all 16 corrected cases
+pass within one stored color step. This fixes particle fog independently of
+the still-open comparison with Soap's stock gear reference.
+
+Formatting, Clippy, and all 583 workspace tests pass with the corrected shader.
+
+Original archive SHA-256 fingerprints, in the path order above (effect,
+lit vertex, unlit vertex, pixel):
+
+```text
+902E094365E6ACFF7E904ED89D3AB35EDF3FB7DC3D2224ED88FFBEAB5659DCE1
+76016A4CB29124D784163DD0739B64BEA80A9BF228C9492E8E66E6B98A3C52E3
+EC46462309E02362B52E98D810594406ACE8712DE5638C518C7024D0DB5EC1F2
+B0757BD321BCC7810D3D0120BF32259EE7CE8421D73C1B853919C249BCF0B65A
+```

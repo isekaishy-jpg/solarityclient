@@ -2,6 +2,8 @@
 
 #[path = "model/mesh_transfer.rs"]
 mod mesh_transfer;
+#[path = "model/particle_fog.rs"]
+mod particle_fog;
 #[path = "model/particle_frame.rs"]
 mod particle_frame;
 #[path = "model/sequence_blend.rs"]
@@ -3007,6 +3009,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(lit_permutation.vertex_index(), 17);
     assert_eq!(lit_permutation.pixel_index(), 8);
     let scene_uniform = M2SceneUniform::new(
+        Mat4::IDENTITY,
         Mat4::IDENTITY,
         Vec3::new(1.0, 2.0, 3.0),
         Vec3::splat(0.1),
