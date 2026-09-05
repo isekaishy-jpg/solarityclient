@@ -931,9 +931,44 @@ reach 29.8 ms. Several pauses accumulate in platform events, while others
 include the model/presentation path; phase timing alone does not establish
 their cause. The stall goal remains open.
 
-This slice does not complete Model parity. Secondary-pose blending on automatic
-variation, individual event-position sampling and sound age, hidden model
+At that revision, secondary-pose blending on automatic variation remained open;
+the following slice implements it. Individual event-position sampling and sound age, hidden model
 clock/effect ownership, external-payload completion behavior, and scene-global
 track ownership remain. FrameXML Model rendering and the older world playback
 path also need their own integration. The transition-card and in-world work
 remain part of the active goal.
+
+## Automatic Model variation blending
+
+Automatic variation changes now retain the outgoing timer and blend its pose
+into the incoming sequence. The new sequence supplies the fade duration,
+and the fade starts at the scene's current tick even after a delayed callback.
+An interrupted blend retains its existing previous pose while that pose's
+weight exceeds one half. Repeated explicit Lua sequence calls still restart
+directly, following the separate native request path.
+
+The shared clock carries both sequence samples into bone, material, light,
+ribbon, particle, and camera consumers. Continuous tracks blend before bone
+hierarchy and material composition. Step and discrete tracks retain primary
+selection; global tracks keep their global time. Rotation between sequence
+poses uses the recovered spherical interpolation and its near-collinear
+threshold. The previous timer also uses stock's distinct completion flag.
+
+Deterministic tests verify the resulting bone hierarchy, rotation angle,
+material opacity, ribbon dimensions and selectors, particle rate and enable
+state, global and step behavior, timer wrap, completion flags, blend expiry,
+explicit restart, multiple callbacks in one frame, and the exact half-weight
+interruption boundary. This supplies blending to the native Model timer path;
+world playback, individual callback-position sampling, and hidden effect
+ownership remain open.
+
+Formatting, Clippy, and all 571 workspace tests pass. The original 31-action
+replay also passes with 6,000 following frames per action. The final paired
+run measures 1,956-2,954 FPS with blending, versus 1,569-2,838 FPS for the
+previous commit built and run on the same machine. Median frame changes range
+from -16.5% to +9.8% across actions; these variable runs do not isolate a
+blending cost or establish a performance improvement. Ordinary customization
+transition maxima are 2.56-4.15 ms in the current run. Its following intervals
+still reach 58.9 ms, and the previous build reaches 88.0 ms. Cold publication
+and intermittent frame pauses remain unresolved; average throughput alone
+does not satisfy the stall goal.

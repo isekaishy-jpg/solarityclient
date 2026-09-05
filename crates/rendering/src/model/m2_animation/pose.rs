@@ -3,9 +3,9 @@
 use glam::{Mat3, Mat4, Vec3};
 use solarity_asset::{M2AnimationSet, M2Attachment, M2ParticleEmitter, M2Track};
 
-use super::M2BonePoseError;
 use super::sample::sample_discrete;
 use super::sample::{sample_quaternion, sample_vec3};
+use super::{M2AnimationClock, M2BonePoseError};
 
 /// Per-hand selection for the model-authored `HandsClosed` finger pose.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,73 +31,6 @@ impl M2FingerPoseHands {
     }
 }
 
-/// The local animation and process-global clocks used by every bone track.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct M2AnimationClock {
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
-}
-
-impl M2AnimationClock {
-    /// Creates one clock snapshot; finiteness is checked when composing a pose.
-    #[must_use]
-    pub const fn new(sequence: usize, animation_time_ms: f32, global_time_ms: f32) -> Self {
-        Self {
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-        }
-    }
-
-    /// Returns the selected zero-based sequence before alias resolution.
-    #[must_use]
-    pub const fn sequence(self) -> usize {
-        self.sequence
-    }
-
-    /// Returns elapsed time on the selected sequence clock.
-    #[must_use]
-    pub const fn animation_time_ms(self) -> f32 {
-        self.animation_time_ms
-    }
-
-    /// Returns elapsed time on the process-global animation clock.
-    #[must_use]
-    pub const fn global_time_ms(self) -> f32 {
-        self.global_time_ms
-    }
-
-    /// Validates availability and returns the final non-alias sequence slot.
-    pub(crate) fn resolve(self, animations: &M2AnimationSet) -> Result<usize, M2BonePoseError> {
-        if !self.animation_time_ms.is_finite() || !self.global_time_ms.is_finite() {
-            return Err(M2BonePoseError::NonFiniteTime);
-        }
-        // Models without an animation catalog still use the implicit zero
-        // channel/default values carried by their material and bone tracks.
-        if animations.sequences().is_empty() && self.sequence == 0 {
-            return Ok(0);
-        }
-        if self.sequence >= animations.sequences().len() {
-            return Err(M2BonePoseError::SequenceIndex {
-                requested: self.sequence,
-                available: animations.sequences().len(),
-            });
-        }
-        if animations.is_sequence_available(self.sequence) != Some(true) {
-            return Err(M2BonePoseError::SequenceUnavailable {
-                sequence: self.sequence,
-            });
-        }
-        animations
-            .resolve_sequence_alias(self.sequence)
-            .ok_or(M2BonePoseError::SequenceIndex {
-                requested: self.sequence,
-                available: animations.sequences().len(),
-            })
-    }
-}
-
 /// One complete model-bone matrix palette ready for GPU upload.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct M2BonePose {
@@ -115,8 +48,7 @@ struct BillboardView {
 
 #[derive(Clone, Copy)]
 struct ResolvedFingerPose {
-    sequence: usize,
-    animation_time_ms: f32,
+    clock: M2AnimationClock,
     hands: M2FingerPoseHands,
 }
 
@@ -270,12 +202,11 @@ impl M2BonePose {
         model_oriented_billboard_bones: &[bool],
         finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
     ) -> Result<(), M2BonePoseError> {
-        let sequence = clock.resolve(animations)?;
+        let clock = clock.resolve(animations)?;
         let finger_pose = finger_pose
             .map(|(finger_clock, hands)| {
                 Ok::<ResolvedFingerPose, M2BonePoseError>(ResolvedFingerPose {
-                    sequence: finger_clock.resolve(animations)?,
-                    animation_time_ms: finger_clock.animation_time_ms(),
+                    clock: finger_clock.resolve(animations)?,
                     hands,
                 })
             })
@@ -294,41 +225,21 @@ impl M2BonePose {
         for (index, bone) in animations.bones().iter().enumerate() {
             let finger_pose =
                 finger_pose.filter(|pose| pose.hands.includes(finger_pose_hand(animations, index)));
-            let (translation_sequence, translation_time) = track_clock(
-                bone.translation(),
-                sequence,
-                clock.animation_time_ms,
-                finger_pose,
-            );
-            let (rotation_sequence, rotation_time) = track_clock(
-                bone.rotation(),
-                sequence,
-                clock.animation_time_ms,
-                finger_pose,
-            );
-            let (scale_sequence, scale_time) =
-                track_clock(bone.scale(), sequence, clock.animation_time_ms, finger_pose);
             let translation = sample_vec3(
                 animations,
                 bone.translation(),
-                translation_sequence,
-                translation_time,
-                clock.global_time_ms,
+                track_clock(bone.translation(), clock, finger_pose),
                 Vec3::ZERO,
             );
             let rotation = sample_quaternion(
                 animations,
                 bone.rotation(),
-                rotation_sequence,
-                rotation_time,
-                clock.global_time_ms,
+                track_clock(bone.rotation(), clock, finger_pose),
             );
             let scale = sample_vec3(
                 animations,
                 bone.scale(),
-                scale_sequence,
-                scale_time,
-                clock.global_time_ms,
+                track_clock(bone.scale(), clock, finger_pose),
                 Vec3::ONE,
             );
             self.local[index] = Mat4::from_translation(bone.pivot())
@@ -416,15 +327,8 @@ impl M2BonePose {
         clock: M2AnimationClock,
         model_transform: Mat4,
     ) -> Result<Option<Mat4>, M2BonePoseError> {
-        let sequence = clock.resolve(animations)?;
-        let enabled = sample_discrete(
-            animations,
-            attachment.enabled(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            1_u8,
-        );
+        let clock = clock.resolve(animations)?;
+        let enabled = sample_discrete(animations, attachment.enabled(), clock, 1_u8);
         if enabled == 0 {
             return Ok(None);
         }
@@ -441,23 +345,21 @@ impl M2BonePose {
     }
 }
 
+/// A finger overlay replaces only tracks that have authored finger keys.
 fn track_clock<T>(
     track: &M2Track<T>,
-    sequence: usize,
-    animation_time_ms: f32,
+    clock: M2AnimationClock,
     finger_pose: Option<ResolvedFingerPose>,
-) -> (usize, f32) {
+) -> M2AnimationClock {
     finger_pose
         .filter(|pose| {
             track.global_sequence().is_none()
                 && track
                     .channels()
-                    .get(pose.sequence)
+                    .get(pose.clock.sequence())
                     .is_some_and(|channel| !channel.timestamps_ms().is_empty())
         })
-        .map_or((sequence, animation_time_ms), |pose| {
-            (pose.sequence, pose.animation_time_ms)
-        })
+        .map_or(clock, |pose| pose.clock)
 }
 
 /// Finds the nearest named finger ancestor in stock's key-bone domain.

@@ -22,6 +22,9 @@ pub enum M2BonePoseError {
     /// NaN or infinity cannot participate in deterministic animation clocks.
     #[error("M2 animation clock contains a non-finite time")]
     NonFiniteTime,
+    /// A previous pose can contribute only a finite unit-interval weight.
+    #[error("M2 sequence blend weight must be finite and between zero and one")]
+    InvalidBlendWeight,
     /// Billboard composition requires the active camera/view basis.
     #[error("M2 billboard bone {bone} requires a camera-relative pose path")]
     BillboardViewRequired {

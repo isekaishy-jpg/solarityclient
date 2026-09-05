@@ -25,6 +25,7 @@ pub struct M2ModelSequenceTimer {
     initial_time_ms: u32,
     direction: i32,
     loops: bool,
+    secondary_clamps: bool,
 }
 
 impl M2ModelSequenceTimer {
@@ -130,6 +131,7 @@ impl M2ModelSequenceTimer {
             initial_time_ms,
             direction,
             loops: sequence.flags() & 1 == 0,
+            secondary_clamps: sequence.flags() & 0x80 != 0,
         }
     }
 
@@ -187,10 +189,26 @@ impl M2ModelSequenceTimer {
     /// Sequences with flag `0x1` clamp before start and hold their terminal pose.
     #[must_use]
     pub fn animation_time_ms(self, scene_time_ms: u32) -> u32 {
-        if !self.loops && tick_at_or_after(scene_time_ms, self.end_ms) {
+        self.sample_time_ms(scene_time_ms, !self.loops)
+    }
+
+    /// Samples a timer copied into the previous-pose slot during blending.
+    ///
+    /// `0x0082F0F0` tests sequence flag `0x80` here, whereas the primary slot
+    /// tests flag `0x1`. Copying a finished primary timer does not by itself
+    /// freeze the secondary pose.
+    #[must_use]
+    pub fn secondary_animation_time_ms(self, scene_time_ms: u32) -> u32 {
+        self.sample_time_ms(scene_time_ms, self.secondary_clamps)
+    }
+
+    /// Shares native timer arithmetic while retaining the two completion flags.
+    fn sample_time_ms(self, scene_time_ms: u32, clamp_to_deadline: bool) -> u32 {
+        if clamp_to_deadline && tick_at_or_after(scene_time_ms, self.end_ms) {
             return ((self.unwrapped_time(self.end_ms) as i32).max(0) as u32).min(self.duration_ms);
         }
-        let scene_time_ms = if !self.loops && !tick_at_or_after(scene_time_ms, self.start_ms) {
+        let scene_time_ms = if clamp_to_deadline && !tick_at_or_after(scene_time_ms, self.start_ms)
+        {
             self.start_ms
         } else {
             scene_time_ms

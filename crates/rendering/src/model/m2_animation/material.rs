@@ -38,9 +38,7 @@ impl M2MaterialPose {
                 requested: draw_index,
                 available: plan.draws().len(),
             })?;
-        let sequence = clock.resolve(model.animations())?;
-        let animation_time_ms = clock.animation_time_ms();
-        let global_time_ms = clock.global_time_ms();
+        let clock = clock.resolve(model.animations())?;
         let animations = model.animations();
 
         let mut mesh_color = Vec4::ONE;
@@ -52,26 +50,9 @@ impl M2MaterialPose {
                     available: animations.colors().len(),
                 },
             )?;
-            mesh_color = sample_vec3(
-                animations,
-                color.color(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                Vec3::ONE,
-            )
-            .clamp(Vec3::ZERO, Vec3::splat(16.0))
-            .extend(
-                sample_scalar(
-                    animations,
-                    color.alpha(),
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                    1.0,
-                )
-                .clamp(0.0, 1.0),
-            );
+            mesh_color = sample_vec3(animations, color.color(), clock, Vec3::ONE)
+                .clamp(Vec3::ZERO, Vec3::splat(16.0))
+                .extend(sample_scalar(animations, color.alpha(), clock, 1.0).clamp(0.0, 1.0));
         }
 
         let batch = draw.batch();
@@ -97,15 +78,8 @@ impl M2MaterialPose {
                         requested: weight_index,
                         available: animations.texture_weights().len(),
                     })?;
-                mesh_color.w *= sample_scalar(
-                    animations,
-                    weight.weight(),
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                    1.0,
-                )
-                .clamp(0.0, 1.0);
+                mesh_color.w *=
+                    sample_scalar(animations, weight.weight(), clock, 1.0).clamp(0.0, 1.0);
             }
         }
 
@@ -135,29 +109,10 @@ impl M2MaterialPose {
                         requested: transform_index,
                         available: animations.texture_transforms().len(),
                     })?;
-                let translation = sample_vec3(
-                    animations,
-                    transform.translation(),
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                    Vec3::ZERO,
-                );
-                let rotation = sample_quaternion(
-                    animations,
-                    transform.rotation(),
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                );
-                let scale = sample_vec3(
-                    animations,
-                    transform.scale(),
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                    Vec3::ONE,
-                );
+                let translation =
+                    sample_vec3(animations, transform.translation(), clock, Vec3::ZERO);
+                let rotation = sample_quaternion(animations, transform.rotation(), clock);
+                let scale = sample_vec3(animations, transform.scale(), clock, Vec3::ONE);
                 *destination = texture_transform(translation, rotation, scale);
             }
         }

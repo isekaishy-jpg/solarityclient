@@ -81,24 +81,17 @@ pub fn sample_m2_lights_into(
     directional: &mut Vec<M2DirectionalLight>,
     points: &mut Vec<M2PointLight>,
 ) -> Result<(), M2BonePoseError> {
-    let sequence = clock.resolve(animations)?;
+    let clock = clock.resolve(animations)?;
     directional.clear();
     points.clear();
     directional.reserve(animations.lights().len());
     points.reserve(animations.lights().len());
     for light in animations.lights() {
-        let visible = sample_discrete(
-            animations,
-            light.visibility(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            1_u8,
-        );
+        let visible = sample_discrete(animations, light.visibility(), clock, 1_u8);
         if visible == 0 {
             continue;
         }
-        let (ambient, diffuse) = sample_light_colors(animations, light, sequence, clock);
+        let (ambient, diffuse) = sample_light_colors(animations, light, clock);
         // FUN_00828A00 indexes the bone matrix for both light types without a
         // sentinel branch. Reject an unbound light instead of inventing an
         // identity-bone substitution for an invalid stock matrix reference.
@@ -137,44 +130,17 @@ pub fn sample_m2_lights_into(
 fn sample_light_colors(
     animations: &M2AnimationSet,
     light: &M2Light,
-    sequence: usize,
     clock: M2AnimationClock,
 ) -> (Vec3, Vec3) {
-    let ambient_intensity = sample_scalar(
-        animations,
-        light.ambient_intensity(),
-        sequence,
-        clock.animation_time_ms(),
-        clock.global_time_ms(),
-        1.0,
-    )
-    .max(0.0);
-    let diffuse_intensity = sample_scalar(
-        animations,
-        light.diffuse_intensity(),
-        sequence,
-        clock.animation_time_ms(),
-        clock.global_time_ms(),
-        1.0,
-    )
-    .max(0.0);
-    let ambient = (sample_vec3(
-        animations,
-        light.ambient_color(),
-        sequence,
-        clock.animation_time_ms(),
-        clock.global_time_ms(),
-        Vec3::ONE,
-    ) * ambient_intensity)
+    let ambient_intensity =
+        sample_scalar(animations, light.ambient_intensity(), clock, 1.0).max(0.0);
+    let diffuse_intensity =
+        sample_scalar(animations, light.diffuse_intensity(), clock, 1.0).max(0.0);
+    let ambient = (sample_vec3(animations, light.ambient_color(), clock, Vec3::ONE)
+        * ambient_intensity)
         .max(Vec3::ZERO);
-    let diffuse = (sample_vec3(
-        animations,
-        light.diffuse_color(),
-        sequence,
-        clock.animation_time_ms(),
-        clock.global_time_ms(),
-        Vec3::ONE,
-    ) * diffuse_intensity)
+    let diffuse = (sample_vec3(animations, light.diffuse_color(), clock, Vec3::ONE)
+        * diffuse_intensity)
         .max(Vec3::ZERO);
     (ambient, diffuse)
 }

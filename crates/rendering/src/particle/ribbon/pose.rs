@@ -32,59 +32,15 @@ impl M2RibbonPose {
         emitter: &M2RibbonEmitter,
         clock: M2AnimationClock,
     ) -> Result<Self, M2BonePoseError> {
-        let sequence = clock.resolve(animations)?;
-        let animation_time_ms = clock.animation_time_ms();
-        let global_time_ms = clock.global_time_ms();
-        let color = sample_vec3(
-            animations,
-            emitter.color(),
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-            Vec3::ONE,
-        );
-        let alpha = sample_scalar(
-            animations,
-            emitter.alpha(),
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-            1.0,
-        );
+        let clock = clock.resolve(animations)?;
+        let color = sample_vec3(animations, emitter.color(), clock, Vec3::ONE);
+        let alpha = sample_scalar(animations, emitter.alpha(), clock, 1.0);
         Ok(Self {
             color: color.extend(alpha),
-            height_above: sample_scalar(
-                animations,
-                emitter.height_above(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0.0,
-            ),
-            height_below: sample_scalar(
-                animations,
-                emitter.height_below(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0.0,
-            ),
-            texture_slot: sample_discrete(
-                animations,
-                emitter.texture_slot(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                0,
-            ),
-            visible: sample_discrete(
-                animations,
-                emitter.visibility(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                1,
-            ) != 0,
+            height_above: sample_scalar(animations, emitter.height_above(), clock, 0.0),
+            height_below: sample_scalar(animations, emitter.height_below(), clock, 0.0),
+            texture_slot: sample_discrete(animations, emitter.texture_slot(), clock, 0),
+            visible: sample_discrete(animations, emitter.visibility(), clock, 1) != 0,
         })
     }
 

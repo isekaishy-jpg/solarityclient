@@ -78,7 +78,7 @@ pub fn sample_m2_camera_frame(
     aspect_ratio: f32,
     model_transform: Mat4,
 ) -> Result<WorldCameraFrame, M2CameraFrameError> {
-    let sequence = clock.resolve(animations)?;
+    let clock = clock.resolve(animations)?;
     let camera = animations
         .cameras()
         .get(camera_index)
@@ -86,24 +86,10 @@ pub fn sample_m2_camera_frame(
             requested: camera_index,
             available: animations.cameras().len(),
         })?;
-    let position = camera.position_base()
-        + sample_vec3(
-            animations,
-            camera.position(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            Vec3::ZERO,
-        );
+    let position =
+        camera.position_base() + sample_vec3(animations, camera.position(), clock, Vec3::ZERO);
     let target = camera.target_position_base()
-        + sample_vec3(
-            animations,
-            camera.target_position(),
-            sequence,
-            clock.animation_time_ms(),
-            clock.global_time_ms(),
-            Vec3::ZERO,
-        );
+        + sample_vec3(animations, camera.target_position(), clock, Vec3::ZERO);
     let position = model_transform.transform_point3(position);
     let target = model_transform.transform_point3(target);
     let forward = (target - position).normalize_or_zero();
@@ -112,14 +98,7 @@ pub fn sample_m2_camera_frame(
         up = Vec3::Y - forward * Vec3::Y.dot(forward);
     }
     up = up.normalize_or_zero();
-    let roll = sample_angle_radians(
-        animations,
-        camera.roll_radians(),
-        sequence,
-        clock.animation_time_ms(),
-        clock.global_time_ms(),
-        0.0,
-    );
+    let roll = sample_angle_radians(animations, camera.roll_radians(), clock, 0.0);
     if roll.is_finite() && roll.abs() > 1.0e-6 && forward.length_squared() > 1.0e-8 {
         up = Quat::from_axis_angle(forward, roll) * up;
     }

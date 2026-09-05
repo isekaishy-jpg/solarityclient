@@ -78,13 +78,49 @@ Scene-timer event windows follow `0x00830FB0`, preserving every crossed
 occurrence, seek position, reverse mapping, and native timestamp order.
 Held timers dispatch no keys, and nonlooping timers stop keys at their deadline.
 
-Remaining gaps include automatic secondary-pose blending, event-position
-sampling at each individual callback tick, event sound age, exact hidden
+Remaining gaps include event-position sampling at each individual callback tick,
+event sound age, exact hidden
 widget update/visibility clocks, and retaining hidden instances' GPU effects.
 The existing world playback path still uses elapsed-time windows that collapse
 multiple occurrences of one declaration and discards overdue variation time.
 These Model changes do not establish parity for those callers or FrameXML
 Model rendering. Scene-global track ownership also remains separate work.
+
+## Automatic sequence blending
+
+The Model timer path retains its outgoing primary timer during automatic
+variation changes. At `0x00826C40`, the incoming sequence supplies the blend
+duration. The envelope begins at the current scene tick, including when a
+callback carries overdue time. A second callback preserves an existing
+secondary while its contribution is strictly greater than 0.5; at exactly
+0.5 it copies the outgoing primary instead. Explicit Model Lua requests
+disable this blend, while unavailable requests and the root clear no-op
+leave the current state intact.
+
+`0x0082F0F0` samples the secondary independently, testing sequence flag `0x80`
+for its completion clamp (`0x0082F592`) where the primary tests flag `0x1`.
+The previous contribution is `smoothstep(remaining / duration)`. It becomes
+zero at the deadline or when both sampled sequence/time pairs coincide.
+The blend uses wrapping scene ticks and does not restart the previous timer.
+
+Blending occurs before bone hierarchy composition and reaches continuous
+material, light, ribbon, particle, and camera tracks through their shared
+animation clock. `0x0082B0A0`, `0x0082AF40`, and `0x0082B340` interpolate vector,
+fixed-point scalar, and float scalar results respectively. Step tracks return
+before blending, global tracks bypass it, and discrete enable/selector tracks
+retain the primary value (`0x0082B270`). Missing secondary keys contribute the
+caller's track default.
+
+`0x00828680` calls `0x00982460` for the rotation between complete sequence
+samples. This is shortest-arc spherical interpolation, distinct from the
+normalized linear key interpolation within a sequence (`0x00982630`). Its
+near-collinear threshold is the pinned float at `0x00AA2E58`, exactly 2^-21;
+below that sine magnitude it retains the primary quaternion.
+
+This integration applies to the native Model timer path. World playback and
+its equipment synchronization still need secondary timer ownership. Existing
+per-sequence key decoding/interpolation remains a separate compatibility
+boundary; this change does not establish complete parity for that boundary.
 
 ## Key-bone lookup
 

@@ -37,19 +37,8 @@ impl M2ParticlePose {
         emitter: &M2ParticleEmitter,
         clock: M2AnimationClock,
     ) -> Result<Self, M2BonePoseError> {
-        let sequence = clock.resolve(animations)?;
-        let animation_time_ms = clock.animation_time_ms();
-        let global_time_ms = clock.global_time_ms();
-        let scalar = |track, default| {
-            sample_scalar(
-                animations,
-                track,
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                default,
-            )
-        };
+        let clock = clock.resolve(animations)?;
+        let scalar = |track, default| sample_scalar(animations, track, clock, default);
         Ok(Self {
             emission_speed: scalar(emitter.emission_speed(), 0.0),
             speed_variation: scalar(emitter.speed_variation(), 0.0),
@@ -57,28 +46,16 @@ impl M2ParticlePose {
             horizontal_range: scalar(emitter.horizontal_range(), 0.0),
             gravity: match emitter.gravity() {
                 M2ParticleGravity::Scalar(track) => Vec3::NEG_Z * scalar(track, 0.0),
-                M2ParticleGravity::Compressed(track) => sample_vec3(
-                    animations,
-                    track,
-                    sequence,
-                    animation_time_ms,
-                    global_time_ms,
-                    Vec3::ZERO,
-                ),
+                M2ParticleGravity::Compressed(track) => {
+                    sample_vec3(animations, track, clock, Vec3::ZERO)
+                }
             },
             lifespan: scalar(emitter.lifespan(), 0.0),
             emission_rate: scalar(emitter.emission_rate(), 0.0),
             emission_area_width: scalar(emitter.emission_area_width(), 0.0),
             emission_area_length: scalar(emitter.emission_area_length(), 0.0),
             z_source: scalar(emitter.z_source(), 0.0),
-            enabled: sample_discrete(
-                animations,
-                emitter.enabled(),
-                sequence,
-                animation_time_ms,
-                global_time_ms,
-                1,
-            ) != 0,
+            enabled: sample_discrete(animations, emitter.enabled(), clock, 1) != 0,
         })
     }
 

@@ -18,18 +18,18 @@ use solarity_rendering::{
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
     M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2FingerPoseHands,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2ModelOrientation, M2ModelSequenceTimer, M2ParticleColorReplacement,
-    M2ParticleMeshPlan, M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose,
-    M2ParticlePreparedDraw, M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler,
-    M2ParticleSpirvProgram, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram,
-    M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2SequenceStartPhase, M2ShaderPermutation,
-    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey,
-    M2SpirvProgram, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentPass,
-    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
-    triggered_m2_event_indices,
+    M2MeshPlan, M2ModelOrientation, M2ModelSequenceBlend, M2ModelSequenceTimer,
+    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
+    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
+    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
+    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
+    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
+    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2SequenceStartPhase, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
+    M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
 
 use crate::application::player_coordinator::{
@@ -575,6 +575,7 @@ pub(in crate::application) struct M2Playback {
     event_timeline_started: bool,
     /// Explicit Model calls use native integer scene timers and event intervals.
     script_timer: Option<M2ModelSequenceTimer>,
+    script_blend: Option<M2ModelSequenceBlend>,
     script_mode: M2ModelAnimationMode,
     scene_time_ms: u32,
     previous_event_scene_time_ms: u32,
@@ -622,6 +623,7 @@ impl M2Playback {
                 previous_global_event_elapsed_ms: 0.0,
                 event_timeline_started: false,
                 script_timer: None,
+                script_blend: None,
                 script_mode: M2ModelAnimationMode::Forward,
                 scene_time_ms: 0,
                 previous_event_scene_time_ms: 0,
@@ -659,6 +661,7 @@ impl M2Playback {
             previous_global_event_elapsed_ms: 0.0,
             event_timeline_started: false,
             script_timer: None,
+            script_blend: None,
             script_mode: M2ModelAnimationMode::Forward,
             scene_time_ms: 0,
             previous_event_scene_time_ms: 0,
@@ -712,6 +715,7 @@ impl M2Playback {
         self.has_variations = animations.sequences()[sequence].variation_index() != 0
             || animations.sequences()[sequence].variation_next().is_some();
         self.script_timer = Some(timer);
+        self.script_blend = None;
         self.script_mode = resolved.mode();
         Ok(())
     }
@@ -852,6 +856,20 @@ impl M2Playback {
             if animations.is_sequence_available(sequence) != Some(true) {
                 break;
             }
+            // 0x00826C40 keeps an existing secondary while its contribution
+            // is strictly above one half. Otherwise the outgoing primary
+            // replaces it, using the incoming sequence's blend duration.
+            if self
+                .script_blend
+                .is_none_or(|blend| blend.weight(self.scene_time_ms) <= 0.5)
+            {
+                self.script_blend = Some(M2ModelSequenceBlend::new(
+                    self.sequence,
+                    timer,
+                    self.scene_time_ms,
+                    animations.sequences()[sequence].blend_time_ms(),
+                ));
+            }
             timer = timer.restart_variation(
                 &animations.sequences()[sequence],
                 self.script_mode,
@@ -867,12 +885,20 @@ impl M2Playback {
                 || animations.sequences()[sequence].variation_next().is_some();
         }
         self.script_timer = Some(timer);
+        let mut clock = M2AnimationClock::new(
+            self.sequence,
+            timer.animation_time_ms(self.scene_time_ms) as f32,
+            global_time_ms,
+        );
+        if let Some(blend) = self.script_blend {
+            if blend.weight(self.scene_time_ms) == 0.0 {
+                self.script_blend = None;
+            } else {
+                clock = blend.apply_to_clock(clock, self.scene_time_ms);
+            }
+        }
         Ok(M2PlaybackAdvance {
-            clock: M2AnimationClock::new(
-                self.sequence,
-                timer.animation_time_ms(self.scene_time_ms) as f32,
-                global_time_ms,
-            ),
+            clock,
             expired_variations,
         })
     }

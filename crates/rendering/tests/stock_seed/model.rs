@@ -4,6 +4,8 @@
 mod mesh_transfer;
 #[path = "model/particle_frame.rs"]
 mod particle_frame;
+#[path = "model/sequence_blend.rs"]
+mod sequence_blend;
 #[path = "model/sequence_timer.rs"]
 mod sequence_timer;
 

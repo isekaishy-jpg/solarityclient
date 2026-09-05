@@ -3,6 +3,91 @@
 use glam::{Quat, Vec3};
 use solarity_asset::{M2AnimationSet, M2Interpolation, M2Track, M2TrackChannel};
 
+use super::M2AnimationClock;
+
+/// Blends continuous vector tracks before bone or material composition.
+pub(crate) fn sample_vec3(
+    animations: &M2AnimationSet,
+    track: &M2Track<Vec3>,
+    clock: M2AnimationClock,
+    default: Vec3,
+) -> Vec3 {
+    let primary = sample_vec3_primary(animations, track, clock, default);
+    let Some((secondary, weight)) = clock.secondary_for(track) else {
+        return primary;
+    };
+    let previous = sample_vec3_primary(animations, track, secondary, default);
+    primary + (previous - primary) * weight
+}
+
+/// 0x0082AF40/0x0082B340 use the same blend for fixed-point and float scalars.
+pub(crate) fn sample_scalar(
+    animations: &M2AnimationSet,
+    track: &M2Track<f32>,
+    clock: M2AnimationClock,
+    default: f32,
+) -> f32 {
+    let primary = sample_scalar_primary(animations, track, clock, default);
+    let Some((secondary, weight)) = clock.secondary_for(track) else {
+        return primary;
+    };
+    let previous = sample_scalar_primary(animations, track, secondary, default);
+    primary + (previous - primary) * weight
+}
+
+/// Camera angles retain their per-sequence sampler before scalar pose blending.
+pub(crate) fn sample_angle_radians(
+    animations: &M2AnimationSet,
+    track: &M2Track<f32>,
+    clock: M2AnimationClock,
+    default: f32,
+) -> f32 {
+    let primary = sample_angle_radians_primary(animations, track, clock, default);
+    let Some((secondary, weight)) = clock.secondary_for(track) else {
+        return primary;
+    };
+    let previous = sample_angle_radians_primary(animations, track, secondary, default);
+    primary + (previous - primary) * weight
+}
+
+/// 0x00828680 uses spherical interpolation between complete sequence samples.
+pub(super) fn sample_quaternion(
+    animations: &M2AnimationSet,
+    track: &M2Track<Quat>,
+    clock: M2AnimationClock,
+) -> Quat {
+    let primary = sample_quaternion_primary(animations, track, clock);
+    let Some((secondary, weight)) = clock.secondary_for(track) else {
+        return primary;
+    };
+    let previous = sample_quaternion_primary(animations, track, secondary);
+    blend_quaternion(primary, previous, weight)
+}
+
+/// 0x00982460 takes the shortest arc and retains the first quaternion when the
+/// sine is below the authored 2^-21 threshold. Extended intermediates avoid
+/// prematurely rounding the dot product of compressed input quaternions.
+fn blend_quaternion(primary: Quat, previous: Quat, weight: f32) -> Quat {
+    let primary = primary.to_array().map(f64::from);
+    let previous = previous.to_array().map(f64::from);
+    let dot = primary
+        .iter()
+        .zip(previous)
+        .map(|(a, b)| a * b)
+        .sum::<f64>();
+    let sine = (1.0 - dot * dot).abs().sqrt();
+    if sine < 1.0 / 2_097_152.0 {
+        return Quat::from_array(primary.map(|value| value as f32));
+    }
+    let angle = sine.atan2(dot.abs());
+    let first_weight = ((1.0 - f64::from(weight)) * angle).sin() / sine;
+    let previous_weight =
+        (f64::from(weight) * angle).sin() / sine * if dot < 0.0 { -1.0 } else { 1.0 };
+    Quat::from_array(std::array::from_fn(|index| {
+        (primary[index] * first_weight + previous[index] * previous_weight) as f32
+    }))
+}
+
 /// One selected channel and its resolved local/global clock time.
 struct SampleLocation<'track, T> {
     channel: &'track M2TrackChannel<T>,
@@ -13,16 +98,14 @@ struct SampleLocation<'track, T> {
 fn locate<'track, T>(
     animations: &M2AnimationSet,
     track: &'track M2Track<T>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
 ) -> Option<SampleLocation<'track, T>> {
     if let Some(global) = track.global_sequence() {
         let duration = *animations
             .global_sequence_durations_ms()
             .get(usize::from(global))? as f32;
         let time_ms = if duration > 0.0 {
-            global_time_ms.rem_euclid(duration)
+            clock.global_time_ms().rem_euclid(duration)
         } else {
             0.0
         };
@@ -33,11 +116,11 @@ fn locate<'track, T>(
     }
     let channel = track
         .channels()
-        .get(sequence)
+        .get(clock.sequence())
         .or_else(|| track.channels().first())?;
     Some(SampleLocation {
         channel,
-        time_ms: animation_time_ms,
+        time_ms: clock.animation_time_ms(),
     })
 }
 
@@ -76,21 +159,13 @@ const fn values_per_key(interpolation: M2Interpolation) -> usize {
 }
 
 /// Evaluates one vector-valued bone track.
-pub(crate) fn sample_vec3(
+fn sample_vec3_primary(
     animations: &M2AnimationSet,
     track: &M2Track<Vec3>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
     default: Vec3,
 ) -> Vec3 {
-    let Some(location) = locate(
-        animations,
-        track,
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ) else {
+    let Some(location) = locate(animations, track, clock) else {
         return default;
     };
     let Some((lower, upper, amount)) =
@@ -117,21 +192,13 @@ pub(crate) fn sample_vec3(
 }
 
 /// Evaluates one scalar material track with the shared cubic basis.
-pub(crate) fn sample_scalar(
+fn sample_scalar_primary(
     animations: &M2AnimationSet,
     track: &M2Track<f32>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
     default: f32,
 ) -> f32 {
-    let Some(location) = locate(
-        animations,
-        track,
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ) else {
+    let Some(location) = locate(animations, track, clock) else {
         return default;
     };
     let Some((lower, upper, amount)) =
@@ -169,31 +236,16 @@ pub(crate) fn sample_scalar(
 /// camera authors equivalent endpoints at one full turn and zero; stock takes
 /// the signed remainder of their delta before interpolation, keeping that
 /// camera static instead of revolving the entire Glue scene once per cycle.
-pub(crate) fn sample_angle_radians(
+fn sample_angle_radians_primary(
     animations: &M2AnimationSet,
     track: &M2Track<f32>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
     default: f32,
 ) -> f32 {
     if track.interpolation() != M2Interpolation::Linear {
-        return sample_scalar(
-            animations,
-            track,
-            sequence,
-            animation_time_ms,
-            global_time_ms,
-            default,
-        );
+        return sample_scalar_primary(animations, track, clock, default);
     }
-    let Some(location) = locate(
-        animations,
-        track,
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ) else {
+    let Some(location) = locate(animations, track, clock) else {
         return default;
     };
     let Some((lower, upper, amount)) =
@@ -239,20 +291,12 @@ fn interpolate_vec3(
 }
 
 /// Evaluates one compressed-quaternion bone track.
-pub(super) fn sample_quaternion(
+fn sample_quaternion_primary(
     animations: &M2AnimationSet,
     track: &M2Track<Quat>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
 ) -> Quat {
-    let Some(location) = locate(
-        animations,
-        track,
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ) else {
+    let Some(location) = locate(animations, track, clock) else {
         return Quat::IDENTITY;
     };
     let Some((lower, upper, amount)) =
@@ -301,21 +345,13 @@ pub(super) fn sample_quaternion(
 pub(crate) fn sample_discrete<T>(
     animations: &M2AnimationSet,
     track: &M2Track<T>,
-    sequence: usize,
-    animation_time_ms: f32,
-    global_time_ms: f32,
+    clock: M2AnimationClock,
     default: T,
 ) -> T
 where
     T: Copy,
 {
-    let Some(location) = locate(
-        animations,
-        track,
-        sequence,
-        animation_time_ms,
-        global_time_ms,
-    ) else {
+    let Some(location) = locate(animations, track, clock) else {
         return default;
     };
     let Some((lower, _upper, _amount)) =

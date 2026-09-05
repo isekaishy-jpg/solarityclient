@@ -7,7 +7,8 @@ use solarity_asset::{
     M2ModelAnimationMode,
 };
 use solarity_rendering::{
-    M2EventTimeWindow, M2ModelSequenceTimer, M2SequenceStartPhase, triggered_m2_event_indices,
+    M2AnimationClock, M2EventTimeWindow, M2ModelSequenceBlend, M2ModelSequenceTimer,
+    M2SequenceStartPhase, triggered_m2_event_indices,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -19,6 +20,10 @@ use super::{
 
 /// Loads the same decoded sequence through both looping and terminal flag paths.
 fn model(non_looping: bool) -> Result<DecodedM2Model, Box<dyn Error>> {
+    model_with_flags(0x20 | u32::from(non_looping))
+}
+
+fn model_with_flags(flags: u32) -> Result<DecodedM2Model, Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Timer", 1)?;
     // The fixture writer does not include the terminator for this name length.
     let name_offset = bytes.len() as u32;
@@ -26,13 +31,12 @@ fn model(non_looping: bool) -> Result<DecodedM2Model, Box<dyn Error>> {
     bytes[8..12].copy_from_slice(&6_u32.to_le_bytes());
     bytes[12..16].copy_from_slice(&name_offset.to_le_bytes());
     append_render_events(&mut bytes)?;
-    if non_looping {
+    if flags & 1 != 0 {
         let events = m2_array_offset(&bytes, 0x100)?;
         append_render_event_track(&mut bytes, events + 24, &[0, 125, 750, 1_250], None)?;
     }
     let sequence = m2_array_offset(&bytes, 0x1c)?;
-    bytes[sequence + 12..sequence + 16]
-        .copy_from_slice(&(0x20_u32 | u32::from(non_looping)).to_le_bytes());
+    bytes[sequence + 12..sequence + 16].copy_from_slice(&flags.to_le_bytes());
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -51,6 +55,45 @@ fn model(non_looping: bool) -> Result<DecodedM2Model, Box<dyn Error>> {
         &mut store,
         &AssetPath::new("Creature\\Solarity\\Timer.m2")?,
     )?)
+}
+
+/// 0x0082F0F0 uses the secondary flag; 0x00826C40 starts the incoming envelope now.
+#[test]
+fn sequence_blend_uses_secondary_completion_flags_and_wrapping_smoothstep()
+-> Result<(), Box<dyn Error>> {
+    for flags in [0x20_u32, 0x21, 0xa0, 0xa1] {
+        let model = model_with_flags(flags)?;
+        let timer = M2ModelSequenceTimer::new(
+            &model.animations().sequences()[0],
+            M2ModelAnimationMode::Forward,
+            1_000,
+            0,
+            0,
+            M2SequenceStartPhase::BeforeSceneUpdate,
+        );
+        assert_eq!(
+            timer.animation_time_ms(2_251),
+            if flags & 1 == 0 { 250 } else { 1_000 }
+        );
+        assert_eq!(
+            timer.secondary_animation_time_ms(2_251),
+            if flags & 0x80 == 0 { 250 } else { 1_000 }
+        );
+        let blend = M2ModelSequenceBlend::new(0, timer, 2_251, 400);
+        assert_eq!(blend.weight(2_251), 1.0);
+        assert_eq!(blend.weight(2_351), 0.84375);
+        assert_eq!(blend.weight(2_451), 0.5);
+        assert_eq!(blend.weight(2_651), 0.0);
+        assert_eq!(blend.weight(2_751), 0.0);
+        let same_pose =
+            M2AnimationClock::new(0, timer.secondary_animation_time_ms(2_251) as f32, 0.0);
+        assert_eq!(blend.apply_to_clock(same_pose, 2_251), same_pose);
+        let wrapped = M2ModelSequenceBlend::new(0, timer, u32::MAX - 50, 400);
+        assert_eq!(wrapped.weight(49), 0.84375);
+        let instantaneous = M2ModelSequenceBlend::new(0, timer, 1_000, 0);
+        assert_eq!(instantaneous.weight(1_000), 0.0);
+    }
+    Ok(())
 }
 
 /// 0x00826B00 retains signed seeks; 0x0082F0F0 wraps or holds according to flag 1.
