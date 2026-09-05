@@ -68,3 +68,51 @@ default chords through this physical translation. Six serialized defaults are
 correctly inactive at this catalog boundary: four are Mac-only movie commands,
 and two name commands not declared by the currently loaded binding documents.
 No Windows fallback is substituted for them.
+
+## Gameplay command boundary under implementation
+
+Physical binding delivery is present; player locomotion and camera command
+consumers are still absent. The following build-12340 executable evidence
+bounds the next implementation. These addresses come from the original Lua
+registration tables and their native callees, not the C++ client's controller.
+
+| Authored Lua call | Native entry | Immediate owner |
+| --- | --- | --- |
+| `MoveForwardStart` / `MoveForwardStop` | `0x005FC200` / `0x005FC250` | InputControl held bit `0x10` |
+| `TurnLeftStart` / `TurnLeftStop` | `0x005FC320` / `0x005FC360` | InputControl held bit `0x100` |
+| `MouselookStart` / `MouselookStop` | `0x005FCC10` / `0x005FC890` | InputControl held bit `1`, pointer/camera lifetime |
+| `CameraZoomIn` / `CameraZoomOut` | `0x006017E0` / `0x00601840` | Persistent camera's timed zoom state |
+
+`0x005FA170` and `0x005FA450` admit held-bit edges and suppress repeated
+starts/stops. Their camera, cursor, and autorun side effects are part of that
+boundary. Movement Lua entries first pass the native protected-action check
+at `0x005191C0`; arbitrary script execution must not acquire hardware-input
+authority merely because it calls the same function.
+
+`0x005FBBC0` resolves the current controlled unit and separately gates
+translation and turning. The ordinary forward/back resolver at `0x005FAE70`
+adds autorun, forward, and the paired mouse-button forward contribution, then
+subtracts backward. It emits no new transition when the resulting direction
+is unchanged. Strafe resolution at `0x005FAFB0` incorporates turn keys during
+mouselook; turn resolution at `0x005FB0B0` owns the corresponding suppression.
+These held-command masks are distinct from the unit's network movement flags.
+
+The unit wrappers `0x0072E5D0`, `0x0072E680`, and `0x0072E7E0` feed timed
+movement events. Their ordinary event IDs are forward/back/stop `0/1/2`,
+strafe-left/right/stop `3/4/5`, and turn-left/right/stop `11/12/13`.
+`0x006ECB50`, `0x006ECBB0`, `0x006ECDE0`, `0x006ECE40`, `0x006F0F70`, and
+`0x006ECEA0` establish this mapping. These are internal event IDs, not packet
+opcodes. Event admission uses `0x006EBC70` and `0x006EC090` before the movement
+update/dispatch owner at `0x007B5020`.
+
+Zoom also requires an update owner: the Lua entries default an absent numeric
+argument to one, then `0x005FF950` / `0x005FFA60` derive timed operations from
+the camera speed CVar. `0x005FE580` retains direction, start, deadline, and
+rate. Directly incrementing the saved distance per wheel event would omit
+that native behavior.
+
+Remaining recovery and implementation work includes the movement event
+consumer and wire snapshot ordering, local displacement/collision and falling,
+server corrections and control changes, timed camera input, and the unit
+animation consumer. None of those capabilities is implied by successful
+binding dispatch or the now-available world-transfer pipeline.
