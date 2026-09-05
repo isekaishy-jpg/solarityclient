@@ -443,16 +443,6 @@ pub enum RuntimeTerrainFrameError {
         /// Number of populated packed texture slots.
         texture_count: usize,
     },
-    /// A validated particle unexpectedly references an absent bone transform.
-    #[error("M2 model {model} particle {particle_index} references absent bone {bone_index}")]
-    M2ParticleBoneIndex {
-        /// Model containing the emitter.
-        model: AssetPath,
-        /// Zero-based particle declaration slot.
-        particle_index: usize,
-        /// Missing zero-based bone transform.
-        bone_index: u32,
-    },
     /// The ordinary simulation does not substitute another generator shape.
     #[error(
         "M2 model {model} particle {particle_index} uses unsupported emitter type {emitter_type}"

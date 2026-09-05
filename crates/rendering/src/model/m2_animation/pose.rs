@@ -1,7 +1,7 @@
 //! Parent-first M2 bone transform composition.
 
 use glam::{Mat3, Mat4, Vec3};
-use solarity_asset::{M2AnimationSet, M2Attachment, M2Track};
+use solarity_asset::{M2AnimationSet, M2Attachment, M2ParticleEmitter, M2Track};
 
 use super::M2BonePoseError;
 use super::sample::sample_discrete;
@@ -360,6 +360,43 @@ impl M2BonePose {
     #[must_use]
     pub fn transforms(&self) -> &[Mat4] {
         &self.transforms
+    }
+
+    /// Resolves the stock particle generator basis at its animated world origin.
+    ///
+    /// Build 12340 `0x008309C0` appends the authored emitter position to its
+    /// bone, applies the model placement, then appends the fixed basis stored
+    /// at `0x00D411E0`: generator +X maps to bone +Y, +Y to -X, and +Z to +Z.
+    /// This changes launch directions and local cards without orbiting the
+    /// authored emitter origin. Both world-space births and model-space
+    /// presentation must use this same transform.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`M2BonePoseError::ParticleBoneIndex`] when the emitter's bone
+    /// is absent from this palette. Unbound emitters use the model placement
+    /// with the same generator remap.
+    pub fn particle_emitter_transform(
+        &self,
+        emitter: &M2ParticleEmitter,
+        model_transform: Mat4,
+    ) -> Result<Mat4, M2BonePoseError> {
+        let bone = match emitter.bone_index() {
+            Some(index) => self.transforms.get(usize::from(index)).copied().ok_or(
+                M2BonePoseError::ParticleBoneIndex {
+                    requested: index,
+                    available: self.transforms.len(),
+                },
+            )?,
+            None => Mat4::IDENTITY,
+        };
+        let mut transform = model_transform * bone * Mat4::from_translation(emitter.position());
+        // Exact column exchange preserves the executable's zero/one matrix
+        // instead of introducing trigonometric rounding at a right angle.
+        let original_x = transform.x_axis;
+        transform.x_axis = transform.y_axis;
+        transform.y_axis = -original_x;
+        Ok(transform)
     }
 
     /// Resolves one enabled child-model attachment in world space.

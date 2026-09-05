@@ -389,3 +389,41 @@ took 21.6 ms, returned no event, and charged only about 65,000 thread cycles.
 The remaining platform wait or scheduling pause is not eliminated by the
 mixer optimization. Initial entry, input publication, and the outstanding
 stock scene/world requirements remain part of completion.
+
+## Night Elf foreground particle placement
+
+The two foreground `PARTICLES\DUST3X.BLP` emitters were admitted, simulated,
+and submitted, but their generated geometry fell outside the authored camera.
+The model-owner recovery at build-12340 `0x008309C0` exposed a missing fixed
+90-degree generator-basis rotation after the bone, emitter-position, and model
+transforms. The shared bone-pose boundary now supplies that exact transform;
+it is used by all placed M2 particle emitters, including world placements.
+The stock source and composition contract are recorded in
+[M2 effects](m2-effects.md#particle-generator-basis).
+
+An installed-data diagnostic advances each emitter at 60 Hz for 20 seconds
+with fixed seeds and samples CPU geometry every five seconds. The Night Elf
+emitters 10 and 11 retain 54 and 36 live particles at 20 seconds. Their
+in-frustum vertex counts change from zero to 147/216 and 124/144 respectively;
+both also enter the frustum at 5, 10, and 15 seconds. All generated vertex
+positions remain finite. Login, the eight racial backdrops, and Death Knight
+complete the same simulation/mesh diagnostic without errors, covering 118
+emitters. A whole-triangle check also rejects every original dust triangle
+against at least one clip plane at each sample. After correction, 91 and 62
+triangles respectively survive that initial rejection at 20 seconds.
+
+All 548 workspace tests, Clippy, formatting, and the optimized build passed.
+The 28-action replay completed with 6,000 following frames per action,
+1280x720 on the GTX 1070, audio, four CPU workers, and the same frame diagnostics
+as the preceding run. Night Elf selection measured 2,477/2,518 FPS cold/warm;
+Night Elf creation measured 3,266/3,279 FPS, and ordinary Human customization
+approximately 3,284–3,432 FPS. These figures retain throughput above the
+target with the corrected particle placement. Creation entry still reached
+26.9 ms, race changes up to 20.9 ms, and following-frame outliers up to
+19.5 ms. This effect correction does not close the remaining stall work.
+
+These measurements establish the misplaced-emitter defect and its stock-based
+correction. They do not establish the final blended appearance or full scene
+parity. Automated window capture was unavailable because the computer-use
+helper could not connect; visual comparison remains open with lighting,
+animation, and the other completion requirements above.

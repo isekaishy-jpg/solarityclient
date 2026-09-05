@@ -225,3 +225,32 @@ the current animated transform during mesh preparation; all other ordinary
 particles retain the world-space position chosen when they were emitted.
 Multi-texture, geometry, child-emitter, and other specialized paths remain
 typed boundaries and never substitute the one-texture ordinary shader.
+
+### Particle generator basis
+
+The model owner at build-12340 `0x008309C0` copies the animated bone matrix,
+appends the authored emitter position with `0x004C1B30`, and applies the model
+placement with `0x004C2370`. It then appends the fixed matrix initialized at
+`0x00D411E0` before calling the particle driver at `0x0097EB10`. Recovered
+`0x004C1F00` multiplication order and the `-1.0` constant at `0x009E2EF4`
+establish the generator remap: local +X becomes bone +Y, +Y becomes -X, and
++Z stays +Z. The translation is unchanged by this final basis rotation.
+
+`M2BonePose::particle_emitter_transform` owns that composition for both the
+live scene and installed-data diagnostics. World-space particles use it at
+birth; model-space particles also use it when preparing their current cards.
+Unbound emitters omit the bone transform and keep the same generator remap.
+An external regression exercises decoded parent-bone translation, a rotated
+and nonuniformly scaled placement, and directed spherical births in both
+storage spaces.
+
+The previously omitted rotation directed both foreground Night Elf dust
+emitters sideways out of the native camera. With deterministic seeds, 60 Hz
+updates, and the authored 16:9 camera, neither emitter produced an in-frustum
+vertex at 5, 10, 15, or 20 seconds, and every triangle lay entirely outside
+at least one clip plane. The corrected frame produces in-frustum vertices at
+all four samples while preserving their live-particle counts.
+`validate_m2_particles <Data directory> <locale> <M2 path>` reports those CPU
+geometry bounds, alpha coverage, vertex counts, and triangle clip-plane
+rejection over 20 seconds. Surviving triangles are only candidates: this does
+not measure GPU occlusion, blended pixels, or equivalence to a stock capture.

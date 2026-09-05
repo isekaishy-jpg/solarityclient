@@ -2439,13 +2439,9 @@ impl M2Frame {
                 }
                 let simulation = &mut placement_particle.simulation;
                 let pose = M2ParticlePose::sample(source.model.animations(), emitter, clock)?;
-                let (emitter_transform, model_lod_position) = particle_emitter_transform(
-                    &source.model,
-                    placement.transform,
-                    bone_pose,
-                    particle_index,
-                    emitter,
-                )?;
+                let emitter_transform =
+                    bone_pose.particle_emitter_transform(emitter, placement.transform)?;
+                let model_lod_position = particle_lod_origin(placement.transform);
                 let particle_density = particle_emission_density(
                     emitter.flags(),
                     model_lod_position,
@@ -3320,34 +3316,8 @@ fn glue_particle_simulations(
         .collect()
 }
 
-/// Resolves one emitter's current bone-relative local-to-world matrix.
-fn particle_emitter_transform(
-    model: &DecodedM2Model,
-    placement_transform: Mat4,
-    bone_pose: &M2BonePose,
-    particle_index: usize,
-    emitter: &M2ParticleEmitter,
-) -> Result<(Mat4, glam::Vec3), RuntimeTerrainFrameError> {
-    let bone = match emitter.bone_index() {
-        Some(bone_index) => bone_pose
-            .transforms()
-            .get(usize::from(bone_index))
-            .copied()
-            .ok_or_else(|| RuntimeTerrainFrameError::M2ParticleBoneIndex {
-                model: model.path().clone(),
-                particle_index,
-                bone_index: u32::from(bone_index),
-            })?,
-        None => Mat4::IDENTITY,
-    };
-    let emitter_transform = placement_transform * bone * Mat4::from_translation(emitter.position());
-    // Build 12340 `0x0097EB10` measures the shared model matrix translation
-    // against the camera before updating every emitter. An emitter's authored
-    // position and animated bone do not independently change particle LOD.
-    let model_origin = particle_lod_origin(placement_transform);
-    Ok((emitter_transform, model_origin))
-}
-
+/// Build 12340 `0x0097EB10` measures the shared model origin for particle LOD;
+/// authored emitter offsets and animated bones do not move that origin.
 fn particle_lod_origin(placement_transform: Mat4) -> glam::Vec3 {
     placement_transform.transform_point3(glam::Vec3::ZERO)
 }

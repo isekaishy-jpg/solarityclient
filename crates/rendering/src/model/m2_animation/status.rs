@@ -39,6 +39,14 @@ pub enum M2BonePoseError {
         /// Number of transforms in the composed pose.
         available: usize,
     },
+    /// A particle declaration from another model references a missing palette entry.
+    #[error("M2 particle bone {requested} is unavailable; pose has {available} bones")]
+    ParticleBoneIndex {
+        /// Emitter bone index.
+        requested: u16,
+        /// Number of transforms in the composed pose.
+        available: usize,
+    },
     /// A decoded light from another model references a missing palette entry.
     #[error("M2 light bone {requested} is unavailable; pose has {available} bones")]
     LightBoneIndex {

@@ -2,6 +2,8 @@
 
 #[path = "model/mesh_transfer.rs"]
 mod mesh_transfer;
+#[path = "model/particle_frame.rs"]
+mod particle_frame;
 
 use std::error::Error;
 use std::io::Cursor;
