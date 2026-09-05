@@ -145,6 +145,16 @@ impl MovementFallTrajectory {
         downward_distance: f32,
         crossing: MovementFallCrossing,
     ) -> Result<f32, MovementFallError> {
+        finite_result(self.seconds_at_distance_extended(downward_distance, crossing)?)
+    }
+
+    /// Collision callers retain the inverse root in x87 until after subtracting
+    /// the interval's start time. Preserve that boundary before narrowing.
+    pub(crate) fn seconds_at_distance_extended(
+        self,
+        downward_distance: f32,
+        crossing: MovementFallCrossing,
+    ) -> Result<f64, MovementFallError> {
         if !downward_distance.is_finite() {
             return Err(MovementFallError::NonFiniteDistance);
         }
@@ -161,13 +171,13 @@ impl MovementFallTrajectory {
             } else {
                 (distance * f64::from(DOUBLE_INVERSE_GRAVITY)).sqrt()
             };
-            return finite_result(elapsed);
+            return Ok(elapsed);
         }
         let discriminant = f64::from(DOUBLE_GRAVITY) * distance + launch * launch;
         let root = discriminant.max(0.0).sqrt();
         let ascending = (-launch - root) * inverse_gravity;
         if crossing == MovementFallCrossing::Ascending {
-            return finite_result(ascending.max(0.0));
+            return Ok(ascending.max(0.0));
         }
         let descending = (root - launch) * inverse_gravity;
         let terminal_time = (terminal - launch) * inverse_gravity;
@@ -178,7 +188,12 @@ impl MovementFallTrajectory {
         } else {
             descending
         };
-        finite_result(elapsed)
+        Ok(elapsed)
+    }
+
+    /// `0x00986E80` uses the signed, uncapped launch field for an active fall.
+    pub(crate) fn apex_seconds(self) -> f64 {
+        -f64::from(self.initial_downward_speed) * f64::from(INVERSE_GRAVITY)
     }
 }
 

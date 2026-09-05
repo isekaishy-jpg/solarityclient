@@ -66,6 +66,11 @@ pub struct MovementCollisionVolume {
 }
 
 impl MovementCollisionVolume {
+    /// Supplies the admitted foot position to movement's contact-time owner.
+    pub(crate) const fn foot_origin(&self) -> Vec3 {
+        self.vertices[0]
+    }
+
     /// Builds the body at the foot origin with the supplied radius and height.
     ///
     /// # Errors

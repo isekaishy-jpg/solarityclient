@@ -1,11 +1,14 @@
 //! Player-volume contact queries recovered from build-12340 `Collide.cpp`.
 
 mod face;
+mod fall;
 mod polygon;
+mod response;
 mod support;
 mod sweep;
 mod volume;
 
+pub use fall::MovementFallContactKind;
 pub use support::MovementSupportProfile;
 pub use sweep::{MovementCollisionTriangle, MovementSweep, MovementSweepError};
 pub use volume::{MovementCollisionPlane, MovementCollisionVolume};

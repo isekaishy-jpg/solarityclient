@@ -5,6 +5,8 @@ It accepts a foot origin, admitted radius and effective height, a displacement,
 and an ordered slice of oriented collision triangles in the same coordinate
 space. It returns permitted travel and the body planes near first contact.
 The triangle API also tests support at a foot point after swept movement.
+`MovementFallContactQuery` combines these queries with native fall contact-time selection,
+landing/ceiling classification, and the remaining horizontal correction.
 These queries do not yet drive the player or collect resident-world triangles.
 
 ## Native evidence
@@ -109,11 +111,63 @@ world coordinates, and small projected edges. The capture executes the real
 it does not replace the predicate with a constant. The standalone fixture
 `movement-support-native.txt` and Rust tests compare each support decision.
 
+## Fall contact response
+
+`MovementFallContactQuery::resolve` implements one fall interval's contact
+response at `0x00760FC0`, followed by the contact-time adjustment at `0x0075EB00`.
+Its query supplies the existing analytic fall curve, launch height, elapsed and
+available seconds, horizontal speed, and resolved support profile. The result
+contains allowed displacement/distance, consumed seconds, the selected triangle,
+an XY correction for remaining travel, and a clear/slide/land/ceiling decision.
+It allocates no memory and mutates no movement or world state. Movement owns
+the curve and time calculation; collision supplies geometry and response using
+the resolved time remaining to the apex. Collision does not depend on movement.
+
+Support is tested first. An unsupported upward contact requests a ceiling reset
+only when a top body plane is present and allowed travel fits the remaining time
+to the apex times horizontal speed. Other contacts use `0x0075E9C0`: steep faces
+select a response plane; flatter surfaces choose the nearest infinite triangle
+edge line, preserving ordered ties. The XY correction preserves the remaining
+vertical motion and adds the native 0.001-unit bias.
+
+The two-body-contact branch (`0x0075E760`) can intersect the world plane with
+both body planes, select an edge using `0x0075D4B0`'s unnormalized cross-product
+metric, and orient the resulting normal against the first body contact. Its
+parallel-edge branch recognizes +1 alignment only. The one-body-contact helper
+`0x0075D890` multiplies absolute plane distances before testing for a negative
+product; that branch cannot select the alternative normal for finite geometry.
+The implementation preserves this observed behavior.
+
+`0x0075E040` selects the height crossing from the launch, apex, interval, and
+horizontal travel. The inverse root retains its wider intermediate through time
+subtraction. A root at/before elapsed time clears displacement and consumes zero
+seconds; a root after the interval consumes the interval. Earlier contacts can
+shorten horizontal travel and recompute distance. With no selected triangle,
+the original displacement survives even when the narrow phase cuts its reported
+distance to zero. A request below 2^-22 returns before that narrow-phase cutoff.
+
+The fixture `movement-fall-contact-native.txt` contains 807 executions of the
+original contact and time functions with all native callees. Explicit cached
+candidate bounds exercise `0x0075F0A0`'s existing-cache branch without replacing
+the collector, support predicate, or geometry helpers. Tests compare all four
+decisions exactly, displacement/distance/correction within 0.0001 world units,
+and time within one microsecond. Cases include the 69 sweep geometries under
+three launch/time states and 600 deterministic ballistic samples across both
+terminal modes and support profiles. Native branch observation recorded 41
+three-plane edge resolutions, 31 flat-surface edge selections, 56 horizontal
+time shortenings, 172 support decisions, and 23 ceiling resets.
+
+These comparisons exposed an early-rounding error in the shared sweep length:
+native callers store length only after taking the square root of wider products.
+Computing the products in f32 could reverse simultaneous body-plane ordering
+and change the slide bias. The shared sweep now retains that native boundary;
+the existing 69 contact/order comparisons still pass.
+
 ## Remaining movement ownership
 
 This query implements the narrow phase after candidate collection. The movement
 owner still needs resident terrain/WMO/M2 triangle selection, transport-space
-conversion, sliding and step-up, support-state transitions, gravity and landing,
+conversion, repeated sliding and step-up, support-state transitions, gravity and landing,
 and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and
 related `Collide.cpp` callers own movement response. Those operations must not

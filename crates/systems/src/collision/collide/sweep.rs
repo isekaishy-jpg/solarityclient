@@ -136,7 +136,9 @@ impl MovementCollisionVolume {
         displacement: Vec3,
         triangles: &[MovementCollisionTriangle],
     ) -> Result<MovementSweep, MovementSweepError> {
-        let distance = displacement.length();
+        // Native callers retain products and their sum in x87 before storing
+        // the length. Early f32 rounding can reorder simultaneous foot contacts.
+        let distance = displacement.as_dvec3().length() as f32;
         if !displacement.is_finite() || !distance.is_finite() {
             return Err(MovementSweepError::InvalidDisplacement);
         }

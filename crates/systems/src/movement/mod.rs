@@ -4,6 +4,7 @@
 //! `Movement.cpp`, `Movement_C.cpp`, and `MovementShared.cpp` family.
 
 mod animation;
+mod contact;
 mod fall;
 mod movement_shared;
 mod movement_source;
@@ -11,6 +12,7 @@ mod path;
 mod player;
 
 pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
+pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
 pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};

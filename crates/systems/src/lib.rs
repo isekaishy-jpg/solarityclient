@@ -52,20 +52,21 @@ pub use camera::{
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{
     M2CollisionError, M2CollisionScene, MovementCollisionPlane, MovementCollisionTriangle,
-    MovementCollisionVolume, MovementSupportProfile, MovementSweep, MovementSweepError,
-    PlacedM2Collision, PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError,
-    TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh,
-    TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
-    WorldModelLiquidSample, WorldModelLiquidScene,
+    MovementCollisionVolume, MovementFallContactKind, MovementSupportProfile, MovementSweep,
+    MovementSweepError, PlacedM2Collision, PlacedWorldModelCollision, PlacedWorldModelLiquid,
+    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
+    TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene,
+    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
     resolve_player_equipment,
 };
 pub use movement::{
-    MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory,
-    UnitLocomotionAnimation, UnitModelAnimation, WorldEntryGroundContact,
-    WorldEntryGroundContactError, resolve_unit_locomotion_animation, resolve_unit_model_animation,
+    MovementFallContact, MovementFallContactError, MovementFallContactQuery, MovementFallCrossing,
+    MovementFallError, MovementFallMode, MovementFallTrajectory, UnitLocomotionAnimation,
+    UnitModelAnimation, WorldEntryGroundContact, WorldEntryGroundContactError,
+    resolve_unit_locomotion_animation, resolve_unit_model_animation,
 };
 pub use object::{ObjectProjectionError, project_object_fields};
 pub use world::{
