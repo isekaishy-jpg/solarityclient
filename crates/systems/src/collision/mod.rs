@@ -4,6 +4,7 @@ mod aa_bsp;
 mod collide;
 mod liquid;
 mod m2_model;
+mod movement_collection;
 mod terrain;
 mod world_model;
 mod world_model_liquid;
@@ -14,6 +15,9 @@ pub use collide::{
 };
 pub use liquid::{TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample};
 pub use m2_model::{M2CollisionError, M2CollisionScene, PlacedM2Collision};
+pub use movement_collection::{
+    MovementBspCacheMode, MovementCollectionError, MovementCollisionBounds, MovementTerrainChunks,
+};
 pub use terrain::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};
 pub use world_model::{
     PlacedWorldModelCollision, WorldModelCollisionError, WorldModelCollisionScene,

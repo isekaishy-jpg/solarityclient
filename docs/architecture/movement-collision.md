@@ -7,7 +7,9 @@ space. It returns permitted travel and the body planes near first contact.
 The triangle API also tests support at a foot point after swept movement.
 `MovementFallContactQuery` combines these queries with native fall contact-time selection,
 landing/ceiling classification, and the remaining horizontal correction.
-These queries do not yet drive the player or collect resident-world triangles.
+These queries do not yet drive the player. The separate
+[world geometry collectors](movement-world-geometry.md) now supply ordered
+terrain, WMO, and M2 faces from admitted resident generations.
 The [fall interval owner](movement-fall-integration.md) now repeats contact
 queries and returns updated airborne state or a ground transition.
 The [ground interval owner](movement-ground-integration.md) now handles surface
@@ -170,7 +172,8 @@ the existing 69 contact/order comparisons still pass.
 ## Remaining movement ownership
 
 This query implements the narrow phase after candidate collection. The movement
-owner still needs resident terrain/WMO/M2 triangle selection, transport-space
+owner still needs residency admission and ordered assembly of the implemented
+terrain/WMO/M2 face collectors, transport-space
 conversion, application of fall/ground transitions,
 and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and

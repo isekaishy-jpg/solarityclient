@@ -70,6 +70,10 @@ impl DecodedWorldModel {
             root.ambient_color,
             root.wmo_id,
             bounds,
+            root.group_info
+                .iter()
+                .map(|group| [group.bounding_box_min, group.bounding_box_max])
+                .collect(),
             materials,
             doodad_sets,
             doodads,

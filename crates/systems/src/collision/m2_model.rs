@@ -1,10 +1,13 @@
-//! Reusable camera collision for placed build-12340 M2 collision meshes.
+//! Camera rays and movement faces from placed build-12340 M2 collision meshes.
 
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::DecodedM2Model;
 use thiserror::Error;
+
+use super::movement_collection::transform_point;
+use super::{MovementCollectionError, MovementCollisionBounds, MovementCollisionTriangle};
 
 use super::world_model::{
     bounds_intersect, placement_transform, segment_triangle_fraction, transformed_bounds,
@@ -27,6 +30,7 @@ pub enum M2CollisionError {
 /// One shared M2 generation transformed by an owning MDDF placement.
 pub struct PlacedM2Collision {
     model: Arc<DecodedM2Model>,
+    transform: Mat4,
     inverse_transform: Mat4,
     collision_bounds: Option<[Vec3; 2]>,
 }
@@ -86,6 +90,7 @@ impl PlacedM2Collision {
             .map_err(|_| M2CollisionError::InvalidPlacement)?;
         Ok(Self {
             model,
+            transform,
             inverse_transform,
             collision_bounds,
         })
@@ -95,6 +100,54 @@ impl PlacedM2Collision {
     #[must_use]
     pub fn model(&self) -> &Arc<DecodedM2Model> {
         &self.model
+    }
+
+    /// Appends selected dedicated collision faces in authored M2 index order.
+    ///
+    /// The three transform axes are normalized independently, as at
+    /// `0x0082EC30`; authored face normals are preserved without normalization.
+    /// Repeated placement references must be deduplicated by the resident owner.
+    ///
+    /// # Errors
+    /// Returns [`MovementCollectionError`] if selected geometry is invalid.
+    pub fn append_movement(
+        &self,
+        bounds: MovementCollisionBounds,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
+        let Some(mesh) = self.model.collision_mesh() else {
+            return Ok(());
+        };
+        let axes = [
+            self.transform.x_axis,
+            self.transform.y_axis,
+            self.transform.z_axis,
+        ]
+        .map(|axis| {
+            let axis = axis.truncate();
+            let length_squared = axis.as_dvec3().length_squared() as f32;
+            if length_squared > f32::from_bits(0x3480_0000) {
+                (axis.as_dvec3() * f64::from(length_squared).sqrt().recip()).as_vec3()
+            } else {
+                axis
+            }
+        });
+        for (face, indices) in mesh.indices().as_chunks::<3>().0.iter().enumerate() {
+            let vertices = std::array::from_fn(|i| {
+                transform_point(self.transform, mesh.vertices()[usize::from(indices[i])])
+            });
+            if bounds.admits(vertices, 0.0) {
+                let authored = mesh.face_normals()[face];
+                let normal = Vec3::from_array(std::array::from_fn(|axis| {
+                    (f64::from(authored.x) * f64::from(axes[0][axis])
+                        + f64::from(authored.y) * f64::from(axes[1][axis])
+                        + f64::from(authored.z) * f64::from(axes[2][axis]))
+                        as f32
+                }));
+                output.push(MovementCollisionTriangle::with_normal(vertices, normal)?);
+            }
+        }
+        Ok(())
     }
 }
 

@@ -113,7 +113,8 @@ generated travel/step height, and invalid body dimensions.
 ## Runtime work remaining
 
 The ground and fall interval cores are ready for a local movement owner. They
-do not yet consume keyboard timestamps, collect terrain/WMO/M2 triangles,
+do not yet consume keyboard timestamps, assemble the implemented
+[terrain/WMO/M2 face collectors](movement-world-geometry.md) across resident owners,
 transform transport coordinates, apply landing input resets, or update a living
 ECS transform. Swimming/flying modes require their own native response owners.
 No runtime movement, camera, or frame-rate parity claim follows from these

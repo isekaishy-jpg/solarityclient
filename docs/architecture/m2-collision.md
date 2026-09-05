@@ -18,3 +18,10 @@ The current camera trace is intentionally two-sided and does not consult the
 authored normal for culling. A later behavior change requires build-12340
 executable evidence; retaining the data now prevents that work from needing a
 format-layer fallback.
+
+Movement now uses `PlacedM2Collision::append_movement`, following native
+`0x0082EC30`. It transforms dedicated vertices, applies the world-box outcode
+test in authored face order, and transforms authored normals using independently
+normalized placement axes. It does not renormalize the authored normal itself.
+See [movement world geometry](movement-world-geometry.md) for executable evidence,
+the independent matrix boundary, and remaining runtime ownership.

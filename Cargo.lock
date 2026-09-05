@@ -4348,11 +4348,14 @@ dependencies = [
  "glam",
  "shipyard",
  "solarity-asset",
+ "solarity-cpu",
  "solarity-ecs",
  "thiserror 2.0.20",
  "tracing",
+ "wow-adt",
  "wow-m2",
  "wow-mpq",
+ "wow-wdt",
 ]
 
 [[package]]

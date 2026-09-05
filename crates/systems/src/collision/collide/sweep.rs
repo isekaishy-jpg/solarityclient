@@ -38,6 +38,30 @@ pub struct MovementCollisionTriangle {
 }
 
 impl MovementCollisionTriangle {
+    /// Returns the ordered world-space vertices supplied by the world provider.
+    #[must_use]
+    pub const fn vertices(&self) -> &[Vec3; 3] {
+        &self.vertices
+    }
+
+    /// Returns the provider's facing normal without renormalizing authored data.
+    #[must_use]
+    pub const fn normal(&self) -> Vec3 {
+        self.normal
+    }
+
+    /// Preserves an M2-authored or stock-calculated collision normal.
+    ///
+    /// # Errors
+    /// Returns [`MovementSweepError::InvalidTriangle`] for non-finite vertices
+    /// or normals. Stock's provider may retain degenerate authored faces.
+    pub fn with_normal(vertices: [Vec3; 3], normal: Vec3) -> Result<Self, MovementSweepError> {
+        if vertices.iter().any(|point| !point.is_finite()) || !normal.is_finite() {
+            return Err(MovementSweepError::InvalidTriangle);
+        }
+        Ok(Self { vertices, normal })
+    }
+
     /// Supplies the authored-facing normal to movement response decisions.
     pub(crate) const fn surface_normal(&self) -> Vec3 {
         self.normal
@@ -67,7 +91,7 @@ pub enum MovementSweepError {
     /// Body dimensions or translated vertices cannot form a finite volume.
     #[error("movement collision volume is invalid")]
     InvalidVolume,
-    /// A world triangle is non-finite or degenerate.
+    /// A world triangle is non-finite, or derived-normal geometry is degenerate.
     #[error("movement collision triangle is invalid")]
     InvalidTriangle,
     /// Displacement or its length is non-finite.

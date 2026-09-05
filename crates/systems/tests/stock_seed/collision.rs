@@ -167,7 +167,7 @@ fn placed_m2_uses_dedicated_stock_collision_mesh() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+pub(super) fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
         name: Some("Collision".to_owned()),
@@ -221,7 +221,7 @@ fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(cursor.into_inner())
 }
 
-fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
+pub(super) fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     let skin = OldSkin {
         header: OldSkinHeader {
             bone_count_max: 1,

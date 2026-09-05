@@ -46,6 +46,8 @@ mod mail;
 mod missile;
 #[path = "stock_seed/movement.rs"]
 mod movement;
+#[path = "stock_seed/movement_collection.rs"]
+mod movement_collection;
 #[path = "stock_seed/name_cache.rs"]
 mod name_cache;
 #[path = "stock_seed/object.rs"]

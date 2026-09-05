@@ -1,10 +1,12 @@
-//! Reusable BSP camera collision for placed build-12340 WMO generations.
+//! Placed build-12340 WMO generations shared by camera and movement queries.
 
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{DecodedWorldModel, DecodedWorldModelGroup};
 use thiserror::Error;
+
+use super::movement_collection::{MovementBspQuery, cached_leaf_eligibility};
 
 const COLLISION_TOLERANCE: f32 = 0.0001;
 const DETERMINANT_TOLERANCE: f32 = 0.000_001;
@@ -25,9 +27,13 @@ pub enum WorldModelCollisionError {
 
 /// One shared WMO generation transformed by an owning MODF or game object.
 pub struct PlacedWorldModelCollision {
-    model: Arc<DecodedWorldModel>,
-    inverse_transform: Mat4,
+    pub(super) model: Arc<DecodedWorldModel>,
+    pub(super) transform: Mat4,
+    pub(super) inverse_transform: Mat4,
     group_bounds: Vec<[Vec3; 2]>,
+    pub(super) movement_pending: Vec<MovementBspQuery>,
+    pub(super) movement_faces: Vec<bool>,
+    pub(super) movement_cached_leaves: Vec<Vec<bool>>,
 }
 
 impl PlacedWorldModelCollision {
@@ -54,8 +60,43 @@ impl PlacedWorldModelCollision {
             return Err(WorldModelCollisionError::InvalidPlacement);
         }
         let transform = placement_transform(position, rotation_degrees, scale)?;
+        Self::prepare_transform(model, transform)
+    }
+
+    /// Creates a placement from an authoritative local-to-world transform.
+    ///
+    /// # Errors
+    /// Returns [`WorldModelCollisionError::InvalidPlacement`] for non-finite,
+    /// singular transforms or non-finite transformed group bounds.
+    pub fn prepare_transform(
+        model: Arc<DecodedWorldModel>,
+        transform: Mat4,
+    ) -> Result<Self, WorldModelCollisionError> {
+        if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
+            return Err(WorldModelCollisionError::InvalidPlacement);
+        }
         let inverse_transform = transform.inverse();
-        if !inverse_transform.is_finite() {
+        Self::prepare_transforms(model, transform, inverse_transform)
+    }
+
+    /// Retains both matrices resolved by a stock placement or transport owner.
+    ///
+    /// Stock stores the two float images independently. Re-inverting one image
+    /// can move a transformed query onto the other side of a BSP boundary.
+    ///
+    /// # Errors
+    /// Returns [`WorldModelCollisionError::InvalidPlacement`] for non-finite
+    /// or singular matrices or non-finite transformed group bounds.
+    pub fn prepare_transforms(
+        model: Arc<DecodedWorldModel>,
+        transform: Mat4,
+        inverse_transform: Mat4,
+    ) -> Result<Self, WorldModelCollisionError> {
+        if !transform.is_finite()
+            || !inverse_transform.is_finite()
+            || transform.determinant().abs() <= f32::EPSILON
+            || inverse_transform.determinant().abs() <= f32::EPSILON
+        {
             return Err(WorldModelCollisionError::InvalidPlacement);
         }
         let group_bounds = model
@@ -63,10 +104,15 @@ impl PlacedWorldModelCollision {
             .iter()
             .map(|group| transformed_bounds(group.bounds(), transform))
             .collect::<Result<Vec<_>, _>>()?;
+        let movement_cached_leaves = model.groups().iter().map(cached_leaf_eligibility).collect();
         Ok(Self {
             model,
+            transform,
             inverse_transform,
             group_bounds,
+            movement_pending: Vec::new(),
+            movement_faces: Vec::new(),
+            movement_cached_leaves,
         })
     }
 

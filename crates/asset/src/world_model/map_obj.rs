@@ -13,6 +13,7 @@ pub struct DecodedWorldModel {
     ambient_color: [u8; 4],
     world_model_id: u32,
     bounds: [[f32; 3]; 2],
+    group_selection_bounds: Vec<[[f32; 3]; 2]>,
     materials: Vec<WorldModelMaterial>,
     doodad_sets: Vec<WorldModelDoodadSet>,
     doodads: Vec<WorldModelDoodad>,
@@ -28,6 +29,7 @@ impl DecodedWorldModel {
         ambient_color: [u8; 4],
         world_model_id: u32,
         bounds: [[f32; 3]; 2],
+        group_selection_bounds: Vec<[[f32; 3]; 2]>,
         materials: Vec<WorldModelMaterial>,
         doodad_sets: Vec<WorldModelDoodadSet>,
         doodads: Vec<WorldModelDoodad>,
@@ -40,6 +42,7 @@ impl DecodedWorldModel {
             ambient_color,
             world_model_id,
             bounds,
+            group_selection_bounds,
             materials,
             doodad_sets,
             doodads,
@@ -81,6 +84,13 @@ impl DecodedWorldModel {
     #[must_use]
     pub const fn bounds(&self) -> [[f32; 3]; 2] {
         self.bounds
+    }
+
+    /// Returns root MOGI bounds in group order, independently of MOGP bounds.
+    /// Stock uses these to select groups before traversing each group's BSP.
+    #[must_use]
+    pub fn group_selection_bounds(&self) -> &[[[f32; 3]; 2]] {
+        &self.group_selection_bounds
     }
 
     /// Returns every MOMT material in authored table order.

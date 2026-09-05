@@ -1,8 +1,11 @@
 //! Hole-aware ADT height-field collision independent of renderer resources.
 
 use glam::Vec3;
-use solarity_asset::{DecodedTerrainTile, TerrainChunk};
+use solarity_asset::{DecodedTerrainTile, TerrainChunk, TerrainChunkIndex};
 use thiserror::Error;
+
+use super::movement_collection::{calculated_triangle, terrain_square_bounds};
+use super::{MovementCollectionError, MovementCollisionBounds, MovementCollisionTriangle};
 
 const TERRAIN_SQUARES_PER_CHUNK: usize = 8;
 const TERRAIN_UNITS_PER_CHUNK: f32 = 33.333_332;
@@ -55,6 +58,7 @@ pub enum TerrainCollisionError {
 /// Immutable CPU collision geometry for one decoded ADT generation.
 pub struct TerrainCollisionMesh {
     chunks: Vec<TerrainCollisionChunk>,
+    tile_square_origin: [i32; 2],
 }
 
 impl TerrainCollisionMesh {
@@ -70,7 +74,54 @@ impl TerrainCollisionMesh {
             .iter()
             .map(TerrainCollisionChunk::prepare)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { chunks })
+        Ok(Self {
+            chunks,
+            tile_square_origin: [
+                i32::from(tile.index().y()) * 128,
+                i32::from(tile.index().x()) * 128,
+            ],
+        })
+    }
+
+    /// Appends one MCNK's movement faces in stock row, square, and fan order.
+    ///
+    /// The resident owner calls this in world chunk order, interleaving the
+    /// owning chunk's M2 references. This preserves equal-distance contacts
+    /// across ADT boundaries. The caller retains ownership of output storage.
+    ///
+    /// # Errors
+    /// Returns [`MovementCollectionError`] if selected geometry is invalid.
+    pub fn append_movement_chunk(
+        &self,
+        index: TerrainChunkIndex,
+        bounds: MovementCollisionBounds,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
+        let chunk = &self.chunks[usize::from(index.y()) * 16 + usize::from(index.x())];
+        let origin = [
+            self.tile_square_origin[0] + i32::from(index.y()) * 8,
+            self.tile_square_origin[1] + i32::from(index.x()) * 8,
+        ];
+        let [minimum, maximum] = terrain_square_bounds(bounds)?;
+        let minimum = [minimum[0] - origin[0], minimum[1] - origin[1]];
+        let maximum = [maximum[0] - origin[0], maximum[1] - origin[1]];
+        let local_bounds =
+            MovementCollisionBounds::new(bounds.minimum - chunk.base, bounds.maximum - chunk.base)?;
+        for row in minimum[0].max(0)..=maximum[0].min(7) {
+            for column in minimum[1].max(0)..=maximum[1].min(7) {
+                if chunk.holes & (1 << ((row / 2) * 4 + column / 2)) != 0 {
+                    continue;
+                }
+                let start = row as usize * 17 + column as usize;
+                for offsets in [[17, 9, 0], [9, 1, 0], [9, 17, 18], [9, 18, 1]] {
+                    let vertices = offsets.map(|offset| chunk.local_vertices[start + offset]);
+                    if local_bounds.admits(vertices, f64::from(0.019_444_443_f32)) {
+                        output.push(calculated_triangle(vertices.map(|p| p + chunk.base))?);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Traces the upper side of the ADT height field and returns nearest contact.
@@ -168,6 +219,9 @@ impl TerrainCollisionMesh {
 /// One MCNK's compact collision triangles and XY broad-phase extent.
 struct TerrainCollisionChunk {
     vertices: Vec<Vec3>,
+    local_vertices: Vec<Vec3>,
+    base: Vec3,
+    holes: u16,
     indices: Vec<u16>,
     minimum: Vec3,
     maximum: Vec3,
@@ -178,6 +232,7 @@ impl TerrainCollisionChunk {
     fn prepare(chunk: &TerrainChunk) -> Result<Self, TerrainCollisionError> {
         let base = Vec3::from_array(chunk.position());
         let mut vertices = Vec::with_capacity(145);
+        let mut local_vertices = Vec::with_capacity(145);
         for logical_row in 0..17 {
             let inner = logical_row % 2 == 1;
             let column_count = if inner { 8 } else { 9 };
@@ -194,6 +249,11 @@ impl TerrainCollisionChunk {
                     return Err(TerrainCollisionError::NonFiniteGeometry);
                 }
                 vertices.push(position);
+                local_vertices.push(Vec3::new(
+                    -row_units * TERRAIN_UNIT_SIZE,
+                    -column_units * TERRAIN_UNIT_SIZE,
+                    chunk.heights()[source],
+                ));
             }
         }
         let indices = prepare_indices(chunk.holes());
@@ -203,6 +263,9 @@ impl TerrainCollisionChunk {
         );
         Ok(Self {
             vertices,
+            local_vertices,
+            base,
+            holes: chunk.holes(),
             indices,
             minimum,
             maximum,

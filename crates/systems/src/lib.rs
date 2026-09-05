@@ -51,12 +51,13 @@ pub use camera::{
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{
-    M2CollisionError, M2CollisionScene, MovementCollisionPlane, MovementCollisionTriangle,
+    M2CollisionError, M2CollisionScene, MovementBspCacheMode, MovementCollectionError,
+    MovementCollisionBounds, MovementCollisionPlane, MovementCollisionTriangle,
     MovementCollisionVolume, MovementFallContactKind, MovementSupportProfile, MovementSweep,
-    MovementSweepError, PlacedM2Collision, PlacedWorldModelCollision, PlacedWorldModelLiquid,
-    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError,
-    TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene,
-    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
+    MovementSweepError, MovementTerrainChunks, PlacedM2Collision, PlacedWorldModelCollision,
+    PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
+    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
+    WorldModelCollisionScene, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
