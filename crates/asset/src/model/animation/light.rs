@@ -60,7 +60,8 @@ impl M2Light {
         self.bone_index
     }
 
-    /// Returns the authored position relative to the owning bone.
+    /// Returns the authored point-light position relative to the owning bone.
+    /// Directional lights ignore this field and use the bone's negative Z axis.
     #[must_use]
     pub const fn position(&self) -> Vec3 {
         self.position

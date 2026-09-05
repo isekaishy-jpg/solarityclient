@@ -427,3 +427,31 @@ correction. They do not establish the final blended appearance or full scene
 parity. Automated window capture was unavailable because the computer-use
 helper could not connect; visual comparison remains open with lighting,
 animation, and the other completion requirements above.
+
+## Authored directional light pose
+
+Build-12340 `0x00828A00` publishes point lights from their authored position
+through the owning bone and model placement. Its directional branch at
+`0x00828B07` instead reads the negative Z column of the bone matrix and
+applies only the placement's linear transform. The previous shared sampler
+incorrectly treated the light's position field as a direction. It now follows
+the recovered branch for placed M2 inputs; the runtime currently calls this
+sampler for the Glue backdrop only. Publishing authored lights from world M2
+placements remains an unimplemented world-rendering requirement.
+`0x00834AE0` normalizes only when squared length exceeds the float at
+`0x009EA27C` (`0x34800000`, twice `f32::EPSILON`); smaller vectors keep their length.
+Both stock branches index a real bone without a sentinel check. Sampling an
+unbound visible light now returns the existing missing-bone error instead of
+silently substituting an identity matrix.
+
+External regressions cover animated bone rotation, translated and rotated
+model placement, tiny/zero/scaled directions, animated colors, both unbound
+light types, and the existing point-position/storage-reuse behavior. The
+installed-data geometry diagnostic now reports authored lights and sampled
+direction/color values. All eight distinct racial backdrops, Death Knight,
+and login load and sample successfully at 5,000 ms; their light records all
+reference real bones. Human, Dwarf, Blood Elf, Draenei, Tauren, and login have
+nonzero diffuse directional output at this sample. Night Elf's directional
+source has zero diffuse output, so correcting that source's direction alone
+does not demonstrate a visual change there. Final appearance, per-model
+light-bank composition, and the remaining completion requirements stay open.

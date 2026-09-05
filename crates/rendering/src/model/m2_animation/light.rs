@@ -10,7 +10,7 @@ use super::{M2AnimationClock, M2BonePose, M2BonePoseError};
 
 /// Samples every visible authored directional light in scene coordinates.
 ///
-/// Build 12340 transforms the light basis through its optional owning bone and
+/// Build 12340 transforms the light basis through its owning bone and
 /// the M2 placement before adding it to the per-model lighting accumulator.
 /// Returned vectors retain D3D's ray direction; the sunlight merger performs
 /// the one required inversion into the shader's surface-to-light convention.
@@ -99,30 +99,27 @@ pub fn sample_m2_lights_into(
             continue;
         }
         let (ambient, diffuse) = sample_light_colors(animations, light, sequence, clock);
-        let mut position = light
-            .position()
-            .extend(if light.kind() == M2LightKind::Point {
-                1.0
-            } else {
-                0.0
-            });
-        if let Some(bone_index) = light.bone_index() {
-            position = pose
-                .transforms()
-                .get(usize::from(bone_index))
-                .copied()
-                .ok_or(M2BonePoseError::LightBoneIndex {
-                    requested: bone_index,
-                    available: pose.transforms().len(),
-                })?
-                * position;
-        }
-        position = model_transform * position;
+        // FUN_00828A00 indexes the bone matrix for both light types without a
+        // sentinel branch. Reject an unbound light instead of inventing an
+        // identity-bone substitution for an invalid stock matrix reference.
+        let bone = light
+            .bone_index()
+            .and_then(|index| pose.transforms().get(usize::from(index)))
+            .ok_or(M2BonePoseError::LightBoneIndex {
+                requested: light.bone_index().unwrap_or(u16::MAX),
+                available: pose.transforms().len(),
+            })?;
         if light.kind() == M2LightKind::Point {
-            points.push(M2PointLight::new(position.truncate(), ambient, diffuse));
+            let position =
+                model_transform.transform_point3(bone.transform_point3(light.position()));
+            points.push(M2PointLight::new(position, ambient, diffuse));
         } else {
-            let mut direction = position.truncate();
-            if direction.length() > f32::EPSILON {
+            // 0x00828B07 takes the negative bone Z column, ignoring the light
+            // position. Placement transforms it as a vector, not a point.
+            let mut direction = model_transform.transform_vector3(-bone.z_axis.truncate());
+            // FUN_00834AE0 compares squared length with DAT_009EA27C
+            // (0x34800000); tiny vectors retain their authored magnitude.
+            if direction.length_squared() > f32::from_bits(0x3480_0000) {
                 direction = direction.normalize();
             }
             directional.push(M2DirectionalLight::new(direction, ambient, diffuse));

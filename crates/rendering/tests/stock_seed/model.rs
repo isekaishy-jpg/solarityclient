@@ -98,6 +98,16 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
 fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("DirectionalLight", 1)?;
     append_render_directional_light(&mut bytes)?;
+    let bone_offset = usize::try_from(u32::from_le_bytes(bytes[0x30..0x34].try_into()?))?;
+    // Identity to a half-turn about Y. At 500 ms the bone's negative Z axis
+    // points along -X, independently of the light's authored +X position.
+    append_render_track(
+        &mut bytes,
+        bone_offset + 36,
+        &[0, 1_000],
+        &render_i16_values(&[-32_768, -32_768, -32_768, -1, -32_768, -1, -32_768, -32_768]),
+        8,
+    )?;
     let skin = render_skin_bytes()?;
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -116,12 +126,13 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
     let model = DecodedM2Model::load(&mut store, &path)?;
     let clock = M2AnimationClock::new(0, 500.0, 0.0);
     let pose = M2BonePose::compose(model.animations(), clock)?;
-    let transform = Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2);
+    let transform = Mat4::from_translation(Vec3::new(5.0, 7.0, 11.0))
+        * Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2);
 
     let lights = sample_m2_directional_lights(model.animations(), &pose, clock, transform)?;
 
     assert_eq!(lights.len(), 1);
-    assert!((lights[0].direction() - Vec3::Y).abs().max_element() < 0.000_01);
+    assert!((lights[0].direction() - Vec3::NEG_Y).abs().max_element() < 0.000_01);
     assert!((lights[0].ambient() - Vec3::splat(0.3)).abs().max_element() < 0.000_01);
     assert!(
         (lights[0].diffuse() - Vec3::splat(1.05))
@@ -129,6 +140,61 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
             .max_element()
             < 0.000_01
     );
+    let initial_clock = M2AnimationClock::new(0, 0.0, 0.0);
+    let initial_pose = M2BonePose::compose(model.animations(), initial_clock)?;
+    let initial =
+        sample_m2_directional_lights(model.animations(), &initial_pose, initial_clock, transform)?;
+    assert!((initial[0].direction() - Vec3::NEG_Z).abs().max_element() < 0.000_01);
+    for scale in [0.0, 0.000_1, 0.000_4, 0.001, 3.0] {
+        let scaled = sample_m2_directional_lights(
+            model.animations(),
+            &initial_pose,
+            initial_clock,
+            transform * Mat4::from_scale(Vec3::splat(scale)),
+        )?;
+        let expected = Vec3::NEG_Z * if scale < 0.001 { scale } else { 1.0 };
+        assert!((scaled[0].direction() - expected).abs().max_element() < 0.000_001);
+    }
+    Ok(())
+}
+
+/// The stock publisher requires a real bone for either light family.
+#[test]
+fn m2_lights_reject_unbound_bones() -> Result<(), Box<dyn Error>> {
+    for kind in [0_u16, 1] {
+        let mut bytes = render_m2_bytes("UnboundLight", 1)?;
+        append_render_directional_light(&mut bytes)?;
+        let light_offset = usize::try_from(u32::from_le_bytes(bytes[0x10c..0x110].try_into()?))?;
+        bytes[light_offset..light_offset + 2].copy_from_slice(&kind.to_le_bytes());
+        bytes[light_offset + 2..light_offset + 4].copy_from_slice(&u16::MAX.to_le_bytes());
+        let skin = render_skin_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "Creature\\Solarity\\UnboundLight.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\UnboundLight00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(catalog)?;
+        let model = DecodedM2Model::load(
+            &mut store,
+            &AssetPath::new("Creature\\Solarity\\UnboundLight.m2")?,
+        )?;
+        let clock = M2AnimationClock::new(0, 500.0, 0.0);
+        let pose = M2BonePose::compose(model.animations(), clock)?;
+        assert_eq!(
+            sample_m2_lights(model.animations(), &pose, clock, Mat4::IDENTITY),
+            Err(solarity_rendering::M2BonePoseError::LightBoneIndex {
+                requested: u16::MAX,
+                available: 3,
+            }),
+        );
+    }
     Ok(())
 }
 

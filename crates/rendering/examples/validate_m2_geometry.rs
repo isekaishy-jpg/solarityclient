@@ -10,7 +10,7 @@ use solarity_asset::{
 };
 use solarity_rendering::{
     M2AnimationClock, M2BonePose, M2MaterialPose, M2MeshPlan, M2ParticlePose, M2ShaderPlan,
-    sample_m2_camera_frame,
+    sample_m2_camera_frame, sample_m2_lights,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -307,6 +307,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             particle.drag(),
             particle.spin_speed(),
             particle.spin_speed_variation(),
+        );
+    }
+    for (index, light) in model.animations().lights().iter().enumerate() {
+        println!(
+            "light={index} kind={:?} bone={:?} position={:?}",
+            light.kind(),
+            light.bone_index(),
+            light.position()
+        );
+    }
+    let lights = sample_m2_lights(
+        model.animations(),
+        &pose,
+        M2AnimationClock::new(0, animation_time_ms, animation_time_ms),
+        Mat4::IDENTITY,
+    )?;
+    for (index, light) in lights.directional.iter().enumerate() {
+        println!(
+            "directional={index} ray={:?} ambient={:?} diffuse={:?}",
+            light.direction(),
+            light.ambient(),
+            light.diffuse()
         );
     }
     Ok(())
