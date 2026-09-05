@@ -820,8 +820,13 @@ impl RuntimeGlueModelScene {
                 camera: active.key.camera,
             }
         })?;
-        let camera =
-            sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        let camera = sample_m2_camera_frame(
+            active.model.animations(),
+            camera_index,
+            clock,
+            aspect_ratio,
+            active.frame.glue_model_transform()?,
+        )?;
         let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
@@ -1283,6 +1288,7 @@ impl RuntimeGlueModelScene {
             key.object_index,
             animation_id,
             key.model_scale,
+            key.rotation_radians,
             random,
             particle_twinkle,
         )?;
@@ -1338,8 +1344,13 @@ impl RuntimeGlueModelScene {
                 camera: active.key.camera,
             }
         })?;
-        let camera =
-            sample_m2_camera_frame(active.model.animations(), camera_index, clock, aspect_ratio)?;
+        let camera = sample_m2_camera_frame(
+            active.model.animations(),
+            camera_index,
+            clock,
+            aspect_ratio,
+            active.frame.glue_model_transform()?,
+        )?;
         self.sound_camera = Some(camera);
         let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =

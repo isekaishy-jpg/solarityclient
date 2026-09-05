@@ -1156,12 +1156,23 @@ impl M2Frame {
         object_index: usize,
         animation_id: u16,
         model_scale: f32,
+        rotation_radians: f32,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         if !model_scale.is_finite() || model_scale <= 0.0 {
             return Err(RuntimeTerrainFrameError::InvalidGlueM2Scale);
         }
+        if !rotation_radians.is_finite() {
+            return Err(RuntimeTerrainFrameError::InvalidGlueM2Rotation);
+        }
+        // Stock ModelFFX native-camera setup (0x95fba0) applies widget yaw
+        // and scale to the owning model before publishing its camera.
+        let transform = Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(model_scale),
+            glam::Quat::from_rotation_z(rotation_radians),
+            glam::Vec3::ZERO,
+        );
         let M2GlueGpuSource {
             source,
             animation_started_at,
@@ -1179,8 +1190,8 @@ impl M2Frame {
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
                 source_index: 0,
-                local_transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
-                transform: Mat4::from_scale(glam::Vec3::splat(model_scale)),
+                local_transform: transform,
+                transform,
                 orientation: M2ModelOrientation::Authored,
                 animation_binding: M2AnimationBinding::Independent,
                 glue_parent_attachment: None,
@@ -1923,6 +1934,17 @@ impl M2Frame {
     /// Returns elapsed time on this resident generation's local animation clock.
     pub(in crate::application) fn animation_time_ms(&self) -> f32 {
         self.animation_started_at.elapsed().as_secs_f32() * 1_000.0
+    }
+
+    /// Returns the owning model transform for its authored camera.
+    pub(in crate::application) fn glue_model_transform(
+        &self,
+    ) -> Result<Mat4, RuntimeTerrainFrameError> {
+        self.placements
+            .iter()
+            .find(|placement| matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }))
+            .map(|placement| placement.transform)
+            .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)
     }
 
     /// Advances the one Glue placement before its authored camera is sampled.

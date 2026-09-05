@@ -74,6 +74,7 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
         0,
         M2AnimationClock::new(0, 500.0, 0.0),
         aspect,
+        Mat4::IDENTITY,
     )?;
 
     assert_eq!(frame.camera().position(), Vec3::new(11.0, 0.0, 2.0));
@@ -90,6 +91,33 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
             < 0.000_001
     );
     assert_eq!(M2CameraEffectScale::EXTERNAL_CAMERA.factor(), 1.0);
+    // Stock 0x828a00 publishes animated eye/target through the owner matrix,
+    // while 0x832ea0 installs authored clip distances without model scaling.
+    let transform = Mat4::from_translation(Vec3::new(3.0, 5.0, 7.0))
+        * Mat4::from_rotation_z(core::f32::consts::FRAC_PI_2)
+        * Mat4::from_scale(Vec3::splat(2.0));
+    let transformed = sample_m2_camera_frame(
+        model.animations(),
+        0,
+        M2AnimationClock::new(0, 500.0, 0.0),
+        aspect,
+        transform,
+    )?;
+    assert!((transformed.camera().position() - Vec3::new(3.0, 27.0, 11.0)).length() < 0.000_01);
+    assert!((transformed.camera().target() - Vec3::new(3.0, -15.0, 11.0)).length() < 0.000_01);
+    assert!((transformed.up() - Vec3::Z).length() < 0.000_01);
+    assert_eq!(transformed.camera().near_clip(), frame.camera().near_clip());
+    assert_eq!(transformed.camera().far_clip(), frame.camera().far_clip());
+    // Scaling/rotating the backdrop and its camera together preserves screen
+    // placement, including off-axis geometry; depth still uses authored clips.
+    for point in [Vec3::ZERO, Vec3::new(-2.0, 3.0, 4.0)] {
+        let original = frame.view_projection().project_point3(point);
+        let moved = transformed
+            .view_projection()
+            .project_point3(transform.transform_point3(point));
+        assert!((original.truncate() - moved.truncate()).length() < 0.000_01);
+        assert!((original.z - moved.z).abs() > 0.000_01);
+    }
     Ok(())
 }
 

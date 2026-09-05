@@ -1,6 +1,6 @@
 //! Model-authored camera sampling for Glue and portrait viewports.
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use solarity_asset::M2AnimationSet;
 use thiserror::Error;
 
@@ -61,6 +61,8 @@ pub enum M2CameraFrameError {
 /// Build 12340 stores a diagonal field of view in M2 camera records. The
 /// native model-camera path converts it for the active viewport aspect before
 /// constructing the ordinary right-handed projection.
+/// Eye and target inherit the owning model's affine world transform, as in stock
+/// `0x828a00`; roll and clipping distances remain camera properties.
 ///
 /// # Errors
 ///
@@ -71,6 +73,7 @@ pub fn sample_m2_camera_frame(
     camera_index: usize,
     clock: M2AnimationClock,
     aspect_ratio: f32,
+    model_transform: Mat4,
 ) -> Result<WorldCameraFrame, M2CameraFrameError> {
     let sequence = clock.resolve(animations)?;
     let camera = animations
@@ -98,6 +101,8 @@ pub fn sample_m2_camera_frame(
             clock.global_time_ms(),
             Vec3::ZERO,
         );
+    let position = model_transform.transform_point3(position);
+    let target = model_transform.transform_point3(target);
     let forward = (target - position).normalize_or_zero();
     let mut up = Vec3::Z - forward * Vec3::Z.dot(forward);
     if !up.is_finite() || up.length_squared() <= 1.0e-8 {

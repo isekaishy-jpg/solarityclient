@@ -44,7 +44,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     for tick in 1..=1_200 {
         let time_ms = (tick as f32 * 1_000.0) / 60.0;
         let clock = M2AnimationClock::new(0, time_ms, time_ms);
-        let camera = sample_m2_camera_frame(model.animations(), 0, clock, 16.0 / 9.0)?;
+        let camera =
+            sample_m2_camera_frame(model.animations(), 0, clock, 16.0 / 9.0, Mat4::IDENTITY)?;
         let bones = M2BonePose::compose_with_model_view(model.animations(), clock, camera.view())?;
         for (index, (emitter, simulation)) in model
             .animations()

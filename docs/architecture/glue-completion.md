@@ -539,3 +539,39 @@ Following throughput ranged from 2,307 to 3,656 FPS. Creation entry still
 reached a 26.6 ms transition frame and a 30.2 ms following frame. The diagnostic
 therefore preserves throughput above the target but does not close the stall,
 camera, visual-parity, or world-entry requirements.
+
+## Native camera and owning-model transform audit
+
+The stock projection path `0x4bf0c0 -> 0x4becf0 -> 0x6bfe00 -> 0x6bf370`
+uses the actual viewport aspect and divides authored diagonal FOV by
+`sqrt(1 + aspect * aspect)` before constructing the perspective matrix.
+This matches the renderer's existing FOV conversion. An additional installed
+capture at 960x720 fits the Night Elf hunter's helmet and pet; the 1280x720
+capture clips vertically. That viewport dependence alone does not establish
+a placement defect, and it does not justify an arbitrary character scale fix.
+Stock image equivalence remains unverified.
+
+A separate, proven mismatch concerned explicit Model widget transforms.
+Stock `0x95fba0` forwards widget rotation and scale into the owning model via
+`0x8251d0`. Camera publication in `0x828a00` transforms animated eye and target
+through the model-view matrix at model `+0xf4`, then the inverse scene view
+at scene `+0xc4`, producing world-space camera positions. Roll is published
+separately. Camera initialization `0x832ea0` sets authored near/far properties
+without multiplying them by model scale.
+
+The runtime now applies the retained widget rotation to backdrop geometry,
+and samples both visible and cinematic-covered cameras using the same root
+placement transform. Previously rotation was retained only in the generation
+key, and scale affected geometry while leaving its authored camera unchanged.
+The external camera fixture checks transformed animated eye/target, unchanged
+clip distances, and invariant screen placement when camera and geometry are
+scaled, rotated, and translated together. Default identity placement retains
+the verified projection; this correction does not claim to resolve the Night
+Elf framing question or the separate effects/lighting parity requirements.
+
+All 552 workspace tests, Clippy, formatting, and the optimized replay build
+pass with this correction. The capture-disabled 31-action replay with 6,000
+following frames per action measured 2,156–3,596 FPS on the GTX 1070 setup.
+Creation entry reached 29.7 ms, and one customization following frame reached
+28.9 ms. These results preserve throughput above the target while retaining
+the unresolved stall requirement.

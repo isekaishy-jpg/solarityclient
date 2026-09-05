@@ -231,6 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             camera_index,
             M2AnimationClock::new(0, animation_time_ms, animation_time_ms),
             16.0 / 9.0,
+            Mat4::IDENTITY,
         )?;
         println!(
             "camera={camera_index} diagonal_fov={} near={} far={} position={:?} target={:?}",

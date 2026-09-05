@@ -273,6 +273,9 @@ pub enum RuntimeTerrainFrameError {
     /// A Glue model widget supplied a non-positive or non-finite local scale.
     #[error("Glue M2 model scale is invalid")]
     InvalidGlueM2Scale,
+    /// A Glue model widget supplied a non-finite local rotation.
+    #[error("Glue M2 model rotation is invalid")]
+    InvalidGlueM2Rotation,
     /// Glue effective alpha is outside the normalized finite interval.
     #[error("Glue M2 opacity {opacity} is outside the normalized finite interval")]
     InvalidGlueM2Opacity {
