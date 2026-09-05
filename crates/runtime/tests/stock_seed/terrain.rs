@@ -19,12 +19,14 @@ use solarity_rendering::{
 };
 use solarity_runtime::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
-    RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeTerrainCoordinator,
+    RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeStaticMovementOwner,
+    RuntimeStaticMovementQuery, RuntimeStaticMovementResidency, RuntimeTerrainCoordinator,
     RuntimeTerrainError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
 };
 use solarity_systems::{
-    CameraSubjectGeometry, TerrainStreamingWindow, WorldViewDistanceRequest, project_object_fields,
-    resolve_camera_subject_height, resolve_player_camera_pose, resolve_world_view_distance,
+    CameraSubjectGeometry, MovementBspCacheMode, MovementCollisionBounds, TerrainStreamingWindow,
+    WorldViewDistanceRequest, project_object_fields, resolve_camera_subject_height,
+    resolve_player_camera_pose, resolve_world_view_distance,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -92,6 +94,20 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
         0.,
     ));
     terrain.synchronize(Some(&world))?;
+    let movement_bounds =
+        MovementCollisionBounds::new(Vec3::new(999., 5332., -1.), Vec3::new(1001., 5334., 60.))?;
+    let mut movement = RuntimeStaticMovementQuery::new();
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            movement_bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::PendingTile { tile: second }
+    );
+    assert!(movement.triangles().is_empty());
+    assert_eq!(movement.map_id(), None);
     let distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
         777.,
         WorldMapId::new(571),
@@ -136,6 +152,42 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
         RuntimeTerrainStreamPoll::Current
     );
     assert_eq!(terrain.resident_tile_count(), 2);
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            movement_bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(movement.map_id(), Some(571));
+    let movement_before_promotion = movement.triangles().to_vec();
+    let movement_owners: Vec<_> = (0..movement.triangles().len())
+        .map(|index| movement.owner(index))
+        .collect();
+    let mut seen_second = false;
+    let mut seen_first = false;
+    let native_chunks: Vec<_> = movement_bounds.terrain_chunks()?.collect();
+    let mut previous_chunk = 0;
+    for owner in &movement_owners {
+        let Some(RuntimeStaticMovementOwner::Terrain { tile, chunk }) = owner else {
+            return Err("unexpected static owner".into());
+        };
+        let ordinal = native_chunks
+            .iter()
+            .position(|address| address == &(*tile, *chunk))
+            .ok_or("unselected chunk")?;
+        assert!(ordinal >= previous_chunk, "query reordered terrain chunks");
+        previous_chunk = ordinal;
+        if *tile == first {
+            seen_first = true;
+        } else {
+            assert_eq!(*tile, second);
+            seen_second = true;
+        }
+    }
+    assert!(seen_first && seen_second);
     let neighbor_point = Vec3::new(1000., 5300., 300.);
     let neighbor_height = terrain
         .controlled_player_terrain_height(neighbor_point)?
@@ -163,6 +215,46 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
         terrain.resident_tile().map(DecodedTerrainTile::index),
         Some(second)
     );
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            movement_bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(movement.triangles().len(), movement_before_promotion.len());
+    for (current, previous) in movement.triangles().iter().zip(&movement_before_promotion) {
+        assert_eq!(current.vertices(), previous.vertices());
+        assert_eq!(current.normal(), previous.normal());
+    }
+    assert_eq!(
+        (0..movement.triangles().len())
+            .map(|index| movement.owner(index))
+            .collect::<Vec<_>>(),
+        movement_owners
+    );
+    // An unrelated active map cannot inherit the previous query's geometry.
+    assert_eq!(
+        terrain.collect_static_movement(
+            0,
+            movement_bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::PendingMap
+    );
+    assert!(movement.triangles().is_empty());
+    assert_eq!(movement.owner(0), None);
+    let hole =
+        MovementCollisionBounds::new(Vec3::new(999., 4500., -1.), Vec3::new(1001., 4501., 60.))?;
+    assert_eq!(
+        terrain.collect_static_movement(571, hole, MovementBspCacheMode::Enabled, &mut movement)?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert!(movement.triangles().is_empty());
+    assert_eq!(movement.map_id(), Some(571));
     let distant_origin = Vec3::new(1000., 5050., 250.);
     let short_distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
         183.333_33,
@@ -181,6 +273,16 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
     );
     assert_eq!(terrain.resident_tile_count(), 1);
     assert!(terrain.resident_tile_at(first).is_none());
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            movement_bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::PendingTile { tile: first }
+    );
+    assert!(movement.triangles().is_empty());
     Ok(())
 }
 
@@ -290,6 +392,248 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
         }
     }
     Ok(())
+}
+
+/// MCRF/MODR reference order and first visits survive a shared-ADT promotion.
+#[test]
+fn static_movement_retains_reference_order_and_placement_owners() -> Result<(), Box<dyn Error>> {
+    let first = TerrainTileIndex::new(31, 31).ok_or("bad first tile")?;
+    let second = TerrainTileIndex::new(32, 31).ok_or("bad second tile")?;
+    let mut manifest = WdtFile::new(WowVersion::WotLK);
+    manifest.mwmo = Some(MwmoChunk::new());
+    for tile in [first, second] {
+        manifest
+            .main
+            .get_mut(usize::from(tile.x()), usize::from(tile.y()))
+            .ok_or("bad tile")?
+            .set_has_adt(true);
+    }
+    let mut wdt = Vec::new();
+    WdtWriter::new(&mut wdt).write(&manifest)?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &map_table()),
+        ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
+        (
+            "World\\Maps\\Northrend\\Northrend_31_31.adt",
+            &movement_reference_adt(first, false)?,
+        ),
+        (
+            "World\\Maps\\Northrend\\Northrend_32_31.adt",
+            &movement_reference_adt(second, true)?,
+        ),
+        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+        ("World\\Wmo\\Fixture.wmo", &movement_reference_root_wmo()?),
+        (
+            "World\\Wmo\\Fixture_000.wmo",
+            &movement_reference_group_wmo()?,
+        ),
+        (
+            "World\\Wmo\\Fixture_001.wmo",
+            &movement_reference_group_wmo()?,
+        ),
+        ("World\\Fixture\\Collision.m2", &m2_collision_fixture()?),
+        ("World\\Fixture\\Collision00.skin", &skin_fixture()?),
+        ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let maps = MapCatalog::load(&mut store)?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps)
+        .with_worker_catalog(catalog);
+    let origin = Vec3::new(1., 1., 2.);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "MovementReferences",
+        origin,
+        0.,
+    ));
+    terrain.synchronize(Some(&world))?;
+    let distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
+        777.,
+        WorldMapId::new(571),
+        0x8000_0000,
+    ))?;
+    let window = TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
+    let cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("bad capacity")?,
+    ))?;
+    terrain.synchronize_streaming_async(571, origin, window, &cpu)?;
+    cpu.try_submit(|| ())?.join()?;
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+        RuntimeTerrainStreamPoll::Current
+    );
+    let bounds = MovementCollisionBounds::new(Vec3::splat(-3.), Vec3::splat(3.))?;
+    let mut query = RuntimeStaticMovementQuery::new();
+    let expected = native_static_movement_owners()?;
+    for phase in 0..3 {
+        if phase == 1 {
+            let world = ActiveWorld::enter(WorldBootstrap::new(
+                WorldMapId::new(571),
+                1,
+                "MovementReferences",
+                Vec3::new(1., -1., 2.),
+                0.,
+            ));
+            assert_eq!(
+                terrain.synchronize_async(Some(&world), &cpu)?,
+                RuntimeTerrainPoll::TileLoaded {
+                    map_id: 571,
+                    tile: second
+                }
+            );
+        }
+        assert_eq!(
+            terrain.collect_static_movement(
+                571,
+                bounds,
+                MovementBspCacheMode::Enabled,
+                &mut query
+            )?,
+            RuntimeStaticMovementResidency::Ready
+        );
+        let actual: Vec<_> = (0..query.triangles().len())
+            .map(|index| query.owner(index))
+            .collect();
+        assert_eq!(
+            actual,
+            expected.iter().copied().map(Some).collect::<Vec<_>>()
+        );
+    }
+    // Invalid boxes must not leave the previous successful candidate list usable.
+    let outside = MovementCollisionBounds::new(Vec3::splat(40_000.), Vec3::splat(40_001.))?;
+    assert!(
+        terrain
+            .collect_static_movement(571, outside, MovementBspCacheMode::Enabled, &mut query)
+            .is_err()
+    );
+    assert_eq!(query.map_id(), None);
+    assert!(query.triangles().is_empty());
+    assert_eq!(query.owner(0), None);
+    terrain.disconnect();
+    assert_eq!(
+        terrain.collect_static_movement(571, bounds, MovementBspCacheMode::Enabled, &mut query)?,
+        RuntimeStaticMovementResidency::PendingMap
+    );
+    Ok(())
+}
+
+fn native_static_movement_owners() -> Result<Vec<RuntimeStaticMovementOwner>, Box<dyn Error>> {
+    let fixture = include_str!("../fixtures/movement-residency-native.txt");
+    fixture
+        .lines()
+        .find(|line| line.starts_with("ready 1 "))
+        .ok_or("missing native resident query")?
+        .split_whitespace()
+        .skip(2)
+        .map(|word| {
+            let tag = word.parse::<u32>()?;
+            Ok(match tag {
+                7..=9 => RuntimeStaticMovementOwner::WorldModel { unique_id: tag },
+                700 | 800 | 900 => RuntimeStaticMovementOwner::WorldModelDoodad {
+                    world_model_unique_id: tag / 100,
+                    doodad_index: 0,
+                },
+                10009 | 10010 => RuntimeStaticMovementOwner::TerrainDoodad {
+                    unique_id: tag - 10000,
+                },
+                _ => return Err("unknown native diagnostic owner".into()),
+            })
+        })
+        .collect()
+}
+
+fn movement_reference_adt(
+    tile: TerrainTileIndex,
+    extra_root: bool,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    const ORIGIN: f32 = 32.0 * 533.333_3;
+    let mut builder = AdtBuilder::new()
+        .with_version(AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .add_model("World/Fixture/Collision.m2")
+        .add_wmo("World/Wmo/Fixture.wmo");
+    for unique_id in [9, 10] {
+        builder = builder.add_doodad_placement(DoodadPlacement {
+            name_id: 0,
+            unique_id,
+            position: [ORIGIN, 0.5, ORIGIN],
+            rotation: [0.; 3],
+            scale: 1024,
+            flags: 0,
+        });
+    }
+    for unique_id in if extra_root {
+        &[7, 8, 9][..]
+    } else {
+        &[7, 8][..]
+    } {
+        builder = builder.add_wmo_placement(WmoPlacement {
+            name_id: 0,
+            unique_id: *unique_id,
+            position: [ORIGIN, 0., ORIGIN],
+            rotation: [0.; 3],
+            extents_min: [ORIGIN - 5., -1., ORIGIN - 5.],
+            extents_max: [ORIGIN + 5., 3., ORIGIN + 5.],
+            flags: 0,
+            doodad_set: 0,
+            name_set: 0,
+            scale: 1024,
+        });
+    }
+    let bytes = position_streaming_adt(tile, 10., builder.build()?.to_bytes()?)?;
+    let wow_adt::ParsedAdt::Root(mut root) = wow_adt::parse_adt(&mut Cursor::new(bytes))? else {
+        return Err("not a root ADT".into());
+    };
+    for chunk in &mut root.mcnk_chunks {
+        chunk.header.n_doodad_refs = 3;
+        chunk.header.n_map_obj_refs = if extra_root { 4 } else { 3 };
+        let mut references = vec![1, 0, 1, 1, 0, 1];
+        if extra_root {
+            references.push(2);
+        }
+        chunk.refs = Some(wow_adt::chunks::mcnk::McrfChunk { references });
+    }
+    // The dependency reads MTXF through EOF; retain the fixture's one MTEX word.
+    root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
+    Ok(wow_adt::builder::BuiltAdt::from_root_adt(*root, None).to_bytes()?)
+}
+
+fn movement_reference_root_wmo() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = root_wmo_fixture();
+    let header = bytes
+        .windows(4)
+        .position(|tag| tag == b"DHOM")
+        .ok_or("missing MOHD")?;
+    set_u32(&mut bytes, header + 8 + 4, 2);
+    let groups = bytes
+        .windows(4)
+        .position(|tag| tag == b"IGOM")
+        .ok_or("missing MOGI")?;
+    let group = bytes[groups + 8..groups + 40].to_vec();
+    bytes.splice(groups + 40..groups + 40, group);
+    set_u32(&mut bytes, groups + 4, 64);
+    let doodads = bytes
+        .windows(4)
+        .position(|tag| tag == b"DDOM")
+        .ok_or("missing MODD")?;
+    set_f32(&mut bytes, doodads + 8 + 4, 1.);
+    Ok(bytes)
+}
+
+fn movement_reference_group_wmo() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bytes = group_wmo_fixture();
+    let group = bytes
+        .windows(4)
+        .position(|tag| tag == b"PGOM")
+        .ok_or("missing MOGP")?;
+    let size = read_u32(&bytes, group + 4)?;
+    push_wmo_chunk(&mut bytes, *b"RDOM", &[0, 0, 0, 0]);
+    set_u32(&mut bytes, group + 4, size + 12);
+    Ok(bytes)
 }
 
 /// Authors repeated selected IDs and one deliberately unreferenced MDDF record.
@@ -956,6 +1300,33 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id: 571 }
     );
+    let mut movement = RuntimeStaticMovementQuery::new();
+    let bounds = MovementCollisionBounds::new(Vec3::splat(-1.), Vec3::splat(1.))?;
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            bounds,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(movement.triangles().len(), 1);
+    assert_eq!(
+        movement.owner(0),
+        Some(RuntimeStaticMovementOwner::WorldModel { unique_id: 7 })
+    );
+    let outside_grid = MovementCollisionBounds::new(Vec3::splat(40_000.), Vec3::splat(40_001.))?;
+    assert_eq!(
+        terrain.collect_static_movement(
+            571,
+            outside_grid,
+            MovementBspCacheMode::Enabled,
+            &mut movement
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert!(movement.triangles().is_empty());
     assert!(terrain.resident_tile().is_none());
     assert!(terrain.resident_mesh_plan().is_none());
     assert_eq!(terrain.current_area_id(&world)?, Some(571));

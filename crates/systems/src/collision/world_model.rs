@@ -30,7 +30,9 @@ pub struct PlacedWorldModelCollision {
     pub(super) model: Arc<DecodedWorldModel>,
     pub(super) transform: Mat4,
     pub(super) inverse_transform: Mat4,
+    root_bounds: [Vec3; 2],
     group_bounds: Vec<[Vec3; 2]>,
+    movement_group_bounds: Vec<[Vec3; 2]>,
     pub(super) movement_pending: Vec<MovementBspQuery>,
     pub(super) movement_faces: Vec<bool>,
     pub(super) movement_cached_leaves: Vec<Vec<bool>>,
@@ -99,6 +101,14 @@ impl PlacedWorldModelCollision {
         {
             return Err(WorldModelCollisionError::InvalidPlacement);
         }
+        let root_bounds = transformed_bounds(model.bounds(), transform)?;
+        // 0x007BDE50 / 0x007AE720 transform root MOGI boxes for the placed
+        // group-reference list, independently of the group's MOGP BSP region.
+        let movement_group_bounds = model
+            .group_selection_bounds()
+            .iter()
+            .map(|&bounds| transformed_bounds(bounds, transform))
+            .collect::<Result<Vec<_>, _>>()?;
         let group_bounds = model
             .groups()
             .iter()
@@ -109,7 +119,9 @@ impl PlacedWorldModelCollision {
             model,
             transform,
             inverse_transform,
+            root_bounds,
             group_bounds,
+            movement_group_bounds,
             movement_pending: Vec::new(),
             movement_faces: Vec::new(),
             movement_cached_leaves,
@@ -120,6 +132,26 @@ impl PlacedWorldModelCollision {
     #[must_use]
     pub fn model(&self) -> &Arc<DecodedWorldModel> {
         &self.model
+    }
+
+    /// Tests the placed root box used before ordinary movement collection.
+    #[must_use]
+    pub fn movement_intersects(&self, bounds: super::MovementCollisionBounds) -> bool {
+        bounds_intersect([bounds.minimum(), bounds.maximum()], self.root_bounds)
+    }
+
+    /// Tests a placed group's box before visiting its registered M2 references.
+    #[must_use]
+    pub fn movement_group_intersects(
+        &self,
+        group: usize,
+        bounds: super::MovementCollisionBounds,
+    ) -> bool {
+        self.movement_group_bounds
+            .get(group)
+            .is_some_and(|group_bounds| {
+                bounds_intersect([bounds.minimum(), bounds.maximum()], *group_bounds)
+            })
     }
 }
 
@@ -155,6 +187,11 @@ impl WorldModelCollisionScene {
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Borrows a registered owner and its retained movement traversal scratch.
+    pub fn instance_mut(&mut self, index: usize) -> Option<&mut PlacedWorldModelCollision> {
+        self.instances.get_mut(index)
     }
 
     /// Traces stock camera-collidable MOPY faces and returns the nearest fraction.

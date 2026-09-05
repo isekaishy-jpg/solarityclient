@@ -23,10 +23,16 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub(in crate::application) mod m2_residency;
+mod movement;
 mod streaming;
 pub(in crate::application) mod world_model_residency;
 
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
+use movement::{ResidentMovementReferences, ResidentMovementScene};
+pub use movement::{
+    RuntimeStaticMovementError, RuntimeStaticMovementOwner, RuntimeStaticMovementQuery,
+    RuntimeStaticMovementResidency,
+};
 pub use streaming::RuntimeTerrainStreamPoll;
 use streaming::TerrainStreamingDemand;
 use world_model_residency::{
@@ -604,6 +610,7 @@ impl RuntimeTerrainCoordinator {
                 tile: None,
                 global_world_model: None,
                 nearby: Vec::new(),
+                movement: ResidentMovementScene::default(),
             });
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
@@ -635,6 +642,7 @@ impl RuntimeTerrainCoordinator {
                 &mut self.world_models,
                 &mut self.assets.borrow_mut(),
             )?);
+            active.synchronize_movement_owners();
             self.textures.collect_unused();
             self.models.collect_unused();
             self.world_models.collect_unused();
@@ -675,6 +683,7 @@ impl RuntimeTerrainCoordinator {
         {
             active.nearby.push(previous);
         }
+        active.synchronize_movement_owners();
         self.textures.collect_unused();
         self.models.collect_unused();
         self.world_models.collect_unused();
@@ -1193,6 +1202,7 @@ impl TerrainWorkerState {
                 tile: None,
                 global_world_model,
                 nearby: Vec::new(),
+                movement: ResidentMovementScene::default(),
             });
         }
         if !terrain.tile(request.tile).exists() {
@@ -1215,6 +1225,7 @@ impl TerrainWorkerState {
             tile,
             global_world_model: None,
             nearby: Vec::new(),
+            movement: ResidentMovementScene::default(),
         })
     }
 
@@ -1260,6 +1271,7 @@ struct ResidentTerrainMap {
     tile: Option<ResidentTerrainTile>,
     global_world_model: Option<ResidentGlobalWorldModel>,
     nearby: Vec<ResidentTerrainTile>,
+    movement: ResidentMovementScene,
 }
 
 impl ResidentTerrainMap {
@@ -1270,6 +1282,7 @@ impl ResidentTerrainMap {
 
 /// Complete non-ADT scene owned by one WDT-level MODF placement.
 struct ResidentGlobalWorldModel {
+    movement_references: ResidentMovementReferences,
     m2_scene: ResidentM2Scene,
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
@@ -1296,7 +1309,10 @@ impl ResidentGlobalWorldModel {
             store,
         )?;
         let (m2_scene, m2_collision) = m2_builder.finish();
+        let movement_references =
+            ResidentMovementReferences::prepare(None, &m2_scene, &world_models);
         Ok(Self {
+            movement_references,
             m2_scene,
             m2_collision,
             world_model_collision,
@@ -1307,6 +1323,7 @@ impl ResidentGlobalWorldModel {
 }
 
 pub(super) struct ResidentTerrainTile {
+    movement_references: ResidentMovementReferences,
     decoded: DecodedTerrainTile,
     textures: Vec<Arc<BlpTextureSource>>,
     mesh: Arc<TerrainTileMeshPlan>,
@@ -1348,7 +1365,10 @@ impl ResidentTerrainTile {
             store,
         )?;
         let (m2_scene, m2_collision) = m2_builder.finish();
+        let movement_references =
+            ResidentMovementReferences::prepare(Some(&decoded), &m2_scene, &world_models);
         Ok(Self {
+            movement_references,
             decoded,
             textures,
             mesh,

@@ -59,6 +59,73 @@ fn world_model_loads_stock_group_geometry_and_bsp() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// Nested reference lists survive MLIQ and retain strict root-table validation.
+#[test]
+fn world_model_decodes_and_validates_nested_group_references() -> Result<(), Box<dyn Error>> {
+    let mut root_wmo = doodad_root_fixture();
+    set_u32(&mut root_wmo, 20 + 4, 1);
+    set_u32(&mut root_wmo, 20 + 12, 1);
+    let mut info = vec![0_u8; 32];
+    set_vec3(&mut info, 4, [-1.; 3]);
+    set_vec3(&mut info, 16, [1.; 3]);
+    set_u32(&mut info, 28, u32::MAX);
+    push_chunk(&mut root_wmo, *b"IGOM", &info);
+    push_chunk(&mut root_wmo, *b"TLOM", &[0; 48]);
+    for (doodads, lights, expected_error) in [
+        (&[1, 0, 0, 0, 1, 0][..], &[0, 0, 0, 0][..], None),
+        (&[1][..], &[0, 0][..], Some("MODR requires complete u16")),
+        (
+            &[2, 0][..],
+            &[0, 0][..],
+            Some("MODR references a doodad outside MODD"),
+        ),
+        (
+            &[0, 0][..],
+            &[1, 0][..],
+            Some("MOLR references a light outside MOLT"),
+        ),
+    ] {
+        let mut group_wmo = group_fixture_with_liquid(8, 2, Some(&liquid_fixture()));
+        let old_size = u32::from_le_bytes(group_wmo[16..20].try_into()?);
+        push_chunk(&mut group_wmo, *b"RDOM", doodads);
+        push_chunk(&mut group_wmo, *b"RLOM", lights);
+        set_u32(
+            &mut group_wmo,
+            16,
+            old_size + 16 + u32::try_from(doodads.len() + lights.len())?,
+        );
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Wmo\\Fixture.wmo",
+                bytes: &root_wmo,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Wmo\\Fixture_000.wmo",
+                bytes: &group_wmo,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let loaded =
+            DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Fixture.wmo")?);
+        if let Some(message) = expected_error {
+            let Err(error) = loaded else {
+                return Err("invalid group references were admitted".into());
+            };
+            assert!(error.to_string().contains(message), "{error}");
+        } else {
+            let model = loaded?;
+            assert_eq!(model.groups()[0].doodad_references(), &[1, 0, 1]);
+            assert_eq!(model.groups()[0].light_references(), &[0, 0]);
+        }
+    }
+    Ok(())
+}
+
 /// MOPY's no-camera flag remains distinct from ordinary world collision.
 #[test]
 fn world_model_preserves_stock_no_camera_collision_flag() -> Result<(), Box<dyn Error>> {

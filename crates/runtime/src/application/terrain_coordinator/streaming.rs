@@ -86,7 +86,11 @@ impl RuntimeTerrainCoordinator {
             .as_ref()
             .is_none_or(|demand| demand.origin != origin || demand.window != window)
         {
+            let previous_count = active.nearby.len();
             active.nearby.retain(|tile| window.contains(tile.index()));
+            if active.nearby.len() != previous_count {
+                active.synchronize_movement_owners();
+            }
             // 0x007B5950 registers every missing WDT owner before sorting its
             // request array. 0x007D9A8A appends the reference to the persistent
             // list through 0x006DED60. These entries survive CPU load progress
@@ -216,6 +220,7 @@ impl RuntimeTerrainCoordinator {
                         return Err(error);
                     }
                     active.nearby.push(tile);
+                    active.synchronize_movement_owners();
                 }
             }
             Err(error) => {
@@ -277,6 +282,7 @@ impl RuntimeTerrainCoordinator {
             && resident.global_world_model.is_none()
             && let Some(demand) = self.streaming.as_ref()
         {
+            resident.movement = previous.movement;
             for tile in previous.tile.into_iter().chain(previous.nearby) {
                 if demand.window.contains(tile.index()) && resident.tile_at(tile.index()).is_none()
                 {
@@ -284,6 +290,7 @@ impl RuntimeTerrainCoordinator {
                 }
             }
         }
+        resident.synchronize_movement_owners();
         self.active = Some(resident);
         Ok(())
     }

@@ -1,0 +1,12 @@
+# Unmodified build 12340, SHA256 aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8
+# Entry 007A5F20, flags 00100011, bounds [-3,-3,-3,3,3,3]. No collection function replaced.
+# Complete WMO roots registered [8,7,9], two groups each, MODR repeats one M2 twice in each group.
+# Two declared ADTs [31,31],[32,31] share MCRF M2 references [10,9,10]. Terrain faces disabled.
+# Diagnostic two-word object IDs label providers: root ID, root ID*100 for MODD, 10000+MDDF ID.
+# These nonzero diagnostic IDs select enabled high M2 bits; actual static object IDs are zero.
+# name ready [first word of each emitted triangle's ID; second word is always zero]
+ready 1 8 8 800 7 7 700 9 9 900 10010 10009
+repeated 1 8 8 800 7 7 700 9 9 900 10010 10009
+missing_declared_adt 0 8 8 800 7 7 700 9 9 900 10010 10009
+# The failed native query retains partial output; callers must discard it.
+# MCNK visits for every case: [511,511],[512,511],[511,512],[512,512].

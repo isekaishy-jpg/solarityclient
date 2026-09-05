@@ -100,7 +100,8 @@ for terrain, WMOs, and M2s. The runtime currently admits a whole ADT generation
 and still completes the transition card from the primary scene. Static-model
 GPU buffers/descriptors and shared diffuse images still use their existing
 renderer cache lifetime. Incremental asynchronous GPU transfers, native loading
-readiness, complete movement-reference ordering/resource IDs, and local
-ground/fall/input ownership remain separate work. See
+readiness, dynamic movement references/resource IDs, and local ground/fall/input
+ownership remain separate work. Static movement now joins the resident
+neighborhood while retaining WMO registrations and MCRF/MODR references. See
 [`movement-world-geometry.md`](movement-world-geometry.md) for the movement
 collector boundary and its remaining integration.

@@ -106,7 +106,7 @@ impl ResidentWorldModelScene {
         &self.sources
     }
 
-    /// Returns unique referenced MODF instances in file order.
+    /// Returns unique MODF instances in first MCRF reference order.
     pub(in crate::application) fn placements(&self) -> &[ResidentWorldModelPlacement] {
         &self.placements
     }
@@ -138,21 +138,14 @@ pub(super) fn prepare_world_models(
     ),
     RuntimeTerrainError,
 > {
-    let mut referenced = vec![false; tile.world_models().len()];
-    for reference in tile
-        .chunks()
-        .iter()
-        .flat_map(|chunk| chunk.world_model_references())
-    {
-        // Strict ADT decoding has already proven every MCRF index is in range.
-        referenced[*reference as usize] = true;
-    }
-
+    // 0x007C6150 registers MODF owners in MCRF order. The transactional
+    // whole-ADT owner visits its admitted chunks in row-major order; repeated
+    // references retain their first registration rather than MODF table order.
     prepare_world_model_placements(
-        tile.world_models()
+        tile.chunks()
             .iter()
-            .enumerate()
-            .filter_map(|(index, placement)| referenced[index].then_some(placement)),
+            .flat_map(|chunk| chunk.world_model_references())
+            .map(|&index| &tile.world_models()[index as usize]),
         model_cache,
         m2_cache,
         texture_cache,

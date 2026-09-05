@@ -214,16 +214,21 @@ fn load_group(
 ) -> Result<DecodedWorldModelGroup, AssetError> {
     let group_path = group_path(root_path, index)?;
     let read = store.read(&group_path)?;
-    validate_group_chunk_layout(&group_path, read.bytes())?;
+    let references = decode_group_references(&group_path, read.bytes())?;
     let liquid = decode_group_liquid(&group_path, read.bytes())?;
     let parsed = parse_wmo(&mut Cursor::new(read.bytes()))
         .map_err(|error| world_model_error(&group_path, error))?;
-    let ParsedWmo::Group(group) = parsed else {
+    let ParsedWmo::Group(mut group) = parsed else {
         return Err(world_model_message(
             &group_path,
             "expected a WMO group file",
         ));
     };
+    // wow-wmo 0.7's nested MOGP parser omits MOLR/MODR (its top-level
+    // parser handles them). Recover the exact bounded arrays before validating
+    // their root-table membership; an omitted list must not look like no refs.
+    group.light_refs = references.lights;
+    group.doodad_refs = references.doodads;
     validate_group(
         &group_path,
         &group,
@@ -970,7 +975,12 @@ fn validate_root_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), Asse
     Ok(())
 }
 
-fn validate_group_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), AssetError> {
+struct GroupReferences {
+    lights: Vec<u16>,
+    doodads: Vec<u16>,
+}
+
+fn decode_group_references(path: &AssetPath, bytes: &[u8]) -> Result<GroupReferences, AssetError> {
     const OUTER: [[u8; 4]; 2] = [*b"REVM", *b"PGOM"];
     const NESTED: [[u8; 4]; 12] = [
         *b"YPOM", *b"IVOM", *b"TVOM", *b"RNOM", *b"VTOM", *b"ABOM", *b"RLOM", *b"RDOM", *b"NBOM",
@@ -987,7 +997,25 @@ fn validate_group_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), Ass
         .get(68..)
         .ok_or_else(|| world_model_message(path, "MOGP is smaller than its 68-byte header"))?;
     let nested = scan_chunks(path, nested_bytes, "MOGP")?;
-    validate_unique_chunks(path, &nested, &NESTED, "MOGP", &[*b"VTOM", *b"VCOM"])
+    validate_unique_chunks(path, &nested, &NESTED, "MOGP", &[*b"VTOM", *b"VCOM"])?;
+    let decode = |magic, name| -> Result<Vec<u16>, AssetError> {
+        let Some(chunk) = nested.iter().find(|chunk| chunk.magic == magic) else {
+            return Ok(Vec::new());
+        };
+        let data = &nested_bytes[chunk.payload_start..chunk.payload_end];
+        let (words, remainder) = data.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(world_model_message(
+                path,
+                format!("{name} requires complete u16 references"),
+            ));
+        }
+        Ok(words.iter().map(|word| u16::from_le_bytes(*word)).collect())
+    };
+    Ok(GroupReferences {
+        lights: decode(*b"RLOM", "MOLR")?,
+        doodads: decode(*b"RDOM", "MODR")?,
+    })
 }
 
 #[derive(Clone, Copy)]

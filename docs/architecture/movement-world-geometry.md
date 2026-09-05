@@ -113,16 +113,66 @@ an estimate. Normal magnitude comparison therefore permits the instruction's
 relative error bound. Separate CPU tests exercise the public instruction
 boundary. Invalid world queries cannot become successful empty collections.
 
+## Resident static queries
+
+`RuntimeTerrainCoordinator::collect_static_movement` joins these collectors to
+the [resident ADT neighborhood](terrain-streaming.md) and global-WMO maps.
+`RuntimeStaticMovementQuery` retains candidate, owner, and first-visit storage.
+Each selected triangle maps to its authored MCNK, MDDF, MODF, or MODD owner.
+These identities are scoped to the query map; they are not network GUIDs.
+Native static triangle object identifiers are zero. Dynamic object identifiers
+and transport ownership still belong to the movement interval's other providers.
+
+An unavailable matching map returns `PendingMap`. A query overlapping an
+unavailable WDT-declared ADT returns `PendingTile`; an undeclared WDT tile is
+empty space. Pending and failed queries clear all output. Global-WMO maps bypass
+the terrain grid, as `0x007A5F20` does. A successful **static** result is not yet
+authorization to commit player movement against an incomplete dynamic scene.
+
+WMO registrations survive primary-tile promotion and are retired only after
+their last resident reference disappears. `0x007BF1A5` appends roots through
+`0x006DED60`. `0x007C6150` registers terrain placements in MCRF order, and
+`0x007BF740` registers active MODD records in group MODR order. The runtime
+prepares these references on the terrain worker and resolves them without
+rescanning placement tables during each query. Roots precede terrain chunks;
+each root's faces precede its groups' M2 references. M2 first visits are shared
+across groups, chunks, and ADTs, matching the stamp at `0x007A50C0`.
+The retained dedicated M2 box (`0x007BDB10`, header +0xBC) rejects distant
+placements before the face collector, so a selected group does not require
+transforming every referenced model's collision mesh on each query.
+
+Placed group-reference bounds come from root MOGI (`0x007BDE50` / `0x007AE720`),
+independently of MOGP BSP regions. The asset decoder reads nested MODR/MOLR
+arrays directly from their validated chunk extents because `wow-wmo` 0.7's
+nested parser omits them. Duplicate references and file order are retained;
+incomplete u16 values and references outside the root tables are rejected.
+
+`runtime/tests/fixtures/movement-residency-native.txt` records the original
+`0x007A5F20` instructions over three root registrations, two groups per root,
+repeated group M2 references, and shared MCRF references in two ADTs. The two
+successful calls emit the same 11 owner tags; removing a declared ADT returns
+false with partial candidates, which the runtime must discard. Diagnostic
+nonzero object IDs label the native providers; enabled high M2 mask bits admit
+those labels. No collection function was replaced. Runtime integration tests
+compare the resulting order to this capture and cover repeated queries,
+promotion, WDT holes, unavailable neighbors, wrong maps, invalid grid bounds,
+and global-WMO queries. Separate asset tests cover nested references after MLIQ.
+
+A local installed-client probe loaded Stormwind ADT `[30,48]` (6,210 M2 owners,
+one WMO) and Northrend `[21,30]` (822 M2 owners). Narrow horizontal queries
+with a tall vertical range selected 12 terrain / 6 WMO faces in Stormwind and
+8 terrain / 8 MDDF faces in Northrend. Each query repeated 1,000 times with
+identical vertices and normals. This is CPU geometry validation, not live input,
+stock placement-matrix parity, visual parity, or a full-client FPS measurement.
+Wider queries also selected 12,145 WMO and 8,159 MODD faces in Stormwind,
+and 3,126 MDDF faces in Northrend, exercising the recovered group references.
+
 ## Runtime work remaining
 
-The local movement owner must join these collectors to complete residency,
-deduplicate placed-object references, preserve WMO/chunk/M2 traversal order,
-and associate selected triangles with their native resource identities.
-[Neighboring ADT residency](terrain-streaming.md) now retains complete terrain
-and static-object generations across tile boundaries, including camera and
-liquid providers. The movement owner still needs to assemble its ordered query
-inputs from that neighborhood. An unavailable tile or object must not become
-empty geometry that starts a fall.
+Residency still admits whole ADTs atomically. New roots use first MCRF reference
+order across that generation's row-major chunks; exact registration timing
+under native per-MCNK load priorities is not yet reproduced. Existing roots
+retain their order across admission and promotion.
 
 The owner also needs native placement/transport matrix updates, collision-query
 cache bounds covering step trials, dynamic-object admission, liquid/WDL modes,

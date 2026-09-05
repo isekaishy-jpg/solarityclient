@@ -102,6 +102,17 @@ impl PlacedM2Collision {
         &self.model
     }
 
+    /// Tests the placed dedicated collision box before visiting its faces.
+    ///
+    /// `0x007BDB10` prepares this box from M2 header +0xBC; `0x007A50C0`
+    /// rejects nonintersecting placements before entering `0x0082EC30`.
+    #[must_use]
+    pub fn movement_intersects(&self, bounds: MovementCollisionBounds) -> bool {
+        self.collision_bounds.is_some_and(|collision_bounds| {
+            bounds_intersect([bounds.minimum(), bounds.maximum()], collision_bounds)
+        })
+    }
+
     /// Appends selected dedicated collision faces in authored M2 index order.
     ///
     /// The three transform axes are normalized independently, as at
@@ -175,6 +186,12 @@ impl M2CollisionScene {
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Borrows one admitted placement selected by a resident chunk reference.
+    #[must_use]
+    pub fn instance(&self, index: usize) -> Option<&PlacedM2Collision> {
+        self.instances.get(index)
     }
 
     /// Traces dedicated unanimated collision triangles and returns the nearest fraction.
