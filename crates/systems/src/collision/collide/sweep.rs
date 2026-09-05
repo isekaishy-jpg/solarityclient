@@ -38,6 +38,11 @@ pub struct MovementCollisionTriangle {
 }
 
 impl MovementCollisionTriangle {
+    /// Supplies the authored-facing normal to movement response decisions.
+    pub(crate) const fn surface_normal(&self) -> Vec3 {
+        self.normal
+    }
+
     /// Preserves winding and derives its front-facing unit normal.
     ///
     /// # Errors
@@ -142,17 +147,35 @@ impl MovementCollisionVolume {
         if !displacement.is_finite() || !distance.is_finite() {
             return Err(MovementSweepError::InvalidDisplacement);
         }
+        let direction = if distance.abs() < DEGENERATE_TOLERANCE {
+            Vec3::ZERO
+        } else {
+            displacement / distance
+        };
+        self.sweep_along(direction, distance, triangles)
+    }
+
+    /// Native ground/step callers already own separate direction and distance
+    /// fields. Preserve their float images instead of normalizing a product.
+    pub(crate) fn sweep_along(
+        &self,
+        direction: Vec3,
+        distance: f32,
+        triangles: &[MovementCollisionTriangle],
+    ) -> Result<MovementSweep, MovementSweepError> {
+        if !direction.is_finite() || !distance.is_finite() {
+            return Err(MovementSweepError::InvalidDisplacement);
+        }
         let mut result = MovementSweep {
             distance,
             planes: [MovementCollisionPlane::ZERO; 9],
             count: 0,
             last_triangle: None,
         };
-        if distance < DEGENERATE_TOLERANCE {
+        if distance.abs() < DEGENERATE_TOLERANCE {
             result.distance = 0.0;
             return Ok(result);
         }
-        let direction = displacement / distance;
         let extrusion = direction * distance.max(MINIMUM_SWEEP_LENGTH);
         let query = FaceSweep {
             direction,

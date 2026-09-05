@@ -63,12 +63,15 @@ pub use equipment::{
     resolve_player_equipment,
 };
 pub use movement::{
-    MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy, MovementFallContact,
-    MovementFallContactError, MovementFallContactQuery, MovementFallContinuation,
-    MovementFallCrossing, MovementFallError, MovementFallInterval, MovementFallMode,
-    MovementFallPhase, MovementFallSnapshot, MovementFallState, MovementFallTrajectory,
-    UnitLocomotionAnimation, UnitModelAnimation, WorldEntryGroundContact,
-    WorldEntryGroundContactError, resolve_unit_locomotion_animation, resolve_unit_model_animation,
+    MovementFallAdmission, MovementFallAdvance, MovementFallAdvanceError,
+    MovementFallAdvancePolicy, MovementFallContact, MovementFallContactError,
+    MovementFallContactQuery, MovementFallContinuation, MovementFallCrossing, MovementFallError,
+    MovementFallInterval, MovementFallMode, MovementFallPhase, MovementFallSnapshot,
+    MovementFallState, MovementFallTrajectory, MovementGroundAdvance, MovementGroundAdvanceError,
+    MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,
+    MovementGroundSnapshot, MovementGroundState, UnitLocomotionAnimation, UnitModelAnimation,
+    WorldEntryGroundContact, WorldEntryGroundContactError, resolve_unit_locomotion_animation,
+    resolve_unit_model_animation,
 };
 pub use object::{ObjectProjectionError, project_object_fields};
 pub use world::{

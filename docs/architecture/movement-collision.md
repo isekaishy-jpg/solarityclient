@@ -10,6 +10,8 @@ landing/ceiling classification, and the remaining horizontal correction.
 These queries do not yet drive the player or collect resident-world triangles.
 The [fall interval owner](movement-fall-integration.md) now repeats contact
 queries and returns updated airborne state or a ground transition.
+The [ground interval owner](movement-ground-integration.md) now handles surface
+following, wall response, step probes, and speculative falls.
 
 ## Native evidence
 
@@ -169,13 +171,14 @@ the existing 69 contact/order comparisons still pass.
 
 This query implements the narrow phase after candidate collection. The movement
 owner still needs resident terrain/WMO/M2 triangle selection, transport-space
-conversion, ground sliding and step-up, application of fall/ground transitions,
+conversion, application of fall/ground transitions,
 and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and
-related `Collide.cpp` callers own movement response. Those operations must not
+related `Collide.cpp` callers own movement response. Ground/step and fall
+intervals now implement their respective response cores. Runtime operations must not
 be inferred from the camera ray API or from successful contact tests.
 
 The [analytic fall curves](movement-trajectories.md) used by collision response
 and step trials are now implemented and checked against native x86 execution.
 The fall interval now owns repeated collisions and fall-specific state updates;
-the surrounding ground and step-trial owners remain under implementation.
+the ground interval now owns surface response and the surrounding step trials.

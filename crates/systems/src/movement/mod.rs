@@ -5,8 +5,10 @@
 
 mod airborne;
 mod animation;
+mod clock;
 mod contact;
 mod fall;
+mod grounded;
 mod movement_shared;
 mod movement_source;
 mod path;
@@ -20,5 +22,10 @@ pub use airborne::{
 pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
 pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
+pub use grounded::{
+    MovementFallAdmission, MovementGroundAdvance, MovementGroundAdvanceError,
+    MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,
+    MovementGroundSnapshot, MovementGroundState,
+};
 pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};

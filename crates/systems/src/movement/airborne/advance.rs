@@ -1,5 +1,6 @@
 //! Collision-driven fall loop recovered from `0x007612B0`.
 
+use crate::movement::clock::{millis_from_seconds, seconds_from_millis};
 use glam::Vec3;
 
 use super::state::{
@@ -19,7 +20,6 @@ const DEGENERATE_TOLERANCE: f32 = f32::from_bits(0x3580_0000);
 const MINIMUM_PROGRESS_SECONDS: f32 = f32::from_bits(0x3a03_126f);
 const SLIDE_GROWTH_PER_VERTICAL: f32 = f32::from_bits(0x3f97_e4ad);
 const FAR_FALL_HEIGHT: f32 = f32::from_bits(0x3de3_8e39);
-const SECONDS_PER_MILLISECOND: f32 = f32::from_bits(0x3a83_126f);
 
 impl MovementFallState {
     /// Applies the native repeated-contact fall loop to an admitted interval.
@@ -223,21 +223,5 @@ impl MovementFallState {
                 contact_triangle
             },
         })
-    }
-}
-
-/// Native FILD retains the complete unsigned clock through multiplication.
-fn seconds_from_millis(milliseconds: u32) -> f32 {
-    (f64::from(milliseconds) * f64::from(SECONDS_PER_MILLISECOND)) as f32
-}
-
-/// FSTP float then FISTP signed integer, with round-to-nearest/even and the
-/// x87 indefinite integer for overflow. The caller uses its raw unsigned bits.
-fn millis_from_seconds(seconds: f64) -> u32 {
-    let milliseconds = f64::from((seconds * 1000.0) as f32).round_ties_even();
-    if (-2147483648.0..2147483648.0).contains(&milliseconds) {
-        milliseconds as i32 as u32
-    } else {
-        i32::MIN as u32
     }
 }

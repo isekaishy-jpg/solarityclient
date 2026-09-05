@@ -22,6 +22,16 @@ pub enum MovementSupportProfile {
     Other,
 }
 
+impl MovementSupportProfile {
+    /// Native surface admission threshold shared by landing and ground motion.
+    pub(super) const fn minimum_normal_z(self) -> f32 {
+        match self {
+            Self::PlayerControlled => PLAYER_SUPPORT_SLOPE,
+            Self::Other => OTHER_SUPPORT_SLOPE,
+        }
+    }
+}
+
 impl MovementCollisionTriangle {
     /// Tests whether this surface supports the supplied foot point for landing.
     ///
@@ -41,10 +51,7 @@ impl MovementCollisionTriangle {
         if !foot_point.is_finite() {
             return Err(MovementSweepError::NonFiniteSupportPoint);
         }
-        let threshold = match profile {
-            MovementSupportProfile::PlayerControlled => PLAYER_SUPPORT_SLOPE,
-            MovementSupportProfile::Other => OTHER_SUPPORT_SLOPE,
-        };
+        let threshold = profile.minimum_normal_z();
         if self.normal.z <= threshold {
             return Ok(false);
         }

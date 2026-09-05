@@ -11,7 +11,6 @@ const INVERSE_GRAVITY: f32 = f32::from_bits(0x3d54_536a);
 const DOUBLE_GRAVITY: f32 = f32::from_bits(0x421a_542f);
 const DOUBLE_INVERSE_GRAVITY: f32 = f32::from_bits(0x3dd4_536a);
 const ZERO_LAUNCH_TOLERANCE: f32 = f32::from_bits(0x3480_0000);
-const SECONDS_PER_MILLISECOND: f32 = f32::from_bits(0x3a83_126f);
 
 /// Terminal-speed choice already resolved by the movement effect owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +70,14 @@ pub struct MovementFallTrajectory {
 }
 
 impl MovementFallTrajectory {
+    /// Speculative step trial duration at `0x007619C0`, including the native
+    /// indefinite integer when a signed drop produces a negative square root.
+    pub(super) fn step_trial_millis(drop: f32) -> u32 {
+        super::clock::millis_from_seconds(
+            (f64::from(drop) * 2.0 * f64::from(INVERSE_GRAVITY)).sqrt(),
+        )
+    }
+
     /// Admits the resolved fall mode and signed downward launch speed.
     ///
     /// The native curve caps positive launch speed at the selected terminal
@@ -125,7 +132,7 @@ impl MovementFallTrajectory {
     /// Returns [`MovementFallError::NonFiniteResult`] if the curve result exceeds
     /// the native float range.
     pub fn distance_at_millis(self, elapsed_ms: u32) -> Result<f32, MovementFallError> {
-        let seconds = (f64::from(elapsed_ms) * f64::from(SECONDS_PER_MILLISECOND)) as f32;
+        let seconds = super::clock::seconds_from_millis(elapsed_ms);
         self.distance_at_seconds(seconds)
     }
 

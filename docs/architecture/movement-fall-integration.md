@@ -83,8 +83,10 @@ clock, phase, and anchor changes needed by the trial owner.
 
 The step trial's native save/restore pair (`0x0075B480`/`0x0075B4F0`) restores
 anchor, elapsed/fall clocks, bases, flags, and horizontal speed. It does **not**
-restore current XYZ. That outer step-trial owner remains to be implemented;
-restoring an entire world transform would lose the native trial displacement.
+restore current XYZ or the launch-height/downward-speed fields. The
+[ground interval's step-trial owner](movement-ground-integration.md) now applies
+that partial restoration; restoring an entire world transform would lose the
+native trial displacement.
 
 ## Native validation
 
