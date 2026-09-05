@@ -174,7 +174,12 @@ order across that generation's row-major chunks; exact registration timing
 under native per-MCNK load priorities is not yet reproduced. Existing roots
 retain their order across admission and promotion.
 
-The owner also needs native placement/transport matrix updates, collision-query
+Replicated GameObject quaternion and passenger matrices now have a shared
+native-verified placement provider used by transport M2/WMO presentation; see
+[`game-object-placement.md`](game-object-placement.md). It still needs to be
+joined to dynamic collision residency and animated transport path owners.
+
+The owner also needs authored static placement-matrix verification, collision-query
 cache bounds covering step trials, dynamic-object admission, liquid/WDL modes,
 timestamped input, and landing/ground/fall application to ECS state. None of the
 collector tests establishes live player movement or frame-rate parity.

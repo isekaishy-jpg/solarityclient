@@ -229,12 +229,25 @@ fn game_object_display_field_projects_without_unit_aliasing() -> Result<(), Box<
     let presentation = world
         .game_object_presentation(guid)
         .ok_or("game-object presentation was absent")?;
-    assert_eq!(presentation, GameObjectPresentation::new(42, 1));
+    assert_eq!(
+        presentation,
+        GameObjectPresentation::from_fields(42, 0, u32::from_le_bytes([1, 5, 7, 100]))
+    );
+    assert_eq!(presentation.object_type(), 5);
+    assert_eq!(presentation.art_kit(), 7);
+    assert_eq!(presentation.animation_progress(), 100);
     assert!(world.game_object_presentation(guid).is_some());
 
     let sparse_fields = [(9, 0x20)];
     world.update_fields(guid, sparse_fields)?;
     project_object_fields(&mut world, guid, sparse_fields)?;
+    assert_eq!(
+        world
+            .game_object_presentation(guid)
+            .ok_or("missing flags")?
+            .flags(),
+        0x20
+    );
     assert_eq!(
         world
             .game_object_presentation(guid)

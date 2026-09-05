@@ -51,7 +51,20 @@ impl PlacedWorldModelDrawPlan {
             * Mat4::from_rotation_y(radians.x)
             * Mat4::from_rotation_x(radians.z)
             * Mat4::from_scale(Vec3::splat(scale));
-        if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
+        Self::prepare_with_transform(mesh, transform)
+    }
+
+    /// Creates a placement using a complete GameObject or authored owner matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldModelPlacementError`] for an invalid affine transform or
+    /// inconsistent draw/group ownership.
+    pub fn prepare_with_transform(
+        mesh: Arc<WorldModelMeshPlan>,
+        transform: Mat4,
+    ) -> Result<Self, WorldModelPlacementError> {
+        if !valid_affine_transform(transform) {
             return Err(WorldModelPlacementError::InvalidTransform {
                 path: mesh.path().clone(),
             });
@@ -93,6 +106,34 @@ impl PlacedWorldModelDrawPlan {
         })
     }
 
+    /// Updates retained bounds when the owning GameObject moves.
+    ///
+    /// Repeated identical matrices are free of bound work; changed matrices
+    /// reuse the existing group, draw, and visibility allocations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldModelPlacementError`] for a non-finite or singular matrix.
+    pub fn set_transform(&mut self, transform: Mat4) -> Result<(), WorldModelPlacementError> {
+        if !valid_affine_transform(transform) {
+            return Err(WorldModelPlacementError::InvalidTransform {
+                path: self.mesh.path().clone(),
+            });
+        }
+        if self.transform == transform {
+            return Ok(());
+        }
+        for (bounds, group) in self.group_bounds.iter_mut().zip(self.mesh.groups()) {
+            *bounds = OrientedBounds::prepare(group.bounds(), transform);
+        }
+        for (bounds, draw) in self.draw_bounds.iter_mut().zip(self.mesh.draws()) {
+            *bounds =
+                OrientedBounds::prepare(draw.bounds().map(|point| point.map(f32::from)), transform);
+        }
+        self.transform = transform;
+        Ok(())
+    }
+
     /// Returns the shared immutable WMO generation.
     #[must_use]
     pub const fn mesh(&self) -> &Arc<WorldModelMeshPlan> {
@@ -131,6 +172,17 @@ impl PlacedWorldModelDrawPlan {
         }
         Ok(())
     }
+}
+
+fn valid_affine_transform(transform: Mat4) -> bool {
+    let determinant = transform.determinant();
+    transform.is_finite()
+        && determinant.is_finite()
+        && determinant != 0.0
+        && transform.x_axis.w == 0.0
+        && transform.y_axis.w == 0.0
+        && transform.z_axis.w == 0.0
+        && transform.w_axis.w == 1.0
 }
 
 struct OrientedBounds {

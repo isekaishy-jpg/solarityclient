@@ -138,14 +138,13 @@ impl WorldModelFrame {
         transport: Option<&ResidentTransport>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let prepared = match transport {
-            Some(transport) => match (
-                transport.resource(),
-                transport.transform(),
-                transport.scale(),
-            ) {
-                (ResidentTransportResource::WorldModel(source), Some(transform), Some(scale)) => {
+            Some(transport) => match (transport.resource(), transport.placement()) {
+                (ResidentTransportResource::WorldModel(source), Some(placement)) => {
                     let gpu = prepare_gpu_source(renderer, source, self.filtering, self.base_mip)?;
-                    let plan = transport_draw_plan(&gpu.plan, transform, scale)?;
+                    let plan = PlacedWorldModelDrawPlan::prepare_with_transform(
+                        Arc::clone(&gpu.plan),
+                        placement.matrix(),
+                    )?;
                     Some((transport.guid(), gpu, plan))
                 }
                 _ => None,
@@ -176,11 +175,9 @@ impl WorldModelFrame {
         let Some(transport) = transport else {
             return Ok(());
         };
-        let (ResidentTransportResource::WorldModel(_), Some(transform), Some(scale)) = (
-            transport.resource(),
-            transport.transform(),
-            transport.scale(),
-        ) else {
+        let (ResidentTransportResource::WorldModel(_), Some(resolved)) =
+            (transport.resource(), transport.placement())
+        else {
             return Ok(());
         };
         let Some(placement) = self.placements.iter_mut().find(|placement| {
@@ -191,13 +188,7 @@ impl WorldModelFrame {
         }) else {
             return Ok(());
         };
-        let source = self.sources[placement.source_index].as_ref().ok_or(
-            RuntimeTerrainFrameError::WorldModelSourceIndex {
-                source_index: placement.source_index,
-                source_count: self.sources.len(),
-            },
-        )?;
-        placement.plan = transport_draw_plan(&source.plan, transform, scale)?;
+        placement.plan.set_transform(resolved.matrix())?;
         Ok(())
     }
 
@@ -350,20 +341,6 @@ fn prepare_gpu_source(
         mesh,
         draws,
     })
-}
-
-/// Converts ECS Z-up yaw using `world_game_object_projector.cpp::makeWmo`.
-fn transport_draw_plan(
-    source: &Arc<WorldModelMeshPlan>,
-    transform: solarity_ecs::WorldTransform,
-    scale: f32,
-) -> Result<PlacedWorldModelDrawPlan, RuntimeTerrainFrameError> {
-    Ok(PlacedWorldModelDrawPlan::prepare(
-        Arc::clone(source),
-        transform.position(),
-        Vec3::new(0.0, transform.orientation().to_degrees() - 180.0, 0.0),
-        scale,
-    )?)
 }
 
 fn prepare_draw_resources(

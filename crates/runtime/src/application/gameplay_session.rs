@@ -2,9 +2,9 @@
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldMovementContext, WorldMovementFall,
-    WorldMovementSpeeds, WorldMovementState, WorldMovementTransport, WorldStateError,
-    WorldTransform,
+    ActiveWorld, GameObjectMovement, GameObjectTransport, ObjectKind, WorldBootstrap, WorldMapId,
+    WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
+    WorldMovementTransport, WorldStateError, WorldTransform,
 };
 use solarity_network::{
     InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
@@ -117,6 +117,9 @@ pub(crate) fn apply_object_updates(
                 )?;
             }
             WorldObjectUpdate::Movement { guid, movement } => {
+                if world.object_kind(*guid) == Some(ObjectKind::GameObject) {
+                    world.update_game_object_movement(*guid, game_object_movement(*movement))?;
+                }
                 if let Some(transform) = movement_transform(*movement) {
                     world.update_transform(*guid, transform)?;
                 }
@@ -145,6 +148,11 @@ pub(crate) fn apply_object_updates(
                     && let Some(movement) = movement_state(*movement)
                 {
                     world.update_movement(*guid, movement)?;
+                }
+                if (existing.is_none() || existing == Some(world.local_player()))
+                    && *kind == WorldObjectKind::GameObject
+                {
+                    world.update_game_object_movement(*guid, game_object_movement(*movement))?;
                 }
                 project_object_fields(
                     world,
@@ -198,6 +206,20 @@ fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> 
         Vec3::new(x, y, z),
         movement.orientation()?,
     ))
+}
+
+fn game_object_movement(movement: ObjectMovementUpdate) -> GameObjectMovement {
+    GameObjectMovement::new(
+        movement.packed_rotation().unwrap_or(0),
+        movement
+            .position_transport()
+            .filter(|transport| transport.guid != 0)
+            .map(|transport| GameObjectTransport {
+                guid: transport.guid,
+                position: Vec3::from_array(transport.position),
+                orientation: transport.orientation,
+            }),
+    )
 }
 
 const fn object_kind(kind: WorldObjectKind) -> ObjectKind {

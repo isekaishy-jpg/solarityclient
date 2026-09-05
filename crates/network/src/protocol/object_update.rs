@@ -87,6 +87,19 @@ pub struct ObjectMovementUpdate {
     speeds: Option<ObjectMovementSpeeds>,
     position: Option<[f32; 3]>,
     orientation: Option<f32>,
+    position_transport: Option<ObjectPositionTransport>,
+    packed_rotation: Option<u64>,
+}
+
+/// Non-living passenger position carried by `UPDATEFLAG_POSITION`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObjectPositionTransport {
+    /// Exact parent GUID; zero denotes an unattached position.
+    pub guid: u64,
+    /// Position in the parent's coordinate system.
+    pub position: [f32; 3],
+    /// Final orientation word, also used by corpse placement.
+    pub orientation: f32,
 }
 
 impl ObjectMovementUpdate {
@@ -130,6 +143,18 @@ impl ObjectMovementUpdate {
     #[must_use]
     pub const fn orientation(self) -> Option<f32> {
         self.orientation
+    }
+
+    /// Returns the non-living passenger offset without discarding a zero GUID.
+    #[must_use]
+    pub const fn position_transport(self) -> Option<ObjectPositionTransport> {
+        self.position_transport
+    }
+
+    /// Returns the exact packed local quaternion when `UPDATEFLAG_ROTATION` is set.
+    #[must_use]
+    pub const fn packed_rotation(self) -> Option<u64> {
+        self.packed_rotation
     }
 
     /// Returns whether this block identifies the controlled object.
@@ -465,6 +490,7 @@ impl<'a> UpdateCursor<'a> {
         let mut speeds = None;
         let mut position = None;
         let mut orientation = None;
+        let mut position_transport = None;
         if update_flags & UPDATE_FLAG_LIVING != 0 {
             let low = u64::from(self.read_u32("living movement flags are truncated")?);
             let high = u64::from(self.read_u16("living movement flags are truncated")?);
@@ -529,11 +555,16 @@ impl<'a> UpdateCursor<'a> {
                 self.read_spline()?;
             }
         } else if update_flags & UPDATE_FLAG_POSITION != 0 {
-            transport_guid = Some(self.read_packed_guid("position transport GUID is truncated")?);
+            let guid = self.read_packed_guid("position transport GUID is truncated")?;
+            transport_guid = Some(guid);
             position = Some(self.read_position()?);
-            self.skip(12, "position transport offset is truncated")?;
+            let offset = self.read_position()?;
             orientation = Some(self.read_f32("position orientation is truncated")?);
-            self.skip(4, "corpse orientation is truncated")?;
+            position_transport = Some(ObjectPositionTransport {
+                guid,
+                position: offset,
+                orientation: self.read_f32("corpse orientation is truncated")?,
+            });
         } else if update_flags & UPDATE_FLAG_HAS_POSITION != 0 {
             position = Some(self.read_position()?);
             orientation = Some(self.read_f32("movement orientation is truncated")?);
@@ -553,9 +584,14 @@ impl<'a> UpdateCursor<'a> {
         if update_flags & UPDATE_FLAG_VEHICLE != 0 {
             self.skip(8, "vehicle movement is truncated")?;
         }
-        if update_flags & UPDATE_FLAG_ROTATION != 0 {
-            self.skip(8, "packed local rotation is truncated")?;
-        }
+        let packed_rotation = if update_flags & UPDATE_FLAG_ROTATION != 0 {
+            let bytes = self.take(8, "packed local rotation is truncated")?;
+            Some(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+                self.error("packed local rotation is truncated")
+            })?))
+        } else {
+            None
+        };
         Ok(ObjectMovementUpdate {
             update_flags,
             movement_flags,
@@ -564,6 +600,8 @@ impl<'a> UpdateCursor<'a> {
             speeds,
             position,
             orientation,
+            position_transport,
+            packed_rotation,
         })
     }
 

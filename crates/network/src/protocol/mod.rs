@@ -43,8 +43,8 @@ pub use movement_message::{
     WorldMovementEncodeError, WorldMovementField, WorldMovementKind, WorldMovementMessage,
 };
 pub use object_update::{
-    ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectUpdateError,
-    WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
+    ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectPositionTransport,
+    ObjectUpdateError, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
 };
 pub use server_packet::WorldServerPacket;
 pub use world_entry::{

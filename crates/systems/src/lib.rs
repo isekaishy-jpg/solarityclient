@@ -74,7 +74,10 @@ pub use movement::{
     WorldEntryGroundContact, WorldEntryGroundContactError, resolve_unit_locomotion_animation,
     resolve_unit_model_animation,
 };
-pub use object::{ObjectProjectionError, project_object_fields};
+pub use object::{
+    GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
+    ObjectProjectionError, project_object_fields, unpack_game_object_rotation,
+};
 pub use world::{
     DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
     LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, TerrainStreamingError, TerrainStreamingWindow,

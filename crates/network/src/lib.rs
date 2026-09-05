@@ -33,12 +33,13 @@ pub use protocol::{
     CharacterLocation, CharacterLoginRejection, CharacterLoginRejectionReason, CharacterNameResult,
     CharacterPet, CharacterRace, CharacterRename, CharacterRenameError, CharacterRenameResult,
     ObjectFieldUpdate, ObjectMovementContext, ObjectMovementFall, ObjectMovementSpeeds,
-    ObjectMovementTransport, ObjectMovementUpdate, ObjectUpdateError, WORLD_ACTION_BUTTON_COUNT,
-    WorldActionButtonPacketError, WorldActionButtonUpdate, WorldActionButtons,
-    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldMovementEncodeError,
-    WorldMovementField, WorldMovementKind, WorldMovementMessage, WorldObjectKind,
-    WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
-    WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
+    ObjectMovementTransport, ObjectMovementUpdate, ObjectPositionTransport, ObjectUpdateError,
+    WORLD_ACTION_BUTTON_COUNT, WorldActionButtonPacketError, WorldActionButtonUpdate,
+    WorldActionButtons, WorldEntryPacketError, WorldLivenessPacketError, WorldLocation,
+    WorldMovementEncodeError, WorldMovementField, WorldMovementKind, WorldMovementMessage,
+    WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket,
+    WorldTimePacketError, WorldTimeSpeed, WorldTransfer, WorldTransferPacketError,
+    WorldTransferTransport,
 };
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};

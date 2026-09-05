@@ -1184,15 +1184,11 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let prepared = match transport {
-            Some(transport) => match (
-                transport.resource(),
-                transport.transform(),
-                transport.scale(),
-            ) {
-                (ResidentTransportResource::M2(source), Some(transform), Some(scale)) => {
+            Some(transport) => match (transport.resource(), transport.placement()) {
+                (ResidentTransportResource::M2(source), Some(placement)) => {
                     match prepare_source(renderer, source)? {
                         Some(gpu) => {
-                            let matrix = transport_placement_transform(transform, scale)?;
+                            let matrix = placement.matrix();
                             let placement = unit_gpu_placement(
                                 0,
                                 matrix,
@@ -1234,11 +1230,9 @@ impl M2Frame {
         let Some(transport) = transport else {
             return Ok(());
         };
-        let (ResidentTransportResource::M2(_), Some(transform), Some(scale)) = (
-            transport.resource(),
-            transport.transform(),
-            transport.scale(),
-        ) else {
+        let (ResidentTransportResource::M2(_), Some(resolved)) =
+            (transport.resource(), transport.placement())
+        else {
             return Ok(());
         };
         let Some(placement) = self.placements.iter_mut().find(|placement| {
@@ -1249,7 +1243,7 @@ impl M2Frame {
         }) else {
             return Ok(());
         };
-        let matrix = transport_placement_transform(transform, scale)?;
+        let matrix = resolved.matrix();
         placement.local_transform = matrix;
         placement.transform = matrix;
         let Some(source) = self.sources[placement.source_index].as_ref() else {
@@ -3712,27 +3706,6 @@ fn unit_placement_transform(
         * Mat4::from_scale(glam::Vec3::splat(object_scale));
     if !matrix.is_finite() || matrix.determinant().abs() <= f32::EPSILON {
         return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
-    }
-    Ok(matrix)
-}
-
-/// Converts a GameObject movement parent into the ordinary M2 world basis.
-fn transport_placement_transform(
-    transform: WorldTransform,
-    object_scale: f32,
-) -> Result<Mat4, RuntimeTerrainFrameError> {
-    if !transform.position().is_finite()
-        || !transform.orientation().is_finite()
-        || !object_scale.is_finite()
-        || object_scale <= 0.0
-    {
-        return Err(RuntimeTerrainFrameError::InvalidTransportM2Transform);
-    }
-    let matrix = Mat4::from_translation(transform.position())
-        * Mat4::from_rotation_z(transform.orientation())
-        * Mat4::from_scale(glam::Vec3::splat(object_scale));
-    if !matrix.is_finite() || matrix.determinant().abs() <= f32::EPSILON {
-        return Err(RuntimeTerrainFrameError::InvalidTransportM2Transform);
     }
     Ok(matrix)
 }

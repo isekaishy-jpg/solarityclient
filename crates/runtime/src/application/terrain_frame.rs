@@ -268,9 +268,6 @@ pub enum RuntimeTerrainFrameError {
     /// Authoritative unit placement data cannot form a finite model matrix.
     #[error("unit M2 transform is invalid")]
     InvalidUnitM2Transform,
-    /// Authoritative transport placement data cannot form a finite model matrix.
-    #[error("transport M2 transform is invalid")]
-    InvalidTransportM2Transform,
     /// A Glue model widget supplied a non-positive or non-finite local scale.
     #[error("Glue M2 model scale is invalid")]
     InvalidGlueM2Scale,

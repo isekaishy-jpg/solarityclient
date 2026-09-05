@@ -2,5 +2,7 @@
 
 mod game_object_c;
 mod game_object_stats;
+mod movement;
 
 pub use game_object_c::GameObjectPresentation;
+pub use movement::{GameObjectMovement, GameObjectTransport};

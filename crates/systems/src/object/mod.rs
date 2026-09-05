@@ -4,7 +4,12 @@
 //! shared lifecycle responsibility. Storage details remain owned by ECS.
 
 mod lifecycle;
+mod placement;
 mod types;
 mod update;
 
+pub use placement::{
+    GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
+    unpack_game_object_rotation,
+};
 pub use update::{ObjectProjectionError, project_object_fields};

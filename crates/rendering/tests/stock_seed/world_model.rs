@@ -186,6 +186,23 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     )?;
     placed.select_visible_draws(behind, &mut draw_indices)?;
     assert!(draw_indices.is_empty());
+    let original = placed.transform();
+    let moved = Mat4::from_translation(Vec3::new(10_000.0, 0.0, 0.0))
+        * Mat4::from_rotation_x(0.7)
+        * original;
+    for _ in 0..3 {
+        placed.set_transform(moved)?;
+        placed.select_visible_draws(visible, &mut draw_indices)?;
+        assert!(
+            draw_indices.is_empty(),
+            "stale placement bounds remained visible"
+        );
+    }
+    placed.set_transform(original)?;
+    placed.select_visible_draws(visible, &mut draw_indices)?;
+    assert_eq!(draw_indices, [0]);
+    assert!(placed.set_transform(Mat4::ZERO).is_err());
+    assert_eq!(placed.transform(), original);
     Ok(())
 }
 

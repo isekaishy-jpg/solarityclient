@@ -6,6 +6,9 @@ use solarity_asset::{
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, ObjectKind, WorldTransform};
+use solarity_systems::{
+    GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
+};
 use thiserror::Error;
 
 use crate::application::terrain_coordinator::RuntimeTerrainError;
@@ -71,6 +74,13 @@ pub enum RuntimeTransportPoll {
         /// Resource family selected by the display row.
         kind: RuntimeTransportResourceKind,
     },
+    /// The retained resource's placement became available or unavailable.
+    PlacementChanged {
+        /// Exact admitted GameObject GUID.
+        guid: u64,
+        /// Resource family retained without another asset decode request.
+        kind: RuntimeTransportResourceKind,
+    },
 }
 
 /// Complete CPU-side resource retained for the current transport display.
@@ -98,6 +108,7 @@ pub(in crate::application) struct ResidentTransport {
     state: u8,
     transform: Option<WorldTransform>,
     scale: Option<f32>,
+    placement: Result<GameObjectPlacement, GameObjectPlacementError>,
     resource: ResidentTransportResource,
 }
 
@@ -127,6 +138,11 @@ impl ResidentTransport {
         self.scale
     }
 
+    /// Returns the resolved native quaternion matrix, including GameObject parents.
+    pub(in crate::application) fn placement(&self) -> Option<GameObjectPlacement> {
+        self.placement.ok()
+    }
+
     /// Returns the complete decoded M2 or WMO resource generation.
     pub(in crate::application) const fn resource(&self) -> &ResidentTransportResource {
         &self.resource
@@ -146,6 +162,7 @@ pub struct RuntimeTransportPresentation {
     worker: Option<TransportWorkerState>,
     pending: Option<PendingTransportGeneration>,
     failed_request: Option<TransportRequest>,
+    placement_resolver: GameObjectPlacementResolver,
 }
 
 impl RuntimeTransportPresentation {
@@ -164,6 +181,7 @@ impl RuntimeTransportPresentation {
             worker: None,
             pending: None,
             failed_request: None,
+            placement_resolver: GameObjectPlacementResolver::default(),
         }
     }
 
@@ -199,13 +217,24 @@ impl RuntimeTransportPresentation {
                 && resident.display_id == request.display_id
                 && resident.resource.kind() == request.kind
         }) {
+            let placement_changed = self
+                .resident
+                .as_ref()
+                .is_some_and(|resident| resident.placement.is_ok() != requested.placement.is_ok());
             if let Some(resident) = self.resident.as_mut() {
                 resident.transform = requested.transform;
                 resident.scale = requested.scale;
                 resident.state = requested.state;
+                resident.placement = requested.placement;
             }
             self.recover_finished_stale_worker(&request)?;
             self.readiness = true;
+            if placement_changed {
+                return Ok(RuntimeTransportPoll::PlacementChanged {
+                    guid: request.guid,
+                    kind: request.kind,
+                });
+            }
             return Ok(RuntimeTransportPoll::Current {
                 guid: request.guid,
                 kind: request.kind,
@@ -236,6 +265,7 @@ impl RuntimeTransportPresentation {
                             state: requested.state,
                             transform: requested.transform,
                             scale: requested.scale,
+                            placement: requested.placement,
                             resource,
                         });
                         self.failed_request = None;
@@ -284,7 +314,7 @@ impl RuntimeTransportPresentation {
         })
     }
 
-    fn requested_transport(&self, world: Option<&ActiveWorld>) -> Option<RequestedTransport> {
+    fn requested_transport(&mut self, world: Option<&ActiveWorld>) -> Option<RequestedTransport> {
         let world = world?;
         let guid = world.local_player_transport_guid()?;
         if world.object_kind(guid) != Some(ObjectKind::GameObject) {
@@ -305,6 +335,7 @@ impl RuntimeTransportPresentation {
                 path,
             },
             state: presentation.state(),
+            placement: self.placement_resolver.resolve(world, guid),
             transform: world.object_transform(guid).filter(valid_transform),
             scale: world
                 .object_presentation(guid)
@@ -454,17 +485,26 @@ impl RuntimeTransportPresentation {
             .object_presentation(guid)
             .map(solarity_ecs::ObjectPresentation::scale)
             .filter(|scale| scale.is_finite() && *scale > 0.0);
+        let placement = self.placement_resolver.resolve(world, guid);
         if self.resident.as_ref().is_some_and(|resident| {
             resident.guid == guid
                 && resident.display_id == display_id
                 && resident.resource.kind() == kind
         }) {
+            let placement_changed = self
+                .resident
+                .as_ref()
+                .is_some_and(|resident| resident.placement.is_ok() != placement.is_ok());
             if let Some(resident) = self.resident.as_mut() {
                 resident.transform = transform;
                 resident.scale = scale;
                 resident.state = state;
+                resident.placement = placement;
             }
             self.readiness = true;
+            if placement_changed {
+                return Ok(RuntimeTransportPoll::PlacementChanged { guid, kind });
+            }
             return Ok(RuntimeTransportPoll::Current { guid, kind });
         }
 
@@ -493,6 +533,7 @@ impl RuntimeTransportPresentation {
             state,
             transform,
             scale,
+            placement,
             resource,
         });
         self.textures.collect_unused();
@@ -553,6 +594,22 @@ impl RuntimeTransportPresentation {
         self.resident.as_ref().and_then(ResidentTransport::scale)
     }
 
+    /// Returns the full currently resolved matrix used by both resource families.
+    #[must_use]
+    pub fn resident_placement(&self) -> Option<GameObjectPlacement> {
+        self.resident
+            .as_ref()
+            .and_then(ResidentTransport::placement)
+    }
+
+    /// Returns the current missing or invalid placement dependency, if any.
+    #[must_use]
+    pub fn resident_placement_error(&self) -> Option<GameObjectPlacementError> {
+        self.resident
+            .as_ref()
+            .and_then(|resident| resident.placement.err())
+    }
+
     /// Returns the canonical decoded M2 or root-WMO archive identity.
     #[must_use]
     pub fn resident_asset_path(&self) -> Option<&AssetPath> {
@@ -595,6 +652,7 @@ struct RequestedTransport {
     state: u8,
     transform: Option<WorldTransform>,
     scale: Option<f32>,
+    placement: Result<GameObjectPlacement, GameObjectPlacementError>,
 }
 
 struct PendingTransportGeneration {

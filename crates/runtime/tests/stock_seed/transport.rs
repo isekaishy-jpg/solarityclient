@@ -10,9 +10,9 @@ use solarity_asset::{
 };
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{
-    ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, WorldBootstrap,
-    WorldMapId, WorldMovementContext, WorldMovementSpeeds, WorldMovementState,
-    WorldMovementTransport, WorldTransform,
+    ActiveWorld, GameObjectMovement, GameObjectPresentation, GameObjectTransport, ObjectKind,
+    ObjectPresentation, WorldBootstrap, WorldMapId, WorldMovementContext, WorldMovementSpeeds,
+    WorldMovementState, WorldMovementTransport, WorldTransform,
 };
 use solarity_runtime::{
     RuntimeTransportPoll, RuntimeTransportPresentation, RuntimeTransportResourceKind,
@@ -150,6 +150,90 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         }
     );
     assert_eq!(presentation.resident_state(), Some(0));
+
+    let packed_rotation = 0x4000_0000_0000_0000;
+    world.update_game_object_movement(
+        transport_guid,
+        GameObjectMovement::new(packed_rotation, None),
+    )?;
+    assert_eq!(
+        presentation.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTransportPoll::Current {
+            guid: transport_guid,
+            kind: RuntimeTransportResourceKind::WorldModel,
+        }
+    );
+    let rotated = presentation
+        .resident_placement()
+        .ok_or("missing full transport placement")?;
+    assert_eq!(
+        rotated.rotation(),
+        solarity_systems::unpack_game_object_rotation(packed_rotation)
+    );
+    assert!(rotated.matrix().y_axis.z > 1.0);
+    assert!(presentation.resident_placement_error().is_none());
+
+    let parent_guid = 0xF110_0000_0000_003B;
+    world.update_game_object_movement(
+        transport_guid,
+        GameObjectMovement::new(
+            packed_rotation,
+            Some(GameObjectTransport {
+                guid: parent_guid,
+                position: Vec3::new(2.0, 3.0, 4.0),
+                orientation: 0.0,
+            }),
+        ),
+    )?;
+    let changed = RuntimeTransportPoll::PlacementChanged {
+        guid: transport_guid,
+        kind: RuntimeTransportResourceKind::WorldModel,
+    };
+    assert_eq!(presentation.synchronize_async(Some(&world), &cpu)?, changed);
+    assert!(presentation.resident_placement().is_none());
+    assert_eq!(
+        presentation.resident_placement_error(),
+        Some(solarity_systems::GameObjectPlacementError::MissingObject { guid: parent_guid })
+    );
+    assert!(
+        presentation.is_ready(),
+        "resource readiness must remain independent of placement"
+    );
+    assert_eq!(presentation.resident_guid(), Some(transport_guid));
+
+    let parent_entity = world.create_object(
+        parent_guid,
+        ObjectKind::GameObject,
+        Some(WorldTransform::new(Vec3::splat(10.0), 0.0)),
+        [],
+    )?;
+    world
+        .storage_mut()
+        .add_component(parent_entity, (ObjectPresentation::new(1, 2.0),));
+    assert_eq!(presentation.synchronize_async(Some(&world), &cpu)?, changed);
+    assert_eq!(
+        presentation
+            .resident_placement()
+            .ok_or("parent arrival did not restore placement")?
+            .matrix()
+            .w_axis
+            .truncate(),
+        Vec3::new(14.0, 16.0, 18.0)
+    );
+    world.remove_object(parent_guid)?;
+    assert_eq!(presentation.synchronize(Some(&world))?, changed);
+    assert!(presentation.resident_placement().is_none());
+    world.update_game_object_movement(transport_guid, GameObjectMovement::default())?;
+    assert_eq!(presentation.synchronize(Some(&world))?, changed);
+    assert_eq!(
+        presentation
+            .resident_placement()
+            .ok_or("detach did not restore placement")?
+            .matrix()
+            .w_axis
+            .truncate(),
+        Vec3::new(10.0, 20.0, 30.0)
+    );
 
     world.remove_object(transport_guid)?;
     assert_eq!(

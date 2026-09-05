@@ -1927,7 +1927,8 @@ impl ClientServices {
             .transport
             .synchronize_async(self.gameplay.world(), &self.cpu)?
         {
-            RuntimeTransportPoll::ResourceLoaded { guid, kind } => {
+            RuntimeTransportPoll::ResourceLoaded { guid, kind }
+            | RuntimeTransportPoll::PlacementChanged { guid, kind } => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     frame.replace_transport(
                         &mut self.renderer,
@@ -1938,7 +1939,7 @@ impl ClientServices {
                 tracing::debug!(
                     transport_guid = guid,
                     resource_kind = ?kind,
-                    "local player transport resource became resident"
+                    "updated local player transport presentation admission"
                 );
             }
             RuntimeTransportPoll::Idle

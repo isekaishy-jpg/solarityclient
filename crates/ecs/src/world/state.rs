@@ -3,7 +3,7 @@
 use shipyard::{EntityId, World};
 use thiserror::Error;
 
-use crate::game_object::GameObjectPresentation;
+use crate::game_object::{GameObjectMovement, GameObjectPresentation};
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression};
@@ -328,6 +328,31 @@ impl ActiveWorld {
         }
         self.objects.insert(guid, entity);
         Ok(entity)
+    }
+
+    /// Returns the admitted GameObject passenger and packed-rotation snapshot.
+    #[must_use]
+    pub fn game_object_movement(&self, guid: u64) -> Option<GameObjectMovement> {
+        let entity = self.entity_by_guid(guid)?;
+        self.storage
+            .get::<&GameObjectMovement>(entity)
+            .map(|value| **value)
+            .ok()
+    }
+
+    /// Replaces the admitted GameObject movement snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError`] when the server references an unknown GUID.
+    pub fn update_game_object_movement(
+        &mut self,
+        guid: u64,
+        movement: GameObjectMovement,
+    ) -> Result<(), WorldStateError> {
+        let entity = self.require_entity(guid)?;
+        self.storage.add_component(entity, (movement,));
+        Ok(())
     }
 
     /// Applies sparse field words to an existing visible object.
