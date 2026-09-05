@@ -49,7 +49,7 @@ pub use model::{
     M2Interpolation, M2Light, M2LightKind, M2Material, M2ModelBounds, M2ParticleEmitter,
     M2ParticleGravity, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence, M2SequenceStorage,
     M2SkinProfile, M2Submesh, M2Texture, M2TextureKind, M2TextureTransform, M2TextureWeight,
-    M2Track, M2TrackChannel, M2Vertex,
+    M2Track, M2TrackChannel, M2Vertex, canonical_model_path,
 };
 pub use shader::{BlsPermutation, BlsShaderStage, DecodedBlsShader};
 pub use terrain::{

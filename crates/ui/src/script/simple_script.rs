@@ -11,7 +11,7 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
-use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle, Locale};
+use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle, Locale, canonical_model_path};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canonical_glue_event};
 use crate::script::UiGlueNetworkBridge;
@@ -202,6 +202,7 @@ static RESOLVED_VISIBLE_TOKEN: u8 = 138;
 static MODEL_UNIT_TOKEN: u8 = 139;
 static MODEL_ROTATION_TOKEN: u8 = 140;
 static MOTION_SCRIPTS_WHILE_DISABLED_TOKEN: u8 = 141;
+static MODEL_INSTANCE_GENERATION_TOKEN: u8 = 142;
 
 const OBJECT_KINDS: [UiObjectKind; 24] = [
     UiObjectKind::Frame,
@@ -5278,6 +5279,7 @@ fn set_texture_gradient(
 }
 
 fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> {
+    model.raw_set(model_instance_generation_key(), 0_u32)?;
     model.raw_set(model_unit_key(), Option::<String>::None)?;
     model.raw_set(model_rotation_key(), 0.0)?;
     model.raw_set(model_camera_key(), 0)?;
@@ -5294,6 +5296,24 @@ fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> 
     // runtime, and model state must never be shared across Lua instances.
     let _ = lua;
     Ok(())
+}
+
+/// Publishes native model-instance replacement independently of shared file
+/// residency. A repeated SetModel still creates fresh mutable playback, and
+/// an explicit clear must remain distinguishable from an unconfigured widget.
+fn assign_model_instance(lua: &Lua, model: &Table, path: Option<&AssetPath>) -> mlua::Result<()> {
+    let generation = model.raw_get::<u32>(model_instance_generation_key())?;
+    model.raw_set(
+        model_instance_generation_key(),
+        generation.wrapping_add(1).max(1),
+    )?;
+    model.raw_set(model_file_key(), path.map(AssetPath::as_str))?;
+    // Sequence requests target the M2 instance (0x0095F5E0/0x0095F610),
+    // unlike camera and transform properties retained by the widget.
+    model.raw_set(model_sequence_key(), 0_u32)?;
+    model.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
+    model.raw_set(model_sequence_time_key(), 0_i32)?;
+    mark_object_state_changed(lua, model, DIRTY_MODEL)
 }
 
 /// Installs the unit-selection contract shared by stock paper-doll models.
@@ -5334,10 +5354,10 @@ fn register_model_methods(
     )?;
     // Stock's model cache (0x0081C390, reached through 0x0095F990)
     // returns a resident resource before opening its archive entry again.
-    // Retain successful file validation for this mounted store and method
-    // table as well; the renderer owns decoded model/instance resources.
-    // Failed reads remain errors and are never recorded as validated files.
-    let validated_model_files = RefCell::new(HashSet::new());
+    // M2Shared initialization (0x0083D410) queues the file read; the script
+    // call only needs archive presence. Decoding remains with the renderer's
+    // asynchronous asset pipeline, including errors discovered during decode.
+    let available_model_files = RefCell::new(HashSet::new());
     methods.raw_set(
         "SetModel",
         lua.create_function(move |lua, (model, value): (Table, Value)| {
@@ -5345,35 +5365,58 @@ fn register_model_methods(
                 return Err(mlua::Error::runtime("Usage: Model:SetModel(\"file\")"));
             };
             let display = value.to_string_lossy();
-            let path = AssetPath::new(&display)
-                .map_err(|error| mlua::Error::runtime(format!("Invalid model file: {error}")))?;
+            // An empty filename clears the instance before the script wrapper
+            // reports its null result (0x0095F990 -> 0x00960530).
+            if display.is_empty() {
+                assign_model_instance(lua, &model, None)?;
+                return Err(mlua::Error::runtime("Invalid model file: "));
+            }
             let Some(assets) = &assets else {
                 return Err(mlua::Error::runtime(
                     "Model:SetModel requires a mounted asset store",
                 ));
             };
-            let validated = validated_model_files.borrow().contains(&path);
-            if !validated {
-                assets
-                    .borrow_mut()
-                    .read(&path)
-                    .map_err(|_| mlua::Error::runtime(format!("Invalid model file: {display}")))?;
-                validated_model_files.borrow_mut().insert(path.clone());
-            }
-            if model
-                .raw_get::<Option<String>>(model_file_key())?
-                .as_deref()
-                != Some(path.as_str())
-            {
-                model.raw_set(model_file_key(), path.as_str())?;
-                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
-            }
-            Ok(())
+            let requested = AssetPath::new(&display)
+                .and_then(|path| canonical_model_path(&path))
+                .ok();
+            let is_available = |path: &AssetPath| {
+                let cached = available_model_files.borrow().contains(path);
+                if cached || assets.borrow().contains(path).unwrap_or(false) {
+                    available_model_files.borrow_mut().insert(path.clone());
+                    true
+                } else {
+                    false
+                }
+            };
+            let path = requested.filter(|path| is_available(path)).or_else(|| {
+                // M2Scene::CreateModel (0x0081F8F0) attempts this exact stock
+                // resource after a failed path/extension lookup.
+                AssetPath::new("Spells\\ErrorCube.m2")
+                    .ok()
+                    .filter(|path| is_available(path))
+            });
+            assign_model_instance(lua, &model, path.as_ref())?;
+            path.map(|_| ())
+                .ok_or_else(|| mlua::Error::runtime(format!("Invalid model file: {display}")))
         })?,
     )?;
     methods.raw_set(
         "GetModel",
-        lua.create_function(|_, model: Table| model.raw_get::<Option<String>>(model_file_key()))?,
+        lua.create_function(|lua, (model, extra): (Table, Variadic<Value>)| {
+            match model.raw_get::<Option<String>>(model_file_key())? {
+                Some(path) => Ok(Value::String(lua.create_string(path.to_ascii_lowercase())?)),
+                // 0x009605D0 returns one stack value without pushing when the
+                // instance is null. Lua 5.1 returns the last original argument
+                // in that case (normally the model table itself).
+                None => Ok(extra.last().cloned().unwrap_or(Value::Table(model))),
+            }
+        })?,
+    )?;
+    methods.raw_set(
+        "ClearModel",
+        // Keep a null ModelFFX instance safe: its native assignment override
+        // (0x004E5ED0) appears to pass null to 0x00824060 without a guard.
+        lua.create_function(|lua, model: Table| assign_model_instance(lua, &model, None))?,
     )?;
     methods.raw_set(
         "SetCamera",
@@ -5400,6 +5443,9 @@ fn register_model_methods(
                     "SetSequence(sequence) exceeds valid range of 0 - 506",
                 ));
             }
+            if model.raw_get::<Option<String>>(model_file_key())?.is_none() {
+                return Ok(());
+            }
             let value = value as u32;
             if model.raw_get::<u32>(model_sequence_key())? != value {
                 model.raw_set(model_sequence_key(), value)?;
@@ -5417,6 +5463,10 @@ fn register_model_methods(
             let time = lua.coerce_number(time)?.ok_or_else(|| {
                 mlua::Error::runtime("Usage: Model:SetSequenceTime(sequence, time)")
             })?;
+            if model.raw_get::<Option<String>>(model_file_key())?.is_none() {
+                return Ok(());
+            }
+            model.raw_set(model_sequence_key(), sequence as u32)?;
             model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
             model.raw_set(model_sequence_time_key(), time as i32)?;
             mark_object_state_changed(lua, &model, DIRTY_MODEL)
@@ -9352,6 +9402,10 @@ pub(super) fn model_sequence_key() -> LightUserData {
 
 pub(super) fn model_file_key() -> LightUserData {
     hidden_key(&MODEL_FILE_TOKEN)
+}
+
+pub(super) fn model_instance_generation_key() -> LightUserData {
+    hidden_key(&MODEL_INSTANCE_GENERATION_TOKEN)
 }
 
 pub(super) fn model_unit_key() -> LightUserData {

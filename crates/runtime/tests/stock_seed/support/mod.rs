@@ -93,6 +93,12 @@ fn build_archive(
         builder = builder.add_file_data(bytes.to_vec(), asset_path);
     }
     if archive == "enUS/locale-enUS.MPQ" {
+        // This hidden widget checks deferred model lookup during bootstrap;
+        // rendering/decoding is outside the application-foundations fixture.
+        builder = builder.add_file_data(
+            b"deferred model fixture".to_vec(),
+            "Solarity\\RuntimeFixture.m2",
+        );
         builder = builder.add_file_data(realm_category_dbc(), "DBFilesClient\\Cfg_Categories.dbc");
         builder =
             builder.add_file_data(realm_configuration_dbc(), "DBFilesClient\\Cfg_Configs.dbc");
@@ -153,7 +159,7 @@ fn build_archive(
 </Layers><Frames>
   <Model name="$parentModel" hidden="true"/>
 </Frames><Scripts><OnLoad>
-  GlueBootstrapModel:SetModel("Solarity\\RuntimeFixture.txt")
+  GlueBootstrapModel:SetModel("Solarity\\RuntimeFixture.m2")
   self.loaded = true
 </OnLoad></Scripts></Frame></Ui>"#
                 .to_vec(),
@@ -161,7 +167,7 @@ fn build_archive(
         );
         builder = builder.add_file_data(
             br#"assert(GlueBootstrap.loaded)
-assert(GlueBootstrapModel:GetModel() == "SOLARITY\\RUNTIMEFIXTURE.TXT")
+assert(GlueBootstrapModel:GetModel() == "solarity\\runtimefixture.m2")
 GLUE_READY = true"#
                 .to_vec(),
             "Interface\\GlueXML\\After.lua",

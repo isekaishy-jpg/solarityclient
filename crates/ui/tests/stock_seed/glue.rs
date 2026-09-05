@@ -1750,15 +1750,19 @@ fn glue_manager_owns_executed_login_ui() -> Result<(), Box<dyn Error>> {
             bytes: br#"<Ui><Frame name="GlueBootstrap"><Frames>
   <Model name="$parentModel"/>
 </Frames><Scripts><OnLoad>
-  GlueBootstrapModel:SetModel("Solarity\\FixtureMarker.txt")
+  GlueBootstrapModel:SetModel("Solarity\\Bootstrap.m2")
   self.loaded = true
 </OnLoad></Scripts></Frame></Ui>"#,
         },
         FixtureFile {
             path: "Interface\\GlueXML\\After.lua",
             bytes: br#"assert(GlueBootstrap.loaded)
-assert(GlueBootstrapModel:GetModel() == "SOLARITY\\FIXTUREMARKER.TXT")
+assert(GlueBootstrapModel:GetModel() == "solarity\\bootstrap.m2")
 GLUE_READY = true"#,
+        },
+        FixtureFile {
+            path: "Solarity\\Bootstrap.m2",
+            bytes: b"model archive marker",
         },
     ])?;
     let catalog =
@@ -1829,7 +1833,7 @@ fn glue_model_file_validation_is_scoped_to_mounted_runtime() -> Result<(), Box<d
                     result?;
                     assert_eq!(
                         get_model.call::<String>(model.clone())?,
-                        path.replace('/', "\\").to_ascii_uppercase(),
+                        path.replace('/', "\\").to_ascii_lowercase(),
                     );
                 } else {
                     assert!(result.is_err(), "unmounted model unexpectedly selected");

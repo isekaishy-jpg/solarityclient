@@ -731,7 +731,7 @@ virtual slot `0xe8`; both Model and ModelFFX use `0x0095F990`. This reaches
 `0x0081F8F0` and the shared resource cache at `0x0081C390`. A matching cached
 resource returns before the archive-open call at `0x00424B50`.
 
-The script method now retains successful file validation within its mounted
+At this revision, the script method retained successful file validation within its mounted
 asset-store and method-table lifetime. First reads still validate the archive
 entry, failed reads do not enter the set, and decoded model resources remain
 owned by the renderer's asset pipeline. The repeated background calls now
@@ -741,8 +741,8 @@ publication and profiling overhead, so the native-call attribution is the
 more direct evidence. A regression checks repeated selections, path spelling,
 different model objects, missing files, and isolation across mounted runtimes.
 
-This trace also identifies separate stock behavior that the script bridge
-does not yet fully implement: shared-model extension conversion, the
+This trace also identified separate stock behavior that the script bridge
+did not yet fully implement: shared-model extension conversion, the
 `Spells\\ErrorCube.mdx` load attempted by `0x0081F8F0` after a failed resource
 request, and replacement of model instances through virtual slot `0xe4`.
 The validation reuse does not establish parity for those behaviors.
@@ -758,3 +758,65 @@ The maximum following-frame interval is 20.5 ms; its inner benchmark scope
 charges 2.50 million thread cycles and spends 20.37 ms in model/UI
 presentation. Randomized creation state and resource history still prevent
 treating full readiness times as a controlled before/after comparison.
+
+## Model lookup and mutable instance lifecycle
+
+Following the model loader beyond its cache lookup shows that shared-resource
+initialization (`0x0083D410`) queues the file read. `SetModel` now checks archive
+presence and reuses positive results within the mounted store; it no longer
+reads and discards even the first model file on the synchronous Lua path.
+Decode and GPU preparation remain in the existing asynchronous residency
+pipeline. Missing or unsupported model paths attempt `Spells\\ErrorCube.m2`,
+matching `0x0081F8F0`'s `.mdx` request after shared-cache extension conversion.
+The asset layer's existing `.mdl`/`.mdx` canonicalization is shared with the UI.
+
+Every accepted `SetModel` publishes an instance generation, even for the same
+path. The runtime constructs fresh mutable playback while reusing decoded and
+prepared GPU sources. Sequence state belongs to that instance and resets on
+replacement; widget camera and transform properties survive. `ClearModel`
+publishes an explicitly empty viewport, so the transition readiness guard
+cannot leave the previous scene indefinitely visible. Visibility and alpha
+updates retain that explicit-clear state correctly.
+
+`GetModel` returns the normalized lowercase loaded filename. The null-instance
+case retains the unusual build-12340 Lua result: `0x009605D0` returns one value
+without pushing, so the last original argument is returned (normally `self`).
+The object lookup at `0x004A81B0` leaves the original arguments intact; Lua 5.1's
+call-result handling copies the topmost value for this return count. Empty
+`SetModel` clears the old instance before reporting an invalid-model error.
+
+Tests exercise both Model and ModelFFX, aliases, same-path replacement,
+sequence reset, retained camera/scale, argument errors, ErrorCube lookup,
+clearing, visibility/alpha changes, and subsequent restoration. The real-data
+lifecycle diagnostic uses an isolated archive overlay with ordinary Lua calls
+and pointer actions. Captures show the complete Human scene, an empty model
+viewport with the surrounding UI preserved, and correct repeated restoration.
+Five clear/restore/repeat steps reach readiness in 2.25-3.05 ms; the repeated
+Human instances use one prepared GPU source. This short capture run establishes
+lifecycle behavior, not steady-state throughput.
+
+There are explicit remaining limits. The ModelFFX assignment override at
+`0x004E5ED0` appears to call `0x00824060` with a null instance when clearing;
+that callee dereferences the instance. Solarity deliberately handles that case
+safely instead of reproducing the apparent crash. ErrorCube lookup is tested
+at the asset/script boundary, but models without authored cameras still need
+the stock default-camera rendering path (`0x0095FC30` -> `0x004BEE60`).
+`SetSequenceTime` selects the requested sequence in the published state;
+applying its time offset to renderer playback remains unfinished. Shared-cache
+basename collision behavior is also not reproduced by full-path resource keys.
+These results do not establish complete Model/ModelFFX parity.
+
+Formatting, Clippy, all 556 workspace tests, and the original real-data
+interaction validator pass. The original 31-action replay also passes with
+6,000 following frames per action, no captures, and detailed UI timing
+disabled. Following throughput is 2,095-2,949 FPS; ordinary customization
+transition maxima are 2.5-3.6 ms. Creation entry reaches 16.0 ms and cold Blood
+Elf selection 22.8 ms. Long frames remain: creation's following maximum is
+35.2 ms, including 10.7 ms in platform events and 24.4 ms in application
+presentation within the inner measured scope (3.23 million thread cycles).
+Login startup has an 81.3 ms frame, with 80.0 ms in platform events; a later
+customization following frame reaches 23.3 ms, also mostly platform events.
+The phase placement identifies where elapsed time accumulated, not the
+underlying cause of those pauses. Fresh instance behavior changes playback
+and resource history, so these numbers are validation of the resulting
+behavior, not a controlled end-to-end speedup claim.

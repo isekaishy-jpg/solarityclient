@@ -11,7 +11,11 @@ const BUILD_12340_M2_VERSION: u32 = 264;
 /// the corresponding archive entry contains an M2. The cache accepts exactly
 /// those two legacy extensions and `.m2`; it does not infer an absent or
 /// unrelated extension.
-pub(crate) fn canonical_model_path(path: &AssetPath) -> Result<AssetPath, AssetError> {
+///
+/// # Errors
+///
+/// Returns an error when the path has no supported model extension.
+pub fn canonical_model_path(path: &AssetPath) -> Result<AssetPath, AssetError> {
     let value = path.as_str();
     let Some((stem, extension)) = value.rsplit_once('.') else {
         return Err(model_decode(

@@ -108,6 +108,7 @@ pub enum RuntimeGlueModelError {
 struct GlueModelKey {
     object_index: usize,
     path: AssetPath,
+    instance_generation: u32,
     camera: i32,
     sequence: u32,
     sequence_time_sequence: u32,
@@ -121,6 +122,7 @@ impl GlueModelKey {
         Self {
             object_index: model.object_index(),
             path: model.path().clone(),
+            instance_generation: model.instance_generation(),
             camera: model.camera(),
             sequence: model.sequence(),
             sequence_time_sequence: model.sequence_time_sequence(),
@@ -874,7 +876,13 @@ impl RuntimeGlueModelScene {
             // CharacterSelect briefly owns an empty directory before its
             // asynchronous enumeration arrives. The old scene remains a
             // complete generation until the new Model widget becomes visible.
+            let explicitly_cleared = glue.presentation().has_visible_cleared_model()
+                || self.active.as_ref().is_some_and(|active| {
+                    glue.presentation()
+                        .model_was_cleared(active.key.object_index)
+                });
             if self.active.is_some()
+                && !explicitly_cleared
                 && matches!(glue.current_screen().as_str(), "charselect" | "charcreate")
             {
                 return Ok(RuntimeGlueModelPoll::Pending);
@@ -1301,7 +1309,8 @@ impl RuntimeGlueModelScene {
             random,
         )?;
         frame.set_glue_opacity(environment.alpha)?;
-        tracing::info!(model = %model.path(), "activated resident Glue model generation");
+        tracing::info!(model = %model.path(), instance_generation = key.instance_generation,
+            "activated resident Glue model generation");
         self.active = Some(ActiveGlueModel {
             key,
             environment,

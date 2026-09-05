@@ -181,6 +181,7 @@ impl UiModelLightSets {
 pub struct UiModelPresentation {
     object_index: usize,
     path: AssetPath,
+    instance_generation: u32,
     camera: i32,
     sequence: u32,
     sequence_time_sequence: u32,
@@ -209,6 +210,12 @@ impl UiModelPresentation {
     #[must_use]
     pub const fn path(&self) -> &AssetPath {
         &self.path
+    }
+
+    /// Identifies mutable playback replacement independently of the shared M2.
+    #[must_use]
+    pub const fn instance_generation(&self) -> u32 {
+        self.instance_generation
     }
 
     /// Returns the signed model-camera slot selected through `SetCamera`.
@@ -409,6 +416,8 @@ pub struct UiPresentationPlan {
     packets: Vec<UiPresentationPacket>,
     members: Vec<UiTexturePresentation>,
     models: Vec<UiModelPresentation>,
+    /// Explicitly cleared model object indices and their effective visibility.
+    cleared_models: Vec<(usize, bool)>,
     member_indices_by_object: Vec<Vec<usize>>,
     model_index_by_object: Vec<Option<usize>>,
     disabled_texture_owners: Vec<bool>,
@@ -574,6 +583,13 @@ impl UiPresentationPlan {
             self.models[*model_index].alpha =
                 region.effective_alpha() as f32 * f32::from(region.effectively_shown());
         }
+        if let Some((_, visible)) = self
+            .cleared_models
+            .iter_mut()
+            .find(|(index, _)| *index == object_index)
+        {
+            *visible = region.effectively_shown() && region.effective_alpha() > 0.0;
+        }
     }
 
     pub(crate) fn object_opacity(&self, object_index: usize) -> Option<f32> {
@@ -625,6 +641,11 @@ impl UiPresentationPlan {
                 model.alpha =
                     region.effective_alpha() as f32 * f32::from(region.effectively_shown());
             }
+        }
+        for (object_index, visible) in &mut self.cleared_models {
+            *visible = geometry
+                .region(*object_index)
+                .is_some_and(|region| region.effectively_shown() && region.effective_alpha() > 0.0);
         }
         self.disabled_texture_owners = disabled_texture_owners;
     }
@@ -680,6 +701,7 @@ impl UiPresentationPlan {
     ) -> Self {
         let mut keyed = Vec::new();
         let mut models = Vec::new();
+        let mut cleared_models = Vec::new();
         let disabled_texture_owners = disabled_texture_owners(live);
         for (object_index, object) in live.objects().iter().enumerate() {
             if let (Some(backdrop), Some(region), Some(strata), Some(frame_level)) = (
@@ -714,6 +736,18 @@ impl UiPresentationPlan {
                 })
             {
                 models.push(model);
+            }
+            if object
+                .model
+                .as_ref()
+                .is_some_and(|model| model.file.is_none() && model.instance_generation != 0)
+            {
+                cleared_models.push((
+                    object_index,
+                    geometry.region(object_index).is_some_and(|region| {
+                        region.effectively_shown() && region.effective_alpha() > 0.0
+                    }),
+                ));
             }
             let Some(texture) = &object.texture else {
                 continue;
@@ -826,6 +860,7 @@ impl UiPresentationPlan {
             packets,
             members,
             models,
+            cleared_models,
             member_indices_by_object,
             model_index_by_object,
             disabled_texture_owners,
@@ -883,6 +918,20 @@ impl UiPresentationPlan {
         self.models.iter().filter(|model| model.alpha > 0.0)
     }
 
+    /// Reports an explicit clear of this widget, including a hidden old scene.
+    #[must_use]
+    pub fn model_was_cleared(&self, object_index: usize) -> bool {
+        self.cleared_models
+            .iter()
+            .any(|(index, _)| *index == object_index)
+    }
+
+    /// Distinguishes a deliberately empty visible viewport from initial loading.
+    #[must_use]
+    pub fn has_visible_cleared_model(&self) -> bool {
+        self.cleared_models.iter().any(|(_, visible)| *visible)
+    }
+
     /// Resolves one model widget without requiring its owning screen to be shown.
     pub(crate) fn configured_model(
         live: &UiRuntimeObjectPlan,
@@ -896,6 +945,7 @@ impl UiPresentationPlan {
         Some(UiModelPresentation {
             object_index,
             path: path.clone(),
+            instance_generation: model.instance_generation,
             camera: model.camera,
             sequence: model.sequence,
             sequence_time_sequence: model.sequence_time_sequence,

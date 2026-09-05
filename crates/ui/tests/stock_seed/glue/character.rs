@@ -159,11 +159,11 @@ fn glue_manager_bridges_character_selection_globals() -> Result<(), Box<dyn Erro
     for (frame_name, expected_path) in [
         (
             "CharacterSelect",
-            "INTERFACE\\GLUES\\MODELS\\UI_HUMAN\\UI_HUMAN.M2",
+            "interface\\glues\\models\\ui_human\\ui_human.m2",
         ),
         (
             "CharacterCreate",
-            "INTERFACE\\GLUES\\MODELS\\UI_DWARF\\UI_DWARF.M2",
+            "interface\\glues\\models\\ui_dwarf\\ui_dwarf.m2",
         ),
     ] {
         let frame = globals.get::<mlua::Table>(frame_name)?;

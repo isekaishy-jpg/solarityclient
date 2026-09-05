@@ -20,7 +20,7 @@ pub use animation::{
 };
 pub use collision::M2CollisionMesh;
 pub use m2_model::DecodedM2Model;
-pub(crate) use m2_shared::canonical_model_path;
+pub use m2_shared::canonical_model_path;
 pub use model_blob::{
     M2BlendMode, M2HardcodedTextureSource, M2Material, M2ModelBounds, M2Texture, M2TextureKind,
     M2Vertex,
