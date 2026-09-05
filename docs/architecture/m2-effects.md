@@ -47,8 +47,10 @@ vectors, and animated roll. It has no trailing later-version ID or flag word.
 
 The separate signed camera lookup preserves `-1` as an absent semantic slot and
 validates every nonnegative index. Missing roles remain missing; camera zero is
-not a compatibility substitute. Runtime presentation will sample shared camera
-tracks into placement-local state rather than mutate the decoded M2.
+not a compatibility substitute. Runtime presentation samples shared camera
+tracks into placement-local state. Position and target use complete 36-byte
+value/incoming/outgoing keys, and roll uses 12-byte keys, including for step
+and linear interpolation. Roll interpolation preserves authored full turns.
 
 ## Model events
 

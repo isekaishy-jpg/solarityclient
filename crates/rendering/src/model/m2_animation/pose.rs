@@ -3,6 +3,7 @@
 use glam::{Mat3, Mat4, Vec3};
 use solarity_asset::{M2AnimationSet, M2Attachment, M2ParticleEmitter, M2Track};
 
+use super::quaternion::quaternion_matrix;
 use super::sample::sample_discrete;
 use super::sample::{sample_quaternion, sample_vec3};
 use super::{M2AnimationClock, M2BonePoseError};
@@ -244,7 +245,7 @@ impl M2BonePose {
             );
             self.local[index] = Mat4::from_translation(bone.pivot())
                 * Mat4::from_translation(translation)
-                * Mat4::from_quat(rotation)
+                * quaternion_matrix(rotation)
                 * Mat4::from_scale(scale)
                 * Mat4::from_translation(-bone.pivot());
         }

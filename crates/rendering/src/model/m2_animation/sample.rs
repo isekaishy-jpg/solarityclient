@@ -1,56 +1,75 @@
-//! Stock step, linear, Bezier, and Hermite track evaluation.
+//! Property-specific stock animation sampling over typed timestamp keys.
 
 use glam::{Quat, Vec3};
-use solarity_asset::{M2AnimationSet, M2Interpolation, M2Track, M2TrackChannel};
+use solarity_asset::{M2AnimationSet, M2Interpolation, M2SplineKey, M2Track, M2TrackChannel};
 
 use super::M2AnimationClock;
+use super::quaternion::{blend_quaternion, interpolate_quaternion};
 
-/// Blends continuous vector tracks before bone or material composition.
+/// `0x0082B0A0` samples ordinary vectors linearly for every nonzero selector.
 pub(crate) fn sample_vec3(
     animations: &M2AnimationSet,
     track: &M2Track<Vec3>,
     clock: M2AnimationClock,
     default: Vec3,
 ) -> Vec3 {
-    let primary = sample_vec3_primary(animations, track, clock, default);
-    let Some((secondary, weight)) = clock.secondary_for(track) else {
-        return primary;
-    };
-    let previous = sample_vec3_primary(animations, track, secondary, default);
-    primary + (previous - primary) * weight
+    sample_continuous(animations, track, clock, default)
 }
 
-/// 0x0082AF40/0x0082B340 use the same blend for fixed-point and float scalars.
+/// `0x0082AF40`/`0x0082B340` sample ordinary scalars before sequence blending.
 pub(crate) fn sample_scalar(
     animations: &M2AnimationSet,
     track: &M2Track<f32>,
     clock: M2AnimationClock,
     default: f32,
 ) -> f32 {
-    let primary = sample_scalar_primary(animations, track, clock, default);
-    let Some((secondary, weight)) = clock.secondary_for(track) else {
-        return primary;
-    };
-    let previous = sample_scalar_primary(animations, track, secondary, default);
-    primary + (previous - primary) * weight
+    sample_continuous(animations, track, clock, default)
 }
 
-/// Camera angles retain their per-sequence sampler before scalar pose blending.
-pub(crate) fn sample_angle_radians(
+/// Applies the previous-sequence blend after each ordinary track sample.
+fn sample_continuous<T>(
     animations: &M2AnimationSet,
-    track: &M2Track<f32>,
+    track: &M2Track<T>,
     clock: M2AnimationClock,
-    default: f32,
-) -> f32 {
-    let primary = sample_angle_radians_primary(animations, track, clock, default);
+    default: T,
+) -> T
+where
+    T: Copy
+        + std::ops::Add<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Mul<f32, Output = T>,
+{
+    let primary = sample_linear_primary(animations, track, clock, default);
     let Some((secondary, weight)) = clock.secondary_for(track) else {
         return primary;
     };
-    let previous = sample_angle_radians_primary(animations, track, secondary, default);
+    let previous = sample_linear_primary(animations, track, secondary, default);
     primary + (previous - primary) * weight
 }
 
-/// 0x00828680 uses spherical interpolation between complete sequence samples.
+/// Camera vectors and roll use complete spline keys for every selector.
+/// Roll remains an ordinary scalar in `0x0082B8A0`, with no angle wrapping.
+pub(super) fn sample_spline<T>(
+    animations: &M2AnimationSet,
+    track: &M2Track<M2SplineKey<T>>,
+    clock: M2AnimationClock,
+    default: T,
+) -> T
+where
+    T: Copy
+        + std::ops::Add<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Mul<f32, Output = T>,
+{
+    let primary = sample_spline_primary(animations, track, clock, default);
+    let Some((secondary, weight)) = clock.secondary_for(track) else {
+        return primary;
+    };
+    let previous = sample_spline_primary(animations, track, secondary, default);
+    primary + (previous - primary) * weight
+}
+
+/// `0x00828680`/`0x0082AD50` blend complete compressed/float rotation samples.
 pub(super) fn sample_quaternion(
     animations: &M2AnimationSet,
     track: &M2Track<Quat>,
@@ -62,30 +81,6 @@ pub(super) fn sample_quaternion(
     };
     let previous = sample_quaternion_primary(animations, track, secondary);
     blend_quaternion(primary, previous, weight)
-}
-
-/// 0x00982460 takes the shortest arc and retains the first quaternion when the
-/// sine is below the authored 2^-21 threshold. Extended intermediates avoid
-/// prematurely rounding the dot product of compressed input quaternions.
-fn blend_quaternion(primary: Quat, previous: Quat, weight: f32) -> Quat {
-    let primary = primary.to_array().map(f64::from);
-    let previous = previous.to_array().map(f64::from);
-    let dot = primary
-        .iter()
-        .zip(previous)
-        .map(|(a, b)| a * b)
-        .sum::<f64>();
-    let sine = (1.0 - dot * dot).abs().sqrt();
-    if sine < 1.0 / 2_097_152.0 {
-        return Quat::from_array(primary.map(|value| value as f32));
-    }
-    let angle = sine.atan2(dot.abs());
-    let first_weight = ((1.0 - f64::from(weight)) * angle).sin() / sine;
-    let previous_weight =
-        (f64::from(weight) * angle).sin() / sine * if dot < 0.0 { -1.0 } else { 1.0 };
-    Quat::from_array(std::array::from_fn(|index| {
-        (primary[index] * first_weight + previous[index] * previous_weight) as f32
-    }))
 }
 
 /// One selected channel and its resolved local/global clock time.
@@ -150,21 +145,48 @@ fn interval<T>(
     Some((lower, upper, fraction))
 }
 
-/// Returns the value-array stride expressed in typed values.
-const fn values_per_key(interpolation: M2Interpolation) -> usize {
-    match interpolation {
-        M2Interpolation::Step | M2Interpolation::Linear => 1,
-        M2Interpolation::Bezier | M2Interpolation::Hermite => 3,
+/// Ordinary values have one element per timestamp and no cubic controls.
+fn sample_linear_primary<T>(
+    animations: &M2AnimationSet,
+    track: &M2Track<T>,
+    clock: M2AnimationClock,
+    default: T,
+) -> T
+where
+    T: Copy
+        + std::ops::Add<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Mul<f32, Output = T>,
+{
+    let Some(location) = locate(animations, track, clock) else {
+        return default;
+    };
+    let Some((lower, upper, amount)) =
+        interval(location.channel, track.interpolation(), location.time_ms)
+    else {
+        return default;
+    };
+    let first = location.channel.values()[lower];
+    if track.interpolation() == M2Interpolation::Step {
+        return first;
     }
+    let second = location.channel.values()[upper];
+    first + (second - first) * amount
 }
 
-/// Evaluates one vector-valued bone track.
-fn sample_vec3_primary(
+/// Interpolates complete typed camera keys in the native value/control order.
+fn sample_spline_primary<T>(
     animations: &M2AnimationSet,
-    track: &M2Track<Vec3>,
+    track: &M2Track<M2SplineKey<T>>,
     clock: M2AnimationClock,
-    default: Vec3,
-) -> Vec3 {
+    default: T,
+) -> T
+where
+    T: Copy
+        + std::ops::Add<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Mul<f32, Output = T>,
+{
     let Some(location) = locate(animations, track, clock) else {
         return default;
     };
@@ -173,124 +195,23 @@ fn sample_vec3_primary(
     else {
         return default;
     };
-    let stride = values_per_key(track.interpolation());
-    let Some(&first) = location.channel.values().get(lower * stride) else {
-        return default;
-    };
-    let Some(&second) = location.channel.values().get(upper * stride) else {
-        return default;
-    };
-    interpolate_vec3(
-        location.channel,
-        track.interpolation(),
-        lower,
-        upper,
-        amount,
-        first,
-        second,
-    )
-}
-
-/// Evaluates one scalar material track with the shared cubic basis.
-fn sample_scalar_primary(
-    animations: &M2AnimationSet,
-    track: &M2Track<f32>,
-    clock: M2AnimationClock,
-    default: f32,
-) -> f32 {
-    let Some(location) = locate(animations, track, clock) else {
-        return default;
-    };
-    let Some((lower, upper, amount)) =
-        interval(location.channel, track.interpolation(), location.time_ms)
-    else {
-        return default;
-    };
-    let stride = values_per_key(track.interpolation());
-    let Some(&first) = location.channel.values().get(lower * stride) else {
-        return default;
-    };
-    let Some(&second) = location.channel.values().get(upper * stride) else {
-        return default;
-    };
+    let first = &location.channel.values()[lower];
+    let second = &location.channel.values()[upper];
     match track.interpolation() {
-        M2Interpolation::Step => first,
-        M2Interpolation::Linear => first + (second - first) * amount,
-        M2Interpolation::Bezier | M2Interpolation::Hermite => {
-            let values = location.channel.values();
-            cubic(
-                track.interpolation(),
-                first,
-                values[lower * 3 + 2],
-                values[upper * 3 + 1],
-                second,
-                amount,
-            )
-        }
+        M2Interpolation::Step => *first.value(),
+        M2Interpolation::Linear => *first.value() + (*second.value() - *first.value()) * amount,
+        M2Interpolation::Bezier | M2Interpolation::Hermite => cubic(
+            track.interpolation(),
+            *first.value(),
+            *first.outgoing(),
+            *second.incoming(),
+            *second.value(),
+            amount,
+        ),
     }
 }
 
-/// Evaluates the wrapped linear angle used by build-12340 M2 cameras.
-///
-/// Camera roll is not an ordinary scalar interpolation. The Northrend login
-/// camera authors equivalent endpoints at one full turn and zero; stock takes
-/// the signed remainder of their delta before interpolation, keeping that
-/// camera static instead of revolving the entire Glue scene once per cycle.
-fn sample_angle_radians_primary(
-    animations: &M2AnimationSet,
-    track: &M2Track<f32>,
-    clock: M2AnimationClock,
-    default: f32,
-) -> f32 {
-    if track.interpolation() != M2Interpolation::Linear {
-        return sample_scalar_primary(animations, track, clock, default);
-    }
-    let Some(location) = locate(animations, track, clock) else {
-        return default;
-    };
-    let Some((lower, upper, amount)) =
-        interval(location.channel, track.interpolation(), location.time_ms)
-    else {
-        return default;
-    };
-    let Some(&first) = location.channel.values().get(lower) else {
-        return default;
-    };
-    let Some(&second) = location.channel.values().get(upper) else {
-        return default;
-    };
-    if !first.is_finite() || !second.is_finite() {
-        return default;
-    }
-    let full_turn = core::f32::consts::TAU;
-    let authored_delta = second - first;
-    let wrapped_delta = authored_delta - full_turn * (authored_delta / full_turn).round_ties_even();
-    first + wrapped_delta * amount
-}
-
-/// Applies the selected vector interpolation using WotLK's value/tangent order.
-fn interpolate_vec3(
-    channel: &M2TrackChannel<Vec3>,
-    interpolation: M2Interpolation,
-    lower: usize,
-    upper: usize,
-    amount: f32,
-    first: Vec3,
-    second: Vec3,
-) -> Vec3 {
-    match interpolation {
-        M2Interpolation::Step => first,
-        M2Interpolation::Linear => first.lerp(second, amount),
-        M2Interpolation::Bezier | M2Interpolation::Hermite => {
-            let values = channel.values();
-            let outgoing = values[lower * 3 + 2];
-            let incoming = values[upper * 3 + 1];
-            cubic(interpolation, first, outgoing, incoming, second, amount)
-        }
-    }
-}
-
-/// Evaluates one compressed-quaternion bone track.
+/// Step retains the decoded quaternion; every nonzero selector uses 0x00982630.
 fn sample_quaternion_primary(
     animations: &M2AnimationSet,
     track: &M2Track<Quat>,
@@ -304,44 +225,14 @@ fn sample_quaternion_primary(
     else {
         return Quat::IDENTITY;
     };
-    let stride = values_per_key(track.interpolation());
-    let Some(&first) = location.channel.values().get(lower * stride) else {
-        return Quat::IDENTITY;
-    };
-    if lower == upper || track.interpolation() == M2Interpolation::Step {
+    let first = location.channel.values()[lower];
+    if track.interpolation() == M2Interpolation::Step {
         return first;
     }
-    let Some(mut second) = location.channel.values().get(upper * stride).copied() else {
-        return Quat::IDENTITY;
-    };
-    if first.dot(second) < 0.0 {
-        second = -second;
-    }
-    let sampled = match track.interpolation() {
-        M2Interpolation::Step => first,
-        M2Interpolation::Linear => first * (1.0 - amount) + second * amount,
-        M2Interpolation::Bezier | M2Interpolation::Hermite => {
-            let values = location.channel.values();
-            let outgoing = values[lower * 3 + 2];
-            let incoming = values[upper * 3 + 1];
-            cubic(
-                track.interpolation(),
-                first,
-                outgoing,
-                incoming,
-                second,
-                amount,
-            )
-        }
-    };
-    sampled.normalize()
+    interpolate_quaternion(first, location.channel.values()[upper], amount)
 }
 
-/// Evaluates a selector or enable track without inventing fractional states.
-///
-/// Build 12340 stores ribbon texture slots and visibility in ordinary M2
-/// tracks, but consumes their values as discrete integers. The selected key is
-/// therefore held even when malformed content labels the track as a spline.
+/// Selectors and enable tracks hold one ordinary integer value per timestamp.
 pub(crate) fn sample_discrete<T>(
     animations: &M2AnimationSet,
     track: &M2Track<T>,
@@ -354,21 +245,14 @@ where
     let Some(location) = locate(animations, track, clock) else {
         return default;
     };
-    let Some((lower, _upper, _amount)) =
-        interval(location.channel, M2Interpolation::Step, location.time_ms)
+    let Some((lower, _, _)) = interval(location.channel, M2Interpolation::Step, location.time_ms)
     else {
         return default;
     };
-    let stride = values_per_key(track.interpolation());
-    location
-        .channel
-        .values()
-        .get(lower * stride)
-        .copied()
-        .unwrap_or(default)
+    location.channel.values()[lower]
 }
 
-/// Shares the recovered cubic basis between vectors and quaternions.
+/// `0x0082B460`/`0x0082B8A0` use outgoing-lower and incoming-upper controls.
 fn cubic<T>(
     interpolation: M2Interpolation,
     first: T,

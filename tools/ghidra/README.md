@@ -68,3 +68,23 @@ program when changing archive discovery or precedence behavior.
 
 The first command uses `-overwrite`. Point it only at a dedicated analysis
 project whose existing `Wow.exe` program may be replaced.
+
+## Isolated M2 animation sampler oracle
+
+`animation_sampler_oracle.py` loads the fingerprinted executable into
+[Unicorn](https://www.unicorn-engine.org/docs/tutorial.html) and executes only
+the original M2 interpolation and quaternion/matrix routines. It never runs
+the client entry point. The harness supplies interval indices and fractions;
+it validates key addressing and math, not timestamp search or scene timing.
+
+For an isolated Python environment with Unicorn 2.1.4 installed, run:
+
+```text
+python tools/ghidra/animation_sampler_oracle.py <path-to-Wow.exe> --output target/stock-animation-oracle.json
+```
+
+The script rejects another executable fingerprint. Its output records the
+original numeric results behind `model/track_sampling.rs` regression cases,
+including non-unit quaternion matrices and all four interpolation selectors.
+Unicorn is a research-tool dependency; normal Cargo tests require neither it
+nor a stock executable.

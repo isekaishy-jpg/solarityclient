@@ -6,6 +6,7 @@ mod event;
 mod light;
 mod material;
 mod pose;
+mod quaternion;
 pub(crate) mod sample;
 mod sequence_blend;
 mod sequence_timer;

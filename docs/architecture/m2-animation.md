@@ -118,21 +118,21 @@ near-collinear threshold is the pinned float at `0x00AA2E58`, exactly 2^-21;
 below that sine magnitude it retains the primary quaternion.
 
 This integration applies to the native Model timer path. World playback and
-its equipment synchronization still need secondary timer ownership. Existing
-per-sequence key decoding/interpolation remains a separate compatibility
-boundary; this change does not establish complete parity for that boundary.
+its equipment synchronization still need secondary timer ownership.
 
-## Confirmed key-storage gaps
+## Property-typed key storage and sampling
 
-The installed test revision `bfa15ad` still derives a key's stored value count
-from its interpolation selector. Native storage instead follows the property's
-type. These findings identify pending corrections, not implemented behavior.
+Key width follows the property's type independently of its interpolation
+selector. The decoder now retains one typed key per timestamp. Camera tracks
+use `M2SplineKey<Vec3>` or `M2SplineKey<f32>`; ordinary tracks retain their
+single scalar, vector, or quaternion. Nested-channel decoding lives in the
+asset animation `track` module.
 
 | Property | Bytes per timestamp | Pinned validator / sampler |
 | --- | ---: | --- |
 | Ordinary vector | 12 | `0x008371C0` / `0x0082B0A0` |
 | Bone compressed quaternion | 8 | `0x00836F80` / `0x00828680` |
-| Texture-transform float quaternion | 16 | `0x00837010`, called by `0x00838B10` |
+| Texture-transform float quaternion | 16 | `0x00837010` / `0x0082AD50` |
 | Camera position or target spline | 36 | `0x00837130` / `0x0082B460` |
 | Camera roll spline | 12 | `0x008371C0` / `0x0082B8A0` |
 | Fixed-point material scalar | 2 | `0x00836C00` / `0x0082AF40` |
@@ -149,29 +149,51 @@ Direct archive extraction confirms this in
 (SHA-256 `875f665c96a6c97004aab94c09e194aa1b1c134352788c122ddfb2abb6331d65`).
 Its linear roll track has two timestamps at byte `0x1481B0`: 0 and 66,667 ms.
 The two triplets starting at `0x1481C0` are both
-`(6.2831854820251465, 0, 0)`. The current decoder mistakenly selects the first
-key's incoming tangent as the second key. Its subsequent angle-wrapping
-workaround masks that decoding error; `0x0082B8A0` uses ordinary scalar linear
+`(6.2831854820251465, 0, 0)`. The former decoder selected the first
+key's incoming tangent as the second key. The angle-wrapping workaround that
+masked that error has been removed: `0x0082B8A0` uses ordinary scalar linear
 interpolation and performs no angle wrapping. The linear position track has
 93 timestamps and 36-byte keys at `0x147450`; the third position value is
-`(0, 0, -0.0025912390556186438)` at 11,600 ms. Incorrect stride also changes
+`(0, 0, -0.0025912390556186438)` at 11,600 ms. The corrected stride restores
 these authored camera movements.
 
 The Night Elf backdrop has the same triplet layout with step interpolation:
 its camera position, target, and roll each have one all-zero key. Its M2 hash
 is `77445315fb1d47eed3f20b962a5b6e1e00ad28325b1fdffc12d7d7eddc29b5f9`.
-These original files have no rotation keys in their texture transforms, so
-they do not validate the float-quaternion sampler's behavior.
+These original files have no rotation keys in their texture transforms.
+The texture matrix builder at `0x0082D6F0` separately proves the float path:
+it calls `0x0082AD50` on the rotation track at record offset `+0x14` before
+`0x004C33C0` composes its matrix.
 
 `0x00828680` expands each compressed quaternion component as unsigned 16-bit
 times the float at `0x00A45560` (2/65535), minus one. Step sampling retains
 that result directly. Non-step sampling calls `0x00982630`, which linearly
 interpolates components without a hemisphere flip, then applies the polynomial
 normalization at `0x00982570`. Matrix construction at `0x004C1C40` uses the
-quaternion components directly. The current signed expansion, eager exact
-normalization, and normalized-key assumptions need correction together.
-Float texture-transform quaternion sampling still needs its own call-path
-verification before changing its implementation.
+quaternion components directly. Compressed expansion, float-quaternion
+decoding, key interpolation, and matrix composition now follow those rules
+together. Nonzero selectors normalize even when the selected endpoints are
+the same key. Neither decoding nor step sampling normalizes the stored value.
+
+The normalizer uses exact float constants at `0x00AA2E5C..6C`, with bits
+`3F82BE62`, `3F0852F8`, `3F758559`, `3F26F151`, and `3F6A4B55`. It starts with
+`base - (length_squared - center) * slope`, applies another correction when
+squared length is at most the final constant, and a third when it is at most
+the preceding constant. Matrix composition accepts the resulting non-unit
+components. Wider intermediates retain the native x87 rounding boundary at
+stored floats; this is not a general bit-identical floating-point claim.
+
+Ordinary particle emission-rate/lifespan tracks are linear for every nonzero
+selector. Their preallocation bound therefore uses the largest stored value;
+the previous synthetic cubic-overshoot calculation has been removed.
+
+`tools/ghidra/animation_sampler_oracle.py` executes the original isolated
+sampler, quaternion, and matrix instructions. It supplies only interval
+indices/fractions and does not test timestamp lookup. Its numerical results
+back regression cases for all four selectors, complete camera keys, an
+authored full roll, ordinary vector stride, compressed bone rotations,
+float texture rotations, and previous-sequence blending. Step and non-step
+camera array-bound tests cover truncated triplet storage too.
 
 ## Key-bone lookup
 

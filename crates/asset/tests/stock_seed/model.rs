@@ -1249,7 +1249,11 @@ fn m2_cameras_decode_wotlk_record_tracks_and_lookup() -> Result<(), Box<dyn Erro
     assert_eq!(camera.field_of_view_radians(), 1.0);
     assert_eq!((camera.near_clip(), camera.far_clip()), (0.25, 500.0));
     assert_eq!(
-        camera.position().channels()[0].values(),
+        camera.position().channels()[0]
+            .values()
+            .iter()
+            .map(|key| *key.value())
+            .collect::<Vec<_>>(),
         &[
             glam::Vec3::new(0.0, 1.0, 2.0),
             glam::Vec3::new(3.0, 4.0, 5.0)
@@ -1257,7 +1261,11 @@ fn m2_cameras_decode_wotlk_record_tracks_and_lookup() -> Result<(), Box<dyn Erro
     );
     assert_eq!(camera.position_base(), glam::Vec3::new(6.0, 7.0, 8.0));
     assert_eq!(
-        camera.target_position().channels()[0].values(),
+        camera.target_position().channels()[0]
+            .values()
+            .iter()
+            .map(|key| *key.value())
+            .collect::<Vec<_>>(),
         &[
             glam::Vec3::new(9.0, 10.0, 11.0),
             glam::Vec3::new(12.0, 13.0, 14.0)
@@ -1267,8 +1275,66 @@ fn m2_cameras_decode_wotlk_record_tracks_and_lookup() -> Result<(), Box<dyn Erro
         camera.target_position_base(),
         glam::Vec3::new(15.0, 16.0, 17.0)
     );
-    assert_eq!(camera.roll_radians().channels()[0].values(), &[0.0, 0.5]);
+    assert_eq!(
+        camera.roll_radians().channels()[0]
+            .values()
+            .iter()
+            .map(|key| *key.value())
+            .collect::<Vec<_>>(),
+        &[0.0, 0.5]
+    );
+    assert_eq!(
+        *camera.position().channels()[0].values()[0].incoming(),
+        glam::Vec3::splat(21.0)
+    );
+    assert_eq!(
+        *camera.position().channels()[0].values()[1].outgoing(),
+        glam::Vec3::splat(24.0)
+    );
+    assert_eq!(
+        *camera.roll_radians().channels()[0].values()[1].incoming(),
+        33.0
+    );
     assert_eq!(animations.camera_lookup(), &[None, Some(0)]);
+    Ok(())
+}
+
+/// Native validators bound the complete camera triplet even for step/linear.
+#[test]
+fn m2_camera_key_bounds_include_unused_controls() -> Result<(), Box<dyn Error>> {
+    for selector in [0_u16, 1] {
+        for (relative, ordinary_size, field) in [(16, 12, "position"), (80, 4, "roll")] {
+            let mut model = animated_camera_m2_bytes()?;
+            let camera = m2_array_offset(&model, 0x110)?;
+            let track = camera + relative;
+            model[track..track + 2].copy_from_slice(&selector.to_le_bytes());
+            let values = m2_array_offset(&model, track + 12)?;
+            let payload_offset = u32::try_from(model.len())?;
+            // Two ordinary values fit; two complete spline keys do not.
+            model.resize(model.len() + ordinary_size * 2, 0);
+            model[values + 4..values + 8].copy_from_slice(&payload_offset.to_le_bytes());
+            let skin = skin_bytes(32, &[0, 1, 2])?;
+            let fixture = Fixture::new(&[
+                FixtureFile {
+                    archive: "common.MPQ",
+                    path: "Creature\\Solarity\\BadCamera.m2",
+                    bytes: &model,
+                },
+                FixtureFile {
+                    archive: "common.MPQ",
+                    path: "Creature\\Solarity\\BadCamera00.skin",
+                    bytes: &skin,
+                },
+            ])?;
+            let catalog =
+                ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+            let mut store = AssetStore::mount(catalog)?;
+            let path = AssetPath::new("Creature\\Solarity\\BadCamera.m2")?;
+            assert!(matches!(DecodedM2Model::load(&mut store, &path),
+                Err(AssetError::ModelDecode { path: failed, message })
+                    if failed == path && message == format!("camera 0 {field} array exceeds its asset")));
+        }
+    }
     Ok(())
 }
 
@@ -2053,8 +2119,8 @@ fn animated_material_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
         &mut bytes,
         transform_offset + 20,
         &[0, 1_000],
-        &i16_values(&[-32_768, -32_768, -32_768, -1, -32_768, -32_768, -32_768, -1]),
-        8,
+        &f32_values(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]),
+        16,
     )?;
     append_linear_track(
         &mut bytes,
@@ -2337,24 +2403,30 @@ fn animated_camera_m2_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
         &mut bytes,
         camera_offset + 16,
         &[0, 1_000],
-        &f32_values(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]),
-        12,
+        &f32_values(&[
+            0.0, 1.0, 2.0, 21.0, 21.0, 21.0, 22.0, 22.0, 22.0, 3.0, 4.0, 5.0, 23.0, 23.0, 23.0,
+            24.0, 24.0, 24.0,
+        ]),
+        36,
     )?;
     bytes[camera_offset + 36..camera_offset + 48].copy_from_slice(&f32_values(&[6.0, 7.0, 8.0]));
     append_linear_track(
         &mut bytes,
         camera_offset + 48,
         &[0, 1_000],
-        &f32_values(&[9.0, 10.0, 11.0, 12.0, 13.0, 14.0]),
-        12,
+        &f32_values(&[
+            9.0, 10.0, 11.0, 25.0, 25.0, 25.0, 26.0, 26.0, 26.0, 12.0, 13.0, 14.0, 27.0, 27.0,
+            27.0, 28.0, 28.0, 28.0,
+        ]),
+        36,
     )?;
     bytes[camera_offset + 68..camera_offset + 80].copy_from_slice(&f32_values(&[15.0, 16.0, 17.0]));
     append_linear_track(
         &mut bytes,
         camera_offset + 80,
         &[0, 1_000],
-        &f32_values(&[0.0, 0.5]),
-        4,
+        &f32_values(&[0.0, 31.0, 32.0, 0.5, 33.0, 34.0]),
+        12,
     )?;
     let lookup_offset = bytes.len();
     bytes.extend_from_slice(&(-1_i16).to_le_bytes());

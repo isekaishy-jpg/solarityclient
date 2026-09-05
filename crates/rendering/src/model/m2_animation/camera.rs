@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{WorldCamera, WorldCameraError, WorldCameraFrame};
 
-use super::sample::{sample_angle_radians, sample_vec3};
+use super::sample::sample_spline;
 use super::{M2AnimationClock, M2BonePoseError};
 
 /// View-model scale inherited by native-camera M2 particles and ribbons.
@@ -87,9 +87,9 @@ pub fn sample_m2_camera_frame(
             available: animations.cameras().len(),
         })?;
     let position =
-        camera.position_base() + sample_vec3(animations, camera.position(), clock, Vec3::ZERO);
+        camera.position_base() + sample_spline(animations, camera.position(), clock, Vec3::ZERO);
     let target = camera.target_position_base()
-        + sample_vec3(animations, camera.target_position(), clock, Vec3::ZERO);
+        + sample_spline(animations, camera.target_position(), clock, Vec3::ZERO);
     let position = model_transform.transform_point3(position);
     let target = model_transform.transform_point3(target);
     let forward = (target - position).normalize_or_zero();
@@ -98,7 +98,7 @@ pub fn sample_m2_camera_frame(
         up = Vec3::Y - forward * Vec3::Y.dot(forward);
     }
     up = up.normalize_or_zero();
-    let roll = sample_angle_radians(animations, camera.roll_radians(), clock, 0.0);
+    let roll = sample_spline(animations, camera.roll_radians(), clock, 0.0);
     if roll.is_finite() && roll.abs() > 1.0e-6 && forward.length_squared() > 1.0e-8 {
         up = Quat::from_axis_angle(forward, roll) * up;
     }

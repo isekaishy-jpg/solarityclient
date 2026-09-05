@@ -8,6 +8,8 @@ mod particle_frame;
 mod sequence_blend;
 #[path = "model/sequence_timer.rs"]
 mod sequence_timer;
+#[path = "model/track_sampling.rs"]
+mod track_sampling;
 
 use std::error::Error;
 use std::io::Cursor;
@@ -84,8 +86,8 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
     assert_eq!(frame.camera().position(), Vec3::new(11.0, 0.0, 2.0));
     assert_eq!(frame.camera().target(), Vec3::new(-10.0, 0.0, 2.0));
     assert_eq!(frame.forward(), Vec3::NEG_X);
-    // The authored roll keys are 2*pi and zero. Stock preserves their
-    // equivalent orientation instead of linearly rotating through pi.
+    // Both complete stock roll keys author 2*pi; their control words are zero.
+    // Linear sampling retains that orientation without wrapping the angle.
     assert!((frame.up() - Vec3::Z).abs().max_element() < 0.000_01);
     let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
     assert!(
@@ -297,7 +299,13 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
     let lights = sample_m2_directional_lights(model.animations(), &pose, clock, transform)?;
 
     assert_eq!(lights.len(), 1);
-    assert!((lights[0].direction() - Vec3::NEG_Y).abs().max_element() < 0.000_01);
+    // Executed 0x00828680/0x004C1C40 produce a slightly non-unit quarter-turn.
+    let native_direction = Vec3::new(0.0, -1.0002936, 0.000_293_667_5).normalize();
+    assert!(
+        lights[0]
+            .direction()
+            .abs_diff_eq(native_direction, 0.000001)
+    );
     assert!((lights[0].ambient() - Vec3::splat(0.3)).abs().max_element() < 0.000_01);
     assert!(
         (lights[0].diffuse() - Vec3::splat(1.05))
@@ -309,7 +317,12 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
     let initial_pose = M2BonePose::compose(model.animations(), initial_clock)?;
     let initial =
         sample_m2_directional_lights(model.animations(), &initial_pose, initial_clock, transform)?;
-    assert!((initial[0].direction() - Vec3::NEG_Z).abs().max_element() < 0.000_01);
+    let native_initial = Vec3::new(-0.000_030_494_96, -0.000030495892, -1.0);
+    assert!(
+        initial[0]
+            .direction()
+            .abs_diff_eq(native_initial.normalize(), 0.000001)
+    );
     for scale in [0.0, 0.000_1, 0.000_4, 0.001, 3.0] {
         let scaled = sample_m2_directional_lights(
             model.animations(),
@@ -317,7 +330,11 @@ fn m2_directional_lights_sample_animated_scene_state() -> Result<(), Box<dyn Err
             initial_clock,
             transform * Mat4::from_scale(Vec3::splat(scale)),
         )?;
-        let expected = Vec3::NEG_Z * if scale < 0.001 { scale } else { 1.0 };
+        let expected = if scale < 0.001 {
+            native_initial * scale
+        } else {
+            native_initial.normalize()
+        };
         assert!((scaled[0].direction() - expected).abs().max_element() < 0.000_001);
     }
     Ok(())
@@ -1833,20 +1850,18 @@ fn m2_particle_simulation_accepts_unbound_emitter_flag() -> Result<(), Box<dyn E
     Ok(())
 }
 
-/// Prewarming includes spline overshoot instead of only stored key values.
+/// Ordinary particle float tracks stay linear under a cubic selector (0x0082B340).
 #[test]
-fn m2_particle_prewarm_bounds_hermite_emission_rate() -> Result<(), Box<dyn Error>> {
+fn m2_particle_prewarm_bounds_ordinary_emission_rate_with_cubic_selector()
+-> Result<(), Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let particle_offset = m2_array_offset(&bytes, 0x128)?;
     append_render_track(
         &mut bytes,
         particle_offset + 0x0b0,
         &[0, 1_000],
-        &render_f32_values(&[
-            10.0, 0.0, 0.0, // First value, incoming tangent, outgoing tangent.
-            10.0, -100.0, 0.0, // Second value, incoming tangent, outgoing tangent.
-        ]),
-        12,
+        &render_f32_values(&[10.0, 30.0]),
+        4,
     )?;
     bytes[particle_offset + 0x0b0..particle_offset + 0x0b2].copy_from_slice(&3_u16.to_le_bytes());
     let skin = render_skin_bytes()?;
@@ -1877,14 +1892,14 @@ fn m2_particle_prewarm_bounds_hermite_emission_rate() -> Result<(), Box<dyn Erro
         emitter,
         M2AnimationClock::new(0, 2_000.0 / 3.0, 0.0),
     )?;
-    assert!((peak_pose.emission_rate() - (10.0 + 400.0 / 27.0)).abs() < 0.0001);
+    assert!((peak_pose.emission_rate() - (10.0 + 40.0 / 3.0)).abs() < 0.0001);
 
     let mut simulation = M2ParticleSimulation::new(0x0029_4823);
     simulation.reserve_authored_capacity(emitter)?;
-    // ceil((10 + 400/27) * 3 seconds * stock 1.15 headroom)
-    assert_eq!(simulation.capacity(), 86);
+    // ceil(30 * 3 seconds * stock 1.15 headroom)
+    assert_eq!(simulation.capacity(), 104);
     simulation.advance_planar(emitter, peak_pose, 0.0, Mat4::IDENTITY, 1.0)?;
-    assert_eq!(simulation.capacity(), 86);
+    assert_eq!(simulation.capacity(), 104);
     Ok(())
 }
 
@@ -4942,8 +4957,15 @@ fn append_render_camera(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
         bytes,
         camera_offset + 80,
         &[0, 1_000],
-        &render_f32_values(&[core::f32::consts::TAU, 0.0]),
-        4,
+        &render_f32_values(&[
+            core::f32::consts::TAU,
+            0.0,
+            0.0,
+            core::f32::consts::TAU,
+            0.0,
+            0.0,
+        ]),
+        12,
     )?;
     set_render_header_array(bytes, 0x110, 1, camera_offset)?;
     Ok(())
@@ -5226,8 +5248,8 @@ fn append_render_material_tracks(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Erro
         bytes,
         transform_offset + 20,
         &[0, 1_000],
-        &render_i16_values(&[-32_768, -32_768, -32_768, -1, -32_768, -32_768, -32_768, -1]),
-        8,
+        &render_f32_values(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]),
+        16,
     )?;
     append_render_track(
         bytes,

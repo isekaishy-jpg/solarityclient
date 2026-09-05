@@ -5,6 +5,7 @@ use solarity_asset::DecodedM2Model;
 
 use crate::model::M2MeshPlan;
 
+use super::quaternion::quaternion_matrix;
 use super::sample::{sample_quaternion, sample_scalar, sample_vec3};
 use super::{M2AnimationClock, M2MaterialPoseError};
 
@@ -139,7 +140,7 @@ impl M2MaterialPose {
 fn texture_transform(translation: Vec3, rotation: glam::Quat, scale: Vec3) -> Mat4 {
     let pivot = Vec3::new(0.5, 0.5, 0.0);
     Mat4::from_translation(pivot)
-        * Mat4::from_quat(rotation)
+        * quaternion_matrix(rotation)
         * Mat4::from_translation(-pivot)
         * Mat4::from_translation(pivot)
         * Mat4::from_scale(scale)

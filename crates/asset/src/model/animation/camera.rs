@@ -3,8 +3,8 @@
 use glam::Vec3;
 
 use super::{
-    M2Sequence, M2Track, array_ref, decode_track, decode_vec3, read_f32, read_i16, read_i32,
-    validate_array,
+    M2Sequence, M2SplineKey, M2Track, array_ref, decode_track, decode_vec3, read_f32, read_i16,
+    read_i32, validate_array,
 };
 use crate::model::m2_shared::model_decode;
 use crate::{AssetError, AssetPath};
@@ -16,11 +16,11 @@ pub struct M2Camera {
     field_of_view_radians: f32,
     far_clip: f32,
     near_clip: f32,
-    position: M2Track<Vec3>,
+    position: M2Track<M2SplineKey<Vec3>>,
     position_base: Vec3,
-    target_position: M2Track<Vec3>,
+    target_position: M2Track<M2SplineKey<Vec3>>,
     target_position_base: Vec3,
-    roll_radians: M2Track<f32>,
+    roll_radians: M2Track<M2SplineKey<f32>>,
 }
 
 impl M2Camera {
@@ -50,7 +50,7 @@ impl M2Camera {
 
     /// Returns animated offsets from the position base.
     #[must_use]
-    pub const fn position(&self) -> &M2Track<Vec3> {
+    pub const fn position(&self) -> &M2Track<M2SplineKey<Vec3>> {
         &self.position
     }
 
@@ -62,7 +62,7 @@ impl M2Camera {
 
     /// Returns animated offsets from the target-position base.
     #[must_use]
-    pub const fn target_position(&self) -> &M2Track<Vec3> {
+    pub const fn target_position(&self) -> &M2Track<M2SplineKey<Vec3>> {
         &self.target_position
     }
 
@@ -74,7 +74,7 @@ impl M2Camera {
 
     /// Returns animated view-axis roll in radians.
     #[must_use]
-    pub const fn roll_radians(&self) -> &M2Track<f32> {
+    pub const fn roll_radians(&self) -> &M2Track<M2SplineKey<f32>> {
         &self.roll_radians
     }
 }
@@ -115,8 +115,8 @@ pub(super) fn decode_cameras(
                 globals,
                 sequences,
                 payloads,
-                12,
-                decode_vec3,
+                36,
+                decode_spline_vec3,
             )?,
             position_base: decode_vec3(path, bytes, offset + 36, &field("position base"))?,
             target_position: decode_track(
@@ -127,8 +127,8 @@ pub(super) fn decode_cameras(
                 globals,
                 sequences,
                 payloads,
-                12,
-                decode_vec3,
+                36,
+                decode_spline_vec3,
             )?,
             target_position_base: decode_vec3(
                 path,
@@ -144,8 +144,8 @@ pub(super) fn decode_cameras(
                 globals,
                 sequences,
                 payloads,
-                4,
-                read_f32,
+                12,
+                decode_spline_scalar,
             )?,
         });
     }
@@ -176,4 +176,32 @@ fn decode_camera_lookup(
         }
     }
     Ok(lookup)
+}
+
+/// Decodes the fixed 36-byte value/incoming/outgoing camera-vector key.
+fn decode_spline_vec3(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<M2SplineKey<Vec3>, AssetError> {
+    Ok(M2SplineKey::new(
+        decode_vec3(path, bytes, offset, field)?,
+        decode_vec3(path, bytes, offset + 12, field)?,
+        decode_vec3(path, bytes, offset + 24, field)?,
+    ))
+}
+
+/// Decodes the fixed 12-byte value/incoming/outgoing camera-roll key.
+fn decode_spline_scalar(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<M2SplineKey<f32>, AssetError> {
+    Ok(M2SplineKey::new(
+        read_f32(path, bytes, offset, field)?,
+        read_f32(path, bytes, offset + 4, field)?,
+        read_f32(path, bytes, offset + 8, field)?,
+    ))
 }

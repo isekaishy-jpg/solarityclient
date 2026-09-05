@@ -1,7 +1,7 @@
 //! Bounded placement-local emission and lifecycle ownership.
 
 use glam::{Mat4, Vec3};
-use solarity_asset::{M2Interpolation, M2ParticleEmitter, M2Track, M2TrackChannel};
+use solarity_asset::{M2ParticleEmitter, M2Track};
 use thiserror::Error;
 
 use super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateError};
@@ -666,90 +666,16 @@ impl M2ParticleSimulation {
     }
 }
 
-/// Finds the exact finite maximum across every linear or cubic interval.
-///
-/// Hermite's incoming/outgoing values are tangents, not curve points. Merely
-/// taking the largest stored word misses overshoot between keys and allowed a
-/// supposedly prewarmed Glue particle pool to grow during presentation.
+/// Ordinary float tracks use step or linear sampling (`0x0082B340`),
+/// so their largest stored value bounds every emission-rate/lifespan sample.
 fn maximum_authored_value(track: &M2Track<f32>) -> f64 {
     track
         .channels()
         .iter()
-        .map(|channel| maximum_channel_value(track.interpolation(), channel))
-        .fold(0.0, f64::max)
-}
-
-fn maximum_channel_value(interpolation: M2Interpolation, channel: &M2TrackChannel<f32>) -> f64 {
-    let values = channel.values();
-    let stride = match interpolation {
-        M2Interpolation::Step | M2Interpolation::Linear => 1,
-        M2Interpolation::Bezier | M2Interpolation::Hermite => 3,
-    };
-    let key_count = channel.timestamps_ms().len().min(values.len() / stride);
-    let mut maximum = (0..key_count)
-        .filter_map(|index| values.get(index * stride).copied())
-        .filter(|value| value.is_finite())
+        .flat_map(|channel| channel.values())
+        .copied()
         .map(f64::from)
-        .fold(0.0, f64::max);
-    if !matches!(
-        interpolation,
-        M2Interpolation::Bezier | M2Interpolation::Hermite
-    ) {
-        return maximum;
-    }
-    for interval in 0..key_count.saturating_sub(1) {
-        let first = f64::from(values[interval * 3]);
-        let outgoing = f64::from(values[interval * 3 + 2]);
-        let incoming = f64::from(values[(interval + 1) * 3 + 1]);
-        let second = f64::from(values[(interval + 1) * 3]);
-        if ![first, outgoing, incoming, second]
-            .into_iter()
-            .all(f64::is_finite)
-        {
-            continue;
-        }
-        let (a, b, c) = match interpolation {
-            M2Interpolation::Bezier => (
-                -first + 3.0 * outgoing - 3.0 * incoming + second,
-                3.0 * first - 6.0 * outgoing + 3.0 * incoming,
-                -3.0 * first + 3.0 * outgoing,
-            ),
-            M2Interpolation::Hermite => (
-                2.0 * first - 2.0 * second + outgoing + incoming,
-                -3.0 * first + 3.0 * second - 2.0 * outgoing - incoming,
-                outgoing,
-            ),
-            M2Interpolation::Step | M2Interpolation::Linear => unreachable!(),
-        };
-        for amount in cubic_stationary_points(a, b, c).into_iter().flatten() {
-            if amount > 0.0 && amount < 1.0 {
-                maximum = maximum.max(((a * amount + b) * amount + c) * amount + first);
-            }
-        }
-    }
-    maximum
-}
-
-/// Returns the real roots of `3a*t^2 + 2b*t + c`.
-fn cubic_stationary_points(a: f64, b: f64, c: f64) -> [Option<f64>; 2] {
-    let quadratic = 3.0 * a;
-    let linear = 2.0 * b;
-    if quadratic.abs() <= f64::EPSILON {
-        return if linear.abs() <= f64::EPSILON {
-            [None, None]
-        } else {
-            [Some(-c / linear), None]
-        };
-    }
-    let discriminant = linear * linear - 4.0 * quadratic * c;
-    if discriminant < 0.0 || !discriminant.is_finite() {
-        return [None, None];
-    }
-    let root = discriminant.sqrt();
-    [
-        Some((-linear - root) / (2.0 * quadratic)),
-        Some((-linear + root) / (2.0 * quadratic)),
-    ]
+        .fold(0.0, f64::max)
 }
 
 /// Generator selector retained separately from raw authored bytes.

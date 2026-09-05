@@ -1069,5 +1069,36 @@ Formatting, Clippy, and all 575 workspace tests pass. Login and Soap selection
 captures were inspected, and the replay log contains no errors.
 
 Full gear visual parity still needs comparison with the user's stock reference.
-The separate camera-key storage gaps and repeatable world-transfer integration
-also remain open.
+Repeatable world-transfer integration also remains open.
+
+## Typed animation keys and native quaternion math
+
+The shared decoder previously derived key size from interpolation. Stock
+chooses it from the property type: ordinary vectors/scalars retain one value,
+camera vectors/roll retain complete triplets, bone rotations use unsigned
+compressed components, and texture rotations use four floats. These paths
+now use their native widths. The camera-roll wrapping workaround has been
+removed, and ordinary particle preallocation no longer assumes cubic curves.
+
+Quaternion key interpolation now uses native component interpolation and
+polynomial normalization; step values and resulting matrix components retain
+their authored magnitude. The original instructions were executed in an
+isolated harness to establish the numerical regression expectations. This
+also corrected two earlier tests that assumed ideal unit rotations.
+
+The Northrend login camera's two roll values are both 2*pi, with zero control
+values. Correct triplet decoding keeps that camera steady while recovering
+its actual position keys. Broader Model lifecycle and world playback gaps
+listed in `m2-animation.md` remain separate work.
+
+Formatting, Clippy, and all 581 workspace tests pass. Original archive checks
+verified 102 complete camera keys and 95 sampled frames across the Northrend,
+Night Elf, and Blood Elf backdrops. Login and Soap captures were inspected;
+the complete 31-step selection/customization replay finished without errors.
+
+The user's subsequent movie/back-out report identifies a separate lifecycle
+defect: hidden login playback advances during cinematic presentation, and
+explicit sequence requests use the last sampled scene time. Stock
+`AccountLogin_OnShow` calls `SetSequence(0)` and `AccountLogin_OnHide` calls
+`StopAllSFX(1.0)`. Correct command-time anchoring and hidden ownership remain
+the next correction; typed key decoding does not resolve them.

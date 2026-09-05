@@ -13,6 +13,9 @@ mod material;
 mod particle;
 mod ribbon;
 mod selection;
+mod track;
+
+use track::decode_track;
 
 pub use attachment::M2Attachment;
 pub use camera::M2Camera;
@@ -22,92 +25,7 @@ pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
 pub use particle::{M2ParticleEmitter, M2ParticleGravity, M2ParticleLifetimeTrack};
 pub use ribbon::M2RibbonEmitter;
 pub use selection::{M2ModelAnimation, M2ModelAnimationMode};
-
-/// Stock interpolation operation authored by one M2 track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum M2Interpolation {
-    /// Hold the preceding key.
-    Step,
-    /// Interpolate directly between adjacent values.
-    Linear,
-    /// Use the incoming and outgoing Bezier control points stored with each key.
-    Bezier,
-    /// Use the incoming and outgoing Hermite tangents stored with each key.
-    Hermite,
-}
-
-impl M2Interpolation {
-    /// Converts the version-264 selector without substituting unknown values.
-    fn from_raw(path: &AssetPath, value: u16, field: &str) -> Result<Self, AssetError> {
-        match value {
-            0 => Ok(Self::Step),
-            1 => Ok(Self::Linear),
-            2 => Ok(Self::Bezier),
-            3 => Ok(Self::Hermite),
-            _ => Err(model_decode(
-                path,
-                format!("{field} has unsupported interpolation {value}"),
-            )),
-        }
-    }
-
-    /// Returns the stored values belonging to each timestamp.
-    const fn values_per_key(self) -> usize {
-        match self {
-            Self::Step | Self::Linear => 1,
-            Self::Bezier | Self::Hermite => 3,
-        }
-    }
-}
-
-/// One timestamp/value channel selected by a sequence or global clock.
-#[derive(Clone, Debug, PartialEq)]
-pub struct M2TrackChannel<T> {
-    timestamps_ms: Vec<u32>,
-    values: Vec<T>,
-}
-
-impl<T> M2TrackChannel<T> {
-    /// Returns ordered key timestamps in milliseconds.
-    #[must_use]
-    pub fn timestamps_ms(&self) -> &[u32] {
-        &self.timestamps_ms
-    }
-
-    /// Returns one value per key, or three consecutive values for spline tracks.
-    #[must_use]
-    pub fn values(&self) -> &[T] {
-        &self.values
-    }
-}
-
-/// Every per-sequence channel for one animated M2 property.
-#[derive(Clone, Debug, PartialEq)]
-pub struct M2Track<T> {
-    interpolation: M2Interpolation,
-    global_sequence: Option<u16>,
-    channels: Vec<M2TrackChannel<T>>,
-}
-
-impl<T> M2Track<T> {
-    /// Returns the authored interpolation operation.
-    #[must_use]
-    pub const fn interpolation(&self) -> M2Interpolation {
-        self.interpolation
-    }
-
-    /// Returns the global-sequence clock index, or `None` for animation time.
-    #[must_use]
-    pub const fn global_sequence(&self) -> Option<u16> {
-        self.global_sequence
-    }
-
-    /// Returns channels in their exact outer-array order.
-    #[must_use]
-    pub fn channels(&self) -> &[M2TrackChannel<T>] {
-        &self.channels
-    }
-}
+pub use track::{M2Interpolation, M2SplineKey, M2Track, M2TrackChannel};
 
 /// Where stock stores the keyframe payload for an animation sequence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1024,8 +942,8 @@ fn decode_texture_transforms(
                 globals,
                 sequences,
                 payloads,
-                8,
-                decode_quaternion,
+                16,
+                decode_float_quaternion,
             )?,
             decode_track(
                 path,
@@ -1062,143 +980,6 @@ fn validate_bone_hierarchy(path: &AssetPath, bones: &[M2Bone]) -> Result<(), Ass
     Ok(())
 }
 
-/// Expands one WotLK nested track using each sequence's actual data source.
-#[allow(clippy::too_many_arguments)]
-fn decode_track<T>(
-    path: &AssetPath,
-    model_bytes: &[u8],
-    offset: usize,
-    field: &str,
-    globals: &[u32],
-    sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
-    value_size: usize,
-    decode_value: fn(&AssetPath, &[u8], usize, &str) -> Result<T, AssetError>,
-) -> Result<M2Track<T>, AssetError> {
-    let interpolation =
-        M2Interpolation::from_raw(path, read_u16(path, model_bytes, offset, field)?, field)?;
-    let global_raw = read_i16(path, model_bytes, offset + 2, field)?;
-    let global_sequence = if global_raw < 0 {
-        None
-    } else {
-        let value = global_raw as u16;
-        if usize::from(value) >= globals.len() {
-            return Err(model_decode(
-                path,
-                format!("{field} global sequence is missing"),
-            ));
-        }
-        Some(value)
-    };
-    let timestamp_arrays = array_ref(path, model_bytes, offset + 4, field)?;
-    let value_arrays = array_ref(path, model_bytes, offset + 12, field)?;
-    validate_array(path, model_bytes, timestamp_arrays, 8, field)?;
-    validate_array(path, model_bytes, value_arrays, 8, field)?;
-    if timestamp_arrays.count != value_arrays.count {
-        return Err(model_decode(path, format!("{field} channel counts differ")));
-    }
-    let mut channels = Vec::with_capacity(timestamp_arrays.count);
-    for channel_index in 0..timestamp_arrays.count {
-        if global_sequence.is_none()
-            && sequences
-                .get(channel_index)
-                .is_some_and(|value| value.storage == M2SequenceStorage::Alias)
-        {
-            channels.push(empty_channel());
-            continue;
-        }
-        let payload = if global_sequence.is_none()
-            && sequences
-                .get(channel_index)
-                .is_some_and(|value| value.storage == M2SequenceStorage::External)
-        {
-            let Some((payload_path, payload_bytes)) =
-                payloads.get(channel_index).and_then(Option::as_ref)
-            else {
-                channels.push(empty_channel());
-                continue;
-            };
-            (payload_path, payload_bytes.as_slice())
-        } else {
-            (path, model_bytes)
-        };
-        let timestamps = array_ref(
-            path,
-            model_bytes,
-            timestamp_arrays.offset + channel_index * 8,
-            field,
-        )?;
-        let values = array_ref(
-            path,
-            model_bytes,
-            value_arrays.offset + channel_index * 8,
-            field,
-        )?;
-        validate_array(payload.0, payload.1, timestamps, 4, field)?;
-        if values.count != timestamps.count {
-            return Err(model_decode(
-                payload.0,
-                format!("{field} key counts differ"),
-            ));
-        }
-        let stored_count = timestamps
-            .count
-            .checked_mul(interpolation.values_per_key())
-            .ok_or_else(|| model_decode(payload.0, format!("{field} value count overflows")))?;
-        validate_array(
-            payload.0,
-            payload.1,
-            ArrayRef {
-                count: stored_count,
-                offset: values.offset,
-            },
-            value_size,
-            field,
-        )?;
-        let mut timestamps_ms = Vec::with_capacity(timestamps.count);
-        for index in 0..timestamps.count {
-            timestamps_ms.push(read_u32(
-                payload.0,
-                payload.1,
-                timestamps.offset + index * 4,
-                field,
-            )?);
-        }
-        if !timestamps_ms.windows(2).all(|pair| pair[0] <= pair[1]) {
-            return Err(model_decode(
-                payload.0,
-                format!("{field} timestamps are not ordered"),
-            ));
-        }
-        let mut decoded_values = Vec::with_capacity(stored_count);
-        for index in 0..stored_count {
-            decoded_values.push(decode_value(
-                payload.0,
-                payload.1,
-                values.offset + index * value_size,
-                field,
-            )?);
-        }
-        channels.push(M2TrackChannel {
-            timestamps_ms,
-            values: decoded_values,
-        });
-    }
-    Ok(M2Track {
-        interpolation,
-        global_sequence,
-        channels,
-    })
-}
-
-/// Builds the explicit empty slot retained for aliases and unavailable payloads.
-fn empty_channel<T>() -> M2TrackChannel<T> {
-    M2TrackChannel {
-        timestamps_ms: Vec::new(),
-        values: Vec::new(),
-    }
-}
-
 /// Decodes one finite vector key without the dependency's NaN substitution.
 fn decode_vec3(
     path: &AssetPath,
@@ -1209,35 +990,40 @@ fn decode_vec3(
     read_vec3(path, bytes, offset, field)
 }
 
-/// Expands stock's signed 16-bit quaternion representation.
+/// `0x00828680` expands unsigned components by the exact float at 0x00A45560.
+/// Step sampling retains these components without normalization.
 fn decode_quaternion(
     path: &AssetPath,
     bytes: &[u8],
     offset: usize,
     field: &str,
 ) -> Result<Quat, AssetError> {
+    const SCALE: f32 = f32::from_bits(0x3800_0080);
     let raw = [
-        read_i16(path, bytes, offset, field)?,
-        read_i16(path, bytes, offset + 2, field)?,
-        read_i16(path, bytes, offset + 4, field)?,
-        read_i16(path, bytes, offset + 6, field)?,
+        read_u16(path, bytes, offset, field)?,
+        read_u16(path, bytes, offset + 2, field)?,
+        read_u16(path, bytes, offset + 4, field)?,
+        read_u16(path, bytes, offset + 6, field)?,
     ];
-    let expanded = raw.map(|value| {
-        let numerator = if value < 0 {
-            f32::from(value) + 32768.0
-        } else {
-            f32::from(value) - 32767.0
-        };
-        numerator / 32767.0
-    });
-    let value = Quat::from_xyzw(expanded[0], expanded[1], expanded[2], expanded[3]);
-    if !value.is_finite() || value.length_squared() <= 0.000_001 {
-        return Err(model_decode(
-            path,
-            format!("{field} contains an invalid quaternion"),
-        ));
-    }
-    Ok(value.normalize())
+    // Stock rounds the complete x87 multiply/subtract when storing each float.
+    Ok(Quat::from_array(raw.map(|value| {
+        (f64::from(value) * f64::from(SCALE) - 1.0) as f32
+    })))
+}
+
+/// Texture rotations use four ordinary floats (`0x00837010`, `0x0082AD50`).
+fn decode_float_quaternion(
+    path: &AssetPath,
+    bytes: &[u8],
+    offset: usize,
+    field: &str,
+) -> Result<Quat, AssetError> {
+    Ok(Quat::from_xyzw(
+        read_f32(path, bytes, offset, field)?,
+        read_f32(path, bytes, offset + 4, field)?,
+        read_f32(path, bytes, offset + 8, field)?,
+        read_f32(path, bytes, offset + 12, field)?,
+    ))
 }
 
 /// Normalizes stock's signed fixed16 material scalar by exactly `32767`.

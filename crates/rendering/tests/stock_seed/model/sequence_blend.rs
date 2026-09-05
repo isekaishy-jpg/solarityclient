@@ -80,8 +80,8 @@ fn sequence_blend_composes_local_pose_and_preserves_global_and_step_tracks()
     let model = model()?;
     let clock = M2AnimationClock::new(0, 0.0, 500.0).with_secondary_sequence(0, 1_000.0, 0.25);
     let pose = M2BonePose::compose(model.animations(), clock)?;
-    let expected =
-        Mat4::from_translation(Vec3::X) * Mat4::from_rotation_z(core::f32::consts::FRAC_PI_4);
+    let expected = Mat4::from_translation(Vec3::X)
+        * Mat4::from_cols_array(&super::track_sampling::BONE_BLEND_MATRIX);
     assert!(pose.transforms()[0].abs_diff_eq(expected, 0.0002));
     assert!(
         pose.transforms()[1].abs_diff_eq(expected * Mat4::from_translation(Vec3::Y * 4.0), 0.0002)
