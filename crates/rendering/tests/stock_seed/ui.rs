@@ -8,6 +8,158 @@ use solarity_rendering::{
     UiRenderTransform, UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };
 
+/// Growing and shrinking one run keeps neighboring data and updates later lookups.
+#[test]
+fn ui_mesh_resizes_source_run_without_rebuilding_neighbor_payloads() -> Result<(), Box<dyn Error>> {
+    let atlas = UiRenderSource::GlyphAtlas(17);
+    let decoration = UiRenderSource::VertexColor;
+    let prefix = quad(4, decoration.clone(), [-10.0, 0.0, 0.0, 10.0]);
+    let text = quad(4, atlas.clone(), [0.0, 0.0, 10.0, 10.0]);
+    let suffix = quad(8, decoration.clone(), [30.0, 0.0, 40.0, 10.0]);
+    let trailing = quad(4, decoration, [50.0, 0.0, 60.0, 10.0]);
+    let mut mesh = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [
+            prefix.clone(),
+            text.clone(),
+            suffix.clone(),
+            trailing.clone(),
+        ]
+        .into_iter(),
+    )?;
+    mesh.translate_object(8, [3.0, 5.0])?;
+    let old_suffix = mesh.vertices()[8..].to_vec();
+    let old_suffix_batch = mesh.batches()[2].clone();
+    let previous_identity = mesh.geometry_identity();
+    let replacement = [
+        text.clone(),
+        quad(4, atlas.clone(), [10.0, 0.0, 20.0, 10.0]),
+        quad(4, atlas.clone(), [20.0, 0.0, 30.0, 10.0]),
+    ];
+    assert!(mesh.replace_object_source_run(4, &atlas, &replacement)?);
+    assert_ne!(mesh.geometry_identity(), previous_identity);
+    assert_eq!(mesh.object_indices(), [4, 4, 4, 4, 8, 4]);
+    assert_eq!(&mesh.vertices()[16..], old_suffix);
+    assert_eq!(mesh.batches()[1].quad_count(), 3);
+    assert_eq!(mesh.batches()[1].index_count(), 18);
+    assert_eq!(mesh.batches()[2].first_quad(), 4);
+    assert_eq!(
+        mesh.batches()[2].translation(),
+        old_suffix_batch.translation()
+    );
+    assert_eq!(mesh.batches()[2].opacity(), old_suffix_batch.opacity());
+    assert_eq!(mesh.batches()[3].first_quad(), 5);
+    let mut fresh = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [
+            prefix.clone(),
+            replacement[0].clone(),
+            replacement[1].clone(),
+            replacement[2].clone(),
+            suffix.clone(),
+            trailing.clone(),
+        ]
+        .into_iter(),
+    )?;
+    fresh.translate_object(8, [3.0, 5.0])?;
+    assert_eq!(mesh.vertices(), fresh.vertices());
+    assert_eq!(mesh.indices(), fresh.indices());
+    assert_eq!(mesh.batches(), fresh.batches());
+    // A later targeted write must resolve the relocated tail, including an
+    // additional source belonging to the resized text's own object.
+    assert!(mesh.replace_object_quad_colors(8, &[[[0.25; 4]; 4]])?);
+    assert_eq!(mesh.vertices()[16].color(), [0.25; 4]);
+    assert!(mesh.replace_object_source_run(4, &atlas, &[text])?);
+    assert_eq!(mesh.object_indices(), [4, 4, 8, 4]);
+    assert_eq!(mesh.batches()[2].first_quad(), 2);
+    assert_eq!(mesh.batches()[3].first_quad(), 3);
+    assert_eq!(mesh.indices(), [0, 1, 2, 2, 1, 3]);
+    assert_eq!(mesh.vertices()[8].color(), [0.25; 4]);
+    assert!(mesh.replace_object_quad_colors(4, &[[[0.75; 4]; 4]; 3])?);
+    assert_eq!(mesh.vertices()[12].color(), [0.75; 4]);
+    Ok(())
+}
+
+/// State batches can merge and split while later owner lookups remain valid.
+#[test]
+fn ui_mesh_source_replacement_merges_and_splits_adjacent_state_batches()
+-> Result<(), Box<dyn Error>> {
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let text = quad(4, atlas.clone(), [0.0, 0.0, 10.0, 10.0]);
+    let caret = text
+        .clone()
+        .with_state(UiRenderState::EditBoxCaret(4))
+        .with_opacity(0.0);
+    let tail = quad(8, UiRenderSource::VertexColor, [20.0, 0.0, 30.0, 10.0]);
+    let mut mesh = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [text.clone(), caret.clone(), tail.clone()].into_iter(),
+    )?;
+    assert_eq!(mesh.batches().len(), 3);
+    assert!(mesh.replace_object_source_run(4, &atlas, &[text.clone(), text.clone()])?);
+    let reference = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [text.clone(), text.clone(), tail.clone()].into_iter(),
+    )?;
+    assert_eq!(mesh.batches(), reference.batches());
+    assert_eq!(mesh.vertices(), reference.vertices());
+    assert!(mesh.replace_object_quad_colors(8, &[[[0.5; 4]; 4]])?);
+    assert_eq!(mesh.vertices()[8].color(), [0.5; 4]);
+    assert!(mesh.replace_object_source_run(4, &atlas, &[text.clone(), caret.clone(), text])?);
+    assert_eq!(mesh.batches().len(), 4);
+    assert_eq!(mesh.batches()[3].first_quad(), 3);
+    mesh.set_state_opacity(UiRenderState::EditBoxCaret(4), 0.75)?;
+    assert_eq!(mesh.batches()[1].opacity(), 0.75);
+    assert!(mesh.replace_object_source_run(8, &UiRenderSource::VertexColor, &[tail])?);
+    assert_eq!(mesh.vertices()[12].color(), [1.0; 4]);
+    Ok(())
+}
+
+/// A one-run material replacement preserves ordering and updates its source.
+#[test]
+fn ui_mesh_replaces_single_run_material_and_rejects_split_runs_atomically()
+-> Result<(), Box<dyn Error>> {
+    let old_source = UiRenderSource::Texture(AssetPath::new("Interface/Old.blp")?);
+    let new_source = UiRenderSource::Texture(AssetPath::new("Interface/New.blp")?);
+    let old = quad(4, old_source.clone(), [0.0, 0.0, 10.0, 10.0]);
+    let replacement = quad(4, new_source.clone(), [1.0, 1.0, 11.0, 11.0]);
+    let mut mesh = UiMeshPlan::prepare([800.0, 600.0], [old.clone()].into_iter())?;
+    assert!(mesh.replace_object_source_run(4, &old_source, std::slice::from_ref(&replacement))?);
+    assert_eq!(mesh.batches()[0].source(), &new_source);
+    assert_eq!(
+        mesh.sources_for_object(4).collect::<Vec<_>>(),
+        [&new_source]
+    );
+    let before = mesh.clone();
+    assert!(!mesh.replace_object_source_run(
+        4,
+        &new_source,
+        &[replacement.clone(), old.clone()]
+    )?);
+    assert_eq!(mesh, before);
+    assert!(!mesh.replace_object_source_run(4, &new_source, &[])?);
+    assert_eq!(mesh, before);
+    let invalid = quad(4, new_source.clone(), [f32::NAN, 0.0, 10.0, 10.0]);
+    assert!(
+        mesh.replace_object_source_run(4, &new_source, &[replacement.clone(), invalid])
+            .is_err()
+    );
+    assert_eq!(mesh, before);
+    let mut split = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [
+            old.clone(),
+            quad(8, UiRenderSource::VertexColor, [0.0, 0.0, 10.0, 10.0]),
+            old,
+        ]
+        .into_iter(),
+    )?;
+    let before = split.clone();
+    assert!(!split.replace_object_source_run(4, &old_source, &[replacement])?);
+    assert_eq!(split, before);
+    Ok(())
+}
+
 /// Adjacent equal materials on one object merge without changing quad order.
 #[test]
 fn ui_mesh_batches_only_adjacent_equal_materials() -> Result<(), Box<dyn Error>> {

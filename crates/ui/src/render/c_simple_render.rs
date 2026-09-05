@@ -257,6 +257,7 @@ impl UiRenderPlan {
     ) -> Result<bool, UiRenderError> {
         let quads = glyphs.retained_live_object_quads(object_indices, geometry, scroll_frames);
         let source = UiRenderSource::GlyphAtlas(glyphs.identity());
+        let mut batches_changed = false;
         for &object_index in object_indices {
             let first = quads.partition_point(|quad| quad.object_index() < object_index);
             let end = quads.partition_point(|quad| quad.object_index() <= object_index);
@@ -268,7 +269,27 @@ impl UiRenderPlan {
                 .mesh
                 .replace_object_source_quads(object_index, &source, &rendered)?
             {
-                return Ok(false);
+                if self
+                    .mesh
+                    .replace_object_source_run(object_index, &source, &rendered)?
+                {
+                    batches_changed = true;
+                } else {
+                    if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                        eprintln!(
+                            "UI glyph slot rebuild: object={} name={:?} retained={} requested={}",
+                            object_index,
+                            live.objects()[object_index].name,
+                            self.mesh
+                                .object_indices()
+                                .iter()
+                                .filter(|&&index| index == object_index)
+                                .count(),
+                            rendered.len()
+                        );
+                    }
+                    return Ok(false);
+                }
             }
             if let Some(text) = live
                 .objects()
@@ -284,6 +305,9 @@ impl UiRenderPlan {
                 self.mesh
                     .set_state_opacity(UiRenderState::EditBoxCaret(object_index), opacity)?;
             }
+        }
+        if batches_changed {
+            self.texture_assets = UiTextureAssetPlan::prepare(&self.mesh)?;
         }
         Ok(true)
     }
@@ -311,6 +335,7 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         object_indices: &[usize],
     ) -> Result<bool, UiRenderError> {
+        let mut material_changed = false;
         for &object_index in object_indices {
             let rendered = presentation
                 .members_for_object(object_index)
@@ -339,6 +364,7 @@ impl UiRenderPlan {
                 }
                 continue;
             }
+            let single_source = sources.len() == 1;
             for source in sources {
                 let quads = rendered
                     .iter()
@@ -349,13 +375,32 @@ impl UiRenderPlan {
                     .mesh
                     .replace_object_source_quads(object_index, &source, &quads)?
                 {
-                    return Ok(false);
+                    let previous_sources = self
+                        .mesh
+                        .sources_for_object(object_index)
+                        .filter(|source| !matches!(source, UiRenderSource::GlyphAtlas(_)))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !single_source
+                        || previous_sources.len() != 1
+                        || !self.mesh.replace_object_source_run(
+                            object_index,
+                            &previous_sources[0],
+                            &quads,
+                        )?
+                    {
+                        return Ok(false);
+                    }
+                    material_changed = true;
                 }
             }
             self.mesh.set_object_opacity(
                 object_index,
                 presentation.object_opacity(object_index).unwrap_or(0.0),
             )?;
+        }
+        if material_changed {
+            self.texture_assets = UiTextureAssetPlan::prepare(&self.mesh)?;
         }
         Ok(true)
     }

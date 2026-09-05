@@ -265,3 +265,46 @@ confirmation, whose login frame reached 26.5 ms and customization frames
 3.8–4.6 ms. Creation entry still reached 29.8 ms and race/class changes up to
 23.3 ms. The glyph-reveal improvement is repeatable in these local measurements;
 the broader requirement to eliminate noticeable stalls remains open.
+
+## Retained source-run replacement
+
+Race/class publication still rebuilt the complete roughly 34,000-quad UI when
+one description grew or an icon selected another texture. The class-description
+trace recorded an increase from 3,190 to 3,690 glyph quads, followed by a complete
+mesh rebuild costing about 8 ms.
+
+The renderer can now replace a single contiguous object/source run, including
+its size or material, while preserving neighboring vertex payloads and batch
+order. Resizing relocates later quad offsets and object lookups, updates the
+canonical index prefix, and invalidates old byte-range revisions. Adjacent
+state batches can merge or split within that source run, including the reserved
+caret slot used by initially empty labels. Interrupted source ranges and
+multi-source replacements retain the complete-publication path. UI text uses
+this operation when fixed slots no longer fit; text batch changes and
+single-source icon replacements also refresh the texture-request plan so GPU
+publication retains correct batch associations and binds the selected asset.
+Layout, draw-layer, and hierarchy changes retain their existing publication rules.
+
+Regression tests compare resized geometry and batches against a freshly built
+reference, exercise growth followed by shrinkage and later targeted writes,
+verify atomic rejection of invalid/interrupted replacements, merge and split
+state batches with subsequent caret and neighboring-object updates, and check
+texture-request rebinding after a real Lua icon change.
+
+All 545 workspace tests, Clippy, formatting, and the installed-data interaction
+validator passed. The final 28-action replay used 1,000 following frames per
+action, the GTX 1070 at 1280x720, four CPU workers, capacity 64, audio enabled,
+and `RUST_LOG=info`, matching the preceding baseline. The first Warrior class
+change fell from a 22.4 ms maximum frame and 19.3 ms input action to 15.7 ms and
+11.6 ms. An earlier single-batch version measured 15.8 ms and 11.9 ms for the
+same change; it still rejected an initially empty race label, which the final
+version accepts. No glyph-slot rebuild rejection appeared in the final trace.
+
+Other race changes still reach the complete publisher: final Human creation
+switching reached 21.3 ms, Blood Elf 23.9 ms, and creation entry 26.7 ms. The
+earlier single-batch replay also recorded a 45.5 ms Blood Elf frame, with
+25.5 ms spent serializing the complete mesh; that outlier did not recur in the
+final run. Final customization/randomize maximum frames were 3.9–4.7 ms,
+following-frame means were about 1,610–2,400 FPS, and login reached 43.1 ms.
+These measurements verify the class-description improvement and leave the
+remaining complete-publication paths and startup stalls open.

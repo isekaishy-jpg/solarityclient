@@ -413,6 +413,154 @@ impl UiMeshPlan {
         Ok(true)
     }
 
+    /// Replaces one complete contiguous source run while retaining other payloads.
+    ///
+    /// The replacement may resize the run or change its material/state batches.
+    /// The old object/source must occupy one uninterrupted range; replacement
+    /// quads must share one object and source, in the owner's desired draw order.
+    /// Other batches retain their order, vertices, transforms, and opacity;
+    /// following quad offsets move with the resized range. Replacement bounds
+    /// are absolute presentation coordinates, as for fixed-slot replacement.
+    /// Empty replacements and interrupted source ranges return `false` without
+    /// mutation so their owner can publish a complete topology change instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiMeshPlanError`] for invalid replacement vertices or counts
+    /// outside the renderer's index/vertex ABI, without changing the mesh.
+    pub fn replace_object_source_run(
+        &mut self,
+        object_index: usize,
+        previous_source: &UiRenderSource,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        let Some(first) = quads.first() else {
+            return Ok(false);
+        };
+        if first.object_index() != object_index {
+            return Ok(false);
+        }
+        let mut matching = self
+            .object_batches
+            .get(&object_index)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&index| self.batches[index].source() == previous_source);
+        let Some(batch_index) = matching.next() else {
+            return Ok(false);
+        };
+        let mut old_batch_end = batch_index + 1;
+        for index in matching {
+            if index != old_batch_end {
+                return Ok(false);
+            }
+            old_batch_end += 1;
+        }
+        let old = &self.batches[batch_index];
+        let start = old.first_quad() as usize;
+        let last = &self.batches[old_batch_end - 1];
+        let old_end = last.first_quad() as usize + last.quad_count() as usize;
+        let old_count = old_end - start;
+        if old_count == 0 {
+            return Ok(false);
+        }
+        let new_count = quads.len();
+        let total_quads = self
+            .object_indices
+            .len()
+            .checked_sub(old_count)
+            .and_then(|count| count.checked_add(new_count))
+            .ok_or(UiMeshPlanError::Capacity { domain: "quad" })?;
+        let vertex_count = total_quads
+            .checked_mul(4)
+            .ok_or(UiMeshPlanError::Capacity { domain: "vertex" })?;
+        u32::try_from(vertex_count).map_err(|_| UiMeshPlanError::Capacity { domain: "vertex" })?;
+        vertex_count
+            .checked_mul(UiRenderVertex::BYTE_SIZE)
+            .ok_or(UiMeshPlanError::Capacity {
+                domain: "vertex byte",
+            })?;
+        let _index_count = new_count
+            .checked_mul(6)
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or(UiMeshPlanError::Capacity { domain: "index" })?;
+        let mut replacements: Vec<UiRenderBatch> = Vec::new();
+        let mut vertices = Vec::with_capacity(new_count * 4);
+        for (offset, quad) in quads.iter().enumerate() {
+            validate_quad(quad)?;
+            if quad.object_index() != object_index || quad.source() != first.source() {
+                return Ok(false);
+            }
+            if let Some(batch) = replacements.last_mut()
+                && batch.can_append(quad)
+            {
+                batch.append_quad();
+            } else {
+                replacements.push(UiRenderBatch::from_quad(quad, 0, (start + offset) as u32));
+            }
+            let [left, bottom, right, top] = quad.bounds();
+            let positions = [[left, top], [left, bottom], [right, top], [right, bottom]];
+            let coordinates = quad.texture_coordinates();
+            let colors = quad.colors();
+            for corner in 0..4 {
+                vertices.push(UiRenderVertex::new(
+                    positions[corner],
+                    coordinates[corner],
+                    colors[corner],
+                ));
+            }
+        }
+        let new_batch_count = replacements.len();
+        let maximum_new_run = replacements
+            .iter()
+            .map(|batch| batch.quad_count() as usize)
+            .max()
+            .unwrap_or(0);
+        self.ensure_canonical_quad_indices(maximum_new_run)?;
+        self.vertices.splice(start * 4..old_end * 4, vertices);
+        self.object_indices
+            .splice(start..old_end, std::iter::repeat_n(object_index, new_count));
+        for (&owner, slots) in &mut self.object_quads {
+            let first = slots.partition_point(|&slot| slot < start);
+            let end = slots.partition_point(|&slot| slot < old_end);
+            for slot in &mut slots[end..] {
+                *slot = *slot - old_count + new_count;
+            }
+            if owner == object_index {
+                slots.splice(first..end, start..start + new_count);
+            }
+        }
+        let old_batch_count = old_batch_end - batch_index;
+        for (&owner, batches) in &mut self.object_batches {
+            let first = batches.partition_point(|&index| index < batch_index);
+            let end = batches.partition_point(|&index| index < old_batch_end);
+            for index in &mut batches[end..] {
+                *index = *index - old_batch_count + new_batch_count;
+            }
+            if owner == object_index {
+                batches.splice(first..end, batch_index..batch_index + new_batch_count);
+            }
+        }
+        self.batches
+            .splice(batch_index..old_batch_end, replacements);
+        for batch in &mut self.batches[batch_index + new_batch_count..] {
+            batch.set_first_quad((batch.first_quad() as usize - old_count + new_count) as u32);
+        }
+        let maximum_run = self
+            .batches
+            .iter()
+            .map(|batch| batch.quad_count() as usize)
+            .max()
+            .unwrap_or(0);
+        self.indices.truncate(maximum_run * 6);
+        // Moving following runs invalidates offsets from earlier byte revisions.
+        // The renderer compares the retained payload and uploads its changed span.
+        self.vertex_revisions.clear();
+        self.identity = next_identity();
+        Ok(true)
+    }
+
     /// Replaces complete vertices for one object's topology-stable source slots.
     ///
     /// Objects may own several sources at once (for example, an EditBox backdrop

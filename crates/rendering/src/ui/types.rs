@@ -487,6 +487,11 @@ impl UiRenderBatch {
         self.object_translation = [0.0; 2];
     }
 
+    /// Relocates an ordered quad run after another run changes size.
+    pub(super) fn set_first_quad(&mut self, first_quad: u32) {
+        self.first_quad = first_quad;
+    }
+
     pub(super) fn set_clip(&mut self, clip: Option<[f32; 4]>) {
         self.clip = clip;
     }

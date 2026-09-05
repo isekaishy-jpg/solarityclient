@@ -119,6 +119,27 @@ fn mixed_content_patch_preserves_native_decorations_and_material_changes()
     assert!(
         matches!(sources[0], UiRenderSource::Texture(path) if path.as_str() == "INTERFACE\\GLUES\\OTHER.BLP")
     );
+    let requests = manager.render_plan().texture_assets().requests();
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.path().as_str() == "INTERFACE\\GLUES\\OTHER.BLP")
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.path().as_str() == "INTERFACE\\GLUES\\ICON.BLP")
+    );
+    let mesh = manager.render_plan().mesh();
+    assert_eq!(mesh.object_indices(), old_owners);
+    for (quad, &owner) in mesh.object_indices().iter().enumerate() {
+        if owner == untouched {
+            assert_eq!(
+                &mesh.vertices()[quad * 4..quad * 4 + 4],
+                &old_vertices[quad * 4..quad * 4 + 4]
+            );
+        }
+    }
     Ok(())
 }
 
