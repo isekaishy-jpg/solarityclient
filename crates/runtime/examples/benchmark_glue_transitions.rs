@@ -40,8 +40,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         application.vulkan_report().device_name(),
         application.vulkan_report().extent()
     );
-    let result =
-        application.benchmark_glue_steps(&steps, following_frames, Duration::from_secs(30));
+    let capture_directory = std::env::var_os("SOLARITY_GLUE_CAPTURE_DIR").map(PathBuf::from);
+    if let Some(directory) = &capture_directory {
+        for (index, step) in steps.iter().enumerate() {
+            println!(
+                "capture step={} path={}",
+                step.name,
+                directory.join(format!("{index:02}.ppm")).display()
+            );
+        }
+    }
+    let result = application.benchmark_glue_steps(
+        &steps,
+        following_frames,
+        Duration::from_secs(30),
+        capture_directory.as_deref(),
+    );
     let shutdown = application.shutdown();
     let samples = result?;
     shutdown?;

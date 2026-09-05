@@ -10,6 +10,7 @@ use ash::{Device, vk};
 use glam::Mat4;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
@@ -26,6 +27,7 @@ pub use types::M2FrameReport;
 pub(in crate::device) struct M2FrameContext<'a> {
     pub(in crate::device) device: &'a Device,
     pub(in crate::device) allocator: &'a vk_mem::Allocator,
+    pub(in crate::device) capture: Option<&'a FrameReadback>,
     pub(in crate::device) swapchain_loader: &'a ash::khr::swapchain::Device,
     pub(in crate::device) swapchain: vk::SwapchainKHR,
     pub(in crate::device) swapchain_images: &'a [vk::Image],
@@ -130,6 +132,7 @@ impl M2FrameRenderer {
         let slot = self.resources.slot_mut(slot_index)?;
         record_draws(RecordContext {
             device: context.device,
+            capture: context.capture,
             command_buffer: slot.command_buffer(),
             image,
             image_view,

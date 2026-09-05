@@ -15,6 +15,7 @@ mod capacity;
 mod gfx_singleton_manager;
 mod m2_model_orientation;
 mod status;
+mod vulkan_capture;
 mod vulkan_character_atlas;
 mod vulkan_frame;
 mod vulkan_glow;
@@ -54,6 +55,7 @@ mod vulkan_world_model_texture_set;
 
 pub use m2_model_orientation::M2ModelOrientation;
 pub use status::VulkanError;
+pub use vulkan_capture::CapturedFrame;
 pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 pub use vulkan_frame::CinematicFrameIdentity;
 pub use vulkan_glow::WorldFrameGlow;

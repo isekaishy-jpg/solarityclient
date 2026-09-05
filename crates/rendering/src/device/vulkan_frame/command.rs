@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_ui_frame::{UiOverlayRecordContext, record_loaded_overlay};
 
 use super::resource::FrameSlot;
@@ -13,6 +14,7 @@ use super::{FrameContext, FrameUiContext, swapchain_error};
 /// Borrowed resources needed to record one acquired swapchain image.
 pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
+    pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
     pub(super) source_image: vk::Image,
     pub(super) source_buffer: vk::Buffer,
@@ -237,6 +239,15 @@ fn transition_target_to_ui(context: &RecordContext<'_>) {
 
 /// Exposes the completed overlay to presentation.
 fn transition_ui_to_present(context: &RecordContext<'_>) {
+    if let Some(capture) = context.capture {
+        capture.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+        return;
+    }
     let barriers = [vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -257,6 +268,15 @@ fn transition_ui_to_present(context: &RecordContext<'_>) {
 
 /// Exposes a blit result directly when no overlay is active.
 fn transition_blit_to_present(context: &RecordContext<'_>) {
+    if let Some(capture) = context.capture {
+        capture.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        );
+        return;
+    }
     let barriers = [vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
         .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)

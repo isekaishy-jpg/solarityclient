@@ -9,6 +9,7 @@ mod types;
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
@@ -24,6 +25,7 @@ pub use types::UiFrameReport;
 /// Borrowed renderer graph required to present one immutable UI generation.
 pub(in crate::device) struct UiFrameContext<'a> {
     pub(in crate::device) device: &'a Device,
+    pub(in crate::device) capture: Option<&'a FrameReadback>,
     pub(in crate::device) swapchain_loader: &'a ash::khr::swapchain::Device,
     pub(in crate::device) swapchain: vk::SwapchainKHR,
     pub(in crate::device) swapchain_images: &'a [vk::Image],
@@ -115,6 +117,7 @@ impl UiFrameRenderer {
         let slot = self.resources.slot_mut(slot_index)?;
         record_draws(RecordContext {
             device: context.device,
+            capture: context.capture,
             command_buffer: slot.command_buffer(),
             image,
             image_view,

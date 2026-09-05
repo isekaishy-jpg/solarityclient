@@ -40,6 +40,9 @@ pub enum VulkanError {
     /// The desktop surface changed shape and its swapchain must be rebuilt.
     #[error("Vulkan presentation swapchain is out of date")]
     SwapchainOutOfDate,
+    /// An earlier explicit capture must be consumed before requesting another.
+    #[error("a framebuffer capture is already pending or awaiting collection")]
+    FrameCaptureBusy,
     /// The explicit zero-based adapter index does not exist.
     #[error("Vulkan adapter index {requested} is unavailable; found {available} adapters")]
     AdapterUnavailable {

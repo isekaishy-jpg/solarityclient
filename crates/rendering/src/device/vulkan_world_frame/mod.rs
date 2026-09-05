@@ -11,6 +11,7 @@ use glam::Mat4;
 
 use crate::WorldScreenWindow;
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
@@ -44,6 +45,7 @@ pub use types::{WorldFrameReport, WorldFrameScene};
 pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) device: &'a Device,
     pub(in crate::device) allocator: &'a vk_mem::Allocator,
+    pub(in crate::device) capture: Option<&'a FrameReadback>,
     pub(in crate::device) swapchain_loader: &'a ash::khr::swapchain::Device,
     pub(in crate::device) swapchain: vk::SwapchainKHR,
     pub(in crate::device) swapchain_images: &'a [vk::Image],
@@ -321,6 +323,7 @@ impl WorldFrameRenderer {
         let record_started = std::time::Instant::now();
         record(RecordContext {
             device: context.device,
+            capture: context.capture,
             command_buffer: slot.command_buffer(),
             image,
             image_view,

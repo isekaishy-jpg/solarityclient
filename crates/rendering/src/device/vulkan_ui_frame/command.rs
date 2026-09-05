@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
@@ -19,6 +20,7 @@ const UPDATE_CHUNK_SIZE: usize = 65_536;
 /// Borrowed objects needed to record one acquired swapchain image.
 pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
+    pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
     pub(super) image: vk::Image,
     pub(super) image_view: vk::ImageView,
@@ -516,6 +518,15 @@ fn transition_to_color(context: &RecordContext<'_>) {
 
 /// Exposes completed color writes to the presentation engine.
 fn transition_to_present(context: &RecordContext<'_>) {
+    if let Some(capture) = context.capture {
+        capture.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+        return;
+    }
     let barrier = vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)

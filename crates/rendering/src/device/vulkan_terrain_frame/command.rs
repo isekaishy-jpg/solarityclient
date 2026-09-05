@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
@@ -16,6 +17,7 @@ use super::resource::TerrainFrameSlot;
 
 pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
+    pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
     pub(super) image: vk::Image,
     pub(super) image_view: vk::ImageView,
@@ -209,6 +211,15 @@ fn transition_attachments(context: &RecordContext<'_>) {
 }
 
 fn transition_to_present(context: &RecordContext<'_>) {
+    if let Some(capture) = context.capture {
+        capture.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+        return;
+    }
     let range = vk::ImageSubresourceRange::default()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
         .level_count(1)

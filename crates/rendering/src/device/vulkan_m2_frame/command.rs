@@ -5,6 +5,7 @@
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
@@ -17,6 +18,7 @@ use super::resource::M2FrameSlot;
 /// Borrowed state required to record one acquired image.
 pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
+    pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
     pub(super) image: vk::Image,
     pub(super) image_view: vk::ImageView,
@@ -312,6 +314,15 @@ fn transition_attachments(context: &RecordContext<'_>) {
 
 /// Exposes completed color writes to the presentation engine.
 fn transition_to_present(context: &RecordContext<'_>) {
+    if let Some(capture) = context.capture {
+        capture.record(
+            context.device,
+            context.command_buffer,
+            context.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+        return;
+    }
     let range = vk::ImageSubresourceRange::default()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
         .base_mip_level(0)

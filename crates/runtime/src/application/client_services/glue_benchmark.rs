@@ -1,6 +1,9 @@
 //! Offline diagnostic replay through the production Glue presentation path.
 
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use solarity_ui::{
@@ -108,6 +111,21 @@ pub enum GlueBenchmarkError {
     /// Closing the diagnostic window cancels work without hiding an incomplete result.
     #[error("glue benchmark was cancelled by a platform termination event")]
     Cancelled,
+    /// An explicitly requested framebuffer artifact could not be written.
+    #[error("could not write glue benchmark capture {path}")]
+    CaptureIo {
+        /// Output directory or image whose operation failed.
+        path: PathBuf,
+        /// Underlying filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A ready scene failed to present the explicitly requested capture frame.
+    #[error("glue benchmark step {name} did not present its capture frame")]
+    CaptureMissing {
+        /// Step whose requested image was not recorded.
+        name: String,
+    },
 }
 
 impl ClientServices {
@@ -117,6 +135,7 @@ impl ClientServices {
         steps: &[GlueBenchmarkStep],
         following_frame_count: NonZeroUsize,
         timeout: Duration,
+        capture_directory: Option<&Path>,
     ) -> Result<Vec<GlueBenchmarkResult>, GlueBenchmarkError> {
         if self.gameplay.world().is_some()
             || self.glue.current_screen() != "login"
@@ -128,8 +147,14 @@ impl ClientServices {
             .set_network_status(UiGlueNetworkStatus::new(None, true));
         self.glue
             .set_character_creation_expansion(UiCharacterExpansion::WRATH_OF_THE_LICH_KING);
+        if let Some(directory) = capture_directory {
+            std::fs::create_dir_all(directory).map_err(|source| GlueBenchmarkError::CaptureIo {
+                path: directory.to_owned(),
+                source,
+            })?;
+        }
         let mut results = Vec::with_capacity(steps.len());
-        for step in steps {
+        for (index, step) in steps.iter().enumerate() {
             tracing::info!(step = %step.name, "started Glue benchmark step");
             let started = Instant::now();
             self.apply_benchmark_action(&step.action)?;
@@ -182,6 +207,27 @@ impl ClientServices {
                 transition_frames,
                 following_frames,
             });
+            if let Some(directory) = capture_directory {
+                // Capture a separate frame after measurement. GPU synchronization
+                // and filesystem work must not enter the measured intervals.
+                self.renderer
+                    .request_frame_capture()
+                    .map_err(ApplicationError::from)?;
+                self.benchmark_frame()?;
+                let frame = self
+                    .renderer
+                    .take_captured_frame()
+                    .map_err(ApplicationError::from)?
+                    .ok_or_else(|| GlueBenchmarkError::CaptureMissing {
+                        name: step.name.clone(),
+                    })?;
+                let path = directory.join(format!("{index:02}.ppm"));
+                write_capture(&path, &frame).map_err(|source| GlueBenchmarkError::CaptureIo {
+                    path: path.clone(),
+                    source,
+                })?;
+                tracing::info!(step = %step.name, path = %path.display(), "wrote Glue framebuffer capture");
+            }
         }
         Ok(results)
     }
@@ -282,4 +328,15 @@ impl ClientServices {
         profile.mark("application present");
         Ok(())
     }
+}
+
+/// Writes the final opaque display RGB bytes without scaling or recompression.
+fn write_capture(path: &Path, frame: &solarity_rendering::CapturedFrame) -> std::io::Result<()> {
+    let mut writer = BufWriter::new(File::create(path)?);
+    let (width, height) = frame.extent();
+    writeln!(writer, "P6\n{width} {height}\n255")?;
+    for pixel in frame.rgba8().as_chunks::<4>().0 {
+        writer.write_all(&pixel[..3])?;
+    }
+    writer.flush()
 }

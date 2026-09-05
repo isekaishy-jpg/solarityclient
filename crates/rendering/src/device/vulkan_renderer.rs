@@ -179,6 +179,7 @@ pub struct VulkanRenderer {
     bootstrap: VulkanBootstrap,
     adapter_index: usize,
     present_mode: VulkanPresentMode,
+    capture: Option<super::vulkan_capture::FrameReadback>,
     device: Device,
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_path: Option<PathBuf>,
@@ -257,6 +258,7 @@ impl VulkanRenderer {
             bootstrap,
             adapter_index,
             present_mode,
+            capture: None,
             device,
             pipeline_cache: vk::PipelineCache::null(),
             pipeline_cache_path: None,
@@ -516,6 +518,7 @@ impl VulkanRenderer {
         let uploaded = self.cinematic_frames.present(FrameContext {
             device: &self.device,
             allocator,
+            capture: self.capture.as_ref().filter(|capture| !capture.captured),
             swapchain_loader: &self.swapchain_loader,
             swapchain: self.swapchain,
             swapchain_images: &self.swapchain_images,
@@ -548,13 +551,88 @@ impl VulkanRenderer {
             self.m2_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
         }
-        match present(self) {
+        let result = match present(self) {
             Err(VulkanError::SwapchainOutOfDate) => {
                 self.recreate_swapchain()?;
+                // Recreate waited for idle. A pending readback may have belonged
+                // to the failed present, and must match the replacement extent.
+                if self
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| !capture.captured)
+                {
+                    let allocator = self.allocator.as_ref().ok_or_else(|| {
+                        VulkanError::operation(
+                            "access Vulkan allocator",
+                            "allocator is unavailable",
+                        )
+                    })?;
+                    if let Some(capture) = self.capture.take() {
+                        capture.destroy(allocator);
+                    }
+                    self.request_frame_capture()?;
+                }
                 present(self)
             }
             result => result,
+        };
+        if result.is_ok()
+            && let Some(capture) = self.capture.as_mut()
+        {
+            capture.captured = true;
         }
+        result
+    }
+
+    /// Requests one copy of the next successfully presented framebuffer.
+    ///
+    /// This diagnostic allocates GPU readback storage. Ordinary frames perform
+    /// no readback; call [`Self::take_captured_frame`] to wait and collect pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError::FrameCaptureBusy`] for an outstanding request, or
+    /// a Vulkan error when host-visible storage cannot be allocated.
+    pub fn request_frame_capture(&mut self) -> Result<(), VulkanError> {
+        if self.capture.is_some() {
+            return Err(VulkanError::FrameCaptureBusy);
+        }
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.capture = Some(super::vulkan_capture::FrameReadback::create(
+            allocator,
+            self.report.extent,
+        )?);
+        Ok(())
+    }
+
+    /// Waits for GPU completion and consumes a successfully presented capture.
+    ///
+    /// Returns `None` before a requested frame has been presented. Collection
+    /// deliberately stalls the GPU and belongs outside performance samples.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VulkanError`] when GPU synchronization or mapped readback fails.
+    pub fn take_captured_frame(&mut self) -> Result<Option<super::CapturedFrame>, VulkanError> {
+        if !self
+            .capture
+            .as_ref()
+            .is_some_and(|capture| capture.captured)
+        {
+            return Ok(None);
+        }
+        self.wait_idle()?;
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let Some(capture) = self.capture.take() else {
+            return Ok(None);
+        };
+        let result = capture.read(allocator);
+        capture.destroy(allocator);
+        result.map(Some)
     }
 
     /// Rebuilds every swapchain-shaped frame owner after the desktop surface
@@ -869,6 +947,7 @@ impl VulkanRenderer {
             TerrainFrameContext {
                 device: &self.device,
                 allocator,
+                capture: self.capture.as_ref().filter(|capture| !capture.captured),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -1319,6 +1398,7 @@ impl VulkanRenderer {
         let report = self.ui_frames.present_clear(
             UiFrameContext {
                 device: &self.device,
+                capture: self.capture.as_ref().filter(|capture| !capture.captured),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -1355,6 +1435,7 @@ impl VulkanRenderer {
         let report = self.ui_frames.present_composite(
             UiFrameContext {
                 device: &self.device,
+                capture: self.capture.as_ref().filter(|capture| !capture.captured),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2088,6 +2169,7 @@ impl VulkanRenderer {
             WorldFrameContext {
                 device: &self.device,
                 allocator,
+                capture: self.capture.as_ref().filter(|capture| !capture.captured),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2263,6 +2345,7 @@ impl VulkanRenderer {
             M2FrameContext {
                 device: &self.device,
                 allocator,
+                capture: self.capture.as_ref().filter(|capture| !capture.captured),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2405,6 +2488,9 @@ impl Drop for VulkanRenderer {
         let _pipeline_cache_result = self.save_pipeline_cache();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
+            if let Some(capture) = self.capture.take() {
+                capture.destroy(allocator);
+            }
             self.cinematic_frames.destroy(&self.device, allocator);
             self.world_frames.destroy(&self.device, allocator);
             self.glow.destroy(&self.device, allocator);

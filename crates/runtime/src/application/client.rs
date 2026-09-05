@@ -352,6 +352,9 @@ impl ClientApplication {
     /// startup movies or legal dialogs. It supplies fixture entitlement and
     /// directory state, performs no server operations, and measures both scene
     /// publication and the following frames under the configured VSync policy.
+    /// An optional capture directory receives numbered PPM framebuffers after
+    /// each step's measurement. These runs include diagnostic GPU waits between
+    /// steps; use a separate run without captures for performance evidence.
     ///
     /// # Errors
     ///
@@ -362,9 +365,10 @@ impl ClientApplication {
         steps: &[super::GlueBenchmarkStep],
         following_frame_count: std::num::NonZeroUsize,
         timeout: std::time::Duration,
+        capture_directory: Option<&std::path::Path>,
     ) -> Result<Vec<super::GlueBenchmarkResult>, super::GlueBenchmarkError> {
         self.services
-            .benchmark_glue_steps(steps, following_frame_count, timeout)
+            .benchmark_glue_steps(steps, following_frame_count, timeout, capture_directory)
     }
 
     /// Routes one event after any preceding motion run has been flushed.

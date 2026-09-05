@@ -496,3 +496,46 @@ measurements retain throughput above the target without closing the remaining
 stall or visual-parity requirements. Palette sampling failures are retained
 until a bank actually requests the default, matching the conditional stock
 lookup; ordinary login and explicitly authored banks do not require it.
+
+## Rendered framebuffer evidence
+
+`VulkanRenderer::request_frame_capture` and `take_captured_frame` provide an
+explicit diagnostic copy of the next successfully presented framebuffer.
+Every presentation path copies after its final effects/UI pass and before
+presentation. The request owns a host-readable buffer until GPU completion,
+handles pending swapchain recreation, and cannot be overwritten by later
+frames. Ordinary rendering performs no readback. Collection deliberately
+waits for GPU idle; these diagnostic waits must remain outside performance
+measurements. The captured RGBA8 channels are the actual stored image, before
+desktop composition and display gamma.
+
+Set `SOLARITY_GLUE_CAPTURE_DIR` when running `benchmark_glue_transitions` to
+export one numbered PPM after each step's following-frame measurements. The
+example prints the step-to-file mapping. Use a separate run without that
+variable for performance evidence, because capture waits and file writes alter
+the state between steps even though they are outside the recorded intervals.
+The exports include the complete framebuffer without scaling or color changes.
+
+A GPU regression presents a known two-dimensional color pattern, then presents
+a different frame before collecting the capture. It checks every original
+channel and pixel, request exclusivity, pending behavior after rejected input,
+one-shot consumption, opaque-black clear capture, and unsubmitted teardown.
+This validates actual GPU readback rather than a CPU reconstruction.
+
+The first installed-data run produced all 31 captures at 1280x720, including
+login, live/ghost hunters with a pet, Human and Blood Elf selection, character
+creation, class/race changes, and customization. Inspection shows the Night Elf
+selection head/helmet clipped at the upper framebuffer edge, while Human and
+Blood Elf selection fit vertically. Night Elf creation also reaches the upper
+edge. This is now a concrete camera/placement audit target; its stock comparison
+and cause remain unproven. The live and ghost lighting changes are visible, but
+the exports alone do not establish stock equivalence. No stock frame capture
+was available from the Windows automation helper during this run.
+
+All 552 workspace tests, Clippy, formatting, and the optimized replay build
+pass. A separate capture-disabled run completed all 31 actions with 6,000
+following frames each on the same GTX 1070 setup with timing instrumentation.
+Following throughput ranged from 2,307 to 3,656 FPS. Creation entry still
+reached a 26.6 ms transition frame and a 30.2 ms following frame. The diagnostic
+therefore preserves throughput above the target but does not close the stall,
+camera, visual-parity, or world-entry requirements.

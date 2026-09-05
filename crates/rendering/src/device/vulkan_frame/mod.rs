@@ -9,6 +9,7 @@ mod types;
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
 use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
@@ -32,6 +33,7 @@ pub(super) struct FrameUiContext<'a> {
 pub(super) struct FrameContext<'a> {
     pub(super) device: &'a Device,
     pub(super) allocator: &'a vk_mem::Allocator,
+    pub(super) capture: Option<&'a FrameReadback>,
     pub(super) swapchain_loader: &'a ash::khr::swapchain::Device,
     pub(super) swapchain: vk::SwapchainKHR,
     pub(super) swapchain_images: &'a [vk::Image],
@@ -111,6 +113,7 @@ impl FrameRenderer {
         let slot = self.resources.slot_mut(slot_index)?;
         record_frame(RecordContext {
             device: context.device,
+            capture: context.capture,
             command_buffer: slot.command_buffer(),
             source_image,
             source_buffer,
