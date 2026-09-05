@@ -1,4 +1,4 @@
-//! Plan-identity deduplication and renderer-lifetime terrain buffer ownership.
+//! Plan-identity deduplication and retained terrain buffer ownership.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,11 +15,12 @@ struct GpuTerrainMesh {
     info: TerrainMeshResourceInfo,
 }
 
-/// Owns every uploaded ADT geometry allocation until renderer teardown.
+/// Owns uploaded ADT geometry until explicit retirement or renderer teardown.
 pub(in crate::device) struct TerrainMeshRegistry {
     registry_id: u64,
     handles: HashMap<u64, TerrainMeshHandle>,
-    resources: Vec<GpuTerrainMesh>,
+    resources: HashMap<u32, GpuTerrainMesh>,
+    next_slot: u32,
 }
 
 impl Default for TerrainMeshRegistry {
@@ -28,7 +29,8 @@ impl Default for TerrainMeshRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
         }
     }
 }
@@ -52,8 +54,10 @@ impl TerrainMeshRegistry {
                 buffer_kind: "index",
             });
         }
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::TerrainMeshCapacity)?;
+        let slot = self.next_slot;
+        let next_slot = slot
+            .checked_add(1)
+            .ok_or(VulkanError::TerrainMeshCapacity)?;
         let vertex_bytes = plan.vertex_bytes();
         let index_bytes = plan.index_bytes();
         let info = TerrainMeshResourceInfo::new(
@@ -69,11 +73,15 @@ impl TerrainMeshRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuTerrainMesh {
-            plan_identity: plan.identity(),
-            buffers,
-            info,
-        });
+        self.resources.insert(
+            slot,
+            GpuTerrainMesh {
+                plan_identity: plan.identity(),
+                buffers,
+                info,
+            },
+        );
+        self.next_slot = next_slot;
         self.handles.insert(plan.identity(), handle);
         Ok(handle)
     }
@@ -86,7 +94,7 @@ impl TerrainMeshRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.info)
     }
 
@@ -98,7 +106,7 @@ impl TerrainMeshRegistry {
         handle.registry_id == self.registry_id
             && self
                 .resources
-                .get(handle.slot as usize)
+                .get(&handle.slot)
                 .is_some_and(|resource| resource.plan_identity == plan.identity())
     }
 
@@ -110,13 +118,21 @@ impl TerrainMeshRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.buffers.buffers())
+    }
+
+    /// Invalidates the public handle while transferring allocations to a GPU fence owner.
+    pub(in crate::device) fn take_plan(&mut self, identity: u64) -> Option<GpuMeshBuffers> {
+        let handle = self.handles.remove(&identity)?;
+        self.resources
+            .remove(&handle.slot)
+            .map(|resource| resource.buffers)
     }
 
     pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
         self.handles.clear();
-        for resource in self.resources.iter_mut().rev() {
+        for resource in self.resources.values_mut() {
             resource.buffers.destroy(allocator);
         }
         self.resources.clear();

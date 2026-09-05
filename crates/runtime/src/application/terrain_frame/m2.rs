@@ -4,6 +4,8 @@
 #[path = "../../../tests/application/model_playback.rs"]
 mod model_playback_tests;
 
+mod streaming;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -604,6 +606,24 @@ struct M2PlaybackSynchronization {
 }
 
 impl M2Playback {
+    /// Starts a newly resident world owner against the existing scene clock.
+    /// Native 0x00826B00 anchors sequence construction to that clock; loading a
+    /// neighbor must not age its new local sequence from world entry time zero.
+    fn new_at(
+        model: &DecodedM2Model,
+        animation_id: u16,
+        scene_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
+        let mut playback = Self::new(model, animation_id, random)?;
+        if let Some(playback) = playback.as_mut() {
+            playback.cycle_started_ms = scene_time_ms;
+            playback.scene_time_ms = scene_time_ms as u32;
+            playback.previous_event_scene_time_ms = scene_time_ms as u32;
+        }
+        Ok(playback)
+    }
+
     /// Selects one base animation and consumes its authored cycle-count roll.
     pub(in crate::application) fn new(
         model: &DecodedM2Model,
@@ -1105,43 +1125,19 @@ impl M2Frame {
 
         let mut placements = Vec::with_capacity(scene.placements().len());
         for placement in scene.placements() {
-            if placement.source_index() >= sources.len() {
-                return Err(RuntimeTerrainFrameError::M2SourceIndex {
+            let source = sources.get(placement.source_index()).ok_or(
+                RuntimeTerrainFrameError::M2SourceIndex {
                     source_index: placement.source_index(),
                     source_count: sources.len(),
-                });
-            }
-            let (playback, particles, ribbons) = match sources[placement.source_index()].as_ref() {
-                Some(source) => {
-                    let playback = M2Playback::new(&source.model, 0, random)?;
-                    let particles = stock_particle_simulations(&source.model);
-                    let ribbons = source
-                        .model
-                        .animations()
-                        .ribbons()
-                        .iter()
-                        .map(M2RibbonTrail::new)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    (playback, particles, ribbons)
-                }
-                None => (None, Vec::new(), Vec::new()),
-            };
-            placements.push(M2GpuPlacement {
-                source_index: placement.source_index(),
-                local_transform: placement.transform(),
-                transform: placement.transform(),
-                orientation: M2ModelOrientation::Authored,
-                animation_binding: M2AnimationBinding::Independent,
-                glue_parent_attachment: None,
-                owner: M2GpuPlacementOwner::Static(placement.owner()),
-                flags: placement.flags(),
-                color: placement.color(),
-                opacity: 1.0,
-                particle_colors: None,
-                playback,
-                particles,
-                ribbons,
-            });
+                },
+            )?;
+            placements.push(streaming::static_gpu_placement(
+                placement,
+                placement.source_index(),
+                source.as_ref(),
+                0.0,
+                random,
+            )?);
         }
         Ok(Self {
             sources,

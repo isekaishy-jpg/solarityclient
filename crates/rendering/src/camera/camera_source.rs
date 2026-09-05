@@ -4,6 +4,18 @@ use glam::{Mat4, Vec3};
 
 use super::{WorldCamera, WorldCameraError, WorldCameraFrame, WorldCameraProjection};
 
+impl WorldCameraFrame {
+    /// Returns the world-space bottom-right far corner used by terrain demand.
+    ///
+    /// The far plane has clip Z=1 in both stock's projection and Vulkan. Each
+    /// inverse matrix is resolved independently before composing the transform.
+    #[must_use]
+    pub fn terrain_streaming_corner(self) -> Vec3 {
+        let inverse = self.view().inverse() * self.projection().inverse();
+        inverse.project_point3(Vec3::new(1.0, -1.0, 1.0))
+    }
+}
+
 impl WorldCamera {
     /// Builds the renderer frame shared by visibility and draw submission.
     ///

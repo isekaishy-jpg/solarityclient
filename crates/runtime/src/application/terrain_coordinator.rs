@@ -23,9 +23,12 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub(in crate::application) mod m2_residency;
+mod streaming;
 pub(in crate::application) mod world_model_residency;
 
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
+pub use streaming::RuntimeTerrainStreamPoll;
+use streaming::TerrainStreamingDemand;
 use world_model_residency::{
     ResidentWorldModelScene, prepare_global_world_model, prepare_world_models,
 };
@@ -51,6 +54,9 @@ pub enum RuntimeTerrainError {
     /// Decoded terrain could not enter strict collision geometry.
     #[error(transparent)]
     Collision(#[from] TerrainCollisionError),
+    /// Camera inputs could not resolve the native terrain loading window.
+    #[error(transparent)]
+    Streaming(#[from] solarity_systems::TerrainStreamingError),
     /// Decoded MH2O data could not enter strict liquid query geometry.
     #[error(transparent)]
     Liquid(#[from] TerrainLiquidError),
@@ -76,13 +82,13 @@ pub enum RuntimeTerrainError {
         model: solarity_asset::AssetPath,
     },
     /// One authored placement identity disagrees with another MODF record.
-    #[error("terrain tile repeats WMO placement {unique_id} with conflicting fields")]
+    #[error("resident terrain repeats WMO placement {unique_id} with conflicting fields")]
     ConflictingWorldModelPlacement {
         /// MODF unique identifier shared across nearby chunks and ADTs.
         unique_id: u32,
     },
     /// One authored placement identity disagrees with another MDDF record.
-    #[error("terrain tile repeats M2 placement {unique_id} with conflicting fields")]
+    #[error("resident terrain repeats M2 placement {unique_id} with conflicting fields")]
     ConflictingDoodadPlacement {
         /// MDDF unique identifier shared across nearby chunks and ADTs.
         unique_id: u32,
@@ -188,6 +194,9 @@ pub struct RuntimeTerrainCoordinator {
     pending: Option<PendingTerrainGeneration>,
     prefetched: Option<PrefetchedTerrainGeneration>,
     failed_request: Option<TerrainRequest>,
+    streaming: Option<TerrainStreamingDemand>,
+    pending_stream: Option<PendingTerrainGeneration>,
+    failed_stream: std::collections::HashSet<TerrainTileIndex>,
 }
 
 impl RuntimeTerrainCoordinator {
@@ -218,6 +227,9 @@ impl RuntimeTerrainCoordinator {
             pending: None,
             prefetched: None,
             failed_request: None,
+            streaming: None,
+            pending_stream: None,
+            failed_stream: std::collections::HashSet::new(),
         }
     }
 
@@ -248,6 +260,10 @@ impl RuntimeTerrainCoordinator {
         world_y: f32,
         cpu: &CpuExecutor,
     ) -> Result<bool, RuntimeTerrainError> {
+        self.poll_stream_completion()?;
+        if self.pending_stream.is_some() {
+            return Ok(false);
+        }
         let request = TerrainRequest::at_world_position(map_id, world_x, world_y);
         if self.active_satisfies(request)
             || self
@@ -309,6 +325,8 @@ impl RuntimeTerrainCoordinator {
     ) -> Result<RuntimeTerrainPoll, RuntimeTerrainError> {
         let Some(world) = world else {
             self.active = None;
+            self.retire_streaming();
+            self.poll_stream_completion()?;
             self.failed_request = None;
             self.collect_main_thread_caches();
             if self
@@ -325,11 +343,19 @@ impl RuntimeTerrainCoordinator {
         let map_id = world.map_id().value();
         let position = world.local_player_transform()?.position();
         let request = TerrainRequest::at_world_position(map_id, position.x, position.y);
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.map_id() != map_id)
+        {
+            self.retire_streaming();
+        }
+        self.poll_stream_completion()?;
 
         if let Some(prefetched) = self.prefetched.take() {
             if prefetched.request == request {
                 let global_world_model = prefetched.resident.global_world_model.is_some();
-                self.active = Some(prefetched.resident);
+                self.publish_active(prefetched.resident)?;
                 self.failed_request = None;
                 self.collect_main_thread_caches();
                 tracing::info!(
@@ -359,6 +385,12 @@ impl RuntimeTerrainCoordinator {
             );
         }
 
+        if self.promote_resident_tile(request) {
+            return Ok(RuntimeTerrainPoll::TileLoaded {
+                map_id,
+                tile: request.tile,
+            });
+        }
         if let Some(active) = self.active.as_ref()
             && self.active_satisfies(request)
         {
@@ -396,7 +428,7 @@ impl RuntimeTerrainCoordinator {
                 match completion.result {
                     Ok(active) => {
                         let global_world_model = active.global_world_model.is_some();
-                        self.active = Some(active);
+                        self.publish_active(active)?;
                         self.failed_request = None;
                         self.collect_main_thread_caches();
                         tracing::info!(
@@ -424,6 +456,9 @@ impl RuntimeTerrainCoordinator {
             }
         }
         if self.failed_request == Some(request) {
+            return Ok(RuntimeTerrainPoll::Pending { map_id });
+        }
+        if self.pending_stream.is_some() {
             return Ok(RuntimeTerrainPoll::Pending { map_id });
         }
 
@@ -537,9 +572,8 @@ impl RuntimeTerrainCoordinator {
 
     /// Synchronizes map and exact player-tile residency from authoritative ECS.
     ///
-    /// This stage intentionally does not guess a preload radius. Neighbor tile
-    /// admission belongs to recovered stock streaming policy; camera visibility
-    /// can only filter tiles already admitted by that policy.
+    /// Neighbor demand is supplied separately by `synchronize_streaming_async`
+    /// after the camera owner resolves the native loading window.
     ///
     /// # Errors
     ///
@@ -551,6 +585,7 @@ impl RuntimeTerrainCoordinator {
     ) -> Result<RuntimeTerrainPoll, RuntimeTerrainError> {
         let Some(world) = world else {
             self.active = None;
+            self.retire_streaming();
             self.textures.collect_unused();
             self.models.collect_unused();
             self.world_models.collect_unused();
@@ -558,6 +593,7 @@ impl RuntimeTerrainCoordinator {
         };
         let map_id = world.map_id().value();
         if self.active.as_ref().map(ResidentTerrainMap::map_id) != Some(map_id) {
+            self.retire_streaming();
             let definition = self
                 .maps
                 .map(map_id)
@@ -567,12 +603,21 @@ impl RuntimeTerrainCoordinator {
                 terrain,
                 tile: None,
                 global_world_model: None,
+                nearby: Vec::new(),
             });
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
             self.textures.collect_unused();
             self.models.collect_unused();
             self.world_models.collect_unused();
+        }
+        let position = world.local_player_transform()?.position();
+        let request = TerrainRequest::at_world_position(map_id, position.x, position.y);
+        if self.promote_resident_tile(request) {
+            return Ok(RuntimeTerrainPoll::TileLoaded {
+                map_id,
+                tile: request.tile,
+            });
         }
         let active = self
             .active
@@ -621,7 +666,15 @@ impl RuntimeTerrainCoordinator {
             &mut self.world_models,
             &mut self.assets.borrow_mut(),
         )?;
-        active.tile = Some(resident);
+        active.validate_tile_placements(&resident)?;
+        if let Some(previous) = active.tile.replace(resident)
+            && self
+                .streaming
+                .as_ref()
+                .is_some_and(|demand| demand.contains(previous.index()))
+        {
+            active.nearby.push(previous);
+        }
         self.textures.collect_unused();
         self.models.collect_unused();
         self.world_models.collect_unused();
@@ -688,7 +741,7 @@ impl RuntimeTerrainCoordinator {
         self.active
             .as_ref()
             .and_then(|active| active.tile.as_ref())
-            .map(|tile| &tile.mesh)
+            .map(|tile| tile.mesh.as_ref())
     }
 
     /// Returns the number of distinct root-WMO generations used by MODF.
@@ -766,7 +819,7 @@ impl RuntimeTerrainCoordinator {
             .collect()
     }
 
-    /// Traces the resident ADT's one-sided, hole-aware collision surface.
+    /// Traces every resident ADT's one-sided, hole-aware collision surface.
     ///
     /// # Errors
     ///
@@ -778,15 +831,17 @@ impl RuntimeTerrainCoordinator {
         collision_radius: f32,
         maximum_fraction: f32,
     ) -> Result<Option<TerrainCollisionHit>, TerrainCollisionError> {
-        let Some(collision) = self
-            .active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map(|tile| &tile.collision)
-        else {
+        let Some(active) = self.active.as_ref() else {
             return Ok(None);
         };
-        collision.trace(start, end, collision_radius, maximum_fraction)
+        let mut selected: Option<TerrainCollisionHit> = None;
+        for tile in active.tile.iter().chain(&active.nearby) {
+            let limit = selected.map_or(maximum_fraction, TerrainCollisionHit::fraction);
+            if let Some(hit) = tile.collision.trace(start, end, collision_radius, limit)? {
+                selected = Some(hit);
+            }
+        }
+        Ok(selected)
     }
 
     /// Resolves the resident ADT point height considered at player entry.
@@ -801,15 +856,16 @@ impl RuntimeTerrainCoordinator {
         &self,
         position: glam::Vec3,
     ) -> Result<Option<f32>, TerrainCollisionError> {
-        let Some(collision) = self
-            .active
-            .as_ref()
-            .and_then(|active| active.tile.as_ref())
-            .map(|tile| &tile.collision)
-        else {
+        let Some(active) = self.active.as_ref() else {
             return Ok(None);
         };
-        collision.height_at(position.x, position.y)
+        let mut selected: Option<f32> = None;
+        for tile in active.tile.iter().chain(&active.nearby) {
+            if let Some(height) = tile.collision.height_at(position.x, position.y)? {
+                selected = Some(selected.map_or(height, |current| current.max(height)));
+            }
+        }
+        Ok(selected)
     }
 
     /// Samples the preferred resident MH2O surface at a world-space point.
@@ -823,10 +879,16 @@ impl RuntimeTerrainCoordinator {
         world_y: f32,
         reference_height: Option<f32>,
     ) -> Result<Option<TerrainLiquidSample>, TerrainLiquidError> {
+        if !world_x.is_finite() || !world_y.is_finite() {
+            return Err(TerrainLiquidError::NonFinitePoint);
+        }
+        if reference_height.is_some_and(|height| !height.is_finite()) {
+            return Err(TerrainLiquidError::NonFiniteReferenceHeight);
+        }
         let Some(liquid) = self
             .active
             .as_ref()
-            .and_then(|active| active.tile.as_ref())
+            .and_then(|active| active.tile_at(TerrainMap::tile_at_world_position(world_x, world_y)))
             .map(|tile| &tile.liquid)
         else {
             return Ok(None);
@@ -887,20 +949,24 @@ impl RuntimeTerrainCoordinator {
         let Some(active) = self.active.as_ref() else {
             return Ok(None);
         };
-        let Some(collision) = active
+        let mut selected = None;
+        for collision in active
             .tile
-            .as_ref()
+            .iter()
+            .chain(&active.nearby)
             .map(|tile| &tile.m2_collision)
-            .or_else(|| {
+            .chain(
                 active
                     .global_world_model
-                    .as_ref()
-                    .map(|global| &global.m2_collision)
-            })
-        else {
-            return Ok(None);
-        };
-        collision.trace_camera(start, end, maximum_fraction)
+                    .iter()
+                    .map(|global| &global.m2_collision),
+            )
+        {
+            let candidate =
+                collision.trace_camera(start, end, selected.unwrap_or(maximum_fraction))?;
+            selected = nearest_fraction(selected, candidate);
+        }
+        Ok(selected)
     }
 
     /// Traces camera-collidable faces in the resident tile's placed WMOs.
@@ -918,20 +984,24 @@ impl RuntimeTerrainCoordinator {
         let Some(active) = self.active.as_mut() else {
             return Ok(None);
         };
-        let Some(collision) = active
+        let mut selected = None;
+        for collision in active
             .tile
-            .as_mut()
+            .iter_mut()
+            .chain(&mut active.nearby)
             .map(|tile| &mut tile.world_model_collision)
-            .or_else(|| {
+            .chain(
                 active
                     .global_world_model
-                    .as_mut()
-                    .map(|global| &mut global.world_model_collision)
-            })
-        else {
-            return Ok(None);
-        };
-        collision.trace_camera(start, end, maximum_fraction)
+                    .iter_mut()
+                    .map(|global| &mut global.world_model_collision),
+            )
+        {
+            let candidate =
+                collision.trace_camera(start, end, selected.unwrap_or(maximum_fraction))?;
+            selected = nearest_fraction(selected, candidate);
+        }
+        Ok(selected)
     }
 
     /// Samples the preferred resident placed-WMO liquid surface.
@@ -949,20 +1019,36 @@ impl RuntimeTerrainCoordinator {
         let Some(active) = self.active.as_ref() else {
             return Ok(None);
         };
-        let Some(liquid) = active
+        let mut selected: Option<WorldModelLiquidSample> = None;
+        for liquid in active
             .tile
-            .as_ref()
+            .iter()
+            .chain(&active.nearby)
             .map(|tile| &tile.world_model_liquid)
-            .or_else(|| {
+            .chain(
                 active
                     .global_world_model
-                    .as_ref()
-                    .map(|global| &global.world_model_liquid)
-            })
-        else {
-            return Ok(None);
-        };
-        liquid.sample(world_x, world_y, reference_height)
+                    .iter()
+                    .map(|global| &global.world_model_liquid),
+            )
+        {
+            if let Some(candidate) = liquid.sample(world_x, world_y, reference_height)? {
+                let preferred = selected.is_none_or(|current| {
+                    reference_height.map_or(candidate.height() > current.height(), |reference| {
+                        preferred_surface(
+                            Some(current.height()),
+                            Some(candidate.height()),
+                            reference,
+                        )
+                        .is_some_and(|height| height != current.height())
+                    })
+                });
+                if preferred {
+                    selected = Some(candidate);
+                }
+            }
+        }
+        Ok(selected)
     }
 
     /// Resolves one final player camera against all resident static providers.
@@ -1020,6 +1106,7 @@ impl RuntimeTerrainCoordinator {
     /// Releases map and tile residency on world disconnect.
     pub fn disconnect(&mut self) {
         self.active = None;
+        self.retire_streaming();
         self.prefetched = None;
         if let Some(pending) = self.pending.as_mut() {
             pending.retain_without_world = false;
@@ -1105,6 +1192,7 @@ impl TerrainWorkerState {
                 terrain,
                 tile: None,
                 global_world_model,
+                nearby: Vec::new(),
             });
         }
         if !terrain.tile(request.tile).exists() {
@@ -1126,6 +1214,7 @@ impl TerrainWorkerState {
             terrain,
             tile,
             global_world_model: None,
+            nearby: Vec::new(),
         })
     }
 
@@ -1170,6 +1259,7 @@ struct ResidentTerrainMap {
     terrain: TerrainMap,
     tile: Option<ResidentTerrainTile>,
     global_world_model: Option<ResidentGlobalWorldModel>,
+    nearby: Vec<ResidentTerrainTile>,
 }
 
 impl ResidentTerrainMap {
@@ -1216,10 +1306,10 @@ impl ResidentGlobalWorldModel {
     }
 }
 
-struct ResidentTerrainTile {
+pub(super) struct ResidentTerrainTile {
     decoded: DecodedTerrainTile,
     textures: Vec<Arc<BlpTextureSource>>,
-    mesh: TerrainTileMeshPlan,
+    mesh: Arc<TerrainTileMeshPlan>,
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
     m2_scene: ResidentM2Scene,
@@ -1244,7 +1334,7 @@ impl ResidentTerrainTile {
             .iter()
             .map(|path| texture_cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
-        let mesh = TerrainTileMeshPlan::prepare(&decoded)?;
+        let mesh = Arc::new(TerrainTileMeshPlan::prepare(&decoded)?);
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
         let mut m2_builder = ResidentM2SceneBuilder::new();

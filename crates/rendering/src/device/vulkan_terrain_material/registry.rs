@@ -19,7 +19,8 @@ struct GpuTerrainMaterial {
 pub(in crate::device) struct TerrainMaterialRegistry {
     registry_id: u64,
     handles: HashMap<u64, TerrainMaterialHandle>,
-    resources: Vec<GpuTerrainMaterial>,
+    resources: HashMap<u32, GpuTerrainMaterial>,
+    next_slot: u32,
 }
 
 impl Default for TerrainMaterialRegistry {
@@ -28,7 +29,8 @@ impl Default for TerrainMaterialRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
         }
     }
 }
@@ -42,8 +44,10 @@ impl TerrainMaterialRegistry {
         if let Some(handle) = self.handles.get(&plan.identity()) {
             return Ok(*handle);
         }
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::TerrainMaterialCapacity)?;
+        let slot = self.next_slot;
+        let next_slot = slot
+            .checked_add(1)
+            .ok_or(VulkanError::TerrainMaterialCapacity)?;
         let width = u32::try_from(crate::TERRAIN_MATERIAL_ATLAS_WIDTH)
             .map_err(|source| VulkanError::operation("convert terrain atlas width", source))?;
         let extent = (width, width);
@@ -54,11 +58,15 @@ impl TerrainMaterialRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuTerrainMaterial {
-            plan_identity: plan.identity(),
-            image,
-            info,
-        });
+        self.resources.insert(
+            slot,
+            GpuTerrainMaterial {
+                plan_identity: plan.identity(),
+                image,
+                info,
+            },
+        );
+        self.next_slot = next_slot;
         self.handles.insert(plan.identity(), handle);
         Ok(handle)
     }
@@ -71,7 +79,7 @@ impl TerrainMaterialRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.info)
     }
 
@@ -83,7 +91,7 @@ impl TerrainMaterialRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.image.view())
     }
 
@@ -95,8 +103,19 @@ impl TerrainMaterialRegistry {
         handle.registry_id == self.registry_id
             && self
                 .resources
-                .get(handle.slot as usize)
+                .get(&handle.slot)
                 .is_some_and(|resource| resource.plan_identity == plan.identity())
+    }
+
+    /// Invalidates atlas lookup before its descriptor/image retirement is queued.
+    pub(in crate::device) fn take_plan(
+        &mut self,
+        identity: u64,
+    ) -> Option<(TerrainMaterialHandle, GpuSampledImage)> {
+        let handle = self.handles.remove(&identity)?;
+        self.resources
+            .remove(&handle.slot)
+            .map(|resource| (handle, resource.image))
     }
 
     pub(in crate::device) fn destroy(
@@ -105,7 +124,7 @@ impl TerrainMaterialRegistry {
         allocator: &vk_mem::Allocator,
     ) {
         self.handles.clear();
-        for resource in self.resources.iter_mut().rev() {
+        for resource in self.resources.values_mut() {
             resource.image.destroy(device, allocator);
         }
         self.resources.clear();

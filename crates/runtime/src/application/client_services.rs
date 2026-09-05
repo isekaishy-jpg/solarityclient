@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 pub(super) mod glue_benchmark;
+mod world_camera;
 mod world_transfer;
 
 use std::cell::RefCell;
@@ -27,8 +28,8 @@ use solarity_network::{
 };
 use solarity_rendering::{
     CharacterComponentTextureLevel, M2ParticleTwinkleTable, UiPreparedDraw, VulkanBootstrap,
-    VulkanPresentMode, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
-    WorldModelTextureFiltering, glue_ghost_sunlight,
+    VulkanPresentMode, VulkanRenderer, VulkanReport, WorldModelBaseMip, WorldModelTextureFiltering,
+    glue_ghost_sunlight,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
@@ -953,27 +954,12 @@ impl ClientServices {
             }
             self.persist_active_cvars()?;
         }
-        let (Some(environment), Some(pose)) =
-            (self.environment.current(), self.player.camera_pose())
-        else {
+        let Some(environment) = self.environment.current() else {
             return self.present_glue_frame();
         };
-        let (width, height) = self.platform.pixel_extent();
-        let aspect_ratio = width as f32 / height as f32;
-        // These are the registered build-12340 defaults. The settings owner
-        // will pass live CVar values through this same explicit boundary.
-        let pose = self
-            .terrain
-            .resolve_player_camera(pose, aspect_ratio, true, true)?;
-        let camera = WorldCamera::stock_following(
-            pose.eye(),
-            pose.target(),
-            pose.up(),
-            pose.orbit_pivot(),
-            pose.subject(),
-            environment.view_distance().value(),
-        )
-        .frame(aspect_ratio)?;
+        let Some(camera) = self.resolved_world_camera()? else {
+            return self.present_glue_frame();
+        };
         if let Some(clock) = self.gameplay.realm_clock() {
             self.sound.update(
                 &self.glue,
@@ -1342,7 +1328,9 @@ impl ClientServices {
                     self.player.disconnect();
                     self.terrain.disconnect();
                     self.sound.disconnect()?;
-                    self.terrain_frame = None;
+                    if let Some(frame) = self.terrain_frame.take() {
+                        frame.retire(&mut self.renderer)?;
+                    }
                     self.loading_screen_cache.clear();
                     self.loading_screen_prewarm_queue.clear();
                     self.authentication_prewarm_active = false;
@@ -1964,7 +1952,7 @@ impl ClientServices {
             RuntimeTransportPoll::Current { .. } => {}
         }
         match terrain_poll {
-            RuntimeTerrainPoll::TileLoaded { tile, .. } => {
+            RuntimeTerrainPoll::TileLoaded { map_id, tile } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
                     RuntimeTerrainFrameError::MissingMeshPlan {
                         tile_x: tile.x(),
@@ -1972,58 +1960,77 @@ impl ClientServices {
                     },
                 )?;
                 self.sound.stage_terrain_tile(resident_tile);
-                let plan = self.terrain.resident_mesh_plan().ok_or(
-                    RuntimeTerrainFrameError::MissingMeshPlan {
-                        tile_x: tile.x(),
-                        tile_y: tile.y(),
-                    },
-                )?;
-                let sources = self.terrain.resident_texture_sources().ok_or(
-                    RuntimeTerrainFrameError::MissingTextureSources {
-                        tile_x: tile.x(),
-                        tile_y: tile.y(),
-                    },
-                )?;
-                let world_models = self.terrain.resident_world_models().ok_or(
-                    RuntimeTerrainFrameError::MissingWorldModelScene {
-                        tile_x: tile.x(),
-                        tile_y: tile.y(),
-                    },
-                )?;
-                let m2_scene = self.terrain.resident_m2_scene().ok_or(
-                    RuntimeTerrainFrameError::MissingM2Scene {
-                        tile_x: tile.x(),
-                        tile_y: tile.y(),
-                    },
-                )?;
-                // Registered build-12340 defaults: textureFilteringMode 3 is
-                // anisotropic 4x and BaseMip 0 begins at the authored top mip.
-                // A settings owner will pass live typed values here directly.
-                let frame = TerrainFrame::prepare(
-                    &mut self.renderer,
-                    plan,
-                    sources,
-                    m2_scene,
-                    world_models,
-                    WorldModelTextureFiltering::Anisotropic4x,
-                    WorldModelBaseMip::Zero,
-                    &mut self.crt_rand,
-                    Arc::clone(&self.particle_twinkle),
-                    self.player.resident_frame_input(),
-                    &self.player.resident_creature_frame_inputs(),
-                    &self.player.resident_remote_player_frame_inputs(),
-                    self.transport.resident(),
-                )?;
-                tracing::info!(
-                    tile_x = tile.x(),
-                    tile_y = tile.y(),
-                    draw_count = frame.draw_count(),
-                    m2_mesh_count = frame.m2_mesh_count(),
-                    m2_placement_count = frame.m2_placement_count(),
-                    world_model_placement_count = frame.world_model_placement_count(),
-                    "resident terrain entered renderer resources"
-                );
-                self.terrain_frame = Some(frame);
+                if let Some(frame) = self
+                    .terrain_frame
+                    .as_mut()
+                    .filter(|frame| frame.belongs_to_map(map_id))
+                {
+                    frame.synchronize_tiles(
+                        &mut self.renderer,
+                        tile,
+                        self.terrain.resident_tiles(),
+                        &mut self.crt_rand,
+                    )?;
+                } else {
+                    let plan = self
+                        .terrain
+                        .resident_tiles()
+                        .find(|resident| resident.mesh().tile() == tile)
+                        .map(|resident| resident.mesh())
+                        .ok_or(RuntimeTerrainFrameError::MissingMeshPlan {
+                            tile_x: tile.x(),
+                            tile_y: tile.y(),
+                        })?;
+                    let sources = self.terrain.resident_texture_sources().ok_or(
+                        RuntimeTerrainFrameError::MissingTextureSources {
+                            tile_x: tile.x(),
+                            tile_y: tile.y(),
+                        },
+                    )?;
+                    let world_models = self.terrain.resident_world_models().ok_or(
+                        RuntimeTerrainFrameError::MissingWorldModelScene {
+                            tile_x: tile.x(),
+                            tile_y: tile.y(),
+                        },
+                    )?;
+                    let m2_scene = self.terrain.resident_m2_scene().ok_or(
+                        RuntimeTerrainFrameError::MissingM2Scene {
+                            tile_x: tile.x(),
+                            tile_y: tile.y(),
+                        },
+                    )?;
+                    // Registered build-12340 defaults: textureFilteringMode 3 is
+                    // anisotropic 4x and BaseMip 0 begins at the authored top mip.
+                    // A settings owner will pass live typed values here directly.
+                    let frame = TerrainFrame::prepare(
+                        &mut self.renderer,
+                        map_id,
+                        plan,
+                        sources,
+                        m2_scene,
+                        world_models,
+                        WorldModelTextureFiltering::Anisotropic4x,
+                        WorldModelBaseMip::Zero,
+                        &mut self.crt_rand,
+                        Arc::clone(&self.particle_twinkle),
+                        self.player.resident_frame_input(),
+                        &self.player.resident_creature_frame_inputs(),
+                        &self.player.resident_remote_player_frame_inputs(),
+                        self.transport.resident(),
+                    )?;
+                    tracing::info!(
+                        tile_x = tile.x(),
+                        tile_y = tile.y(),
+                        draw_count = frame.draw_count(),
+                        m2_mesh_count = frame.m2_mesh_count(),
+                        m2_placement_count = frame.m2_placement_count(),
+                        world_model_placement_count = frame.world_model_placement_count(),
+                        "resident terrain entered renderer resources"
+                    );
+                    if let Some(previous) = self.terrain_frame.replace(frame) {
+                        previous.retire(&mut self.renderer)?;
+                    }
+                }
             }
             RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id } => {
                 // Global-WMO maps have no MCSE/MH2O tile generation. Release
@@ -2057,11 +2064,15 @@ impl ClientServices {
                     world_model_placement_count = frame.world_model_placement_count(),
                     "global WMO entered renderer resources"
                 );
-                self.terrain_frame = Some(frame);
+                if let Some(previous) = self.terrain_frame.replace(frame) {
+                    previous.retire(&mut self.renderer)?;
+                }
             }
             RuntimeTerrainPoll::Idle => {
                 self.sound.disconnect()?;
-                self.terrain_frame = None;
+                if let Some(frame) = self.terrain_frame.take() {
+                    frame.retire(&mut self.renderer)?;
+                }
             }
             RuntimeTerrainPoll::Pending { .. } => {}
             RuntimeTerrainPoll::Current { tile, .. } => {
@@ -2083,6 +2094,7 @@ impl ClientServices {
                 }
             }
         }
+        self.service_terrain_streaming()?;
         self.synchronize_world_ui_zone()?;
         self.complete_world_transfer_map()?;
         if self.player.resident_frame_input().is_some()

@@ -95,6 +95,12 @@ environment availability, player-model residency, and first terrain-frame
 residency. Input remains with the transition until one complete final card has
 been presented.
 
+Tiled maps retain a [camera-driven ADT neighborhood](terrain-streaming.md).
+Worker-completed neighbors enter collision and renderer state together; primary
+tile changes preserve retained M2 playback, particles, and ribbons. Shared
+placement IDs prevent duplicate buildings and doodads across ADT references.
+Departed terrain GPU allocations retire after their queued frame uses complete.
+
 WDT content selects either an ADT-backed terrain generation or the sole global
 MODF placement. The global branch retains that placement's transform, doodad
 and name sets, root/group WMO resources, selected embedded M2s, collision and

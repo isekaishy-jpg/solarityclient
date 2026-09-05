@@ -13,6 +13,12 @@ use crate::device::vulkan_texture::BlpTextureRegistry;
 
 use super::{TerrainTextureSet, TerrainTextureSetHandle, TerrainTextureSetInfo};
 
+/// A batch remains allocated until every descriptor in it has retired.
+struct TerrainDescriptorPool {
+    handle: vk::DescriptorPool,
+    slots: std::ops::Range<u32>,
+}
+
 struct GpuTerrainTextureSet {
     handle: vk::DescriptorSet,
     info: TerrainTextureSetInfo,
@@ -21,8 +27,9 @@ struct GpuTerrainTextureSet {
 pub(in crate::device) struct TerrainTextureSetRegistry {
     registry_id: u64,
     handles: HashMap<TerrainTextureSet, TerrainTextureSetHandle>,
-    resources: Vec<GpuTerrainTextureSet>,
-    pools: Vec<vk::DescriptorPool>,
+    resources: HashMap<u32, GpuTerrainTextureSet>,
+    next_slot: u32,
+    pools: Vec<TerrainDescriptorPool>,
     atlas_sampler: vk::Sampler,
     diffuse_sampler: vk::Sampler,
 }
@@ -33,7 +40,8 @@ impl Default for TerrainTextureSetRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
             pools: Vec::new(),
             atlas_sampler: vk::Sampler::null(),
             diffuse_sampler: vk::Sampler::null(),
@@ -82,7 +90,7 @@ impl TerrainTextureSetRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.info)
     }
 
@@ -106,8 +114,38 @@ impl TerrainTextureSetRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.handle)
+    }
+
+    /// Invalidates every descriptor using retired atlases and transfers empty pools.
+    /// A mixed-atlas allocation remains owned until its final live set departs.
+    pub(in crate::device) fn take_materials(
+        &mut self,
+        materials: &[crate::device::TerrainMaterialHandle],
+    ) -> Vec<vk::DescriptorPool> {
+        self.handles.retain(|key, handle| {
+            if materials.contains(&key.material()) {
+                self.resources.remove(&handle.slot);
+                false
+            } else {
+                true
+            }
+        });
+        let mut pools = Vec::new();
+        self.pools.retain(|pool| {
+            if pool
+                .slots
+                .clone()
+                .any(|slot| self.resources.contains_key(&slot))
+            {
+                true
+            } else {
+                pools.push(pool.handle);
+                false
+            }
+        });
+        pools
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
@@ -116,7 +154,7 @@ impl TerrainTextureSetRegistry {
         // SAFETY: All descriptor use is retired and handles are uniquely owned.
         unsafe {
             for pool in self.pools.drain(..).rev() {
-                device.destroy_descriptor_pool(pool, None);
+                device.destroy_descriptor_pool(pool.handle, None);
             }
             if self.diffuse_sampler != vk::Sampler::null() {
                 device.destroy_sampler(self.diffuse_sampler, None);
@@ -162,11 +200,10 @@ impl TerrainTextureSetRegistry {
         textures: &BlpTextureRegistry,
         pending: &[TerrainTextureSet],
     ) -> Result<(), VulkanError> {
-        let first = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::TerrainTextureSetCapacity)?;
+        let first = self.next_slot;
         let added = u32::try_from(pending.len())
             .map_err(|_source| VulkanError::TerrainTextureSetCapacity)?;
-        first
+        let next_slot = first
             .checked_add(added)
             .ok_or(VulkanError::TerrainTextureSetCapacity)?;
         // The common layout reserves the atlas plus four diffuse bindings even
@@ -199,7 +236,9 @@ impl TerrainTextureSetRegistry {
                 ));
             }
         };
-        for (key, descriptor_set) in pending.iter().cloned().zip(descriptor_sets) {
+        for (slot, (key, descriptor_set)) in
+            (first..next_slot).zip(pending.iter().cloned().zip(descriptor_sets))
+        {
             write_set(
                 device,
                 descriptor_set,
@@ -209,19 +248,24 @@ impl TerrainTextureSetRegistry {
                 self.diffuse_sampler,
                 &key,
             )?;
-            let slot = u32::try_from(self.resources.len())
-                .map_err(|_source| VulkanError::TerrainTextureSetCapacity)?;
             let handle = TerrainTextureSetHandle {
                 registry_id: self.registry_id,
                 slot,
             };
-            self.resources.push(GpuTerrainTextureSet {
-                handle: descriptor_set,
-                info: TerrainTextureSetInfo::new(key.layer_count()),
-            });
+            self.resources.insert(
+                slot,
+                GpuTerrainTextureSet {
+                    handle: descriptor_set,
+                    info: TerrainTextureSetInfo::new(key.layer_count()),
+                },
+            );
             self.handles.insert(key, handle);
         }
-        self.pools.push(pool);
+        self.next_slot = next_slot;
+        self.pools.push(TerrainDescriptorPool {
+            handle: pool,
+            slots: first..next_slot,
+        });
         Ok(())
     }
 }

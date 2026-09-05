@@ -151,6 +151,37 @@ fn append_playback_sound_event(bytes: &mut Vec<u8>) {
     bytes[0x104..0x108].copy_from_slice(&event.to_le_bytes());
 }
 
+/// 0x00826B00 anchors a new sequence without aging it through earlier world time.
+#[test]
+fn newly_streamed_world_model_starts_at_its_admission_time() -> Result<(), Box<dyn Error>> {
+    let (model, _) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback =
+        M2Playback::new_at(&model, 0, 60_000.0, &mut random)?.ok_or("missing playback")?;
+    let mut expected_random = random;
+    let advance = playback.clock(&model, 60_000.0, 60_000.0, &mut random)?;
+    assert_eq!(advance.clock.animation_time_ms(), 0.0);
+    assert!(advance.expired_variations.is_empty());
+    assert!(
+        triggered_m2_event_indices(
+            model.animations(),
+            playback.event_window(60_000.0, 60_000.0)
+        )
+        .is_empty()
+    );
+    let advance = playback.clock(&model, 60_100.0, 60_100.0, &mut random)?;
+    assert_eq!(advance.clock.animation_time_ms(), 100.0);
+    assert_eq!(
+        triggered_m2_event_indices(
+            model.animations(),
+            playback.event_window(60_100.0, 60_100.0)
+        ),
+        vec![0]
+    );
+    assert_eq!(random.next_u15(), expected_random.next_u15());
+    Ok(())
+}
+
 /// AccountLogin_OnShow and 0x00826B00 restart against the current scene tick.
 #[test]
 fn model_show_restarts_after_hidden_time_without_replaying_sound_or_variations()

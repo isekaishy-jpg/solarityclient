@@ -17,7 +17,7 @@ use crate::application::terrain_frame::m2::{M2CpuSource, prepare_m2_cpu_source};
 use super::RuntimeTerrainError;
 
 /// The authored owner of one independently transformed M2 instance.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(in crate::application) enum ResidentM2Owner {
     /// A terrain MDDF record selected through an MCNK MCRF reference.
     TerrainDoodad { unique_id: u32 },

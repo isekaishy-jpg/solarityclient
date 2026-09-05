@@ -27,6 +27,7 @@ use crate::application::transport_coordinator::ResidentTransport;
 use crate::random::CrtRand;
 
 pub(in crate::application) mod m2;
+mod streaming;
 mod world_model;
 
 use m2::M2Frame;
@@ -460,10 +461,17 @@ pub enum RuntimeTerrainFrameError {
     },
 }
 
-/// One immutable resident ADT generation ready for camera selection.
+/// One retained ADT's immutable upload resources and culling plan.
+struct TerrainGpuTile {
+    plan: Arc<TerrainTileMeshPlan>,
+    draws: Vec<TerrainPreparedDraw>,
+}
+
+/// Resident world composition whose placement state survives tile changes.
 pub(super) struct TerrainFrame {
     tile: Option<TerrainTileIndex>,
-    draws: Vec<TerrainPreparedDraw>,
+    map_id: Option<u32>,
+    tiles: Vec<TerrainGpuTile>,
     visible_draws: Vec<TerrainPreparedDraw>,
     m2: M2Frame,
     world_models: WorldModelFrame,
@@ -474,7 +482,8 @@ impl TerrainFrame {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
-        plan: &TerrainTileMeshPlan,
+        map_id: u32,
+        plan: &Arc<TerrainTileMeshPlan>,
         sources: &[Arc<BlpTextureSource>],
         m2_scene: &ResidentM2Scene,
         world_models: &ResidentWorldModelScene,
@@ -487,81 +496,7 @@ impl TerrainFrame {
         remote_players: &[ResidentPlayerFrameInput<'_>],
         transport: Option<&ResidentTransport>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
-        validate_texture_table(plan, sources)?;
-
-        // The shared tile allocations are immutable. Renderer registries use
-        // the plan identity to suppress duplicate staging work within a
-        // generation, while MTEX images deduplicate by selected asset identity.
-        let mesh = renderer.upload_terrain_mesh(plan)?;
-        let material = renderer.upload_terrain_material(plan)?;
-        let texture_uploads = sources
-            .iter()
-            .map(|source| {
-                solarity_rendering::BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb)
-            })
-            .collect::<Vec<_>>();
-        let textures = renderer.upload_blp_textures(&texture_uploads)?;
-
-        let mut requests = Vec::with_capacity(plan.chunks().len());
-        let mut layer_counts = Vec::with_capacity(plan.chunks().len());
-        for (chunk_index, chunk) in plan.chunks().iter().enumerate() {
-            let layer_count = TerrainLayerCount::try_from(chunk.layers().len())?;
-            let layers = chunk
-                .layers()
-                .iter()
-                .map(|layer| {
-                    let texture_index =
-                        usize::try_from(layer.texture_index()).map_err(|_source| {
-                            RuntimeTerrainFrameError::TextureIndex {
-                                chunk_index,
-                                texture_index: layer.texture_index(),
-                                texture_count: textures.len(),
-                            }
-                        })?;
-                    textures.get(texture_index).copied().ok_or(
-                        RuntimeTerrainFrameError::TextureIndex {
-                            chunk_index,
-                            texture_index: layer.texture_index(),
-                            texture_count: textures.len(),
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            requests.push(TerrainTextureSet::new(material, &layers)?);
-            layer_counts.push(layer_count);
-        }
-
-        // Descriptor allocation is exact-demand and internally shares
-        // identical atlas/layer tuples. Pipeline preparation similarly reduces
-        // the 256 chunks to the one-through-four variants actually authored.
-        let texture_sets = renderer.prepare_terrain_texture_sets(&requests)?;
-        let mut pipelines = [None; 4];
-        for layer_count in &layer_counts {
-            let slot = usize::from(layer_count.get() - 1);
-            if pipelines[slot].is_none() {
-                pipelines[slot] = Some(renderer.prepare_terrain_pipeline(*layer_count)?);
-            }
-        }
-
-        let mut draws = Vec::with_capacity(plan.chunks().len());
-        for chunk_index in 0..plan.chunks().len() {
-            let slot = usize::from(layer_counts[chunk_index].get() - 1);
-            let Some(pipeline) = pipelines[slot] else {
-                // The immediately preceding loop prepared this exact closed
-                // layer-count slot, so absence would indicate local corruption.
-                return Err(RuntimeTerrainFrameError::Vulkan(
-                    VulkanError::TerrainDrawPipelineMismatch,
-                ));
-            };
-            draws.push(renderer.prepare_terrain_draw(
-                mesh,
-                pipeline,
-                texture_sets[chunk_index],
-                &requests[chunk_index],
-                plan,
-                chunk_index,
-            )?);
-        }
+        let draws = prepare_tile_draws(renderer, plan, sources)?;
 
         let (m2, world_models) = prepare_scene_models(
             renderer,
@@ -578,7 +513,11 @@ impl TerrainFrame {
         )?;
         Ok(Self {
             tile: Some(plan.tile()),
-            draws,
+            map_id: Some(map_id),
+            tiles: vec![TerrainGpuTile {
+                plan: Arc::clone(plan),
+                draws,
+            }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
             m2,
             world_models,
@@ -615,7 +554,8 @@ impl TerrainFrame {
         )?;
         Ok(Self {
             tile: None,
-            draws: Vec::new(),
+            map_id: None,
+            tiles: Vec::new(),
             visible_draws: Vec::new(),
             m2,
             world_models,
@@ -665,8 +605,8 @@ impl TerrainFrame {
         self.world_models.update_transport_state(transport)?;
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         self.visible_draws.clear();
-        if let Some(plan) = plan {
-            for (chunk, draw) in plan.chunks().iter().zip(&self.draws) {
+        for tile in &self.tiles {
+            for (chunk, draw) in tile.plan.chunks().iter().zip(&tile.draws) {
                 if chunk.is_visible(frustum)? {
                     self.visible_draws.push(*draw);
                 }
@@ -811,7 +751,7 @@ impl TerrainFrame {
 
     /// Returns the complete row-major packet count retained for camera culling.
     pub(super) fn draw_count(&self) -> usize {
-        self.draws.len()
+        self.tiles.iter().map(|tile| tile.draws.len()).sum()
     }
 
     /// Returns the number of independently transformed resident WMO owners.
@@ -881,4 +821,87 @@ fn validate_texture_table(
         }
     }
     Ok(())
+}
+
+/// Uploads one admitted ADT without replacing any world placement state.
+fn prepare_tile_draws(
+    renderer: &mut VulkanRenderer,
+    plan: &TerrainTileMeshPlan,
+    sources: &[Arc<BlpTextureSource>],
+) -> Result<Vec<TerrainPreparedDraw>, RuntimeTerrainFrameError> {
+    validate_texture_table(plan, sources)?;
+
+    // The shared tile allocations are immutable. Renderer registries use
+    // the plan identity to suppress duplicate staging work within a
+    // generation, while MTEX images deduplicate by selected asset identity.
+    let mesh = renderer.upload_terrain_mesh(plan)?;
+    let material = renderer.upload_terrain_material(plan)?;
+    let texture_uploads = sources
+        .iter()
+        .map(|source| solarity_rendering::BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb))
+        .collect::<Vec<_>>();
+    let textures = renderer.upload_blp_textures(&texture_uploads)?;
+
+    let mut requests = Vec::with_capacity(plan.chunks().len());
+    let mut layer_counts = Vec::with_capacity(plan.chunks().len());
+    for (chunk_index, chunk) in plan.chunks().iter().enumerate() {
+        let layer_count = TerrainLayerCount::try_from(chunk.layers().len())?;
+        let layers = chunk
+            .layers()
+            .iter()
+            .map(|layer| {
+                let texture_index = usize::try_from(layer.texture_index()).map_err(|_source| {
+                    RuntimeTerrainFrameError::TextureIndex {
+                        chunk_index,
+                        texture_index: layer.texture_index(),
+                        texture_count: textures.len(),
+                    }
+                })?;
+                textures
+                    .get(texture_index)
+                    .copied()
+                    .ok_or(RuntimeTerrainFrameError::TextureIndex {
+                        chunk_index,
+                        texture_index: layer.texture_index(),
+                        texture_count: textures.len(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        requests.push(TerrainTextureSet::new(material, &layers)?);
+        layer_counts.push(layer_count);
+    }
+
+    // Descriptor allocation is exact-demand and internally shares
+    // identical atlas/layer tuples. Pipeline preparation similarly reduces
+    // the 256 chunks to the one-through-four variants actually authored.
+    let texture_sets = renderer.prepare_terrain_texture_sets(&requests)?;
+    let mut pipelines = [None; 4];
+    for layer_count in &layer_counts {
+        let slot = usize::from(layer_count.get() - 1);
+        if pipelines[slot].is_none() {
+            pipelines[slot] = Some(renderer.prepare_terrain_pipeline(*layer_count)?);
+        }
+    }
+
+    let mut draws = Vec::with_capacity(plan.chunks().len());
+    for chunk_index in 0..plan.chunks().len() {
+        let slot = usize::from(layer_counts[chunk_index].get() - 1);
+        let Some(pipeline) = pipelines[slot] else {
+            // The immediately preceding loop prepared this exact closed
+            // layer-count slot, so absence would indicate local corruption.
+            return Err(RuntimeTerrainFrameError::Vulkan(
+                VulkanError::TerrainDrawPipelineMismatch,
+            ));
+        };
+        draws.push(renderer.prepare_terrain_draw(
+            mesh,
+            pipeline,
+            texture_sets[chunk_index],
+            &requests[chunk_index],
+            plan,
+            chunk_index,
+        )?);
+    }
+
+    Ok(draws)
 }

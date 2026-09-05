@@ -77,7 +77,7 @@ pub use movement::{
 pub use object::{ObjectProjectionError, project_object_fields};
 pub use world::{
     DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
-    LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, WORLD_VIEW_DISTANCE_MINIMUM, WorldViewDistance,
-    WorldViewDistanceError, WorldViewDistanceLimit, WorldViewDistanceRequest,
-    resolve_world_view_distance,
+    LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, TerrainStreamingError, TerrainStreamingWindow,
+    WORLD_VIEW_DISTANCE_MINIMUM, WorldViewDistance, WorldViewDistanceError, WorldViewDistanceLimit,
+    WorldViewDistanceRequest, prioritize_terrain_tiles, resolve_world_view_distance,
 };

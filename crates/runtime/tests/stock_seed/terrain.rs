@@ -8,9 +8,9 @@ use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, CharacterAppearanceCatalog,
     CharacterRaceCatalog, CharacterStartOutfitCatalog, ClientDataRoot, CreatureCatalog,
-    CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog,
-    ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog, ParticleColorCatalog,
-    TerrainTileIndex,
+    CreatureFamilyCatalog, DecodedTerrainTile, HelmetGeosetVisibilityCatalog,
+    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, Locale, MapCatalog,
+    ParticleColorCatalog, TerrainTileIndex,
 };
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform};
@@ -20,11 +20,11 @@ use solarity_rendering::{
 use solarity_runtime::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
     RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeTerrainCoordinator,
-    RuntimeTerrainPoll,
+    RuntimeTerrainError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
 };
 use solarity_systems::{
-    CameraSubjectGeometry, project_object_fields, resolve_camera_subject_height,
-    resolve_player_camera_pose,
+    CameraSubjectGeometry, TerrainStreamingWindow, WorldViewDistanceRequest, project_object_fields,
+    resolve_camera_subject_height, resolve_player_camera_pose, resolve_world_view_distance,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -40,6 +40,337 @@ use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
 use crate::support::{ClientFixture, bootstrap_texture_blp};
+
+/// Neighbor preparation survives ordinary movement, but never a retired world.
+#[test]
+fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<dyn Error>> {
+    let first = TerrainTileIndex::new(21, 30).ok_or("bad first tile")?;
+    let second = TerrainTileIndex::new(22, 30).ok_or("bad second tile")?;
+    let mut manifest = WdtFile::new(WowVersion::WotLK);
+    manifest.mwmo = Some(MwmoChunk::new());
+    for tile in [first, second] {
+        manifest
+            .main
+            .get_mut(usize::from(tile.x()), usize::from(tile.y()))
+            .ok_or("bad tile")?
+            .set_has_adt(true);
+    }
+    let mut wdt = Vec::new();
+    WdtWriter::new(&mut wdt).write(&manifest)?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &map_table()),
+        ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
+        (
+            "World\\Maps\\Northrend\\Northrend_21_30.adt",
+            &streaming_adt(first, 10.)?,
+        ),
+        (
+            "World\\Maps\\Northrend\\Northrend_22_30.adt",
+            &streaming_adt(second, 50.)?,
+        ),
+        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let maps = MapCatalog::load(&mut store)?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps)
+        .with_worker_catalog(catalog);
+    let origin = Vec3::new(1000., 5800., 250.);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "StreamingFixture",
+        origin,
+        0.,
+    ));
+    let next_world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "StreamingFixture",
+        Vec3::new(1000., 5300., 250.),
+        0.,
+    ));
+    terrain.synchronize(Some(&world))?;
+    let distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
+        777.,
+        WorldMapId::new(571),
+        0x8000_0000,
+    ))?;
+    let window = TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
+    assert!(window.contains(second));
+    let cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(3).ok_or("bad capacity")?,
+    ))?;
+    let (release, wait) = std::sync::mpsc::channel();
+    let blocker = cpu.try_submit(move || wait.recv())?;
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+        RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
+    );
+    assert!(terrain.resident_tile_at(second).is_none());
+    assert_eq!(terrain.resident_tile_count(), 1);
+    assert_eq!(
+        terrain.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTerrainPoll::Current {
+            map_id: 571,
+            tile: first
+        }
+    );
+    terrain.disconnect();
+    terrain.synchronize(Some(&world))?;
+    release.send(())?;
+    blocker.join()??;
+    cpu.try_submit(|| ())?.join()?;
+    // The completed old-world job must be discarded, then prepared under the
+    // replacement world even though its map and tile identifiers are identical.
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+        RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
+    );
+    assert!(terrain.resident_tile_at(second).is_none());
+    cpu.try_submit(|| ())?.join()?;
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+        RuntimeTerrainStreamPoll::Current
+    );
+    assert_eq!(terrain.resident_tile_count(), 2);
+    let neighbor_point = Vec3::new(1000., 5300., 300.);
+    let neighbor_height = terrain
+        .controlled_player_terrain_height(neighbor_point)?
+        .ok_or("neighbor height unavailable")?;
+    assert!((neighbor_height - 50.).abs() < 0.00001);
+    let contact = terrain
+        .trace_collision(neighbor_point, neighbor_point - Vec3::Z * 300., 0., 1.)?
+        .ok_or("neighbor terrain missed camera trace")?;
+    assert!((contact.fraction() - 250. / 300.).abs() < 0.00001);
+    // A busy worker proves the boundary crossing reuses the admitted neighbor.
+    let (release, wait) = std::sync::mpsc::channel();
+    let blocker = cpu.try_submit(move || wait.recv())?;
+    let promoted = terrain.synchronize_async(Some(&next_world), &cpu);
+    release.send(())?;
+    blocker.join()??;
+    assert_eq!(
+        promoted?,
+        RuntimeTerrainPoll::TileLoaded {
+            map_id: 571,
+            tile: second
+        }
+    );
+    assert_eq!(terrain.resident_tile_count(), 2);
+    assert_eq!(
+        terrain.resident_tile().map(DecodedTerrainTile::index),
+        Some(second)
+    );
+    let distant_origin = Vec3::new(1000., 5050., 250.);
+    let short_distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
+        183.333_33,
+        WorldMapId::new(571),
+        0x8000_0000,
+    ))?;
+    let smaller = TerrainStreamingWindow::new(
+        distant_origin,
+        short_distance,
+        Vec3::new(short_distance.value(), 0., 0.),
+    )?;
+    assert!(!smaller.contains(first));
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, distant_origin, smaller, &cpu)?,
+        RuntimeTerrainStreamPoll::Current
+    );
+    assert_eq!(terrain.resident_tile_count(), 1);
+    assert!(terrain.resident_tile_at(first).is_none());
+    Ok(())
+}
+
+/// Neighbor references share IDs only when their selected authored records agree.
+#[test]
+fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<dyn Error>> {
+    let first = TerrainTileIndex::new(21, 30).ok_or("bad first tile")?;
+    let second = TerrainTileIndex::new(22, 30).ok_or("bad second tile")?;
+    let origin = Vec3::new(1000., 5800., 250.);
+    let distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
+        777.,
+        WorldMapId::new(571),
+        0x8000_0000,
+    ))?;
+    let window = TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
+    // 0: identical owners, 1: MDDF conflict, 2: MODF conflict. An unselected
+    // duplicate ID has different fields in every case and creates no owner.
+    for conflict in 0..3 {
+        let mut manifest = WdtFile::new(WowVersion::WotLK);
+        manifest.mwmo = Some(MwmoChunk::new());
+        for tile in [first, second] {
+            manifest
+                .main
+                .get_mut(usize::from(tile.x()), usize::from(tile.y()))
+                .ok_or("bad tile")?
+                .set_has_adt(true);
+        }
+        let mut wdt = Vec::new();
+        WdtWriter::new(&mut wdt).write(&manifest)?;
+        let fixture = ClientFixture::with_common_files(&[
+            ("DBFilesClient\\Map.dbc", &map_table()),
+            ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
+            (
+                "World\\Maps\\Northrend\\Northrend_21_30.adt",
+                &streaming_placement_adt(first, 0)?,
+            ),
+            (
+                "World\\Maps\\Northrend\\Northrend_22_30.adt",
+                &streaming_placement_adt(second, conflict)?,
+            ),
+            ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+            ("World\\Wmo\\Fixture.wmo", &root_wmo_fixture()),
+            ("World\\Wmo\\Fixture_000.wmo", &group_wmo_fixture()),
+            ("World\\Fixture\\Collision.m2", &m2_collision_fixture()?),
+            ("World\\Fixture\\Collision00.skin", &skin_fixture()?),
+            ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(catalog.clone())?;
+        let maps = MapCatalog::load(&mut store)?;
+        let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps)
+            .with_worker_catalog(catalog);
+        let world = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(571),
+            1,
+            "SharedPlacements",
+            origin,
+            0.,
+        ));
+        terrain.synchronize(Some(&world))?;
+        let one = NonZeroUsize::new(1).ok_or("bad worker count")?;
+        let cpu = CpuExecutor::new(CpuPoolConfig::new(
+            one,
+            NonZeroUsize::new(2).ok_or("bad worker capacity")?,
+        ))?;
+        assert_eq!(
+            terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+            RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
+        );
+        cpu.try_submit(|| ())?.join()?;
+        let result = terrain.synchronize_streaming_async(571, origin, window, &cpu);
+        match conflict {
+            0 => {
+                assert_eq!(result?, RuntimeTerrainStreamPoll::Current);
+                assert_eq!(terrain.resident_tile_count(), 2);
+                let next_world = ActiveWorld::enter(WorldBootstrap::new(
+                    WorldMapId::new(571),
+                    1,
+                    "SharedPlacements",
+                    Vec3::new(1000., 5300., 250.),
+                    0.,
+                ));
+                assert_eq!(
+                    terrain.synchronize_async(Some(&next_world), &cpu)?,
+                    RuntimeTerrainPoll::TileLoaded {
+                        map_id: 571,
+                        tile: second
+                    }
+                );
+                assert_eq!(terrain.resident_world_model_count(), 1);
+                assert_eq!(terrain.resident_m2_count(), 2);
+            }
+            1 => assert!(matches!(
+                result,
+                Err(RuntimeTerrainError::ConflictingDoodadPlacement { unique_id: 9 })
+            )),
+            2 => assert!(matches!(
+                result,
+                Err(RuntimeTerrainError::ConflictingWorldModelPlacement { unique_id: 7 })
+            )),
+            _ => unreachable!(),
+        }
+        if conflict != 0 {
+            assert!(terrain.resident_tile_at(second).is_none());
+            assert_eq!(terrain.resident_tile_count(), 1);
+        }
+    }
+    Ok(())
+}
+
+/// Authors repeated selected IDs and one deliberately unreferenced MDDF record.
+fn streaming_placement_adt(
+    tile: TerrainTileIndex,
+    conflict: u8,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    const ORIGIN: f32 = 32.0 * 533.333_3;
+    let doodad = DoodadPlacement {
+        name_id: 0,
+        unique_id: 9,
+        position: [ORIGIN, if conflict == 1 { 1.5 } else { 0.5 }, ORIGIN],
+        rotation: [0.; 3],
+        scale: 1024,
+        flags: 0,
+    };
+    let unselected = DoodadPlacement {
+        position: [ORIGIN, 300., ORIGIN],
+        ..doodad
+    };
+    let placement = WmoPlacement {
+        name_id: 0,
+        unique_id: 7,
+        position: [ORIGIN, if conflict == 2 { 1. } else { 0. }, ORIGIN],
+        rotation: [0.; 3],
+        extents_min: [ORIGIN - 1., -1., ORIGIN - 1.],
+        extents_max: [ORIGIN + 1., 1., ORIGIN + 1.],
+        flags: 0,
+        doodad_set: 0,
+        name_set: 0,
+        scale: 1024,
+    };
+    let bytes = AdtBuilder::new()
+        .with_version(AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .add_model("World/Fixture/Collision.m2")
+        .add_doodad_placement(doodad)
+        .add_doodad_placement(unselected)
+        .add_wmo("World/Wmo/Fixture.wmo")
+        .add_wmo_placement(placement)
+        .build()?
+        .to_bytes()?;
+    let bytes = add_last_chunk_object_references(bytes, &[0], &[0])?;
+    position_streaming_adt(tile, 10., bytes)
+}
+
+/// Builds correctly addressed flat ADTs with different collision heights.
+fn streaming_adt(tile: TerrainTileIndex, height: f32) -> Result<Vec<u8>, Box<dyn Error>> {
+    let bytes = AdtBuilder::new()
+        .with_version(AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .build()?
+        .to_bytes()?;
+    position_streaming_adt(tile, height, bytes)
+}
+
+/// Assigns terrain coordinates while retaining selected placement records.
+fn position_streaming_adt(
+    tile: TerrainTileIndex,
+    height: f32,
+    bytes: Vec<u8>,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let wow_adt::ParsedAdt::Root(mut root) = wow_adt::parse_adt(&mut Cursor::new(bytes))? else {
+        return Err("not a root ADT".into());
+    };
+    root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
+    for chunk in &mut root.mcnk_chunks {
+        chunk.header.position = [
+            17_066.666_f32 - (u32::from(tile.y()) * 16 + chunk.header.index_y) as f32 * 33.333_332,
+            17_066.666_f32 - (u32::from(tile.x()) * 16 + chunk.header.index_x) as f32 * 33.333_332,
+            height,
+        ];
+        chunk
+            .heights
+            .as_mut()
+            .ok_or("missing heights")?
+            .heights
+            .fill(0.);
+    }
+    Ok(wow_adt::builder::BuiltAdt::from_root_adt(*root, None).to_bytes()?)
+}
 
 /// World entry admits only the exact player ADT and prepares each MCNK once.
 #[test]

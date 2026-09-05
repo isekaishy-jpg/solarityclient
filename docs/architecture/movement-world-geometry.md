@@ -117,10 +117,12 @@ boundary. Invalid world queries cannot become successful empty collections.
 
 The local movement owner must join these collectors to complete residency,
 deduplicate placed-object references, preserve WMO/chunk/M2 traversal order,
-and associate selected triangles with their native resource identities. The
-current runtime's single active ADT is insufficient for queries crossing into
-an adjacent declared tile. An unavailable tile or object must not become empty
-geometry that starts a fall.
+and associate selected triangles with their native resource identities.
+[Neighboring ADT residency](terrain-streaming.md) now retains complete terrain
+and static-object generations across tile boundaries, including camera and
+liquid providers. The movement owner still needs to assemble its ordered query
+inputs from that neighborhood. An unavailable tile or object must not become
+empty geometry that starts a fall.
 
 The owner also needs native placement/transport matrix updates, collision-query
 cache bounds covering step trials, dynamic-object admission, liquid/WDL modes,

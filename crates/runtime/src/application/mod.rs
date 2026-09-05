@@ -53,7 +53,7 @@ pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;
 pub use terrain_coordinator::{
     RuntimeCameraError, RuntimeCameraSceneError, RuntimeTerrainCoordinator, RuntimeTerrainError,
-    RuntimeTerrainPoll,
+    RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
 };
 pub use terrain_frame::RuntimeTerrainFrameError;
 pub use transport_coordinator::{

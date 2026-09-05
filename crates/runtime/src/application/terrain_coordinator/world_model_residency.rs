@@ -66,11 +66,17 @@ impl ResidentWorldModelSource {
 /// One unique, chunk-referenced MODF instance.
 pub(in crate::application) struct ResidentWorldModelPlacement {
     source_index: usize,
+    unique_id: u32,
     position: Vec3,
     rotation_degrees: Vec3,
 }
 
 impl ResidentWorldModelPlacement {
+    /// Returns the MODF identity shared by references in neighboring ADTs.
+    pub(in crate::application) const fn unique_id(&self) -> u32 {
+        self.unique_id
+    }
+
     /// Returns the source-table slot shared by this placement.
     pub(in crate::application) const fn source_index(&self) -> usize {
         self.source_index
@@ -242,6 +248,7 @@ fn prepare_world_model_placements<'placement>(
         )?);
         result.placements.push(ResidentWorldModelPlacement {
             source_index,
+            unique_id: placement.unique_id(),
             position,
             rotation_degrees,
         });
@@ -305,7 +312,7 @@ fn prepare_texture(
     })
 }
 
-fn same_world_model_placement(
+pub(super) fn same_world_model_placement(
     left: &TerrainWorldModelPlacement,
     right: &TerrainWorldModelPlacement,
 ) -> bool {

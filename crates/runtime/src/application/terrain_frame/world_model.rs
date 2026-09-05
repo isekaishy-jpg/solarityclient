@@ -1,5 +1,7 @@
 //! Renderer-local WMO resources and allocation-reusing MODF visibility.
 
+mod streaming;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -35,6 +37,7 @@ struct LogicalDrawResource {
 
 /// One shared root/group WMO generation in renderer-local storage.
 struct WorldModelGpuSource {
+    model: Arc<solarity_asset::DecodedWorldModel>,
     plan: Arc<WorldModelMeshPlan>,
     mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
@@ -52,7 +55,7 @@ struct WorldModelGpuPlacement {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WorldModelGpuPlacementOwner {
     /// One immutable terrain MODF owner.
-    Static,
+    Static { unique_id: u32 },
     /// The controlled player's current movement parent.
     Transport { guid: u64 },
 }
@@ -98,7 +101,9 @@ impl WorldModelFrame {
             )?;
             placements.push(WorldModelGpuPlacement {
                 source_index: placement.source_index(),
-                owner: WorldModelGpuPlacementOwner::Static,
+                owner: WorldModelGpuPlacementOwner::Static {
+                    unique_id: placement.unique_id(),
+                },
                 visible_draw_indices: Vec::with_capacity(source.plan.draws().len()),
                 plan,
             });
@@ -339,7 +344,12 @@ fn prepare_gpu_source(
         renderer.prepare_world_model_texture_sets(&texture_requests)?
     };
     let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
-    Ok(WorldModelGpuSource { plan, mesh, draws })
+    Ok(WorldModelGpuSource {
+        model: Arc::clone(source.model()),
+        plan,
+        mesh,
+        draws,
+    })
 }
 
 /// Converts ECS Z-up yaw using `world_game_object_projector.cpp::makeWmo`.

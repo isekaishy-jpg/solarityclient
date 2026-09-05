@@ -2,6 +2,8 @@
 
 #![allow(unsafe_code)]
 
+mod terrain_retirement;
+
 use std::path::{Path, PathBuf};
 
 use ash::{Device, vk};
@@ -200,6 +202,7 @@ pub struct VulkanRenderer {
     terrain_pipelines: TerrainPipelineRegistry,
     terrain_frames: TerrainFrameRenderer,
     terrain_texture_sets: TerrainTextureSetRegistry,
+    terrain_retirements: std::collections::VecDeque<terrain_retirement::TerrainRetirement>,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
     character_atlas_textures: CharacterAtlasTextureRegistry,
@@ -275,6 +278,7 @@ impl VulkanRenderer {
             world_frames: WorldFrameRenderer::default(),
             glow: VulkanGlowRenderer::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
+            terrain_retirements: std::collections::VecDeque::new(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
             terrain_frames: TerrainFrameRenderer::default(),
@@ -547,6 +551,7 @@ impl VulkanRenderer {
         &mut self,
         mut present: impl FnMut(&mut Self) -> Result<T, VulkanError>,
     ) -> Result<T, VulkanError> {
+        self.collect_retired_terrain()?;
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
@@ -2488,6 +2493,9 @@ impl Drop for VulkanRenderer {
         let _pipeline_cache_result = self.save_pipeline_cache();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
+            for batch in self.terrain_retirements.drain(..) {
+                batch.destroy(&self.device, allocator);
+            }
             if let Some(capture) = self.capture.take() {
                 capture.destroy(allocator);
             }
