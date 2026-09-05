@@ -728,9 +728,19 @@ impl UiPresentationPlan {
             let (Some(strata), Some(frame_level)) = (owner.frame_strata, owner.frame_level) else {
                 continue;
             };
+            // Hidden texture children of a visible frame retain their draw
+            // slots. Stock scripts toggle ordinary overlays (not just native
+            // button-state roles), so hiding one must not discard the slot
+            // needed by the next content/visibility journal. Whole hidden
+            // frames still defer their texture topology until first reveal.
+            let owner_presented = geometry.region(owner_index).is_some_and(|owner_region| {
+                owner_region.effectively_shown()
+                    && (owner_region.effective_alpha() > 0.0 || owner_region.animation_active())
+            });
             if (!region.effectively_shown()
                 || region.effective_alpha() <= 0.0 && !region.animation_active())
                 && strata != UiFrameStrata::Tooltip
+                && !owner_presented
             {
                 continue;
             }

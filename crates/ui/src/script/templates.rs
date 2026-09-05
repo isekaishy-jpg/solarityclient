@@ -107,6 +107,7 @@ pub struct UiRuntimeTemplateNode {
     texture_coords: [f64; 8],
     texture_colors: [[f64; 4]; 4],
     texture_file: Option<String>,
+    texture_solid_color: Option<[f64; 4]>,
     texture_blend_mode: &'static str,
     horizontal_tiling: bool,
     vertical_tiling: bool,
@@ -300,6 +301,7 @@ impl UiRuntimeTemplatePlan {
                     texture_coords: texture.coords,
                     texture_colors: texture.colors,
                     texture_file: texture.file,
+                    texture_solid_color: texture.solid_color,
                     texture_blend_mode: texture.blend_mode,
                     horizontal_tiling: texture.horizontal_tiling,
                     vertical_tiling: texture.vertical_tiling,
@@ -498,6 +500,12 @@ impl UiRuntimeTemplatePlan {
                     lua.create_sequence_from(node.texture_colors.iter().flatten().copied())?,
                 )?;
                 record.raw_set("texture_file", node.texture_file.as_deref())?;
+                record.raw_set(
+                    "texture_solid_color",
+                    node.texture_solid_color
+                        .map(|color| lua.create_sequence_from(color))
+                        .transpose()?,
+                )?;
                 record.raw_set("texture_blend_mode", node.texture_blend_mode)?;
                 record.raw_set("horizontal_tiling", node.horizontal_tiling)?;
                 record.raw_set("vertical_tiling", node.vertical_tiling)?;
@@ -797,6 +805,7 @@ fn apply_justification(
 
 struct InitialTexture {
     file: Option<String>,
+    solid_color: Option<[f64; 4]>,
     coords: [f64; 8],
     colors: [[f64; 4]; 4],
     blend_mode: &'static str,
@@ -815,6 +824,7 @@ fn initial_texture(
     if tree.nodes().get(index).map(|node| node.kind()) != Some(UiObjectKind::Texture) {
         return Ok(InitialTexture {
             file: None,
+            solid_color: None,
             coords: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
             colors: [[1.0, 1.0, 1.0, 1.0]; 4],
             blend_mode: "BLEND",
@@ -828,6 +838,7 @@ fn initial_texture(
     textures
         .state(index)
         .map(|state| InitialTexture {
+            solid_color: state.solid_color().map(|color| color.map(f64::from)),
             file: match state.file() {
                 Some(UiTextureFile::Asset(path)) => Some(path.as_str().to_owned()),
                 Some(UiTextureFile::Dynamic) | None => None,

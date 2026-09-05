@@ -12,6 +12,7 @@ const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiTextureState {
     file: Option<UiTextureFile>,
+    solid_color: Option<[f32; 4]>,
     blend_mode: UiBlendMode,
     tex_coords: [f32; 8],
     vertex_colors: [[f32; 4]; 4],
@@ -27,6 +28,12 @@ impl UiTextureState {
     #[must_use]
     pub const fn file(&self) -> Option<&UiTextureFile> {
         self.file.as_ref()
+    }
+
+    /// Returns the uniform texture payload created by an XML `Color` child.
+    #[must_use]
+    pub const fn solid_color(&self) -> Option<[f32; 4]> {
+        self.solid_color
     }
 
     /// Returns final source-alpha or additive blending.
@@ -80,6 +87,7 @@ impl UiTextureState {
     fn initial() -> Self {
         Self {
             file: None,
+            solid_color: None,
             blend_mode: UiBlendMode::Blend,
             tex_coords: DEFAULT_TEX_COORDS,
             vertex_colors: [WHITE; 4],
@@ -92,9 +100,6 @@ impl UiTextureState {
     }
 
     fn apply(&mut self, layer: &UiTextureLayer) {
-        if let Some(file) = layer.file() {
-            self.file = Some(file.clone());
-        }
         if let Some(blend_mode) = layer.blend_mode() {
             self.blend_mode = blend_mode;
         }
@@ -102,7 +107,11 @@ impl UiTextureState {
             apply_tex_coords(&mut self.tex_coords, coords);
         }
         if let Some(color) = layer.color() {
-            self.vertex_colors = [rgba(color); 4];
+            // CSimpleTexture::LoadXML (0x00485F40) creates a color texture
+            // before applying this declaration's file attribute. It replaces
+            // an inherited source without changing inherited vertex tint.
+            self.file = None;
+            self.solid_color = Some(rgba(color));
         }
         if let Some(gradient) = layer.gradient() {
             match gradient.orientation() {
@@ -112,6 +121,21 @@ impl UiTextureState {
                     self.vertex_colors = [maximum, minimum, maximum, minimum];
                 }
             }
+        }
+        match layer.file() {
+            Some(file @ UiTextureFile::Asset(_)) => {
+                self.file = Some(file.clone());
+                self.solid_color = None;
+                if let Some(color) = layer.color().map(rgba)
+                    && color != [0.0; 4]
+                {
+                    self.vertex_colors = [color; 4];
+                }
+            }
+            Some(UiTextureFile::Dynamic) if self.file.is_none() && self.solid_color.is_none() => {
+                self.file = Some(UiTextureFile::Dynamic);
+            }
+            Some(UiTextureFile::Dynamic) | None => {}
         }
         if let Some(value) = layer.horizontal_tiling() {
             self.horizontal_tiling = value;

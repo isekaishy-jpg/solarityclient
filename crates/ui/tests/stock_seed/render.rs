@@ -10,6 +10,132 @@ use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiPointerButton, UiTe
 
 use crate::support::{Fixture, FixtureFile};
 
+/// XML color sources and file tints survive inheritance and dynamic templates.
+#[test]
+fn xml_color_sources_follow_stock_file_precedence_and_dynamic_templates()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"Colors.xml\n" },
+        FixtureFile { path: "Interface\\GlueXML\\Colors.xml", bytes: br#"<Ui>
+<Texture name="TintedAsset" virtual="true" file="Interface\Glues\Base"><Color r="0.5" g="0.5" b="0.5" a="1"/></Texture>
+<Frame name="ColorTemplate" virtual="true"><Size x="80" y="40"/>
+  <Layers><Layer level="ARTWORK"><Texture name="$parentColor" setAllPoints="true"><Color r="0.25" g="0.5" b="1" a="0.75"/></Texture></Layer></Layers>
+</Frame>
+<Frame name="Owner"><Size x="100" y="100"/>
+  <Layers><Layer level="ARTWORK">
+    <Texture name="Replaced" inherits="TintedAsset" setAllPoints="true"><Color r="1" g="0" b="0" a="0.75"/></Texture>
+    <Texture name="FileWins" inherits="TintedAsset" file="Interface\Glues\New" setAllPoints="true"><Color r="0" g="1" b="0" a="0.75"/></Texture>
+    <Texture name="EmptyFile" inherits="TintedAsset" file="" setAllPoints="true"/>
+  </Layer></Layers>
+  <Scripts><OnLoad>CreateFrame("Frame", "Dynamic", nil, "ColorTemplate")</OnLoad></Scripts>
+</Frame>
+</Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (800, 600), false)?;
+    let member = |name| {
+        manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .find(|member| manager.objects()[member.object_index()].name() == Some(name))
+            .ok_or("missing texture member")
+    };
+    let replaced = member("Replaced")?;
+    assert_eq!(
+        replaced.source(),
+        &UiTextureSource::SolidColor([1.0, 0.0, 0.0, 0.75])
+    );
+    assert_eq!(replaced.vertex_colors(), [[0.5, 0.5, 0.5, 1.0]; 4]);
+    let file = member("FileWins")?;
+    assert!(
+        matches!(file.source(), UiTextureSource::Asset(path) if path.as_str() == "INTERFACE\\GLUES\\NEW.BLP")
+    );
+    assert_eq!(file.vertex_colors(), [[0.0, 1.0, 0.0, 0.75]; 4]);
+    let empty = member("EmptyFile")?;
+    assert!(
+        matches!(empty.source(), UiTextureSource::Asset(path) if path.as_str() == "INTERFACE\\GLUES\\BASE.BLP")
+    );
+    let dynamic = member("DynamicColor")?;
+    assert_eq!(
+        dynamic.source(),
+        &UiTextureSource::SolidColor([0.25, 0.5, 1.0, 0.75])
+    );
+    assert_eq!(dynamic.vertex_colors(), [[1.0; 4]; 4]);
+    Ok(())
+}
+
+/// Authored overlays retain zero-opacity slots while their owning frame is
+/// visible, including mixed widget/visibility callbacks such as race choices.
+#[test]
+fn hidden_texture_overlays_retain_slots_across_content_and_visibility_changes()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"Overlays.xml\n" },
+        FixtureFile { path: "Interface\\GlueXML\\Overlays.xml", bytes: br#"<Ui>
+<CheckButton name="Choice"><Size x="100" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer level="OVERLAY">
+    <Texture name="ChoiceOverlay" hidden="true" setAllPoints="true"><Color r="0" g="0" b="0" a="0.75"/></Texture>
+    <Texture name="EmptyOverlay" hidden="true" setAllPoints="true"/>
+  </Layer></Layers>
+  <Scripts><OnClick>
+    if ChoiceOverlay:IsShown() then ChoiceOverlay:Hide() EmptyOverlay:Hide() else ChoiceOverlay:Show() EmptyOverlay:Show() end
+    self:SetChecked(ChoiceOverlay:IsShown())
+  </OnClick></Scripts>
+</CheckButton>
+<Frame name="OtherScreen" hidden="true"><Size x="100" y="100"/>
+  <Layers><Layer level="ARTWORK"><Texture name="OtherScreenTexture" setAllPoints="true"><Color r="1" g="0" b="0"/></Texture></Layer></Layers>
+</Frame>
+</Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (800, 600), false)?;
+    let index = |name| {
+        manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))
+            .ok_or("missing object")
+    };
+    let choice = index("Choice")?;
+    let overlay = index("ChoiceOverlay")?;
+    let other = index("OtherScreenTexture")?;
+    let bounds = manager
+        .geometry()
+        .region(choice)
+        .ok_or("missing choice bounds")?
+        .presentation_bounds();
+    let pointer = (
+        bounds.left() + bounds.width() * 0.5,
+        bounds.bottom() + bounds.height() * 0.5,
+    );
+    let mesh = manager.render_plan().mesh();
+    assert!(mesh.contains_object(overlay));
+    assert!(!mesh.contains_object(other));
+    assert_eq!(mesh.batches()[0].opacity(), 0.0);
+    let identity = mesh.geometry_identity();
+    let vertices = mesh.vertices().to_vec();
+    let indices = mesh.indices().to_vec();
+    for expected in [1.0, 0.0, 1.0] {
+        manager.pointer_button(pointer, UiPointerButton::Left, true)?;
+        assert!(
+            manager
+                .pointer_button(pointer, UiPointerButton::Left, false)?
+                .click_activated()
+        );
+        let mesh = manager.render_plan().mesh();
+        assert_eq!(mesh.geometry_identity(), identity);
+        assert_eq!(mesh.vertices(), vertices);
+        assert_eq!(mesh.indices(), indices);
+        assert_eq!(mesh.object_indices(), [overlay]);
+        assert_eq!(mesh.batches()[0].opacity(), expected);
+        assert_eq!(mesh.vertices()[0].color(), [0.0, 0.0, 0.0, 0.75]);
+    }
+    Ok(())
+}
+
 /// One native callback can recolor a backdrop and texture while changing another
 /// texture's UVs. A later material replacement still removes the old source.
 #[test]
@@ -194,8 +320,8 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
     let presentation = manager.presentation();
 
-    assert_eq!(presentation.member_count(), 6);
-    assert_eq!(presentation.packets().len(), 5);
+    assert_eq!(presentation.member_count(), 7);
+    assert_eq!(presentation.packets().len(), 6);
 
     let low_background = presentation.packets()[0];
     assert_eq!(low_background.key().strata(), UiFrameStrata::Low);
@@ -210,13 +336,21 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         .collect::<Vec<_>>();
     assert_eq!(names, [Some("LowFirst"), Some("LowSecond")]);
 
-    let mutated = &presentation.members(1).ok_or("missing mutated packet")?[0];
+    let transparent = &presentation
+        .members(1)
+        .ok_or("missing transparent packet")?[0];
+    assert_eq!(
+        manager.objects()[transparent.object_index()].name(),
+        Some("Transparent")
+    );
+    assert_eq!(transparent.opacity(), 0.0);
+    let mutated = &presentation.members(2).ok_or("missing mutated packet")?[0];
     assert_eq!(
         manager.objects()[mutated.object_index()].name(),
         Some("Mutated")
     );
-    assert_eq!(presentation.packets()[1].key().draw_rank(), 30);
-    assert_eq!(presentation.packets()[1].key().draw_sub_level(), -2);
+    assert_eq!(presentation.packets()[2].key().draw_rank(), 30);
+    assert_eq!(presentation.packets()[2].key().draw_sub_level(), -2);
     assert_eq!(mutated.blend_mode(), UiBlendMode::Add);
     assert!(mutated.desaturated());
     assert_eq!(
@@ -233,23 +367,23 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     assert!((mutated.vertex_colors()[1][3] - 0.4).abs() < 0.000_01);
     assert!((mutated.opacity() - 0.5).abs() < 0.000_01);
 
-    let normal = &presentation.members(2).ok_or("missing normal packet")?[0];
+    let normal = &presentation.members(3).ok_or("missing normal packet")?[0];
     assert_eq!(
         manager.objects()[normal.object_index()].name(),
         Some("HighButtonNormal")
     );
     assert_eq!(normal.opacity(), 0.0);
 
-    let disabled = &presentation.members(3).ok_or("missing disabled packet")?[0];
+    let disabled = &presentation.members(4).ok_or("missing disabled packet")?[0];
     assert_eq!(
         manager.objects()[disabled.object_index()].name(),
         Some("HighButtonDisabled")
     );
-    assert_eq!(presentation.packets()[3].key().draw_rank(), 21);
+    assert_eq!(presentation.packets()[4].key().draw_rank(), 21);
     assert_eq!(disabled.bounds().width(), 80.0);
     assert_eq!(disabled.bounds().height(), 30.0);
 
-    let solid = &presentation.members(4).ok_or("missing solid packet")?[0];
+    let solid = &presentation.members(5).ok_or("missing solid packet")?[0];
     assert_eq!(
         manager.objects()[solid.object_index()].name(),
         Some("Solid")
@@ -259,14 +393,14 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
         &UiTextureSource::SolidColor([0.2, 0.4, 0.6, 0.8])
     );
     assert_eq!(
-        presentation.packets()[4].key().strata(),
+        presentation.packets()[5].key().strata(),
         UiFrameStrata::High
     );
-    assert_eq!(presentation.packets()[4].key().draw_rank(), 40);
+    assert_eq!(presentation.packets()[5].key().draw_rank(), 40);
 
     let mesh = manager.render_plan().mesh();
     assert_eq!(mesh.logical_extent(), [1_365.333_4, 768.0]);
-    assert_eq!(mesh.vertices().len(), 24);
+    assert_eq!(mesh.vertices().len(), 28);
     // Every contiguous batch reuses the same canonical zero-based quad-index
     // prefix through baseVertex instead of retaining absolute indices per quad.
     assert_eq!(mesh.indices().len(), 6);
@@ -293,7 +427,7 @@ fn glue_presentation_packets_use_post_lua_texture_state() -> Result<(), Box<dyn 
     let solid_vertex = mesh.vertices()[solid_quad * 4];
     assert_eq!(solid_vertex.color(), [0.2, 0.4, 0.6, 0.8]);
     let texture_assets = manager.render_plan().texture_assets();
-    assert_eq!(texture_assets.requests().len(), 5);
+    assert_eq!(texture_assets.requests().len(), 6);
     assert_eq!(
         texture_assets.request_for_batch(mesh.batches().len() - 1),
         None,

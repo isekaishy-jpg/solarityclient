@@ -432,6 +432,24 @@ loose files. The same canonical path also means an HD patch archive replaces
 the payload solely through normal archive priority; the UI layer has no
 separate HD path or quality branch.
 
+The build-12340 texture XML loader at `0x00485F40` processes a `Color`
+child by creating a uniform texture through `0x004B9550`. A later nonempty
+`file` attribute in the same declaration replaces that source and applies the
+nonzero color as vertex tint, after any gradient child. Without that file,
+the color texture remains the source, including when it replaces an inherited
+file. An empty file attribute does not replace an inherited source. The native
+texture plan preserves this distinction through startup Lua registration and
+dynamic templates; source color and vertex tint remain separate to avoid
+applying the same alpha twice. A gradient alone changes vertex colors and does
+not supply a texture source.
+
+Texture children retain draw slots at zero opacity while their owning frame is
+presented. This includes ordinary hidden overlays, such as the color-only
+`CharacterCreateIconButtonTemplate` disabled overlay, as well as native button
+roles. Hidden frame trees still defer their texture topology until first reveal.
+An empty texture region does not require a mesh slot merely because its region
+has become visible.
+
 The instantiated local Glue tree retains 1,671 texture layers referencing 97
 unique concrete paths; Frame retains 10,913 layers referencing 494. The
 validator reads every unique canonical path through the mounted archive stack

@@ -1086,6 +1086,9 @@ impl GlueManager {
             // the content journal. Publish those draw slots as well as Lua
             // state before the content path limits work to its own roots.
             if !self.try_refresh_targeted_visual_objects(visual_objects)? {
+                if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                    eprintln!("UI content fallback: visual topology");
+                }
                 return Ok(false);
             }
         }
@@ -1100,6 +1103,9 @@ impl GlueManager {
                 text_objects.iter().copied(),
             )
         {
+            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                eprintln!("UI content fallback: glyph coverage");
+            }
             return Ok(false);
         }
         let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
@@ -1141,6 +1147,12 @@ impl GlueManager {
             if object.kind == UiObjectKind::Texture {
                 texture_objects.push(index);
             } else if text_objects.binary_search(&index).is_err() {
+                if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                    eprintln!(
+                        "UI content fallback: dependent geometry object={index} name={:?} kind={:?} old={old:?} new={new:?}",
+                        object.name, object.kind
+                    );
+                }
                 return Ok(false);
             }
         }
@@ -1997,14 +2009,20 @@ impl GlueManager {
             if !presented {
                 return true;
             }
-            let owns_quad = object.texture.is_some()
+            let owns_quad = object.texture.as_ref().is_some_and(|texture| {
+                texture.file.is_some() || texture.solid_color.is_some()
+            })
                 || object
                     .text
                     .as_ref()
                     .is_some_and(|text| !text.content.is_empty())
                 || self.backdrops.state(object_index).is_some();
-            (!owns_quad || self.render_plan.mesh().contains_object(object_index))
-                && (object.model.is_none() || self.presentation.contains_model(object_index))
+            let resident = (!owns_quad || self.render_plan.mesh().contains_object(object_index))
+                && (object.model.is_none() || self.presentation.contains_model(object_index));
+            if !resident && std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                eprintln!("UI missing visual slots: object={object_index} name={:?} kind={:?} owns_quad={owns_quad} model={}", object.name, object.kind, object.model.is_some());
+            }
+            resident
         })
     }
 

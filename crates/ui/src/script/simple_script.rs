@@ -288,6 +288,7 @@ struct InitialButton {
 #[derive(Clone, Debug)]
 struct InitialTexture {
     file: Option<String>,
+    solid_color: Option<[f64; 4]>,
     coords: [f64; 8],
     colors: [[f64; 4]; 4],
     blend_mode: &'static str,
@@ -302,6 +303,7 @@ impl Default for InitialTexture {
     fn default() -> Self {
         Self {
             file: None,
+            solid_color: None,
             coords: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
             colors: [[1.0, 1.0, 1.0, 1.0]; 4],
             blend_mode: "BLEND",
@@ -3112,7 +3114,15 @@ impl UiScriptRuntime {
                 })
                 .and_then(|()| table.raw_set(texture_file_key(), texture.file.as_deref()))
                 .and_then(|()| table.raw_set(portrait_unit_key(), Option::<String>::None))
-                .and_then(|()| table.raw_set(texture_solid_color_key(), Option::<Table>::None))
+                .and_then(|()| {
+                    table.raw_set(
+                        texture_solid_color_key(),
+                        texture
+                            .solid_color
+                            .map(|color| lua.create_sequence_from(color))
+                            .transpose()?,
+                    )
+                })
                 .and_then(|()| table.raw_set(texture_blend_mode_key(), texture.blend_mode))
                 .and_then(|()| table.raw_set(horizontal_tiling_key(), texture.horizontal_tiling))
                 .and_then(|()| table.raw_set(vertical_tiling_key(), texture.vertical_tiling))
@@ -3741,7 +3751,10 @@ fn create_dynamic_object(
             record.raw_get::<Option<String>>("texture_file")?,
         )?;
         object.raw_set(portrait_unit_key(), Option::<String>::None)?;
-        object.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
+        object.raw_set(
+            texture_solid_color_key(),
+            record.raw_get::<Option<Table>>("texture_solid_color")?,
+        )?;
         object.raw_set(
             texture_blend_mode_key(),
             record.raw_get::<String>("texture_blend_mode")?,
@@ -8762,6 +8775,7 @@ fn tree_textures(
             textures
                 .state(index)
                 .map(|state| InitialTexture {
+                    solid_color: state.solid_color().map(|color| color.map(f64::from)),
                     file: match state.file() {
                         Some(UiTextureFile::Asset(path)) => Some(path.as_str().to_owned()),
                         Some(UiTextureFile::Dynamic) | None => None,

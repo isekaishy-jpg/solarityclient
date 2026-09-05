@@ -360,6 +360,9 @@ impl UiRenderPlan {
                     .sources_for_object(object_index)
                     .any(|source| !matches!(source, UiRenderSource::GlyphAtlas(_)))
                 {
+                    if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                        eprintln!("UI texture slot rebuild: object={object_index} removed sources");
+                    }
                     return Ok(false);
                 }
                 continue;
@@ -389,6 +392,12 @@ impl UiRenderPlan {
                             &quads,
                         )?
                     {
+                        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                            eprintln!(
+                                "UI texture slot rebuild: object={object_index} old={previous_sources:?} new={source:?} quads={}",
+                                quads.len()
+                            );
+                        }
                         return Ok(false);
                     }
                     material_changed = true;

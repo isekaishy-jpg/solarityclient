@@ -93,15 +93,7 @@ fn texture_plan_canonicalizes_stock_file_names() -> Result<(), Box<dyn Error>> {
         logo_state.tex_coords(),
         [0.1, 0.0, 0.1, 1.0, 0.9, 0.0, 0.9, 1.0]
     );
-    assert_eq!(
-        logo_state.vertex_colors(),
-        [
-            [1.0, 1.0, 1.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0],
-        ]
-    );
+    assert_eq!(logo_state.vertex_colors(), [[1.0, 0.8, 0.6, 0.5]; 4]);
     assert!(logo_state.horizontal_tiling());
     assert!(!logo_state.vertical_tiling());
     assert!(logo_state.non_blocking());

@@ -308,3 +308,45 @@ final run. Final customization/randomize maximum frames were 3.9–4.7 ms,
 following-frame means were about 1,610–2,400 FPS, and login reached 43.1 ms.
 These measurements verify the class-description improvement and leave the
 remaining complete-publication paths and startup stalls open.
+
+## Color-only overlays and race-switch residency
+
+Targeted diagnostics identified the class buttons' ordinary hidden
+`DisableTexture` regions as the recurring missing visual slots. The installed
+`CharacterCreateIconButtonTemplate` defines these as black `Color` textures
+with alpha 0.75. The native plan previously copied that color only into vertex
+tint and left the texture without a source, so the overlay never rendered and
+every reveal could demand another full publication. Recovered XML loader
+behavior and the corrected source/tint ordering are documented in
+[UI content loading](ui-content-loading.md#typed-texture-plan).
+
+Color sources now survive XML inheritance, startup registration, and dynamic
+templates. Texture children retain zero-opacity slots while their owning frame
+is presented, so race availability can toggle the disabled overlays without
+discarding geometry. Empty texture regions do not demand nonexistent draw
+slots. External tests cover source replacement versus file tint, inherited
+empty file attributes, dynamically created color textures, and repeated mixed
+visibility/widget callbacks with unchanged mesh bytes and identity. All 547
+workspace tests, Clippy, formatting, and the installed-data interaction
+validator passed.
+
+Two final 28-action replays used 1,000 following frames, 1280x720 on the GTX
+1070, four CPU workers, capacity 64, and audio. Both retained the UI through
+every race change; only initial screen reveals needed missing topology.
+Human creation switches measured 16.9/16.1 ms maximum frames, Night Elf
+12.0/11.2 ms, and Blood Elf 17.9/18.1 ms, versus the preceding run's
+21.3/19.2/23.9 ms. Following-frame means remained approximately 1,590–2,440
+FPS. The second run additionally enabled targeted UI GPU-publication debug
+timings. The stock creation screen randomizes its initial state, so initial
+entry and the first race/class change do not have identical resource histories
+across these runs; the retained-publication traces establish the removed work.
+
+Remaining outliers are recorded separately: the first run reached 86.0 ms at
+login (56.9 ms in full mesh serialization) and 103.6 ms at creation entry. The
+confirmation reached 38.7 and 33.6 ms respectively, with creation UI resource
+preparation taking 8.4 ms. Both runs recorded a following-frame pause during
+the first customization axis's return step, at 25.7 and 21.7 ms, hundreds of
+frames after readiness. That pause needs attribution; the confirmed run's
+renderer/model phase maxima do not explain its full duration. This change
+restores an authored overlay and removes repeated race UI rebuilds, but does
+not establish the complete no-stall requirement.
