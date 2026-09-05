@@ -8,6 +8,13 @@ frames per second (0.833 ms), with particular attention to visible stalls while
 switching characters or changing customization. A fast idle average does not
 establish transition performance.
 
+On September 5, after testing installed revision `bfa15ad`, the user reported
+that performance "seems good enough." This accepts the current performance
+for the active slice. Further throughput tuning is no longer a completion
+gate; reopen it only for a new reported or reproduced regression. Historical
+measurements and their unresolved outliers below remain diagnostic evidence,
+not a reason to disregard that acceptance.
+
 The pinned build-12340 executable and exact stock data remain the behavioral
 authority. SolCL is an implementation reference that can be incomplete or
 incorrect. Fallbacks require stock evidence unless an explicit product decision
@@ -41,7 +48,7 @@ features were not tested.
 
 | Area | Required completion evidence |
 | --- | --- |
-| Character and customization transitions | Phase timings for cold and warm changes; complete scene publication; no ordinary interaction causing recurrent long frames |
+| Character and customization transitions | Performance accepted by the user on `bfa15ad`; retain complete scene publication and investigate new regressions only |
 | Scene effects | Authored emitter/ribbon coverage and recovered simulation/render rules, including the missing Night Elf ground effect |
 | Lighting and cameras | Stock scene inputs, light-bank assignment, FOV, placement, and material behavior checked against the actual presentation |
 | Animation | Stock sequence selection, repetition, variation, blend, and pet behavior; preservation of timelines across compatible appearance changes |
