@@ -106,7 +106,29 @@ impl SdlPlatform {
 
     /// Polls until it finds one admitted client event or exhausts SDL's queue.
     pub(crate) fn poll_event(&mut self) -> Option<PlatformEvent> {
-        while let Some(event) = self.event_pump.poll_event() {
+        static PROFILE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let profile = *PROFILE.get_or_init(|| std::env::var_os("SOLARITY_FRAME_TIMINGS").is_some());
+        loop {
+            let started = profile.then(std::time::Instant::now);
+            let started_cycles = profile
+                .then(crate::platform::current_thread_cycles)
+                .flatten();
+            let event = self.event_pump.poll_event();
+            if let Some(started) = started {
+                let elapsed = started.elapsed();
+                if elapsed >= std::time::Duration::from_millis(5) {
+                    let cpu_cycles = started_cycles
+                        .zip(crate::platform::current_thread_cycles())
+                        .map(|(start, end)| end.saturating_sub(start));
+                    tracing::info!(
+                        elapsed_ms = elapsed.as_secs_f64() * 1_000.0,
+                        ?cpu_cycles,
+                        has_event = event.is_some(),
+                        "profiled slow native SDL event poll"
+                    );
+                }
+            }
+            let event = event?;
             if let Some(event) = event_translation::translate(event) {
                 if let PlatformEvent::Window {
                     window_id,
@@ -126,7 +148,6 @@ impl SdlPlatform {
                 return Some(event);
             }
         }
-        None
     }
 
     /// Returns the SDL identifier used to reject or route window-scoped work.

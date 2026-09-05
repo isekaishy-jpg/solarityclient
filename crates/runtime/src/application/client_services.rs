@@ -43,6 +43,7 @@ use crate::application::cinematic_coordinator::{
 };
 use crate::application::developer_console::RuntimeDeveloperConsole;
 use crate::application::environment_coordinator::RuntimeWorldEnvironment;
+use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
@@ -804,6 +805,7 @@ impl ClientServices {
 
     /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        let mut profile = RuntimeFrameProfile::new("application present");
         let update_time = std::time::Instant::now();
         if self.platform.presentation_suspended() {
             // A minimized Vulkan surface cannot pace the main loop reliably,
@@ -815,12 +817,14 @@ impl ClientServices {
         }
         self.poll_glue_texture_prewarm();
         self.service_glue_gpu_texture_prewarm()?;
+        profile.mark("texture prewarm");
         let developer_elapsed = update_time
             .duration_since(self.glue_update_clock)
             .as_secs_f32();
         self.developer_console
             .prepare_frame(&mut self.renderer, developer_elapsed)?;
         self.refresh_runtime_overlay_draws();
+        profile.mark("developer overlay");
         if self.gameplay.world().is_none() && self.glue.flush_deferred_refresh()? {
             self.glue_ui_dirty = true;
         }
@@ -831,6 +835,7 @@ impl ClientServices {
                 &self.cpu,
             )?;
         }
+        profile.mark("deferred UI and audio");
         if self
             .loading_screen
             .as_ref()
@@ -853,6 +858,7 @@ impl ClientServices {
             if self.glue.update(glue_elapsed)? {
                 self.glue_ui_dirty = true;
             }
+            profile.mark("Glue update");
             while let Some(message) = self.glue.take_update_failure() {
                 tracing::error!(error = %message, "contained failing GlueXML OnUpdate handler");
                 self.developer_console.record_error(&message);
@@ -871,7 +877,9 @@ impl ClientServices {
                 self.glue_ui_dirty = false;
             }
             self.sync_platform_text_input();
+            profile.mark("UI upload and text input");
             self.persist_active_cvars()?;
+            profile.mark("CVar persistence");
             let movie = self.glue.media_intent().movie().cloned();
             let cinematic_overlay = (!self.runtime_overlay_draws.is_empty()).then_some((
                 self.developer_console.logical_extent(),
@@ -917,6 +925,7 @@ impl ClientServices {
                 }
                 RuntimeCinematicPoll::Idle => {}
             }
+            profile.mark("cinematic service");
         } else {
             // The stock client transfers event and update ownership from GlueXML
             // to FrameXML after world entry. Keeping Glue alive for disconnect
@@ -1118,6 +1127,7 @@ impl ClientServices {
     }
 
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
+        let mut profile = RuntimeFrameProfile::new("Glue present");
         self.synchronize_component_texture_level();
         let current_screen = self.glue.current_screen();
         let screen_transition =
@@ -1154,6 +1164,7 @@ impl ClientServices {
             )?);
             self.glue_ui_dirty = false;
         }
+        profile.mark("UI screen preparation");
         let (glue_character_result, glue_character_expected) = match current_screen.as_str() {
             "charcreate" => {
                 let preview = self.glue.character_creation_preview();
@@ -1190,6 +1201,7 @@ impl ClientServices {
         };
         glue_character_expected &= !self.player.glue_character_request_failed();
         let glue_character = self.player.glue_character_frame_input();
+        profile.mark("character synchronization");
         let model_poll = self.glue_model.synchronize(
             &mut self.renderer,
             &self.glue,
@@ -1200,6 +1212,7 @@ impl ClientServices {
             glue_character_changed,
             glue_character_expected,
         )?;
+        profile.mark("model synchronization");
         if screen_transition && model_poll == RuntimeGlueModelPoll::Ready {
             let (candidate_screen, candidate) =
                 self.pending_login_ui
@@ -1240,10 +1253,12 @@ impl ClientServices {
         if !model_presented {
             frame.present_with_overlay(&mut self.renderer, &self.runtime_overlay_draws)?;
         }
+        profile.mark("model and UI present");
         if let Some((camera, events)) = self.glue_model.drain_sound_events() {
             self.sound
                 .play_m2_events(&events, camera, &mut self.blizzard_rand.borrow_mut())?;
         }
+        profile.mark("model sound events");
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }

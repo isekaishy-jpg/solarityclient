@@ -18,6 +18,7 @@ mod os_url_download;
 mod os_version_hash;
 mod sdl_platform;
 mod status;
+mod thread_clock;
 mod window_identity;
 
 pub use event::{
@@ -27,3 +28,4 @@ pub use event::{
 };
 pub(crate) use sdl_platform::SdlPlatform;
 pub use status::PlatformError;
+pub(crate) use thread_clock::current_thread_cycles;

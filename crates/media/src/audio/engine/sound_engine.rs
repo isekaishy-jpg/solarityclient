@@ -311,10 +311,16 @@ impl<'output> SoundEngine<'output> {
     /// fails.
     pub fn set_settings(&mut self, settings: SoundEngineSettings) -> Result<(), SoundEngineError> {
         self.collect_stopped_unmanaged_voices()?;
-        self.settings = settings;
-        for voice in &self.active_voices {
-            let gain = applied_gain(settings, *voice);
-            self.backend.set_gain(voice.handle, gain)?;
+        if self.settings != settings {
+            // Voice admission and runtime-gain changes already apply the current
+            // policy. Reapplying an identical snapshot would repeatedly lock
+            // the mixer and rebalance every voice during otherwise idle frames.
+            for voice in &self.active_voices {
+                let gain = applied_gain(settings, *voice);
+                self.backend.set_gain(voice.handle, gain)?;
+            }
+            // Keep a failed update retryable even if some voices were updated.
+            self.settings = settings;
         }
         self.decoder
             .trim_predecoded_cache(settings.residency().maximum_sample_cache_size_bytes() as usize);

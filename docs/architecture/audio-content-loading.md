@@ -272,3 +272,24 @@ server-anchored `RealmClock`; neither local wall time nor another listener is
 substituted. MCSE payloads use the same recovered extension/size residency rule
 as every other stock sound. A larger HD archive override can therefore cross
 the normal stream threshold without introducing an HD-specific path or mode.
+
+## Retained live sound policy
+
+An unchanged CVar snapshot no longer reapplies every active voice's gain.
+Each backend gain update rebalances the 512-slot logical pool, so the previous
+per-frame settings application repeatedly scanned and sorted the pool and
+entered SDL mixer operations during otherwise idle frames. Voice admission and
+runtime gain changes already apply the current policy at their own boundaries.
+
+Settings snapshots become current only after all changed gains are applied,
+keeping a partial backend failure retryable. Unchanged snapshots still collect
+naturally stopped unmanaged voices and enforce the decoded-cache budget.
+Memory-output tests cover retirement through an unchanged snapshot and
+preservation of independent runtime muting.
+
+With identical frame diagnostics enabled, a 4,000-following-frame Glue replay
+measured warm Human selection at 3,574 FPS versus 2,395 before this change.
+Normal creation/customization scenes ran around 3,400–3,500 FPS, confirmed in
+a subsequent 6,000-following-frame replay. These are local GTX 1070, 1280x720
+measurements; transition frames and heavier scenes are reported separately in
+[Glue completion](glue-completion.md).

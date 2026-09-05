@@ -10,6 +10,7 @@ mod client;
 mod client_services;
 mod developer_console;
 mod environment_coordinator;
+mod frame_profile;
 mod gameplay_coordinator;
 mod gameplay_session;
 mod login_coordinator;

@@ -276,6 +276,14 @@ fn engine_releases_noncacheable_stream_resources() -> Result<(), Box<dyn Error>>
     engine.generate(&mut mixed)?;
     assert_eq!(engine.collect_stopped_voices()?, 1);
     assert_eq!(engine.decoded_sound_count(), 0);
+    let SoundPlayback::Started(_voice) = engine.play(&mut store, once, &mut || 0)? else {
+        return Err("second one-shot stream was suppressed".into());
+    };
+    engine.generate(&mut mixed)?;
+    // An unchanged CVar snapshot still performs ordinary voice retirement.
+    engine.set_settings(engine.settings())?;
+    assert_eq!(engine.active_voice_count(), 0);
+    assert_eq!(engine.decoded_sound_count(), 0);
     Ok(())
 }
 
@@ -546,6 +554,7 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     engine.set_settings(settings(false)?)?;
     engine.set_settings(enabled)?;
     let mut runtime_muted = [0xFF_u8; 4_096];
+    engine.set_settings(enabled)?;
     engine.generate(&mut runtime_muted)?;
     assert!(runtime_muted.iter().all(|byte| *byte == 0));
     engine.set_voice_runtime_gain(voice, 1.0)?;

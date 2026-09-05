@@ -350,3 +350,42 @@ frames after readiness. That pause needs attribution; the confirmed run's
 renderer/model phase maxima do not explain its full duration. This change
 restores an authored overlay and removes repeated race UI rebuilds, but does
 not establish the complete no-stall requirement.
+
+## Slow-frame attribution and unchanged audio policy
+
+`SOLARITY_FRAME_TIMINGS` now attributes individual application frames above
+5 ms across event polling, UI updates and uploads, CVar persistence, audio
+service, character/model preparation, and presentation. On Windows, slow
+scopes also report CPU cycles charged to the calling thread. Cycle counts are
+not converted to time or treated as a calibrated CPU frequency. Native SDL
+poll diagnostics report whether an event was returned without logging typed
+text or other event contents. Fast frames do not allocate profiling records.
+
+Extended replays showed that the later pauses did not have one consistent
+application phase: one 28.3 ms frame spent 24.5 ms polling platform events,
+another spent 25.2 ms applying audio settings, and a later 23.5 ms frame spent
+22.7 ms in presentation. Additional thread accounting measured an 8.4 ms audio
+settings scope at about 859,000 cycles and a 9.6 ms empty SDL poll at about
+754,000 cycles. This evidence does not support attributing all pauses to Lua
+GC or scene publication. An initial ambience-fade timing hypothesis was also
+not supported by the current runtime path.
+
+The audio investigation exposed redundant gain/pool work for unchanged CVar
+snapshots. Removing that work preserved stopped-voice collection and residency
+maintenance. All 547 workspace tests, Clippy, and formatting passed. A final
+28-action replay with 4,000 following frames per action measured warm Human
+following throughput at 3,574 FPS, compared with the instrumented baseline's
+2,395 FPS. Most creation/customization scenes measured 3,400–3,500 FPS, versus
+approximately 2,200–2,400 before. This run's maximum following frame was
+4.4 ms; creation entry still reached 25.8 ms and race changes up to 17.3 ms.
+
+A 6,000-following-frame confirmation retained the 3,400–3,500 FPS range until
+the Blood Elf switch chose Death Knight through the unavailable-class fallback.
+That scene added armor/effect work and retained its class backdrop through
+later race switches, measuring approximately 2,200–2,400 FPS with over 1,000
+particle vertices. It is a different workload from the ordinary race scenes.
+The confirmation also recorded a 23.1 ms following frame: its native SDL poll
+took 21.6 ms, returned no event, and charged only about 65,000 thread cycles.
+The remaining platform wait or scheduling pause is not eliminated by the
+mixer optimization. Initial entry, input publication, and the outstanding
+stock scene/world requirements remain part of completion.

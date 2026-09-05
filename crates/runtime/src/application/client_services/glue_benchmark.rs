@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use super::ClientServices;
 use crate::application::ApplicationError;
+use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::login_model::RuntimeGlueModelPoll;
 use crate::application::run;
 
@@ -254,6 +255,7 @@ impl ClientServices {
 
     /// Services the real renderer and local selection dispatch while keeping networking offline.
     fn benchmark_frame(&mut self) -> Result<(), GlueBenchmarkError> {
+        let mut profile = RuntimeFrameProfile::new("benchmark frame");
         for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
             let Some(event) = self.poll_platform_event() else {
                 break;
@@ -264,6 +266,7 @@ impl ClientServices {
             // SDL retains native window state during polling. Diagnostic
             // stimuli above exclusively own UI input during the replay.
         }
+        profile.mark("platform events");
         while let Some(action) = self.glue.take_network_action() {
             if let UiGlueNetworkAction::SelectCharacter { index } = action {
                 let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))])
@@ -274,7 +277,9 @@ impl ClientServices {
                 self.glue_ui_dirty = true;
             }
         }
+        profile.mark("selection dispatch");
         self.present_frame()?;
+        profile.mark("application present");
         Ok(())
     }
 }

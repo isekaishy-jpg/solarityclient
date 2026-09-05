@@ -22,6 +22,7 @@ use thiserror::Error;
 use crate::random::BlizzardRand;
 use crate::time::RealmClock;
 
+use super::frame_profile::RuntimeFrameProfile;
 use super::terrain_frame::RuntimeM2Event;
 
 mod loader;
@@ -210,9 +211,12 @@ impl RuntimeSoundCoordinator {
         random: &mut BlizzardRand,
         cpu: &CpuExecutor,
     ) -> Result<(), RuntimeSoundError> {
+        let mut profile = RuntimeFrameProfile::new("Glue audio service");
         let settings = SoundPolicy::read(glue)?.settings;
+        profile.mark("read settings");
         self.engine
             .with_engine_mut(|engine| engine.set_settings(settings))?;
+        profile.mark("apply settings");
         while let Some(action) = glue.take_media_action() {
             let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS")
                 .map(|_| (std::time::Instant::now(), format!("{action:?}")));
@@ -227,6 +231,7 @@ impl RuntimeSoundCoordinator {
                 );
             }
         }
+        profile.mark("media actions");
         if let Some(completion) = self
             .engine
             .with_engine_mut(|engine| self.loader.poll(cpu, engine))?
@@ -248,8 +253,10 @@ impl RuntimeSoundCoordinator {
                 }
             }
         }
+        profile.mark("load completions");
         self.engine
             .with_engine_mut(|engine| engine.collect_unused_encoded());
+        profile.mark("encoded retirement");
         Ok(())
     }
 
