@@ -191,3 +191,9 @@ local control flags: full admission at `0x006EB730` merges through mask
 `0x77FFFDFF`, while its selective path uses `0x77E00DFF`. `0x006E90E0` and
 `0x00987140` rebuild transport/spline wire state from its local owners.
 Those are distinct state boundaries.
+
+The first local collision dependency is now present: the native nine-plane
+body sweep is implemented and checked against 69 calls to the original x86
+routine. [Movement collision](movement-collision.md) records its exact scope,
+evidence, arithmetic, and remaining response/world-provider work. Player input
+still has no displacement consumer.
