@@ -92,9 +92,8 @@ and the flags notification (`0x0070D160`) store the current scene tick, or 1 whe
 that tick is zero, in model `+0x64`. A nonzero value suppresses callback scanning.
 Pose update `0x0082F0F0` advances that pause marker and shifts both primary and
 secondary timer start/end ticks by the elapsed pause duration. The global scene
-clock and secondary blend envelope continue advancing. Timer APIs now support
-these shifts and terminal completion lookup; runtime ownership and dispatch are
-still pending.
+clock and secondary blend envelope continue advancing. The shared runtime model
+owner now applies these shifts and invokes the generic completion handler.
 
 ## Field notification order
 
@@ -126,7 +125,7 @@ and updates the WMO collision state. It is not evidence for a generic M2
 stable-state selector. Animated transport types 7/11 additionally require their
 path/animation clocks; the generic table cannot substitute for those providers.
 
-## Integration still required
+## Runtime integration and remaining work
 
 `GameObjectAnimationRequest` implements `0x0070D1E0`'s authored-presence checks
 and missing Open/Close substitutions before `AnimationData` fallback. Presence
@@ -163,9 +162,39 @@ GameObject user callback or the full scene traversal. Rendering tests separately
 check that pause shifts preserve pose while advancing the blend envelope.
 
 Shared resource residency and fresh object lifetimes are implemented in
-[GameObject placement](game-object-placement.md). Retained behavior and animation
-state must next drive both presentation and collision eligibility, including
-supplied progress, reversals, completion callbacks, and behavior-specific clocks.
+[GameObject placement](game-object-placement.md). `GameObjectBehavior` retains
+the cached replicated state, internal state, pre-fallback request, and shared
+`M2Playback` timer for each exact object lifetime. CPU model completion attaches
+the timer independently of GPU placement. Packet admission runs a raw pass and
+then ordered notifications before admitting the next packet. Progress writes
+update both raw and typed ECS fields. A display change retires the old model
+before a subsequent state or progress notification can animate it.
+
+The scene advances every loaded generic object in retained object order before
+the GPU placement traversal, including objects with an unresolved placement.
+It publishes the pose clock, expired sequence tails, and current event interval
+for rendering to consume once. Completion changes the same internal state
+returned by `RuntimeGameObjectPresentation::animation_state`, so a future door
+collision owner can consult the actual completion state. Dynamic collision
+registration is not yet connected to that boundary.
+
+The generic owner is restricted to the constructor families that enter native
+`0x007124B0`: types 0–3, 5–6, 8–10, 12, 16–19, 22–27, 29–30, and 34. Other
+families retain the previous stable presentation path while their specialized
+providers remain unimplemented. WMO state, path transport clocks, reference-GUID
+interruption, and actor flags controlling other startup actions still require
+their own native behavior integration. Scene advancement currently begins with
+world rendering; traversal order relative to other model families and callbacks
+during loading still need verification. Events from an object without drawable
+placement are not retained for later spatial dispatch.
+
+Runtime tests exercise CPU-only transition completion, single-sequence stable
+restarts, shared timer retention, pause/resume, reversal, boneless progress
+consumption, progress-before-state decisions, and display replacement. An
+encrypted packet fixture checks whole-packet raw admission, repeated-block
+mirrors, ascending field handlers, live progress comparison, and state's
+always-notify registration. These integration tests supplement the native
+function fixtures; they do not establish full native scene traversal parity.
 
 Dynamic references also belong in native MCNK and WMO-group collection order:
 `0x007A5A60` reaches the chunk's dynamic list through `0x007A5240` after its

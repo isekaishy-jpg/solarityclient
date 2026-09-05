@@ -416,6 +416,20 @@ impl ActiveWorld {
         &self,
         guid: u64,
     ) -> Result<Option<u16>, WorldStateError> {
+        let previous = self.set_game_object_sequence_progress(guid, u16::MAX)?;
+        Ok((previous != u16::MAX).then_some(previous))
+    }
+
+    /// Writes a behavior-owned seek without generating a network-field notification.
+    /// Returns the previous fraction; native reversal uses this same backing word.
+    ///
+    /// # Errors
+    /// Returns [`WorldStateError`] for an absent object or missing field views.
+    pub fn set_game_object_sequence_progress(
+        &self,
+        guid: u64,
+        progress: u16,
+    ) -> Result<u16, WorldStateError> {
         let entity = self.require_entity(guid)?;
         let mut presentation = self
             .storage
@@ -426,15 +440,13 @@ impl ActiveWorld {
             .get::<&mut ObjectFields>(entity)
             .map_err(|_| WorldStateError::MissingObjectFields { guid })?;
         let dynamic = fields.get(14);
-        let progress = (dynamic >> 16) as u16;
-        let consumed = dynamic | 0xFFFF_0000;
-        **presentation = presentation.with_dynamic_word(consumed);
-        if progress != u16::MAX {
-            fields.apply([(14, consumed)]);
-            Ok(Some(progress))
-        } else {
-            Ok(None)
+        let previous = (dynamic >> 16) as u16;
+        let updated = (dynamic & 0xFFFF) | (u32::from(progress) << 16);
+        **presentation = presentation.with_dynamic_word(updated);
+        if previous != progress {
+            fields.apply([(14, updated)]);
         }
+        Ok(previous)
     }
 
     /// Replaces the authoritative transform for an existing object.

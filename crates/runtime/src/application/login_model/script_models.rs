@@ -8,8 +8,8 @@ use solarity_asset::{AssetPath, DecodedM2Model};
 use solarity_cpu::CpuExecutor;
 use solarity_ui::{GlueManager, UiModelAction, UiModelInstance};
 
+use crate::application::model_playback::M2Playback;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
-use crate::application::terrain_frame::m2::M2Playback;
 use crate::random::CrtRand;
 
 use super::{GlueModelKey, RuntimeGlueModelError, RuntimeGlueModelScene};

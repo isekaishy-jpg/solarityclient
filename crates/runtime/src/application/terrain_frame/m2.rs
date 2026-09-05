@@ -1,22 +1,22 @@
 //! Renderer-local resources for the shared resident placed-M2 scene.
 
 #[cfg(test)]
-#[path = "../../../tests/application/model_playback.rs"]
-mod model_playback_tests;
-
-#[cfg(test)]
 #[path = "../../../tests/application/game_object_scene.rs"]
 mod game_object_scene_tests;
 
+mod playback;
 mod streaming;
+use playback::M2PlaybackStorage;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::application::model_playback::{
+    M2Playback, M2PlaybackAdvance, M2PlaybackSynchronization,
+};
 use glam::Mat4;
 use solarity_asset::{
-    AnimationDataCatalog, AssetPath, BlpTextureSource, DecodedM2Model, M2ModelAnimationMode,
-    M2ParticleEmitter,
+    AnimationDataCatalog, AssetPath, BlpTextureSource, DecodedM2Model, M2ParticleEmitter,
 };
 use solarity_ecs::{WorldObjectIdentity, WorldTransform};
 use solarity_rendering::{
@@ -24,20 +24,18 @@ use solarity_rendering::{
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
     M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2FingerPoseHands,
     M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2ModelOrientation, M2ModelSequenceBlend, M2ModelSequenceTimer,
-    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
-    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
-    M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram, M2ParticleTwinkleTable,
-    M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan,
-    M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2SequenceStartPhase, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
+    M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
+    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
+    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
+    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
+    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail,
+    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
     M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
     M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
     WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
     m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
-use solarity_systems::GameObjectAnimationRequest;
 
 use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::application::player_coordinator::{
@@ -153,7 +151,7 @@ struct M2GpuPlacement {
     color: [u8; 4],
     opacity: f32,
     particle_colors: Option<M2ParticleColorReplacement>,
-    playback: Option<M2Playback>,
+    playback: Option<M2PlaybackStorage>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
 }
@@ -574,532 +572,6 @@ impl<'source> From<&'source ResidentCreatureGeosets> for M2GeosetSelection<'sour
     }
 }
 
-/// Per-instance sequence state retained by stock's `CM2Model` owner.
-pub(in crate::application) struct M2Playback {
-    game_object_state: Option<u8>,
-    game_object_request: Option<u16>,
-    animation_id: u16,
-    sequence: usize,
-    sequence_duration_ms: f32,
-    cycle_count: u32,
-    cycle_started_ms: f32,
-    has_variations: bool,
-    previous_event_elapsed_ms: f32,
-    previous_global_event_elapsed_ms: f32,
-    event_timeline_started: bool,
-    /// Explicit Model calls use native integer scene timers and event intervals.
-    script_timer: Option<M2ModelSequenceTimer>,
-    script_blend: Option<M2ModelSequenceBlend>,
-    script_mode: M2ModelAnimationMode,
-    scene_time_ms: u32,
-    previous_event_scene_time_ms: u32,
-}
-
-/// Current bone clock plus an expired variation tail awaiting event dispatch.
-struct M2PlaybackAdvance {
-    clock: M2AnimationClock,
-    expired_variations: Vec<M2ExpiredVariation>,
-}
-
-/// Final event interval and pose clock from one replaced sequence variation.
-struct M2ExpiredVariation {
-    clock: M2AnimationClock,
-    event_window: M2EventTimeWindow,
-}
-
-/// Cross-model animation identity copied by stock equipment components.
-#[derive(Clone, Copy)]
-struct M2PlaybackSynchronization {
-    animation_id: u16,
-    variation_index: u16,
-    cycle_count: u32,
-    cycle_started_ms: f32,
-    previous_global_event_elapsed_ms: f32,
-}
-
-impl M2Playback {
-    /// Keeps static geometry and effects alive before a primary sequence exists.
-    fn unstarted(animation_id: u16) -> Self {
-        Self {
-            game_object_state: None,
-            game_object_request: None,
-            animation_id,
-            sequence: 0,
-            sequence_duration_ms: 0.0,
-            cycle_count: 1,
-            cycle_started_ms: 0.0,
-            has_variations: false,
-            previous_event_elapsed_ms: 0.0,
-            previous_global_event_elapsed_ms: 0.0,
-            event_timeline_started: false,
-            script_timer: None,
-            script_blend: None,
-            script_mode: M2ModelAnimationMode::Forward,
-            scene_time_ms: 0,
-            previous_event_scene_time_ms: 0,
-        }
-    }
-
-    /// Starts a newly resident world owner against the existing scene clock.
-    /// Native 0x00826B00 anchors sequence construction to that clock; loading a
-    /// neighbor must not age its new local sequence from world entry time zero.
-    fn new_at(
-        model: &DecodedM2Model,
-        animation_id: u16,
-        scene_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
-        let mut playback = Self::new(model, animation_id, random)?;
-        if let Some(playback) = playback.as_mut() {
-            playback.cycle_started_ms = scene_time_ms;
-            playback.scene_time_ms = scene_time_ms as u32;
-            playback.previous_event_scene_time_ms = scene_time_ms as u32;
-        }
-        Ok(playback)
-    }
-
-    /// Selects one base animation and consumes its authored cycle-count roll.
-    pub(in crate::application) fn new(
-        model: &DecodedM2Model,
-        animation_id: u16,
-        random: &mut CrtRand,
-    ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
-        let animations = model.animations();
-        if animations.sequences().is_empty() {
-            return Ok(Some(Self::unstarted(animation_id)));
-        }
-        let sequence = animations
-            .sequence_for_variation(animation_id, 0)
-            .or_else(|| {
-                animations.select_sequence(animation_id, None, u32::from(random.next_u15()))
-            });
-        let Some(sequence) = sequence else {
-            tracing::debug!(
-                path = %model.path(),
-                animation_id,
-                "placed M2 omitted because its selected animation is unavailable"
-            );
-            return Ok(None);
-        };
-        let sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
-        let cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
-        let variation_count = animations
-            .available_variation_count(animation_id)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id,
-            })?;
-        Ok(Some(Self {
-            game_object_state: None,
-            game_object_request: None,
-            animation_id,
-            sequence,
-            sequence_duration_ms,
-            cycle_count,
-            cycle_started_ms: 0.0,
-            has_variations: variation_count > 1,
-            previous_event_elapsed_ms: 0.0,
-            previous_global_event_elapsed_ms: 0.0,
-            event_timeline_started: false,
-            script_timer: None,
-            script_blend: None,
-            script_mode: M2ModelAnimationMode::Forward,
-            scene_time_ms: 0,
-            previous_event_scene_time_ms: 0,
-        }))
-    }
-
-    /// Applies each Model Lua request without replacing the mutable M2 owner.
-    pub(in crate::application) fn apply_model_sequence(
-        &mut self,
-        model: &DecodedM2Model,
-        catalog: &AnimationDataCatalog,
-        requested_animation: u32,
-        time_offset_ms: i32,
-        scene_time_ms: u32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        // 0x00832840 refuses to clear bone zero. The -1 animation sentinel
-        // therefore leaves a Model widget's primary timer and RNG untouched.
-        let animations = model.animations();
-        if requested_animation == u32::MAX || animations.bones().is_empty() {
-            return Ok(());
-        }
-        let Some(resolved) = animations.resolve_model_animation(catalog, requested_animation)
-        else {
-            return Ok(());
-        };
-        let animation_id = resolved.animation_id();
-        self.apply_resolved_model_sequence(
-            model,
-            animation_id,
-            resolved.mode(),
-            time_offset_ms,
-            scene_time_ms,
-            random,
-        )
-    }
-
-    /// Changes a stable generic GameObject request without resetting live neighbors.
-    fn select_game_object_state(
-        &mut self,
-        model: &DecodedM2Model,
-        catalog: &AnimationDataCatalog,
-        state: u8,
-        scene_time_ms: u32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        if self.game_object_state == Some(state) {
-            return Ok(());
-        }
-        let animations = model.animations();
-        // 0x00832AB0 also validates the primary bone before selecting or rolling.
-        if !animations.bones().is_empty() {
-            let request =
-                GameObjectAnimationRequest::resolve(animations, game_object_animation_id(state));
-            if self
-                .game_object_request
-                .is_some_and(|current| request.preserves_current(current))
-            {
-                self.game_object_state = Some(state);
-                return Ok(());
-            }
-            if let Some(resolved) =
-                animations.resolve_model_animation(catalog, u32::from(request.animation_id()))
-            {
-                // Frozen substitutions always name an authored Open/Close clip,
-                // so CM2Model cannot add a reverse/endpoint fallback operation.
-                let mode = if request.frozen() {
-                    M2ModelAnimationMode::HoldStart
-                } else {
-                    resolved.mode()
-                };
-                self.apply_resolved_model_sequence(
-                    model,
-                    resolved.animation_id(),
-                    mode,
-                    0,
-                    scene_time_ms,
-                    random,
-                )?;
-                self.game_object_request = Some(request.animation_id());
-            }
-        }
-        self.game_object_state = Some(state);
-        Ok(())
-    }
-
-    /// Shared 0x00832AB0 variation selection and 0x00826B00 timer construction.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_resolved_model_sequence(
-        &mut self,
-        model: &DecodedM2Model,
-        animation_id: u16,
-        mode: M2ModelAnimationMode,
-        time_offset_ms: i32,
-        scene_time_ms: u32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        let animations = model.animations();
-        let sequence = animations
-            .select_model_sequence(animation_id, random.next_u15())
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id,
-            })?;
-        if animations.is_sequence_available(sequence) != Some(true) {
-            // Native selection queues unavailable external animation data
-            // after consuming its variation roll. The previous timer survives.
-            return Ok(());
-        }
-        let timer = M2ModelSequenceTimer::new(
-            &animations.sequences()[sequence],
-            mode,
-            // 0x00826B00 reads the owning scene clock at the request, even
-            // when this model has not been sampled while its widget is hidden.
-            scene_time_ms,
-            time_offset_ms,
-            random.next_u15(),
-            M2SequenceStartPhase::BeforeSceneUpdate,
-        );
-        self.animation_id = animation_id;
-        self.sequence = sequence;
-        self.sequence_duration_ms = animations.sequences()[sequence].duration_ms() as f32;
-        self.cycle_count = timer.cycle_count();
-        self.cycle_started_ms = timer.start_time_ms() as f32;
-        self.has_variations = animations.sequences()[sequence].variation_index() != 0
-            || animations.sequences()[sequence].variation_next().is_some();
-        self.script_timer = Some(timer);
-        self.script_blend = None;
-        self.script_mode = mode;
-        Ok(())
-    }
-
-    /// Restarts playback when authoritative gameplay selects another base ID.
-    fn select_animation(
-        &mut self,
-        model: &DecodedM2Model,
-        animation_id: u16,
-        animation_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        if self.animation_id == animation_id || model.animations().sequences().is_empty() {
-            self.animation_id = animation_id;
-            return Ok(());
-        }
-        let animations = model.animations();
-        let sequence = animations
-            .sequence_for_variation(animation_id, 0)
-            .or_else(|| {
-                animations.select_sequence(animation_id, None, u32::from(random.next_u15()))
-            })
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id,
-            })?;
-        self.animation_id = animation_id;
-        self.sequence = sequence;
-        self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
-        self.cycle_count = animations.sequences()[sequence].cycle_count(random.next_u15());
-        self.cycle_started_ms = animation_time_ms;
-        self.previous_event_elapsed_ms = 0.0;
-        self.event_timeline_started = false;
-        self.has_variations = animations
-            .available_variation_count(animation_id)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id,
-            })?
-            > 1;
-        Ok(())
-    }
-
-    /// Advances one expired stock timer and returns the selected sequence clock.
-    fn clock(
-        &mut self,
-        model: &DecodedM2Model,
-        animation_time_ms: f32,
-        global_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        self.scene_time_ms = animation_time_ms as u32;
-        if let Some(timer) = self.script_timer {
-            return self.advance_model_timer(model, timer, global_time_ms, random);
-        }
-        let elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
-        let selected_span_ms = self.sequence_duration_ms * self.cycle_count as f32;
-        let mut expired_variations = Vec::new();
-        if self.has_variations && self.sequence_duration_ms > 0.0 && elapsed_ms >= selected_span_ms
-        {
-            // Stock finishes the old sequence's event interval before replacing
-            // its timer. Bone-relative callbacks from that tail must also use
-            // the old sequence's terminal pose, not the newly selected pose.
-            expired_variations.push(M2ExpiredVariation {
-                clock: M2AnimationClock::new(
-                    self.sequence,
-                    self.sequence_duration_ms,
-                    global_time_ms,
-                ),
-                event_window: M2EventTimeWindow::new(
-                    self.sequence,
-                    self.previous_event_elapsed_ms,
-                    selected_span_ms,
-                    !self.event_timeline_started,
-                    true,
-                ),
-            });
-            let animation_id = model.animations().sequences()[self.sequence].animation_id();
-            self.sequence = model
-                .animations()
-                .select_sequence(animation_id, None, u32::from(random.next_u15()))
-                .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                    model: model.path().clone(),
-                    animation_id,
-                })?;
-            self.sequence_duration_ms = resolved_sequence_duration(model, self.sequence)?;
-            self.cycle_count =
-                model.animations().sequences()[self.sequence].cycle_count(random.next_u15());
-            // This legacy gameplay path still restarts at the current frame.
-            // Explicit Model calls below retain native callback overdue time.
-            self.cycle_started_ms = animation_time_ms;
-            self.previous_event_elapsed_ms = 0.0;
-            self.event_timeline_started = false;
-        }
-        Ok(M2PlaybackAdvance {
-            clock: world_animation_clock(
-                self.sequence,
-                self.sequence_duration_ms,
-                animation_time_ms - self.cycle_started_ms,
-                global_time_ms,
-            ),
-            expired_variations,
-        })
-    }
-
-    /// Dispatches native cycle boundaries before sampling the remaining frame interval.
-    fn advance_model_timer(
-        &mut self,
-        model: &DecodedM2Model,
-        mut timer: M2ModelSequenceTimer,
-        global_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        let animations = model.animations();
-        let mut expired_variations = Vec::new();
-        while self.has_variations {
-            let Some(boundary) =
-                timer.next_loop_boundary_ms(self.previous_event_scene_time_ms, self.scene_time_ms)
-            else {
-                break;
-            };
-            expired_variations.push(M2ExpiredVariation {
-                clock: M2AnimationClock::new(
-                    self.sequence,
-                    timer.animation_time_ms(boundary) as f32,
-                    global_time_ms,
-                ),
-                event_window: M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false)
-                    .with_scene_timer(timer, self.previous_event_scene_time_ms, boundary),
-            });
-            self.previous_event_scene_time_ms = boundary;
-            let sequence = animations
-                .select_model_sequence(self.animation_id, random.next_u15())
-                .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                    model: model.path().clone(),
-                    animation_id: self.animation_id,
-                })?;
-            if animations.is_sequence_available(sequence) != Some(true) {
-                break;
-            }
-            // 0x00826C40 keeps an existing secondary while its contribution
-            // is strictly above one half. Otherwise the outgoing primary
-            // replaces it, using the incoming sequence's blend duration.
-            if self
-                .script_blend
-                .is_none_or(|blend| blend.weight(self.scene_time_ms) <= 0.5)
-            {
-                self.script_blend = Some(M2ModelSequenceBlend::new(
-                    self.sequence,
-                    timer,
-                    self.scene_time_ms,
-                    animations.sequences()[sequence].blend_time_ms(),
-                ));
-            }
-            timer = timer.restart_variation(
-                &animations.sequences()[sequence],
-                self.script_mode,
-                self.scene_time_ms,
-                boundary,
-                random.next_u15(),
-            );
-            self.sequence = sequence;
-            self.sequence_duration_ms = animations.sequences()[sequence].duration_ms() as f32;
-            self.cycle_count = timer.cycle_count();
-            self.cycle_started_ms = timer.start_time_ms() as f32;
-            self.has_variations = animations.sequences()[sequence].variation_index() != 0
-                || animations.sequences()[sequence].variation_next().is_some();
-        }
-        self.script_timer = Some(timer);
-        let mut clock = M2AnimationClock::new(
-            self.sequence,
-            timer.animation_time_ms(self.scene_time_ms) as f32,
-            global_time_ms,
-        );
-        if let Some(blend) = self.script_blend {
-            if blend.weight(self.scene_time_ms) == 0.0 {
-                self.script_blend = None;
-            } else {
-                clock = blend.apply_to_clock(clock, self.scene_time_ms);
-            }
-        }
-        Ok(M2PlaybackAdvance {
-            clock,
-            expired_variations,
-        })
-    }
-
-    /// Advances the unwrapped clocks retained exclusively for event crossing.
-    fn event_window(&mut self, animation_time_ms: f32, global_time_ms: f32) -> M2EventTimeWindow {
-        if let Some(timer) = self.script_timer {
-            let window = M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false)
-                .with_scene_timer(
-                    timer,
-                    self.previous_event_scene_time_ms,
-                    animation_time_ms as u32,
-                );
-            self.previous_event_scene_time_ms = animation_time_ms as u32;
-            return window;
-        }
-        self.previous_event_scene_time_ms = animation_time_ms as u32;
-        let current_event_elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
-        let window = M2EventTimeWindow::new(
-            self.sequence,
-            self.previous_event_elapsed_ms,
-            current_event_elapsed_ms,
-            !self.event_timeline_started,
-            true,
-        )
-        .with_global_time(self.previous_global_event_elapsed_ms, global_time_ms);
-        self.previous_event_elapsed_ms = current_event_elapsed_ms;
-        self.previous_global_event_elapsed_ms = global_time_ms;
-        self.event_timeline_started = true;
-        window
-    }
-
-    /// Captures the stock sequence identity shared with an equipment model.
-    fn synchronization(&self, model: &DecodedM2Model) -> M2PlaybackSynchronization {
-        let variation_index = model
-            .animations()
-            .sequences()
-            .get(self.sequence)
-            .map_or(0, |sequence| sequence.variation_index());
-        M2PlaybackSynchronization {
-            animation_id: self.animation_id,
-            variation_index,
-            cycle_count: self.cycle_count,
-            cycle_started_ms: self.cycle_started_ms,
-            previous_global_event_elapsed_ms: self.previous_global_event_elapsed_ms,
-        }
-    }
-
-    /// Maps another model's active sequence identity onto this model's table.
-    fn synchronize_from(
-        &mut self,
-        model: &DecodedM2Model,
-        source: M2PlaybackSynchronization,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        let sequence = model
-            .animations()
-            .select_sequence(source.animation_id, Some(source.variation_index), 0)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id: source.animation_id,
-            })?;
-        let identity_changed = self.animation_id != source.animation_id
-            || self.sequence != sequence
-            || self.cycle_started_ms != source.cycle_started_ms;
-        self.animation_id = source.animation_id;
-        self.sequence = sequence;
-        self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
-        self.cycle_count = source.cycle_count;
-        self.cycle_started_ms = source.cycle_started_ms;
-        self.has_variations = model
-            .animations()
-            .available_variation_count(source.animation_id)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id: source.animation_id,
-            })?
-            > 1;
-        if identity_changed {
-            self.previous_event_elapsed_ms = 0.0;
-            self.previous_global_event_elapsed_ms = source.previous_global_event_elapsed_ms;
-            self.event_timeline_started = false;
-        }
-        Ok(())
-    }
-}
-
 /// One generic authored M2 callback resolved into world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::application) struct RuntimeM2Event {
@@ -1341,16 +813,24 @@ impl M2Frame {
                 self.sources.push(Some(gpu));
                 index
             };
-            let mut playback = M2Playback::unstarted(0);
-            playback.scene_time_ms = scene_time_ms as u32;
-            playback.previous_event_scene_time_ms = scene_time_ms as u32;
-            playback.select_game_object_state(
-                cpu.model(),
-                game_objects.animations(),
-                instance.state(),
-                scene_time_ms as u32,
-                random,
-            )?;
+            let playback = if let Some(behavior) = instance.behavior() {
+                let Some(playback) = behavior.playback() else {
+                    continue;
+                };
+                M2PlaybackStorage::Shared(playback)
+            } else {
+                let mut playback = M2Playback::unstarted(0);
+                playback.scene_time_ms = scene_time_ms as u32;
+                playback.previous_event_scene_time_ms = scene_time_ms as u32;
+                playback.select_game_object_state(
+                    cpu.model(),
+                    game_objects.animations(),
+                    instance.state(),
+                    scene_time_ms as u32,
+                    random,
+                )?;
+                M2PlaybackStorage::Local(playback)
+            };
             let placement = m2_gpu_placement(
                 source_index,
                 resolved.matrix(),
@@ -1391,8 +871,12 @@ impl M2Frame {
                 placement.local_transform = resolved.matrix();
                 placement.transform = resolved.matrix();
             }
-            if let Some(source) = self.sources[placement.source_index].as_ref()
-                && let Some(playback) = placement.playback.as_mut()
+            if instance.behavior().is_none()
+                && let Some(source) = self.sources[placement.source_index].as_ref()
+                && let Some(mut playback) = placement
+                    .playback
+                    .as_mut()
+                    .map(M2PlaybackStorage::borrow_mut)
             {
                 playback.select_game_object_state(
                     &source.model,
@@ -1483,7 +967,7 @@ impl M2Frame {
                 color: [u8::MAX; 4],
                 opacity: 1.0,
                 particle_colors: None,
-                playback: Some(playback),
+                playback: Some(M2PlaybackStorage::Local(playback)),
                 particles,
                 ribbons,
             }],
@@ -1728,9 +1212,13 @@ impl M2Frame {
                     .get(placement.source_index)
                     .and_then(Option::as_ref)
                     .is_some_and(|source| source.model.path() == input.model().path())
-                    && placement.playback.as_ref().is_some_and(|playback| {
-                        playback.animation_id == input.animation().animation_id()
-                    })
+                    && placement
+                        .playback
+                        .as_ref()
+                        .map(M2PlaybackStorage::borrow)
+                        .is_some_and(|playback| {
+                            playback.animation_id == input.animation().animation_id()
+                        })
             })
             .and_then(|index| self.placements[index].playback.take());
         if let Some(playback) = retained_playback
@@ -1946,7 +1434,11 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 return Ok(());
             };
-            if let Some(playback) = placement.playback.as_mut() {
+            if let Some(mut playback) = placement
+                .playback
+                .as_mut()
+                .map(M2PlaybackStorage::borrow_mut)
+            {
                 playback.select_animation(
                     &source.model,
                     mount.animation().animation_id(),
@@ -1970,7 +1462,11 @@ impl M2Frame {
         let Some(source) = self.sources[placement.source_index].as_ref() else {
             return Ok(());
         };
-        if let Some(playback) = placement.playback.as_mut() {
+        if let Some(mut playback) = placement
+            .playback
+            .as_mut()
+            .map(M2PlaybackStorage::borrow_mut)
+        {
             playback.select_animation(
                 &source.model,
                 input.animation().animation_id(),
@@ -2005,7 +1501,11 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
-            if let Some(playback) = placement.playback.as_mut() {
+            if let Some(mut playback) = placement
+                .playback
+                .as_mut()
+                .map(M2PlaybackStorage::borrow_mut)
+            {
                 playback.select_animation(
                     &source.model,
                     input.animation().animation_id(),
@@ -2045,7 +1545,11 @@ impl M2Frame {
                 let Some(source) = self.sources[placement.source_index].as_ref() else {
                     continue;
                 };
-                if let Some(playback) = placement.playback.as_mut() {
+                if let Some(mut playback) = placement
+                    .playback
+                    .as_mut()
+                    .map(M2PlaybackStorage::borrow_mut)
+                {
                     playback.select_animation(
                         &source.model,
                         mount.animation().animation_id(),
@@ -2072,7 +1576,11 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
-            if let Some(playback) = placement.playback.as_mut() {
+            if let Some(mut playback) = placement
+                .playback
+                .as_mut()
+                .map(M2PlaybackStorage::borrow_mut)
+            {
                 playback.select_animation(
                     &source.model,
                     input.animation().animation_id(),
@@ -2229,6 +1737,7 @@ impl M2Frame {
             .iter_mut()
             .find(|placement| matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }))
             .and_then(|placement| placement.playback.take())
+            .and_then(M2PlaybackStorage::into_local)
     }
 
     /// Mutates the active sequence while retaining particles, ribbons, and GPU resources.
@@ -2250,9 +1759,10 @@ impl M2Frame {
             .get(placement.source_index)
             .and_then(Option::as_ref)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        let playback = placement
+        let mut playback = placement
             .playback
             .as_mut()
+            .map(M2PlaybackStorage::borrow_mut)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
         playback.apply_model_sequence(
             &source.model,
@@ -2321,9 +1831,10 @@ impl M2Frame {
             .get(placement.source_index)
             .and_then(Option::as_ref)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        let playback = placement
+        let mut playback = placement
             .playback
             .as_mut()
+            .map(M2PlaybackStorage::borrow_mut)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
         let advance = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
         let clock = advance.clock;
@@ -2343,7 +1854,11 @@ impl M2Frame {
         global_time_ms: f32,
         effect_scale: M2CameraEffectScale,
         random: &mut CrtRand,
+        game_objects: Option<GameObjectFrameInput<'_>>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
+        if let Some(game_objects) = game_objects {
+            game_objects.advance_scene(animation_time_ms, global_time_ms, random)?;
+        }
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_elements.clear();
@@ -2478,7 +1993,7 @@ impl M2Frame {
             else {
                 continue;
             };
-            let Some(playback) = placement.playback.as_ref() else {
+            let Some(playback) = placement.playback.as_ref().map(M2PlaybackStorage::borrow) else {
                 continue;
             };
             self.shoulder_animation_sync
@@ -2612,19 +2127,37 @@ impl M2Frame {
                     shoulder_source().or_else(character_source)
                 }
             };
-            let Some(playback) = placement.playback.as_mut() else {
+            let Some(mut playback) = placement
+                .playback
+                .as_mut()
+                .map(M2PlaybackStorage::borrow_mut)
+            else {
                 continue;
             };
             if let Some(synchronization) = synchronization {
                 playback.synchronize_from(&source.model, synchronization)?;
             }
-            let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                self.pending_glue_playback_advance.take().map_or_else(
-                    || playback.clock(&source.model, animation_time_ms, global_time_ms, random),
-                    Ok,
-                )?
+            let scene_sample = if let M2GpuPlacementOwner::GameObject { identity, .. } = owner
+                && let Some(game_objects) = game_objects
+                && let Some(instance) = game_objects.get(identity)
+                && let Some(behavior) = instance.behavior()
+            {
+                behavior.take_scene_sample()
             } else {
-                playback.clock(&source.model, animation_time_ms, global_time_ms, random)?
+                None
+            };
+            let (advance, prepared_event_window) = if let Some(sample) = scene_sample {
+                (sample.advance, Some(sample.event_window))
+            } else {
+                let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                    self.pending_glue_playback_advance.take().map_or_else(
+                        || playback.clock(&source.model, animation_time_ms, global_time_ms, random),
+                        Ok,
+                    )?
+                } else {
+                    playback.clock(&source.model, animation_time_ms, global_time_ms, random)?
+                };
+                (advance, None)
             };
             if let M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid } = owner
@@ -2658,7 +2191,9 @@ impl M2Frame {
                     .sequence_for_variation(15, 0)
                     .map(|sequence| (M2AnimationClock::new(sequence, 0.0, global_time_ms), hands))
             });
-            let event_window = playback.event_window(animation_time_ms, global_time_ms);
+            let event_window = prepared_event_window
+                .unwrap_or_else(|| playback.event_window(animation_time_ms, global_time_ms));
+            drop(playback);
             let model_view = camera.view() * placement.transform;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance = m2_model_distance_key(model_view);
@@ -3634,7 +3169,7 @@ fn unit_gpu_placement(
         transform,
         owner,
         model,
-        playback,
+        playback.map(M2PlaybackStorage::Local),
         particle_colors,
     )
 }
@@ -3645,7 +3180,7 @@ fn m2_gpu_placement(
     transform: Mat4,
     owner: M2GpuPlacementOwner,
     model: &DecodedM2Model,
-    playback: Option<M2Playback>,
+    playback: Option<M2PlaybackStorage>,
     particle_colors: Option<M2ParticleColorReplacement>,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let particles = stock_particle_simulations(model);
@@ -3803,36 +3338,6 @@ fn section_distance_key(
     ))
 }
 
-/// Resolves the immutable duration owned by an alias target.
-fn resolved_sequence_duration(
-    model: &DecodedM2Model,
-    sequence: usize,
-) -> Result<f32, RuntimeTerrainFrameError> {
-    let resolved = model
-        .animations()
-        .resolve_sequence_alias(sequence)
-        .ok_or_else(|| RuntimeTerrainFrameError::M2SequenceIndex {
-            model: model.path().clone(),
-            sequence,
-        })?;
-    Ok(model.animations().sequences()[resolved].duration_ms() as f32)
-}
-
-/// Advances the sequence selected for one placed model instance.
-fn world_animation_clock(
-    sequence: usize,
-    duration_ms: f32,
-    animation_time_ms: f32,
-    global_time_ms: f32,
-) -> M2AnimationClock {
-    let animation_time_ms = if duration_ms > 0.0 {
-        animation_time_ms.rem_euclid(duration_ms)
-    } else {
-        0.0
-    };
-    M2AnimationClock::new(sequence, animation_time_ms, global_time_ms)
-}
-
 /// Converts MODD's BGRA bytes to shader RGBA; MDDF already stores white.
 fn placement_color(color: [u8; 4]) -> glam::Vec4 {
     const BYTE_TO_UNIT: f32 = 1.0 / 255.0;
@@ -3863,16 +3368,6 @@ fn unit_placement_transform(
         return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
     }
     Ok(matrix)
-}
-
-/// Stable generic behavior request; progress, transition clips, and completion
-/// callbacks additionally require the retained GameObject behavior clock.
-const fn game_object_animation_id(state: u8) -> u16 {
-    match state {
-        1 => 147,
-        2 => 151,
-        _ => 149,
-    }
 }
 
 /// Publishes a source only when every selected draw has concrete BLP stages.

@@ -1,5 +1,9 @@
 //! Generated client archive layout for runtime integration tests.
 
+#[path = "../../support/game_object_models.rs"]
+#[allow(dead_code)]
+pub(crate) mod game_object_models;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};

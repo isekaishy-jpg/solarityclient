@@ -1304,6 +1304,7 @@ impl RuntimeGlueModelScene {
             global_time_ms,
             effect_scale,
             random,
+            None,
         )?;
         let sunlight = active
             .environment

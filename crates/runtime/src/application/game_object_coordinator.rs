@@ -6,7 +6,9 @@ mod worker;
 #[path = "../../tests/application/game_object_jobs.rs"]
 mod tests;
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use solarity_asset::{
@@ -22,9 +24,12 @@ use solarity_systems::{
 };
 use thiserror::Error;
 
+use crate::application::game_object_behavior::{GameObjectBehavior, GameObjectNotification};
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelSource;
+use crate::application::terrain_frame::RuntimeTerrainFrameError;
+use crate::random::CrtRand;
 use worker::{
     GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState, prepare_on_worker,
 };
@@ -129,6 +134,7 @@ pub(in crate::application) struct GameObjectInstance {
     request: Option<ResourceRequest>,
     resource: Option<Arc<GameObjectResource>>,
     failed: bool,
+    behavior: Option<Rc<GameObjectBehavior>>,
 }
 
 /// Borrowed object order and lifetime lookup for one renderer publication/update.
@@ -137,9 +143,27 @@ pub(in crate::application) struct GameObjectFrameInput<'a> {
     animations: &'a AnimationDataCatalog,
     instances: &'a [GameObjectInstance],
     indices: &'a HashMap<WorldObjectIdentity, usize>,
+    world: Option<&'a ActiveWorld>,
+    scene_time_ms: &'a Cell<u32>,
 }
 
 impl<'a> GameObjectFrameInput<'a> {
+    pub(in crate::application) fn advance_scene(
+        self,
+        scene_time_ms: f32,
+        global_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.scene_time_ms.set(scene_time_ms as u32);
+        if let Some(world) = self.world {
+            for instance in self.instances {
+                if let Some(behavior) = instance.behavior() {
+                    behavior.advance_scene(world, scene_time_ms, global_time_ms, random)?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub(in crate::application) const fn animations(self) -> &'a AnimationDataCatalog {
         self.animations
     }
@@ -157,6 +181,9 @@ impl<'a> GameObjectFrameInput<'a> {
 }
 
 impl GameObjectInstance {
+    pub(in crate::application) fn behavior(&self) -> Option<&GameObjectBehavior> {
+        self.behavior.as_deref()
+    }
     pub(in crate::application) const fn identity(&self) -> WorldObjectIdentity {
         self.identity
     }
@@ -198,6 +225,8 @@ pub struct RuntimeGameObjectPresentation {
     worker_catalog: Option<ArchiveCatalog>,
     worker: Option<GameObjectWorkerState>,
     pending: Option<PendingGeneration>,
+    behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectBehavior>>,
+    scene_time_ms: Cell<u32>,
 }
 
 impl RuntimeGameObjectPresentation {
@@ -228,6 +257,8 @@ impl RuntimeGameObjectPresentation {
             worker_catalog: None,
             worker: None,
             pending: None,
+            behaviors: HashMap::new(),
+            scene_time_ms: Cell::new(0),
         }
     }
 
@@ -319,19 +350,12 @@ impl RuntimeGameObjectPresentation {
         &mut self,
         world: Option<&ActiveWorld>,
     ) -> Result<(), RuntimeGameObjectError> {
-        let world_identity = world.and_then(|world| {
-            world
-                .local_player_guid()
-                .ok()
-                .and_then(|guid| world.object_identity(guid))
-        });
-        if self.world_identity != world_identity {
-            self.disconnect();
-            self.world_identity = world_identity;
-        }
+        self.admit_world(world);
         let Some(world) = world else {
             return Ok(());
         };
+        self.behaviors
+            .retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
         self.transport_guid = world.local_player_transport_guid();
         self.transport_identity = self
             .transport_guid
@@ -358,6 +382,7 @@ impl RuntimeGameObjectPresentation {
             let presentation = world
                 .game_object_presentation(identity.guid())
                 .unwrap_or_default();
+            let behavior = self.behavior_for(identity, presentation);
             let index = self.indices.get(&identity).copied();
             let display_changed = index.is_none_or(|index| {
                 self.instances[index].display_id() != presentation.display_id()
@@ -378,6 +403,9 @@ impl RuntimeGameObjectPresentation {
             if let Some(index) = index {
                 let instance = &mut self.instances[index];
                 if display_changed {
+                    if let Some(behavior) = instance.behavior() {
+                        behavior.detach_model();
+                    }
                     instance.resource = request
                         .as_ref()
                         .and_then(|request| self.resources.get(request))
@@ -393,6 +421,7 @@ impl RuntimeGameObjectPresentation {
                 instance.placement = placement;
                 instance.transform = transform;
                 instance.scale = scale;
+                instance.behavior = behavior;
             } else {
                 let resource = request
                     .as_ref()
@@ -408,6 +437,7 @@ impl RuntimeGameObjectPresentation {
                     request,
                     resource,
                     failed: false,
+                    behavior,
                 });
                 self.scene_revision = self.scene_revision.wrapping_add(1);
             }
@@ -415,6 +445,82 @@ impl RuntimeGameObjectPresentation {
         if self.scene_revision != previous_revision {
             self.collect_unused();
             self.placement_resolver.retain_world(world);
+        }
+        Ok(())
+    }
+
+    fn admit_world(&mut self, world: Option<&ActiveWorld>) {
+        let identity = world.and_then(|world| {
+            world
+                .local_player_guid()
+                .ok()
+                .and_then(|guid| world.object_identity(guid))
+        });
+        if self.world_identity != identity {
+            self.disconnect();
+            self.world_identity = identity;
+        }
+    }
+
+    fn behavior_for(
+        &mut self,
+        identity: WorldObjectIdentity,
+        fields: GameObjectPresentation,
+    ) -> Option<Rc<GameObjectBehavior>> {
+        // 714250's constructors enter 7124B0 only for these generic families.
+        // Path transports and specialized destructible/trap clocks have other owners.
+        if !matches!(fields.object_type(), 0..=3 | 5..=6 | 8..=10 | 12 | 16..=19 | 22..=27 | 29..=30 | 34)
+        {
+            return None;
+        }
+        Some(Rc::clone(self.behaviors.entry(identity).or_insert_with(
+            || {
+                Rc::new(GameObjectBehavior::new(
+                    identity,
+                    fields,
+                    Arc::clone(&self.animations),
+                ))
+            },
+        )))
+    }
+
+    pub(in crate::application) fn observe_notification(
+        &mut self,
+        world: &ActiveWorld,
+        identity: WorldObjectIdentity,
+        notification: GameObjectNotification,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.admit_world(Some(world));
+        if let Some(fields) = world.game_object_presentation(identity.guid())
+            && world.object_identity(identity.guid()) == Some(identity)
+            && let Some(behavior) = self.behavior_for(identity, fields)
+        {
+            behavior.notify(world, notification, self.scene_time_ms.get(), random)?;
+        }
+        Ok(())
+    }
+
+    pub(in crate::application) fn synchronize_animations(
+        &self,
+        world: Option<&ActiveWorld>,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(world) = world else {
+            return Ok(());
+        };
+        for instance in &self.instances {
+            if let (Some(behavior), Some(GameObjectResource::M2(source))) =
+                (instance.behavior(), instance.resource())
+            {
+                behavior.attach_model(
+                    world,
+                    instance.display_id(),
+                    source.model(),
+                    self.scene_time_ms.get(),
+                    random,
+                )?;
+            }
         }
         Ok(())
     }
@@ -595,11 +701,16 @@ impl RuntimeGameObjectPresentation {
         self.world_models.collect_unused();
     }
 
-    pub(in crate::application) fn frame_input(&self) -> GameObjectFrameInput<'_> {
+    pub(in crate::application) fn frame_input<'a>(
+        &'a self,
+        world: Option<&'a ActiveWorld>,
+    ) -> GameObjectFrameInput<'a> {
         GameObjectFrameInput {
             animations: &self.animations,
             instances: &self.instances,
             indices: &self.indices,
+            world,
+            scene_time_ms: &self.scene_time_ms,
         }
     }
 
@@ -607,6 +718,18 @@ impl RuntimeGameObjectPresentation {
     #[must_use]
     pub const fn scene_revision(&self) -> u64 {
         self.scene_revision
+    }
+
+    /// Returns the live generic behavior state for an exact object lifetime.
+    /// Exposes the model completion state needed by native door collision eligibility.
+    #[must_use]
+    pub fn animation_state(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Option<solarity_systems::GameObjectAnimationState> {
+        self.behaviors
+            .get(&identity)
+            .and_then(|behavior| behavior.state())
     }
 
     /// Reports only stock's local-player transport object/resource gate.
@@ -708,6 +831,8 @@ impl RuntimeGameObjectPresentation {
             self.scene_revision = self.scene_revision.wrapping_add(1);
         }
         self.instances.clear();
+        self.behaviors.clear();
+        self.scene_time_ms.set(0);
         self.placement_resolver.clear();
         self.indices.clear();
         self.resources.clear();

@@ -16,6 +16,111 @@ use super::M2Playback;
 use crate::random::CrtRand;
 use crate::test_support::ClientFixture;
 
+/// A user completion replaces the timer before the automatic variation branch.
+#[test]
+fn primary_completion_runs_before_variation_and_starts_at_current_scene_tick()
+-> Result<(), Box<dyn Error>> {
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::unstarted(0);
+    playback.apply_model_sequence(&model, &catalog, 7, 0, 0, &mut random)?;
+    let mut expected_random = random;
+    let _variation = expected_random.next_u15();
+    let _cycle = expected_random.next_u15();
+    let mut completions = 0;
+    let mut completed = |playback: &mut M2Playback, random: &mut CrtRand| {
+        completions += 1;
+        assert!(playback.script_finished);
+        playback.apply_resolved_model_sequence(
+            &model,
+            0,
+            solarity_asset::M2ModelAnimationMode::Forward,
+            0,
+            playback.scene_time_ms,
+            solarity_rendering::M2SequenceStartPhase::DuringSceneUpdate,
+            true,
+            random,
+        )?;
+        Ok(())
+    };
+    let advance = playback.clock_with_completion(
+        &model,
+        2_500.0,
+        2_500.0,
+        &mut random,
+        Some(&mut completed),
+    )?;
+    assert_eq!(completions, 1);
+    assert_eq!(advance.expired_variations.len(), 1);
+    assert_eq!(advance.expired_variations[0].clock.sequence(), 2);
+    assert_eq!(advance.clock.animation_time_ms(), 0.0);
+    assert_eq!(
+        playback
+            .script_timer
+            .ok_or("missing replacement")?
+            .start_time_ms(),
+        2_500
+    );
+    assert_eq!(
+        random, expected_random,
+        "replacement must suppress automatic reroll"
+    );
+    assert!(playback.script_blend.is_some());
+    Ok(())
+}
+
+/// Retaining a terminal timer marks it finished; pause blocks both events and completion.
+#[test]
+fn primary_completion_is_once_and_pause_moves_the_retained_clock() -> Result<(), Box<dyn Error>> {
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::unstarted(0);
+    playback.apply_model_sequence(&model, &catalog, 7, 0, 0, &mut random)?;
+    playback.clock(&model, 250.0, 250.0, &mut random)?;
+    playback.event_window(250.0, 250.0);
+    playback.set_paused(true, 250);
+    let expected_random = random;
+    let mut completions = 0;
+    let mut completed = |_: &mut M2Playback, _: &mut CrtRand| {
+        completions += 1;
+        Ok(())
+    };
+    let advance = playback.clock_with_completion(
+        &model,
+        1_250.0,
+        1_250.0,
+        &mut random,
+        Some(&mut completed),
+    )?;
+    assert_eq!(advance.clock.animation_time_ms(), 249.0);
+    assert!(advance.expired_variations.is_empty());
+    assert!(
+        triggered_m2_event_indices(model.animations(), playback.event_window(1_250.0, 1_250.0),)
+            .is_empty()
+    );
+    playback.set_paused(false, 1_250);
+    let advance = playback.clock_with_completion(
+        &model,
+        3_000.0,
+        3_000.0,
+        &mut random,
+        Some(&mut completed),
+    )?;
+    assert_eq!(advance.expired_variations.len(), 1);
+    playback.event_window(3_000.0, 3_000.0);
+    let advance = playback.clock_with_completion(
+        &model,
+        4_000.0,
+        4_000.0,
+        &mut random,
+        Some(&mut completed),
+    )?;
+    assert!(advance.expired_variations.is_empty());
+    assert_eq!(completions, 1);
+    assert_eq!(random, expected_random);
+    Ok(())
+}
+
 /// Two looping variations plus a terminal sequence with reverse/hold fallback rows.
 fn playback_model() -> Result<(DecodedM2Model, AnimationDataCatalog), Box<dyn Error>> {
     playback_model_with_blend(400)

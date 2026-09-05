@@ -80,6 +80,12 @@ effect histories. Parent arrival restores those owners without restarting
 neighbors. Removing and recreating an object establishes fresh playback.
 Resource readiness remains separate from collision placement and eligibility.
 
+Generic M2 GameObjects now attach a shared behavior timer when CPU preparation
+completes. Ordered packet handlers and scene callbacks mutate that same owner;
+GPU placement consumes its scene sample. Missing placement therefore no longer
+stops transition completion. The exact constructor coverage and remaining
+specialized providers are described in [GameObject behavior](game-object-behavior.md).
+
 Scene retirement releases instance histories and CPU source ownership. The
 renderer still caches shared M2/WMO device buffers until renderer teardown;
 bounded device-resource retirement across static, Glue, and dynamic owners

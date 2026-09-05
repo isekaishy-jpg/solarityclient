@@ -1,13 +1,10 @@
 //! Actual Vulkan resource admission preserves independent object playback.
 
-#[path = "../support/game_object_models.rs"]
-mod models;
-
 use super::{CrtRand, M2Frame, M2GpuPlacementOwner, M2Playback, ResidentM2Scene};
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use crate::configuration::{WindowConfiguration, WindowMode};
 use crate::platform::SdlPlatform;
-use crate::test_support::ClientFixture;
+use crate::test_support::{ClientFixture, game_object_models as models};
 use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, ClientDataRoot,
@@ -154,7 +151,12 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 2);
     assert_eq!(frame.sources.len(), 1);
     let mesh = frame.sources[0]
@@ -163,18 +165,25 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         .mesh
         .ok_or("fixture must upload an actual triangle mesh")?;
     let first_identity = world.object_identity(30).ok_or("missing first lifetime")?;
-    let playback = frame.placements[0]
+    let mut playback = frame.placements[0]
         .playback
         .as_mut()
+        .map(super::M2PlaybackStorage::borrow_mut)
         .ok_or("missing retained playback")?;
     assert!(playback.script_timer.is_some());
     playback.cycle_started_ms = 40.0;
     playback.previous_event_elapsed_ms = 25.0;
     playback.event_timeline_started = true;
+    drop(playback);
     let mut expected_random = random;
     add_object(&mut world, 20, 42)?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
     let _new_variation_roll = expected_random.next_u15();
     let _new_cycle_roll = expected_random.next_u15();
     assert_eq!(
@@ -190,10 +199,12 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     let playback = frame.placements[0]
         .playback
         .as_ref()
+        .map(super::M2PlaybackStorage::borrow)
         .ok_or("lost playback")?;
     assert_eq!(playback.cycle_started_ms, 40.0);
     assert_eq!(playback.previous_event_elapsed_ms, 25.0);
     assert!(playback.event_timeline_started);
+    drop(playback);
 
     world.update_game_object_movement(
         30,
@@ -207,8 +218,13 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         ),
     )?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
-    frame.update_game_object_states(objects.frame_input(), 400.0, &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
+    frame.update_game_object_states(objects.frame_input(Some(&world)), 400.0, &mut random)?;
     assert!(!frame.placements[0].placement_valid);
     assert_eq!(frame.placements.len(), 3);
     let parent = world.create_object(
@@ -221,8 +237,13 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         .storage_mut()
         .add_component(parent, (ObjectPresentation::new(1, 2.0),));
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
-    frame.update_game_object_states(objects.frame_input(), 500.0, &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
+    frame.update_game_object_states(objects.frame_input(Some(&world)), 500.0, &mut random)?;
     assert!(frame.placements[0].placement_valid);
     assert_eq!(
         frame.placements[0].transform.w_axis.truncate(),
@@ -232,6 +253,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         frame.placements[0]
             .playback
             .as_ref()
+            .map(super::M2PlaybackStorage::borrow)
             .ok_or("parent arrival lost playback")?
             .cycle_started_ms,
         40.0
@@ -247,7 +269,12 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     world.remove_object(30)?;
     add_object(&mut world, 30, 42)?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 3);
     assert_eq!(frame.sources.len(), 1);
     assert!(frame.placements.iter().all(|placement| !matches!(placement.owner, M2GpuPlacementOwner::GameObject { identity, .. } if identity == first_identity)));
@@ -259,11 +286,17 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         !recreated
             .playback
             .as_ref()
+            .map(super::M2PlaybackStorage::borrow)
             .ok_or("missing recreated playback")?
             .event_timeline_started
     );
     objects.disconnect();
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(), &mut random)?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
     assert!(frame.sources.is_empty());
     assert!(frame.placements.is_empty());
     renderer.shutdown()?;
@@ -275,13 +308,13 @@ fn add_object(world: &mut ActiveWorld, guid: u64, display: u32) -> Result<(), Bo
         guid,
         ObjectKind::GameObject,
         Some(WorldTransform::new(Vec3::X * guid as f32, 0.0)),
-        [],
+        [(14, 0xFFFF_0000)],
     )?;
     world.storage_mut().add_component(
         entity,
         (
             ObjectPresentation::new(1, 1.0),
-            GameObjectPresentation::new(display, 1),
+            GameObjectPresentation::new(display, 1).with_dynamic_word(0xFFFF_0000),
         ),
     );
     Ok(())

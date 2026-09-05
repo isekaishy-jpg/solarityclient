@@ -37,6 +37,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// A gameplay animation callback lost its authoritative object fields.
+    #[error(transparent)]
+    WorldObject(#[from] solarity_ecs::WorldStateError),
     /// An authored BLP could not decode or enter device-local storage.
     #[error(transparent)]
     TextureUpload(#[from] BlpTextureUploadError),
@@ -659,6 +662,7 @@ impl TerrainFrame {
             global_animation_time_ms,
             solarity_rendering::M2CameraEffectScale::EXTERNAL_CAMERA,
             random,
+            Some(game_objects),
         )?;
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);

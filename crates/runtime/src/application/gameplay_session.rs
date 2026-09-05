@@ -1,5 +1,10 @@
 //! Composition boundary between an accepted network login and ECS ownership.
 
+mod game_object_notifications;
+
+use crate::application::game_object_behavior::GameObjectNotification;
+use game_object_notifications::GameObjectUpdateMirrors;
+
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, GameObjectMovement, GameObjectTransport, ObjectKind, WorldBootstrap, WorldMapId,
@@ -111,9 +116,32 @@ pub(crate) fn apply_object_updates(
     world: &mut ActiveWorld,
     batch: &WorldObjectUpdateBatch,
 ) -> Result<(), GameplayUpdateError> {
+    apply_object_updates_with(world, batch, &mut |_, _, _| Ok(()))
+}
+
+/// Native packet processing applies all raw blocks before any field callback.
+pub(crate) fn apply_object_updates_with<E: From<GameplayUpdateError>>(
+    world: &mut ActiveWorld,
+    batch: &WorldObjectUpdateBatch,
+    notify: &mut impl FnMut(
+        &ActiveWorld,
+        solarity_ecs::WorldObjectIdentity,
+        GameObjectNotification,
+    ) -> Result<(), E>,
+) -> Result<(), E> {
+    let mirrors = apply_object_updates_raw(world, batch).map_err(E::from)?;
+    mirrors.dispatch(world, batch, notify)
+}
+
+fn apply_object_updates_raw(
+    world: &mut ActiveWorld,
+    batch: &WorldObjectUpdateBatch,
+) -> Result<GameObjectUpdateMirrors, GameplayUpdateError> {
+    let mut mirrors = GameObjectUpdateMirrors::default();
     for update in batch.updates() {
         match update {
             WorldObjectUpdate::Values { guid, fields } => {
+                let previous = world.game_object_presentation(*guid);
                 world.update_fields(
                     *guid,
                     fields.iter().map(|field| (field.index(), field.value())),
@@ -123,6 +151,7 @@ pub(crate) fn apply_object_updates(
                     *guid,
                     fields.iter().map(|field| (field.index(), field.value())),
                 )?;
+                mirrors.record(world, *guid, previous, false);
             }
             WorldObjectUpdate::Movement { guid, movement } => {
                 // 0x004D6DA0 consumes the block but skips the local player's
@@ -155,6 +184,7 @@ pub(crate) fn apply_object_updates(
                 ..
             } => {
                 let existing = world.entity_by_guid(*guid);
+                let previous = world.game_object_presentation(*guid);
                 world.create_object(
                     *guid,
                     object_kind(*kind),
@@ -179,6 +209,7 @@ pub(crate) fn apply_object_updates(
                     *guid,
                     fields.iter().map(|field| (field.index(), field.value())),
                 )?;
+                mirrors.record(world, *guid, previous, existing.is_none());
             }
             WorldObjectUpdate::OutOfRange(guids) => {
                 for guid in guids {
@@ -188,7 +219,7 @@ pub(crate) fn apply_object_updates(
             WorldObjectUpdate::Near(_) => {}
         }
     }
-    Ok(())
+    Ok(mirrors)
 }
 
 /// Preserves the complete admitted living context at the network-to-ECS boundary.

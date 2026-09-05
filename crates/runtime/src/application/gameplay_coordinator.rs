@@ -22,8 +22,9 @@ use tokio::sync::mpsc::{
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::application::game_object_behavior::GameObjectNotification;
 use crate::application::gameplay_session::{
-    GameplaySession, GameplayUpdateError, apply_object_updates,
+    GameplaySession, GameplayUpdateError, apply_object_updates_with,
 };
 use crate::time::RealmClock;
 
@@ -35,6 +36,9 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 /// A failure in active-world network or ECS ownership.
 #[derive(Debug, Error)]
 pub enum RuntimeGameplayError {
+    /// A retained game-object animation rejected a field callback.
+    #[error(transparent)]
+    ObjectAnimation(#[from] crate::application::terrain_frame::RuntimeTerrainFrameError),
     /// A second active-world session was supplied before disconnect.
     #[error("an active gameplay session is already owned")]
     AlreadyActive,
@@ -76,6 +80,13 @@ pub enum RuntimeGameplayError {
     },
 }
 
+type GameObjectObserver<'a> = dyn FnMut(
+        &ActiveWorld,
+        solarity_ecs::WorldObjectIdentity,
+        GameObjectNotification,
+    ) -> Result<(), RuntimeGameplayError>
+    + 'a;
+
 /// Main-thread ECS owner paired with one cancellable async network pump.
 pub struct RuntimeGameplayCoordinator {
     active: Option<ActiveGameplayNetwork>,
@@ -115,6 +126,16 @@ impl RuntimeGameplayCoordinator {
         network: InWorldSession<TcpStream>,
         setup_packets: Vec<WorldServerPacket>,
     ) -> Result<(), RuntimeGameplayError> {
+        self.begin_with_game_objects(runtime, network, setup_packets, &mut |_, _, _| Ok(()))
+    }
+
+    pub(in crate::application) fn begin_with_game_objects(
+        &mut self,
+        runtime: &Handle,
+        network: InWorldSession<TcpStream>,
+        setup_packets: Vec<WorldServerPacket>,
+        notify: &mut GameObjectObserver<'_>,
+    ) -> Result<(), RuntimeGameplayError> {
         if self.active.is_some() || self.world.is_some() {
             return Err(RuntimeGameplayError::AlreadyActive);
         }
@@ -130,6 +151,7 @@ impl RuntimeGameplayCoordinator {
                 &mut realm_clock,
                 &mut action_buttons,
                 &mut retained,
+                notify,
             )?;
         }
         let (network, world) = gameplay.into_parts();
@@ -168,6 +190,13 @@ impl RuntimeGameplayCoordinator {
     ///
     /// Returns a network, decode, retention, or ECS update failure.
     pub fn service(&mut self) -> Result<usize, RuntimeGameplayError> {
+        self.service_with_game_objects(&mut |_, _, _| Ok(()))
+    }
+
+    pub(in crate::application) fn service_with_game_objects(
+        &mut self,
+        notify: &mut GameObjectObserver<'_>,
+    ) -> Result<usize, RuntimeGameplayError> {
         if self.transfer.is_some() {
             return Ok(0);
         }
@@ -202,6 +231,7 @@ impl RuntimeGameplayCoordinator {
                         &mut self.realm_clock,
                         &mut self.action_buttons,
                         &mut self.unhandled_packets,
+                        notify,
                     ) {
                         Ok(true) => applied += 1,
                         Ok(false) => {}
@@ -544,6 +574,7 @@ fn dispatch_setup_packet<S>(
     realm_clock: &mut Option<RealmClock>,
     action_buttons: &mut Option<WorldActionButtons>,
     unhandled: &mut VecDeque<WorldServerPacket>,
+    notify: &mut GameObjectObserver<'_>,
 ) -> Result<(), RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
         tracing::info!(
@@ -555,7 +586,11 @@ fn dispatch_setup_packet<S>(
         return Ok(());
     }
     if let Some(updates) = packet.object_updates()? {
-        gameplay.apply_object_updates(&updates)?;
+        apply_object_updates_with(
+            gameplay.world_mut(),
+            &updates,
+            &mut |world, identity, event| notify(world, identity, event),
+        )?;
         return Ok(());
     }
     if let Some(buttons) = packet.action_buttons()? {
@@ -573,6 +608,7 @@ fn dispatch_world_packet(
     realm_clock: &mut Option<RealmClock>,
     action_buttons: &mut Option<WorldActionButtons>,
     unhandled: &mut VecDeque<WorldServerPacket>,
+    notify: &mut GameObjectObserver<'_>,
 ) -> Result<bool, RuntimeGameplayError> {
     if let Some(source) = packet.world_time_speed()? {
         tracing::info!(
@@ -584,7 +620,9 @@ fn dispatch_world_packet(
         return Ok(false);
     }
     if let Some(updates) = packet.object_updates()? {
-        apply_object_updates(world, &updates)?;
+        apply_object_updates_with(world, &updates, &mut |world, identity, event| {
+            notify(world, identity, event)
+        })?;
         return Ok(true);
     }
     if let Some(buttons) = packet.action_buttons()? {

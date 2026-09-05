@@ -1003,7 +1003,7 @@ impl ClientServices {
             player,
             &creatures,
             &remote_players,
-            self.game_objects.frame_input(),
+            self.game_objects.frame_input(self.gameplay.world()),
             ui_extent,
             frame_draws,
             &self.runtime_overlay_draws,
@@ -1800,7 +1800,21 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     let (session, setup_packets) = entry.into_parts();
-                    self.gameplay.begin(&handle, session, setup_packets)?;
+                    self.gameplay.begin_with_game_objects(
+                        &handle,
+                        session,
+                        setup_packets,
+                        &mut |world, identity, notification| {
+                            self.game_objects
+                                .observe_notification(
+                                    world,
+                                    identity,
+                                    notification,
+                                    &mut self.crt_rand,
+                                )
+                                .map_err(Into::into)
+                        },
+                    )?;
                     tracing::info!("selected character entered the active world");
                 }
             }
@@ -1932,12 +1946,14 @@ impl ClientServices {
         let transport_poll = self
             .game_objects
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        self.game_objects
+            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
         if self.game_objects.scene_revision() != previous_game_object_revision
             && let Some(frame) = self.terrain_frame.as_mut()
         {
             frame.synchronize_game_objects(
                 &mut self.renderer,
-                self.game_objects.frame_input(),
+                self.game_objects.frame_input(self.gameplay.world()),
                 &mut self.crt_rand,
             )?;
         }
@@ -2012,7 +2028,7 @@ impl ClientServices {
                         self.player.resident_frame_input(),
                         &self.player.resident_creature_frame_inputs(),
                         &self.player.resident_remote_player_frame_inputs(),
-                        self.game_objects.frame_input(),
+                        self.game_objects.frame_input(self.gameplay.world()),
                     )?;
                     tracing::info!(
                         tile_x = tile.x(),
@@ -2051,7 +2067,7 @@ impl ClientServices {
                     self.player.resident_frame_input(),
                     &self.player.resident_creature_frame_inputs(),
                     &self.player.resident_remote_player_frame_inputs(),
-                    self.game_objects.frame_input(),
+                    self.game_objects.frame_input(self.gameplay.world()),
                 )?;
                 tracing::info!(
                     map_id,
