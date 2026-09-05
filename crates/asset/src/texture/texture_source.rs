@@ -28,7 +28,17 @@ impl BlpTextureSource {
     /// when the selected bytes do not form a supported stock BLP image.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
         let read = store.read(path)?;
-        let image = wow_blp::parser::load_blp_from_buf(read.bytes()).map_err(|error| {
+        let archive = read.source().clone();
+        let mut bytes = read.into_bytes();
+        // Stock 0x4b5fe0 maps native pixel format 2 (BGRA8) and format 8
+        // with eight alpha bits to the same output format. wow-blp 0.7 names
+        // this header field AlphaType and omits 2 from its enum. Translate
+        // only the equivalent BLP2/direct/RAW3/8-bit-alpha header; retain all
+        // authored pixel bytes, mip offsets, and ordinary parser validation.
+        if bytes.starts_with(b"BLP2\x01\x00\x00\x00\x03\x08\x02") {
+            bytes[10] = 8;
+        }
+        let image = wow_blp::parser::load_blp_from_buf(&bytes).map_err(|error| {
             AssetError::TextureDecode {
                 path: path.clone(),
                 message: error.to_string(),
@@ -37,7 +47,7 @@ impl BlpTextureSource {
 
         Ok(Self {
             path: path.clone(),
-            archive: read.source().clone(),
+            archive,
             image,
         })
     }

@@ -575,3 +575,35 @@ following frames per action measured 2,156–3,596 FPS on the GTX 1070 setup.
 Creation entry reached 29.7 ms, and one customization following frame reached
 28.9 ms. These results preserve throughput above the target while retaining
 the unresolved stall requirement.
+
+## Native BGRA8 Glue button texture
+
+The configured texture prewarm rejected
+`Interface/Buttons/UI-PaidCharacterCustomization-Button.blp` from the installed
+`enUS/patch-enUS-2.MPQ`. Its BLP2 header declares direct content, RAW3 pixels,
+eight alpha bits, and native pixel format 2. The `wow-blp` 0.7 header parser
+names the last field `AlphaType` and rejects 2 before reading any pixels.
+
+Stock `0x6ae900` accepts the BLP2/version-1 header. `0x4b5fe0` maps native
+format 2 and format 8 with eight alpha bits to the same BGRA8 output, and
+`0x6affd0` can publish RAW3 mip addresses directly. The asset parser now
+translates this exact header combination into the dependency's supported
+format-8 representation using its owned archive-read buffer. It retains the
+authored pixels, mip offsets, archive bytes, and ordinary parser validation.
+This does not reinterpret other pixel formats or compressed payloads.
+
+The regression checks fractional and zero alpha, channel order, every pixel
+of two mip levels, unchanged archive content, and rejection of truncated or
+unsupported input. The common raw-texture fixture now uses native format 2.
+An installed-data diagnostic also verified all 21,845 pixels across all eight
+mips of the actual 128x128 button against the source BGRA bytes.
+
+All 554 workspace tests, Clippy, formatting, and the optimized replay build
+pass. The installed replay's configured Glue prewarm admits 93 textures with
+zero failures, including the previously rejected button.
+All 31 actions with 6,000 following frames complete. With client-service info
+logging enabled to observe admission, following throughput ranges from 1,894
+to 2,997 FPS; creation entry reaches 29.7 ms and a later customization frame
+reaches 36.5 ms. This is decode/admission evidence, not a measured speedup;
+the slower throughput versus the preceding quiet replay and the remaining
+long frames still need attribution.

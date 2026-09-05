@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetPath, AssetStore, BlpBlockCompression, BlpTextureSource, ClientDataRoot,
-    DecodedBlpTexture, Locale,
+    ArchiveCatalog, AssetError, AssetPath, AssetStore, BlpBlockCompression, BlpTextureSource,
+    ClientDataRoot, DecodedBlpTexture, Locale,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -33,6 +33,65 @@ fn blp_top_mip_decodes_to_resource_sized_rgba8() -> Result<(), Box<dyn Error>> {
         texture.source().relative_path().to_string_lossy(),
         "patch-A.MPQ"
     );
+    Ok(())
+}
+
+/// Stock format 2 retains every BGRA channel, including fractional alpha.
+#[test]
+fn blp_native_bgra8_format_preserves_alpha_and_mips() -> Result<(), Box<dyn Error>> {
+    // 0x4b5fe0 accepts native format 2; 0x6affd0 uses RAW3 mip bytes directly.
+    // The installed UI-PaidCharacterCustomization-Button.blp has this header.
+    let blp = raw3_blp_mips(&[
+        (2, 2, &[0x0012_3456, 0x7876_5432, 0xABCD_EF01, 0xFF98_7654]),
+        (1, 1, &[0x42FE_DCBA]),
+    ]);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "patch-A.MPQ",
+        path: "Interface\\Buttons\\NativeBgra.blp",
+        bytes: &blp,
+    }])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Interface/Buttons/NativeBgra.blp")?;
+    let source = BlpTextureSource::load(&mut store, &path)?;
+    assert_eq!(source.block_compression(), None);
+    assert_eq!(source.mip_count(), 2);
+    assert_eq!(
+        source.decode_mip(0)?.rgba8(),
+        &[
+            0x12, 0x34, 0x56, 0x00, 0x76, 0x54, 0x32, 0x78, 0xCD, 0xEF, 0x01, 0xAB, 0x98, 0x76,
+            0x54, 0xFF,
+        ]
+    );
+    assert_eq!(source.decode_mip(1)?.rgba8(), &[0xFE, 0xDC, 0xBA, 0x42]);
+    assert_eq!(store.read(&path)?.bytes(), blp);
+    Ok(())
+}
+
+/// The native BGRA adapter does not bypass content or mip bounds validation.
+#[test]
+fn blp_native_bgra8_rejects_truncated_and_unsupported_input() -> Result<(), Box<dyn Error>> {
+    let mut truncated = raw3_blp(1, 1, &[0xFF12_3456]);
+    truncated.pop();
+    let unsupported_dxt = dxt_blp_mips(2, 8, 2, &[(4, 4, &[0; 16])]);
+    for blp in [truncated, unsupported_dxt] {
+        let fixture = Fixture::new(&[FixtureFile {
+            archive: "patch-A.MPQ",
+            path: "Interface\\Buttons\\Invalid.blp",
+            bytes: &blp,
+        }])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(catalog)?;
+        assert!(matches!(
+            BlpTextureSource::load(
+                &mut store,
+                &AssetPath::new("Interface/Buttons/Invalid.blp")?
+            ),
+            Err(AssetError::TextureDecode { .. })
+        ));
+    }
     Ok(())
 }
 
@@ -117,7 +176,7 @@ pub(crate) fn raw3_blp_mips(mips: &[(u32, u32, &[u32])]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(next_offset as usize);
     bytes.extend_from_slice(b"BLP2");
     bytes.extend_from_slice(&1_u32.to_le_bytes());
-    bytes.extend_from_slice(&[3, 8, 8, u8::from(mips.len() > 1)]);
+    bytes.extend_from_slice(&[3, 8, 2, u8::from(mips.len() > 1)]);
     bytes.extend_from_slice(&width.to_le_bytes());
     bytes.extend_from_slice(&height.to_le_bytes());
     for offset in offsets {
