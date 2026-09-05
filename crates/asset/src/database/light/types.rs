@@ -6,6 +6,27 @@ pub(super) const BAND_KEY_COUNT: usize = 16;
 pub(super) const COLOR_BAND_COUNT: u32 = 18;
 pub(super) const FLOAT_BAND_COUNT: u32 = 6;
 
+/// Ambient and diffuse M2 colors sampled from one LightParams row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelLightColors {
+    pub(super) ambient: Vec3,
+    pub(super) diffuse: Vec3,
+}
+
+impl ModelLightColors {
+    /// Returns the unpacked RGB value from color channel one.
+    #[must_use]
+    pub const fn ambient(self) -> Vec3 {
+        self.ambient
+    }
+
+    /// Returns the unpacked RGB value from color channel zero.
+    #[must_use]
+    pub const fn diffuse(self) -> Vec3 {
+        self.diffuse
+    }
+}
+
 /// One positioned or map-global Light.dbc environment volume.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightDefinition {

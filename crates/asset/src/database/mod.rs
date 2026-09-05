@@ -61,8 +61,9 @@ pub use item::{
     ItemVisualEffect, SpellItemEnchantment,
 };
 pub use light::{
-    LightCatalog, LightDefinition, LightParameter, LightSkybox, SkyboxBlend, WorldLightCondition,
-    WorldLightQuery, WorldLightSample, WorldLightSampleError, exterior_light_direction,
+    LightCatalog, LightDefinition, LightParameter, LightSkybox, ModelLightColors, SkyboxBlend,
+    WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
+    exterior_light_direction,
 };
 pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};
 pub use map::{MapCatalog, MapDefinition, MapKind};

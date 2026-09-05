@@ -14,6 +14,6 @@ pub use catalog::LightCatalog;
 pub use direction::exterior_light_direction;
 pub use status::WorldLightSampleError;
 pub use types::{
-    LightDefinition, LightParameter, LightSkybox, SkyboxBlend, WorldLightCondition,
-    WorldLightQuery, WorldLightSample,
+    LightDefinition, LightParameter, LightSkybox, ModelLightColors, SkyboxBlend,
+    WorldLightCondition, WorldLightQuery, WorldLightSample,
 };

@@ -34,13 +34,13 @@ pub use database::{
     ItemDefinition, ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, ItemVisual,
     ItemVisualCatalog, ItemVisualEffect, LightCatalog, LightDefinition, LightParameter,
     LightSkybox, LiquidTypeCatalog, LiquidTypeDefinition, LoadingScreenCatalog,
-    LoadingScreenDefinition, MapCatalog, MapDefinition, MapKind, PaperDollItemFrameCatalog,
-    PaperDollItemFrameDefinition, ParticleColorCatalog, ParticleColorDefinition,
-    RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,
-    SkyboxBlend, SoundAsset, SoundEmitterCatalog, SoundEmitterDefinition, SoundEntry,
-    SoundEntryCatalog, SpellItemEnchantment, UiSoundLookup, UiSoundLookupCatalog, WdbcHeader,
-    WdbcTable, WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    exterior_light_direction,
+    LoadingScreenDefinition, MapCatalog, MapDefinition, MapKind, ModelLightColors,
+    PaperDollItemFrameCatalog, PaperDollItemFrameDefinition, ParticleColorCatalog,
+    ParticleColorDefinition, RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration,
+    RealmConfigurationCatalog, SkyboxBlend, SoundAsset, SoundEmitterCatalog,
+    SoundEmitterDefinition, SoundEntry, SoundEntryCatalog, SpellItemEnchantment, UiSoundLookup,
+    UiSoundLookupCatalog, WdbcHeader, WdbcTable, WorldLightCondition, WorldLightQuery,
+    WorldLightSample, WorldLightSampleError, exterior_light_direction,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{

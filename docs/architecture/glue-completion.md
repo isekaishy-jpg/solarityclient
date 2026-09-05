@@ -455,3 +455,44 @@ nonzero diffuse directional output at this sample. Night Elf's directional
 source has zero diffuse output, so correcting that source's direction alone
 does not demonstrate a visual change there. Final appearance, per-model
 light-bank composition, and the remaining completion requirements stay open.
+
+## Default ghost lighting
+
+The ModelFFX callback at `0x004E3A20` distinguishes an authored directional
+override from an absent ghost override. `0x004E2730` clears directional
+accumulation while retaining the collected point lights. The default ghost
+branch instead calls `0x00834900`, clearing the entire light accumulator,
+then creates a negative-Z D3D directional source. It samples LightParams row
+three at time zero through `0x007EBF30`: color channel zero supplies diffuse
+and channel one supplies ambient. The renderer receives the inverted +Z
+surface-to-light direction.
+
+`LightCatalog::model_light_colors` now provides this direct-parameter sampling
+without a world-volume lookup or requirements on unused sky/scalar channels.
+The Glue scene loads the default palette once. Each of the background,
+character, and pet ghost banks uses a complete replacement when it has no
+authored lights; an explicit bank replaces only the directional contribution.
+The previous default selected a camera-facing warm character light and kept
+the backdrop's point lights. The replacement also selects the one-light
+character/pet shader permutation.
+
+External regressions cover exact parameter/channel IDs, time-zero colors,
+cyclic band interpolation, missing parameters, directional inversion, and
+point-light retention versus complete replacement. The offline transition
+replay now includes cold/warm selection of a ghost hunter with a pet and the
+return to the live hunter. This exercises production selection dispatch and
+Vulkan presentation; it does not by itself establish visual equivalence to a
+stock capture.
+
+All 551 workspace tests, Clippy, formatting, and the optimized runtime/replay
+build pass. The 31-action replay completes with 6,000 following frames per
+action at 1280x720 on the GTX 1070, four CPU workers, audio, and frame timing
+instrumentation. The installed default ghost palette is ambient
+`(26, 56, 85) / 255` and diffuse `(94, 153, 198) / 255`. Ghost selection
+measures 2,283 FPS cold and 2,244 FPS warm; its transition maxima are 6.5 and
+6.7 ms. The return to the live hunter completes at 2,410 FPS. Creation entry
+still reaches 29.5 ms, and a later following frame reaches 30.6 ms. These
+measurements retain throughput above the target without closing the remaining
+stall or visual-parity requirements. Palette sampling failures are retained
+until a bank actually requests the default, matching the conditional stock
+lookup; ordinary login and explicitly authored banks do not require it.

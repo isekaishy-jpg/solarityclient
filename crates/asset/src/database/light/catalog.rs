@@ -8,7 +8,7 @@ use crate::archive::{AssetError, AssetPath};
 use crate::file_stack::AssetStore;
 
 use super::types::{BAND_KEY_COUNT, LightBand, LightDefinition, LightParameter, LightSkybox};
-use super::{WorldLightQuery, WorldLightSample, WorldLightSampleError};
+use super::{ModelLightColors, WorldLightQuery, WorldLightSample, WorldLightSampleError};
 use crate::database::wow_client_db::WdbcTable;
 
 const LIGHT_PATH: &str = "DBFilesClient\\Light.dbc";
@@ -86,6 +86,23 @@ impl LightCatalog {
         query: WorldLightQuery,
     ) -> Result<WorldLightSample, WorldLightSampleError> {
         super::sampling::sample(self, query)
+    }
+
+    /// Samples an M2 palette directly from LightParams and its first two bands.
+    ///
+    /// Build 12340's Glue ghost callback at `0x004E3A20` uses parameter three
+    /// at time zero through `0x007EBF30`, without a world-volume lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldLightSampleError`] for an absent parameter or required
+    /// color band. Unrelated sky and scalar channels are not required.
+    pub fn model_light_colors(
+        &self,
+        parameter_id: u32,
+        half_minutes: u32,
+    ) -> Result<ModelLightColors, WorldLightSampleError> {
+        super::sampling::model_light_colors(self, parameter_id, half_minutes)
     }
 }
 

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use solarity_asset::{ArchiveCatalog, AssetStore};
+use solarity_asset::{ArchiveCatalog, AssetStore, LightCatalog};
 use solarity_cpu::BlizzardRand;
 use solarity_runtime::{
     ClientApplication, GlueBenchmarkAction, GlueBenchmarkResult, GlueBenchmarkScreen,
@@ -62,6 +62,12 @@ fn scenario(
     let archives =
         ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
     let mut store = AssetStore::mount(archives)?;
+    let ghost_colors = LightCatalog::load(&mut store)?.model_light_colors(3, 0)?;
+    println!(
+        "ghost_light parameter=3 half_minutes=0 ambient={:?} diffuse={:?}",
+        ghost_colors.ambient(),
+        ghost_colors.diffuse()
+    );
     let creation = UiCharacterCreationState::load(
         &mut store,
         false,
@@ -88,6 +94,9 @@ fn scenario(
         ("nightelf-cold", 2),
         ("bloodelf-cold", 3),
         ("nightelf-warm", 2),
+        ("ghost-cold", 4),
+        ("nightelf-after-ghost", 2),
+        ("ghost-warm", 4),
         ("human-warm", 1),
     ] {
         steps.push(click(
@@ -166,6 +175,7 @@ fn selection_directory() -> UiCharacterDirectory {
             1,
             [0; 5],
             UiCharacterPetPreview::default(),
+            0,
         ),
         (
             4,
@@ -174,6 +184,7 @@ fn selection_directory() -> UiCharacterDirectory {
             3,
             [0, 1, 6, 5, 2],
             UiCharacterPetPreview::new(2711, 80, 25),
+            0,
         ),
         (
             10,
@@ -182,41 +193,53 @@ fn selection_directory() -> UiCharacterDirectory {
             2,
             [0; 5],
             UiCharacterPetPreview::default(),
+            0,
+        ),
+        (
+            4,
+            "Night Elf",
+            "NightElf",
+            3,
+            [0, 1, 6, 5, 2],
+            UiCharacterPetPreview::new(2711, 80, 25),
+            0x2000,
         ),
     ];
     UiCharacterDirectory::new(
         entries
             .into_iter()
             .enumerate()
-            .map(|(index, (race, name, file, class, appearance, pet))| {
-                UiCharacterInfo::new(
-                    index as u64 + 1,
-                    format!("Benchmark{file}"),
-                    name.to_owned(),
-                    race,
-                    file.to_owned(),
-                    match class {
-                        1 => "Warrior",
-                        2 => "Paladin",
-                        _ => "Hunter",
-                    }
-                    .to_owned(),
-                    class,
-                    80,
-                    None,
-                    2,
-                    0,
-                    appearance,
-                    if class == 3 {
-                        hunter_equipment()
-                    } else {
-                        [UiCharacterEquipment::default(); 23]
-                    },
-                    pet,
-                    0,
-                    0,
-                )
-            })
+            .map(
+                |(index, (race, name, file, class, appearance, pet, flags))| {
+                    UiCharacterInfo::new(
+                        index as u64 + 1,
+                        format!("Benchmark{file}"),
+                        name.to_owned(),
+                        race,
+                        file.to_owned(),
+                        match class {
+                            1 => "Warrior",
+                            2 => "Paladin",
+                            _ => "Hunter",
+                        }
+                        .to_owned(),
+                        class,
+                        80,
+                        None,
+                        2,
+                        0,
+                        appearance,
+                        if class == 3 {
+                            hunter_equipment()
+                        } else {
+                            [UiCharacterEquipment::default(); 23]
+                        },
+                        pet,
+                        flags,
+                        0,
+                    )
+                },
+            )
             .collect(),
         "Human".to_owned(),
     )

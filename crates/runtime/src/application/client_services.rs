@@ -27,7 +27,7 @@ use solarity_network::{
 use solarity_rendering::{
     CharacterComponentTextureLevel, M2ParticleTwinkleTable, UiPreparedDraw, VulkanBootstrap,
     VulkanPresentMode, VulkanRenderer, VulkanReport, WorldCamera, WorldModelBaseMip,
-    WorldModelTextureFiltering,
+    WorldModelTextureFiltering, glue_ghost_sunlight,
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
@@ -302,7 +302,12 @@ impl ClientServices {
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
-        let mut glue_model = RuntimeGlueModelScene::new(backdrop_catalog);
+        // The stock default ghost callback samples LightParams row 3 at time
+        // zero, independent of the active world, camera, and Glue animation.
+        let ghost_sunlight = lights
+            .model_light_colors(3, 0)
+            .map(|colors| glue_ghost_sunlight(colors.ambient(), colors.diffuse()));
+        let mut glue_model = RuntimeGlueModelScene::new(backdrop_catalog, ghost_sunlight);
         let login_model = glue
             .configured_model_presentation("AccountLogin")
             .map_err(GlueError::from)?;

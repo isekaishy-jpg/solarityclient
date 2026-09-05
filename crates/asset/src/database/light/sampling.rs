@@ -7,8 +7,8 @@ use glam::Vec3;
 use super::catalog::LightCatalog;
 use super::status::WorldLightSampleError;
 use super::types::{
-    COLOR_BAND_COUNT, FLOAT_BAND_COUNT, LightBand, LightDefinition, SkyboxBlend, WorldLightQuery,
-    WorldLightSample,
+    COLOR_BAND_COUNT, FLOAT_BAND_COUNT, LightBand, LightDefinition, ModelLightColors, SkyboxBlend,
+    WorldLightQuery, WorldLightSample,
 };
 
 const DAY_HALF_MINUTES: u32 = 2_880;
@@ -21,6 +21,23 @@ const SKY_COLOR_FIRST_CHANNEL: u32 = 2;
 const FOG_COLOR_CHANNEL: u32 = 7;
 const SPECULAR_COLOR_CHANNEL: u32 = 9;
 const LIQUID_COLOR_CHANNELS: [u32; 4] = [14, 15, 16, 17];
+
+/// Samples the native direct-parameter color path used by M2 callbacks.
+pub(super) fn model_light_colors(
+    catalog: &LightCatalog,
+    parameter_id: u32,
+    half_minutes: u32,
+) -> Result<ModelLightColors, WorldLightSampleError> {
+    let parameter = catalog
+        .parameter(parameter_id)
+        .ok_or(WorldLightSampleError::MissingParameterId { parameter_id })?;
+    // Decoding has already checked that each parameter's band IDs fit u32.
+    let first_band = parameter.id() * COLOR_BAND_COUNT - (COLOR_BAND_COUNT - 1);
+    Ok(ModelLightColors {
+        ambient: sample_color_at(catalog, first_band + AMBIENT_COLOR_CHANNEL, half_minutes)?,
+        diffuse: sample_color_at(catalog, first_band + DIRECT_COLOR_CHANNEL, half_minutes)?,
+    })
+}
 
 /// Resolves one complete sample without substituting missing global state.
 pub(super) fn sample(
@@ -195,6 +212,15 @@ fn sample_color(
     band_id: u32,
     query: WorldLightQuery,
 ) -> Result<Vec3, WorldLightSampleError> {
+    sample_color_at(catalog, band_id, query.half_minutes)
+}
+
+/// Shares cyclic packed-color sampling with direct model palettes.
+fn sample_color_at(
+    catalog: &LightCatalog,
+    band_id: u32,
+    half_minutes: u32,
+) -> Result<Vec3, WorldLightSampleError> {
     let band = catalog
         .color_bands
         .get(&band_id)
@@ -202,7 +228,7 @@ fn sample_color(
     if band.entries == 0 {
         return Err(WorldLightSampleError::EmptyColorBand { band_id });
     }
-    let color = sample_color_band(band, query.half_minutes);
+    let color = sample_color_band(band, half_minutes);
     Ok(Vec3::new(
         ((color >> 16) & 0xff) as f32,
         ((color >> 8) & 0xff) as f32,

@@ -207,3 +207,16 @@ pub fn glue_character_sunlight(camera: WorldCamera) -> M2Sunlight {
         diffuse: GLUE_CHARACTER_DIFFUSE,
     }
 }
+
+/// Finalizes the fixed-axis default ghost light from its sampled DBC colors.
+///
+/// `0x004E3A20` submits a negative-Z D3D ray with LightParams three's ambient
+/// and diffuse bands at time zero. The shader receives the inverted +Z vector.
+#[must_use]
+pub fn glue_ghost_sunlight(ambient: Vec3, diffuse: Vec3) -> M2Sunlight {
+    M2Sunlight {
+        direction: Vec3::Z,
+        ambient: ambient.clamp(Vec3::ZERO, Vec3::splat(16.0)),
+        diffuse: diffuse.clamp(Vec3::ZERO, Vec3::ONE),
+    }
+}

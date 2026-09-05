@@ -1362,6 +1362,72 @@ fn light_catalog_samples_stock_color_and_float_channels() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Glue can sample parameter three without a world volume or unused bands.
+#[test]
+fn model_light_colors_sample_direct_parameter_channels() -> Result<(), Box<dyn Error>> {
+    let light_table = create_wdbc(0, 15, &[], &[0]);
+    let parameter_table = create_wdbc(1, 9, &[3, 0, 0, 0, 0, 0, 0, 0, 0], &[0]);
+    let skybox_table = create_wdbc(0, 3, &[], &[0]);
+    let float_table = create_wdbc(0, 34, &[], &[0]);
+    let mut colors = [0_u32; 68];
+    for (row, start, end) in [(0, 0x1e2832, 0x78828c), (1, 0x46505a, 0xa0aab4)] {
+        colors[row * 34] = 37 + row as u32;
+        colors[row * 34 + 1] = 2;
+        colors[row * 34 + 3] = 1_440;
+        colors[row * 34 + 18] = start;
+        colors[row * 34 + 19] = end;
+    }
+    let color_table = create_wdbc(2, 34, &colors, &[0]);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Light.dbc",
+            bytes: &light_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightParams.dbc",
+            bytes: &parameter_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightSkybox.dbc",
+            bytes: &skybox_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightIntBand.dbc",
+            bytes: &color_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\LightFloatBand.dbc",
+            bytes: &float_table,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = LightCatalog::load(&mut store)?;
+    let midnight = catalog.model_light_colors(3, 0)?;
+    assert_eq!(
+        midnight.diffuse(),
+        glam::Vec3::new(30.0, 40.0, 50.0) / 255.0
+    );
+    assert_eq!(
+        midnight.ambient(),
+        glam::Vec3::new(70.0, 80.0, 90.0) / 255.0
+    );
+    let dawn = catalog.model_light_colors(3, 720)?;
+    assert_eq!(dawn.diffuse(), glam::Vec3::new(75.0, 85.0, 95.0) / 255.0);
+    assert_eq!(dawn.ambient(), glam::Vec3::new(115.0, 125.0, 135.0) / 255.0);
+    assert_eq!(catalog.model_light_colors(3, 2_880)?, midnight);
+    assert_eq!(
+        catalog.model_light_colors(4, 0),
+        Err(WorldLightSampleError::MissingParameterId { parameter_id: 4 }),
+    );
+    Ok(())
+}
+
 /// The native cubic day/night path wraps and retains recovered key vectors.
 #[test]
 fn exterior_light_direction_uses_the_executable_table() {

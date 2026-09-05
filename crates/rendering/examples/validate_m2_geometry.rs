@@ -331,6 +331,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             light.diffuse()
         );
     }
+    for (index, light) in lights.points.iter().enumerate() {
+        println!(
+            "point={index} position={:?} ambient={:?} diffuse={:?}",
+            light.position(),
+            light.ambient(),
+            light.diffuse()
+        );
+    }
     Ok(())
 }
 

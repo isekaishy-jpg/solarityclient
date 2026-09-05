@@ -10,14 +10,14 @@ use std::sync::Arc;
 use glam::{Vec3, Vec4};
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, BlpTextureCache, M2HardcodedTextureSource,
-    M2LightKind, M2ModelCache, M2TextureKind,
+    M2LightKind, M2ModelCache, M2TextureKind, WorldLightSampleError,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
-    M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LocalLightCount,
-    M2LocalLightState, M2ModelOrientation, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight,
-    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldCameraFrame, WorldFrameGlow,
-    WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
+    M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LightOverride,
+    M2LocalLightCount, M2LocalLightState, M2ModelOrientation, M2ParticleTwinkleTable,
+    M2SceneUniform, M2Sunlight, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldCameraFrame,
+    WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
     glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
@@ -41,6 +41,9 @@ const STOCK_LOGIN_FOG_RANGE: Vec4 = Vec4::new(0.0, 1200.0, 0.0, 1.0);
 /// A visible Glue model cannot enter the retained M2 compositor callback.
 #[derive(Debug, Error)]
 pub enum RuntimeGlueModelError {
+    /// A required Glue model-light palette could not be sampled.
+    #[error(transparent)]
+    Light(#[from] WorldLightSampleError),
     /// The exact backdrop request failed on its worker and is not retried.
     #[error("Glue backdrop {path} failed to load: {source}")]
     BackdropLoad {
@@ -352,12 +355,10 @@ struct GlueModelEnvironment {
     light_direction: Vec3,
     fog_color: Vec3,
     fog_range: Vec4,
-    background_sunlight: Option<M2Sunlight>,
-    character_local_lights: [M2LocalLightState; 4],
-    pet_local_lights: [M2LocalLightState; 4],
+    background_light_override: Option<M2LightOverride>,
+    character_light_override: Option<M2LightOverride>,
+    pet_light_override: Option<M2LightOverride>,
     shared_point_light_count: usize,
-    character_uses_camera_light: bool,
-    pet_inherits_character_light: bool,
     bounds: UiScreenRect,
     alpha: f32,
     glow: f32,
@@ -367,7 +368,8 @@ impl GlueModelEnvironment {
     fn from_presentation(
         model: &UiModelPresentation,
         light_variant: GlueModelLightVariant,
-    ) -> Self {
+        ghost_sunlight: Result<M2Sunlight, WorldLightSampleError>,
+    ) -> Result<Self, RuntimeGlueModelError> {
         let (fog_color, fog_range) =
             model
                 .fog()
@@ -381,51 +383,49 @@ impl GlueModelEnvironment {
         // GlueParent.lua documents these as six paired background, character,
         // and pet banks. The selected character's enum ghost flag chooses the
         // same half of every pair before SetupSunlight merges directionals.
-        let background_directional_lights =
-            model_directional_lights(light_variant.select(model.background_lights()));
-        let background_sunlight = model_sunlight(background_directional_lights);
-        let character_lights = light_variant.select(model.character_lights());
-        let character_uses_camera_light = !character_lights.iter().any(Option::is_some);
-        let character_local_lights = model_light_states(model_directional_lights(character_lights));
-        let pet_lights = light_variant.select(model.pet_lights());
-        let pet_inherits_character_light = !pet_lights.iter().any(Option::is_some);
-        let pet_local_lights = model_light_states(model_directional_lights(pet_lights));
-        Self {
+        let light_override = |lights| -> Result<_, RuntimeGlueModelError> {
+            if let Some(sunlight) =
+                model_sunlight(model_directional_lights(light_variant.select(lights)))
+            {
+                return Ok(Some(M2LightOverride::Directional(sunlight)));
+            }
+            // 0x004E3A20 requires the default palette and resets the entire
+            // accumulator only for a ghost bank without authored lights.
+            Ok(match light_variant {
+                GlueModelLightVariant::Live => None,
+                GlueModelLightVariant::Ghost => Some(M2LightOverride::All(ghost_sunlight?)),
+            })
+        };
+        Ok(Self {
             ambient: STOCK_GLUE_AMBIENT,
             diffuse: STOCK_GLUE_DIFFUSE,
             light_direction: STOCK_GLUE_LIGHT_DIRECTION,
             fog_color,
             fog_range,
-            background_sunlight,
-            character_local_lights,
-            pet_local_lights,
+            background_light_override: light_override(model.background_lights())?,
+            character_light_override: light_override(model.character_lights())?,
+            pet_light_override: light_override(model.pet_lights())?,
             shared_point_light_count: 0,
-            character_uses_camera_light,
-            pet_inherits_character_light,
             bounds: model.bounds(),
             alpha: model.alpha(),
             glow: model.glow(),
-        }
+        })
     }
 
     /// Returns the shader light count after stock directional-light merging.
     fn character_light_count(self) -> M2LocalLightCount {
-        let directional_count = if self.character_uses_camera_light {
-            1
-        } else {
-            active_local_light_count(self.character_local_lights)
-        };
-        local_light_count_from_len((directional_count + self.shared_point_light_count).min(4))
+        self.character_light_override.map_or_else(
+            || local_light_count_from_len((1 + self.shared_point_light_count).min(4)),
+            |light| light.local_light_count(self.shared_point_light_count),
+        )
     }
 
     /// Applies stock's pet fallback to the effective character light bank.
     fn pet_light_count(self) -> M2LocalLightCount {
-        if self.pet_inherits_character_light {
-            self.character_light_count()
-        } else {
-            let directional_count = active_local_light_count(self.pet_local_lights);
-            local_light_count_from_len((directional_count + self.shared_point_light_count).min(4))
-        }
+        self.pet_light_override.map_or_else(
+            || self.character_light_count(),
+            |light| light.local_light_count(self.shared_point_light_count),
+        )
     }
 }
 
@@ -440,14 +440,6 @@ fn model_directional_lights(lights: [Option<UiModelLight>; 4]) -> [Option<M2Dire
             )
         })
     })
-}
-
-fn model_light_states(lights: [Option<M2DirectionalLight>; 4]) -> [M2LocalLightState; 4] {
-    let mut merged = [M2LocalLightState::disabled(); 4];
-    if let Some(sunlight) = model_sunlight(lights) {
-        merged[0] = sunlight.local_light_state();
-    }
-    merged
 }
 
 fn model_sunlight(lights: [Option<M2DirectionalLight>; 4]) -> Option<M2Sunlight> {
@@ -465,6 +457,9 @@ fn model_sunlight(lights: [Option<M2DirectionalLight>; 4]) -> Option<M2Sunlight>
 /// Process-long model and texture caches plus the current Glue M2 generation.
 pub(crate) struct RuntimeGlueModelScene {
     backdrop_assets: GlueBackdropLoader,
+    // Keep failures deferred until the ghost branch actually requests this
+    // palette, matching 0x004E3A20 without archive work on selection input.
+    ghost_sunlight: Result<M2Sunlight, WorldLightSampleError>,
     active: Option<ActiveGlueModel>,
     pending: Vec<PendingGlueModel>,
     backdrop_paths: VecDeque<AssetPath>,
@@ -542,9 +537,13 @@ impl GlueFrameProfiler {
 
 impl RuntimeGlueModelScene {
     #[must_use]
-    pub(crate) fn new(catalog: ArchiveCatalog) -> Self {
+    pub(crate) fn new(
+        catalog: ArchiveCatalog,
+        ghost_sunlight: Result<M2Sunlight, WorldLightSampleError>,
+    ) -> Self {
         Self {
             backdrop_assets: GlueBackdropLoader::new(catalog),
+            ghost_sunlight,
             active: None,
             pending: Vec::new(),
             backdrop_paths: VecDeque::new(),
@@ -637,11 +636,14 @@ impl RuntimeGlueModelScene {
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
         let key = GlueModelKey::from_presentation(presentation);
-        let environment =
-            GlueModelEnvironment::from_presentation(presentation, GlueModelLightVariant::Live);
+        let environment = GlueModelEnvironment::from_presentation(
+            presentation,
+            GlueModelLightVariant::Live,
+            self.ghost_sunlight,
+        )?;
         let generation = GlueModelGenerationKey {
             path: key.path.clone(),
-            external_directional_light: environment.background_sunlight.is_some(),
+            external_directional_light: environment.background_light_override.is_some(),
         };
         if !self.prepared.contains_key(&generation) {
             let pending_index = self
@@ -891,8 +893,12 @@ impl RuntimeGlueModelScene {
         } else {
             GlueModelLightVariant::Live
         };
-        let mut environment = GlueModelEnvironment::from_presentation(presentation, light_variant);
-        let external_directional_light = environment.background_sunlight.is_some();
+        let mut environment = GlueModelEnvironment::from_presentation(
+            presentation,
+            light_variant,
+            self.ghost_sunlight,
+        )?;
+        let external_directional_light = environment.background_light_override.is_some();
         let generation = GlueModelGenerationKey {
             path: key.path.clone(),
             external_directional_light,
@@ -1351,7 +1357,8 @@ impl RuntimeGlueModelScene {
         )?;
         let sunlight = active
             .environment
-            .background_sunlight
+            .background_light_override
+            .map(M2LightOverride::sunlight)
             .or_else(|| merge_wotlk_directional_lights(visible.glue_directional_lights));
         let mut environment_local_lights = [M2LocalLightState::disabled(); 4];
         let mut environment_light_count = 0_usize;
@@ -1359,11 +1366,14 @@ impl RuntimeGlueModelScene {
             environment_local_lights[0] = sunlight.local_light_state();
             environment_light_count = 1;
         }
-        for point in visible
-            .glue_point_lights
-            .iter()
-            .take(4 - environment_light_count)
-        {
+        for point in visible.glue_point_lights.iter().take(
+            active
+                .environment
+                .background_light_override
+                .map_or(4 - environment_light_count, |light| {
+                    light.point_light_count(visible.glue_point_lights.len())
+                }),
+        ) {
             environment_local_lights[environment_light_count] = point.local_light_state();
             environment_light_count += 1;
         }
@@ -1398,23 +1408,21 @@ impl RuntimeGlueModelScene {
             environment_local_lights,
         )
         .with_specular_enabled(specular_enabled);
-        let character_local_lights = if active.environment.character_uses_camera_light {
-            let mut lights = [M2LocalLightState::disabled(); 4];
-            lights[0] = glue_character_sunlight(camera.camera()).local_light_state();
-            lights
-        } else {
-            active.environment.character_local_lights
-        };
-        let mut character_local_lights = character_local_lights;
-        append_point_lights(&mut character_local_lights, visible.glue_point_lights);
-        let mut pet_local_lights = if active.environment.pet_inherits_character_light {
-            character_local_lights
-        } else {
-            active.environment.pet_local_lights
-        };
-        if !active.environment.pet_inherits_character_light {
-            append_point_lights(&mut pet_local_lights, visible.glue_point_lights);
-        }
+        let character_local_lights =
+            if let Some(light) = active.environment.character_light_override {
+                light.local_lights(visible.glue_point_lights)
+            } else {
+                let mut lights = [M2LocalLightState::disabled(); 4];
+                lights[0] = glue_character_sunlight(camera.camera()).local_light_state();
+                append_point_lights(&mut lights, visible.glue_point_lights);
+                lights
+            };
+        let pet_local_lights = active
+            .environment
+            .pet_light_override
+            .map_or(character_local_lights, |light| {
+                light.local_lights(visible.glue_point_lights)
+            });
         let character_model = M2SceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),

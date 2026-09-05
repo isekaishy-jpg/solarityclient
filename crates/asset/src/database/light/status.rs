@@ -30,6 +30,12 @@ pub enum WorldLightSampleError {
         /// Zero-based light-condition slot.
         condition: u8,
     },
+    /// A direct LightParams lookup has no matching row.
+    #[error("light parameters {parameter_id} do not exist")]
+    MissingParameterId {
+        /// Requested LightParams.dbc identifier.
+        parameter_id: u32,
+    },
     /// One of the required 18 color channels is absent.
     #[error("world light color band {band_id} is missing")]
     MissingColorBand {
