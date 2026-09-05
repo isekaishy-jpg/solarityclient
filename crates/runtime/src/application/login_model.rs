@@ -1,16 +1,18 @@
 //! Retained stock M2 scene inserted beneath pre-world Glue presentation.
 
 mod backdrop_loader;
+mod script_models;
 
 use backdrop_loader::GlueBackdropLoader;
+use script_models::GlueScriptModelInstance;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use glam::{Vec3, Vec4};
 use solarity_asset::{
-    ArchiveCatalog, AssetError, AssetPath, AssetStore, BlpTextureCache, M2HardcodedTextureSource,
-    M2LightKind, M2ModelCache, M2TextureKind, WorldLightSampleError,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, BlpTextureCache,
+    M2HardcodedTextureSource, M2LightKind, M2ModelCache, M2TextureKind, WorldLightSampleError,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
@@ -71,9 +73,6 @@ pub enum RuntimeGlueModelError {
     /// The current compositor supports one stock environment callback.
     #[error("Glue presentation exposes {count} simultaneous visible models")]
     VisibleModelCount { count: usize },
-    /// The Glue sequence ABI is wider than the model animation identifier.
-    #[error("Glue model {object_index} selected animation {sequence} outside the M2 domain")]
-    AnimationCapacity { object_index: usize, sequence: u32 },
     /// An environment M2 used a replacement category without a stock owner.
     #[error("Glue model {model} texture {texture_index} requires replacement {kind:?}")]
     ReplaceableTexture {
@@ -106,11 +105,6 @@ struct GlueModelKey {
     object_index: usize,
     path: AssetPath,
     instance_generation: u32,
-    sequence: u32,
-    sequence_time_sequence: u32,
-    sequence_time_ms: i32,
-    model_scale: f32,
-    rotation_radians: f32,
 }
 
 impl GlueModelKey {
@@ -119,11 +113,6 @@ impl GlueModelKey {
             object_index: model.object_index(),
             path: model.path().clone(),
             instance_generation: model.instance_generation(),
-            sequence: model.sequence(),
-            sequence_time_sequence: model.sequence_time_sequence(),
-            sequence_time_ms: model.sequence_time_ms(),
-            model_scale: model.model_scale(),
-            rotation_radians: model.rotation_radians(),
         }
     }
 }
@@ -349,6 +338,8 @@ impl GlueModelLightVariant {
 struct GlueModelEnvironment {
     /// Camera selection changes the view without replacing M2 playback.
     camera: i32,
+    model_scale: f32,
+    rotation_radians: f32,
     ambient: Vec3,
     diffuse: Vec3,
     light_direction: Vec3,
@@ -398,6 +389,8 @@ impl GlueModelEnvironment {
         };
         Ok(Self {
             camera: model.camera(),
+            model_scale: model.model_scale(),
+            rotation_radians: model.rotation_radians(),
             ambient: STOCK_GLUE_AMBIENT,
             diffuse: STOCK_GLUE_DIFFUSE,
             light_direction: STOCK_GLUE_LIGHT_DIRECTION,
@@ -466,6 +459,8 @@ fn model_sunlight(lights: [Option<M2DirectionalLight>; 4]) -> Option<M2Sunlight>
 /// Process-long model and texture caches plus the current Glue M2 generation.
 pub(crate) struct RuntimeGlueModelScene {
     backdrop_assets: GlueBackdropLoader,
+    animations: Arc<AnimationDataCatalog>,
+    model_instances: Vec<GlueScriptModelInstance>,
     // Keep failures deferred until the ghost branch actually requests this
     // palette, matching 0x004E3A20 without archive work on selection input.
     ghost_sunlight: Result<M2Sunlight, WorldLightSampleError>,
@@ -549,9 +544,12 @@ impl RuntimeGlueModelScene {
     pub(crate) fn new(
         catalog: ArchiveCatalog,
         ghost_sunlight: Result<M2Sunlight, WorldLightSampleError>,
+        animations: Arc<AnimationDataCatalog>,
     ) -> Self {
         Self {
             backdrop_assets: GlueBackdropLoader::new(catalog),
+            animations,
+            model_instances: Vec::new(),
             ghost_sunlight,
             active: None,
             pending: Vec::new(),
@@ -860,6 +858,7 @@ impl RuntimeGlueModelScene {
         glue_character_changed: bool,
         glue_character_expected: bool,
     ) -> Result<RuntimeGlueModelPoll, RuntimeGlueModelError> {
+        self.synchronize_script_models(glue, cpu, random)?;
         let mut visible = glue.presentation().visible_models();
         let character_screen = match glue.current_screen().as_str() {
             "charselect" => Some(GlueCharacterScreen::Selection),
@@ -885,7 +884,7 @@ impl RuntimeGlueModelScene {
             {
                 return Ok(RuntimeGlueModelPoll::Pending);
             }
-            self.active = None;
+            self.retire_active_script_model();
             self.character_screen = character_screen;
             self.sound_camera = None;
             return Ok(RuntimeGlueModelPoll::Ready);
@@ -979,6 +978,14 @@ impl RuntimeGlueModelScene {
         {
             if self.character_replacement_required && !character_sources_ready {
                 return Ok(RuntimeGlueModelPoll::Pending);
+            }
+            if active.environment.model_scale != environment.model_scale
+                || active.environment.rotation_radians != environment.rotation_radians
+            {
+                active.frame.update_glue_model_transform(
+                    environment.model_scale,
+                    environment.rotation_radians,
+                )?;
             }
             active.environment = environment;
             if self.character_replacement_required {
@@ -1264,12 +1271,8 @@ impl RuntimeGlueModelScene {
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
-        let animation_id = u16::try_from(key.sequence).map_err(|_source| {
-            RuntimeGlueModelError::AnimationCapacity {
-                object_index: key.object_index,
-                sequence: key.sequence,
-            }
-        })?;
+        self.retire_active_script_model();
+        let (playback, animation_started_at) = self.take_script_playback(&key)?;
         let prepared = self
             .prepared
             .get(&generation)
@@ -1280,10 +1283,10 @@ impl RuntimeGlueModelScene {
         let mut frame = M2Frame::activate_glue_gpu_source(
             source,
             key.object_index,
-            animation_id,
-            key.model_scale,
-            key.rotation_radians,
-            random,
+            playback,
+            environment.model_scale,
+            environment.rotation_radians,
+            animation_started_at,
             particle_twinkle,
         )?;
         frame.replace_glue_character(

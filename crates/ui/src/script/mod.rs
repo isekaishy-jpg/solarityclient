@@ -6,6 +6,7 @@
 
 mod clock;
 mod handlers;
+mod model_intent;
 mod network_intent;
 mod process_intent;
 mod runtime_state;
@@ -15,6 +16,7 @@ mod templates;
 
 pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
+pub use model_intent::{UiModelAction, UiModelInstance};
 pub use network_intent::{
     UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
     UiCharacterSelectionPreview, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest,

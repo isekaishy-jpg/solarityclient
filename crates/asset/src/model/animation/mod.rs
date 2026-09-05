@@ -12,6 +12,7 @@ mod light;
 mod material;
 mod particle;
 mod ribbon;
+mod selection;
 
 pub use attachment::M2Attachment;
 pub use camera::M2Camera;
@@ -20,6 +21,7 @@ pub use light::{M2Light, M2LightKind};
 pub use material::{M2ColorAnimation, M2TextureTransform, M2TextureWeight};
 pub use particle::{M2ParticleEmitter, M2ParticleGravity, M2ParticleLifetimeTrack};
 pub use ribbon::M2RibbonEmitter;
+pub use selection::{M2ModelAnimation, M2ModelAnimationMode};
 
 /// Stock interpolation operation authored by one M2 track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,7 +128,7 @@ pub struct M2Sequence {
     duration_ms: u32,
     movement_speed: f32,
     flags: u32,
-    frequency: i16,
+    frequency: u32,
     replay_range: (u32, u32),
     blend_time_ms: u32,
     bounds: (Vec3, Vec3, f32),
@@ -161,9 +163,9 @@ impl M2Sequence {
     pub const fn flags(self) -> u32 {
         self.flags
     }
-    /// Returns the signed selection frequency.
+    /// Returns the complete unsigned selection weight consumed by `0x00826E60`.
     #[must_use]
-    pub const fn frequency(self) -> i16 {
+    pub const fn frequency(self) -> u32 {
         self.frequency
     }
     /// Returns the authored minimum and exclusive-maximum cycle-count inputs.
@@ -477,45 +479,22 @@ impl M2AnimationSet {
             }
         }
 
-        let mut available_count = 0_u64;
-        let mut total_weight = 0_u64;
-        self.visit_variations(first, animation_id, |index, sequence| {
-            if self.sequence_available[index] {
-                available_count += 1;
-                total_weight += u64::from(sequence.frequency.max(0) as u16);
-            }
-        })?;
-        if available_count == 0 {
-            return None;
-        }
         let mut roll = u64::from(weighted_roll);
-        let mut zero_weight_slot = if total_weight == 0 {
-            Some(roll % available_count)
-        } else {
-            None
-        };
         let mut selected = None;
         self.visit_variations(first, animation_id, |index, sequence| {
             if selected.is_some() || !self.sequence_available[index] {
                 return;
             }
-            if let Some(slot) = zero_weight_slot.as_mut() {
-                if *slot == 0 {
-                    selected = Some(index);
-                } else {
-                    *slot -= 1;
-                }
-                return;
-            }
-            let weight = u64::from(sequence.frequency.max(0) as u16);
+            let weight = u64::from(sequence.frequency);
             if roll < weight {
                 selected = Some(index);
             } else {
                 roll -= weight;
             }
         })?;
-        // Stock retains the base available sequence when incomplete authored
-        // frequencies do not consume the raw SRand range.
+        // 0x00826E60 retains its input sequence when the authored frequencies
+        // do not consume the raw CRT roll, including an entirely zero-weight
+        // chain. A zero sum never requests uniform random selection.
         selected.or_else(|| {
             self.visit_variations(first, animation_id, |index, _sequence| {
                 if selected.is_none() && self.sequence_available[index] {
@@ -737,7 +716,9 @@ fn decode_sequences(path: &AssetPath, bytes: &[u8]) -> Result<Vec<M2Sequence>, A
             duration_ms: read_u32(path, bytes, offset + 4, "sequence duration")?,
             movement_speed: read_f32(path, bytes, offset + 8, "sequence speed")?,
             flags,
-            frequency: read_i16(path, bytes, offset + 16, "sequence frequency")?,
+            // 0x00826E97 reads the entire unsigned word before subtracting it
+            // from the CRT roll; the upper half is not discarded as padding.
+            frequency: read_u32(path, bytes, offset + 16, "sequence frequency")?,
             replay_range: (
                 read_u32(path, bytes, offset + 20, "sequence replay minimum")?,
                 read_u32(path, bytes, offset + 24, "sequence replay maximum")?,

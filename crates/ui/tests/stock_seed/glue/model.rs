@@ -3,7 +3,7 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::{GlueManager, UiEventPayload};
+use solarity_ui::{GlueManager, UiEventPayload, UiModelAction};
 
 use crate::support::{Fixture, FixtureFile};
 
@@ -13,6 +13,120 @@ fn action(manager: &mut GlueManager, source: &str) -> Result<(), Box<dyn Error>>
     lua.globals()
         .set("MODEL_ACTION", lua.load(source).into_function()?)?;
     manager.dispatch_event("SET_GLUE_SCREEN", &UiEventPayload::default())?;
+    Ok(())
+}
+
+/// Stock queues every call against its current instance, including hidden models.
+#[test]
+fn model_sequence_actions_preserve_order_restarts_and_native_integer_conversion()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Model.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Model.xml",
+            bytes: br#"<Ui>
+<Model name="Probe"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors><Scripts>
+<OnLoad>self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+<OnEvent>if MODEL_ACTION then MODEL_ACTION() end</OnEvent>
+</Scripts></Model></Ui>"#,
+        },
+        FixtureFile {
+            path: "Solarity\\Backdrop.m2",
+            bytes: b"deferred model bytes",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    action(
+        &mut manager,
+        r#"
+Probe:SetSequence(7)
+Probe:SetSequenceTime(7, 10)
+Probe:SetModel("Solarity\\Backdrop.m2")
+Probe:Hide()
+Probe:SetSequence("7.9")
+Probe:SetSequence(7)
+Probe:SetSequenceTime(7, "250.9")
+Probe:SetSequenceTime(7, 250.9)
+Probe:SetSequenceTime(7, -250.9)
+Probe:SetSequence(-0.5)
+Probe:SetSequence(505.9)
+Probe:SetSequence(4294967303)
+Probe:SetSequence(9223372036854775808)
+assert(not pcall(function() Probe:SetSequence(-1) end))
+assert(not pcall(function() Probe:SetSequence(506) end))
+assert(not pcall(function() Probe:SetSequence({}) end))
+Probe:SetSequenceTime(-1, 2147483648)
+Probe:SetSequenceTime(65536, -2147483649)
+Probe:SetSequence(7)
+Probe:ClearModel()
+Probe:SetSequence(7)
+Probe:SetModel("Solarity\\Backdrop.m2")
+Probe:SetSequence(7)
+"#,
+    )?;
+    let Some(UiModelAction::Assign {
+        instance: first,
+        path: Some(path),
+    }) = manager.take_model_action()
+    else {
+        return Err("missing first assignment".into());
+    };
+    assert_eq!(path.as_str(), "SOLARITY\\BACKDROP.M2");
+    let expected = [
+        (7, 0),
+        (7, 0),
+        (7, 250),
+        (7, 250),
+        (7, -250),
+        (0, 0),
+        (505, 0),
+        (7, 0),
+        (0, 0),
+        (u32::MAX, i32::MIN),
+        (65_536, i32::MIN),
+        (7, 0),
+    ];
+    for (animation_id, time_offset_ms) in expected {
+        assert_eq!(
+            manager.take_model_action(),
+            Some(UiModelAction::Sequence {
+                instance: first,
+                animation_id,
+                time_offset_ms
+            })
+        );
+    }
+    let Some(UiModelAction::Assign {
+        instance: cleared,
+        path: None,
+    }) = manager.take_model_action()
+    else {
+        return Err("missing clear".into());
+    };
+    let Some(UiModelAction::Assign {
+        instance: second,
+        path: Some(_),
+    }) = manager.take_model_action()
+    else {
+        return Err("missing replacement".into());
+    };
+    assert_eq!(first.object_index(), second.object_index());
+    assert_ne!(first.generation(), cleared.generation());
+    assert_ne!(cleared.generation(), second.generation());
+    assert_eq!(
+        manager.take_model_action(),
+        Some(UiModelAction::Sequence {
+            instance: second,
+            animation_id: 7,
+            time_offset_ms: 0
+        })
+    );
+    assert_eq!(manager.take_model_action(), None);
     Ok(())
 }
 

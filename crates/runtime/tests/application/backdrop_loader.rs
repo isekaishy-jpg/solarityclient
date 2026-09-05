@@ -1,9 +1,5 @@
 //! Regression tests for worker-owned backdrop residency and admission.
 
-#[allow(dead_code)]
-#[path = "../stock_seed/support/mod.rs"]
-mod support;
-
 use std::error::Error;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -18,7 +14,7 @@ use wow_m2::skin::OldSkinHeader;
 use wow_m2::{M2Model, M2Version, OldSkin};
 
 use super::{GlueBackdropLoader, GlueM2Texture, RuntimeGlueModelError};
-use support::ClientFixture;
+use crate::test_support::{self as support, ClientFixture};
 
 fn loader(fixture: &ClientFixture) -> Result<GlueBackdropLoader, Box<dyn Error>> {
     Ok(GlueBackdropLoader::new(ArchiveCatalog::discover(

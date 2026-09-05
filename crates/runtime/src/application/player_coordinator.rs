@@ -319,7 +319,7 @@ impl RuntimePlayerCatalogs {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        animations: AnimationDataCatalog,
+        animations: impl Into<Arc<AnimationDataCatalog>>,
         creatures: CreatureCatalog,
         creature_families: CreatureFamilyCatalog,
         characters: CharacterAppearanceCatalog,
@@ -330,7 +330,7 @@ impl RuntimePlayerCatalogs {
         particle_colors: ParticleColorCatalog,
     ) -> Self {
         Self {
-            animations: Arc::new(animations),
+            animations: animations.into(),
             creatures: Arc::new(creatures),
             creature_families: Arc::new(creature_families),
             characters: Arc::new(characters),

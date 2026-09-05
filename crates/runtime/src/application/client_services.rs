@@ -184,7 +184,7 @@ impl ClientServices {
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
-        let animations = AnimationDataCatalog::load(&mut assets)?;
+        let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
@@ -307,7 +307,8 @@ impl ClientServices {
         let ghost_sunlight = lights
             .model_light_colors(3, 0)
             .map(|colors| glue_ghost_sunlight(colors.ambient(), colors.diffuse()));
-        let mut glue_model = RuntimeGlueModelScene::new(backdrop_catalog, ghost_sunlight);
+        let mut glue_model =
+            RuntimeGlueModelScene::new(backdrop_catalog, ghost_sunlight, Arc::clone(&animations));
         let login_model = glue
             .configured_model_presentation("AccountLogin")
             .map_err(GlueError::from)?;
@@ -326,6 +327,7 @@ impl ClientServices {
             && let Some(login_model) = login_model.as_ref()
         {
             glue_model.prewarm(login_model.path().clone(), background_light_count, &cpu)?;
+            glue_model.synchronize_script_models(&glue, &cpu, &mut crt_rand)?;
             // AccountLogin's immutable resources and live effect owner must
             // both exist before the movie starts. The movie then advances that
             // hidden owner until EULA reveals the already-current scene.

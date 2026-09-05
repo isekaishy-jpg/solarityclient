@@ -801,8 +801,8 @@ that callee dereferences the instance. Solarity deliberately handles that case
 safely instead of reproducing the apparent crash. ErrorCube lookup is tested
 at the asset/script boundary; at this revision, models without authored cameras
 still required the stock default-camera rendering path (`0x0095FC30` -> `0x004BEE60`).
-`SetSequenceTime` selects the requested sequence in the published state;
-applying its time offset to renderer playback remains unfinished. Shared-cache
+At that revision, `SetSequenceTime` selected the requested sequence only in
+published state; the renderer offset is implemented below. Shared-cache
 basename collision behavior is also not reproduced by full-path resource keys.
 These results do not establish complete Model/ModelFFX parity.
 
@@ -873,8 +873,8 @@ steady-state performance measurement.
 
 This implements the default projection and camera-index switching, not the
 entire Model camera API. Explicit camera-object ownership across model
-replacement, `SetPosition`, and renderer playback seeking still need separate
-stock parity work.
+replacement and `SetPosition` still need separate stock parity work. Renderer
+playback seeking is implemented in the following slice.
 
 Formatting, Clippy, all 558 workspace tests, and the original real-data
 interaction validator pass. The separate 31-action replay with 6,000 following
@@ -886,3 +886,54 @@ of the previously observed long following-frame pauses, but does not explain
 their cause or prove their elimination. The frustum change moves side-plane
 construction out of individual visibility tests; the replay alone does not
 isolate its contribution to the throughput difference.
+
+## Ordered Model sequence playback
+
+The native Model methods restart a timer on every accepted sequence call,
+including repeated IDs and offsets. A presentation snapshot could collapse
+several calls into one and incorrectly reset the whole GPU instance when the
+sequence changed. Glue now consumes typed commands addressed to the mutable
+model generation, retaining calls in order across asynchronous loading.
+Hidden widgets keep lightweight CPU playback, and activation transfers that
+playback into the existing visible compositor. Scale and yaw changes update
+the placement transform without replacing the model or its live effects.
+
+The Model-specific resolver follows native AnimationData fallback modes and
+selects authored variation ordinals with raw unsigned 32-bit frequencies.
+The timer applies signed seek offsets, reverse and held modes, integer tick
+wrapping, and native boundary placement. Automatic variation updates preserve
+overdue frame time. Event intervals preserve each crossed occurrence in scene
+order rather than replaying a prefix after a seek. Source addresses, conversion
+rules, and remaining timer/event limitations are recorded in
+[`m2-animation.md`](m2-animation.md).
+
+Deterministic tests cover repeated calls and their CRT consumption, queued
+instance ownership, numeric conversion, fallback chains, authored variation
+heads, incomplete and wide weights, seeks, reverse and held sampling, wrapping
+ticks, multiple crossed boundaries, and terminal event deadlines. The original
+real-archive Glue interaction validator passes. Formatting, Clippy, and all
+565 workspace tests pass.
+
+A thirteen-step renderer diagnostic uses a private archive overlay with a
+linear translation added to the stock ErrorCube. Captures verify middle/end
+seeks, repeated end seeks, the root-bone clear no-op, restart, ordered multiple
+seeks, fallback, and fresh-instance reset. The log contains four activations:
+initial login, the probe, explicit probe replacement, and restored login.
+Sequence requests and scale/yaw changes create no additional activations.
+The ordinary sequence actions reach readiness in 2.1-3.2 ms in this short
+capture run. These synthetic captures establish behavior, not throughput.
+
+The separate original 31-action replay passes with 6,000 following frames
+per action, no captures, and detailed UI timing disabled. Following throughput
+ranges from 2,314 to 3,603 FPS; ordinary customization transition maxima are
+2.48-3.34 ms, and creation entry reaches 18.0 ms. Following intervals still
+reach 29.8 ms. Several pauses accumulate in platform events, while others
+include the model/presentation path; phase timing alone does not establish
+their cause. The stall goal remains open.
+
+This slice does not complete Model parity. Secondary-pose blending on automatic
+variation, individual event-position sampling and sound age, hidden model
+clock/effect ownership, external-payload completion behavior, and scene-global
+track ownership remain. FrameXML Model rendering and the older world playback
+path also need their own integration. The transition-card and in-world work
+remain part of the active goal.

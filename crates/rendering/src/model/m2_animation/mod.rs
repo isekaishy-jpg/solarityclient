@@ -6,6 +6,7 @@ mod light;
 mod material;
 mod pose;
 pub(crate) mod sample;
+mod sequence_timer;
 mod status;
 mod ui_camera;
 
@@ -16,5 +17,6 @@ pub use light::{
 };
 pub use material::M2MaterialPose;
 pub use pose::{M2AnimationClock, M2BonePose, M2FingerPoseHands};
+pub use sequence_timer::{M2ModelSequenceTimer, M2SequenceStartPhase};
 pub use status::{M2BonePoseError, M2MaterialPoseError};
 pub use ui_camera::{M2UiCameraViewport, sample_m2_ui_camera_frame};

@@ -14,9 +14,9 @@ mod skin_profile;
 
 pub use animation::{
     M2AnimationSet, M2Attachment, M2Bone, M2Camera, M2ColorAnimation, M2Event, M2EventTrack,
-    M2Interpolation, M2Light, M2LightKind, M2ParticleEmitter, M2ParticleGravity,
-    M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence, M2SequenceStorage, M2TextureTransform,
-    M2TextureWeight, M2Track, M2TrackChannel,
+    M2Interpolation, M2Light, M2LightKind, M2ModelAnimation, M2ModelAnimationMode,
+    M2ParticleEmitter, M2ParticleGravity, M2ParticleLifetimeTrack, M2RibbonEmitter, M2Sequence,
+    M2SequenceStorage, M2TextureTransform, M2TextureWeight, M2Track, M2TrackChannel,
 };
 pub use collision::M2CollisionMesh;
 pub use m2_model::DecodedM2Model;

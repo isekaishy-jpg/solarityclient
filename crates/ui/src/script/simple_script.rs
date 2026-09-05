@@ -32,6 +32,9 @@ use crate::animation::{
 use self::cvars::UiCVarRegistry;
 use self::globals::register_base_globals;
 use super::handlers::handler_for;
+use super::model_intent::{
+    UiModelAction, UiModelBridge, UiModelInstance, model_animation_id, model_time_offset,
+};
 use super::runtime_state::{finite_region_number, snapshot_slider};
 use super::templates::{TEMPLATE_REGISTRY, slider_orientation};
 
@@ -584,6 +587,7 @@ pub struct UiScriptEnvironment {
     assets: Option<AssetStoreHandle>,
     character_creation: Option<crate::UiCharacterCreationState>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
+    model_intent: Rc<RefCell<UiModelBridge>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     process: Rc<RefCell<crate::script::UiProcessBridge>>,
     current_screen: Rc<RefCell<String>>,
@@ -625,6 +629,16 @@ pub struct UiScriptEnvironment {
 }
 
 impl UiScriptEnvironment {
+    /// Installs Glue's native model consumer before its startup Lua executes.
+    pub(crate) fn record_model_actions(&self) {
+        self.model_intent.borrow_mut().start_recording();
+    }
+
+    /// Transfers the oldest Model operation to the process model owner.
+    pub(crate) fn take_model_action(&self) -> Option<UiModelAction> {
+        self.model_intent.borrow_mut().take_action()
+    }
+
     /// Derives the stock 768-unit UI canvas from a logical window extent.
     ///
     /// # Errors
@@ -651,6 +665,7 @@ impl UiScriptEnvironment {
             assets: None,
             character_creation: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
+            model_intent: Rc::new(RefCell::new(UiModelBridge::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             process: Rc::new(RefCell::new(crate::script::UiProcessBridge::default())),
             current_screen: Rc::new(RefCell::new(String::new())),
@@ -1103,6 +1118,7 @@ impl UiScriptRuntime {
                     environment.cursor_position(),
                     environment.assets(),
                     environment.media_intent(),
+                    Rc::clone(&environment.model_intent),
                     Some(text_measurement.clone()),
                     dynamic_arena.clone(),
                 )
@@ -4190,6 +4206,7 @@ fn create_object_metatable(
     cursor_position: Rc<Cell<(f64, f64)>>,
     assets: Option<AssetStoreHandle>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
+    model_intent: Rc<RefCell<UiModelBridge>>,
     text_measurement: Option<buttons::TextMeasurement>,
     dynamic_arena: DynamicArenaState,
 ) -> mlua::Result<Table> {
@@ -4266,7 +4283,7 @@ fn create_object_metatable(
         register_texture_methods(lua, &methods)?;
     }
     if is_model_object(kind) {
-        register_model_methods(lua, &methods, assets.clone())?;
+        register_model_methods(lua, &methods, assets.clone(), model_intent)?;
     }
     if matches!(
         kind,
@@ -5301,7 +5318,12 @@ fn initialize_model_runtime_state(lua: &Lua, model: &Table) -> mlua::Result<()> 
 /// Publishes native model-instance replacement independently of shared file
 /// residency. A repeated SetModel still creates fresh mutable playback, and
 /// an explicit clear must remain distinguishable from an unconfigured widget.
-fn assign_model_instance(lua: &Lua, model: &Table, path: Option<&AssetPath>) -> mlua::Result<()> {
+fn assign_model_instance(
+    lua: &Lua,
+    model: &Table,
+    path: Option<&AssetPath>,
+    intent: &RefCell<UiModelBridge>,
+) -> mlua::Result<()> {
     let generation = model.raw_get::<u32>(model_instance_generation_key())?;
     model.raw_set(
         model_instance_generation_key(),
@@ -5313,7 +5335,19 @@ fn assign_model_instance(lua: &Lua, model: &Table, path: Option<&AssetPath>) -> 
     model.raw_set(model_sequence_key(), 0_u32)?;
     model.raw_set(model_sequence_time_sequence_key(), 0_u32)?;
     model.raw_set(model_sequence_time_key(), 0_i32)?;
+    intent.borrow_mut().push(UiModelAction::Assign {
+        instance: model_instance(model)?,
+        path: path.cloned(),
+    });
     mark_object_state_changed(lua, model, DIRTY_MODEL)
+}
+
+/// Reads the exact native owner targeted by this script operation.
+fn model_instance(model: &Table) -> mlua::Result<UiModelInstance> {
+    Ok(UiModelInstance::new(
+        model.raw_get::<usize>(index_key())? - 1,
+        model.raw_get(model_instance_generation_key())?,
+    ))
 }
 
 /// Installs the unit-selection contract shared by stock paper-doll models.
@@ -5338,6 +5372,7 @@ fn register_model_methods(
     lua: &Lua,
     methods: &Table,
     assets: Option<AssetStoreHandle>,
+    model_intent: Rc<RefCell<UiModelBridge>>,
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetRotation",
@@ -5358,6 +5393,7 @@ fn register_model_methods(
     // call only needs archive presence. Decoding remains with the renderer's
     // asynchronous asset pipeline, including errors discovered during decode.
     let available_model_files = RefCell::new(HashSet::new());
+    let assignment_intent = Rc::clone(&model_intent);
     methods.raw_set(
         "SetModel",
         lua.create_function(move |lua, (model, value): (Table, Value)| {
@@ -5368,7 +5404,7 @@ fn register_model_methods(
             // An empty filename clears the instance before the script wrapper
             // reports its null result (0x0095F990 -> 0x00960530).
             if display.is_empty() {
-                assign_model_instance(lua, &model, None)?;
+                assign_model_instance(lua, &model, None, &assignment_intent)?;
                 return Err(mlua::Error::runtime("Invalid model file: "));
             }
             let Some(assets) = &assets else {
@@ -5395,7 +5431,7 @@ fn register_model_methods(
                     .ok()
                     .filter(|path| is_available(path))
             });
-            assign_model_instance(lua, &model, path.as_ref())?;
+            assign_model_instance(lua, &model, path.as_ref(), &assignment_intent)?;
             path.map(|_| ())
                 .ok_or_else(|| mlua::Error::runtime(format!("Invalid model file: {display}")))
         })?,
@@ -5412,11 +5448,14 @@ fn register_model_methods(
             }
         })?,
     )?;
+    let clear_intent = Rc::clone(&model_intent);
     methods.raw_set(
         "ClearModel",
         // Keep a null ModelFFX instance safe: its native assignment override
         // (0x004E5ED0) appears to pass null to 0x00824060 without a guard.
-        lua.create_function(|lua, model: Table| assign_model_instance(lua, &model, None))?,
+        lua.create_function(move |lua, model: Table| {
+            assign_model_instance(lua, &model, None, &clear_intent)
+        })?,
     )?;
     methods.raw_set(
         "SetCamera",
@@ -5432,13 +5471,15 @@ fn register_model_methods(
             Ok(())
         })?,
     )?;
+    let sequence_intent = Rc::clone(&model_intent);
     methods.raw_set(
         "SetSequence",
-        lua.create_function(|lua, (model, value): (Table, Value)| {
+        lua.create_function(move |lua, (model, value): (Table, Value)| {
             let value = lua
                 .coerce_number(value)?
                 .ok_or_else(|| mlua::Error::runtime("Usage: Model:SetSequence(sequence)"))?;
-            if !(0.0..506.0).contains(&value) {
+            let value = model_animation_id(value);
+            if value >= 506 {
                 return Err(mlua::Error::runtime(
                     "SetSequence(sequence) exceeds valid range of 0 - 506",
                 ));
@@ -5446,17 +5487,20 @@ fn register_model_methods(
             if model.raw_get::<Option<String>>(model_file_key())?.is_none() {
                 return Ok(());
             }
-            let value = value as u32;
-            if model.raw_get::<u32>(model_sequence_key())? != value {
-                model.raw_set(model_sequence_key(), value)?;
-                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
-            }
-            Ok(())
+            model.raw_set(model_sequence_key(), value)?;
+            model.raw_set(model_sequence_time_sequence_key(), value)?;
+            model.raw_set(model_sequence_time_key(), 0_i32)?;
+            sequence_intent.borrow_mut().push(UiModelAction::Sequence {
+                instance: model_instance(&model)?,
+                animation_id: value,
+                time_offset_ms: 0,
+            });
+            mark_object_state_changed(lua, &model, DIRTY_MODEL)
         })?,
     )?;
     methods.raw_set(
         "SetSequenceTime",
-        lua.create_function(|lua, (model, sequence, time): (Table, Value, Value)| {
+        lua.create_function(move |lua, (model, sequence, time): (Table, Value, Value)| {
             let sequence = lua.coerce_number(sequence)?.ok_or_else(|| {
                 mlua::Error::runtime("Usage: Model:SetSequenceTime(sequence, time)")
             })?;
@@ -5466,9 +5510,16 @@ fn register_model_methods(
             if model.raw_get::<Option<String>>(model_file_key())?.is_none() {
                 return Ok(());
             }
-            model.raw_set(model_sequence_key(), sequence as u32)?;
-            model.raw_set(model_sequence_time_sequence_key(), sequence as u32)?;
-            model.raw_set(model_sequence_time_key(), time as i32)?;
+            let sequence = model_animation_id(sequence);
+            let time = model_time_offset(time);
+            model.raw_set(model_sequence_key(), sequence)?;
+            model.raw_set(model_sequence_time_sequence_key(), sequence)?;
+            model.raw_set(model_sequence_time_key(), time)?;
+            model_intent.borrow_mut().push(UiModelAction::Sequence {
+                instance: model_instance(&model)?,
+                animation_id: sequence,
+                time_offset_ms: time,
+            });
             mark_object_state_changed(lua, &model, DIRTY_MODEL)
         })?,
     )?;

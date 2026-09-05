@@ -31,13 +31,60 @@ seed independent generators.
    probing. A miss is authoritative and does not fall back to a record scan.
 
 The weighted selector at `0x00826E60` consumes the raw 15-bit CRT result. It
-subtracts each non-negative authored frequency while following
+subtracts each unsigned 32-bit authored frequency while following
 `variation_next`; it does not normalize by the observed frequency sum. If the
 chain ends before consuming the roll, the input/base sequence remains selected.
 
 An exact requested variation is resolved before the weighted selector. Finding
 that exact variation consumes no selection roll. Sequence timer construction
 then consumes the next roll for its cycle count.
+
+The frequency load and unsigned comparison at `0x00826E97` use the entire
+32-bit word at sequence offset `0x10`. This is not a signed 16-bit value.
+Zero or incomplete weights retain the input record when the roll is not
+consumed; they do not imply a uniform distribution.
+
+## Model Lua sequence requests
+
+`SetSequence` (`0x009607E0`) and `SetSequenceTime` (`0x009608B0`) issue a new
+request on every accepted call, including equal IDs and equal offsets.
+The UI therefore publishes an ordered, instance-addressed command stream.
+Glue drains it in call order; requests awaiting a decoded model remain FIFO
+until that source is resident or the owning instance is replaced. Hidden
+widgets retain CPU playback without allocating another visible GPU scene.
+The stream is enabled only for the Glue owner that has a renderer consumer.
+
+`0x00826350` resolves an absent animation through AnimationData fallbacks,
+including reverse and held-endpoint modes. Direct authored presence wins
+before fallback flags, even if external animation payload is unavailable.
+The Model request supplies ordinal zero to `0x008260C0`: this is the lookup
+head, not a search for a sequence whose variation metadata equals zero.
+The request always consumes its weighted roll; an unavailable selected
+payload leaves the current timer unchanged without consuming a cycle roll.
+The root-bone `0xFFFFFFFF` request is a no-op at `0x00832840`.
+
+`0x00826B00` creates a wrapping millisecond timer against the scene clock,
+with a one-tick adjustment outside scene update. Explicit offsets change
+that timer without replacing the model or clearing its effects. Sampling
+at `0x0082F0F0` preserves signed scene differences and unsigned loop modulo,
+including negative-offset behavior. Lua animation conversion preserves the
+low 32 bits after the x87 integer conversion; the time argument follows
+the SSE2 `_ftol2` path at `0x0088B9C0`.
+
+The automatic callback at `0x00831FC0` retains the portion of the frame after
+a crossed boundary. `0x00832260` places looping callbacks at the last tick of
+each authored cycle independently of the primary timer's total cycle count.
+Scene-timer event windows follow `0x00830FB0`, preserving every crossed
+occurrence, seek position, reverse mapping, and native timestamp order.
+Held timers dispatch no keys, and nonlooping timers stop keys at their deadline.
+
+Remaining gaps include automatic secondary-pose blending, event-position
+sampling at each individual callback tick, event sound age, exact hidden
+widget update/visibility clocks, and retaining hidden instances' GPU effects.
+The existing world playback path still uses elapsed-time windows that collapse
+multiple occurrences of one declaration and discards overdue variation time.
+These Model changes do not establish parity for those callers or FrameXML
+Model rendering. Scene-global track ownership also remains separate work.
 
 ## Key-bone lookup
 

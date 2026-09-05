@@ -4,9 +4,9 @@ use std::error::Error;
 use std::io::Cursor;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
-    M2BlendMode, M2HardcodedTextureSource, M2Interpolation, M2ModelCache, M2SequenceStorage,
-    M2TextureKind,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot,
+    DecodedM2Model, Locale, M2BlendMode, M2HardcodedTextureSource, M2Interpolation,
+    M2ModelAnimationMode, M2ModelCache, M2SequenceStorage, M2TextureKind,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -439,6 +439,178 @@ fn m2_animation_selection_preserves_present_lookup_miss() -> Result<(), Box<dyn 
 
     assert_eq!(model.animations().sequences()[0].animation_id(), 5);
     assert_eq!(model.animations().select_sequence(5, None, 0), None);
+    Ok(())
+}
+
+/// 0x00826E60 leaves the input sequence selected when its chain exhausts the roll.
+#[test]
+fn m2_zero_and_incomplete_variation_weights_retain_the_base() -> Result<(), Box<dyn Error>> {
+    for weights in [[0_u32, 0, 0], [1, 2, 0], [0x1_0000, 0, 0], [0x8000, 1, 0]] {
+        let mut bytes = animated_m2_bytes()?;
+        let original = m2_array_offset(&bytes, 0x1c)?;
+        let record = bytes[original..original + 64].to_vec();
+        let offset = u32::try_from(bytes.len())?;
+        for (index, weight) in weights.into_iter().enumerate() {
+            let start = bytes.len();
+            bytes.extend_from_slice(&record);
+            // Model requests use chain ordinal zero, not the variation-ID field.
+            bytes[start + 2..start + 4].copy_from_slice(&[4_u16, 0, 2][index].to_le_bytes());
+            bytes[start + 16..start + 20].copy_from_slice(&weight.to_le_bytes());
+            let next = if index == 2 {
+                u16::MAX
+            } else {
+                index as u16 + 1
+            };
+            bytes[start + 60..start + 62].copy_from_slice(&next.to_le_bytes());
+        }
+        bytes[0x1c..0x20].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[0x20..0x24].copy_from_slice(&offset.to_le_bytes());
+        let skin = skin_bytes(32, &[0, 1, 2])?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "Creature\\Solarity\\Weighted.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "Creature\\Solarity\\Weighted00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(catalog)?;
+        let model = DecodedM2Model::load(
+            &mut store,
+            &AssetPath::new("Creature\\Solarity\\Weighted.m2")?,
+        )?;
+        let animations = model.animations();
+        assert_eq!(animations.select_sequence(5, Some(2), 32_767), Some(2));
+        for roll in [0, 1, 2, 3, 16_384, 32_767] {
+            let expected =
+                usize::from(weights[0] == 1 && weights[1] == 2 && (1..3).contains(&roll));
+            assert_eq!(animations.select_sequence(5, None, roll), Some(expected));
+            assert_eq!(
+                animations.select_model_sequence(5, roll as u16),
+                Some(expected)
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 0x00826350 resolves flags only on missing rows and resets them on a broken chain.
+#[test]
+fn m2_model_animation_fallback_preserves_reverse_and_endpoint_operations()
+-> Result<(), Box<dyn Error>> {
+    let rows = [
+        (5_u32, 0x30_u32, 0_u32), // A direct hit must ignore this row's flags.
+        (10, 0, 5),
+        (11, 0x10, 10),
+        (12, 0x10, 11),
+        (13, 0x20, 5),
+        (14, 0x30, 5),
+        (15, 0x10, 13),
+        (16, 0x20, 11),
+        (17, 0x10, 17), // Self-fallback is broken before applying flags.
+        (18, 0x10, 19),
+        (19, 0x20, 18),
+        (20, 0x10, 499), // Missing metadata resets accumulated reverse.
+        (505, 0x10, 5),
+        (506, 0x10, 5), // Stock's visited domain ends at 505.
+    ];
+    let mut dbc = b"WDBC".to_vec();
+    for value in [rows.len() as u32, 8, 32, 1] {
+        dbc.extend_from_slice(&value.to_le_bytes());
+    }
+    for (id, flags, fallback) in rows {
+        for value in [id, 0, 0, 0, flags, fallback, id, 0] {
+            dbc.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    dbc.push(0);
+    for ids in [vec![5, 147, 0, 40_000], vec![5, 147], vec![5]] {
+        let mut bytes = animated_m2_bytes()?;
+        let original = m2_array_offset(&bytes, 0x1c)?;
+        let record = bytes[original..original + 64].to_vec();
+        let offset = bytes.len() as u32;
+        for id in &ids {
+            let start = bytes.len();
+            bytes.extend_from_slice(&record);
+            bytes[start..start + 2].copy_from_slice(&(*id as u16).to_le_bytes());
+        }
+        bytes[0x1c..0x20].copy_from_slice(&(ids.len() as u32).to_le_bytes());
+        bytes[0x20..0x24].copy_from_slice(&offset.to_le_bytes());
+        bytes[0x24..0x2c].fill(0);
+        let skin = skin_bytes(32, &[0, 1, 2])?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "Creature\\Solarity\\Fallback.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "Creature\\Solarity\\Fallback00.skin",
+                bytes: &skin,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "DBFilesClient\\AnimationData.dbc",
+                bytes: &dbc,
+            },
+        ])?;
+        let archive =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(archive)?;
+        let model = DecodedM2Model::load(
+            &mut store,
+            &AssetPath::new("Creature\\Solarity\\Fallback.m2")?,
+        )?;
+        let catalog = AnimationDataCatalog::load(&mut store)?;
+        let animations = model.animations();
+        for (request, mode) in [
+            (5, M2ModelAnimationMode::Forward),
+            (10, M2ModelAnimationMode::Forward),
+            (11, M2ModelAnimationMode::Reverse),
+            (12, M2ModelAnimationMode::Forward),
+            (13, M2ModelAnimationMode::HoldEnd),
+            (14, M2ModelAnimationMode::HoldStart),
+            (15, M2ModelAnimationMode::HoldStart),
+            (16, M2ModelAnimationMode::HoldEnd),
+            (505, M2ModelAnimationMode::Reverse),
+        ] {
+            let resolved = animations
+                .resolve_model_animation(&catalog, request)
+                .ok_or("missing animation")?;
+            assert_eq!(resolved.animation_id(), 5, "request {request}");
+            assert_eq!(resolved.mode(), mode, "request {request}");
+        }
+        let emergency = if ids.contains(&0) {
+            0
+        } else if ids.contains(&147) {
+            147
+        } else {
+            5
+        };
+        for request in [17, 18, 19, 20, 506, 65_536, u32::MAX] {
+            let resolved = animations
+                .resolve_model_animation(&catalog, request)
+                .ok_or("missing emergency")?;
+            assert_eq!(resolved.animation_id(), emergency);
+            assert_eq!(resolved.mode(), M2ModelAnimationMode::Forward);
+        }
+        if ids.contains(&40_000) {
+            assert_eq!(
+                animations
+                    .resolve_model_animation(&catalog, 40_000)
+                    .ok_or("missing direct id")?
+                    .animation_id(),
+                40_000
+            );
+        }
+    }
     Ok(())
 }
 

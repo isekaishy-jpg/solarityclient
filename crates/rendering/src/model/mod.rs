@@ -22,9 +22,10 @@ pub use character_component::{
 };
 pub use m2_animation::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2CameraEffectScale, M2CameraFrameError,
-    M2EventTimeWindow, M2FingerPoseHands, M2MaterialPose, M2MaterialPoseError, M2SampledLights,
-    M2UiCameraViewport, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    sample_m2_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
+    M2EventTimeWindow, M2FingerPoseHands, M2MaterialPose, M2MaterialPoseError,
+    M2ModelSequenceTimer, M2SampledLights, M2SequenceStartPhase, M2UiCameraViewport,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    sample_m2_ui_camera_frame, triggered_m2_event_indices,
 };
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2LocalLightState,

@@ -2,6 +2,8 @@
 
 use solarity_asset::M2AnimationSet;
 
+use super::sequence_timer::M2ModelSequenceTimer;
+
 /// One monotonic event interval for a selected M2 animation sequence.
 ///
 /// Bone and material sampling consume wrapped clocks. Events instead require
@@ -16,6 +18,7 @@ pub struct M2EventTimeWindow {
     include_start: bool,
     loops: bool,
     global_time_ms: Option<(f32, f32)>,
+    scene_timer: Option<(M2ModelSequenceTimer, u32, u32)>,
 }
 
 impl M2EventTimeWindow {
@@ -35,6 +38,7 @@ impl M2EventTimeWindow {
             include_start,
             loops,
             global_time_ms: None,
+            scene_timer: None,
         }
     }
 
@@ -48,20 +52,39 @@ impl M2EventTimeWindow {
         self.global_time_ms = Some((previous_global_time_ms, global_time_ms));
         self
     }
+
+    /// Uses the native primary timer's scene interval after an explicit Model request.
+    ///
+    /// Unlike elapsed-time windows, this preserves seeks, reverse playback,
+    /// integer ticks, and repeated occurrences in native timestamp order.
+    #[must_use]
+    pub const fn with_scene_timer(
+        mut self,
+        timer: M2ModelSequenceTimer,
+        previous_scene_time_ms: u32,
+        scene_time_ms: u32,
+    ) -> Self {
+        self.scene_timer = Some((timer, previous_scene_time_ms, scene_time_ms));
+        self
+    }
 }
 
 /// Returns event declaration indices whose timelines cross one interval.
 ///
-/// Each declaration is returned at most once even when several of its
-/// timestamps or loop occurrences fall inside a long frame. This matches the
-/// model dispatcher boundary: one declaration produces one event callback per
-/// update, not one callback per timestamp. An invalid or unavailable interval
-/// produces no callbacks and never selects another sequence.
+/// The legacy elapsed-time window returns each declaration at most once, even
+/// when several timestamps or loop occurrences fall inside a long frame. This
+/// remains a compatibility gap for callers without a native scene timer. A
+/// scene-timer window returns every occurrence in native timestamp order,
+/// including repeated indices. An invalid or unavailable interval produces no
+/// callbacks and never selects another sequence.
 #[must_use]
 pub fn triggered_m2_event_indices(
     animations: &M2AnimationSet,
     window: M2EventTimeWindow,
 ) -> Vec<usize> {
+    if let Some((timer, previous, current)) = window.scene_timer {
+        return triggered_scene_timer_events(animations, window.sequence, timer, previous, current);
+    }
     if !valid_interval(window.previous_animation_time_ms, window.animation_time_ms) {
         return Vec::new();
     }
@@ -108,6 +131,40 @@ pub fn triggered_m2_event_indices(
         }
     }
     triggered
+}
+
+/// 0x00832260/0x00830FB0 dispatch every crossed occurrence in scene-time order.
+fn triggered_scene_timer_events(
+    animations: &M2AnimationSet,
+    sequence: usize,
+    timer: M2ModelSequenceTimer,
+    previous: u32,
+    current: u32,
+) -> Vec<usize> {
+    let Some(sequence) = animations.resolve_sequence_alias(sequence) else {
+        return Vec::new();
+    };
+    let mut occurrences = Vec::new();
+    for (index, event) in animations.events().iter().enumerate() {
+        // Native global-sequence event declarations select channel zero here;
+        // their keys still pass through the primary timer's scene mapping.
+        let channel = if event.timeline().global_sequence().is_some() {
+            0
+        } else {
+            sequence
+        };
+        let Some(timestamps) = event.timeline().channels().get(channel) else {
+            continue;
+        };
+        timer.visit_event_ticks(timestamps, previous, current, |tick| {
+            occurrences.push((tick.wrapping_sub(previous), index));
+        });
+    }
+    occurrences.sort_by_key(|(time, index)| (*time, *index));
+    occurrences
+        .into_iter()
+        .map(|(_time, index)| index)
+        .collect()
 }
 
 fn valid_interval(previous: f32, current: f32) -> bool {

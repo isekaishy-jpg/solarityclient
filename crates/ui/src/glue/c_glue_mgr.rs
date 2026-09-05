@@ -259,6 +259,9 @@ impl GlueManager {
         manifest_kind: UiManifestKind,
         initial_screen: Option<super::GlueInitialScreen>,
     ) -> Result<Self, GlueError> {
+        if manifest_kind == UiManifestKind::Glue {
+            environment.record_model_actions();
+        }
         let startup_started = std::time::Instant::now();
         let mut phase_started = startup_started;
         let report_phase = |name: &str, started: &mut std::time::Instant| {
@@ -562,6 +565,11 @@ impl GlueManager {
     /// Takes the oldest GlueXML audio action for the process media owner.
     pub fn take_media_action(&self) -> Option<UiGlueMediaAction> {
         self.media_intent.borrow_mut().take_action()
+    }
+
+    /// Takes one Model mutation in Lua call order, including equal sequence requests.
+    pub fn take_model_action(&self) -> Option<crate::UiModelAction> {
+        self.environment.take_model_action()
     }
 
     /// Returns the native Glue screen name mirrored by `SetCurrentScreen`.

@@ -18,6 +18,12 @@ mod security;
 mod telemetry;
 mod time;
 
+// Shared archive fixtures for crate-internal tests; production never includes them.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/stock_seed/support/mod.rs"]
+pub(crate) mod test_support;
+
 pub use random::{BlizzardRand, CrtRand};
 pub use time::RealmClock;
 
