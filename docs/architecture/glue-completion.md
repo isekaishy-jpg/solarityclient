@@ -232,3 +232,36 @@ screen transition, and creation entry reached a 33.7 ms frame. These single-run
 results establish removal of duplicate backdrop reads, not stall-free Glue.
 A second complete replay with one CPU worker and capacity one also passed all
 28 actions, exercising deferred admission through real installed assets.
+
+## Text residency across visual reveals
+
+The remaining approximately 50 ms Human-selection frame occurred when the
+stock fade revealed CharacterSelect. Targeted runtime resource timings measured
+only 3.6 ms in GPU resource preparation. The earlier visual-topology rebuild
+spent 37.5 ms checking glyph coverage and laying out every text owner again,
+including unrelated hidden legal and credits text.
+
+A pure visual journal changes visibility, alpha, and animation transforms while
+preserving text and logical bounds. The glyph owner already retains local quads
+for hidden text, and mesh resolution applies current presentation transforms
+and clipping. First reveal now materializes draw topology using those retained
+quads. Content and geometry mutations continue to refresh text through their
+existing journals. `SOLARITY_UI_TIMINGS` reports reveal publication separately;
+the transition replay also accepts `RUST_LOG`, including a targeted
+`solarity_runtime::application::login_ui=debug` directive for GPU resource phases.
+
+The installed-data interaction validator passed after the change, including
+glyph bounds, clipping, legal screens, login input, selection labels, and creation
+text. All 542 workspace tests, formatting, and Clippy also passed. Two isolated
+1,000-following-frame replays measured cold Human maximum frames of 13.7 and
+14.1 ms, compared with 49.3 ms before this change. Reveal publication itself took
+6.3 and 6.6 ms. The confirmation run used `RUST_LOG=info` to match the earlier
+benchmark logging policy and measured following-frame means of about
+1,580–2,420 FPS.
+
+The first run also recorded a separate 103 ms login frame, a 19 ms customization
+frame, and following-frame outliers up to 15 ms. Those did not repeat in the
+confirmation, whose login frame reached 26.5 ms and customization frames
+3.8–4.6 ms. Creation entry still reached 29.8 ms and race/class changes up to
+23.3 ms. The glyph-reveal improvement is repeatable in these local measurements;
+the broader requirement to eliminate noticeable stalls remains open.

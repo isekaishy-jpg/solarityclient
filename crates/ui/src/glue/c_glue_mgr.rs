@@ -2011,24 +2011,16 @@ impl GlueManager {
     /// Materializes a newly revealed subtree from the already patched live arena.
     /// Subsequent hide/show transitions retain and only toggle those slots.
     fn rebuild_visual_topology_from_live(&mut self) -> Result<(), UiEventError> {
-        if self
-            .glyphs
-            .supports_live_text(&self.live, self.glyph_logical_height)
-        {
-            self.glyphs
-                .refresh_live_text(&self.live, &self.geometry, self.glyph_logical_height)?;
-        } else {
-            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
-                self.runtime.simple_html(),
-                &self.live,
-                &self.geometry,
-                &self.fonts,
-                &mut self.assets.borrow_mut(),
-                self.glyph_logical_height,
-            )?;
-        }
+        let started = std::time::Instant::now();
+        // The visual journal changes only visibility, alpha, and animation
+        // transforms. Glyphs retain local bounds for hidden owners as well as
+        // visible ones; mesh resolution applies their current presentation
+        // transform and clip. Content/layout journals refresh those glyphs at
+        // their own boundary. Re-laying out every hidden screen here would
+        // make the first reveal pay for unrelated legal and credits text.
         self.presentation =
             UiPresentationPlan::resolve(&self.live, &self.geometry, &self.backdrops);
+        let presentation_elapsed = started.elapsed();
         self.render_plan = UiRenderPlan::prepare_with_glyphs(
             &self.presentation,
             &self.glyphs,
@@ -2037,6 +2029,18 @@ impl GlueManager {
             self.geometry.ui_extent(),
         )?;
         self.pointer = UiPointerPlan::from_live(&self.live);
+        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+            eprintln!(
+                "UI revealed topology: presentation={:.3}ms mesh={:.3}ms total={:.3}ms",
+                presentation_elapsed.as_secs_f64() * 1_000.0,
+                started
+                    .elapsed()
+                    .saturating_sub(presentation_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
         Ok(())
     }
 

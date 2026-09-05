@@ -21,9 +21,10 @@ use solarity_ui::{
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let _subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .try_init();
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env()?;
+    let _subscriber = tracing_subscriber::fmt().with_env_filter(filter).try_init();
     let mut args = std::env::args_os().skip(1);
     let following_frames = args
         .next()
