@@ -4,6 +4,7 @@
 compile_error!("solarity-runtime supports only 64-bit application targets");
 
 mod application;
+mod build_identity;
 mod configuration;
 mod console;
 mod event;
@@ -24,6 +25,7 @@ mod time;
 #[path = "../tests/stock_seed/support/mod.rs"]
 pub(crate) mod test_support;
 
+pub use build_identity::{CLIENT_BUILD, ClientBuild};
 pub use random::{BlizzardRand, CrtRand};
 pub use time::RealmClock;
 

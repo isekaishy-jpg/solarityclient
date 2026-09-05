@@ -194,9 +194,34 @@ Commits MUST follow [Conventional Commits](https://www.conventionalcommits.org/)
 - The scope SHOULD be the affected domain module when one is clearly primary.
 - The summary MUST be imperative, lowercase, and have no trailing period.
 - Breaking changes MUST use `!` and MUST explain the migration or impact in the body or a `BREAKING CHANGE:` footer.
-- A body SHOULD explain motivation and constraints rather than repeat the diff.
+- Every commit MUST include a body explaining the concrete problem or purpose,
+  the resulting behavior, and relevant validation. Title-only commits MUST NOT
+  be used. The body MUST explain motivation and constraints rather than repeat
+  the diff; documentation-only changes MAY use a short purpose and review note.
 - Each commit MUST be focused, buildable, and independently reviewable.
 - Formatting-only changes SHOULD NOT be mixed with behavior changes unless the formatting is an unavoidable consequence of the edit.
+
+### Product version and build identity
+
+- Product versions MUST use three numeric components followed by a release
+  stage: `a` for alpha, `b` for beta, `rc` for release candidate, or `s` for
+  stable. For example, `0.0.0a` is the initial alpha version.
+- The current product version is `0.0.0a`. Completion of the first major slice
+  advances it to `0.0.1a`; individual fixes MUST NOT prematurely claim that
+  milestone. Later version or stage changes MUST represent an explicit release
+  decision.
+- A separate monotonically increasing build number MUST identify numbered
+  packaged Testing/release builds. It MUST NOT reset when the product version
+  or release stage changes. Ordinary local compiles retain the current number.
+  Package creation MUST use `scripts/build-client.ps1`; `-SkipBuild`
+  installation reuses the compiled artifact's identity and reserves no number.
+- User-facing identity MUST include both fields, for example
+  `Solarity 0.0.0a — Build 000001`. The six-digit formatting is a minimum width,
+  not a limit on the build sequence.
+- Cargo's package version MUST use a valid SemVer encoding of the product
+  version; the user-facing release suffix MUST retain the convention above.
+- Product identity MUST remain independent of the original client's protocol
+  and archive compatibility identifiers.
 
 Examples:
 

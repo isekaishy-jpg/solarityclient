@@ -10,8 +10,6 @@ use crate::platform::event_translation;
 use crate::platform::window_identity;
 use crate::platform::{PlatformError, PlatformEvent, WindowId};
 
-const CLIENT_WINDOW_TITLE: &str = "Solarity";
-
 /// Exclusive owner of SDL objects whose lifecycle is constrained to one thread.
 pub(crate) struct SdlPlatform {
     // Declaration order deliberately destroys the pump and window before their
@@ -65,7 +63,7 @@ impl SdlPlatform {
                 (width, height, Some((bounds.x(), bounds.y())))
             }
         };
-        let mut builder = video.window(CLIENT_WINDOW_TITLE, width, height);
+        let mut builder = video.window(&crate::CLIENT_BUILD.to_string(), width, height);
         builder.vulkan().high_pixel_density().hidden();
         match configuration.mode() {
             WindowMode::Windowed => {

@@ -3,16 +3,35 @@
 use std::env;
 use std::process::ExitCode;
 
-use solarity_runtime::{ClientApplication, RuntimeConfiguration};
+use solarity_runtime::{CLIENT_BUILD, ClientApplication, RuntimeConfiguration};
 use tracing::{error, info};
 
 /// Parses configuration, starts the implemented foundation, and drains it.
 fn main() -> ExitCode {
+    let arguments: Vec<_> = env::args_os().skip(1).collect();
+    if arguments.len() == 1 && arguments[0] == "--version" {
+        println!("{CLIENT_BUILD}");
+        return ExitCode::SUCCESS;
+    }
+    if arguments.len() == 1 && arguments[0] == "--build-info" {
+        println!("version={}", CLIENT_BUILD.version());
+        println!("build_number={}", CLIENT_BUILD.number());
+        println!("revision={}", CLIENT_BUILD.revision());
+        println!("dirty={}", CLIENT_BUILD.is_dirty());
+        return ExitCode::SUCCESS;
+    }
     let _subscriber_result = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
 
-    let configuration = match RuntimeConfiguration::from_arguments(env::args_os().skip(1)) {
+    info!(
+        version = CLIENT_BUILD.version(),
+        build_number = CLIENT_BUILD.number(),
+        revision = CLIENT_BUILD.revision(),
+        dirty = CLIENT_BUILD.is_dirty(),
+        "client build identity"
+    );
+    let configuration = match RuntimeConfiguration::from_arguments(arguments) {
         Ok(configuration) => configuration,
         Err(failure) => {
             error!(error = %failure, usage = RuntimeConfiguration::usage(), "configuration rejected");

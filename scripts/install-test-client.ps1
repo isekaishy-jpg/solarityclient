@@ -58,13 +58,33 @@ if (-not (Test-Path -LiteralPath $resolvedDataRoot -PathType Container)) {
 
 $artifactPath = Join-Path $resolvedRepositoryRoot "target\test-client\solarity-runtime.exe"
 if (-not $SkipBuild) {
-    & cargo build --locked --profile test-client --package solarity-runtime
-    if ($LASTEXITCODE -ne 0) {
-        throw "The test-client Cargo build failed with exit code $LASTEXITCODE."
-    }
+    & (Join-Path $PSScriptRoot 'build-client.ps1') -Profile test-client
 }
 if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
     throw "The test-client artifact is unavailable: $artifactPath"
+}
+
+# Read identity from the executable being installed. The current checkout may
+# have advanced since a -SkipBuild artifact was compiled.
+$dependencyBin = Join-Path $resolvedRepositoryRoot "vcpkg_installed\x64-windows\bin"
+$previousRuntimePath = $env:PATH
+try {
+    $env:PATH = $dependencyBin + ';' + $env:PATH
+    $artifactIdentity = @(& $artifactPath --build-info)
+    if ($LASTEXITCODE -ne 0) { throw 'The test-client artifact cannot report its build identity.' }
+}
+finally { $env:PATH = $previousRuntimePath }
+$identityFields = @{}
+foreach ($line in $artifactIdentity) {
+    $parts = $line -split '=', 2
+    if ($parts.Count -ne 2) { throw "Invalid artifact identity line: $line" }
+    $identityFields[$parts[0]] = $parts[1]
+}
+foreach ($field in @('version', 'build_number', 'revision', 'dirty')) {
+    if (-not $identityFields.ContainsKey($field)) { throw "Artifact identity is missing $field." }
+}
+if ([uint32]::Parse($identityFields['build_number']) -eq 0) {
+    throw 'Build zero is not a numbered package; run scripts/build-client.ps1 first.'
 }
 
 $resolvedInstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
@@ -88,7 +108,6 @@ finally {
 # The Rust executable dynamically links the pinned FFmpeg/vcpkg runtime. Keep
 # the installed DLL set identical to the current build tree so ABI-versioned
 # files are replaced instead of accumulating across test builds.
-$dependencyBin = Join-Path $resolvedRepositoryRoot "vcpkg_installed\x64-windows\bin"
 if (-not (Test-Path -LiteralPath $dependencyBin -PathType Container)) {
     throw "The pinned x64 runtime dependency directory is unavailable: $dependencyBin"
 }
@@ -218,13 +237,9 @@ $launcher = $launcher.Replace("__GPU_INDEX__", $GpuIndex.ToString([Globalization
 Set-Utf8NoBomContent -LiteralPath $launcherPath -Value $launcher
 Reset-TestingFirstRunProfile -ProfileRoot $resolvedInstallRoot
 
-$commit = (& git -C $resolvedRepositoryRoot rev-parse --verify HEAD).Trim()
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not resolve the installed Git revision."
-}
 $buildInformation = @(
-    "revision=$commit"
-    "dirty=$([bool](& git -C $resolvedRepositoryRoot status --porcelain))"
+    $artifactIdentity
+    "sha256=$((Get-FileHash -LiteralPath $installedExecutable -Algorithm SHA256).Hash)"
     "installed_at=$([DateTimeOffset]::Now.ToString('O'))"
     "source=$resolvedRepositoryRoot"
     "data_root=$resolvedDataRoot"
@@ -245,5 +260,6 @@ $shortcut.Description = "Launch the persistent Solarity testing client"
 $shortcut.Save()
 
 Write-Host "Installed test client: $installedExecutable"
+Write-Host ('Solarity {0} (Build {1:D6})' -f $identityFields['version'], [uint32]::Parse($identityFields['build_number']))
 Write-Host "Created Desktop shortcut: $resolvedShortcutPath"
 Write-Host "Run logs: $(Join-Path $resolvedInstallRoot 'logs')"
