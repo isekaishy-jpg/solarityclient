@@ -1108,18 +1108,25 @@ impl GlueManager {
             }
             return Ok(false);
         }
-        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
         // CharacterCreateIconButtonTemplate moves its bevel and resizes its
         // shadow on mouse-down/up. Retain those texture slots, but account for
         // anchors that can move objects outside the explicit mutation set.
         // A content callback can also replace icon UVs, corner colors, and
         // frame backdrops. The renderer verifies their complete source slots
         // before retaining them; a changed material or membership rebuilds.
+        // Preserve the old geometry until the retained update succeeds, and
+        // re-solve every transitive parent/anchor dependent of these roots.
+        let mut geometry = self.geometry.clone();
+        let changed_regions = geometry.refresh_dependency_regions(
+            &self.live,
+            dirty_objects.iter().map(|&(object_index, _)| object_index),
+        )?;
         let mut texture_objects = dirty_objects
             .iter()
             .map(|&(object_index, _)| object_index)
             .collect::<Vec<_>>();
-        for (index, object) in self.live.objects().iter().enumerate() {
+        for &index in &changed_regions {
+            let object = &self.live.objects()[index];
             let (Some(previous), Some(current)) =
                 (self.geometry.region(index), geometry.region(index))
             else {
@@ -1158,7 +1165,11 @@ impl GlueManager {
         }
         self.runtime
             .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
-        synchronize_resolved_dimensions(&mut self.live, &geometry);
+        synchronize_resolved_dimensions_for(
+            &mut self.live,
+            &geometry,
+            changed_regions.iter().copied(),
+        );
         let scroll_frames = UiScrollFramePlan::from_live(&self.live);
         let resolved = started.elapsed();
         if !text_objects.is_empty() {

@@ -677,3 +677,39 @@ These observations are consistent with broader scheduling delays and do not
 isolate a blocking SDL function. They do not justify changing event delivery,
 thread priority, or stock timing policy. The platform-pause requirement stays
 open; ordinary synchronous UI and model publication remain independent work.
+
+## Retained content geometry dependencies
+
+The content publisher previously re-solved the complete region arena for
+every icon press and release, even when the stock callback only moved its
+bevel and resized its shadow. It now seeds the existing geometry dependency
+resolver from the mutation journal. Parent inheritance and transitive anchor
+targets propagate the update; unrelated regions keep their resolved values.
+Only affected regions need dimension synchronization and dependent-movement
+checks. Material, membership, and non-texture movement still receive the same
+complete-publication checks as before.
+
+The icon-button regression covers an anchor chain outside the changed
+button's ownership subtree, including a forward reference in arena order.
+Repeated press/release cycles verify exact dependent positions, mesh bounds,
+Lua geometry queries, retained draw/index slots, and no full runtime snapshot.
+Formatting, Clippy, and all 554 workspace tests pass.
+
+The matching 31-action diagnostic completes successfully. Across ten
+three-object updates without text mutations, median geometry time decreases
+from 0.681 to 0.206 ms and total content publication from 1.366 to 0.864 ms.
+Median presentation time remains similar, 0.426 versus 0.433 ms, consistent
+with the change being confined to geometry resolution. These figures compare
+the existing glyph-residency diagnostic with the dependency-update replay;
+they do not establish a controlled improvement in randomized creation model
+readiness or resolve the separate platform-pause requirement.
+
+The real-data interaction validator also passes. The separate replay with
+UI timing output disabled completes all 31 actions with 6,000 following
+frames each. Following throughput ranges from 1,878 to 3,020 FPS, ordinary
+customization transition maxima from 2.5 to 4.0 ms, and creation entry reaches
+21.8 ms. A following-frame maximum of 40.2 ms remains: its inner benchmark
+scope records 38.3 ms, including 31.8 ms in model/UI presentation and 5.7 ms
+in platform events, with only 3.28 million thread cycles across that scope.
+Other low-cycle pauses appear in presentation and UI upload. The remaining
+long frames are not confined to the content geometry publisher.

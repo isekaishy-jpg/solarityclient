@@ -398,6 +398,7 @@ fn glue_manager_retains_icon_button_layout_and_anchor_dependents() -> Result<(),
   </Scripts>
 </CheckButton>
 <Frame name="Unrelated"><Layers><Layer level="ARTWORK">
+  <Texture name="Transitive" file="Interface\Glues\Dependent"><Size x="6" y="6"/><Anchors><Anchor point="LEFT" relativeTo="Dependent" relativePoint="RIGHT"/></Anchors></Texture>
   <Texture name="Dependent" file="Interface\Glues\Dependent"><Size x="10" y="10"/><Anchors><Anchor point="LEFT" relativeTo="IconShadow" relativePoint="RIGHT"/></Anchors></Texture>
 </Layer></Layers></Frame>
 </Ui>"#,
@@ -420,7 +421,7 @@ fn glue_manager_retains_icon_button_layout_and_anchor_dependents() -> Result<(),
     let snapshots = manager.runtime_snapshot_count();
     for pressed in [true, false, true, false] {
         manager.pointer_button(position, UiPointerButton::Left, pressed)?;
-        for name in ["IconShadow", "IconBevel", "Dependent"] {
+        for name in ["IconShadow", "IconBevel", "Dependent", "Transitive"] {
             let object = manager
                 .objects()
                 .iter()
@@ -445,6 +446,17 @@ fn glue_manager_retains_icon_button_layout_and_anchor_dependents() -> Result<(),
                 mesh.vertices()[slot * 4 + 3].position(),
                 [bounds.right() as f32, bounds.bottom() as f32]
             );
+            // This anchor points forward in arena order, so propagation must
+            // reach a fixed point rather than stop after a single scan.
+            if name == "Transitive" {
+                assert_close(
+                    bounds.left(),
+                    position.0 + if pressed { 26.0 } else { 29.0 } + 10.0,
+                );
+                let table = manager.bundle().lua().globals().get::<mlua::Table>(name)?;
+                let get_left = table.get::<mlua::Function>("GetLeft")?;
+                assert_close(get_left.call::<f64>(table)?, bounds.left());
+            }
         }
         assert_close(
             manager
