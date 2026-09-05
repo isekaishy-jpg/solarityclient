@@ -63,6 +63,7 @@ pub use equipment::{
     resolve_player_equipment,
 };
 pub use movement::{
+    MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory,
     UnitLocomotionAnimation, UnitModelAnimation, WorldEntryGroundContact,
     WorldEntryGroundContactError, resolve_unit_locomotion_animation, resolve_unit_model_animation,
 };

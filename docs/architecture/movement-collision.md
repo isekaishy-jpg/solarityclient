@@ -91,3 +91,7 @@ and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and
 related `Collide.cpp` callers own movement response. Those operations must not
 be inferred from the camera ray API or from successful contact tests.
+
+The [analytic fall curves](movement-trajectories.md) used by collision response
+and step trials are now implemented and checked against native x86 execution.
+The trial's collision and state transitions remain under implementation.
