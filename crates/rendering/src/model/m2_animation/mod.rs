@@ -7,6 +7,7 @@ mod material;
 mod pose;
 pub(crate) mod sample;
 mod status;
+mod ui_camera;
 
 pub use camera::{M2CameraEffectScale, M2CameraFrameError, sample_m2_camera_frame};
 pub use event::{M2EventTimeWindow, triggered_m2_event_indices};
@@ -16,3 +17,4 @@ pub use light::{
 pub use material::M2MaterialPose;
 pub use pose::{M2AnimationClock, M2BonePose, M2FingerPoseHands};
 pub use status::{M2BonePoseError, M2MaterialPoseError};
+pub use ui_camera::{M2UiCameraViewport, sample_m2_ui_camera_frame};

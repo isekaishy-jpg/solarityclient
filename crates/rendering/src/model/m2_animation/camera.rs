@@ -40,6 +40,9 @@ impl M2CameraEffectScale {
 /// A decoded M2 camera cannot form its stock presentation frame.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum M2CameraFrameError {
+    /// Widget/root viewport extents or effective scale are invalid.
+    #[error("M2 UI camera viewport extents and scale must be positive and finite")]
+    UiViewport,
     /// The widget selected a camera outside the model's authored table.
     #[error("M2 camera {requested} is unavailable; model has {available} cameras")]
     CameraIndex {

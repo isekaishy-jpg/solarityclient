@@ -17,7 +17,11 @@ pub enum WorldCameraError {
     /// Vertical FOV is not finite and strictly between zero and pi.
     #[error("world camera field of view is outside the projection range")]
     FieldOfView,
-    /// Near and far planes are not positive, finite, and ordered.
+    /// Parallel projection bounds are non-finite, empty, or reversed.
+    #[error("world camera orthographic bounds are invalid")]
+    OrthographicBounds,
+    /// Near and far planes are not finite and ordered, or a perspective near
+    /// plane is not positive.
     #[error("world camera clipping planes are invalid")]
     ClipRange,
     /// A followed subject origin or collision pivot contains NaN or infinity.

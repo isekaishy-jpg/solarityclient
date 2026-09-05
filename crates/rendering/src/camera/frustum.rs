@@ -2,18 +2,16 @@
 
 use glam::Vec3;
 
-use super::{WorldCameraError, WorldCameraFrame, WorldScreenWindow};
+use super::{WorldCameraError, WorldCameraFrame, WorldCameraProjection, WorldScreenWindow};
 
 /// Six-plane world frustum derived from one validated camera frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldFrustum {
     position: Vec3,
     forward: Vec3,
-    right: Vec3,
-    up: Vec3,
-    vertical_tangent: f32,
-    horizontal_tangent: f32,
-    window: WorldScreenWindow,
+    /// Outward normals and offsets relative to the eye. Keeping this form
+    /// avoids losing precision by subtracting large world-space plane terms.
+    sides: [(Vec3, f32); 4],
     near: f32,
     far: f32,
 }
@@ -33,15 +31,47 @@ impl WorldFrustum {
             return Err(WorldCameraError::ScreenWindow);
         }
         let camera = frame.camera();
-        let vertical_tangent = (camera.vertical_field_of_view_radians() * 0.5).tan();
+        let right = frame.right();
+        let up = frame.up();
+        let forward = frame.forward();
+        let sides = match camera.projection() {
+            WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians,
+            } => {
+                let vertical_tangent = (vertical_field_of_view_radians * 0.5).tan();
+                let horizontal_tangent = vertical_tangent * frame.aspect_ratio();
+                [
+                    (
+                        right - forward * (window.maximum_x() * horizontal_tangent),
+                        0.0,
+                    ),
+                    (
+                        -right + forward * (window.minimum_x() * horizontal_tangent),
+                        0.0,
+                    ),
+                    (up - forward * (window.maximum_y() * vertical_tangent), 0.0),
+                    (-up + forward * (window.minimum_y() * vertical_tangent), 0.0),
+                ]
+            }
+            WorldCameraProjection::Orthographic {
+                horizontal,
+                vertical,
+            } => {
+                let coordinate = |[minimum, maximum]: [f32; 2], clip: f32| {
+                    minimum + (maximum - minimum) * ((clip + 1.0) * 0.5)
+                };
+                [
+                    (right, -coordinate(horizontal, window.maximum_x())),
+                    (-right, coordinate(horizontal, window.minimum_x())),
+                    (up, -coordinate(vertical, window.maximum_y())),
+                    (-up, coordinate(vertical, window.minimum_y())),
+                ]
+            }
+        };
         Ok(Self {
             position: camera.position(),
             forward: frame.forward(),
-            right: frame.right(),
-            up: frame.up(),
-            vertical_tangent,
-            horizontal_tangent: vertical_tangent * frame.aspect_ratio(),
-            window,
+            sides,
             near: camera.near_clip(),
             far: camera.far_clip(),
         })
@@ -62,16 +92,10 @@ impl WorldFrustum {
         if depth + radius < self.near || depth - radius > self.far {
             return Ok(false);
         }
-        let outside = |normal: Vec3| offset.dot(normal) > radius * normal.length();
-        Ok(!outside(
-            self.right - self.forward * (self.window.maximum_x() * self.horizontal_tangent),
-        ) && !outside(
-            -self.right + self.forward * (self.window.minimum_x() * self.horizontal_tangent),
-        ) && !outside(
-            self.up - self.forward * (self.window.maximum_y() * self.vertical_tangent),
-        ) && !outside(
-            -self.up + self.forward * (self.window.minimum_y() * self.vertical_tangent),
-        ))
+        Ok(self
+            .sides
+            .into_iter()
+            .all(|(normal, constant)| offset.dot(normal) + constant <= radius * normal.length()))
     }
 
     /// Conservatively tests an oriented box expressed as three half axes.
@@ -101,19 +125,10 @@ impl WorldFrustum {
         if outside(-self.forward, self.near) || outside(self.forward, -self.far) {
             return Ok(false);
         }
-        Ok(!outside(
-            self.right - self.forward * (self.window.maximum_x() * self.horizontal_tangent),
-            0.0,
-        ) && !outside(
-            -self.right + self.forward * (self.window.minimum_x() * self.horizontal_tangent),
-            0.0,
-        ) && !outside(
-            self.up - self.forward * (self.window.maximum_y() * self.vertical_tangent),
-            0.0,
-        ) && !outside(
-            -self.up + self.forward * (self.window.minimum_y() * self.vertical_tangent),
-            0.0,
-        ))
+        Ok(self
+            .sides
+            .into_iter()
+            .all(|(normal, constant)| !outside(normal, constant)))
     }
 }
 

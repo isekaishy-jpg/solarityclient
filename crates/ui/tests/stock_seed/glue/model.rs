@@ -80,6 +80,19 @@ Probe:SetCamera(2)
             .clone();
         assert_eq!(initial.path().as_str(), "SOLARITY\\BACKDROP.M2");
         assert_eq!(initial.sequence(), 7);
+        assert_eq!(initial.effective_scale(), 1.0);
+        assert_eq!(initial.ui_extent()[1], 768.0);
+        action(&mut manager, "ModelOwner:SetScale(0.5)")?;
+        let scaled = manager
+            .presentation()
+            .visible_models()
+            .next()
+            .ok_or("lost scaled viewport")?;
+        assert_eq!(scaled.effective_scale(), 0.5);
+        assert_eq!(scaled.bounds().width(), 100.0);
+        assert_eq!(scaled.bounds().height(), 50.0);
+        assert_eq!(scaled.model_scale(), 1.25);
+        action(&mut manager, "ModelOwner:SetScale(1)")?;
         action(&mut manager, r#"Probe:SetModel("Solarity\\Backdrop.mdl")"#)?;
         let replacement = manager
             .presentation()

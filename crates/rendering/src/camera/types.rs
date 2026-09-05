@@ -50,10 +50,27 @@ pub struct WorldCamera {
     position: Vec3,
     target: Vec3,
     up: Vec3,
-    vertical_field_of_view_radians: f32,
+    projection: WorldCameraProjection,
     near_clip: f32,
     far_clip: f32,
     subject: Option<WorldCameraSubject>,
+}
+
+/// Projection policy shared by world, authored-model, and default UI cameras.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WorldCameraProjection {
+    /// Eye-centered projection used by world and authored M2 cameras.
+    Perspective {
+        /// Vertical field of view, strictly between zero and pi.
+        vertical_field_of_view_radians: f32,
+    },
+    /// Parallel projection used by a Model widget without a selected camera.
+    Orthographic {
+        /// Left and right view-space bounds.
+        horizontal: [f32; 2],
+        /// Bottom and top view-space bounds.
+        vertical: [f32; 2],
+    },
 }
 
 impl WorldCamera {
@@ -64,7 +81,9 @@ impl WorldCamera {
             position,
             target,
             up,
-            vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
+            projection: WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
+            },
             near_clip: WORLD_NEAR_CLIP,
             far_clip,
             subject: None,
@@ -85,7 +104,9 @@ impl WorldCamera {
             position,
             target,
             up,
-            vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
+            projection: WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
+            },
             near_clip: WORLD_NEAR_CLIP,
             far_clip,
             subject: Some(WorldCameraSubject::new(orbit_pivot, subject)),
@@ -106,7 +127,34 @@ impl WorldCamera {
             position,
             target,
             up,
-            vertical_field_of_view_radians,
+            projection: WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians,
+            },
+            near_clip,
+            far_clip,
+            subject: None,
+        }
+    }
+
+    /// Creates a parallel camera, including asymmetric bounds and signed depth.
+    #[must_use]
+    pub const fn orthographic(
+        position: Vec3,
+        target: Vec3,
+        up: Vec3,
+        horizontal: [f32; 2],
+        vertical: [f32; 2],
+        near_clip: f32,
+        far_clip: f32,
+    ) -> Self {
+        Self {
+            position,
+            target,
+            up,
+            projection: WorldCameraProjection::Orthographic {
+                horizontal,
+                vertical,
+            },
             near_clip,
             far_clip,
             subject: None,
@@ -131,19 +179,30 @@ impl WorldCamera {
         self.up
     }
 
-    /// Returns the vertical field of view in radians.
+    /// Returns the selected projection policy.
     #[must_use]
-    pub const fn vertical_field_of_view_radians(self) -> f32 {
-        self.vertical_field_of_view_radians
+    pub const fn projection(self) -> WorldCameraProjection {
+        self.projection
     }
 
-    /// Returns the positive near clipping distance.
+    /// Returns the vertical field of view for a perspective camera.
+    #[must_use]
+    pub const fn vertical_field_of_view_radians(self) -> Option<f32> {
+        match self.projection {
+            WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians,
+            } => Some(vertical_field_of_view_radians),
+            WorldCameraProjection::Orthographic { .. } => None,
+        }
+    }
+
+    /// Returns the near clipping distance (signed for parallel projections).
     #[must_use]
     pub const fn near_clip(self) -> f32 {
         self.near_clip
     }
 
-    /// Returns the positive far clipping distance.
+    /// Returns the far clipping distance (signed for parallel projections).
     #[must_use]
     pub const fn far_clip(self) -> f32 {
         self.far_clip

@@ -2,7 +2,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::{WorldCamera, WorldCameraError, WorldCameraFrame};
+use super::{WorldCamera, WorldCameraError, WorldCameraFrame, WorldCameraProjection};
 
 impl WorldCamera {
     /// Builds the renderer frame shared by visibility and draw submission.
@@ -35,12 +35,27 @@ impl WorldCamera {
         up = right.cross(forward).normalize();
 
         let view = Mat4::look_at_rh(self.position(), self.target(), up);
-        let projection = Mat4::perspective_rh(
-            self.vertical_field_of_view_radians(),
-            aspect_ratio,
-            self.near_clip(),
-            self.far_clip(),
-        );
+        let projection = match self.projection() {
+            WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians,
+            } => Mat4::perspective_rh(
+                vertical_field_of_view_radians,
+                aspect_ratio,
+                self.near_clip(),
+                self.far_clip(),
+            ),
+            WorldCameraProjection::Orthographic {
+                horizontal,
+                vertical,
+            } => Mat4::orthographic_rh(
+                horizontal[0],
+                horizontal[1],
+                vertical[0],
+                vertical[1],
+                self.near_clip(),
+                self.far_clip(),
+            ),
+        };
         Ok(WorldCameraFrame::new(
             self,
             aspect_ratio,
@@ -60,16 +75,36 @@ impl WorldCamera {
         if (self.target() - self.position()).length_squared() <= 1.0e-8 {
             return Err(WorldCameraError::ViewDirection);
         }
-        let field_of_view = self.vertical_field_of_view_radians();
-        if !field_of_view.is_finite()
-            || field_of_view <= 0.0
-            || field_of_view >= core::f32::consts::PI
-        {
-            return Err(WorldCameraError::FieldOfView);
+        match self.projection() {
+            WorldCameraProjection::Perspective {
+                vertical_field_of_view_radians,
+            } => {
+                if !vertical_field_of_view_radians.is_finite()
+                    || vertical_field_of_view_radians <= 0.0
+                    || vertical_field_of_view_radians >= core::f32::consts::PI
+                {
+                    return Err(WorldCameraError::FieldOfView);
+                }
+                if self.near_clip() <= 0.0 {
+                    return Err(WorldCameraError::ClipRange);
+                }
+            }
+            WorldCameraProjection::Orthographic {
+                horizontal,
+                vertical,
+            } => {
+                if [horizontal, vertical]
+                    .into_iter()
+                    .any(|[minimum, maximum]| {
+                        !minimum.is_finite() || !maximum.is_finite() || maximum <= minimum
+                    })
+                {
+                    return Err(WorldCameraError::OrthographicBounds);
+                }
+            }
         }
         if !self.near_clip().is_finite()
             || !self.far_clip().is_finite()
-            || self.near_clip() <= 0.0
             || self.far_clip() <= self.near_clip()
         {
             return Err(WorldCameraError::ClipRange);

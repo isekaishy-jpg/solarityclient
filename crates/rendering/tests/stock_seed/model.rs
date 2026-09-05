@@ -30,10 +30,10 @@ use solarity_rendering::{
     M2ParticleTwinkleTable, M2PixelShader, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPose,
     M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
     M2SceneUniform, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
-    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2VertexShader, TerrainSceneUniform,
-    VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
-    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
-    triggered_m2_event_indices,
+    M2SpirvCompiler, M2TextureAddressMode, M2TextureSet, M2UiCameraViewport, M2VertexShader,
+    TerrainSceneUniform, VulkanBootstrap, VulkanError, WorldCamera, WorldFrameScene,
+    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
+    sample_m2_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
 };
 use wow_m2::chunks::material::{
     M2BlendMode as RawBlendMode, M2Material as RawMaterial, M2RenderFlags,
@@ -84,7 +84,15 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
     // equivalent orientation instead of linearly rotating through pi.
     assert!((frame.up() - Vec3::Z).abs().max_element() < 0.000_01);
     let expected_fov = (2.0 * core::f32::consts::FRAC_PI_3) / (1.0_f32 + aspect * aspect).sqrt();
-    assert!((frame.camera().vertical_field_of_view_radians() - expected_fov).abs() < 0.0001);
+    assert!(
+        (frame
+            .camera()
+            .vertical_field_of_view_radians()
+            .ok_or("missing authored FOV")?
+            - expected_fov)
+            .abs()
+            < 0.0001
+    );
     let expected_effect_scale = 1.0_f32.hypot(4.0 / 3.0) / 1.0_f32.hypot(aspect);
     assert!(
         (M2CameraEffectScale::from_native_camera(&frame).factor() - expected_effect_scale).abs()
@@ -117,6 +125,131 @@ fn m2_camera_samples_authored_glue_projection() -> Result<(), Box<dyn Error>> {
             .project_point3(transform.transform_point3(point));
         assert!((original.truncate() - moved.truncate()).length() < 0.000_01);
         assert!((original.z - moved.z).abs() > 0.000_01);
+    }
+    Ok(())
+}
+
+/// Build 12340's default Model projection uses the root diagonal scale and
+/// bottom-left viewport origin. An unavailable camera selects this same path.
+#[test]
+fn model_widget_default_camera_matches_native_viewport_matrices() -> Result<(), Box<dyn Error>> {
+    for authored_camera in [false, true] {
+        let mut bytes = render_m2_bytes("UiCamera", 1)?;
+        if authored_camera {
+            append_render_camera(&mut bytes)?;
+        }
+        let skin = render_skin_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "Creature\\Solarity\\UiCamera.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\UiCamera00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut store = AssetStore::mount(catalog)?;
+        let model = DecodedM2Model::load(
+            &mut store,
+            &AssetPath::new("Creature\\Solarity\\UiCamera.m2")?,
+        )?;
+        let clock = M2AnimationClock::new(0, 500.0, 0.0);
+        let transform = Mat4::from_rotation_z(0.3) * Mat4::from_scale(Vec3::splat(1.25));
+        for (screen, size, scale) in [
+            ([1024.0_f32, 768.0], [1024.0_f32, 768.0], 1.0_f32),
+            ([1365.3334, 768.0], [1365.3334, 768.0], 1.0),
+            ([1365.3334, 768.0], [320.0, 180.0], 0.5),
+            ([768.0, 1024.0], [180.0, 320.0], 2.0),
+        ] {
+            let viewport = M2UiCameraViewport::new(size, screen, scale);
+            // Native 0x0047BF90 -> 0x004BEE60 -> 0x0095FBA0:
+            // screen-diagonal normalization, centered orthographic projection,
+            // lower-left view translation, then effective model scaling.
+            let normalized_height = 1.0 / (screen[0] / screen[1]).hypot(1.0);
+            let native_width = size[0] / screen[1] * normalized_height;
+            let native_height = size[1] / screen[1] * normalized_height;
+            let native_model_scale = scale * normalized_height * (5.0 / 3.0);
+            let native = Mat4::orthographic_rh(
+                -native_width * 0.5,
+                native_width * 0.5,
+                -native_height * 0.5,
+                native_height * 0.5,
+                -500.0,
+                500.0,
+            ) * Mat4::from_translation(Vec3::new(
+                -native_width * 0.5,
+                -native_height * 0.5,
+                0.0,
+            )) * Mat4::from_scale(Vec3::splat(native_model_scale))
+                * transform;
+            for index in [-1, 999] {
+                let (frame, effects) = sample_m2_ui_camera_frame(
+                    model.animations(),
+                    index,
+                    clock,
+                    viewport,
+                    transform,
+                )?;
+                assert_eq!(effects, M2CameraEffectScale::EXTERNAL_CAMERA);
+                assert_eq!(frame.camera().position(), Vec3::ZERO);
+                assert_eq!(frame.camera().vertical_field_of_view_radians(), None);
+                for point in [
+                    Vec3::ZERO,
+                    Vec3::new(0.1, 0.2, -100.0),
+                    Vec3::new(0.3, 0.1, 100.0),
+                ] {
+                    let actual = frame
+                        .view_projection()
+                        .project_point3(transform.transform_point3(point));
+                    let expected = native.project_point3(point);
+                    assert!((actual - expected).abs().max_element() < 0.000_01);
+                }
+            }
+            let (selected, effects) =
+                sample_m2_ui_camera_frame(model.animations(), 0, clock, viewport, transform)?;
+            if authored_camera {
+                assert_eq!(
+                    selected,
+                    sample_m2_camera_frame(
+                        model.animations(),
+                        0,
+                        clock,
+                        size[0] / size[1],
+                        transform
+                    )?
+                );
+                assert_eq!(effects, M2CameraEffectScale::from_native_camera(&selected));
+                assert!(
+                    sample_m2_ui_camera_frame(
+                        model.animations(),
+                        0,
+                        M2AnimationClock::new(999, 0.0, 0.0),
+                        viewport,
+                        transform
+                    )
+                    .is_err()
+                );
+            } else {
+                assert_eq!(
+                    selected,
+                    sample_m2_ui_camera_frame(model.animations(), -1, clock, viewport, transform)?
+                        .0
+                );
+            }
+        }
+        for viewport in [
+            M2UiCameraViewport::new([0.0, 100.0], [1024.0, 768.0], 1.0),
+            M2UiCameraViewport::new([100.0, 100.0], [1024.0, f32::NAN], 1.0),
+            M2UiCameraViewport::new([100.0, 100.0], [1024.0, 768.0], -1.0),
+        ] {
+            assert!(matches!(
+                sample_m2_ui_camera_frame(model.animations(), -1, clock, viewport, transform),
+                Err(solarity_rendering::M2CameraFrameError::UiViewport)
+            ));
+        }
     }
     Ok(())
 }

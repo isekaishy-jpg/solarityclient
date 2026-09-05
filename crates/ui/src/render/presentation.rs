@@ -194,6 +194,8 @@ pub struct UiModelPresentation {
     character_lights: UiModelLightSets,
     pet_lights: UiModelLightSets,
     bounds: UiScreenRect,
+    ui_extent: [f32; 2],
+    effective_scale: f32,
     alpha: f32,
     strata: UiFrameStrata,
     frame_level: i32,
@@ -288,6 +290,19 @@ impl UiModelPresentation {
     #[must_use]
     pub const fn bounds(&self) -> UiScreenRect {
         self.bounds
+    }
+
+    /// Returns the root UI extent in the same logical units as the viewport.
+    #[must_use]
+    pub const fn ui_extent(&self) -> [f32; 2] {
+        self.ui_extent
+    }
+
+    /// Returns the widget scale after parent composition, independently of
+    /// the model-local scale. Default camera projection consumes both.
+    #[must_use]
+    pub const fn effective_scale(&self) -> f32 {
+        self.effective_scale
     }
 
     /// Returns effective frame alpha after parent composition.
@@ -962,6 +977,8 @@ impl UiPresentationPlan {
             character_lights: model_light_sets(model.character_lights),
             pet_lights: model_light_sets(model.pet_lights),
             bounds: region.presentation_bounds(),
+            ui_extent: [geometry.ui_extent().0 as f32, geometry.ui_extent().1 as f32],
+            effective_scale: region.effective_scale() as f32,
             alpha: region.effective_alpha() as f32,
             strata: object.frame_strata?,
             frame_level: object.frame_level?,

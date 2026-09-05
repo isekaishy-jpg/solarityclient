@@ -799,8 +799,8 @@ There are explicit remaining limits. The ModelFFX assignment override at
 `0x004E5ED0` appears to call `0x00824060` with a null instance when clearing;
 that callee dereferences the instance. Solarity deliberately handles that case
 safely instead of reproducing the apparent crash. ErrorCube lookup is tested
-at the asset/script boundary, but models without authored cameras still need
-the stock default-camera rendering path (`0x0095FC30` -> `0x004BEE60`).
+at the asset/script boundary; at this revision, models without authored cameras
+still required the stock default-camera rendering path (`0x0095FC30` -> `0x004BEE60`).
 `SetSequenceTime` selects the requested sequence in the published state;
 applying its time offset to renderer playback remains unfinished. Shared-cache
 basename collision behavior is also not reproduced by full-path resource keys.
@@ -820,3 +820,69 @@ The phase placement identifies where elapsed time accumulated, not the
 underlying cause of those pauses. Fresh instance behavior changes playback
 and resource history, so these numbers are validation of the resulting
 behavior, not a controlled end-to-end speedup claim.
+
+## Default Model camera projection
+
+The camera-less Model path is orthographic. `0x0095F9F0` compares the requested
+unsigned index with the authored camera count and clears the selected camera
+when it is unavailable. `0x0095FC30` then calls `0x004BEE60` with the viewport
+rectangle and its bottom-left corner. The projection helper `0x006BF4C0` uses
+the centered rectangle and signed native depth bounds of -500 and 500; the
+view matrix translates the supplied origin relative to the rectangle center.
+The render callback at `0x0095FBA0` applies widget yaw and scales the model by
+its local scale, effective region scale, normalized screen height, and 5/3.
+`GetEffectiveScale` at `0x0049F790` confirms the region field at offset `0x7c`.
+Screen normalization is explicit in `0x0047BF90`: height is
+`1 / sqrt(aspect * aspect + 1)`, and width is aspect times that height.
+
+The rendering camera now represents perspective and orthographic projections
+explicitly, including asymmetric parallel bounds and signed clipping depths.
+Its vertical-FOV query returns `None` for a parallel camera. Frustum side planes
+use the selected projection, retaining eye-relative arithmetic for large world
+coordinates. Model presentation carries root UI extent and effective region
+scale into the common model-camera selector. Valid authored indices retain the
+existing animated camera path; unavailable indices, including negative values,
+select the orthographic path. Errors in valid authored camera tracks remain
+errors. Both visible and hidden Glue advancement use this selector.
+
+The default projection absorbs the native coordinate-unit conversion while
+leaving model geometry and effects in their existing authored units. Its eye
+remains zero, its up axis is Y, and its origin is the viewport's bottom-left.
+Camera selection also moves out of mutable model-instance identity: changing
+`SetCamera` updates the view without resetting playback or particle state.
+
+Projection tests compare against the recovered native matrix composition for
+full and partial viewports, portrait and landscape roots, inherited UI scales,
+model transforms, camera-less files, and unavailable camera indices. Separate
+visibility tests cover signed near/far depths, asymmetric bounds, spheres,
+oriented boxes, and clipped screen windows. UI publication tests verify that
+parent scaling changes the effective camera scale and viewport dimensions
+without changing the model-local scale.
+
+The eight-step real-archive capture replay passes. It requests a missing model,
+explicitly selects camera zero, displays the stock blue/white ErrorCube at the
+default lower-left origin, accepts negative and large camera indices, scales
+the owning UI, and restores the authored login scene. The model log records
+only three instance activations: initial login, ErrorCube, and the explicit
+login-model replacement. Camera changes and the UI scale change do not create
+new model instances. Camera-only readiness is 2.0-2.6 ms in this short capture
+diagnostic; the UI scaling and restoration actions take 33.0 and 25.3 ms.
+Those actions include whole-screen UI mutation and publication; the replay
+does not isolate the cause of their longer intervals. The diagnostic is not a
+steady-state performance measurement.
+
+This implements the default projection and camera-index switching, not the
+entire Model camera API. Explicit camera-object ownership across model
+replacement, `SetPosition`, and renderer playback seeking still need separate
+stock parity work.
+
+Formatting, Clippy, all 558 workspace tests, and the original real-data
+interaction validator pass. The separate 31-action replay with 6,000 following
+frames per action, no captures, and detailed UI timing disabled also passes.
+Following throughput is 2,512-3,603 FPS; its largest following interval is
+2.96 ms. Ordinary customization transition maxima are 2.49-3.15 ms, creation
+entry reaches 14.3 ms, and login startup reaches 20.2 ms. This run contains none
+of the previously observed long following-frame pauses, but does not explain
+their cause or prove their elimination. The frustum change moves side-plane
+construction out of individual visibility tests; the replay alone does not
+isolate its contribution to the throughput difference.

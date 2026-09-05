@@ -14,11 +14,11 @@ use solarity_asset::{
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
-    M2CameraEffectScale, M2CameraFrameError, M2DirectionalLight, M2LightOverride,
-    M2LocalLightCount, M2LocalLightState, M2ModelOrientation, M2ParticleTwinkleTable,
-    M2SceneUniform, M2Sunlight, TerrainSceneUniform, VulkanError, VulkanRenderer, WorldCameraFrame,
-    WorldFrameGlow, WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
-    glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_camera_frame,
+    M2CameraFrameError, M2DirectionalLight, M2LightOverride, M2LocalLightCount, M2LocalLightState,
+    M2ModelOrientation, M2ParticleTwinkleTable, M2SceneUniform, M2Sunlight, M2UiCameraViewport,
+    TerrainSceneUniform, VulkanError, VulkanRenderer, WorldCameraFrame, WorldFrameGlow,
+    WorldFrameScene, WorldFrustum, WorldModelSceneUniform, WorldScreenWindow,
+    glue_character_sunlight, merge_wotlk_directional_lights, sample_m2_ui_camera_frame,
 };
 use solarity_ui::{GlueManager, UiModelLight, UiModelLightSets, UiModelPresentation, UiScreenRect};
 use thiserror::Error;
@@ -71,9 +71,6 @@ pub enum RuntimeGlueModelError {
     /// The current compositor supports one stock environment callback.
     #[error("Glue presentation exposes {count} simultaneous visible models")]
     VisibleModelCount { count: usize },
-    /// Lua selected a negative camera slot.
-    #[error("Glue model {object_index} selected negative camera {camera}")]
-    NegativeCamera { object_index: usize, camera: i32 },
     /// The Glue sequence ABI is wider than the model animation identifier.
     #[error("Glue model {object_index} selected animation {sequence} outside the M2 domain")]
     AnimationCapacity { object_index: usize, sequence: u32 },
@@ -109,7 +106,6 @@ struct GlueModelKey {
     object_index: usize,
     path: AssetPath,
     instance_generation: u32,
-    camera: i32,
     sequence: u32,
     sequence_time_sequence: u32,
     sequence_time_ms: i32,
@@ -123,7 +119,6 @@ impl GlueModelKey {
             object_index: model.object_index(),
             path: model.path().clone(),
             instance_generation: model.instance_generation(),
-            camera: model.camera(),
             sequence: model.sequence(),
             sequence_time_sequence: model.sequence_time_sequence(),
             sequence_time_ms: model.sequence_time_ms(),
@@ -352,6 +347,8 @@ impl GlueModelLightVariant {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GlueModelEnvironment {
+    /// Camera selection changes the view without replacing M2 playback.
+    camera: i32,
     ambient: Vec3,
     diffuse: Vec3,
     light_direction: Vec3,
@@ -362,6 +359,7 @@ struct GlueModelEnvironment {
     pet_light_override: Option<M2LightOverride>,
     shared_point_light_count: usize,
     bounds: UiScreenRect,
+    camera_viewport: M2UiCameraViewport,
     alpha: f32,
     glow: f32,
 }
@@ -399,6 +397,7 @@ impl GlueModelEnvironment {
             })
         };
         Ok(Self {
+            camera: model.camera(),
             ambient: STOCK_GLUE_AMBIENT,
             diffuse: STOCK_GLUE_DIFFUSE,
             light_direction: STOCK_GLUE_LIGHT_DIRECTION,
@@ -409,6 +408,14 @@ impl GlueModelEnvironment {
             pet_light_override: light_override(model.pet_lights())?,
             shared_point_light_count: 0,
             bounds: model.bounds(),
+            camera_viewport: M2UiCameraViewport::new(
+                [
+                    model.bounds().width() as f32,
+                    model.bounds().height() as f32,
+                ],
+                model.ui_extent(),
+                model.effective_scale(),
+            ),
             alpha: model.alpha(),
             glow: model.glow(),
         })
@@ -809,27 +816,18 @@ impl RuntimeGlueModelScene {
         let Some(active) = self.active.as_mut() else {
             return Ok(());
         };
-        let aspect_ratio =
-            active.environment.bounds.width() as f32 / active.environment.bounds.height() as f32;
         let animation_time_ms = active.frame.animation_time_ms();
         let clock =
             active
                 .frame
                 .advance_glue_animation_clock(animation_time_ms, global_time_ms, random)?;
-        let camera_index = usize::try_from(active.key.camera).map_err(|_source| {
-            RuntimeGlueModelError::NegativeCamera {
-                object_index: active.key.object_index,
-                camera: active.key.camera,
-            }
-        })?;
-        let camera = sample_m2_camera_frame(
+        let (camera, effect_scale) = sample_m2_ui_camera_frame(
             active.model.animations(),
-            camera_index,
+            active.environment.camera,
             clock,
-            aspect_ratio,
+            active.environment.camera_viewport,
             active.frame.glue_model_transform()?,
         )?;
-        let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
         active.frame.prepare_visible_draws(
@@ -1009,12 +1007,6 @@ impl RuntimeGlueModelScene {
             self.character_screen = character_screen;
             self.service_backdrop_reads(cpu)?;
             return Ok(RuntimeGlueModelPoll::Ready);
-        }
-        if key.camera < 0 {
-            return Err(RuntimeGlueModelError::NegativeCamera {
-                object_index: key.object_index,
-                camera: key.camera,
-            });
         }
         if self.prepared.contains_key(&generation) {
             if self.character_replacement_required && !character_sources_ready {
@@ -1272,12 +1264,6 @@ impl RuntimeGlueModelScene {
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<(), RuntimeGlueModelError> {
-        if key.camera < 0 {
-            return Err(RuntimeGlueModelError::NegativeCamera {
-                object_index: key.object_index,
-                camera: key.camera,
-            });
-        }
         let animation_id = u16::try_from(key.sequence).map_err(|_source| {
             RuntimeGlueModelError::AnimationCapacity {
                 object_index: key.object_index,
@@ -1340,28 +1326,19 @@ impl RuntimeGlueModelScene {
             active.environment.bounds,
             ui_extent,
         )?;
-        let aspect_ratio =
-            active.environment.bounds.width() as f32 / active.environment.bounds.height() as f32;
         let animation_time_ms = active.frame.animation_time_ms();
         let clock =
             active
                 .frame
                 .advance_glue_animation_clock(animation_time_ms, global_time_ms, random)?;
-        let camera_index = usize::try_from(active.key.camera).map_err(|_source| {
-            RuntimeGlueModelError::NegativeCamera {
-                object_index: active.key.object_index,
-                camera: active.key.camera,
-            }
-        })?;
-        let camera = sample_m2_camera_frame(
+        let (camera, effect_scale) = sample_m2_ui_camera_frame(
             active.model.animations(),
-            camera_index,
+            active.environment.camera,
             clock,
-            aspect_ratio,
+            active.environment.camera_viewport,
             active.frame.glue_model_transform()?,
         )?;
         self.sound_camera = Some(camera);
-        let effect_scale = M2CameraEffectScale::from_native_camera(&camera);
         let frustum =
             WorldFrustum::new(camera, WorldScreenWindow::FULL).map_err(M2CameraFrameError::from)?;
         let prepare_started = std::time::Instant::now();
