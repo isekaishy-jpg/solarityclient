@@ -52,10 +52,10 @@ pub use camera::{
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{
     M2CollisionError, M2CollisionScene, MovementCollisionPlane, MovementCollisionTriangle,
-    MovementCollisionVolume, MovementSweep, MovementSweepError, PlacedM2Collision,
-    PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit,
-    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
-    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
+    MovementCollisionVolume, MovementSupportProfile, MovementSweep, MovementSweepError,
+    PlacedM2Collision, PlacedWorldModelCollision, PlacedWorldModelLiquid, TerrainCollisionError,
+    TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh,
+    TerrainLiquidSample, WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
     WorldModelLiquidSample, WorldModelLiquidScene,
 };
 pub use equipment::{

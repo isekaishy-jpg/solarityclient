@@ -1,8 +1,9 @@
 //! Sweeps body faces against already-selected world triangles.
 
-use glam::{DVec3, Vec3};
+use glam::Vec3;
 use thiserror::Error;
 
+use super::face::extruded_edge_plane;
 use super::polygon::ContactPolygon;
 use super::{
     CONTACT_TOLERANCE, DEGENERATE_TOLERANCE, DIRECTION_TOLERANCE, MINIMUM_SWEEP_LENGTH,
@@ -32,8 +33,8 @@ struct FaceSweep<'a> {
 /// One oriented triangle admitted by world collision selection.
 #[derive(Clone, Copy, Debug)]
 pub struct MovementCollisionTriangle {
-    vertices: [Vec3; 3],
-    normal: Vec3,
+    pub(super) vertices: [Vec3; 3],
+    pub(super) normal: Vec3,
 }
 
 impl MovementCollisionTriangle {
@@ -67,6 +68,9 @@ pub enum MovementSweepError {
     /// Displacement or its length is non-finite.
     #[error("movement collision displacement is invalid")]
     InvalidDisplacement,
+    /// A landing/support foot point is NaN or infinite.
+    #[error("movement support point is not finite")]
+    NonFiniteSupportPoint,
 }
 
 /// Travel allowed by the native narrow phase and its simultaneous body contacts.
@@ -183,30 +187,11 @@ impl MovementCollisionVolume {
         for (edge, &index) in indices.iter().enumerate() {
             let origin = self.vertices[index];
             let next = self.vertices[indices[(edge + 1) % indices.len()]];
-            // x87 retains the translated endpoint through subtraction, avoiding
-            // loss of short travel when the origin is thousands of units away.
-            let origin_extended = origin.as_dvec3();
-            let edge_delta = next.as_dvec3() - origin_extended;
-            let stored_edge = edge_delta.as_vec3().as_dvec3();
-            let travel = (origin_extended + query.extrusion.as_dvec3()) - origin_extended;
-            // The x87 implementation spills edge differences before the Y/Z
-            // products, while X still uses the extended differences. Keeping
-            // those stores matters for which simultaneous plane comes first.
-            let cross = DVec3::new(
-                edge_delta.y * travel.z - edge_delta.z * travel.y,
-                stored_edge.z * travel.x - stored_edge.x * travel.z,
-                stored_edge.x * travel.y - stored_edge.y * travel.x,
-            );
-            let squared = cross.length_squared();
-            if squared < f64::from(DEGENERATE_TOLERANCE) {
-                return;
-            }
-            let mut normal = cross / squared.sqrt();
             let previous = self.vertices[indices[(edge + indices.len() - 1) % indices.len()]];
-            if normal.dot(previous.as_dvec3() - origin_extended) > 0.0 {
-                normal = -normal;
-            }
-            sides[edge] = MovementCollisionPlane::through_extended(normal, origin);
+            let Some(side) = extruded_edge_plane(origin, next, previous, query.extrusion) else {
+                return;
+            };
+            sides[edge] = side;
         }
 
         let mut nearest = query.maximum;

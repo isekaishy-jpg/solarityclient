@@ -4,7 +4,8 @@ The systems crate now owns a pure player-volume sweep in `collision/collide`.
 It accepts a foot origin, admitted radius and effective height, a displacement,
 and an ordered slice of oriented collision triangles in the same coordinate
 space. It returns permitted travel and the body planes near first contact.
-It does not yet drive the player or collect triangles from the resident world.
+The triangle API also tests support at a foot point after swept movement.
+These queries do not yet drive the player or collect resident-world triangles.
 
 ## Native evidence
 
@@ -23,6 +24,8 @@ The implementation follows build-12340 `Collide.cpp` in the fingerprinted
 | `0x0075B710` | Convex polygon clipping with whole-polygon tolerance |
 | `0x0075C0B0` | Face distance and initial-penetration admission |
 | `0x0075B560` | Swaps a newly earlier contact plane into the first slot |
+| `0x0075D340` | Landing support after applying the swept displacement |
+| `0x0075D0A0` | Tests the foot point against the triangle's vertical footprint |
 
 The foot rises by radius times the exact float at `0x00A32830`, approximately
 1.849399. Its four normals use the components at `0x00A37F28` and
@@ -82,11 +85,35 @@ low/narrow obstacles; geometry above the body; all six axis directions across
 six gap distances; oblique motion; and large translated world coordinates.
 Separate admission tests reject non-finite and degenerate geometry.
 
+### Landing support
+
+`MovementCollisionTriangle::supports_at` takes the foot point after swept
+displacement and a resolved `MovementSupportProfile`. The slope test uses
+strict greater-than against the native normal-Z threshold: `0x00A37F0C`
+(approximately 0.642788) for the player-control profile and `0x00A37F10`
+(approximately 0.173648) for the other profile. Selection belongs to the native
+unit-control policy at `0x00716710`, which involves unit flags, type, and
+controlling-unit identity; this query does not infer it from the selected GUID.
+
+For an admitted slope, the triangle is extruded vertically and the foot point
+is tested against its three edge planes with the exact 1/12-unit tolerance at
+`0x00A37F38`. Height separation is not retested: the preceding sweep owns
+contact distance. `0x0075D0A0` also preserves initially supplied +Z planes when
+the edge builder stops on a degenerate projected edge. The implementation keeps
+that behavior, including partial edge-plane construction.
+
+An additional 158 captured calls to original `0x0075D340` exercise both profiles,
+slopes around both thresholds, front/back winding, footprint boundaries, large
+world coordinates, and small projected edges. The capture executes the real
+`0x00716710` predicate using explicit player/ordinary-unit object images;
+it does not replace the predicate with a constant. The standalone fixture
+`movement-support-native.txt` and Rust tests compare each support decision.
+
 ## Remaining movement ownership
 
 This query implements the narrow phase after candidate collection. The movement
 owner still needs resident terrain/WMO/M2 triangle selection, transport-space
-conversion, sliding and step-up, support/slope decisions, gravity and landing,
+conversion, sliding and step-up, support-state transitions, gravity and landing,
 and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and
 related `Collide.cpp` callers own movement response. Those operations must not

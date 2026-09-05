@@ -9,8 +9,8 @@ mod world_model;
 mod world_model_liquid;
 
 pub use collide::{
-    MovementCollisionPlane, MovementCollisionTriangle, MovementCollisionVolume, MovementSweep,
-    MovementSweepError,
+    MovementCollisionPlane, MovementCollisionTriangle, MovementCollisionVolume,
+    MovementSupportProfile, MovementSweep, MovementSweepError,
 };
 pub use liquid::{TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample};
 pub use m2_model::{M2CollisionError, M2CollisionScene, PlacedM2Collision};
