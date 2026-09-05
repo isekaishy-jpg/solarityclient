@@ -325,6 +325,40 @@ fn m2_collision_rejects_a_missing_face_normal() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn m2_keeps_collision_header_when_no_faces_are_authored() -> Result<(), Box<dyn Error>> {
+    let mut bytes = m2_bytes("BoundsOnly", 1)?;
+    bytes[0xd8..0xf0].fill(0);
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\BoundsOnly.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\BoundsOnly00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let model = DecodedM2Model::load(&mut store, &AssetPath::new("World\\BoundsOnly.m2")?)?;
+    assert!(model.collision_mesh().is_none());
+    assert_eq!(
+        model.collision_bounds().minimum(),
+        glam::Vec3::new(0., 0., -0.1)
+    );
+    assert_eq!(
+        model.collision_bounds().maximum(),
+        glam::Vec3::new(2., 2., 0.1)
+    );
+    assert_ne!(model.collision_bounds(), model.bounds());
+    Ok(())
+}
+
 /// Version-264 nested arrays decode per-sequence bone keys rather than outer refs.
 #[test]
 fn m2_bone_tracks_decode_wotlk_nested_channels() -> Result<(), Box<dyn Error>> {

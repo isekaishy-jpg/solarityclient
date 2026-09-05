@@ -155,7 +155,7 @@ pub struct M2Vertex {
     texture_coordinates: [Vec2; 2],
 }
 
-/// Authored model-space render bounds from the build-12340 M2 header.
+/// Authored model-space render or collision bounds from the build-12340 M2 header.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2ModelBounds {
     minimum: Vec3,
@@ -303,6 +303,7 @@ pub(super) struct ModelBlob {
     pub(super) flags: u32,
     pub(super) skin_profile_count: u32,
     pub(super) bounds: M2ModelBounds,
+    pub(super) collision_bounds: M2ModelBounds,
     pub(super) collision: Option<M2CollisionMesh>,
     pub(super) vertices: Vec<M2Vertex>,
     pub(super) textures: Vec<M2Texture>,
@@ -329,6 +330,7 @@ impl ModelBlob {
             flags: header.flags,
             skin_profile_count: header.skin_profile_count,
             bounds: header.bounds,
+            collision_bounds: header.collision_bounds,
             collision: decode_collision_mesh(path, bytes, header.collision_bounds)?,
             vertices: decode_vertices(path, bytes, header.vertices)?,
             textures: decode_textures(path, bytes, header.textures)?,

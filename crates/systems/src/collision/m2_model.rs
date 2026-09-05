@@ -9,9 +9,7 @@ use thiserror::Error;
 use super::movement_collection::transform_point;
 use super::{MovementCollectionError, MovementCollisionBounds, MovementCollisionTriangle};
 
-use super::world_model::{
-    bounds_intersect, placement_transform, segment_triangle_fraction, transformed_bounds,
-};
+use super::world_model::{bounds_intersect, placement_transform, segment_triangle_fraction};
 
 /// Invalid M2 placement or camera-ray input.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -27,12 +25,13 @@ pub enum M2CollisionError {
     InvalidMaximumFraction,
 }
 
-/// One shared M2 generation transformed by an owning MDDF placement.
+/// One shared M2 generation transformed by an MDDF, MODD, or GameObject owner.
 pub struct PlacedM2Collision {
     model: Arc<DecodedM2Model>,
     transform: Mat4,
     inverse_transform: Mat4,
-    collision_bounds: Option<[Vec3; 2]>,
+    collision_bounds: MovementCollisionBounds,
+    render_bounds: MovementCollisionBounds,
 }
 
 impl PlacedM2Collision {
@@ -70,30 +69,69 @@ impl PlacedM2Collision {
         model: Arc<DecodedM2Model>,
         transform: Mat4,
     ) -> Result<Self, M2CollisionError> {
-        if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
+        let determinant = transform.determinant();
+        if !transform.is_finite() || !determinant.is_finite() || determinant == 0.0 {
             return Err(M2CollisionError::InvalidPlacement);
         }
         let inverse_transform = transform.inverse();
         if !inverse_transform.is_finite() {
             return Err(M2CollisionError::InvalidPlacement);
         }
-        let collision_bounds = model
-            .collision_mesh()
-            .map(|mesh| {
-                let bounds = mesh.bounds();
-                transformed_bounds(
-                    [bounds.minimum().to_array(), bounds.maximum().to_array()],
-                    transform,
-                )
-            })
-            .transpose()
-            .map_err(|_| M2CollisionError::InvalidPlacement)?;
+        let [collision_bounds, render_bounds] = placed_bounds(&model, transform)?;
         Ok(Self {
             model,
             transform,
             inverse_transform,
             collision_bounds,
+            render_bounds,
         })
+    }
+
+    /// Updates one retained owner after its object or transport moves.
+    ///
+    /// # Errors
+    /// Returns [`M2CollisionError::InvalidPlacement`] for invalid transforms;
+    /// a failed update preserves the previous placement completely.
+    pub fn set_transform(&mut self, transform: Mat4) -> Result<(), M2CollisionError> {
+        if transform == self.transform {
+            return Ok(());
+        }
+        let determinant = transform.determinant();
+        if !transform.is_finite() || !determinant.is_finite() || determinant == 0.0 {
+            return Err(M2CollisionError::InvalidPlacement);
+        }
+        let inverse_transform = transform.inverse();
+        if !inverse_transform.is_finite() {
+            return Err(M2CollisionError::InvalidPlacement);
+        }
+        let [collision_bounds, render_bounds] = placed_bounds(&self.model, transform)?;
+        self.transform = transform;
+        self.inverse_transform = inverse_transform;
+        self.collision_bounds = collision_bounds;
+        self.render_bounds = render_bounds;
+        Ok(())
+    }
+
+    /// Returns the transformed header +0xBC, including models without faces.
+    #[must_use]
+    pub const fn collision_bounds(&self) -> MovementCollisionBounds {
+        self.collision_bounds
+    }
+
+    /// Returns transformed header +0xA0 used for spatial reference registration.
+    #[must_use]
+    pub const fn render_bounds(&self) -> MovementCollisionBounds {
+        self.render_bounds
+    }
+
+    /// Returns the transformed collision-box center used by the registration probe.
+    #[must_use]
+    pub fn collision_center(&self) -> Vec3 {
+        let bounds = self.model.collision_bounds();
+        let center = Vec3::from_array(std::array::from_fn(|axis| {
+            ((f64::from(bounds.minimum()[axis]) + f64::from(bounds.maximum()[axis])) * 0.5) as f32
+        }));
+        transform_point(self.transform, center)
     }
 
     /// Returns the shared decoded M2 generation.
@@ -108,9 +146,7 @@ impl PlacedM2Collision {
     /// rejects nonintersecting placements before entering `0x0082EC30`.
     #[must_use]
     pub fn movement_intersects(&self, bounds: MovementCollisionBounds) -> bool {
-        self.collision_bounds.is_some_and(|collision_bounds| {
-            bounds_intersect([bounds.minimum(), bounds.maximum()], collision_bounds)
-        })
+        self.collision_bounds.intersects(bounds)
     }
 
     /// Appends selected dedicated collision faces in authored M2 index order.
@@ -160,6 +196,18 @@ impl PlacedM2Collision {
         }
         Ok(())
     }
+}
+
+fn placed_bounds(
+    model: &DecodedM2Model,
+    transform: Mat4,
+) -> Result<[MovementCollisionBounds; 2], M2CollisionError> {
+    let resolve = |bounds: solarity_asset::M2ModelBounds| {
+        MovementCollisionBounds::new(bounds.minimum(), bounds.maximum())
+            .and_then(|bounds| bounds.transformed(transform))
+            .map_err(|_| M2CollisionError::InvalidPlacement)
+    };
+    Ok([resolve(model.collision_bounds())?, resolve(model.bounds())?])
 }
 
 /// Main-thread placed-M2 scene with allocation-free repeated traces.
@@ -219,10 +267,11 @@ impl M2CollisionScene {
         let query_bounds = [start.min(limited_end), start.max(limited_end)];
         let mut found = false;
         for instance in &self.instances {
-            let Some(collision_bounds) = instance.collision_bounds else {
-                continue;
-            };
-            if !bounds_intersect(query_bounds, collision_bounds) {
+            let collision_bounds = instance.collision_bounds;
+            if !bounds_intersect(
+                query_bounds,
+                [collision_bounds.minimum(), collision_bounds.maximum()],
+            ) {
                 continue;
             }
             let Some(mesh) = instance.model.collision_mesh() else {

@@ -517,6 +517,7 @@ impl RuntimeGameObjectPresentation {
                     world,
                     instance.display_id(),
                     source.model(),
+                    instance.placement(),
                     self.scene_time_ms.get(),
                     random,
                 )?;
@@ -730,6 +731,26 @@ impl RuntimeGameObjectPresentation {
         self.behaviors
             .get(&identity)
             .and_then(|behavior| behavior.state())
+    }
+
+    /// Returns the retained generic collision flag and native query-mask gate.
+    ///
+    /// Geometry collection also requires the current model, valid placement,
+    /// and spatial registration. This flag alone does not prove residency.
+    #[must_use]
+    pub fn collision_eligible(
+        &self,
+        world: &ActiveWorld,
+        identity: WorldObjectIdentity,
+        query_flags: u32,
+    ) -> Option<bool> {
+        if world.object_identity(identity.guid()) != Some(identity) {
+            return None;
+        }
+        let fields = world.game_object_presentation(identity.guid())?;
+        self.behaviors
+            .get(&identity)
+            .map(|behavior| behavior.collision_eligible(fields.object_type(), query_flags))
     }
 
     /// Reports only stock's local-player transport object/resource gate.

@@ -30,6 +30,38 @@ const VERTICES: [[f32; 3]; 5] = [
 ];
 const FACES: [[u16; 3]; 4] = [[0, 1, 2], [1, 3, 2], [1, 4, 3], [0, 0, 0]];
 
+#[test]
+fn model_bounds_match_original_axis_product_rounding() -> Result<(), Box<dyn Error>> {
+    let mut count = 0;
+    for line in include_str!("../fixtures/model-bounds-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let values = line
+            .split_whitespace()
+            .map(|word| u32::from_str_radix(word, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let transform = Mat4::from_cols_array(&std::array::from_fn(|i| f32::from_bits(values[i])));
+        let corner =
+            |offset| Vec3::from_array(std::array::from_fn(|i| f32::from_bits(values[offset + i])));
+        let bounds =
+            MovementCollisionBounds::new(corner(16), corner(19))?.transformed(transform)?;
+        let actual = [bounds.minimum(), bounds.maximum()]
+            .into_iter()
+            .flat_map(|corner| corner.to_array().map(f32::to_bits))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, values[22..], "native bounds case {count}");
+        count += 1;
+    }
+    assert_eq!(count, 16);
+    let flat = MovementCollisionBounds::new(Vec3::ZERO, Vec3::new(1., 1., 0.))?;
+    assert!(!flat.has_positive_extent());
+    assert!(flat.intersects(flat));
+    let separated = MovementCollisionBounds::new(Vec3::splat(0.000_001), Vec3::ONE)?;
+    assert!(!flat.intersects(separated));
+    Ok(())
+}
+
 /// Invalid residency queries cannot become an empty successful collision result.
 #[test]
 fn movement_collection_rejects_invalid_world_queries() -> Result<(), Box<dyn Error>> {
@@ -167,6 +199,7 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut output = Vec::new();
+    let mut placed_m2 = PlacedM2Collision::prepare_transform(Arc::clone(&model), Mat4::IDENTITY)?;
     let mut count = 0;
     for line in include_str!("../fixtures/movement-collection-native.txt")
         .lines()
@@ -239,8 +272,8 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
             };
             let bounds = read_bounds(&mut words)?;
             if kind == "M" {
-                PlacedM2Collision::prepare_transform(Arc::clone(&model), transform)?
-                    .append_movement(bounds, &mut output)?;
+                placed_m2.set_transform(transform)?;
+                placed_m2.append_movement(bounds, &mut output)?;
             } else {
                 PlacedWorldModelCollision::prepare_transforms(
                     Arc::clone(&world_model),

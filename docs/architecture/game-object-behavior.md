@@ -1,10 +1,11 @@
 # GameObject behavior evidence for dynamic collision
 
-The shared GameObject scene now owns visible resource generations and independent
-renderer playback. Stable generic states request Closed/Opened/Destroyed poses
-(147/149/151), apply the model-dependent selector below, and use the native
-CM2Model timer backend. Transition progress, completion, and collision eligibility
-still require the retained behavior owner described here.
+The shared GameObject scene owns visible resource generations, retained generic
+behavior, and one CPU model timer shared with rendering. Generic transitions
+consume progress in native notification order and complete through that timer's
+scene callbacks, including while GPU placement is pending. The behavior also
+retains the native collision flag and current M2 collision placement. Dynamic
+MCNK/WMO reference registration and movement collection remain to be connected.
 
 The build-12340 dynamic geometry callback is registered by `0x004FA5F0` through
 `0x0077F2B0` as `0x004F6560` in `DAT_00CE04B0`. It resolves the exact GUID,
@@ -27,8 +28,9 @@ means no supplied fraction. It is distinct from the byte in `GAMEOBJECT_BYTES_1`
 `GameObjectPresentation::sequence_progress` projects this ushort separately from
 the BYTES_1 animation byte. `ActiveWorld::consume_game_object_sequence_progress`
 sets it to `0xFFFF` in both the dense and typed views, retaining the low dynamic
-flags and issuing no notification. Runtime behavior has not yet wired that
-consumer into native field notification order.
+flags and issuing no notification. Runtime dispatch reads live fields between
+ordered notifications, so an earlier handler can consume progress before a later
+handler compares its mirrored value.
 
 | Replicated state | No supplied fraction | Supplied fraction |
 | --- | --- | --- |
@@ -61,6 +63,33 @@ override `0x0070D8D0` sets collision eligibility only when internal state is 1;
 its initial eligibility virtual `0x00712550` uses the same predicate. A closing
 door with supplied progress is therefore not solid until completion reaches 1.
 Checking only replicated state byte 1 would make it solid too soon.
+
+Collision eligibility is retained independently of geometry. Model admission
+writes the strict positive-extent result only when the behavior's initial
+eligibility virtual allows it. Door state virtual `0x0070D8D0` writes the
+Closed predicate after the generic setter, even when the state was unchanged or
+the collision box has zero extent. Later matrix updates do not recompute this
+flag. Runtime retains this ordering and exposes the flag separately from model
+and spatial residency; it is not yet a complete movement admission result.
+
+`DecodedM2Model::collision_bounds` preserves header +0xBC even when the model
+contains no collision faces. `PlacedM2Collision` retains this transformed box,
+the separate +0xA0 render box, and the transformed collision-box center. Dynamic
+registration uses the render box for overlap and the collision center for its
+floor probe. Model-box transforms now execute the axis-product accumulation
+and float spills from `0x007F9430` / `0x00984860`, also used by static M2/WMO
+placements. Moving a retained M2 updates its matrices and boxes without
+re-decoding its source or restarting playback.
+
+`tools/ghidra/game_object_collision_oracle.py` reproduces 16 exact box-transform
+cases and 264 collision-flag cases from the fingerprinted original executable.
+The latter execute model admission `0x00712F30`, the door setter, and query-mask
+checks; external presentation/resource operations are controlled inputs. The
+door setter fixtures deliberately have no active model, so they do not prove
+timer behavior. Separate live CPU integration tests verify opening/closing
+completion, motion, absent collision faces, zero-extent admission, and model
+reload against the retained owner. These checks do not yet establish native
+floor-probe selection, spatial reference ordering, or complete player movement.
 
 ## Model callbacks, metadata, and pause clocks
 
@@ -173,9 +202,10 @@ before a subsequent state or progress notification can animate it.
 The scene advances every loaded generic object in retained object order before
 the GPU placement traversal, including objects with an unresolved placement.
 It publishes the pose clock, expired sequence tails, and current event interval
-for rendering to consume once. Completion changes the same internal state
-returned by `RuntimeGameObjectPresentation::animation_state`, so a future door
-collision owner can consult the actual completion state. Dynamic collision
+for rendering to consume once. Completion changes the internal state returned
+by `RuntimeGameObjectPresentation::animation_state` and the door's retained
+collision flag. `collision_eligible` checks that flag against the query mask
+and the current ECS type byte for the exact object lifetime. Dynamic collision
 registration is not yet connected to that boundary.
 
 The generic owner is restricted to the constructor families that enter native
@@ -199,6 +229,33 @@ function fixtures; they do not establish full native scene traversal parity.
 Dynamic references also belong in native MCNK and WMO-group collection order:
 `0x007A5A60` reaches the chunk's dynamic list through `0x007A5240` after its
 terrain faces and MDDF references. Appending every GameObject after all static
-geometry would not preserve candidate order. Reference registration, moving
-bounds, disabled states, alternate/destructible resources, and the general WMO
-root registration lifecycle remain work for that owner.
+geometry would not preserve candidate order. Reference registration,
+alternate/destructible resources, and the general WMO root registration
+lifecycle remain work for that owner.
+
+## Spatial registration evidence still to integrate
+
+GameObject map-owner creation uses flags `0xB` at `0x00781A10`, selecting the
+special registration path `0x007C2E70` through `0x007C2F80`. That path probes
+from the collision center plus four Z units (capped by render maximum Z plus
+0.1) down to the collision center minus 1,000. Its separate group-containment
+point is the collision center plus 0.15 Z. The probe combines terrain height,
+WMO BSP faces, and portal crossings; camera ray eligibility is a different query.
+
+`0x007C25D0` filters with root MOGI group flags (`0x007AE7B0`), while
+`0x007C1DC0` derives the selected interior bit from loaded MOGP flags. These
+two flag sources must remain distinct. The latter samples BSP faces through
+`0x007CB260`, then tests interior portals through `0x007AF520`; a qualifying
+portal can choose a neighboring group even when there is no floor face. The
+current asset boundary retains MOGI boxes and MOGP flags but discards MOGI
+flags and the root MOPV/MOPT/MOPR tables. Those tables must be retained before
+this registration probe can be implemented completely.
+
+An interior result registers the chosen group first and overlapping eligible
+interior groups in the same root (`0x007C2D30`), without terrain references.
+An exterior result visits overlapping exterior WMO groups (`0x007C2BF0`) and
+loaded MCNKs (`0x007C2040`). The MCNK loop also requires chunk minimum Z to be
+at or below render maximum Z. Dynamic references enter the site's front list
+through `0x007B5020`, so registration and re-registration order affect later
+first-visit collection. Replacing this process with a final all-object overlap
+pass would lose both membership and candidate order.

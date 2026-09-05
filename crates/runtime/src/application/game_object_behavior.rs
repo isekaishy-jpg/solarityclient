@@ -12,8 +12,8 @@ use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode}
 use solarity_ecs::{ActiveWorld, GameObjectPresentation, WorldObjectIdentity, WorldStateError};
 use solarity_rendering::{M2EventTimeWindow, M2SequenceStartPhase};
 use solarity_systems::{
-    GameObjectAnimationRequest, GameObjectAnimationState, game_object_reversed_progress,
-    game_object_sequence_offset,
+    GameObjectAnimationRequest, GameObjectAnimationState, GameObjectPlacement, PlacedM2Collision,
+    game_object_reversed_progress, game_object_sequence_offset,
 };
 
 use crate::application::model_playback::{M2Playback, M2PlaybackAdvance};
@@ -35,6 +35,8 @@ pub(in crate::application) struct GameObjectBehavior {
     animations: Arc<AnimationDataCatalog>,
     cached_state: Cell<u8>,
     state: Cell<Option<GameObjectAnimationState>>,
+    door: bool,
+    collision_enabled: Cell<bool>,
     current_request: Cell<Option<u16>>,
     model: RefCell<Option<GameObjectModel>>,
     scene_sample: RefCell<Option<GameObjectSceneSample>>,
@@ -49,6 +51,8 @@ struct GameObjectModel {
     display_id: u32,
     model: Arc<DecodedM2Model>,
     playback: Rc<RefCell<M2Playback>>,
+    collision: Option<PlacedM2Collision>,
+    collision_initialized: bool,
 }
 
 impl GameObjectBehavior {
@@ -65,6 +69,8 @@ impl GameObjectBehavior {
                 presentation.state(),
                 presentation.sequence_progress(),
             )),
+            door: presentation.object_type() == 0,
+            collision_enabled: Cell::new(false),
             current_request: Cell::new(None),
             model: RefCell::new(None),
             scene_sample: RefCell::new(None),
@@ -73,6 +79,14 @@ impl GameObjectBehavior {
 
     pub(in crate::application) fn state(&self) -> Option<GameObjectAnimationState> {
         self.state.get()
+    }
+
+    pub(in crate::application) fn collision_eligible(
+        &self,
+        object_type: u8,
+        query_flags: u32,
+    ) -> bool {
+        !(object_type == 0 && query_flags & 0x8000 != 0) && self.collision_enabled.get()
     }
 
     pub(in crate::application) fn playback(&self) -> Option<Rc<RefCell<M2Playback>>> {
@@ -88,13 +102,14 @@ impl GameObjectBehavior {
         world: &ActiveWorld,
         display_id: u32,
         model: &Arc<DecodedM2Model>,
+        placement: Option<GameObjectPlacement>,
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         if self.model.borrow().as_ref().is_some_and(|current| {
             current.display_id == display_id && Arc::ptr_eq(&current.model, model)
         }) {
-            return Ok(());
+            return self.synchronize_collision(placement);
         }
         let mut playback = M2Playback::unstarted(0);
         playback.scene_time_ms = scene_time_ms;
@@ -112,8 +127,47 @@ impl GameObjectBehavior {
             display_id,
             model: Arc::clone(model),
             playback: Rc::new(RefCell::new(playback)),
+            collision: None,
+            collision_initialized: false,
         });
+        self.synchronize_collision(placement)
+    }
+
+    fn synchronize_collision(
+        &self,
+        placement: Option<GameObjectPlacement>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut model = self.model.borrow_mut();
+        let Some(model) = model.as_mut() else {
+            return Ok(());
+        };
+        let Some(placement) = placement else {
+            model.collision.take();
+            return Ok(());
+        };
+        if let Some(collision) = &mut model.collision {
+            collision.set_transform(placement.matrix())?;
+        } else {
+            model.collision = Some(PlacedM2Collision::prepare_transform(
+                Arc::clone(&model.model),
+                placement.matrix(),
+            )?);
+        }
+        if !model.collision_initialized {
+            if let Some(collision) = &model.collision {
+                self.initialize_collision(collision.collision_bounds());
+            }
+            model.collision_initialized = true;
+        }
         Ok(())
+    }
+
+    fn initialize_collision(&self, bounds: solarity_systems::MovementCollisionBounds) {
+        // 712F30 / 713F50 write +20C only when behavior virtual +4
+        // allows it. Later 70CBE0 matrix updates never rewrite that flag.
+        if !self.door || self.state.get() == Some(GameObjectAnimationState::Closed) {
+            self.collision_enabled.set(bounds.has_positive_extent());
+        }
     }
 
     pub(in crate::application) fn detach_model(&self) {
@@ -219,7 +273,7 @@ impl GameObjectBehavior {
                             random,
                         )?;
                     } else {
-                        self.state.set(next);
+                        self.set_state(next);
                     }
                 }
             }
@@ -285,6 +339,7 @@ impl GameObjectBehavior {
     ) -> Result<(), RuntimeTerrainFrameError> {
         let previous = self.state.get();
         if next == previous {
+            self.set_state(next);
             return Ok(());
         }
         if let (Some(next), Some(previous), Some(timer)) = (next, previous, playback.script_timer)
@@ -299,7 +354,23 @@ impl GameObjectBehavior {
             world.set_game_object_sequence_progress(self.identity.guid(), progress)?;
         }
         self.state.set(next);
-        self.reselect(world, model, playback, scene_time_ms, phase, random)
+        self.reselect(world, model, playback, scene_time_ms, phase, random)?;
+        self.update_door_collision();
+        Ok(())
+    }
+
+    fn set_state(&self, next: Option<GameObjectAnimationState>) {
+        self.state.set(next);
+        self.update_door_collision();
+    }
+
+    fn update_door_collision(&self) {
+        // Door virtual 70D8D0 writes after the generic setter, including its
+        // unchanged-state early return, without checking model or bounds.
+        if self.door {
+            self.collision_enabled
+                .set(self.state.get() == Some(GameObjectAnimationState::Closed));
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -37,6 +37,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// A retained GameObject could not form its dedicated collision placement.
+    #[error(transparent)]
+    M2Collision(#[from] solarity_systems::M2CollisionError),
     /// A gameplay animation callback lost its authoritative object fields.
     #[error(transparent)]
     WorldObject(#[from] solarity_ecs::WorldStateError),

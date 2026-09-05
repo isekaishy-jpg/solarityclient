@@ -146,6 +146,15 @@ impl DecodedM2Model {
         self.blob.bounds
     }
 
+    /// Returns header +0xBC even when no dedicated collision faces are authored.
+    ///
+    /// GameObject model admission and spatial registration use these bounds
+    /// independently of the collision mesh and header +0xA0 render bounds.
+    #[must_use]
+    pub const fn collision_bounds(&self) -> M2ModelBounds {
+        self.blob.collision_bounds
+    }
+
     /// Resolves an authored attachment through the M2 attachment lookup table.
     ///
     /// The lookup is authoritative. Missing slots and `0xFFFF` entries return

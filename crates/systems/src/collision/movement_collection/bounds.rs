@@ -1,7 +1,7 @@
 //! Validated bounds and ordered native map-grid selection.
 
 use super::MovementCollectionError;
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 /// Validated world-space box passed to stock's triangle collection.
 ///
@@ -36,6 +36,44 @@ impl MovementCollisionBounds {
     #[must_use]
     pub const fn maximum(self) -> Vec3 {
         self.maximum
+    }
+
+    /// Transforms an authored box with stock's axis-product accumulation.
+    ///
+    /// `0x007F9430` and `0x00984860` add each minimum/maximum product to
+    /// translation, spilling to float after each axis. Transforming eight
+    /// corners with SIMD changes those rounding boundaries.
+    ///
+    /// # Errors
+    /// Returns [`MovementCollectionError::InvalidBounds`] for non-finite output.
+    pub fn transformed(self, transform: Mat4) -> Result<Self, MovementCollectionError> {
+        if !transform.is_finite() {
+            return Err(MovementCollectionError::InvalidBounds);
+        }
+        let mut minimum = transform.w_axis.truncate();
+        let mut maximum = minimum;
+        for axis in 0..3 {
+            for component in 0..3 {
+                let basis = f64::from(transform.col(axis)[component]);
+                let first = basis * f64::from(self.minimum[axis]);
+                let second = basis * f64::from(self.maximum[axis]);
+                minimum[component] = (f64::from(minimum[component]) + first.min(second)) as f32;
+                maximum[component] = (f64::from(maximum[component]) + first.max(second)) as f32;
+            }
+        }
+        Self::new(minimum, maximum)
+    }
+
+    /// Tests inclusive box overlap without expanding either box (`0x0078F370`).
+    #[must_use]
+    pub fn intersects(self, other: Self) -> bool {
+        self.minimum.cmple(other.maximum).all() && other.minimum.cmple(self.maximum).all()
+    }
+
+    /// Tests strict positive extent on every axis (`0x0070BD20`).
+    #[must_use]
+    pub fn has_positive_extent(self) -> bool {
+        self.minimum.cmplt(self.maximum).all()
     }
 
     /// Rejects a face only when all vertices share an outside-box half-space.

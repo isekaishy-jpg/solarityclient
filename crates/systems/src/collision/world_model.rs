@@ -400,22 +400,13 @@ pub(super) fn transformed_bounds(
     bounds: [[f32; 3]; 2],
     transform: Mat4,
 ) -> Result<[Vec3; 2], WorldModelCollisionError> {
-    let [minimum, maximum] = bounds.map(Vec3::from_array);
-    let mut world_minimum = Vec3::splat(f32::INFINITY);
-    let mut world_maximum = Vec3::splat(f32::NEG_INFINITY);
-    for x in [minimum.x, maximum.x] {
-        for y in [minimum.y, maximum.y] {
-            for z in [minimum.z, maximum.z] {
-                let point = transform.transform_point3(Vec3::new(x, y, z));
-                world_minimum = world_minimum.min(point);
-                world_maximum = world_maximum.max(point);
-            }
-        }
-    }
-    if !world_minimum.is_finite() || !world_maximum.is_finite() {
-        return Err(WorldModelCollisionError::InvalidPlacement);
-    }
-    Ok([world_minimum, world_maximum])
+    let bounds = super::MovementCollisionBounds::new(
+        Vec3::from_array(bounds[0]),
+        Vec3::from_array(bounds[1]),
+    )
+    .and_then(|bounds| bounds.transformed(transform))
+    .map_err(|_| WorldModelCollisionError::InvalidPlacement)?;
+    Ok([bounds.minimum(), bounds.maximum()])
 }
 
 pub(super) fn bounds_intersect(left: [Vec3; 2], right: [Vec3; 2]) -> bool {
