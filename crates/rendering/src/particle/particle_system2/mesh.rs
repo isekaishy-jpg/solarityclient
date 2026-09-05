@@ -414,17 +414,13 @@ impl M2ParticleMeshPlan {
         {
             return Err(M2ParticleMeshPlanError::Transform);
         }
-        let inverse_particle_transform = particle_to_world.inverse();
-        let billboard_right = particle_to_world.transform_vector3(
-            inverse_particle_transform
-                .transform_vector3(camera.right())
-                .normalize(),
-        );
-        let billboard_up = particle_to_world.transform_vector3(
-            inverse_particle_transform
-                .transform_vector3(camera.up())
-                .normalize(),
-        );
+        // Build 12340 `0x0097BE80` transforms the particle center through
+        // `0x00B2D550`, then adds the head's X/Y offsets directly in view
+        // space. The emitter matrix therefore cannot scale these camera
+        // axes. Authored flag `0x20` supplies size inheritance separately;
+        // applying the model-space transform here would apply it twice.
+        let billboard_right = camera.right();
+        let billboard_up = camera.up();
         let emitter_right = particle_to_world.transform_vector3(Vec3::X);
         let emitter_up = particle_to_world.transform_vector3(Vec3::Y);
         let emitter_normal = particle_to_world.transform_vector3(Vec3::Z).normalize();

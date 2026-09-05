@@ -202,6 +202,25 @@ alpha, no-alpha-add, alpha-add, modulate, and no-alpha-add respectively; the
 stock default branch is opaque. Every particle is two-sided and depth-tested.
 Low emitter flags independently enable lighting, fog, and depth writes.
 
+### Attached particle card size
+
+Build 12340 `0x0097A390` composes the particle-center transform retained at
+`0x00B2D550`. The ordinary head path at `0x0097BE80` transforms each center
+through that matrix, then adds the lifetime-sized X/Y offsets directly in
+view space. Camera-facing card axes consequently remain independent of the
+attachment's scale and rotation. Raw flag `0x20` separately multiplies card
+size by the emitter X-axis length retained by `0x0097AC20` at runtime offset
+`+0x1EC`; raw flag `0x10` only selects emitter-local particle storage.
+
+Previously, resolving the camera axes through a normalized inverse emitter
+matrix and then the forward matrix introduced attachment scale into every
+model-space card. This shrank Bloodmage shoulder particles by approximately
+0.557 in the observed Blood Elf female attachment pose, although their
+size-inheritance flag is unset. Emitters with size inheritance applied that scale twice.
+The renderer now uses the camera's unit axes. A decoded-model regression covers
+shrinking, growing, rotated, translated, and nonuniform attachment transforms,
+both with and without size inheritance.
+
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
 pool grows, but never shrinks, to the executable's nearest-even estimate of
@@ -214,6 +233,17 @@ call order. Model-space particles retain local coordinates; ordinary particles
 receive their emitter matrix. Recovered but not-yet-implemented spline,
 collision, inherited-velocity, and follow paths return typed errors rather than
 falling through to another generator.
+
+The spherical spawn path at `0x00981950` retains its sampled angular direction
+before multiplying it by the shell radius. Zero-radius emitters therefore
+launch moving particles from a common center; a negative radius changes the
+birth position without reversing that direction. Deriving direction from the
+scaled birth position previously stopped Bloodmage hood and shoulder particles,
+whose radius is zero despite an authored speed of `1/36` units per second.
+The z-source branch separately normalizes its aim only when squared length
+exceeds the exact `0x009EA27C` constant (`0x34800000`); smaller vectors remain
+unchanged. Regression tests cover both branches through decoded emitters and
+live simulation.
 
 Resident M2 generations share one pipeline and one sampled-image descriptor per
 ordinary emitter, while every MDDF or MODD placement owns its simulation and

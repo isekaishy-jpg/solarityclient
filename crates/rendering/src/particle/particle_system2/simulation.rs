@@ -37,6 +37,9 @@ const EMITTER_MOTION_SAMPLE_SECONDS: f32 = 0.03;
 /// Raw `0x8000` is the distinct Squirt flag.
 const SPHERE_VERTICAL_VELOCITY: u32 = 0x0000_0100;
 
+/// `0x00981950` normalizes z-source aim only above `0x009EA27C`.
+const SPHERE_AIM_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3480_0000);
+
 /// Recovered simulation behaviors which must not be silently replaced by basic motion.
 /// Raw `0x1000` is intentionally absent: build-12340 `0x00832EA0` maps it to
 /// the render-only local-orientation bit and does not change particle motion.
@@ -833,23 +836,29 @@ fn spawn_sphere(
         + random.next_unit() * (pose.emission_area_length() - pose.emission_area_width());
     let elevation = random.next_signed() * pose.vertical_range();
     let azimuth = random.next_signed() * pose.horizontal_range();
-    let mut position = Vec3::new(
+    let sphere_direction = Vec3::new(
         azimuth.cos() * elevation.cos(),
         azimuth.sin() * elevation.cos(),
         elevation.sin(),
-    ) * radius;
+    );
+    let mut position = sphere_direction * radius;
     let mut direction = if pose.z_source() == 0.0 {
         if emitter.flags() & SPHERE_VERTICAL_VELOCITY != 0 {
             Vec3::Z
         } else {
-            position.normalize_or_zero()
+            // `0x00981950` retains the sampled unit direction independently
+            // of radius. Zero-radius emitters, including Bloodmage gear,
+            // still launch moving particles from their common center.
+            sphere_direction
         }
     } else {
         let aim = position - Vec3::Z * pose.z_source();
-        if aim.length_squared() == 0.0 {
-            return Err(M2ParticleSimulationError::DegenerateAim);
+        let length_squared = aim.length_squared();
+        if length_squared > SPHERE_AIM_THRESHOLD_SQUARED {
+            aim / length_squared.sqrt()
+        } else {
+            aim
         }
-        aim.normalize()
     };
     let speed = (random.next_signed() * pose.speed_variation() + 1.0) * pose.emission_speed();
     direction *= speed;

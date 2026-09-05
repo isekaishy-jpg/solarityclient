@@ -1015,3 +1015,37 @@ handshake, worldport acknowledgment, or coordinated map replacement lifecycle.
 Adding movement alone therefore will not enable instance entrances or
 cross-map teleports. The readiness/card primitives can be reused, but their
 initial-entry integration is not evidence that later transfers work.
+
+## Gear particle size and spherical launch
+
+The user's stock screenshot of Soap, a Blood Elf female mage on the configured
+test realm, now supplies the concrete gear-effect reference. A read-only query
+provided her appearance and equipped display IDs for an isolated renderer
+replay. The Bloodmage hood (`64897`) and shoulders (`64896`) each contain one
+spherical particle emitter, no ribbons, and no billboard bones. Shadow Silk
+Spindle (`64440`) contains three particle emitters alongside its crystal mesh.
+
+Two stock mismatches affected this case even with the correct live counts:
+
+- Camera-facing cards inherited attachment scale through their camera axes.
+  Stock `0x0097BE80` transforms particle centers separately from view-space
+  offsets. Soap's shoulder transform reduced those cards by about 0.557 even
+  though raw flag `0x20` was unset. Card axes now remain in the camera basis;
+  explicit size inheritance is applied once.
+- Spherical launch direction was derived from the radius-scaled position.
+  Soap's hood and shoulder emitters have zero radius and nonzero speed, so
+  this stopped their motion. Stock `0x00981950` retains the angular direction
+  before applying radius. The same function bounds z-source normalization
+  with its exact squared-length threshold, which is now reproduced too.
+
+Decoded-model regression tests exercise both defects and the z-source boundary.
+The full renderer replay retains 21 live particles per hood/shoulder emitter
+and 6, 12, and 4 in the off-hand emitters after warming. Production-renderer
+captures were inspected before and after the corrections. Counts were not
+increased to compensate for incorrect geometry or motion.
+Formatting, Clippy, and all 574 workspace tests pass.
+
+This is progress toward the screenshot, not a completed visual-parity claim.
+The adjacent local-orientation card basis and lighting-normal paths still need
+reconciliation with `0x0097A390` and `0x0097BE80`. The separate camera-key storage
+gaps and repeatable world-transfer integration also remain open.
