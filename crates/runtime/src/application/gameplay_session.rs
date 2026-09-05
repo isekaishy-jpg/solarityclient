@@ -2,8 +2,9 @@
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldMovementSpeeds, WorldMovementState,
-    WorldStateError, WorldTransform,
+    ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldMovementContext, WorldMovementFall,
+    WorldMovementSpeeds, WorldMovementState, WorldMovementTransport, WorldStateError,
+    WorldTransform,
 };
 use solarity_network::{
     InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
@@ -162,11 +163,32 @@ pub(crate) fn apply_object_updates(
     Ok(())
 }
 
+/// Preserves the complete admitted living context at the network-to-ECS boundary.
 fn movement_state(movement: ObjectMovementUpdate) -> Option<WorldMovementState> {
+    let context = movement.context()?;
     Some(WorldMovementState::new(
         movement.movement_flags()?,
         WorldMovementSpeeds::new(movement.speeds()?.values()),
-        movement.transport_guid(),
+        WorldMovementContext {
+            timestamp_ms: context.timestamp_ms,
+            transport: context.transport.map(|transport| WorldMovementTransport {
+                guid: transport.guid,
+                position: Vec3::from_array(transport.position),
+                orientation: transport.orientation,
+                time_ms: transport.time_ms,
+                seat: transport.seat,
+                interpolated_time_ms: transport.interpolated_time_ms,
+            }),
+            pitch_radians: context.pitch_radians,
+            fall_time_ms: context.fall_time_ms,
+            falling: context.falling.map(|falling| WorldMovementFall {
+                vertical_speed: falling.vertical_speed,
+                direction_sin: falling.direction_sin,
+                direction_cos: falling.direction_cos,
+                horizontal_speed: falling.horizontal_speed,
+            }),
+            spline_elevation: context.spline_elevation,
+        },
     ))
 }
 

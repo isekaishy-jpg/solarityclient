@@ -102,8 +102,11 @@ movement events. Their ordinary event IDs are forward/back/stop `0/1/2`,
 strafe-left/right/stop `3/4/5`, and turn-left/right/stop `11/12/13`.
 `0x006ECB50`, `0x006ECBB0`, `0x006ECDE0`, `0x006ECE40`, `0x006F0F70`, and
 `0x006ECEA0` establish this mapping. These are internal event IDs, not packet
-opcodes. Event admission uses `0x006EBC70` and `0x006EC090` before the movement
-update/dispatch owner at `0x007B5020`.
+opcodes. Event admission uses `0x006EBC70` and `0x006EC090`; `0x007B5020`
+links the movement owner into an intrusive work list. It does not itself
+integrate or dispatch movement. The due-event consumer at `0x006EF860`
+changes movement state before invoking the unit packet/event path at
+`0x007413F0`.
 
 Zoom also requires an update owner: the Lua entries default an absent numeric
 argument to one, then `0x005FF950` / `0x005FFA60` derive timed operations from
@@ -116,3 +119,33 @@ consumer and wire snapshot ordering, local displacement/collision and falling,
 server corrections and control changes, timed camera input, and the unit
 animation consumer. None of those capabilities is implied by successful
 binding dispatch or the now-available world-transfer pipeline.
+
+### Retained movement snapshot
+
+Living object updates now retain the full conditional `MovementInfo` context
+through network decoding and ECS projection: the sender timestamp, transport
+GUID/relative XYZ/facing/clock/signed seat/optional second clock, conditional
+pitch, unconditional fall time, conditional launch values, and spline
+elevation. Previously those fields were skipped after the flags and world
+transform were read. The existing nine movement speeds remain separate.
+
+The original writer is `0x004F4ED0`; `0x00987140` supplies its snapshot and
+`0x00987E30` establishes the direction basis. Falling direction is written as
+**cosine then sine**, following vertical launch speed and preceding horizontal
+launch speed. Those direction and velocity values describe the launch; fall
+time is a separate field and does not replace them with live apex velocity.
+
+Optional presence remains explicit. The second clock requires both transport
+and interpolation flags; an interpolation bit alone consumes no extra field.
+Pitch is present for swimming, flying, or the secondary always-pitching bit.
+FALLING_FAR alone does not introduce the four-float FALLING section. A later
+living update replaces the whole context, so old transport and launch values
+cannot leak into a new snapshot after their fields disappear.
+
+Authenticated TCP regressions drive 49 field combinations through the real
+gameplay pump into ECS, including wrapping timestamps, negative seats, absent
+versus present-zero fields, and preservation of opaque high flags. A second
+encrypted-session regression truncates a fully populated block at every byte
+and then receives a valid packet, proving malformed context cannot read into
+the next packet. These tests establish retention and framing; they do not
+establish local movement, spline-path simulation, or outgoing movement packets.

@@ -5,6 +5,8 @@ use std::io::Read;
 use flate2::read::ZlibDecoder;
 use thiserror::Error;
 
+use super::movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};
+
 const SMSG_COMPRESSED_UPDATE_OBJECT: u16 = 0x01F6;
 const MAX_UPDATE_BODY_BYTES: usize = 0x7F_FFFD;
 
@@ -81,6 +83,7 @@ pub struct ObjectMovementUpdate {
     update_flags: u16,
     movement_flags: Option<u64>,
     transport_guid: Option<u64>,
+    context: Option<ObjectMovementContext>,
     speeds: Option<ObjectMovementSpeeds>,
     position: Option<[f32; 3]>,
     orientation: Option<f32>,
@@ -103,6 +106,12 @@ impl ObjectMovementUpdate {
     #[must_use]
     pub const fn transport_guid(self) -> Option<u64> {
         self.transport_guid
+    }
+
+    /// Returns the complete conditional living movement snapshot.
+    #[must_use]
+    pub const fn context(self) -> Option<ObjectMovementContext> {
+        self.context
     }
 
     /// Returns all nine ordered speed values supplied by a living block.
@@ -452,6 +461,7 @@ impl<'a> UpdateCursor<'a> {
         }
         let mut movement_flags = None;
         let mut transport_guid = None;
+        let mut context = None;
         let mut speeds = None;
         let mut position = None;
         let mut orientation = None;
@@ -460,25 +470,48 @@ impl<'a> UpdateCursor<'a> {
             let high = u64::from(self.read_u16("living movement flags are truncated")?);
             let flags = low | (high << 32);
             movement_flags = Some(flags);
-            self.skip(4, "living movement timestamp is truncated")?;
+            let timestamp_ms = self.read_u32("living movement timestamp is truncated")?;
             position = Some(self.read_position()?);
             orientation = Some(self.read_f32("living movement orientation is truncated")?);
-            if flags & MOVEMENT_ON_TRANSPORT != 0 {
-                transport_guid = Some(self.read_transport_info()?);
-                if flags & MOVEMENT_INTERPOLATED != 0 {
-                    self.skip(4, "interpolated transport time is truncated")?;
-                }
-            }
-            if flags & (MOVEMENT_SWIMMING | MOVEMENT_FLYING | MOVEMENT_ALWAYS_ALLOW_PITCHING) != 0 {
-                self.skip(4, "movement pitch is truncated")?;
-            }
-            self.skip(4, "movement fall time is truncated")?;
-            if flags & MOVEMENT_FALLING != 0 {
-                self.skip(16, "falling movement is truncated")?;
-            }
-            if flags & MOVEMENT_SPLINE_ELEVATION != 0 {
-                self.skip(4, "spline elevation is truncated")?;
-            }
+            let transport = if flags & MOVEMENT_ON_TRANSPORT != 0 {
+                let transport = self.read_transport_info(flags)?;
+                transport_guid = Some(transport.guid);
+                Some(transport)
+            } else {
+                None
+            };
+            let pitch_radians = if flags
+                & (MOVEMENT_SWIMMING | MOVEMENT_FLYING | MOVEMENT_ALWAYS_ALLOW_PITCHING)
+                != 0
+            {
+                Some(self.read_f32("movement pitch is truncated")?)
+            } else {
+                None
+            };
+            let fall_time_ms = self.read_u32("movement fall time is truncated")?;
+            let falling = if flags & MOVEMENT_FALLING != 0 {
+                Some(ObjectMovementFall {
+                    vertical_speed: self.read_f32("falling vertical speed is truncated")?,
+                    direction_cos: self.read_f32("falling direction cosine is truncated")?,
+                    direction_sin: self.read_f32("falling direction sine is truncated")?,
+                    horizontal_speed: self.read_f32("falling horizontal speed is truncated")?,
+                })
+            } else {
+                None
+            };
+            let spline_elevation = if flags & MOVEMENT_SPLINE_ELEVATION != 0 {
+                Some(self.read_f32("spline elevation is truncated")?)
+            } else {
+                None
+            };
+            context = Some(ObjectMovementContext {
+                timestamp_ms,
+                transport,
+                pitch_radians,
+                fall_time_ms,
+                falling,
+                spline_elevation,
+            });
             speeds = Some(ObjectMovementSpeeds {
                 values: [
                     self.read_f32("walk speed is truncated")?,
@@ -527,16 +560,36 @@ impl<'a> UpdateCursor<'a> {
             update_flags,
             movement_flags,
             transport_guid,
+            context,
             speeds,
             position,
             orientation,
         })
     }
 
-    fn read_transport_info(&mut self) -> Result<u64, ObjectUpdateError> {
+    /// Reads the conditional MovementInfo attachment without discarding its clocks or offsets.
+    fn read_transport_info(
+        &mut self,
+        flags: u64,
+    ) -> Result<ObjectMovementTransport, ObjectUpdateError> {
         let guid = self.read_packed_guid("transport GUID is truncated")?;
-        self.skip(12 + 4 + 4 + 1, "transport movement is truncated")?;
-        Ok(guid)
+        let position = self.read_position()?;
+        let orientation = self.read_f32("transport orientation is truncated")?;
+        let time_ms = self.read_u32("transport time is truncated")?;
+        let seat = self.read_u8("transport seat is truncated")? as i8;
+        let interpolated_time_ms = if flags & MOVEMENT_INTERPOLATED != 0 {
+            Some(self.read_u32("interpolated transport time is truncated")?)
+        } else {
+            None
+        };
+        Ok(ObjectMovementTransport {
+            guid,
+            position,
+            orientation,
+            time_ms,
+            seat,
+            interpolated_time_ms,
+        })
     }
 
     fn read_spline(&mut self) -> Result<(), ObjectUpdateError> {

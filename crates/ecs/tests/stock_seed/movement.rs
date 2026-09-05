@@ -3,7 +3,8 @@
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectKind, WorldBootstrap, WorldMapId,
-    WorldMovementSpeeds, WorldMovementState, WorldTransform,
+    WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
+    WorldMovementTransport, WorldTransform,
 };
 use std::error::Error;
 
@@ -30,14 +31,36 @@ fn active_world_retains_complete_living_movement_state() -> Result<(), Box<dyn E
         std::f32::consts::PI,
     ]);
     let transport_guid = 0xF110_0000_0000_002A;
-    let movement = WorldMovementState::new(0x0000_0010_0020_0101, speeds, Some(transport_guid));
+    let context = WorldMovementContext {
+        timestamp_ms: 0xFFFF_FFF0,
+        transport: Some(WorldMovementTransport {
+            guid: transport_guid,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            orientation: 0.5,
+            time_ms: 900,
+            seat: -1,
+            interpolated_time_ms: Some(750),
+        }),
+        pitch_radians: Some(-0.25),
+        fall_time_ms: 400,
+        falling: Some(WorldMovementFall {
+            vertical_speed: 7.5,
+            direction_sin: 0.6,
+            direction_cos: 0.8,
+            horizontal_speed: 4.5,
+        }),
+        spline_elevation: Some(1.5),
+    };
+    let flags = 0x0000_0400_0420_1301;
+    let movement = WorldMovementState::new(flags, speeds, context);
 
     world.update_movement(guid, movement)?;
 
     let retained = world
         .movement_state(guid)
         .ok_or("living movement component was not retained")?;
-    assert_eq!(retained.flags(), 0x0000_0010_0020_0101);
+    assert_eq!(retained.flags(), flags);
+    assert_eq!(retained.context(), context);
     assert_eq!(retained.speeds().values(), speeds.values());
     assert_eq!(retained.transport_guid(), Some(transport_guid));
     assert_eq!(world.local_player_transport_guid(), Some(transport_guid));

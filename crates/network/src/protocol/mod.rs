@@ -12,6 +12,7 @@ mod character_deletion;
 mod character_directory;
 mod character_rename;
 mod liveness;
+mod movement;
 mod object_update;
 mod server_packet;
 mod world_entry;
@@ -36,6 +37,7 @@ pub use character_rename::{
     CharacterNameResult, CharacterRename, CharacterRenameError, CharacterRenameResult,
 };
 pub use liveness::WorldLivenessPacketError;
+pub use movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};
 pub use object_update::{
     ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectUpdateError,
     WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,

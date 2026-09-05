@@ -3,7 +3,9 @@
 use std::error::Error;
 
 use solarity_asset::{AnimationDataCatalog, ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ecs::{UnitAnimationTier, WorldMovementSpeeds, WorldMovementState};
+use solarity_ecs::{
+    UnitAnimationTier, WorldMovementContext, WorldMovementSpeeds, WorldMovementState,
+};
 use solarity_systems::{
     UnitLocomotionAnimation, WorldEntryGroundContact, resolve_unit_locomotion_animation,
     resolve_unit_model_animation,
@@ -15,7 +17,12 @@ const SPEEDS: WorldMovementSpeeds =
     WorldMovementSpeeds::new([2.5, 7.0, 4.5, 4.72, 2.5, 7.0, 4.5, 3.0, 3.0]);
 
 fn animation(flags: u64) -> u16 {
-    resolve_unit_locomotion_animation(WorldMovementState::new(flags, SPEEDS, None)).animation_id()
+    resolve_unit_locomotion_animation(WorldMovementState::new(
+        flags,
+        SPEEDS,
+        WorldMovementContext::default(),
+    ))
+    .animation_id()
 }
 
 /// A mounted rider requests the stock character `Mount` sequence, not the
@@ -75,7 +82,11 @@ fn model_animation_resolution_follows_stock_tiers_and_fallbacks() -> Result<(), 
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let catalog = AnimationDataCatalog::load(&mut store)?;
-    let run = resolve_unit_locomotion_animation(WorldMovementState::new(1, SPEEDS, None));
+    let run = resolve_unit_locomotion_animation(WorldMovementState::new(
+        1,
+        SPEEDS,
+        WorldMovementContext::default(),
+    ));
 
     let fly = resolve_unit_model_animation(&catalog, run, UnitAnimationTier::Fly, |id| id == 234)
         .ok_or("flying run did not resolve")?;
@@ -113,7 +124,11 @@ fn model_animation_resolution_guards_fallback_cycles() -> Result<(), Box<dyn Err
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let catalog = AnimationDataCatalog::load(&mut store)?;
-    let run = resolve_unit_locomotion_animation(WorldMovementState::new(1, SPEEDS, None));
+    let run = resolve_unit_locomotion_animation(WorldMovementState::new(
+        1,
+        SPEEDS,
+        WorldMovementContext::default(),
+    ));
 
     assert_eq!(
         resolve_unit_model_animation(&catalog, run, UnitAnimationTier::Ground, |_| false),

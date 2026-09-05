@@ -19,7 +19,10 @@ mod view;
 mod world;
 
 pub use game_object::GameObjectPresentation;
-pub use movement::{WorldMovementSpeeds, WorldMovementState, WorldTransform};
+pub use movement::{
+    WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
+    WorldMovementTransport, WorldTransform,
+};
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 pub use player::{
     LocalPlayer, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerAppearance, PlayerEquipment,

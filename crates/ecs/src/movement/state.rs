@@ -2,6 +2,8 @@
 
 use shipyard::Component;
 
+use super::context::WorldMovementContext;
+
 /// Nine living-object speeds in build-12340 packet order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldMovementSpeeds {
@@ -82,17 +84,21 @@ impl WorldMovementSpeeds {
 pub struct WorldMovementState {
     flags: u64,
     speeds: WorldMovementSpeeds,
-    transport_guid: Option<u64>,
+    context: WorldMovementContext,
 }
 
 impl WorldMovementState {
-    /// Creates state from the packet's exact flags, speeds, and transport parent.
+    /// Creates state from exact flags, speeds, and the admitted movement context.
     #[must_use]
-    pub const fn new(flags: u64, speeds: WorldMovementSpeeds, transport_guid: Option<u64>) -> Self {
+    pub const fn new(
+        flags: u64,
+        speeds: WorldMovementSpeeds,
+        context: WorldMovementContext,
+    ) -> Self {
         Self {
             flags,
             speeds,
-            transport_guid,
+            context,
         }
     }
 
@@ -111,6 +117,15 @@ impl WorldMovementState {
     /// Returns the transport parent named by the authoritative movement block.
     #[must_use]
     pub const fn transport_guid(self) -> Option<u64> {
-        self.transport_guid
+        match self.context.transport {
+            Some(transport) => Some(transport.guid),
+            None => None,
+        }
+    }
+
+    /// Returns the retained clocks, transport attachment, pitch, and launch state.
+    #[must_use]
+    pub const fn context(self) -> WorldMovementContext {
+        self.context
     }
 }

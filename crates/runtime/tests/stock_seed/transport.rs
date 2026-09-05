@@ -11,7 +11,8 @@ use solarity_asset::{
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, WorldBootstrap,
-    WorldMapId, WorldMovementSpeeds, WorldMovementState, WorldTransform,
+    WorldMapId, WorldMovementContext, WorldMovementSpeeds, WorldMovementState,
+    WorldMovementTransport, WorldTransform,
 };
 use solarity_runtime::{
     RuntimeTransportPoll, RuntimeTransportPresentation, RuntimeTransportResourceKind,
@@ -50,7 +51,17 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         WorldMovementState::new(
             0x200,
             WorldMovementSpeeds::new([0.0; 9]),
-            Some(transport_guid),
+            WorldMovementContext {
+                transport: Some(WorldMovementTransport {
+                    guid: transport_guid,
+                    position: Vec3::ZERO,
+                    orientation: 0.0,
+                    time_ms: 0,
+                    seat: -1,
+                    interpolated_time_ms: None,
+                }),
+                ..WorldMovementContext::default()
+            },
         ),
     )?;
 
