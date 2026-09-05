@@ -5,38 +5,41 @@ mod layout;
 #[path = "../../src/loading/readiness.rs"]
 mod readiness;
 
-use layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fill_uv};
+use layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fit_bounds};
 use readiness::{RuntimeLoadingReadiness, RuntimeLoadingStage};
 
-/// Loading art retains its authored aspect ratio and crops around the center.
+/// 0x0040A270 fits the graphics viewport; it does not crop the artwork's UVs.
 #[test]
-fn loading_art_uses_stock_centered_aspect_fill_coordinates() {
+fn loading_card_fits_stock_viewport_with_black_margins() {
     assert_eq!(
-        centered_aspect_fill_uv([1_024.0, 768.0], STOCK_LOADING_ART_ASPECT),
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
+        centered_aspect_fit_bounds([1_024.0, 768.0], STOCK_LOADING_ART_ASPECT),
+        [0.0, 0.0, 1_024.0, 768.0]
     );
-
-    let widescreen_viewport = centered_aspect_fill_uv([1_366.0, 768.0], STOCK_LOADING_ART_ASPECT);
-    assert_uv_close(widescreen_viewport[0], [0.0, 0.125_183_02]);
-    assert_uv_close(widescreen_viewport[3], [1.0, 0.874_816_95]);
-
-    let standard_viewport =
-        centered_aspect_fill_uv([1_024.0, 768.0], STOCK_WIDE_LOADING_ART_ASPECT);
-    assert_uv_close(standard_viewport[0], [0.083_333_31, 0.0]);
-    assert_uv_close(standard_viewport[3], [0.916_666_7, 1.0]);
-
-    let wide_art_on_sixteen_nine =
-        centered_aspect_fill_uv([1_920.0, 1_080.0], STOCK_WIDE_LOADING_ART_ASPECT);
-    assert_uv_close(wide_art_on_sixteen_nine[0], [0.0, 0.05]);
-    assert_uv_close(wide_art_on_sixteen_nine[3], [1.0, 0.95]);
+    assert_bounds_close(
+        centered_aspect_fit_bounds([1_366.0, 768.0], STOCK_LOADING_ART_ASPECT),
+        [171.0, 0.0, 1_195.0, 768.0],
+    );
+    assert_bounds_close(
+        centered_aspect_fit_bounds([1_024.0, 768.0], STOCK_WIDE_LOADING_ART_ASPECT),
+        [0.0, 64.0, 1_024.0, 704.0],
+    );
+    assert_bounds_close(
+        centered_aspect_fit_bounds([1_920.0, 1_080.0], STOCK_WIDE_LOADING_ART_ASPECT),
+        [96.0, 0.0, 1_824.0, 1_080.0],
+    );
+    // The reported test session used this actual fullscreen drawable extent.
+    assert_bounds_close(
+        centered_aspect_fit_bounds([2_560.0, 1_440.0], STOCK_WIDE_LOADING_ART_ASPECT),
+        [128.0, 0.0, 2_432.0, 1_440.0],
+    );
 }
 
-fn assert_uv_close(actual: [f32; 2], expected: [f32; 2]) {
+fn assert_bounds_close(actual: [f32; 4], expected: [f32; 4]) {
     assert!(
         actual
             .into_iter()
             .zip(expected)
-            .all(|(actual, expected)| (actual - expected).abs() < 0.000_01),
+            .all(|(actual, expected)| (actual - expected).abs() < 0.001),
         "actual={actual:?} expected={expected:?}"
     );
 }

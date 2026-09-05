@@ -19,10 +19,9 @@ use crate::application::ui_frame::PreparedUiFrame;
 
 use super::{
     RuntimeLoadingReadiness, RuntimeLoadingStage,
-    layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fill_uv},
+    layout::{STOCK_LOADING_ART_ASPECT, STOCK_WIDE_LOADING_ART_ASPECT, centered_aspect_fit_bounds},
 };
 
-const LOADING_BAR_BACKGROUND: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBackground.blp";
 const LOADING_BAR_FILL: &str = "Interface\\Glues\\LoadingBar\\Loading-BarFill.blp";
 const LOADING_BAR_BORDER: &str = "Interface\\Glues\\LoadingBar\\Loading-BarBorder.blp";
 
@@ -86,26 +85,29 @@ impl RuntimeLoadingScreen {
             display_extent.0 as f32 / display_extent.1 as f32 * 768.0,
             768.0,
         ];
-        let bar_background = AssetPath::new(LOADING_BAR_BACKGROUND)?;
         let bar_fill = AssetPath::new(LOADING_BAR_FILL)?;
         let bar_border = AssetPath::new(LOADING_BAR_BORDER)?;
-        // LoadingScreen.cpp 0x0040A990 owns the normal-card bar textures. Its
+        // LoadingScreen.cpp 0x0040A990 owns exactly the fill and border textures
+        // from the two records at 0x009E2DFC. Its
         // separate 0x0040AB70 text path exists only when
         // 0x00407E40 publishes TRIAL_LOADING_MESSAGE for a trial account.
-        let mut paths = vec![bar_background, bar_fill, bar_border];
+        let mut paths = vec![bar_fill, bar_border];
         if let Some(background) = &background {
             paths.push(background.path.clone());
         }
         let uploaded = upload_textures(renderer, assets, textures, &paths)?;
-        let background = background.as_ref().map(|background| {
-            (
-                &background.path,
-                centered_aspect_fill_uv(logical_extent, background.authored_aspect),
-            )
-        });
+        let card_bounds = centered_aspect_fit_bounds(
+            logical_extent,
+            background
+                .as_ref()
+                .map_or(STOCK_LOADING_ART_ASPECT, |background| {
+                    background.authored_aspect
+                }),
+        );
+        let background = background.as_ref().map(|background| &background.path);
         let plans = RuntimeLoadingStage::ALL
             .into_iter()
-            .map(|stage| loading_mesh(logical_extent, background, stage.progress()))
+            .map(|stage| loading_mesh(logical_extent, card_bounds, background, stage.progress()))
             .collect::<Result<Vec<_>, ApplicationError>>()?;
         let frame = PreparedUiFrame::prepare(
             renderer,
@@ -229,86 +231,62 @@ fn upload_textures(
     })
 }
 
+/// Maps the complete native card viewport into the renderer's display coordinates.
+/// The bar records at `0x009E2DFC` share that viewport with the uncropped image.
 fn loading_mesh(
     logical_extent: [f32; 2],
-    background: Option<(&AssetPath, [[f32; 2]; 4])>,
+    card_bounds: [f32; 4],
+    background: Option<&AssetPath>,
     progress: f32,
 ) -> Result<UiMeshPlan, ApplicationError> {
-    let width = logical_extent[0];
-    let height = logical_extent[1];
+    let [left, bottom, right, top] = card_bounds;
+    let width = right - left;
+    let height = top - bottom;
     let border_width = width * 0.600;
     let inner_width = width * 0.525;
     let border_height = height * 0.050;
     let inner_height = height * 0.025;
-    let center_y = height * 0.075;
-    let inner_x = (width - inner_width) * 0.5;
+    let center_y = bottom + height * 0.075;
+    let inner_x = left + (width - inner_width) * 0.5;
     let inner_y = center_y - inner_height * 0.5;
-    let fill_width = 1.0 + progress.clamp(0.0, 1.0) * (inner_width - 1.0);
+    let fill_width = progress.clamp(0.0, 1.0) * inner_width;
     let mut quads = vec![solid_quad(
         0,
-        [0.0, 0.0, width, height],
-        [0.015, 0.015, 0.02, 1.0],
+        [0.0, 0.0, logical_extent[0], logical_extent[1]],
+        [0.0, 0.0, 0.0, 1.0],
     )];
-    if let Some((path, texture_coordinates)) = background {
-        quads.push(texture_quad_with_coordinates(
-            1,
-            path.clone(),
-            [0.0, 0.0, width, height],
-            texture_coordinates,
-        ));
+    if let Some(path) = background {
+        quads.push(texture_quad(1, path.clone(), card_bounds));
     }
     quads.extend([
         texture_quad(
             2,
-            AssetPath::new(LOADING_BAR_BACKGROUND)?,
+            AssetPath::new(LOADING_BAR_FILL)?,
             [
                 inner_x,
                 inner_y,
-                inner_x + inner_width,
+                inner_x + fill_width,
                 inner_y + inner_height,
             ],
         ),
         texture_quad(
             3,
-            AssetPath::new(LOADING_BAR_FILL)?,
-            [
-                inner_x + 1.0,
-                inner_y,
-                inner_x + 1.0 + fill_width,
-                inner_y + inner_height,
-            ],
-        ),
-        texture_quad(
-            4,
             AssetPath::new(LOADING_BAR_BORDER)?,
             [
-                (width - border_width) * 0.5,
+                left + (width - border_width) * 0.5,
                 center_y - border_height * 0.5,
-                (width + border_width) * 0.5,
+                left + (width + border_width) * 0.5,
                 center_y + border_height * 0.5,
             ],
         ),
     ]);
-    UiMeshPlan::prepare([width, height], quads.into_iter())
+    UiMeshPlan::prepare(logical_extent, quads.into_iter())
         .map_err(UiRenderError::from)
         .map_err(ApplicationError::from)
 }
 
+/// Preserves the full stock UV range for both loading art and progress textures.
 fn texture_quad(object_index: usize, path: AssetPath, bounds: [f32; 4]) -> UiRenderQuad {
-    texture_quad_with_coordinates(
-        object_index,
-        path,
-        bounds,
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
-    )
-}
-
-fn texture_quad_with_coordinates(
-    object_index: usize,
-    path: AssetPath,
-    bounds: [f32; 4],
-    texture_coordinates: [[f32; 2]; 4],
-) -> UiRenderQuad {
     UiRenderQuad::new(
         object_index,
         UiRenderSource::Texture(path),
@@ -318,7 +296,7 @@ fn texture_quad_with_coordinates(
         UiTextureResidency::Blocking,
         false,
         bounds,
-        texture_coordinates,
+        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
         [[1.0; 4]; 4],
     )
 }

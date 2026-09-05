@@ -46,6 +46,11 @@ features were not tested.
 
 ## Remaining evidence and implementation work
 
+The September 5 test of `bfa15ad` also reports sparse or barely visible gear
+particles across characters and an incorrectly sized loading-card image.
+These are active correctness defects. Successful emitter decoding or particle
+simulation alone does not establish the complete attached effect's appearance.
+
 | Area | Required completion evidence |
 | --- | --- |
 | Character and customization transitions | Performance accepted by the user on `bfa15ad`; retain complete scene publication and investigate new regressions only |
@@ -979,3 +984,34 @@ transition maxima are 2.56-4.15 ms in the current run. Its following intervals
 still reach 58.9 ms, and the previous build reaches 88.0 ms. Cold publication
 and intermittent frame pauses remain unresolved; average throughput alone
 does not satisfy the stall goal.
+
+## Loading-card viewport correction
+
+The loading image previously filled the entire display with cropped UVs.
+Stock `0x0040A270` instead fits a centered graphics viewport, retains the
+complete image, and draws the progress bar inside the same fitted area.
+`0x00681F60 -> 0x00681890` writes graphics viewport state, not texture
+coordinates. `0x0047BF90` normalizes the display aspect by 0.75; the wide-card
+ratio uses the exact 16:10 and 4:3 constants at `0x00AB63B8/0x00AB63B4`.
+The image draw `0x004085A0` retains the full UV table at `0x00AB6400`.
+
+Solarity now fits the complete card and uses black margins. At the tested
+2560x1440 drawable extent, wide artwork occupies x=128..2432 with its full
+height. The bar follows those same bounds. Its two records at `0x009E2DFC`
+select only `Loading-BarFill` and `Loading-BarBorder`; the extra background
+texture and artificial one-pixel fill offset have been removed. The native
+fill width is the authored bar width multiplied by progress (`0x004090C0`).
+
+Viewport regression tests cover ordinary and wide artwork at matching, wider,
+and narrower display aspects. Captures rendered through the production
+loading-screen implementation were inspected at 2560x1440, 1024x768, and
+1440x1000. Formatting, Clippy, and all 571 workspace tests pass.
+
+Initial world entry is still distinct from repeatable world transfers.
+`RuntimeGameplayCoordinator` currently dispatches object updates, realm time,
+and action-button images, with a separate liveness task. Other active-world
+packets are retained. There is no implemented transfer-pending/new-world
+handshake, worldport acknowledgment, or coordinated map replacement lifecycle.
+Adding movement alone therefore will not enable instance entrances or
+cross-map teleports. The readiness/card primitives can be reused, but their
+initial-entry integration is not evidence that later transfers work.
