@@ -122,6 +122,57 @@ its equipment synchronization still need secondary timer ownership. Existing
 per-sequence key decoding/interpolation remains a separate compatibility
 boundary; this change does not establish complete parity for that boundary.
 
+## Confirmed key-storage gaps
+
+The installed test revision `bfa15ad` still derives a key's stored value count
+from its interpolation selector. Native storage instead follows the property's
+type. These findings identify pending corrections, not implemented behavior.
+
+| Property | Bytes per timestamp | Pinned validator / sampler |
+| --- | ---: | --- |
+| Ordinary vector | 12 | `0x008371C0` / `0x0082B0A0` |
+| Bone compressed quaternion | 8 | `0x00836F80` / `0x00828680` |
+| Texture-transform float quaternion | 16 | `0x00837010`, called by `0x00838B10` |
+| Camera position or target spline | 36 | `0x00837130` / `0x0082B460` |
+| Camera roll spline | 12 | `0x008371C0` / `0x0082B8A0` |
+| Fixed-point material scalar | 2 | `0x00836C00` / `0x0082AF40` |
+
+Camera keys contain a value, incoming tangent/control value, and outgoing
+tangent/control value even for step and linear interpolation. The camera
+samplers advance by the full triplet, select its first value for step/linear
+evaluation, and use the other two values for cubic interpolation. Ordinary
+vector and scalar samplers retain their ordinary stride and use linear
+interpolation for every nonzero selector.
+
+Direct archive extraction confirms this in
+`Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2`
+(SHA-256 `875f665c96a6c97004aab94c09e194aa1b1c134352788c122ddfb2abb6331d65`).
+Its linear roll track has two timestamps at byte `0x1481B0`: 0 and 66,667 ms.
+The two triplets starting at `0x1481C0` are both
+`(6.2831854820251465, 0, 0)`. The current decoder mistakenly selects the first
+key's incoming tangent as the second key. Its subsequent angle-wrapping
+workaround masks that decoding error; `0x0082B8A0` uses ordinary scalar linear
+interpolation and performs no angle wrapping. The linear position track has
+93 timestamps and 36-byte keys at `0x147450`; the third position value is
+`(0, 0, -0.0025912390556186438)` at 11,600 ms. Incorrect stride also changes
+these authored camera movements.
+
+The Night Elf backdrop has the same triplet layout with step interpolation:
+its camera position, target, and roll each have one all-zero key. Its M2 hash
+is `77445315fb1d47eed3f20b962a5b6e1e00ad28325b1fdffc12d7d7eddc29b5f9`.
+These original files have no rotation keys in their texture transforms, so
+they do not validate the float-quaternion sampler's behavior.
+
+`0x00828680` expands each compressed quaternion component as unsigned 16-bit
+times the float at `0x00A45560` (2/65535), minus one. Step sampling retains
+that result directly. Non-step sampling calls `0x00982630`, which linearly
+interpolates components without a hemisphere flip, then applies the polynomial
+normalization at `0x00982570`. Matrix construction at `0x004C1C40` uses the
+quaternion components directly. The current signed expansion, eager exact
+normalization, and normalized-key assumptions need correction together.
+Float texture-transform quaternion sampling still needs its own call-path
+verification before changing its implementation.
+
 ## Key-bone lookup
 
 The semantic key-bone table at header offset `0x34` contains signed 16-bit bone
