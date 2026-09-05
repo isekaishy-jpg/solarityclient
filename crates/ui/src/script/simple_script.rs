@@ -6,7 +6,7 @@ mod globals;
 mod tooltips;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -5332,6 +5332,12 @@ fn register_model_methods(
             Ok(())
         })?,
     )?;
+    // Stock's model cache (0x0081C390, reached through 0x0095F990)
+    // returns a resident resource before opening its archive entry again.
+    // Retain successful file validation for this mounted store and method
+    // table as well; the renderer owns decoded model/instance resources.
+    // Failed reads remain errors and are never recorded as validated files.
+    let validated_model_files = RefCell::new(HashSet::new());
     methods.raw_set(
         "SetModel",
         lua.create_function(move |lua, (model, value): (Table, Value)| {
@@ -5346,10 +5352,14 @@ fn register_model_methods(
                     "Model:SetModel requires a mounted asset store",
                 ));
             };
-            assets
-                .borrow_mut()
-                .read(&path)
-                .map_err(|_| mlua::Error::runtime(format!("Invalid model file: {display}")))?;
+            let validated = validated_model_files.borrow().contains(&path);
+            if !validated {
+                assets
+                    .borrow_mut()
+                    .read(&path)
+                    .map_err(|_| mlua::Error::runtime(format!("Invalid model file: {display}")))?;
+                validated_model_files.borrow_mut().insert(path.clone());
+            }
             if model
                 .raw_get::<Option<String>>(model_file_key())?
                 .as_deref()

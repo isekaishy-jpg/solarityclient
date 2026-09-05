@@ -713,3 +713,48 @@ scope records 38.3 ms, including 31.8 ms in model/UI presentation and 5.7 ms
 in platform events, with only 3.28 million thread cycles across that scope.
 Other low-cycle pauses appear in presentation and UI upload. The remaining
 long frames are not confined to the content geometry publisher.
+
+## Model-file validation during creation callbacks
+
+A call/return hook around the seeded interaction validator's create-button
+press and release identifies the remaining large Lua bridge cost. The two
+`SetCharCustomizeBackground` calls reach `Model:SetModel`, which previously
+read and decompressed the complete archive entry before comparing the live
+model path. The bytes were immediately discarded. Their combined native
+self time was 3.616 ms; `Show` took 1.065 ms across 61 calls and `SetText`
+0.838 ms across 43 calls. The hook includes observer overhead and does not
+measure ordinary frame throughput. Its call stack closes without unmatched
+returns.
+
+Build 12340's `Script_Model_SetModel` at `0x00960530` dispatches through
+virtual slot `0xe8`; both Model and ModelFFX use `0x0095F990`. This reaches
+`0x0081F8F0` and the shared resource cache at `0x0081C390`. A matching cached
+resource returns before the archive-open call at `0x00424B50`.
+
+The script method now retains successful file validation within its mounted
+asset-store and method-table lifetime. First reads still validate the archive
+entry, failed reads do not enter the set, and decoded model resources remain
+owned by the renderer's asset pipeline. The repeated background calls now
+take 1.913 ms combined in the same seeded hook diagnostic. The full observed
+button interval changes from 17.419 to 15.419 ms; that interval includes
+publication and profiling overhead, so the native-call attribution is the
+more direct evidence. A regression checks repeated selections, path spelling,
+different model objects, missing files, and isolation across mounted runtimes.
+
+This trace also identifies separate stock behavior that the script bridge
+does not yet fully implement: shared-model extension conversion, the
+`Spells\\ErrorCube.mdx` load attempted by `0x0081F8F0` after a failed resource
+request, and replacement of model instances through virtual slot `0xe4`.
+The validation reuse does not establish parity for those behaviors.
+
+Formatting, Clippy, all 555 workspace tests, and the real-data interaction
+validator pass. The 31-action replay with 6,000 following frames per action
+and detailed UI timing disabled also passes. Warm Human selection takes
+1.73 ms for its action; creation class actions take 4.80-6.11 ms and ordinary
+customization actions 1.69-2.35 ms. Following throughput ranges from 1,937 to
+3,008 FPS. Creation entry still reaches a 16.0 ms transition frame and Blood
+Elf creation 29.3 ms, so switching is not yet free of noticeable stalls.
+The maximum following-frame interval is 20.5 ms; its inner benchmark scope
+charges 2.50 million thread cycles and spends 20.37 ms in model/UI
+presentation. Randomized creation state and resource history still prevent
+treating full readiness times as a controlled before/after comparison.

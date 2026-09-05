@@ -1781,6 +1781,72 @@ GLUE_READY = true"#,
     Ok(())
 }
 
+/// File validation belongs to one mounted runtime even when another runtime
+/// has already selected the same path. Archive markers isolate this boundary
+/// from the separate decoded-M2 tests.
+#[test]
+fn glue_model_file_validation_is_scoped_to_mounted_runtime() -> Result<(), Box<dyn Error>> {
+    for available in [true, false] {
+        let mut files = vec![
+            FixtureFile {
+                path: "Interface\\GlueXML\\GlueXML.toc",
+                bytes: b"Models.xml\n",
+            },
+            FixtureFile {
+                path: "Interface\\GlueXML\\Models.xml",
+                bytes: br#"<Ui><Model name="FirstModel" hidden="true"/><Model name="SecondModel" hidden="true"/></Ui>"#,
+            },
+        ];
+        if available {
+            files.extend([
+                FixtureFile {
+                    path: "Solarity\\First.m2",
+                    bytes: b"first model archive marker",
+                },
+                FixtureFile {
+                    path: "Solarity\\Second.m2",
+                    bytes: b"second model archive marker",
+                },
+            ]);
+        }
+        let fixture = Fixture::new(&files)?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+        let globals = manager.bundle().lua().globals();
+        for name in ["FirstModel", "SecondModel"] {
+            let model = globals.get::<mlua::Table>(name)?;
+            let set_model = model.get::<mlua::Function>("SetModel")?;
+            let get_model = model.get::<mlua::Function>("GetModel")?;
+            for path in [
+                "Solarity\\First.m2",
+                "solarity/first.M2",
+                "Solarity\\Second.m2",
+                "Solarity\\First.m2",
+            ] {
+                let result = set_model.call::<()>((model.clone(), path));
+                if available {
+                    result?;
+                    assert_eq!(
+                        get_model.call::<String>(model.clone())?,
+                        path.replace('/', "\\").to_ascii_uppercase(),
+                    );
+                } else {
+                    assert!(result.is_err(), "unmounted model unexpectedly selected");
+                }
+            }
+            for _ in 0..2 {
+                assert!(
+                    set_model
+                        .call::<()>((model.clone(), "Solarity\\Missing.m2"))
+                        .is_err(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Screen rectangles use post-OnLoad dimensions, anchors, and dynamic frames.
 #[test]
 fn glue_manager_resolves_live_startup_geometry() -> Result<(), Box<dyn Error>> {
