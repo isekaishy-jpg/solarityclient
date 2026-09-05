@@ -82,6 +82,18 @@ impl MovementFallContactQuery {
         displacement: Vec3,
         triangles: &[MovementCollisionTriangle],
     ) -> Result<MovementFallContact, MovementFallContactError> {
+        self.resolve_extended(volume, displacement, triangles)
+            .map(|(contact, _)| contact)
+    }
+
+    /// The interval loop retains the native return value through addition and
+    /// progress comparisons before storing its accumulated float clock.
+    pub(super) fn resolve_extended(
+        self,
+        volume: &MovementCollisionVolume,
+        displacement: Vec3,
+        triangles: &[MovementCollisionTriangle],
+    ) -> Result<(MovementFallContact, f64), MovementFallContactError> {
         self.validate()?;
         let geometry = volume.fall_contact_geometry(
             displacement,
@@ -98,13 +110,16 @@ impl MovementFallContactQuery {
             kind: geometry.kind,
             last_triangle: geometry.last_triangle,
         };
-        if result.kind != MovementFallContactKind::Clear {
+        let consumed_seconds = if result.kind != MovementFallContactKind::Clear {
             self.resolve_time(
                 volume.foot_origin().z,
                 displacement.truncate().as_dvec2().length() as f32,
                 &mut result,
-            )?;
-        }
+            )?
+        } else {
+            f64::from(self.interval_seconds)
+        };
+        result.consumed_seconds = consumed_seconds as f32;
         if !result.displacement.is_finite()
             || !result.distance.is_finite()
             || !result.horizontal_correction.is_finite()
@@ -112,7 +127,7 @@ impl MovementFallContactQuery {
         {
             return Err(MovementFallContactError::NonFiniteResult);
         }
-        Ok(result)
+        Ok((result, consumed_seconds))
     }
 }
 
@@ -139,7 +154,7 @@ impl MovementFallContactQuery {
         height: f32,
         horizontal_distance: f32,
         result: &mut MovementFallContact,
-    ) -> Result<(), MovementFallContactError> {
+    ) -> Result<f64, MovementFallContactError> {
         let elapsed = f64::from(self.elapsed_seconds);
         let interval = f64::from(self.interval_seconds);
         let apex = self.trajectory.apex_seconds();
@@ -169,10 +184,9 @@ impl MovementFallContactQuery {
         if root <= elapsed {
             result.displacement = Vec3::ZERO;
             result.distance = 0.0;
-            result.consumed_seconds = 0.0;
+            return Ok(0.0);
         } else if root - elapsed <= interval {
             let consumed = root - elapsed;
-            result.consumed_seconds = consumed as f32;
             if consumed < f64::from(horizontal_time) {
                 let factor = consumed / f64::from(horizontal_time);
                 let delta = result.displacement.as_dvec3();
@@ -180,7 +194,8 @@ impl MovementFallContactQuery {
                 result.displacement = corrected.as_vec3();
                 result.distance = corrected.length() as f32;
             }
+            return Ok(consumed);
         }
-        Ok(())
+        Ok(interval)
     }
 }

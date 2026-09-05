@@ -5,6 +5,10 @@ The systems crate owns analytic fall distance and contact-time queries through
 viability. They do not yet integrate a living object's transform or consume
 keyboard commands.
 
+The [fall interval owner](movement-fall-integration.md) now combines these
+curves with repeated collision response, clocks, and phase transitions. It
+returns typed state and actions for the local movement owner.
+
 ## Fall curve
 
 The implementation follows build-12340 `Movement_C.cpp` in the fingerprinted
@@ -67,7 +71,7 @@ scalar inputs and outputs only; ordinary tests need no game installation or
 emulator. Separate public behavior tests check two crossings of a jump height,
 linear terminal-speed motion, and invalid scalar admission.
 
-## Collision response still under implementation
+## Remaining ground and step response
 
 The ground-response owner at `0x007620F0` consumes body sweeps, then chooses
 support, step trials, sliding, or a transition into falling. `0x00761B00` tests
@@ -75,6 +79,8 @@ step motion. Its viability helper at `0x007619C0` snapshots movement state,
 starts a trial fall, integrates collision-aware falling through `0x007612B0`,
 and checks the horizontal travel before restoring the snapshot. The analytic
 curve is required for that trial; it does not replace the trial's collisions.
+The fall interval itself is now implemented. Ground step selection and the
+trial's surrounding save/restore and result admission remain to be connected.
 
 The internal movement bit `0x04000000` tracks the step state and its anchor at
 movement offset `0x88`. It must remain distinct from the same bit position in

@@ -3,6 +3,7 @@
 //! This behavior is separated from movement components by the stock
 //! `Movement.cpp`, `Movement_C.cpp`, and `MovementShared.cpp` family.
 
+mod airborne;
 mod animation;
 mod contact;
 mod fall;
@@ -11,6 +12,11 @@ mod movement_source;
 mod path;
 mod player;
 
+pub use airborne::{
+    MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy,
+    MovementFallContinuation, MovementFallInterval, MovementFallPhase, MovementFallSnapshot,
+    MovementFallState,
+};
 pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
 pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
