@@ -33,4 +33,4 @@ pub use unit::{
     UnitSheathState, UnitStats, UnitVitals,
 };
 pub use view::PlayerViewState;
-pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};
+pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldObjectIdentity, WorldStateError};

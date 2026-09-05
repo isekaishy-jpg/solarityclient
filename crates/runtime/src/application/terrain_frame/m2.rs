@@ -4,9 +4,13 @@
 #[path = "../../../tests/application/model_playback.rs"]
 mod model_playback_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/game_object_scene.rs"]
+mod game_object_scene_tests;
+
 mod streaming;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::Mat4;
@@ -14,7 +18,7 @@ use solarity_asset::{
     AnimationDataCatalog, AssetPath, BlpTextureSource, DecodedM2Model, M2ModelAnimationMode,
     M2ParticleEmitter,
 };
-use solarity_ecs::WorldTransform;
+use solarity_ecs::{WorldObjectIdentity, WorldTransform};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
@@ -33,7 +37,9 @@ use solarity_rendering::{
     WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
     m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
+use solarity_systems::GameObjectAnimationRequest;
 
+use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
     ResidentGlueCharacterFrameInput, ResidentPlayerAttachment, ResidentPlayerFrameInput,
@@ -42,7 +48,6 @@ use crate::application::player_coordinator::{
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
 };
-use crate::application::transport_coordinator::{ResidentTransport, ResidentTransportResource};
 use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
@@ -132,6 +137,7 @@ enum M2TransparentDrawIndex {
 
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
+    placement_valid: bool,
     source_index: usize,
     /// Placement-local transform retained across animated parent resolution.
     local_transform: Mat4,
@@ -240,7 +246,11 @@ enum M2GpuPlacementOwner {
     /// One visible non-player unit projected from authoritative ECS state.
     CreatureBody { guid: u64 },
     /// The controlled player's current movement-parent GameObject.
-    Transport { guid: u64 },
+    GameObject {
+        guid: u64,
+        identity: WorldObjectIdentity,
+        display_id: u32,
+    },
     /// One equipment M2 driven by an animated player attachment point.
     PlayerItem {
         guid: u64,
@@ -566,6 +576,8 @@ impl<'source> From<&'source ResidentCreatureGeosets> for M2GeosetSelection<'sour
 
 /// Per-instance sequence state retained by stock's `CM2Model` owner.
 pub(in crate::application) struct M2Playback {
+    game_object_state: Option<u8>,
+    game_object_request: Option<u16>,
     animation_id: u16,
     sequence: usize,
     sequence_duration_ms: f32,
@@ -606,6 +618,28 @@ struct M2PlaybackSynchronization {
 }
 
 impl M2Playback {
+    /// Keeps static geometry and effects alive before a primary sequence exists.
+    fn unstarted(animation_id: u16) -> Self {
+        Self {
+            game_object_state: None,
+            game_object_request: None,
+            animation_id,
+            sequence: 0,
+            sequence_duration_ms: 0.0,
+            cycle_count: 1,
+            cycle_started_ms: 0.0,
+            has_variations: false,
+            previous_event_elapsed_ms: 0.0,
+            previous_global_event_elapsed_ms: 0.0,
+            event_timeline_started: false,
+            script_timer: None,
+            script_blend: None,
+            script_mode: M2ModelAnimationMode::Forward,
+            scene_time_ms: 0,
+            previous_event_scene_time_ms: 0,
+        }
+    }
+
     /// Starts a newly resident world owner against the existing scene clock.
     /// Native 0x00826B00 anchors sequence construction to that clock; loading a
     /// neighbor must not age its new local sequence from world entry time zero.
@@ -632,22 +666,7 @@ impl M2Playback {
     ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
         let animations = model.animations();
         if animations.sequences().is_empty() {
-            return Ok(Some(Self {
-                animation_id,
-                sequence: 0,
-                sequence_duration_ms: 0.0,
-                cycle_count: 1,
-                cycle_started_ms: 0.0,
-                has_variations: false,
-                previous_event_elapsed_ms: 0.0,
-                previous_global_event_elapsed_ms: 0.0,
-                event_timeline_started: false,
-                script_timer: None,
-                script_blend: None,
-                script_mode: M2ModelAnimationMode::Forward,
-                scene_time_ms: 0,
-                previous_event_scene_time_ms: 0,
-            }));
+            return Ok(Some(Self::unstarted(animation_id)));
         }
         let sequence = animations
             .sequence_for_variation(animation_id, 0)
@@ -671,6 +690,8 @@ impl M2Playback {
                 animation_id,
             })?;
         Ok(Some(Self {
+            game_object_state: None,
+            game_object_request: None,
             animation_id,
             sequence,
             sequence_duration_ms,
@@ -709,6 +730,77 @@ impl M2Playback {
             return Ok(());
         };
         let animation_id = resolved.animation_id();
+        self.apply_resolved_model_sequence(
+            model,
+            animation_id,
+            resolved.mode(),
+            time_offset_ms,
+            scene_time_ms,
+            random,
+        )
+    }
+
+    /// Changes a stable generic GameObject request without resetting live neighbors.
+    fn select_game_object_state(
+        &mut self,
+        model: &DecodedM2Model,
+        catalog: &AnimationDataCatalog,
+        state: u8,
+        scene_time_ms: u32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if self.game_object_state == Some(state) {
+            return Ok(());
+        }
+        let animations = model.animations();
+        // 0x00832AB0 also validates the primary bone before selecting or rolling.
+        if !animations.bones().is_empty() {
+            let request =
+                GameObjectAnimationRequest::resolve(animations, game_object_animation_id(state));
+            if self
+                .game_object_request
+                .is_some_and(|current| request.preserves_current(current))
+            {
+                self.game_object_state = Some(state);
+                return Ok(());
+            }
+            if let Some(resolved) =
+                animations.resolve_model_animation(catalog, u32::from(request.animation_id()))
+            {
+                // Frozen substitutions always name an authored Open/Close clip,
+                // so CM2Model cannot add a reverse/endpoint fallback operation.
+                let mode = if request.frozen() {
+                    M2ModelAnimationMode::HoldStart
+                } else {
+                    resolved.mode()
+                };
+                self.apply_resolved_model_sequence(
+                    model,
+                    resolved.animation_id(),
+                    mode,
+                    0,
+                    scene_time_ms,
+                    random,
+                )?;
+                self.game_object_request = Some(request.animation_id());
+            }
+        }
+        self.game_object_state = Some(state);
+        Ok(())
+    }
+
+    /// Shared 0x00832AB0 variation selection and 0x00826B00 timer construction.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_resolved_model_sequence(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_id: u16,
+        mode: M2ModelAnimationMode,
+        time_offset_ms: i32,
+        scene_time_ms: u32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let animations = model.animations();
         let sequence = animations
             .select_model_sequence(animation_id, random.next_u15())
             .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
@@ -722,7 +814,7 @@ impl M2Playback {
         }
         let timer = M2ModelSequenceTimer::new(
             &animations.sequences()[sequence],
-            resolved.mode(),
+            mode,
             // 0x00826B00 reads the owning scene clock at the request, even
             // when this model has not been sampled while its widget is hidden.
             scene_time_ms,
@@ -739,7 +831,7 @@ impl M2Playback {
             || animations.sequences()[sequence].variation_next().is_some();
         self.script_timer = Some(timer);
         self.script_blend = None;
-        self.script_mode = resolved.mode();
+        self.script_mode = mode;
         Ok(())
     }
 
@@ -1176,107 +1268,142 @@ impl M2Frame {
         })
     }
 
-    /// Replaces the dynamic movement-parent M2 without disturbing terrain M2s.
-    pub(super) fn replace_transport(
+    /// Reconciles GameObject lifetimes while preserving retained animation/effects.
+    pub(super) fn synchronize_game_objects(
         &mut self,
         renderer: &mut VulkanRenderer,
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let prepared = match transport {
-            Some(transport) => match (transport.resource(), transport.placement()) {
-                (ResidentTransportResource::M2(source), Some(placement)) => {
-                    match prepare_source(renderer, source)? {
-                        Some(gpu) => {
-                            let matrix = placement.matrix();
-                            let placement = unit_gpu_placement(
-                                0,
-                                matrix,
-                                M2GpuPlacementOwner::Transport {
-                                    guid: transport.guid(),
-                                },
-                                source.model(),
-                                transport_animation_id(transport.state()),
-                                None,
-                                random,
-                            )?;
-                            Some((gpu, placement))
+        let sources = &self.sources;
+        self.placements.retain(|placement| {
+            let M2GpuPlacementOwner::GameObject {
+                identity,
+                display_id,
+                ..
+            } = placement.owner
+            else {
+                return true;
+            };
+            game_objects.get(identity).is_some_and(|instance| {
+                instance.display_id() == display_id
+                    && match (
+                        instance.resource(),
+                        sources.get(placement.source_index).and_then(Option::as_ref),
+                    ) {
+                        (Some(GameObjectResource::M2(cpu)), Some(gpu)) => {
+                            Arc::ptr_eq(cpu.model(), &gpu.model)
                         }
-                        None => None,
+                        _ => false,
                     }
-                }
+            })
+        });
+        let retained = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                M2GpuPlacementOwner::GameObject {
+                    identity,
+                    display_id,
+                    ..
+                } => Some((identity, display_id)),
                 _ => None,
-            },
-            None => None,
-        };
-
-        self.remove_transport();
-        if let Some((source, mut placement)) = prepared {
-            let source_index = self.sources.len();
-            placement.source_index = source_index;
-            self.sources.push(Some(source));
+            })
+            .collect::<HashSet<_>>();
+        let mut sources = self
+            .sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| {
+                source
+                    .as_ref()
+                    .map(|source| (Arc::as_ptr(&source.model), index))
+            })
+            .collect::<HashMap<_, _>>();
+        let scene_time_ms = self.animation_time_ms();
+        for instance in game_objects.instances() {
+            if retained.contains(&(instance.identity(), instance.display_id())) {
+                continue;
+            }
+            let (Some(GameObjectResource::M2(cpu)), Some(resolved)) =
+                (instance.resource(), instance.placement())
+            else {
+                continue;
+            };
+            let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
+                *index
+            } else {
+                let Some(gpu) = prepare_source(renderer, cpu)? else {
+                    continue;
+                };
+                let index = self.sources.len();
+                sources.insert(Arc::as_ptr(&gpu.model), index);
+                self.sources.push(Some(gpu));
+                index
+            };
+            let mut playback = M2Playback::unstarted(0);
+            playback.scene_time_ms = scene_time_ms as u32;
+            playback.previous_event_scene_time_ms = scene_time_ms as u32;
+            playback.select_game_object_state(
+                cpu.model(),
+                game_objects.animations(),
+                instance.state(),
+                scene_time_ms as u32,
+                random,
+            )?;
+            let placement = m2_gpu_placement(
+                source_index,
+                resolved.matrix(),
+                M2GpuPlacementOwner::GameObject {
+                    guid: instance.guid(),
+                    identity: instance.identity(),
+                    display_id: instance.display_id(),
+                },
+                cpu.model(),
+                Some(playback),
+                None,
+            )?;
             self.placements.push(placement);
         }
+        self.placement_topology_dirty = true;
+        self.compact_sources();
         Ok(())
     }
 
-    /// Applies the latest replicated transport transform in place.
-    pub(super) fn update_transport_state(
+    /// Refreshes current GameObject placements with indexed lifetime lookup.
+    pub(super) fn update_game_object_states(
         &mut self,
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let Some(transport) = transport else {
-            return Ok(());
-        };
-        let (ResidentTransportResource::M2(_), Some(resolved)) =
-            (transport.resource(), transport.placement())
-        else {
-            return Ok(());
-        };
-        let Some(placement) = self.placements.iter_mut().find(|placement| {
-            placement.owner
-                == M2GpuPlacementOwner::Transport {
-                    guid: transport.guid(),
-                }
-        }) else {
-            return Ok(());
-        };
-        let matrix = resolved.matrix();
-        placement.local_transform = matrix;
-        placement.transform = matrix;
-        let Some(source) = self.sources[placement.source_index].as_ref() else {
-            return Ok(());
-        };
-        if let Some(playback) = placement.playback.as_mut() {
-            playback.select_animation(
-                &source.model,
-                transport_animation_id(transport.state()),
-                animation_time_ms,
-                random,
-            )?;
+        for placement in &mut self.placements {
+            let M2GpuPlacementOwner::GameObject { identity, .. } = placement.owner else {
+                continue;
+            };
+            let Some(instance) = game_objects.get(identity) else {
+                placement.placement_valid = false;
+                continue;
+            };
+            let resolved = instance.placement();
+            placement.placement_valid = resolved.is_some();
+            if let Some(resolved) = resolved {
+                placement.local_transform = resolved.matrix();
+                placement.transform = resolved.matrix();
+            }
+            if let Some(source) = self.sources[placement.source_index].as_ref()
+                && let Some(playback) = placement.playback.as_mut()
+            {
+                playback.select_game_object_state(
+                    &source.model,
+                    game_objects.animations(),
+                    instance.state(),
+                    animation_time_ms as u32,
+                    random,
+                )?;
+            }
         }
         Ok(())
-    }
-
-    /// Drops renderer references owned only by the current transport.
-    fn remove_transport(&mut self) {
-        self.placement_topology_dirty = true;
-        let mut source_indices = Vec::new();
-        self.placements.retain(|placement| {
-            if matches!(placement.owner, M2GpuPlacementOwner::Transport { .. }) {
-                source_indices.push(placement.source_index);
-                false
-            } else {
-                true
-            }
-        });
-        for source_index in source_indices {
-            if let Some(source) = self.sources.get_mut(source_index) {
-                *source = None;
-            }
-        }
     }
 
     /// Uploads one immutable Glue model generation without starting playback.
@@ -1344,6 +1471,7 @@ impl M2Frame {
         Ok(Self {
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
+                placement_valid: true,
                 source_index: 0,
                 local_transform: transform,
                 transform,
@@ -1619,6 +1747,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                placement_valid: true,
                 source_index,
                 ..placement
             });
@@ -1696,6 +1825,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                placement_valid: true,
                 source_index,
                 ..placement
             });
@@ -1753,6 +1883,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                placement_valid: true,
                 source_index,
                 ..placement
             });
@@ -1782,6 +1913,7 @@ impl M2Frame {
                 let source_index = self.sources.len();
                 self.sources.push(Some(source));
                 self.placements.push(M2GpuPlacement {
+                    placement_valid: true,
                     source_index,
                     ..placement
                 });
@@ -1975,7 +2107,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
-                | M2GpuPlacementOwner::Transport { .. } => false,
+                | M2GpuPlacementOwner::GameObject { .. } => false,
             };
             if owned {
                 player_sources.push(placement.source_index);
@@ -2034,7 +2166,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
-                | M2GpuPlacementOwner::Transport { .. } => false,
+                | M2GpuPlacementOwner::GameObject { .. } => false,
             };
             if owned {
                 remote_sources.push(placement.source_index);
@@ -2251,7 +2383,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::RemotePlayerBody { .. }
                             | M2GpuPlacementOwner::RemotePlayerMount { .. }
                             | M2GpuPlacementOwner::CreatureBody { .. }
-                            | M2GpuPlacementOwner::Transport { .. }
+                            | M2GpuPlacementOwner::GameObject { .. }
                             | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
                         }),
                 );
@@ -2274,7 +2406,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::RemotePlayerBody { .. }
                             | M2GpuPlacementOwner::RemotePlayerMount { .. }
                             | M2GpuPlacementOwner::CreatureBody { .. }
-                            | M2GpuPlacementOwner::Transport { .. }
+                            | M2GpuPlacementOwner::GameObject { .. }
                             | M2GpuPlacementOwner::PlayerItem { .. } => None,
                         }),
                 );
@@ -2353,6 +2485,9 @@ impl M2Frame {
                 .push((guid, playback.synchronization(&source.model)));
         }
         for (placement_index, placement) in self.placements.iter_mut().enumerate() {
+            if !placement.placement_valid {
+                continue;
+            }
             if let Some(attachment_id) = placement.glue_parent_attachment {
                 let parent = self
                     .glue_attachment_transforms
@@ -3181,7 +3316,7 @@ fn placement_parent_index(
         | M2GpuPlacementOwner::PlayerMount { .. }
         | M2GpuPlacementOwner::RemotePlayerMount { .. }
         | M2GpuPlacementOwner::CreatureBody { .. }
-        | M2GpuPlacementOwner::Transport { .. } => None,
+        | M2GpuPlacementOwner::GameObject { .. } => None,
     }
 }
 
@@ -3274,7 +3409,7 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
         | M2GpuPlacementOwner::RemotePlayerBody { guid }
         | M2GpuPlacementOwner::RemotePlayerMount { guid }
         | M2GpuPlacementOwner::CreatureBody { guid }
-        | M2GpuPlacementOwner::Transport { guid }
+        | M2GpuPlacementOwner::GameObject { guid, .. }
         | M2GpuPlacementOwner::PlayerItem { guid, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
     }
@@ -3294,7 +3429,7 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::RemotePlayerBody { .. }
         | M2GpuPlacementOwner::RemotePlayerMount { .. }
         | M2GpuPlacementOwner::CreatureBody { .. }
-        | M2GpuPlacementOwner::Transport { .. }
+        | M2GpuPlacementOwner::GameObject { .. }
         | M2GpuPlacementOwner::PlayerItem { .. }
         | M2GpuPlacementOwner::PlayerItemVisual { .. } => M2SceneLightBank::Environment,
     }
@@ -3494,6 +3629,25 @@ fn unit_gpu_placement(
     random: &mut CrtRand,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let playback = M2Playback::new(model, animation_id, random)?;
+    m2_gpu_placement(
+        source_index,
+        transform,
+        owner,
+        model,
+        playback,
+        particle_colors,
+    )
+}
+
+/// Constructs the effect owner around playback selected by its behavior.
+fn m2_gpu_placement(
+    source_index: usize,
+    transform: Mat4,
+    owner: M2GpuPlacementOwner,
+    model: &DecodedM2Model,
+    playback: Option<M2Playback>,
+    particle_colors: Option<M2ParticleColorReplacement>,
+) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let particles = stock_particle_simulations(model);
     let ribbons = model
         .animations()
@@ -3502,6 +3656,7 @@ fn unit_gpu_placement(
         .map(M2RibbonTrail::new)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
+        placement_valid: true,
         source_index,
         local_transform: transform,
         transform,
@@ -3710,10 +3865,14 @@ fn unit_placement_transform(
     Ok(matrix)
 }
 
-/// Current stable transport pose; the native generic behavior additionally
-/// owns progress, transition clips, model fallbacks, and completion callbacks.
-const fn transport_animation_id(state: u8) -> u16 {
-    if state == 1 { 147 } else { 149 }
+/// Stable generic behavior request; progress, transition clips, and completion
+/// callbacks additionally require the retained GameObject behavior clock.
+const fn game_object_animation_id(state: u8) -> u16 {
+    match state {
+        1 => 147,
+        2 => 151,
+        _ => 149,
+    }
 }
 
 /// Publishes a source only when every selected draw has concrete BLP stages.

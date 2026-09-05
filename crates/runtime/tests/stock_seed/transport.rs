@@ -2,11 +2,13 @@
 
 use std::error::Error;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, GameObjectDisplayCatalog, Locale,
+    AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot,
+    GameObjectDisplayCatalog, Locale,
 };
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_ecs::{
@@ -15,10 +17,241 @@ use solarity_ecs::{
     WorldMovementState, WorldMovementTransport, WorldTransform,
 };
 use solarity_runtime::{
-    RuntimeTransportPoll, RuntimeTransportPresentation, RuntimeTransportResourceKind,
+    RuntimeGameObjectPresentation, RuntimeGameObjectResourceKind, RuntimeTransportPoll,
 };
 
 use crate::support::ClientFixture;
+
+#[test]
+fn ordinary_game_objects_share_preparation_across_lifetimes() -> Result<(), Box<dyn Error>> {
+    let displays = game_object_display_table();
+    let root_wmo = root_wmo_fixture();
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\GameObjectDisplayInfo.dbc", &displays),
+        ("World\\Wmo\\Transport\\Fixture.wmo", &root_wmo),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let mut presentation =
+        RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
+            .with_worker_catalog(catalog);
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_game_object(&mut world, 90, Vec3::X)?;
+    add_game_object(&mut world, 10, Vec3::Y)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while presentation.resident_object_count() != 2 {
+        assert_eq!(
+            presentation.synchronize_async(Some(&world), &cpu)?,
+            RuntimeTransportPoll::Idle
+        );
+        assert!(
+            presentation.is_ready(),
+            "ordinary objects must not become the transport loading gate"
+        );
+        if Instant::now() >= deadline {
+            return Err("ordinary GameObject preparation timed out".into());
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(presentation.resident_resource_count(), 1);
+    let revision = presentation.scene_revision();
+    let original = presentation
+        .object_identity(90)
+        .ok_or("missing original lifetime")?;
+    world.update_transform(90, WorldTransform::new(Vec3::Z, 0.0))?;
+    assert_eq!(
+        presentation.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTransportPoll::Idle
+    );
+    assert_eq!(
+        presentation.scene_revision(),
+        revision,
+        "matrix updates must not republish resources"
+    );
+    assert_eq!(
+        presentation
+            .object_placement(90)
+            .ok_or("lost placement")?
+            .matrix()
+            .w_axis
+            .truncate(),
+        Vec3::Z
+    );
+
+    // A stopped executor proves that the new lifetimes reuse complete CPU
+    // preparations rather than merely sharing the underlying parsed WMO.
+    cpu.shutdown()?;
+    add_game_object(&mut world, 20, Vec3::splat(2.0))?;
+    presentation.synchronize_async(Some(&world), &cpu)?;
+    assert_eq!(presentation.resident_object_count(), 3);
+    assert_eq!(presentation.resident_resource_count(), 1);
+    for guid in [90, 10, 20] {
+        world.remove_object(guid)?;
+    }
+    add_game_object(&mut world, 90, Vec3::splat(9.0))?;
+    presentation.synchronize_async(Some(&world), &cpu)?;
+    assert_eq!(presentation.resident_object_count(), 1);
+    assert_eq!(presentation.resident_resource_count(), 1);
+    assert_ne!(presentation.object_identity(90), Some(original));
+    assert_eq!(
+        presentation
+            .object_placement(90)
+            .ok_or("lost recreated placement")?
+            .matrix()
+            .w_axis
+            .truncate(),
+        Vec3::splat(9.0)
+    );
+    world.remove_object(90)?;
+    presentation.synchronize_async(Some(&world), &cpu)?;
+    assert_eq!(presentation.resident_object_count(), 0);
+    assert_eq!(presentation.resident_resource_count(), 0);
+    Ok(())
+}
+
+fn add_game_object(
+    world: &mut ActiveWorld,
+    guid: u64,
+    position: Vec3,
+) -> Result<(), Box<dyn Error>> {
+    let entity = world.create_object(
+        guid,
+        ObjectKind::GameObject,
+        Some(WorldTransform::new(position, 0.0)),
+        [],
+    )?;
+    world.storage_mut().add_component(
+        entity,
+        (
+            ObjectPresentation::new(1, 1.0),
+            GameObjectPresentation::new(42, 1),
+        ),
+    );
+    Ok(())
+}
+
+#[test]
+fn retired_jobs_cannot_publish_or_fail_a_replacement_world() -> Result<(), Box<dyn Error>> {
+    let displays = game_object_displays(&[
+        (42, "World\\Missing.wmo"),
+        (43, "World\\Wmo\\Transport\\Fixture.wmo"),
+    ]);
+    let root_wmo = root_wmo_fixture();
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\GameObjectDisplayInfo.dbc", &displays),
+        ("World\\Wmo\\Transport\\Fixture.wmo", &root_wmo),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let mut presentation =
+        RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
+            .with_worker_catalog(catalog);
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("bad capacity")?,
+    ))?;
+    let (release, wait) = std::sync::mpsc::channel();
+    let gate = cpu.try_submit(move || wait.recv())?;
+    let bootstrap = WorldBootstrap::new(WorldMapId::new(0), 7, "Local", Vec3::ZERO, 0.0);
+    let mut world = ActiveWorld::enter(bootstrap.clone());
+    add_game_object(&mut world, 9, Vec3::ONE)?;
+    // Ordinary preparation reserves the remaining interactive lane.
+    assert_eq!(
+        presentation.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTransportPoll::Idle
+    );
+    assert_eq!(cpu.snapshot()?.in_flight(), 1);
+    attach_transport(&mut world, 9)?;
+    assert!(matches!(
+        presentation.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTransportPoll::Pending { guid: 9, .. }
+    ));
+    assert_eq!(cpu.snapshot()?.in_flight(), 2);
+    let old_identity = presentation
+        .object_identity(9)
+        .ok_or("missing queued lifetime")?;
+    presentation.disconnect();
+    let mut replacement = ActiveWorld::enter(bootstrap);
+    add_game_object(&mut replacement, 90, Vec3::ZERO)?;
+    add_game_object(&mut replacement, 9, Vec3::splat(9.0))?;
+    let entity = replacement.entity_by_guid(9).ok_or("missing replacement")?;
+    replacement
+        .storage_mut()
+        .add_component(entity, (GameObjectPresentation::new(43, 1),));
+    attach_transport(&mut replacement, 9)?;
+    assert!(matches!(
+        presentation.synchronize_async(Some(&replacement), &cpu)?,
+        RuntimeTransportPoll::Pending { guid: 9, .. }
+    ));
+    assert_eq!(presentation.resident_object_count(), 0);
+    release.send(())?;
+    gate.join()??;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let poll = presentation.synchronize_async(Some(&replacement), &cpu)?;
+        if matches!(poll, RuntimeTransportPoll::ResourceLoaded { guid: 9, .. }) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err("replacement resource timed out".into());
+        }
+        std::thread::yield_now();
+    }
+    assert_ne!(presentation.object_identity(9), Some(old_identity));
+    assert_eq!(presentation.resident_display_id(), Some(43));
+    assert_eq!(
+        presentation.resident_object_count(),
+        1,
+        "transport must precede the earlier ordinary request"
+    );
+    assert_eq!(
+        presentation
+            .resident_placement()
+            .ok_or("lost replacement placement")?
+            .matrix()
+            .w_axis
+            .truncate(),
+        Vec3::splat(9.0)
+    );
+    presentation.disconnect();
+    cpu.shutdown()?;
+    Ok(())
+}
+
+fn attach_transport(world: &mut ActiveWorld, guid: u64) -> Result<(), Box<dyn Error>> {
+    world.update_movement(
+        7,
+        WorldMovementState::new(
+            0x200,
+            WorldMovementSpeeds::new([1.0; 9]),
+            WorldMovementContext {
+                transport: Some(WorldMovementTransport {
+                    guid,
+                    position: Vec3::ZERO,
+                    orientation: 0.0,
+                    time_ms: 0,
+                    seat: -1,
+                    interpolated_time_ms: None,
+                }),
+                ..WorldMovementContext::default()
+            },
+        ),
+    )?;
+    Ok(())
+}
 
 /// Stock `0x00409800` waits for the named object and its concrete WMO request.
 #[test]
@@ -33,8 +266,10 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     let archive_catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
     let mut store = AssetStore::mount(archive_catalog.clone())?;
     let catalog = GameObjectDisplayCatalog::load(&mut store)?;
-    let mut presentation = RuntimeTransportPresentation::new(AssetStoreHandle::new(store), catalog)
-        .with_worker_catalog(archive_catalog);
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let mut presentation =
+        RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), catalog, animations)
+            .with_worker_catalog(archive_catalog);
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
 
     let player_guid = 0x0000_0000_0000_0042;
@@ -91,7 +326,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Pending {
             guid: transport_guid,
-            kind: RuntimeTransportResourceKind::WorldModel,
+            kind: RuntimeGameObjectResourceKind::WorldModel,
         }
     );
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -100,7 +335,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         if poll
             == (RuntimeTransportPoll::ResourceLoaded {
                 guid: transport_guid,
-                kind: RuntimeTransportResourceKind::WorldModel,
+                kind: RuntimeGameObjectResourceKind::WorldModel,
             })
         {
             break;
@@ -131,7 +366,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Current {
             guid: transport_guid,
-            kind: RuntimeTransportResourceKind::WorldModel,
+            kind: RuntimeGameObjectResourceKind::WorldModel,
         }
     );
 
@@ -146,7 +381,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Current {
             guid: transport_guid,
-            kind: RuntimeTransportResourceKind::WorldModel,
+            kind: RuntimeGameObjectResourceKind::WorldModel,
         }
     );
     assert_eq!(presentation.resident_state(), Some(0));
@@ -160,7 +395,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         presentation.synchronize_async(Some(&world), &cpu)?,
         RuntimeTransportPoll::Current {
             guid: transport_guid,
-            kind: RuntimeTransportResourceKind::WorldModel,
+            kind: RuntimeGameObjectResourceKind::WorldModel,
         }
     );
     let rotated = presentation
@@ -187,7 +422,7 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     )?;
     let changed = RuntimeTransportPoll::PlacementChanged {
         guid: transport_guid,
-        kind: RuntimeTransportResourceKind::WorldModel,
+        kind: RuntimeGameObjectResourceKind::WorldModel,
     };
     assert_eq!(presentation.synchronize_async(Some(&world), &cpu)?, changed);
     assert!(presentation.resident_placement().is_none());
@@ -250,18 +485,33 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
 
 /// Builds the exact 19-word display row used by the dynamic owner.
 fn game_object_display_table() -> Vec<u8> {
+    game_object_displays(&[(42, "World\\Wmo\\Transport\\Fixture.wmo")])
+}
+
+fn game_object_displays(paths: &[(u32, &str)]) -> Vec<u8> {
     let mut strings = vec![0_u8];
-    let path = append_string(&mut strings, "World\\Wmo\\Transport\\Fixture.wmo");
-    let mut fields = [0_u32; 19];
-    fields[0] = 42;
-    fields[1] = path;
-    for (slot, value) in fields[12..18]
-        .iter_mut()
-        .zip([-2.0_f32, -3.0, -4.0, 2.0, 3.0, 4.0])
-    {
-        *slot = value.to_bits();
+    let mut records = Vec::new();
+    for (id, path) in paths {
+        let mut fields = [0_u32; 19];
+        fields[0] = *id;
+        fields[1] = append_string(&mut strings, path);
+        for (slot, value) in fields[12..18]
+            .iter_mut()
+            .zip([-2.0_f32, -3.0, -4.0, 2.0, 3.0, 4.0])
+        {
+            *slot = value.to_bits();
+        }
+        for value in fields {
+            records.extend_from_slice(&value.to_le_bytes());
+        }
     }
-    wdbc_fixture(&fields, &strings)
+    let mut bytes = b"WDBC".to_vec();
+    for value in [paths.len() as u32, 19, 76, strings.len() as u32] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend(records);
+    bytes.extend(strings);
+    bytes
 }
 
 /// Builds a valid zero-group WMO root without unrelated embedded doodads.
@@ -275,21 +525,6 @@ fn root_wmo_fixture() -> Vec<u8> {
     set_u16(&mut header, 60, 0x8);
     push_chunk(&mut bytes, *b"DHOM", &header);
     push_chunk(&mut bytes, *b"IGOM", &[]);
-    bytes
-}
-
-/// Encodes one ordinary WDBC generation.
-fn wdbc_fixture(fields: &[u32], strings: &[u8]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(20 + fields.len() * 4 + strings.len());
-    bytes.extend_from_slice(b"WDBC");
-    bytes.extend_from_slice(&1_u32.to_le_bytes());
-    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&((fields.len() * 4) as u32).to_le_bytes());
-    bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-    for field in fields {
-        bytes.extend_from_slice(&field.to_le_bytes());
-    }
-    bytes.extend_from_slice(strings);
     bytes
 }
 

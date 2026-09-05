@@ -9,6 +9,53 @@ use solarity_ecs::{
     WorldMapId, WorldStateError, WorldTransform,
 };
 
+#[test]
+fn game_object_admission_order_and_identity_survive_guid_reuse() -> Result<(), Box<dyn Error>> {
+    let bootstrap = WorldBootstrap::new(WorldMapId::new(0), 7, "Local", Vec3::ZERO, 0.0);
+    let mut world = ActiveWorld::enter(bootstrap.clone());
+    for (guid, kind) in [
+        (90, ObjectKind::GameObject),
+        (20, ObjectKind::Unit),
+        (10, ObjectKind::GameObject),
+    ] {
+        world.create_object(guid, kind, None, [])?;
+    }
+    let original = world.visible_game_objects().collect::<Vec<_>>();
+    assert_eq!(
+        original.iter().map(|id| id.guid()).collect::<Vec<_>>(),
+        [90, 10]
+    );
+    world.create_object(90, ObjectKind::GameObject, None, [])?;
+    assert_eq!(world.visible_game_objects().collect::<Vec<_>>(), original);
+    world.remove_object(90)?;
+    world.create_object(90, ObjectKind::GameObject, None, [])?;
+    let recreated = world.visible_game_objects().collect::<Vec<_>>();
+    assert_eq!(
+        recreated.iter().map(|id| id.guid()).collect::<Vec<_>>(),
+        [10, 90]
+    );
+    assert_eq!(recreated[0], original[1]);
+    assert_ne!(recreated[1], original[0]);
+    world.remove_object(20)?;
+    world.remove_object(90)?;
+    world.remove_object(10)?;
+    assert_eq!(world.visible_game_objects().count(), 0);
+    world.create_object(5, ObjectKind::GameObject, None, [])?;
+    assert_eq!(
+        world
+            .visible_game_objects()
+            .map(|id| id.guid())
+            .collect::<Vec<_>>(),
+        [5]
+    );
+    let old_local = world.object_identity(7).ok_or("lost local identity")?;
+    let mut replacement = ActiveWorld::enter(bootstrap);
+    replacement.create_object(5, ObjectKind::GameObject, None, [])?;
+    assert_ne!(replacement.object_identity(7), Some(old_local));
+    assert_ne!(replacement.object_identity(5), world.object_identity(5));
+    Ok(())
+}
+
 /// World entry creates one indexed local player from authoritative login facts.
 #[test]
 fn world_entry_owns_the_initial_local_player() -> Result<(), Box<dyn Error>> {

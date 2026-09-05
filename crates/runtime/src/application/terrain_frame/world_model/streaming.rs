@@ -69,6 +69,7 @@ impl WorldModelFrame {
                     1.0,
                 )?;
                 added.push(WorldModelGpuPlacement {
+                    placement_valid: true,
                     source_index,
                     owner: WorldModelGpuPlacementOwner::Static {
                         unique_id: placement.unique_id(),
@@ -80,7 +81,7 @@ impl WorldModelFrame {
         }
         self.placements.retain(|placement| match placement.owner {
             WorldModelGpuPlacementOwner::Static { unique_id } => requested.contains(&unique_id),
-            WorldModelGpuPlacementOwner::Transport { .. } => true,
+            WorldModelGpuPlacementOwner::GameObject { .. } => true,
         });
         self.placements.extend(added);
         self.compact_sources();
@@ -88,7 +89,7 @@ impl WorldModelFrame {
     }
 
     /// Removes unused sources without accumulating holes during world traversal.
-    fn compact_sources(&mut self) {
+    pub(super) fn compact_sources(&mut self) {
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &self.placements {
             remap[placement.source_index] = 0;

@@ -9,4 +9,4 @@ mod state;
 mod types;
 
 pub use state::{ActiveWorld, WorldStateError};
-pub use types::{WorldBootstrap, WorldMapId};
+pub use types::{WorldBootstrap, WorldMapId, WorldObjectIdentity};

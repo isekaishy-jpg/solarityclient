@@ -1,6 +1,7 @@
 //! Active-world identity, lifecycle, and shared ECS state.
 
 use shipyard::{EntityId, World};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 use crate::game_object::{GameObjectMovement, GameObjectPresentation};
@@ -10,10 +11,13 @@ use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression}
 use crate::unit::{UnitIdentity, UnitPresentation, UnitVitals};
 use crate::view::PlayerViewState;
 
-use super::{WorldMapId, registry::ObjectRegistry, types::WorldBootstrap};
+use super::{WorldMapId, WorldObjectIdentity, registry::ObjectRegistry, types::WorldBootstrap};
+
+static NEXT_WORLD_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 /// Sole owner of active world entities and their server-GUID index.
 pub struct ActiveWorld {
+    identity: u64,
     map_id: WorldMapId,
     storage: World,
     objects: ObjectRegistry,
@@ -47,6 +51,7 @@ impl ActiveWorld {
         let mut objects = ObjectRegistry::default();
         objects.insert(player_guid, local_player);
         Self {
+            identity: NEXT_WORLD_IDENTITY.fetch_add(1, Ordering::Relaxed),
             map_id,
             storage,
             objects,
@@ -145,6 +150,32 @@ impl ActiveWorld {
     #[must_use]
     pub fn entity_by_guid(&self, guid: u64) -> Option<EntityId> {
         self.objects.find(guid)
+    }
+
+    /// Returns the admitted lifetime, including entity generation and world identity.
+    #[must_use]
+    pub fn object_identity(&self, guid: u64) -> Option<WorldObjectIdentity> {
+        Some(WorldObjectIdentity {
+            world: self.identity,
+            entity: self.objects.find(guid)?,
+            guid,
+        })
+    }
+
+    /// Iterates visible GameObjects in admission order without allocating.
+    /// Duplicate creates retain their position; removal/recreation enters at the end.
+    pub fn visible_game_objects(&self) -> impl Iterator<Item = WorldObjectIdentity> + '_ {
+        self.objects.entries().filter_map(|(guid, entity)| {
+            self.storage
+                .get::<&ObjectKind>(entity)
+                .ok()
+                .filter(|kind| ***kind == ObjectKind::GameObject)
+                .map(|_| WorldObjectIdentity {
+                    world: self.identity,
+                    entity,
+                    guid,
+                })
+        })
     }
 
     /// Returns the create-time object category for a loaded GUID.

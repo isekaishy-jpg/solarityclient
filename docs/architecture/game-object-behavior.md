@@ -1,8 +1,10 @@
 # GameObject behavior evidence for dynamic collision
 
-This records recovered native behavior for the pending shared GameObject
-resource/collision owner. The state machine described here is not implemented
-by the current transport renderer's stable 147/149 selection.
+The shared GameObject scene now owns visible resource generations and independent
+renderer playback. Stable generic states request Closed/Opened/Destroyed poses
+(147/149/151), apply the model-dependent selector below, and use the native
+CM2Model timer backend. Transition progress, completion, and collision eligibility
+still require the retained behavior owner described here.
 
 The build-12340 dynamic geometry callback is registered by `0x004FA5F0` through
 `0x0077F2B0` as `0x004F6560` in `DAT_00CE04B0`. It resolves the exact GUID,
@@ -56,11 +58,34 @@ path/animation clocks; the generic table cannot substitute for those providers.
 
 ## Integration still required
 
-Ordinary visible GameObjects need shared, generation-aware resource residency
-alongside the local player's referenced transport. The resulting retained
-behavior and animation state must drive both presentation and collision
-eligibility. Model resources must be reused across GUIDs; object removal and
-recreation must establish a new behavior generation.
+`GameObjectAnimationRequest` implements `0x0070D1E0`'s authored-presence checks
+and missing Open/Close substitutions before `AnimationData` fallback. Presence
+uses `0x00825E00` semantics independently of external payload availability.
+Missing stable poses can select a frozen authored transition clip. The selector
+also preserves an already active request on the native missing-clip branch;
+the comparison uses the requested ID before CM2Model's DBC fallback.
+
+Runtime shares the existing `AnimationDataCatalog` and CM2Model primary timer
+implementation with the Model widget path. New GameObject requests consume a
+weighted-variation roll followed by the cycle-count roll, even when variation
+zero exists. Unchanged replicated state preserves its timer and RNG position.
+Both native entry points validate the primary bone before sequence setup;
+bone-less or sequence-less models retain static geometry without an invented
+animation selection. Frozen substitutions hold the authored initial pose.
+
+`native_game_object_animation_requests.txt` records 2,048 executions of the
+original selector across every subset of animation IDs 145–152 and all eight
+generic internal states, plus a second call with the selected request already
+active. Native authored lookup runs unchanged. The harness supplies the current
+request, sequence metadata, and final application endpoint; it does not test
+completion deadlines or transition progress. Portable tests compare requests,
+frozen state, and preservation decisions. Runtime archive tests additionally
+check DBC fallback, timer offsets, held endpoints, and RNG order.
+
+Shared resource residency and fresh object lifetimes are implemented in
+[GameObject placement](game-object-placement.md). Retained behavior and animation
+state must next drive both presentation and collision eligibility, including
+supplied progress, reversals, completion callbacks, and behavior-specific clocks.
 
 Dynamic references also belong in native MCNK and WMO-group collection order:
 `0x007A5A60` reaches the chunk's dynamic list through `0x007A5240` after its

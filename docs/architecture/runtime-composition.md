@@ -101,6 +101,14 @@ tile changes preserve retained M2 playback, particles, and ribbons. Shared
 placement IDs prevent duplicate buildings and doodads across ADT references.
 Departed terrain GPU allocations retire after their queued frame uses complete.
 
+`RuntimeGameObjectPresentation` admits all visible GameObjects, shares model
+preparation by canonical path, and publishes independent object lifetimes into
+the world renderer. Its local-player transport dependency remains the loading
+card's resource gate. Ordinary object streaming preserves existing playback and
+effect histories; world replacement invalidates earlier queued publications.
+See [GameObject placement](game-object-placement.md) for ownership and the
+remaining behavior/collision integration.
+
 WDT content selects either an ADT-backed terrain generation or the sole global
 MODF placement. The global branch retains that placement's transform, doodad
 and name sets, root/group WMO resources, selected embedded M2s, collision and

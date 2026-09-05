@@ -3,11 +3,13 @@
 //! `Object_C.cpp`, `ObjectAlloc.cpp`, and `ObjectMgrClient.cpp` evidence a
 //! shared lifecycle responsibility. Storage details remain owned by ECS.
 
+mod animation;
 mod lifecycle;
 mod placement;
 mod types;
 mod update;
 
+pub use animation::GameObjectAnimationRequest;
 pub use placement::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
     unpack_game_object_rotation,

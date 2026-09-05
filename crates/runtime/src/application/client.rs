@@ -14,6 +14,7 @@ use crate::application::character_directory::CharacterProjectionError;
 use crate::application::cinematic_coordinator::RuntimeCinematicError;
 use crate::application::client_services::ClientServices;
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentError;
+use crate::application::game_object_coordinator::RuntimeGameObjectError;
 use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::login_coordinator::{RuntimeLoginError, RuntimeLoginState};
 use crate::application::login_model::RuntimeGlueModelError;
@@ -22,7 +23,6 @@ use crate::application::run::{self, ApplicationExitReason, ApplicationRunReport}
 use crate::application::sound_coordinator::RuntimeSoundError;
 use crate::application::terrain_coordinator::{RuntimeCameraError, RuntimeTerrainError};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
-use crate::application::transport_coordinator::RuntimeTransportError;
 use crate::application::world_coordinator::{RuntimeWorldError, RuntimeWorldState};
 use crate::application::world_transfer::RuntimeWorldTransferError;
 use crate::application::world_ui::RuntimeWorldUiError;
@@ -82,7 +82,7 @@ pub enum ApplicationError {
     TerrainFrame(#[from] RuntimeTerrainFrameError),
     /// A referenced player-transport display resource failed admission.
     #[error(transparent)]
-    Transport(#[from] RuntimeTransportError),
+    Transport(#[from] RuntimeGameObjectError),
     /// A pre-world stock model could not enter the Glue compositor.
     #[error(transparent)]
     GlueModel(#[from] RuntimeGlueModelError),

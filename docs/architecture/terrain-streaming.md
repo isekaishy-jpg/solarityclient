@@ -56,7 +56,9 @@ tiles incrementally. MDDF IDs and `(MODF ID, MODD index)` pairs identify M2
 placements; MODF IDs identify WMO placements. Additional references retain the
 existing transform, playback, particles, ribbons, and random-stream position.
 An owner departs when its last resident ADT reference leaves. Dynamic player,
-creature, equipment, and transport placements keep their separate ownership.
+creature, equipment, and visible GameObject placements keep their separate
+ownership. GameObjects share canonical CPU/GPU model sources and retain each
+world/entity lifetime's playback independently of terrain membership.
 New static M2 local sequences start against the existing scene clock rather
 than aging from world entry time zero (`0x00826B00`).
 

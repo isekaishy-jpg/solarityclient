@@ -49,8 +49,11 @@ by less than 2^-20, stock returns W=0 without normalizing XYZ. Values outside
 the valid sphere and that tolerance produce NaN W. The decoder preserves that
 result; placement admission rejects invalid, non-positive, or singular matrices.
 
-`GameObjectPlacementResolver` retains chain scratch across resolutions, follows
-GameObject parents, and detects missing objects and cycles. Passenger position
+`GameObjectPlacementResolver` retains chain scratch and caches resolved matrices
+by world/entity lifetime and exact input float bits. It follows GameObject
+parents and detects missing objects and cycles on every resolution. Parent input
+changes invalidate dependent placements; a removed/recreated GUID cannot reuse
+the previous lifetime's matrix. Passenger position
 uses the parent's scaled matrix, while orientation uses the native quaternion
 composition and the resulting object keeps its own scale. Missing parents do
 not silently become identity transforms. Parent categories requiring another
@@ -58,12 +61,29 @@ placement provider return `UnsupportedOwner`.
 
 ## Presentation
 
-`RuntimeTransportPresentation` retains a resolved placement or a specific
-placement error alongside its existing CPU resource. Changed matrices update
-the current M2 or WMO placement without another asset decode. A change in
-placement availability emits `PlacementChanged`, causing presentation admission
-to remove or restore its draw owner. Resource readiness remains the separate
-loading-card dependency; it is not proof that collision placement is ready.
+`RuntimeGameObjectPresentation` admits every visible GameObject in registry
+admission order. Its world/entity identities distinguish removal/recreation and
+world replacement even when a server reuses the GUID. Canonical model paths
+share complete CPU preparation, including MDX/M2 aliases; each object retains
+its current replicated inputs and resolved placement or placement error.
+
+The bounded worker prepares one shared resource request at a time. The local
+player's named transport takes priority and remains the loading-card resource
+gate; ordinary objects reserve the executor's interactive lane. Retired-world
+jobs are joined without publishing into a replacement world. Admission and
+resource changes advance a scene revision; valid matrix changes update existing
+placements without decoding or rebuilding the scene.
+
+M2 and WMO renderer owners share uploaded sources across object lifetimes.
+Missing parents hide existing placements while retaining their animation and
+effect histories. Parent arrival restores those owners without restarting
+neighbors. Removing and recreating an object establishes fresh playback.
+Resource readiness remains separate from collision placement and eligibility.
+
+Scene retirement releases instance histories and CPU source ownership. The
+renderer still caches shared M2/WMO device buffers until renderer teardown;
+bounded device-resource retirement across static, Glue, and dynamic owners
+remains separate unfinished work.
 
 `PlacedWorldModelDrawPlan::prepare_with_transform` accepts the same full matrix
 used by M2 presentation. `set_transform` refreshes existing group and draw bounds
@@ -87,11 +107,15 @@ recreation, sparse field updates, and every truncation of a populated GameObject
 create. Runtime resource tests exercise quaternion changes and missing-parent
 arrival/removal through both synchronous and asynchronous synchronization.
 Renderer tests verify that moved bounds change visibility and can be restored.
+Vulkan tests upload real triangle meshes, check shared GPU handles, preserve
+neighbor timers and random-stream position, and retire/recreate exact lifetimes.
+They also cover ordinary models with only a Stand animation.
 
 This implements replicated base placement, not animated transport trajectories.
 GameObject type 7/11 animation/path clocks, other parent categories, destructible
 owners and alternative WMO doodad sets still require their domain providers.
-Ordinary visible GameObjects also still need shared resource/collision residency.
+Ordinary visible GameObjects now share presentation resources; dynamic collision
+registration and retained behavior-driven eligibility still require integration.
 The native dynamic collector calls `0x004F6560` through `DAT_00CE04B0`, tests the
 object's collision eligibility (`0x0070F550` for GameObjects), uses its full matrix,
 and can replace provenance with its transport GUID before `0x007A4B80` emits

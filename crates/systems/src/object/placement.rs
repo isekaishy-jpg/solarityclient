@@ -1,7 +1,9 @@
 //! GameObject passenger quaternions and shared render/collision placement.
 
+use std::collections::HashMap;
+
 use glam::{Mat4, Vec3};
-use solarity_ecs::{ActiveWorld, ObjectKind};
+use solarity_ecs::{ActiveWorld, ObjectKind, WorldObjectIdentity};
 use thiserror::Error;
 
 /// Decodes build 12340's signed 22/21/21-bit local quaternion (`0x00982340`).
@@ -117,6 +119,20 @@ pub enum GameObjectPlacementError {
 #[derive(Default)]
 pub struct GameObjectPlacementResolver {
     chain: Vec<u64>,
+    placements: HashMap<WorldObjectIdentity, CachedPlacement>,
+}
+
+#[derive(Eq, PartialEq)]
+struct PlacementInputs {
+    packed_rotation: u64,
+    local_position: [u32; 3],
+    scale: u32,
+    parent: Option<([u32; 16], [u32; 4])>,
+}
+
+struct CachedPlacement {
+    inputs: PlacementInputs,
+    placement: GameObjectPlacement,
 }
 
 impl GameObjectPlacementResolver {
@@ -162,31 +178,68 @@ impl GameObjectPlacementResolver {
         let mut parent: Option<GameObjectPlacement> = None;
         for &owner in self.chain.iter().rev() {
             let movement = world.game_object_movement(owner).unwrap_or_default();
-            let local = unpack_game_object_rotation(movement.packed_rotation());
-            let (position, rotation) = if let Some(parent) = parent {
-                let transport = movement
+            let local_position = if parent.is_some() {
+                movement
                     .transport()
-                    .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?;
-                (
-                    transform_point(parent.matrix, transport.position),
-                    compose_rotation(local, parent.rotation),
-                )
+                    .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
+                    .position
             } else {
-                (
-                    world
-                        .object_transform(owner)
-                        .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
-                        .position(),
-                    local,
-                )
+                world
+                    .object_transform(owner)
+                    .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
+                    .position()
             };
             let scale = world
                 .object_presentation(owner)
                 .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
                 .scale();
-            parent = Some(GameObjectPlacement::new(position, rotation, scale)?);
+            let identity = world
+                .object_identity(owner)
+                .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
+            let inputs = PlacementInputs {
+                packed_rotation: movement.packed_rotation(),
+                local_position: local_position.to_array().map(f32::to_bits),
+                scale: scale.to_bits(),
+                parent: parent.map(|parent| {
+                    (
+                        parent.matrix.to_cols_array().map(f32::to_bits),
+                        parent.rotation.map(f32::to_bits),
+                    )
+                }),
+            };
+            if let Some(cached) = self.placements.get(&identity)
+                && cached.inputs == inputs
+            {
+                parent = Some(cached.placement);
+                continue;
+            }
+            let local = unpack_game_object_rotation(movement.packed_rotation());
+            let (position, rotation) = if let Some(parent) = parent {
+                (
+                    transform_point(parent.matrix, local_position),
+                    compose_rotation(local, parent.rotation),
+                )
+            } else {
+                (local_position, local)
+            };
+            let placement = GameObjectPlacement::new(position, rotation, scale)?;
+            self.placements
+                .insert(identity, CachedPlacement { inputs, placement });
+            parent = Some(placement);
         }
         parent.ok_or(GameObjectPlacementError::MissingPlacement { guid })
+    }
+
+    /// Releases cached matrices for lifetimes that left this active world.
+    pub fn retain_world(&mut self, world: &ActiveWorld) {
+        self.placements
+            .retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
+    }
+
+    /// Retires cached placements while retaining scratch allocations for reuse.
+    pub fn clear(&mut self) {
+        self.chain.clear();
+        self.placements.clear();
     }
 }
 

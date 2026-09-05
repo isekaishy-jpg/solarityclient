@@ -46,6 +46,9 @@ use crate::application::cinematic_coordinator::{
 use crate::application::developer_console::RuntimeDeveloperConsole;
 use crate::application::environment_coordinator::RuntimeWorldEnvironment;
 use crate::application::frame_profile::RuntimeFrameProfile;
+use crate::application::game_object_coordinator::{
+    RuntimeGameObjectPresentation, RuntimeTransportPoll,
+};
 use crate::application::gameplay_coordinator::RuntimeGameplayCoordinator;
 use crate::application::login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
@@ -65,9 +68,6 @@ use crate::application::sound_coordinator::RuntimeSoundCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::application::terrain_coordinator::RuntimeTerrainPoll;
 use crate::application::terrain_frame::{RuntimeTerrainFrameError, TerrainFrame};
-use crate::application::transport_coordinator::{
-    RuntimeTransportPoll, RuntimeTransportPresentation,
-};
 use crate::application::world_coordinator::{
     RuntimeCharacterScreenRequests, RuntimeWorldCoordinator, RuntimeWorldError, RuntimeWorldPoll,
     RuntimeWorldState,
@@ -134,7 +134,7 @@ pub(crate) struct ClientServices {
     world_transfer: RuntimeWorldTransferCoordinator,
     environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
-    transport: RuntimeTransportPresentation,
+    game_objects: RuntimeGameObjectPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
@@ -453,7 +453,7 @@ impl ClientServices {
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
                     RuntimePlayerCatalogs::new(
-                        animations,
+                        Arc::clone(&animations),
                         creatures,
                         creature_families,
                         characters,
@@ -469,8 +469,12 @@ impl ClientServices {
                     ),
                 )
                 .with_glue_worker_catalog(player_catalog),
-                transport: RuntimeTransportPresentation::new(assets.clone(), game_object_displays)
-                    .with_worker_catalog(transport_catalog),
+                game_objects: RuntimeGameObjectPresentation::new(
+                    assets.clone(),
+                    game_object_displays,
+                    animations,
+                )
+                .with_worker_catalog(transport_catalog),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
@@ -999,7 +1003,7 @@ impl ClientServices {
             player,
             &creatures,
             &remote_players,
-            self.transport.resident(),
+            self.game_objects.frame_input(),
             ui_extent,
             frame_draws,
             &self.runtime_overlay_draws,
@@ -1326,6 +1330,7 @@ impl ClientServices {
                     self.world_transfer.disconnect();
                     self.environment.disconnect();
                     self.player.disconnect();
+                    self.game_objects.disconnect();
                     self.terrain.disconnect();
                     self.sound.disconnect()?;
                     if let Some(frame) = self.terrain_frame.take() {
@@ -1923,34 +1928,24 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Current => {}
         }
-        match self
-            .transport
-            .synchronize_async(self.gameplay.world(), &self.cpu)?
+        let previous_game_object_revision = self.game_objects.scene_revision();
+        let transport_poll = self
+            .game_objects
+            .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        if self.game_objects.scene_revision() != previous_game_object_revision
+            && let Some(frame) = self.terrain_frame.as_mut()
         {
-            RuntimeTransportPoll::ResourceLoaded { guid, kind }
-            | RuntimeTransportPoll::PlacementChanged { guid, kind } => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_transport(
-                        &mut self.renderer,
-                        self.transport.resident(),
-                        &mut self.crt_rand,
-                    )?;
-                }
-                tracing::debug!(
-                    transport_guid = guid,
-                    resource_kind = ?kind,
-                    "updated local player transport presentation admission"
-                );
-            }
-            RuntimeTransportPoll::Idle
-            | RuntimeTransportPoll::AwaitingObject { .. }
-            | RuntimeTransportPoll::Pending { .. }
-            | RuntimeTransportPoll::NoResource { .. } => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_transport(&mut self.renderer, None, &mut self.crt_rand)?;
-                }
-            }
-            RuntimeTransportPoll::Current { .. } => {}
+            frame.synchronize_game_objects(
+                &mut self.renderer,
+                self.game_objects.frame_input(),
+                &mut self.crt_rand,
+            )?;
+        }
+        if let RuntimeTransportPoll::ResourceLoaded { guid, kind }
+        | RuntimeTransportPoll::PlacementChanged { guid, kind } = transport_poll
+        {
+            tracing::debug!(transport_guid = guid, resource_kind = ?kind,
+                "updated local player transport readiness");
         }
         match terrain_poll {
             RuntimeTerrainPoll::TileLoaded { map_id, tile } => {
@@ -2017,7 +2012,7 @@ impl ClientServices {
                         self.player.resident_frame_input(),
                         &self.player.resident_creature_frame_inputs(),
                         &self.player.resident_remote_player_frame_inputs(),
-                        self.transport.resident(),
+                        self.game_objects.frame_input(),
                     )?;
                     tracing::info!(
                         tile_x = tile.x(),
@@ -2056,7 +2051,7 @@ impl ClientServices {
                     self.player.resident_frame_input(),
                     &self.player.resident_creature_frame_inputs(),
                     &self.player.resident_remote_player_frame_inputs(),
-                    self.transport.resident(),
+                    self.game_objects.frame_input(),
                 )?;
                 tracing::info!(
                     map_id,
@@ -2101,7 +2096,7 @@ impl ClientServices {
         if self.player.resident_frame_input().is_some()
             && self.terrain_frame.is_some()
             && self.environment.current().is_some()
-            && self.transport.is_ready()
+            && self.game_objects.is_ready()
             && self.world_ui.is_some()
             && self.world_transfer.complete_player()
             && let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world())
@@ -2117,7 +2112,7 @@ impl ClientServices {
                 scene_ready: self.terrain_frame.is_some()
                     && !self.world_transfer.holds_loading_card(),
                 ui_ready: self.world_ui.is_some(),
-                transport_resource_ready: self.transport.is_ready(),
+                transport_resource_ready: self.game_objects.is_ready(),
             };
             loading.advance(readiness);
         }
@@ -2242,7 +2237,7 @@ impl ClientServices {
         self.world_transfer.disconnect();
         self.environment.disconnect();
         self.player.disconnect();
-        self.transport.disconnect();
+        self.game_objects.disconnect();
         self.terrain.disconnect();
         self.sound.disconnect()?;
         self.terrain_frame = None;

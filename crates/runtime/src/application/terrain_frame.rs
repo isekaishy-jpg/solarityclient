@@ -18,12 +18,12 @@ use solarity_rendering::{
 use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
+use crate::application::game_object_coordinator::GameObjectFrameInput;
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentPlayerFrameInput,
 };
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
-use crate::application::transport_coordinator::ResidentTransport;
 use crate::random::CrtRand;
 
 pub(in crate::application) mod m2;
@@ -491,7 +491,7 @@ impl TerrainFrame {
         player: Option<ResidentPlayerFrameInput<'_>>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let draws = prepare_tile_draws(renderer, plan, sources)?;
 
@@ -506,7 +506,7 @@ impl TerrainFrame {
             player,
             creatures,
             remote_players,
-            transport,
+            game_objects,
         )?;
         Ok(Self {
             tile: Some(plan.tile()),
@@ -534,7 +534,7 @@ impl TerrainFrame {
         player: Option<ResidentPlayerFrameInput<'_>>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let (m2, world_models) = prepare_scene_models(
             renderer,
@@ -547,7 +547,7 @@ impl TerrainFrame {
             player,
             creatures,
             remote_players,
-            transport,
+            game_objects,
         )?;
         Ok(Self {
             tile: None,
@@ -577,7 +577,7 @@ impl TerrainFrame {
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         remote_players: &[ResidentPlayerFrameInput<'_>],
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
         ui_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
         ui_overlay_draws: &[UiPreparedDraw],
@@ -598,8 +598,8 @@ impl TerrainFrame {
         }
         let local_animation_time_ms = self.m2.animation_time_ms();
         self.m2
-            .update_transport_state(transport, local_animation_time_ms, random)?;
-        self.world_models.update_transport_state(transport)?;
+            .update_game_object_states(game_objects, local_animation_time_ms, random)?;
+        self.world_models.update_game_object_states(game_objects)?;
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         self.visible_draws.clear();
         for tile in &self.tiles {
@@ -710,15 +710,17 @@ impl TerrainFrame {
         self.m2.replace_remote_players(renderer, players, random)
     }
 
-    /// Replaces only the dynamic movement-parent renderer generation.
-    pub(super) fn replace_transport(
+    /// Reconciles shared GameObject resources and independent object lifetimes.
+    pub(super) fn synchronize_game_objects(
         &mut self,
         renderer: &mut VulkanRenderer,
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.m2.replace_transport(renderer, transport, random)?;
-        self.world_models.replace_transport(renderer, transport)
+        self.m2
+            .synchronize_game_objects(renderer, game_objects, random)?;
+        self.world_models
+            .synchronize_game_objects(renderer, game_objects)
     }
 
     /// Transfers callbacks generated while advancing the current M2 frame.
@@ -780,20 +782,20 @@ fn prepare_scene_models(
     player: Option<ResidentPlayerFrameInput<'_>>,
     creatures: &[ResidentCreatureFrameInput<'_>],
     remote_players: &[ResidentPlayerFrameInput<'_>],
-    transport: Option<&ResidentTransport>,
+    game_objects: GameObjectFrameInput<'_>,
 ) -> Result<(M2Frame, WorldModelFrame), RuntimeTerrainFrameError> {
     let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
     m2.replace_player(renderer, player, random)?;
     m2.replace_creatures(renderer, creatures, random)?;
     m2.replace_remote_players(renderer, remote_players, random)?;
-    m2.replace_transport(renderer, transport, random)?;
+    m2.synchronize_game_objects(renderer, game_objects, random)?;
     let mut world_models = WorldModelFrame::prepare(
         renderer,
         world_models,
         world_model_filtering,
         world_model_base_mip,
     )?;
-    world_models.replace_transport(renderer, transport)?;
+    world_models.synchronize_game_objects(renderer, game_objects)?;
     Ok((m2, world_models))
 }
 

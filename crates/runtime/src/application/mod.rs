@@ -11,6 +11,7 @@ mod client_services;
 mod developer_console;
 mod environment_coordinator;
 mod frame_profile;
+mod game_object_coordinator;
 mod gameplay_coordinator;
 mod gameplay_session;
 mod login_coordinator;
@@ -23,7 +24,6 @@ mod run;
 mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
-mod transport_coordinator;
 pub(crate) mod ui_frame;
 mod world_coordinator;
 mod world_transfer;
@@ -38,6 +38,10 @@ pub use client_services::glue_benchmark::{
 pub use environment_coordinator::{
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
     world_model_environment_emissive,
+};
+pub use game_object_coordinator::{
+    RuntimeGameObjectError, RuntimeGameObjectPresentation, RuntimeGameObjectResourceKind,
+    RuntimeTransportPoll,
 };
 pub use gameplay_coordinator::{RuntimeGameplayCoordinator, RuntimeGameplayError};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};
@@ -57,10 +61,6 @@ pub use terrain_coordinator::{
     RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
 };
 pub use terrain_frame::RuntimeTerrainFrameError;
-pub use transport_coordinator::{
-    RuntimeTransportError, RuntimeTransportPoll, RuntimeTransportPresentation,
-    RuntimeTransportResourceKind,
-};
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,

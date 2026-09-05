@@ -85,7 +85,7 @@ impl M2Frame {
 
     /// Drops unreferenced sources and remaps surviving static and dynamic slots.
     /// Empty geometry is still an occupied source when a placement references it.
-    fn compact_sources(&mut self) {
+    pub(super) fn compact_sources(&mut self) {
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &self.placements {
             remap[placement.source_index] = 0;
@@ -131,6 +131,7 @@ pub(super) fn static_gpu_placement(
         None => (None, Vec::new(), Vec::new()),
     };
     Ok(M2GpuPlacement {
+        placement_valid: true,
         source_index,
         local_transform: placement.transform(),
         transform: placement.transform(),

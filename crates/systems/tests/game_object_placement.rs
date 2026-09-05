@@ -58,6 +58,15 @@ fn composed_passenger_placements_match_native_operations() -> Result<(), Box<dyn
             ),
         )?;
         let placement = resolver.resolve(&world, 3)?;
+        let cached = resolver.resolve(&world, 3)?;
+        assert_eq!(
+            cached.matrix().to_cols_array().map(f32::to_bits),
+            placement.matrix().to_cols_array().map(f32::to_bits)
+        );
+        assert_eq!(
+            cached.rotation().map(f32::to_bits),
+            placement.rotation().map(f32::to_bits)
+        );
         assert_eq!(
             placement.rotation().map(f32::to_bits).as_slice(),
             &bits[8..12],

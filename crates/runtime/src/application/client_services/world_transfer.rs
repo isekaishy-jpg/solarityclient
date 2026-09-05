@@ -158,7 +158,7 @@ impl ClientServices {
         self.input.clear_held();
         self.environment.disconnect();
         self.player.disconnect();
-        self.transport.disconnect();
+        self.game_objects.disconnect();
         self.terrain.disconnect();
         self.sound.disconnect()?;
         self.terrain_frame = None;

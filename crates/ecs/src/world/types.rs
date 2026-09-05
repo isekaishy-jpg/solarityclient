@@ -1,6 +1,23 @@
 //! RTTI-backed type, state, and identifier vocabulary for this stock responsibility.
 
 use glam::Vec3;
+use shipyard::EntityId;
+
+/// One admitted object lifetime, distinct across GUID reuse and world replacement.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorldObjectIdentity {
+    pub(super) world: u64,
+    pub(super) entity: EntityId,
+    pub(super) guid: u64,
+}
+
+impl WorldObjectIdentity {
+    /// Returns the server identity carried by this particular admitted lifetime.
+    #[must_use]
+    pub const fn guid(self) -> u64 {
+        self.guid
+    }
+}
 
 /// Numeric Map.dbc identifier for the active world.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

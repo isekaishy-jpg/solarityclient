@@ -39,6 +39,14 @@ impl M2ModelAnimation {
 }
 
 impl M2AnimationSet {
+    /// Tests authored sequence presence as build-12340 `0x00825E00` does.
+    ///
+    /// External payload availability and AnimationData fallbacks are separate.
+    #[must_use]
+    pub fn has_model_animation(&self, animation_id: u16) -> bool {
+        self.lookup_sequence(animation_id).is_some()
+    }
+
     /// Selects the variation requested by the Model Lua bridge (`0x00832AB0`).
     ///
     /// Its unspecified-variation argument always runs `0x00826E60`, even if

@@ -2,10 +2,11 @@
 
 mod streaming;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec3;
+use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, PlacedWorldModelDrawPlan,
     VulkanError, VulkanRenderer, WorldFrustum, WorldModelBaseMip, WorldModelMaterialState,
@@ -14,11 +15,11 @@ use solarity_rendering::{
     WorldModelTextureSet, WorldModelTextureSetHandle,
 };
 
+use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::application::terrain_coordinator::world_model_residency::{
     ResidentWorldModelMaterialTextures, ResidentWorldModelScene, ResidentWorldModelSource,
     ResidentWorldModelTexture,
 };
-use crate::application::transport_coordinator::{ResidentTransport, ResidentTransportResource};
 
 use super::RuntimeTerrainFrameError;
 
@@ -45,6 +46,7 @@ struct WorldModelGpuSource {
 
 /// One MODF transform with retained visibility scratch.
 struct WorldModelGpuPlacement {
+    placement_valid: bool,
     source_index: usize,
     owner: WorldModelGpuPlacementOwner,
     plan: PlacedWorldModelDrawPlan,
@@ -57,7 +59,10 @@ enum WorldModelGpuPlacementOwner {
     /// One immutable terrain MODF owner.
     Static { unique_id: u32 },
     /// The controlled player's current movement parent.
-    Transport { guid: u64 },
+    GameObject {
+        identity: WorldObjectIdentity,
+        display_id: u32,
+    },
 }
 
 /// Complete resident WMO generation for one terrain tile.
@@ -100,6 +105,7 @@ impl WorldModelFrame {
                 1.0,
             )?;
             placements.push(WorldModelGpuPlacement {
+                placement_valid: true,
                 source_index: placement.source_index(),
                 owner: WorldModelGpuPlacementOwner::Static {
                     unique_id: placement.unique_id(),
@@ -131,86 +137,115 @@ impl WorldModelFrame {
         })
     }
 
-    /// Replaces the dynamic movement-parent WMO without disturbing MODF state.
-    pub(super) fn replace_transport(
+    /// Reconciles object lifetimes while reusing shared WMO GPU generations.
+    pub(super) fn synchronize_game_objects(
         &mut self,
         renderer: &mut VulkanRenderer,
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let prepared = match transport {
-            Some(transport) => match (transport.resource(), transport.placement()) {
-                (ResidentTransportResource::WorldModel(source), Some(placement)) => {
-                    let gpu = prepare_gpu_source(renderer, source, self.filtering, self.base_mip)?;
-                    let plan = PlacedWorldModelDrawPlan::prepare_with_transform(
-                        Arc::clone(&gpu.plan),
-                        placement.matrix(),
-                    )?;
-                    Some((transport.guid(), gpu, plan))
-                }
+        let sources = &self.sources;
+        self.placements.retain(|placement| {
+            let WorldModelGpuPlacementOwner::GameObject {
+                identity,
+                display_id,
+            } = placement.owner
+            else {
+                return true;
+            };
+            game_objects.get(identity).is_some_and(|instance| {
+                instance.display_id() == display_id
+                    && match (
+                        instance.resource(),
+                        sources.get(placement.source_index).and_then(Option::as_ref),
+                    ) {
+                        (Some(GameObjectResource::WorldModel(cpu)), Some(gpu)) => {
+                            Arc::ptr_eq(cpu.model(), &gpu.model)
+                        }
+                        _ => false,
+                    }
+            })
+        });
+        let retained = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                WorldModelGpuPlacementOwner::GameObject {
+                    identity,
+                    display_id,
+                } => Some((identity, display_id)),
                 _ => None,
-            },
-            None => None,
-        };
-
-        self.remove_transport();
-        if let Some((guid, source, plan)) = prepared {
-            let source_index = self.sources.len();
-            let visible_draw_indices = Vec::with_capacity(source.plan.draws().len());
-            self.sources.push(Some(source));
+            })
+            .collect::<HashSet<_>>();
+        let mut sources = self
+            .sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| {
+                source
+                    .as_ref()
+                    .map(|source| (Arc::as_ptr(&source.model), index))
+            })
+            .collect::<HashMap<_, _>>();
+        for instance in game_objects.instances() {
+            if retained.contains(&(instance.identity(), instance.display_id())) {
+                continue;
+            }
+            let (Some(GameObjectResource::WorldModel(cpu)), Some(resolved)) =
+                (instance.resource(), instance.placement())
+            else {
+                continue;
+            };
+            let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
+                *index
+            } else {
+                let gpu = prepare_gpu_source(renderer, cpu, self.filtering, self.base_mip)?;
+                let index = self.sources.len();
+                sources.insert(Arc::as_ptr(&gpu.model), index);
+                self.sources.push(Some(gpu));
+                index
+            };
+            let gpu = self.sources[source_index].as_ref().ok_or(
+                RuntimeTerrainFrameError::WorldModelSourceIndex {
+                    source_index,
+                    source_count: self.sources.len(),
+                },
+            )?;
             self.placements.push(WorldModelGpuPlacement {
+                placement_valid: true,
                 source_index,
-                owner: WorldModelGpuPlacementOwner::Transport { guid },
-                plan,
-                visible_draw_indices,
+                owner: WorldModelGpuPlacementOwner::GameObject {
+                    identity: instance.identity(),
+                    display_id: instance.display_id(),
+                },
+                plan: PlacedWorldModelDrawPlan::prepare_with_transform(
+                    Arc::clone(&gpu.plan),
+                    resolved.matrix(),
+                )?,
+                visible_draw_indices: Vec::with_capacity(gpu.plan.draws().len()),
             });
         }
+        self.compact_sources();
         Ok(())
     }
 
-    /// Applies the latest replicated transport transform to the retained WMO.
-    pub(super) fn update_transport_state(
+    /// Updates bounds in place; unresolved parents hide an existing owner.
+    pub(super) fn update_game_object_states(
         &mut self,
-        transport: Option<&ResidentTransport>,
+        game_objects: GameObjectFrameInput<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let Some(transport) = transport else {
-            return Ok(());
-        };
-        let (ResidentTransportResource::WorldModel(_), Some(resolved)) =
-            (transport.resource(), transport.placement())
-        else {
-            return Ok(());
-        };
-        let Some(placement) = self.placements.iter_mut().find(|placement| {
-            placement.owner
-                == WorldModelGpuPlacementOwner::Transport {
-                    guid: transport.guid(),
-                }
-        }) else {
-            return Ok(());
-        };
-        placement.plan.set_transform(resolved.matrix())?;
-        Ok(())
-    }
-
-    /// Retires only the renderer references owned by the current transport.
-    fn remove_transport(&mut self) {
-        let mut source_indices = Vec::new();
-        self.placements.retain(|placement| {
-            if matches!(
-                placement.owner,
-                WorldModelGpuPlacementOwner::Transport { .. }
-            ) {
-                source_indices.push(placement.source_index);
-                false
-            } else {
-                true
-            }
-        });
-        for source_index in source_indices {
-            if let Some(source) = self.sources.get_mut(source_index) {
-                *source = None;
+        for placement in &mut self.placements {
+            let WorldModelGpuPlacementOwner::GameObject { identity, .. } = placement.owner else {
+                continue;
+            };
+            let resolved = game_objects
+                .get(identity)
+                .and_then(|instance| instance.placement());
+            placement.placement_valid = resolved.is_some();
+            if let Some(resolved) = resolved {
+                placement.plan.set_transform(resolved.matrix())?;
             }
         }
+        Ok(())
     }
 
     /// Culls placements and replaces the retained physical packet buffer.
@@ -223,6 +258,9 @@ impl WorldModelFrame {
     ) -> Result<&[WorldModelPreparedDraw], RuntimeTerrainFrameError> {
         self.prepared_draws.clear();
         for placement in &mut self.placements {
+            if !placement.placement_valid {
+                continue;
+            }
             placement
                 .plan
                 .select_visible_draws(frustum, &mut placement.visible_draw_indices)?;
