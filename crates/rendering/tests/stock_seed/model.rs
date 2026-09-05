@@ -1574,9 +1574,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         mesh.vertices()
             .iter()
             .map(|vertex| Vec3::from_array(vertex.normal()))
-            .all(|normal| normal.is_finite()
-                && (normal.length() - 1.0).abs() < 0.0001
-                && normal.dot(Vec3::NEG_X) >= 0.0)
+            .all(|normal| normal == Vec3::Z)
     );
     assert_eq!(mesh.vertex_bytes().len(), 24 * 36);
 
@@ -2620,18 +2618,9 @@ fn m2_particle_mesh_uses_fixed_emitter_basis() -> Result<(), Box<dyn Error>> {
         + particle_to_world.transform_vector3(Vec3::Y) * appearance.scale().y;
     let actual = Vec3::from_array(mesh.vertices()[0].position());
     assert!((actual - expected).abs().max_element() < 0.0001);
-    let positions = [
-        Vec3::from_array(mesh.vertices()[0].position()),
-        Vec3::from_array(mesh.vertices()[1].position()),
-        Vec3::from_array(mesh.vertices()[2].position()),
-        Vec3::from_array(mesh.vertices()[3].position()),
-    ];
-    let mut expected_normal = (positions[1] - positions[0])
-        .cross(positions[2] - positions[0])
-        .normalize();
-    if expected_normal.dot(-camera.forward()) < 0.0 {
-        expected_normal = -expected_normal;
-    }
+    // `0x0097BE80` retains the same world-up lighting normal even when the
+    // visible card lies in a different plane.
+    let expected_normal = Vec3::Z;
     assert!(mesh.vertices()[..4].iter().all(|vertex| {
         (Vec3::from_array(vertex.normal()) - expected_normal)
             .abs()

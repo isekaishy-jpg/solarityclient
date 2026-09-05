@@ -221,6 +221,24 @@ The renderer now uses the camera's unit axes. A decoded-model regression covers
 shrinking, growing, rotated, translated, and nonuniform attachment transforms,
 both with and without size inheritance.
 
+Local-orientation heads use a different basis. `0x0097A390` extracts the
+center-transform 3x3 matrix with `0x004C51B0`, then calls `0x004C5230` to divide
+all three axes by the retained emitter X-axis length for model-space particles.
+This preserves nonuniform axis ratios while removing shared attachment scale;
+raw flag `0x20` still controls the separate size multiplication. The renderer
+now follows that division instead of keeping the complete scaled basis.
+
+Every ordinary head and tail branch in `0x0097BE80` writes the same lighting
+normal from `0x00B2D540..548`. `0x0097E730` reads the current graphics view
+matrix, and `0x0097A390` copies its elements 8, 9, and 10 into that normal.
+Those values represent world +Z transformed into view space. The native
+submission at `0x0097A580` uses identity view for the completed vertices.
+Solarity retains world-space vertices and lights, so its equivalent normal is
+world +Z for all ordinary cards, independent of their visible plane. Computing
+camera-facing or geometric cross-product normals changed stock lighting.
+Regression coverage checks the native view-space normal and nonuniform local
+card geometry through rotated attachments and multiple camera directions.
+
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
 pool grows, but never shrinks, to the executable's nearest-even estimate of

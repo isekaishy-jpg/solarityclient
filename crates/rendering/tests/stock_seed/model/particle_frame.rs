@@ -7,14 +7,101 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
 };
 use solarity_rendering::{
-    M2AnimationClock, M2BonePose, M2ParticleMeshPlan, M2ParticlePose, M2ParticleSimulation,
-    M2ParticleState, M2ParticleTwinkleTable, WorldCamera,
+    M2AnimationClock, M2BonePose, M2ParticleLifetimePose, M2ParticleMeshPlan, M2ParticlePose,
+    M2ParticleSimulation, M2ParticleState, M2ParticleTwinkleTable, WorldCamera,
 };
 
 use super::{
     append_render_track, m2_array_offset, render_f32_values, render_m2_bytes, render_skin_bytes,
 };
 use crate::support::{Fixture, FixtureFile};
+
+/// `0x0097A390` divides local head axes by one shared X-axis length, retaining
+/// nonuniform proportions. Head and tail lighting use view-transformed world Z.
+#[test]
+fn oriented_particle_cards_remove_shared_scale_and_keep_stock_lighting_normal()
+-> Result<(), Box<dyn Error>> {
+    for flags in [0x0006_1010_u32, 0x0006_1030] {
+        let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+        let offset = m2_array_offset(&bytes, 0x128)?;
+        bytes[offset + 4..offset + 8].copy_from_slice(&flags.to_le_bytes());
+        for relative in [0x178, 0x17c, 0x180, 0x184] {
+            bytes[offset + relative..offset + relative + 4].copy_from_slice(&0.0_f32.to_le_bytes());
+        }
+        let skin = render_skin_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "Creature\\Solarity\\OrientedCard.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\OrientedCard00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut assets = AssetStore::mount(catalog)?;
+        let model = DecodedM2Model::load(
+            &mut assets,
+            &AssetPath::new("Creature\\Solarity\\OrientedCard.m2")?,
+        )?;
+        let emitter = &model.animations().particles()[0];
+        let pose = M2ParticlePose::sample(
+            model.animations(),
+            emitter,
+            M2AnimationClock::new(0, 500.0, 0.0),
+        )?;
+        let particle = M2ParticleState::new(0.5, Vec3::ZERO, Vec3::new(1.0, 2.0, 3.0), 0x2483)?;
+        let appearance = M2ParticleLifetimePose::sample(
+            emitter,
+            particle.normalized_age(pose.lifespan(), emitter.lifespan_variation()),
+            particle.random_word(),
+        )?;
+        let transform = Mat4::from_cols(
+            Vec4::new(0.0, 2.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 3.0, 0.0),
+            Vec4::new(4.0, 0.0, 0.0, 0.0),
+            Vec4::new(10.0, 20.0, 30.0, 1.0),
+        );
+        for eye in [Vec3::new(4.0, 3.0, 2.0), Vec3::new(-4.0, 2.0, 3.0)] {
+            let camera = WorldCamera::stock(eye, Vec3::ZERO, Vec3::Z, 100.0).frame(16.0 / 9.0)?;
+            let mesh = M2ParticleMeshPlan::prepare_transformed(
+                emitter,
+                pose,
+                &[particle],
+                camera,
+                transform,
+                2.0,
+                1.0,
+            )?;
+            assert_eq!(mesh.vertices().len(), 8);
+            let size_factor = if flags & 0x20 == 0 { 1.0 } else { 2.0 };
+            let expected = Vec3::new(10.0, 20.0, 30.0)
+                + size_factor
+                    * (Vec3::NEG_Y * appearance.scale().x + Vec3::Z * (1.5 * appearance.scale().y));
+            assert!(
+                (Vec3::from_array(mesh.vertices()[0].position()) - expected)
+                    .abs()
+                    .max_element()
+                    < 0.0001
+            );
+            // Native writes matrix elements 8..10 into every head/tail
+            // normal. Projecting the world-space result must recover them.
+            for vertex in mesh.vertices() {
+                let normal = Vec3::from_array(vertex.normal());
+                assert_eq!(normal, Vec3::Z);
+                assert!(
+                    (camera.view().transform_vector3(normal) - camera.view().z_axis.truncate())
+                        .abs()
+                        .max_element()
+                        < 0.000001
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Stock `0x0097BE80` transforms centers but adds billboard offsets in view
 /// space. Model-space storage must not introduce an extra card-size factor.

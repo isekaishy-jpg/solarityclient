@@ -1046,6 +1046,28 @@ increased to compensate for incorrect geometry or motion.
 Formatting, Clippy, and all 574 workspace tests pass.
 
 This is progress toward the screenshot, not a completed visual-parity claim.
-The adjacent local-orientation card basis and lighting-normal paths still need
-reconciliation with `0x0097A390` and `0x0097BE80`. The separate camera-key storage
-gaps and repeatable world-transfer integration also remain open.
+
+## Gear particle orientation and lighting
+
+The adjacent ordinary-card paths are now reconciled with the native matrix
+preparation and submission. `0x0097A390` removes shared emitter scale from
+local-orientation axes by dividing the complete basis by its X-axis length.
+The renderer preserves nonuniform axis ratios and applies explicit size
+inheritance separately.
+
+All ordinary heads and tails in `0x0097BE80` use one lighting normal. The
+view capture in `0x0097E730`, matrix preparation in `0x0097A390`, and identity
+view submission in `0x0097A580` establish that this is world +Z expressed in
+view space. Solarity now uses world +Z in its world-space lighting path;
+the previous geometric normals incorrectly changed lighting with card angle.
+Soap's lit shoulder flames are visibly brighter in the inspected production
+capture after this correction.
+
+Regression coverage checks rotated, nonuniform local cards with and without
+size inheritance, head and tail normals, and multiple camera directions.
+Formatting, Clippy, and all 575 workspace tests pass. Login and Soap selection
+captures were inspected, and the replay log contains no errors.
+
+Full gear visual parity still needs comparison with the user's stock reference.
+The separate camera-key storage gaps and repeatable world-transfer integration
+also remain open.

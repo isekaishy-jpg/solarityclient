@@ -46,6 +46,9 @@ const VELOCITY_ALIGNED_HEAD: u32 = 0x0000_0004;
 /// Exact direction threshold loaded at executable address `0x009EA27C`.
 const DIRECTION_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3480_0000);
 
+/// `0x0097A390` compares emitter axis length directly against `0x009EA27C`.
+const EMITTER_SCALE_THRESHOLD: f32 = f32::from_bits(0x3480_0000);
+
 /// Exact projected tail-length threshold loaded at executable `0x00AA2CEC`.
 const TAIL_PROJECTION_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3a4a_4588);
 
@@ -84,7 +87,7 @@ impl M2ParticleRenderVertex {
         self.position
     }
 
-    /// Returns the world-space normal facing the camera.
+    /// Returns stock's world-up lighting normal, independent of the card plane.
     #[must_use]
     pub const fn normal(self) -> [f32; 3] {
         self.normal
@@ -421,9 +424,26 @@ impl M2ParticleMeshPlan {
         // applying the model-space transform here would apply it twice.
         let billboard_right = camera.right();
         let billboard_up = camera.up();
-        let emitter_right = particle_to_world.transform_vector3(Vec3::X);
-        let emitter_up = particle_to_world.transform_vector3(Vec3::Y);
+        let emitter_scale = particle_to_world.x_axis.truncate().length();
+        // `0x0097A390` extracts the complete center-transform basis with
+        // `0x004C51B0`, then divides every axis by the same emitter X length
+        // for model-space particles. Preserve nonuniform axis ratios; size
+        // inheritance remains the separate flag-`0x20` multiplication below.
+        let orientation_scale =
+            if emitter.particles_in_model_space() && emitter_scale >= EMITTER_SCALE_THRESHOLD {
+                emitter_scale.recip()
+            } else {
+                1.0
+            };
+        let emitter_right = particle_to_world.transform_vector3(Vec3::X) * orientation_scale;
+        let emitter_up = particle_to_world.transform_vector3(Vec3::Y) * orientation_scale;
         let emitter_normal = particle_to_world.transform_vector3(Vec3::Z).normalize();
+        // Every `0x0097BE80` head/tail branch writes `0x00B2D540..548`.
+        // `0x0097A390` fills that value from view-matrix elements 8..10:
+        // world +Z expressed in view space. `0x0097A580` then draws through
+        // identity view. Our vertices and lights stay in world space, so the
+        // equivalent lighting normal is +Z, regardless of card orientation.
+        let lighting_normal = Vec3::Z;
         let (emit_head, emit_tail) = particle_geometry(emitter)?;
         if emitter.texture_rows() == 0 || emitter.texture_columns() == 0 {
             return Err(M2ParticleMeshPlanError::EmptyTextureAtlas);
@@ -556,13 +576,12 @@ impl M2ParticleMeshPlan {
                         )
                     }
                 };
-                let normal = quad_normal(positions, camera);
                 push_quad(
                     vertices,
                     indices,
                     first_vertex,
                     positions,
-                    normal,
+                    lighting_normal,
                     color,
                     appearance.head_texture_cell(),
                     columns,
@@ -609,13 +628,12 @@ impl M2ParticleMeshPlan {
                         billboard_up,
                     )
                 };
-                let normal = quad_normal(positions, camera);
                 push_quad(
                     vertices,
                     indices,
                     first_vertex,
                     positions,
-                    normal,
+                    lighting_normal,
                     color,
                     appearance.tail_texture_cell(),
                     columns,
@@ -646,26 +664,6 @@ impl M2ParticleMeshPlan {
             bytes.extend_from_slice(&vertex.to_bytes());
         }
         bytes
-    }
-}
-
-/// Resolves the shaded card normal from its final stock presentation plane.
-///
-/// Camera-facing heads reduce to `-camera.forward()`. Local-orientation heads
-/// and velocity tails may occupy another plane, so build 12340 lights their
-/// completed card basis and flips the result toward the camera.
-fn quad_normal(positions: [Vec3; 4], camera: WorldCameraFrame) -> Vec3 {
-    let camera_facing = -camera.forward();
-    let normal = (positions[1] - positions[0]).cross(positions[2] - positions[0]);
-    let length_squared = normal.length_squared();
-    if !length_squared.is_finite() || length_squared <= DIRECTION_THRESHOLD_SQUARED {
-        return camera_facing;
-    }
-    let normal = normal / length_squared.sqrt();
-    if normal.dot(camera_facing) < 0.0 {
-        -normal
-    } else {
-        normal
     }
 }
 
