@@ -22,6 +22,14 @@ pub enum GameplayUpdateError {
     /// The decoded field table could not be projected into typed views.
     #[error(transparent)]
     Projection(#[from] ObjectProjectionError),
+    /// A living movement-only operation targeted a non-unit object category.
+    #[error("living movement update targets {kind:?} object {guid:#018X}")]
+    NonLivingMovement {
+        /// Target GUID.
+        guid: u64,
+        /// Admitted category, which cannot own the native unit movement state.
+        kind: ObjectKind,
+    },
 }
 
 /// Live world transport paired with the ECS state it authoritatively seeded.
@@ -117,8 +125,20 @@ pub(crate) fn apply_object_updates(
                 )?;
             }
             WorldObjectUpdate::Movement { guid, movement } => {
-                if world.object_kind(*guid) == Some(ObjectKind::GameObject) {
-                    world.update_game_object_movement(*guid, game_object_movement(*movement))?;
+                // 0x004D6DA0 consumes the block but skips the local player's
+                // echo. Remote blocks enter Unit_C's movement owner directly;
+                // they carry neither GameObject rotation nor create flags.
+                if *guid == world.local_player_guid()? {
+                    continue;
+                }
+                match world.object_kind(*guid) {
+                    Some(ObjectKind::Unit | ObjectKind::Player) => {}
+                    Some(kind) => {
+                        return Err(GameplayUpdateError::NonLivingMovement { guid: *guid, kind });
+                    }
+                    None => {
+                        return Err(WorldStateError::UnknownObject { guid: *guid }.into());
+                    }
                 }
                 if let Some(transform) = movement_transform(*movement) {
                     world.update_transform(*guid, transform)?;

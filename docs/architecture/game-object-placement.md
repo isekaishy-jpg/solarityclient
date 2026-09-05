@@ -21,6 +21,10 @@ non-local GUID keeps the previous placement while refreshing sparse fields.
 Removal and subsequent creation establish a fresh movement owner. Sparse field
 projection does not reset movement.
 
+Movement-only operation 1 carries living data and does not update this placement
+component. Its separate native format and unit-only admission are documented in
+[object movement updates](object-movement-updates.md).
+
 `GameObjectPresentation` retains `GAMEOBJECT_FLAGS` and all four bytes of
 `GAMEOBJECT_BYTES_1`: state, object type, art kit, and animation progress. The
 complete dense update-field table remains authoritative for other fields,

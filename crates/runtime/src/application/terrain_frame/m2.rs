@@ -3710,7 +3710,8 @@ fn unit_placement_transform(
     Ok(matrix)
 }
 
-/// Selects the stable generic GameObject sequence recovered at `FUN_00710460`.
+/// Current stable transport pose; the native generic behavior additionally
+/// owns progress, transition clips, model fallbacks, and completion callbacks.
 const fn transport_animation_id(state: u8) -> u16 {
     if state == 1 { 147 } else { 149 }
 }
