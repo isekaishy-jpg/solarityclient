@@ -1,0 +1,376 @@
+//! Equipment instances follow native component and enchantment lifetimes.
+
+use super::*;
+use crate::application::player_coordinator::RuntimePlayerPresentation;
+use solarity_rendering::{
+    CharacterAttachmentPoint, CharacterComponentTextureLevel, WorldCameraFrame,
+};
+
+#[test]
+fn equipped_instances_survive_material_updates_and_follow_component_replacement()
+-> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_equipment()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    for guid in [7, 20] {
+        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+        fields(
+            &mut world,
+            guid,
+            &[(122, 1), (283, 1000), (287, 2000), (313, 3000), (314, 900)],
+        )?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8.0, 0.0, 0.0),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4.0, 4.0],
+        [-2.0, 2.0],
+        0.1,
+        100.0,
+    )
+    .frame(1.0)?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    for time in [100.0, 300.0] {
+        advance(&mut frame, &renderer, camera, time, &mut random)?;
+    }
+    let before = snapshots(&frame)?;
+    assert_eq!(
+        before.len(),
+        16,
+        "four components and four effects on each player"
+    );
+    for snapshot in &before {
+        assert!(!snapshot.effects.particles.is_empty());
+        assert!(snapshot.effects.ribbons.len() > 1);
+        assert!(snapshot.event_time > 0.0);
+    }
+    presentation.set_component_texture_level(
+        CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
+    );
+    let expected = random;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(
+        random, expected,
+        "material changes consume no component initialization rolls"
+    );
+    assert_eq!(snapshots(&frame)?, before);
+    advance(&mut frame, &renderer, camera, 350.0, &mut random)?;
+
+    // A later component with a missing authored body link must not detach
+    // the earlier components already selected for retention in this plan.
+    let before = snapshots(&frame)?;
+    fields(&mut world, 20, &[(315, 3000)])?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    let failure = frame.replace_remote_players(
+        &mut renderer,
+        &presentation.resident_remote_player_frame_inputs(),
+        &mut random,
+    );
+    assert!(matches!(failure, Err(crate::application::terrain_frame::RuntimeTerrainFrameError::MissingPlayerM2Attachment { attachment_id: 2, .. })));
+    assert_eq!(snapshots(&frame)?, before);
+    fields(&mut world, 20, &[(315, 0)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(snapshots(&frame)?, before);
+
+    // A different weapon item recreates the component even at the same model path.
+    let before = snapshots(&frame)?;
+    fields(&mut world, 20, &[(313, 3001)])?;
+    let expected = rolls(random, 2);
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(random, expected);
+    assert_replaced(&frame, &before, |owner| {
+        belongs_to(owner, 20, CharacterAttachmentPoint::HandRight)
+    })?;
+    advance(&mut frame, &renderer, camera, 400.0, &mut random)?;
+
+    // 6D6BA0/4EA8F0 rebuild the enchant children while keeping their item.
+    // 902 selects the same effect model as 900: path equality cannot retain it.
+    let before = snapshots(&frame)?;
+    fields(&mut world, 20, &[(314, 902)])?;
+    let expected = rolls(random, 1);
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(random, expected);
+    assert_replaced(&frame, &before, |owner| {
+        matches!(
+            owner,
+            M2GpuPlacementOwner::PlayerItemVisual {
+                guid: 20,
+                item_point: CharacterAttachmentPoint::HandRight,
+                ..
+            }
+        )
+    })?;
+
+    // 4EF020/4EF710 reuse matching helmet/shoulder model names even when
+    // the new displays declare different mirroring flags and item visuals.
+    let before = snapshots(&frame)?;
+    fields(&mut world, 7, &[(283, 1001), (287, 2001)])?;
+    let expected = random;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(random, expected);
+    assert_eq!(snapshots(&frame)?, before);
+
+    // Changing either shoulder model replaces both members of the pair.
+    let before = snapshots(&frame)?;
+    fields(&mut world, 20, &[(287, 2002)])?;
+    let expected = rolls(random, 4);
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(random, expected);
+    assert_replaced(&frame, &before, |owner| {
+        belongs_to(owner, 20, CharacterAttachmentPoint::ShoulderLeft)
+            || belongs_to(owner, 20, CharacterAttachmentPoint::ShoulderRight)
+    })?;
+    advance(&mut frame, &renderer, camera, 600.0, &mut random)?;
+
+    // A one-sided shoulder remains a live component during a later atlas update.
+    fields(&mut world, 20, &[(287, 2003)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(!frame.placements.iter().any(|placement| belongs_to(
+        placement.owner,
+        20,
+        CharacterAttachmentPoint::ShoulderLeft
+    )));
+    advance(&mut frame, &renderer, camera, 700.0, &mut random)?;
+    let before = snapshots(&frame)?;
+    presentation.set_component_texture_level(
+        CharacterComponentTextureLevel::new(9).ok_or("texture level")?,
+    );
+    let expected = random;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(random, expected);
+    assert_eq!(snapshots(&frame)?, before);
+
+    world.remove_object(20)?;
+    add_unit(&mut world, 20, ObjectKind::Player, 0)?;
+    fields(
+        &mut world,
+        20,
+        &[(122, 1), (283, 1000), (287, 2003), (313, 3001), (314, 902)],
+    )?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |owner| {
+        matches!(
+            owner,
+            M2GpuPlacementOwner::PlayerItem { guid: 20, .. }
+                | M2GpuPlacementOwner::PlayerItemVisual { guid: 20, .. }
+        )
+    })?;
+    Ok(())
+}
+
+fn fields(world: &mut ActiveWorld, guid: u64, values: &[(u16, u32)]) -> Result<(), Box<dyn Error>> {
+    world.update_fields(guid, values.iter().copied())?;
+    solarity_systems::project_object_fields(world, guid, values.iter().copied())?;
+    Ok(())
+}
+
+fn publish(
+    presentation: &mut RuntimePlayerPresentation,
+    world: &ActiveWorld,
+    frame: &mut M2Frame,
+    renderer: &mut VulkanRenderer,
+    random: &mut CrtRand,
+) -> Result<(), Box<dyn Error>> {
+    presentation.synchronize(Some(world))?;
+    presentation.synchronize_remote_players(Some(world))?;
+    frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+    frame.replace_remote_players(
+        renderer,
+        &presentation.resident_remote_player_frame_inputs(),
+        random,
+    )?;
+    Ok(())
+}
+
+fn advance(
+    frame: &mut M2Frame,
+    renderer: &VulkanRenderer,
+    camera: WorldCameraFrame,
+    time: f32,
+    random: &mut CrtRand,
+) -> Result<(), Box<dyn Error>> {
+    frame.prepare_visible_draws(
+        renderer,
+        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        camera,
+        Vec3::ZERO,
+        time,
+        time,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        random,
+        None,
+    )?;
+    Ok(())
+}
+
+fn rolls(mut random: CrtRand, count: usize) -> CrtRand {
+    for _ in 0..count {
+        let _ = random.next_u15();
+    }
+    random
+}
+
+#[derive(Debug, PartialEq)]
+struct ComponentSnapshot {
+    owner: M2GpuPlacementOwner,
+    source: usize,
+    effects: UnitEffectsSnapshot,
+    event_time: f32,
+    orientation: solarity_rendering::M2ModelOrientation,
+}
+
+fn snapshots(frame: &M2Frame) -> Result<Vec<ComponentSnapshot>, Box<dyn Error>> {
+    let mut snapshots = frame
+        .placements
+        .iter()
+        .filter(|placement| {
+            matches!(
+                placement.owner,
+                M2GpuPlacementOwner::PlayerItem { .. }
+                    | M2GpuPlacementOwner::PlayerItemVisual { .. }
+            )
+        })
+        .map(|placement| {
+            let event_time = placement
+                .playback
+                .as_ref()
+                .ok_or("component playback")?
+                .borrow()
+                .previous_event_elapsed_ms;
+            Ok(ComponentSnapshot {
+                owner: placement.owner,
+                source: unit_source(frame, placement.owner)?,
+                effects: effects(frame, placement.owner)?,
+                event_time,
+                orientation: placement.orientation,
+            })
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    snapshots.sort_by_key(|snapshot| match snapshot.owner {
+        M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point.id(), 0)),
+        M2GpuPlacementOwner::PlayerItemVisual {
+            guid,
+            item_point,
+            effect_point,
+        } => Some((guid, item_point.id(), effect_point + 1)),
+        _ => None,
+    });
+    Ok(snapshots)
+}
+
+fn belongs_to(owner: M2GpuPlacementOwner, guid: u64, point: CharacterAttachmentPoint) -> bool {
+    match owner {
+        M2GpuPlacementOwner::PlayerItem {
+            guid: candidate,
+            point: candidate_point,
+        } => candidate == guid && candidate_point == point,
+        M2GpuPlacementOwner::PlayerItemVisual {
+            guid: candidate,
+            item_point,
+            ..
+        } => candidate == guid && item_point == point,
+        _ => false,
+    }
+}
+
+fn assert_replaced(
+    frame: &M2Frame,
+    before: &[ComponentSnapshot],
+    replaced: impl Fn(M2GpuPlacementOwner) -> bool,
+) -> Result<(), Box<dyn Error>> {
+    let after = snapshots(frame)?;
+    assert_eq!(after.len(), before.len());
+    for current in &after {
+        let previous = before
+            .iter()
+            .find(|previous| previous.owner == current.owner)
+            .ok_or("previous component")?;
+        if replaced(current.owner) {
+            assert_ne!(current.source, previous.source);
+            assert!(frame.sources[previous.source].is_none());
+            assert!(current.effects.particles.is_empty());
+            assert!(current.effects.ribbons.is_empty());
+            assert_eq!(current.event_time, 0.0);
+        } else {
+            assert_eq!(current, previous);
+        }
+    }
+    Ok(())
+}

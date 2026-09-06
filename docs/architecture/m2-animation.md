@@ -175,8 +175,36 @@ test emits live particles and ribbon sections for local players, remote players,
 and creatures, replaces their material resources, and verifies retained state
 and continued aging. GUID reuse, model replacement, and world replacement
 start empty. Disabling the transfer reproduces the test's material-change
-failure. Equipped child effects and effects across complete frame retirement
-still require retained ownership; this transfer covers the unit body only.
+failure. Effects across complete frame retirement still require retained
+ownership; this transfer covers the unit body only.
+
+World character publication also retains continuing equipped components,
+including their GPU sources, playback/event clocks, particles, and ribbons.
+New components prepare independently; retained placements detach only after
+the complete replacement has prepared successfully. Publication restores
+parent-before-child order while preserving their original source indices.
+The same unit/model owner must remain alive, so GUID reuse cannot inherit gear.
+
+The component boundary follows `0x004F2640`: helmet reuse at `0x004EF020`
+compares the model path; shoulder reuse at `0x004EF710` requires both matching
+paths when the equipped entry changes. An unchanged entry, including a
+one-sided shoulder, survives an unrelated body material update. These native
+reuse branches keep the old component's textures, flags, and attached visual
+even if another item display names different values at the same model path.
+Weapon entry or attachment-point changes create a new component through
+`0x004EACD0`/`0x004EAA70`. An enchantment change follows `0x006D6BA0` and
+`0x004EA8F0`, replacing the effect children while retaining their weapon;
+an identical effect model path does not preserve that effect's old lifetime.
+
+The equipment residency test covers local and remote characters, material
+updates, same-path weapon replacement, same-path enchant replacement, helmet
+and shoulder reuse, one changed shoulder, a one-sided shoulder, GUID reuse,
+and failed preparation after a retention plan has formed. It checks real
+Vulkan source identities, event clocks, live effect histories, and that
+continuing components consume no initialization rolls. Disabling component
+retention fails the material-update case. Glue previews, mount instances,
+native component sequence initialization, and secondary-timer synchronization
+remain outside this world-component lifetime change.
 
 Changed stand state follows `0x0073F060`, including death entry through
 `0x0073AF80`, submerged entry 201, and return from submerged through 127 or 224.

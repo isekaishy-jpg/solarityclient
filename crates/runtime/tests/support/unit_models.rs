@@ -4,14 +4,18 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false)
+    build_fixture(false, false)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true)
+    build_fixture(true, false)
 }
 
-fn build_fixture(effects: bool) -> Result<ClientFixture, Box<dyn Error>> {
+pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(false, true)
+}
+
+fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
     let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
@@ -23,6 +27,9 @@ fn build_fixture(effects: bool) -> Result<ClientFixture, Box<dyn Error>> {
     }
     if effects {
         append_effects(&mut model, ids.len());
+    }
+    if equipment {
+        append_attachments(&mut model, &[1, 5, 6, 11, 26], ids.len());
     }
     let animations: Vec<_> = ids
         .iter()
@@ -72,7 +79,7 @@ fn build_fixture(effects: bool) -> Result<ClientFixture, Box<dyn Error>> {
     race[6] = 1;
     race[11] = 4;
     race[14] = 4;
-    ClientFixture::with_common_files(&[
+    let mut files: Vec<(String, Vec<u8>)> = [
         ("Character\\Human\\Male\\HumanMale.m2", &model),
         (
             "Character\\Human\\Male\\HumanMale00.skin",
@@ -106,7 +113,135 @@ fn build_fixture(effects: bool) -> Result<ClientFixture, Box<dyn Error>> {
             "DBFilesClient\\ChrRaces.dbc",
             &dbc(69, &race, b"\0Hu\0Human\0"),
         ),
-    ])
+    ]
+    .into_iter()
+    .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
+    .collect();
+    if equipment {
+        append_equipment_files(&mut files, &ids)?;
+    }
+    ClientFixture::with_common_files(
+        &files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn append_equipment_files(
+    files: &mut Vec<(String, Vec<u8>)>,
+    ids: &[u16],
+) -> Result<(), Box<dyn Error>> {
+    let mut model = game_object_models::model_with_animations(ids)?;
+    append_effects(&mut model, ids.len());
+    append_attachments(&mut model, &[0], ids.len());
+    for path in [
+        "Item\\ObjectComponents\\Head\\Helm_HuM",
+        "Item\\ObjectComponents\\Shoulder\\Right",
+        "Item\\ObjectComponents\\Shoulder\\Right2",
+        "Item\\ObjectComponents\\Shoulder\\Left",
+        "Item\\ObjectComponents\\Weapon\\Weapon",
+        "Spells\\Effect1",
+        "Spells\\Effect2",
+    ] {
+        files.push((format!("{path}.m2"), model.clone()));
+        files.push((format!("{path}00.skin"), game_object_models::skin()?));
+    }
+    let mut strings = vec![0];
+    let mut displays = Vec::new();
+    for (id, right, left, visual, flags) in [
+        (500, "Helm", "", 700, 0),
+        (501, "Helm", "", 701, 0x100),
+        (600, "Right.m2", "Left.m2", 700, 0),
+        (601, "Right.m2", "Left.m2", 701, 0x100),
+        (602, "Right2.m2", "Left.m2", 700, 0),
+        (603, "Right2.m2", "", 700, 0),
+        (800, "Weapon.m2", "", 0, 0),
+    ] {
+        let mut row = [0; 25];
+        row[0] = id;
+        row[1] = strings.len() as u32;
+        strings.extend_from_slice(right.as_bytes());
+        strings.push(0);
+        row[2] = strings.len() as u32;
+        strings.extend_from_slice(left.as_bytes());
+        strings.push(0);
+        row[10] = flags;
+        row[23] = visual;
+        row[24] = u32::MAX;
+        displays.extend_from_slice(&row);
+    }
+    let items: Vec<_> = [
+        (1000, 500, 1),
+        (1001, 501, 1),
+        (2000, 600, 3),
+        (2001, 601, 3),
+        (2002, 602, 3),
+        (2003, 603, 3),
+        (3000, 800, 13),
+        (3001, 800, 13),
+    ]
+    .into_iter()
+    .flat_map(|(id, display, inventory)| [id, 2, 0, u32::MAX, 0, display, inventory, 1])
+    .collect();
+    let enchants: Vec<_> = [(900, 700), (901, 701), (902, 700)]
+        .into_iter()
+        .flat_map(|(id, visual)| {
+            let mut row = [0; 38];
+            row[0] = id;
+            row[31] = visual;
+            row
+        })
+        .collect();
+    files.extend([
+        ("DBFilesClient\\Item.dbc".into(), dbc(8, &items, b"\0")),
+        (
+            "DBFilesClient\\ItemDisplayInfo.dbc".into(),
+            dbc(25, &displays, &strings),
+        ),
+        (
+            "DBFilesClient\\ItemVisuals.dbc".into(),
+            dbc(6, &[700, 710, 0, 0, 0, 0, 701, 711, 0, 0, 0, 0], b"\0"),
+        ),
+        (
+            "DBFilesClient\\ItemVisualEffects.dbc".into(),
+            dbc(
+                2,
+                &[710, 1, 711, 19],
+                b"\0Spells\\Effect1.m2\0Spells\\Effect2.m2\0",
+            ),
+        ),
+        (
+            "DBFilesClient\\SpellItemEnchantment.dbc".into(),
+            dbc(38, &enchants, b"\0"),
+        ),
+    ]);
+    Ok(())
+}
+
+fn append_attachments(bytes: &mut Vec<u8>, ids: &[u32], sequences: usize) {
+    let records = bytes.len();
+    bytes.resize(records + ids.len() * 40, 0);
+    for (index, id) in ids.iter().enumerate() {
+        let record = records + index * 40;
+        bytes[record..record + 4].copy_from_slice(&id.to_le_bytes());
+        constant_track(bytes, record + 20, sequences, &[1]);
+    }
+    array(bytes, 0xf0, ids.len(), records);
+    let lookup = bytes.len();
+    for id in 0..=ids.iter().copied().max().unwrap_or(0) {
+        let index = ids
+            .iter()
+            .position(|candidate| *candidate == id)
+            .map_or(u16::MAX, |index| index as u16);
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    array(
+        bytes,
+        0xf8,
+        ids.iter().copied().max().unwrap_or(0) as usize + 1,
+        lookup,
+    );
 }
 
 /// One ordinary emitter and one ribbon with constant tracks in every pose.

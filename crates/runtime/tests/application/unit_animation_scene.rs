@@ -1,5 +1,8 @@
 //! Scene culling and GPU replacement cannot restart a unit's primary timer.
 
+#[path = "equipment_residency.rs"]
+mod equipment_residency;
+
 use super::super::{M2PlaybackStorage, m2_gpu_placement};
 use super::*;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};

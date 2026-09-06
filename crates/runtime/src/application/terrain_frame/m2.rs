@@ -4,10 +4,12 @@
 #[path = "../../../tests/application/game_object_scene.rs"]
 mod game_object_scene_tests;
 
+mod character_residency;
 mod game_objects;
 mod playback;
 mod streaming;
 use crate::application::unit_animation::UnitAnimationBehavior;
+use character_residency::{M2PlayerItemIdentity, prepare_character_gpu};
 use playback::M2PlaybackStorage;
 
 use std::collections::{HashMap, VecDeque};
@@ -160,6 +162,7 @@ struct M2GpuPlacement {
     playback: Option<M2PlaybackStorage>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
     unit_presentation: Option<UnitPresentationGeneration>,
+    item_identity: Option<M2PlayerItemIdentity>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
 }
@@ -835,6 +838,7 @@ impl M2Frame {
                 playback: Some(M2PlaybackStorage::Local(playback)),
                 unit_animation: None,
                 unit_presentation: None,
+                item_identity: None,
                 particles,
                 ribbons,
             }],
@@ -1169,23 +1173,18 @@ impl M2Frame {
             self.remove_player();
             return Ok(());
         };
-        let mut prepared = prepare_character_gpu(
+        let mut prepared = [prepare_character_gpu(
+            self,
             renderer,
             &input,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
             self.animation_time_ms(),
             random,
-        )?;
-        self.retain_unit_effects(&mut prepared);
+        )?];
+        self.retain_character_instances(&mut prepared);
         self.remove_player();
-        for (source, placement) in prepared {
-            let source_index = self.sources.len();
-            self.sources.push(Some(source));
-            self.placements.push(M2GpuPlacement {
-                placement_valid: true,
-                source_index,
-                ..placement
-            });
+        for character in prepared {
+            self.publish_character(character);
         }
         Ok(())
     }
@@ -1261,7 +1260,7 @@ impl M2Frame {
             prepared.push((source, placement));
         }
 
-        self.retain_unit_effects(&mut prepared);
+        self.retain_unit_effects(prepared.iter_mut().map(|(_, placement)| placement));
         self.remove_creatures(&retained);
         for (source, placement) in prepared {
             let source_index = self.sources.len();
@@ -1296,6 +1295,7 @@ impl M2Frame {
                 continue;
             }
             prepared.push(prepare_character_gpu(
+                self,
                 renderer,
                 input,
                 M2GpuPlacementOwner::RemotePlayerBody { guid: input.guid() },
@@ -1303,20 +1303,10 @@ impl M2Frame {
                 random,
             )?);
         }
-        for character in &mut prepared {
-            self.retain_unit_effects(character);
-        }
+        self.retain_character_instances(&mut prepared);
         self.remove_remote_players(&retained);
         for character in prepared {
-            for (source, placement) in character {
-                let source_index = self.sources.len();
-                self.sources.push(Some(source));
-                self.placements.push(M2GpuPlacement {
-                    placement_valid: true,
-                    source_index,
-                    ..placement
-                });
-            }
+            self.publish_character(character);
         }
         Ok(())
     }
@@ -1324,8 +1314,11 @@ impl M2Frame {
     /// A material rebuild changes GPU resources, not the living model's
     /// emitter histories. Transfer them only after every replacement has
     /// prepared successfully, and only within the same unit/model lifetime.
-    fn retain_unit_effects(&mut self, prepared: &mut [(M2GpuSource, M2GpuPlacement)]) {
-        for (_, replacement) in prepared {
+    fn retain_unit_effects<'a>(
+        &mut self,
+        prepared: impl IntoIterator<Item = &'a mut M2GpuPlacement>,
+    ) {
+        for replacement in prepared {
             let Some(animation) = &replacement.unit_animation else {
                 continue;
             };
@@ -2951,205 +2944,6 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
     }
 }
 
-/// Prepares one complete player character, including equipment and visuals.
-fn prepare_character_gpu(
-    renderer: &mut VulkanRenderer,
-    input: &ResidentPlayerFrameInput<'_>,
-    body_owner: M2GpuPlacementOwner,
-    scene_time_ms: f32,
-    random: &mut CrtRand,
-) -> Result<Vec<(M2GpuSource, M2GpuPlacement)>, RuntimeTerrainFrameError> {
-    let mount = input.mount();
-    let world_transform = if let Some(mount) = mount {
-        unit_placement_transform(input.world_transform(), mount.object_scale())?
-    } else {
-        unit_placement_transform(input.world_transform(), input.object_scale())?
-    };
-    let mut prepared = Vec::new();
-    if let Some(mount) = mount {
-        if mount.model().attachment(0).is_none() {
-            return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
-                model: mount.model().path().clone(),
-                attachment_id: 0,
-            });
-        }
-        let resolved = mount
-            .textures()
-            .iter()
-            .map(|texture| match texture {
-                ResidentCreatureTexture::Authored(source) => {
-                    M2ResolvedTexture::Authored(source.as_ref())
-                }
-                ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
-                ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                ResidentCreatureTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
-            })
-            .collect::<Vec<_>>();
-        let source = prepare_gpu_source(
-            renderer,
-            mount.model(),
-            &resolved,
-            None,
-            M2LocalLightCount::Zero,
-            M2ModelOrientation::Authored,
-        )?;
-        let owner = match body_owner {
-            M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
-            M2GpuPlacementOwner::RemotePlayerBody { guid } => {
-                M2GpuPlacementOwner::RemotePlayerMount { guid }
-            }
-            _ => unreachable!("character preparation requires a player body owner"),
-        };
-        let placement = unit_gpu_placement(
-            0,
-            world_transform,
-            owner,
-            mount.model(),
-            mount.animation().animation_id(),
-            mount.particle_colors().cloned(),
-            random,
-        )?;
-        // Parent-first insertion lets the current mount bone pose determine
-        // the rider transform before the body and its equipment are visited.
-        prepared.push((source, placement));
-    }
-    let resolved = input
-        .textures()
-        .iter()
-        .map(|texture| match texture {
-            ResidentPlayerTexture::Authored(source) => M2ResolvedTexture::Authored(source.as_ref()),
-            ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
-            ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
-            ResidentPlayerTexture::BodyAtlas => M2ResolvedTexture::CharacterAtlas(input.atlas()),
-            ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
-        })
-        .collect::<Vec<_>>();
-    let source = prepare_gpu_source(
-        renderer,
-        input.model(),
-        &resolved,
-        Some(M2GeosetSelection::Character(input.geosets())),
-        M2LocalLightCount::Zero,
-        M2ModelOrientation::Authored,
-    )?;
-    let mut body = if let Some(animation) = input.unit_animation() {
-        animation.synchronize(scene_time_ms as u32, random)?;
-        let mut body = m2_gpu_placement(
-            0,
-            world_transform,
-            body_owner,
-            input.model(),
-            Some(M2PlaybackStorage::Shared(animation.playback())),
-            input.particle_colors().cloned(),
-        )?;
-        body.unit_animation = Some(Rc::clone(animation));
-        body
-    } else {
-        unit_gpu_placement(
-            0,
-            world_transform,
-            body_owner,
-            input.model(),
-            input.animation().animation_id(),
-            input.particle_colors().cloned(),
-            random,
-        )?
-    };
-    body.unit_presentation = Some(input.generation().clone());
-    prepared.push((source, body));
-    for attachment in input.attachments() {
-        if input.model().attachment(attachment.point().id()).is_none() {
-            return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
-                model: input.model().path().clone(),
-                attachment_id: attachment.point().id(),
-            });
-        }
-        let resolved = attachment
-            .textures()
-            .iter()
-            .map(|texture| match texture {
-                ResidentPlayerTexture::Authored(source) => {
-                    M2ResolvedTexture::Authored(source.as_ref())
-                }
-                ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
-                ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                ResidentPlayerTexture::BodyAtlas => {
-                    M2ResolvedTexture::CharacterAtlas(input.atlas())
-                }
-                ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
-            })
-            .collect::<Vec<_>>();
-        let orientation = if attachment.is_model_mirrored() {
-            M2ModelOrientation::Mirrored
-        } else {
-            M2ModelOrientation::Authored
-        };
-        let source = prepare_gpu_source(
-            renderer,
-            attachment.model(),
-            &resolved,
-            None,
-            M2LocalLightCount::Zero,
-            orientation,
-        )?;
-        let mut placement = unit_gpu_placement(
-            0,
-            world_transform,
-            M2GpuPlacementOwner::PlayerItem {
-                guid: input.guid(),
-                point: attachment.point(),
-            },
-            attachment.model(),
-            0,
-            attachment.particle_colors().cloned(),
-            random,
-        )?;
-        placement.orientation = orientation;
-        placement.animation_binding = equipment_animation_binding(attachment);
-        prepared.push((source, placement));
-        for effect in attachment.visual_effects() {
-            let resolved = effect
-                .textures()
-                .iter()
-                .map(|texture| match texture {
-                    ResidentPlayerTexture::Authored(source) => {
-                        M2ResolvedTexture::Authored(source.as_ref())
-                    }
-                    ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
-                    ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                    ResidentPlayerTexture::BodyAtlas => {
-                        M2ResolvedTexture::CharacterAtlas(input.atlas())
-                    }
-                    ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
-                })
-                .collect::<Vec<_>>();
-            let source = prepare_gpu_source(
-                renderer,
-                effect.model(),
-                &resolved,
-                None,
-                M2LocalLightCount::Zero,
-                orientation,
-            )?;
-            let placement = unit_gpu_placement(
-                0,
-                world_transform,
-                M2GpuPlacementOwner::PlayerItemVisual {
-                    guid: input.guid(),
-                    item_point: attachment.point(),
-                    effect_point: effect.point(),
-                },
-                effect.model(),
-                0,
-                None,
-                random,
-            )?;
-            prepared.push((source, placement));
-        }
-    }
-    Ok(prepared)
-}
-
 /// Creates placement-local animation and effect histories for one living M2.
 fn unit_gpu_placement(
     source_index: usize,
@@ -3204,6 +2998,7 @@ fn m2_gpu_placement(
         playback,
         unit_animation: None,
         unit_presentation: None,
+        item_identity: None,
         particles,
         ribbons,
     })

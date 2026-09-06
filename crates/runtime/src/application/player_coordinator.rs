@@ -2659,6 +2659,7 @@ pub(super) enum ResidentPlayerTexture {
 
 /// One independently animated M2 attached to the player body pose.
 pub(super) struct ResidentPlayerAttachment {
+    slot: Option<PlayerEquipmentSlot>,
     point: CharacterAttachmentPoint,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
@@ -2670,6 +2671,10 @@ pub(super) struct ResidentPlayerAttachment {
 }
 
 impl ResidentPlayerAttachment {
+    pub(super) const fn slot(&self) -> Option<PlayerEquipmentSlot> {
+        self.slot
+    }
+
     pub(super) const fn point(&self) -> CharacterAttachmentPoint {
         self.point
     }
@@ -2738,6 +2743,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
     object_scale: f32,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     attachments: &'a [ResidentPlayerAttachment],
+    equipment: &'a [(PlayerEquipmentSlot, VisibleEquipmentItem)],
     mount: Option<ResidentMountFrameInput<'a>>,
 }
 
@@ -2756,6 +2762,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
             object_scale: resident.object_scale,
             particle_colors: resident.particle_colors.as_ref(),
             attachments: &resident.attachments,
+            equipment: &resident.equipment_key,
             mount: resident
                 .mount
                 .as_ref()
@@ -2765,6 +2772,13 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 
     pub(super) const fn generation(&self) -> &UnitPresentationGeneration {
         self.generation
+    }
+
+    pub(super) fn visible_item(&self, slot: PlayerEquipmentSlot) -> VisibleEquipmentItem {
+        self.equipment
+            .iter()
+            .find_map(|(candidate, item)| (*candidate == slot).then_some(*item))
+            .unwrap_or_default()
     }
 
     pub(super) const fn guid(&self) -> u64 {
@@ -3416,6 +3430,7 @@ fn load_player_attachments(
             });
         }
         attachments.push(ResidentPlayerAttachment {
+            slot: attachment.slot(),
             point: attachment.point(),
             model,
             textures: resolved_textures,
