@@ -13,11 +13,23 @@ const SQUARES_PER_UNIT: f32 = 0.24;
 /// Terrain filenames transpose the two horizontal world axes. Items retain
 /// that distinction as an ADT address paired with its local MCNK address.
 pub struct MovementTerrainChunks {
-    row: i32,
-    column: i32,
-    first_column: i32,
-    last_row: i32,
-    last_column: i32,
+    row: i64,
+    column: i64,
+    first_column: i64,
+    last_row: i64,
+    last_column: i64,
+}
+
+impl MovementTerrainChunks {
+    pub(in crate::collision) fn from_grid_bounds(minimum: [i32; 2], maximum: [i32; 2]) -> Self {
+        Self {
+            row: i64::from(minimum[0]),
+            column: i64::from(minimum[1]),
+            first_column: i64::from(minimum[1]),
+            last_row: i64::from(maximum[0]),
+            last_column: i64::from(maximum[1]),
+        }
+    }
 }
 
 impl MovementCollisionBounds {
@@ -31,13 +43,10 @@ impl MovementCollisionBounds {
     /// stock's terrain coordinate domain.
     pub fn terrain_chunks(self) -> Result<MovementTerrainChunks, MovementCollectionError> {
         let [minimum, maximum] = terrain_square_bounds(self)?;
-        Ok(MovementTerrainChunks {
-            row: minimum[0] >> 3,
-            column: minimum[1] >> 3,
-            first_column: minimum[1] >> 3,
-            last_row: maximum[0] >> 3,
-            last_column: maximum[1] >> 3,
-        })
+        Ok(MovementTerrainChunks::from_grid_bounds(
+            minimum.map(|v| v >> 3),
+            maximum.map(|v| v >> 3),
+        ))
     }
 }
 

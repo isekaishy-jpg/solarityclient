@@ -11,6 +11,7 @@ mod world_model_floor;
 mod world_model_liquid;
 mod world_model_portal;
 mod world_model_registration;
+mod world_model_registration_scene;
 
 pub use collide::{
     MovementCollisionPlane, MovementCollisionTriangle, MovementCollisionVolume,
@@ -21,7 +22,9 @@ pub use m2_model::{M2CollisionError, M2CollisionScene, PlacedM2Collision};
 pub use movement_collection::{
     MovementBspCacheMode, MovementCollectionError, MovementCollisionBounds, MovementTerrainChunks,
 };
-pub use terrain::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh};
+pub use terrain::{
+    TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainRegistrationPoint,
+};
 pub use world_model::{
     PlacedWorldModelCollision, WorldModelCollisionError, WorldModelCollisionScene,
 };
@@ -32,4 +35,7 @@ pub use world_model_liquid::{
 pub use world_model_portal::{WorldModelPortalHit, probe_world_model_portals};
 pub use world_model_registration::{
     WorldModelRegistrationHit, WorldModelRegistrationHits, WorldModelRegistrationKind,
+};
+pub use world_model_registration_scene::{
+    WorldModelRegistrationCandidate, WorldModelRegistrationQuery, WorldModelRegistrationSelection,
 };

@@ -3,8 +3,9 @@
 use glam::Vec3;
 
 use super::{
-    MovementBspCacheMode, PlacedWorldModelCollision, WorldModelCollisionError,
-    movement_collection::transform_point, probe_world_model_portals,
+    MovementBspCacheMode, MovementCollectionError, MovementCollisionBounds,
+    PlacedWorldModelCollision, WorldModelCollisionError, movement_collection::transform_point,
+    probe_world_model_portals,
 };
 
 /// Native placed-WMO classification, independent of WDT global-WMO ownership.
@@ -26,6 +27,10 @@ pub struct WorldModelRegistrationHit {
 }
 
 impl WorldModelRegistrationHit {
+    pub(super) const fn without_face(mut self) -> Self {
+        self.face = None;
+        self
+    }
     /// Returns the selected root group index, which can be a portal neighbor.
     #[must_use]
     pub const fn group_index(self) -> usize {
@@ -61,6 +66,54 @@ pub struct WorldModelRegistrationHits {
 }
 
 impl PlacedWorldModelCollision {
+    /// Appends native dynamic-reference destinations in this complete root.
+    ///
+    /// Exterior registration (`0x007C2BF0`) selects overlapping exterior MOGI
+    /// groups. Interior registration (`0x007C2D30`) inserts the chosen group
+    /// first, then other overlapping interior MOGI groups in root index order.
+    /// Both paths first transform the object's render box and test MOHD bounds.
+    /// The scene resolves excluded roots and primary-root identity beforehand.
+    ///
+    /// # Errors
+    /// Returns [`MovementCollectionError`] for invalid transformed bounds.
+    pub fn append_registration_groups(
+        &self,
+        render_bounds: MovementCollisionBounds,
+        interior_group: Option<usize>,
+        output: &mut Vec<usize>,
+    ) -> Result<(), MovementCollectionError> {
+        let local = render_bounds.transformed(self.inverse_transform)?;
+        let root = self.model.bounds();
+        if !local.intersects(MovementCollisionBounds::new(
+            Vec3::from_array(root[0]),
+            Vec3::from_array(root[1]),
+        )?) {
+            return Ok(());
+        }
+        if let Some(group) = interior_group {
+            if group >= self.model.groups().len() {
+                return Err(MovementCollectionError::InvalidRegistrationGroup { group });
+            }
+            output.push(group);
+        }
+        for (group, info) in self.model.group_info().iter().enumerate() {
+            if Some(group) == interior_group || info.flags() & 0x410080 != 0 {
+                continue;
+            }
+            if (info.flags() & 8 != 0) != interior_group.is_none() {
+                continue;
+            }
+            let bounds = info.bounds();
+            if local.intersects(MovementCollisionBounds::new(
+                Vec3::from_array(bounds[0]),
+                Vec3::from_array(bounds[1]),
+            )?) {
+                output.push(group);
+            }
+        }
+        Ok(())
+    }
+
     /// Probes a complete placed root for dynamic-object spatial registration.
     ///
     /// Inputs are world-space. Root/group boxes use native segment admission;

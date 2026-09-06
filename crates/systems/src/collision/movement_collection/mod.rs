@@ -26,6 +26,12 @@ pub enum MovementCollectionError {
     /// The requested terrain box falls outside stock's map-coordinate domain.
     #[error("movement collision bounds are outside the terrain map")]
     OutsideTerrainMap,
+    /// An interior registration names no group in the admitted root.
+    #[error("world-model registration group {group} is outside the admitted model")]
+    InvalidRegistrationGroup {
+        /// Invalid root group index.
+        group: usize,
+    },
     /// The source BSP contains a cycle.
     #[error("movement collision BSP contains a cycle")]
     CyclicBsp,

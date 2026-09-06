@@ -16,23 +16,21 @@ import struct
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE
 from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EIP, UC_X86_REG_FPCW, UC_X86_REG_ECX, UC_X86_REG_EAX
 
-import argparse
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('executable', type=Path)
-parser.add_argument('--portal-output', type=Path, required=True)
-parser.add_argument('--floor-output', type=Path, required=True)
-parser.add_argument('--registration-output', type=Path, required=True)
-parser.add_argument('--box-output', type=Path, required=True)
-arguments = parser.parse_args()
-data = arguments.executable.read_bytes()
-assert hashlib.sha256(data).hexdigest() == 'aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8'
-pe = struct.unpack_from('<I', data, 0x3c)[0]
-section_count = struct.unpack_from('<H', data, pe + 6)[0]
-optional_size = struct.unpack_from('<H', data, pe + 20)[0]
-image_base = struct.unpack_from('<I', data, pe + 24 + 28)[0]
-image_size = struct.unpack_from('<I', data, pe + 24 + 56)[0]
-headers = pe + 24 + optional_size
 STACK, HEAP, STOP = 0x02000000, 0x03000000, 0x04000000
+
+
+def initialize(executable):
+    """Load the pinned image without executing its entry point."""
+    global data, section_count, image_base, image_size, headers
+    data = Path(executable).read_bytes()
+    if hashlib.sha256(data).hexdigest() != 'aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8':
+        raise ValueError('Executable fingerprint does not match build-12340 evidence')
+    pe = struct.unpack_from('<I', data, 0x3c)[0]
+    section_count = struct.unpack_from('<H', data, pe + 6)[0]
+    optional_size = struct.unpack_from('<H', data, pe + 20)[0]
+    image_base = struct.unpack_from('<I', data, pe + 24 + 28)[0]
+    image_size = struct.unpack_from('<I', data, pe + 24 + 56)[0]
+    headers = pe + 24 + optional_size
 
 
 def emulator():
@@ -417,6 +415,15 @@ def capture_boxes(output):
 
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('executable', type=Path)
+    parser.add_argument('--portal-output', type=Path, required=True)
+    parser.add_argument('--floor-output', type=Path, required=True)
+    parser.add_argument('--registration-output', type=Path, required=True)
+    parser.add_argument('--box-output', type=Path, required=True)
+    arguments = parser.parse_args()
+    initialize(arguments.executable)
     capture_portals(arguments.portal_output)
     capture_floors(arguments.floor_output)
     capture_registration(arguments.registration_output)

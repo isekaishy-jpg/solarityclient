@@ -1,5 +1,11 @@
 //! Ordered static movement geometry over complete resident ADT/WMO generations.
 
+mod registration;
+
+pub use registration::{
+    RuntimeMovementReference, RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery,
+};
+
 use std::collections::{HashMap, HashSet};
 
 use solarity_asset::{TerrainChunkIndex, TerrainTileIndex};

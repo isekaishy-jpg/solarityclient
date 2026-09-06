@@ -7,11 +7,279 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
 };
 use solarity_systems::{
-    MovementBspCacheMode, PlacedWorldModelCollision, WorldModelCollisionError,
-    WorldModelRegistrationKind, probe_world_model_portals,
+    MovementBspCacheMode, MovementCollisionBounds, PlacedWorldModelCollision,
+    WorldModelCollisionError, WorldModelRegistrationKind, WorldModelRegistrationQuery,
+    probe_world_model_portals,
 };
 
 use super::support::{Fixture, FixtureFile};
+
+#[test]
+fn group_membership_matches_original_interior_exterior_bounds_and_order()
+-> Result<(), Box<dyn Error>> {
+    let transforms = [
+        Mat4::IDENTITY,
+        Mat4::from_translation(Vec3::new(-100., 200., -30.)),
+        Mat4::from_cols_array(&[
+            0., -2., 0., 0., 2., 0., 0., 0., 0., 0., 2., 0., -20., 40., -10., 1.,
+        ]),
+    ];
+    let mut models = std::collections::HashMap::new();
+    let mut count = 0;
+    for line in include_str!("../fixtures/wmo-group-registration-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let bounds = words[..6]
+            .iter()
+            .map(|v| u32::from_str_radix(v, 16).map(f32::from_bits))
+            .collect::<Result<Vec<_>, _>>()?;
+        let fields = words[6..]
+            .iter()
+            .map(|v| v.parse::<i32>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let flags = [fields[1], fields[2], fields[3], fields[4]];
+        let model = if let Some(model) = models.get(&flags) {
+            Arc::clone(model)
+        } else {
+            let (root, group) = membership_fixture(flags.map(|v| v as u32));
+            let fixture = Fixture::new(&[
+                FixtureFile {
+                    path: "World\\Members.wmo",
+                    bytes: &root,
+                },
+                FixtureFile {
+                    path: "World\\Members_000.wmo",
+                    bytes: &group,
+                },
+                FixtureFile {
+                    path: "World\\Members_001.wmo",
+                    bytes: &group,
+                },
+                FixtureFile {
+                    path: "World\\Members_002.wmo",
+                    bytes: &group,
+                },
+                FixtureFile {
+                    path: "World\\Members_003.wmo",
+                    bytes: &group,
+                },
+            ])?;
+            let mut store = AssetStore::mount(ArchiveCatalog::discover(
+                ClientDataRoot::new(fixture.data_root())?,
+                Locale::EnUs,
+            )?)?;
+            let model = Arc::new(DecodedWorldModel::load(
+                &mut store,
+                &AssetPath::new("World\\Members.wmo")?,
+            )?);
+            models.insert(flags, Arc::clone(&model));
+            model
+        };
+        let inverse = transforms[fields[0] as usize];
+        let placement =
+            PlacedWorldModelCollision::prepare_transforms(model, inverse.inverse(), inverse)?;
+        let mut groups = Vec::new();
+        placement.append_registration_groups(
+            MovementCollisionBounds::new(
+                Vec3::from_slice(&bounds[..3]),
+                Vec3::from_slice(&bounds[3..]),
+            )?,
+            usize::try_from(fields[5]).ok(),
+            &mut groups,
+        )?;
+        assert_eq!(groups.len(), fields[6] as usize, "{line}");
+        assert_eq!(
+            groups,
+            fields[7..].iter().map(|&v| v as usize).collect::<Vec<_>>(),
+            "{line}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 450);
+    Ok(())
+}
+
+fn membership_fixture(flags: [u32; 4]) -> (Vec<u8>, Vec<u8>) {
+    let (_, group) = scene_floor_fixture(8, 0.);
+    let mut root = Vec::new();
+    chunk(&mut root, *b"REVM", &17u32.to_le_bytes());
+    let mut header = vec![0; 64];
+    word(&mut header, 4, 4);
+    vector(&mut header, 36, [-16.; 3]);
+    vector(&mut header, 48, [16.; 3]);
+    chunk(&mut root, *b"DHOM", &header);
+    let bounds = [
+        [[-16., -16., -16.], [0., 16., 16.]],
+        [[0., -16., -16.], [16., 16., 16.]],
+        [[-16., 0., -16.], [16., 16., 16.]],
+        [[-16., -16., -16.], [16., 0., 16.]],
+    ];
+    let mut info = vec![0; 128];
+    for i in 0..4 {
+        word(&mut info, i * 32, flags[i]);
+        vector(&mut info, i * 32 + 4, bounds[i][0]);
+        vector(&mut info, i * 32 + 16, bounds[i][1]);
+        word(&mut info, i * 32 + 28, u32::MAX);
+    }
+    chunk(&mut root, *b"IGOM", &info);
+    (root, group)
+}
+
+#[test]
+fn scene_registration_matches_original_banks_fallbacks_ties_and_terrain()
+-> Result<(), Box<dyn Error>> {
+    let mut count = 0;
+    for line in include_str!("../fixtures/wmo-scene-registration-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let mode = words[0].parse::<u32>()?;
+        let height = f32::from_bits(u32::from_str_radix(words[1], 16)?);
+        let clear = words[2] == "1";
+        let roots = words[3].parse::<usize>()?;
+        let mut query = WorldModelRegistrationQuery::<u32>::new(
+            Vec3::new(0., 0., 4.),
+            Vec3::new(0., 0., -4.),
+            Vec3::new(0., 0., 0.15),
+        )?;
+        for i in 0..roots {
+            let fields = &words[4 + i * 4..8 + i * 4];
+            let owner = fields[0].parse::<u32>()?;
+            let flags = fields[1].parse::<u32>()?;
+            if flags & 0x20 != 0 {
+                continue;
+            } // The scene filters excluded native roots.
+            let (root, group) = scene_floor_fixture(
+                fields[2].parse()?,
+                f32::from_bits(u32::from_str_radix(fields[3], 16)?),
+            );
+            let fixture = Fixture::new(&[
+                FixtureFile {
+                    path: "World\\Scene.wmo",
+                    bytes: &root,
+                },
+                FixtureFile {
+                    path: "World\\Scene_000.wmo",
+                    bytes: &group,
+                },
+            ])?;
+            let mut store = AssetStore::mount(ArchiveCatalog::discover(
+                ClientDataRoot::new(fixture.data_root())?,
+                Locale::EnUs,
+            )?)?;
+            let model = Arc::new(DecodedWorldModel::load(
+                &mut store,
+                &AssetPath::new("World\\Scene.wmo")?,
+            )?);
+            let mut placement =
+                PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
+            query.probe_root(
+                owner,
+                if flags & 0x400 == 0 {
+                    WorldModelRegistrationKind::Static
+                } else {
+                    WorldModelRegistrationKind::Transformed
+                },
+                &mut placement,
+                MovementBspCacheMode::Disabled,
+            )?;
+        }
+        let mut selection = query.finish();
+        if mode != 0 {
+            if clear {
+                selection.clear_secondary_bank();
+            }
+            let fraction = ((4.0 - f64::from(height)) * f64::from(0.001_f32)) as f32;
+            if mode == 1 && fraction >= 0.0 {
+                selection.occlude_by_terrain(fraction)?;
+            }
+        }
+        let primary = selection.primary();
+        let fallback = selection.fallback();
+        for (i, candidate) in [primary[0], primary[1], fallback[0], fallback[1]]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = 4 + roots * 4 + i * 5;
+            let expected = words[offset..offset + 5]
+                .iter()
+                .map(|word| u32::from_str_radix(word, 16))
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                candidate.map_or(u32::MAX, |hit| hit.owner()),
+                expected[0],
+                "{line}"
+            );
+            if let Some(candidate) = candidate {
+                let hit = candidate.hit();
+                assert_eq!(hit.group_index(), expected[1] as usize, "{line}");
+                assert_eq!(hit.fraction().to_bits(), expected[2], "{line}");
+                assert_eq!(
+                    u32::from(hit.face().unwrap_or(u16::MAX)),
+                    expected[3],
+                    "{line}"
+                );
+                assert_eq!(hit.is_interior(), expected[4] != 0, "{line}");
+            }
+        }
+        assert_eq!(selection.selected(), primary[0].or(primary[1]));
+        count += 1;
+    }
+    assert_eq!(count, 61);
+    Ok(())
+}
+
+fn scene_floor_fixture(flag: u8, height: f32) -> (Vec<u8>, Vec<u8>) {
+    let mut root = Vec::new();
+    chunk(&mut root, *b"REVM", &17u32.to_le_bytes());
+    let mut header = vec![0; 64];
+    word(&mut header, 4, 1);
+    vector(&mut header, 36, [-16.; 3]);
+    vector(&mut header, 48, [16.; 3]);
+    chunk(&mut root, *b"DHOM", &header);
+    let mut info = vec![0; 32];
+    word(&mut info, 0, 8);
+    vector(&mut info, 4, [-16.; 3]);
+    vector(&mut info, 16, [16.; 3]);
+    word(&mut info, 28, u32::MAX);
+    chunk(&mut root, *b"IGOM", &info);
+    let mut header = vec![0; 68];
+    word(&mut header, 8, 8);
+    vector(&mut header, 12, [-16.; 3]);
+    vector(&mut header, 24, [16.; 3]);
+    chunk(&mut header, *b"YPOM", &[flag, 255]);
+    let indices = [0u16, 1, 2]
+        .into_iter()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    chunk(&mut header, *b"IVOM", &indices);
+    let vertices = [[-3., -3., height], [3., -3., height], [-3., 3., height]]
+        .into_iter()
+        .flatten()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>();
+    chunk(&mut header, *b"TVOM", &vertices);
+    let normals = [[0f32, 0., 1.]; 3]
+        .into_iter()
+        .flatten()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>();
+    chunk(&mut header, *b"RNOM", &normals);
+    let mut node = vec![0; 16];
+    short(&mut node, 0, 4);
+    short(&mut node, 2, u16::MAX);
+    short(&mut node, 4, u16::MAX);
+    short(&mut node, 6, 1);
+    chunk(&mut header, *b"NBOM", &node);
+    chunk(&mut header, *b"RBOM", &0u16.to_le_bytes());
+    let mut group = Vec::new();
+    chunk(&mut group, *b"REVM", &17u32.to_le_bytes());
+    chunk(&mut group, *b"PGOM", &header);
+    (root, group)
+}
 
 #[test]
 fn floor_probe_rejects_selected_cycles_invalid_axes_and_negative_children()

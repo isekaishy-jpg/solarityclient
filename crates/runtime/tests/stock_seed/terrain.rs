@@ -18,15 +18,16 @@ use solarity_rendering::{
     CharacterComponentTextureLevel, WorldCamera, WorldFrustum, WorldScreenWindow,
 };
 use solarity_runtime::{
-    RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll,
-    RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeStaticMovementOwner,
-    RuntimeStaticMovementQuery, RuntimeStaticMovementResidency, RuntimeTerrainCoordinator,
-    RuntimeTerrainError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
+    RuntimeCreaturePoll, RuntimeMovementReference, RuntimeMovementRegistrationQuery,
+    RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
+    RuntimeRemotePlayerPoll, RuntimeStaticMovementOwner, RuntimeStaticMovementQuery,
+    RuntimeStaticMovementResidency, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
 };
 use solarity_systems::{
-    CameraSubjectGeometry, MovementBspCacheMode, MovementCollisionBounds, TerrainStreamingWindow,
-    WorldViewDistanceRequest, project_object_fields, resolve_camera_subject_height,
-    resolve_player_camera_pose, resolve_world_view_distance,
+    CameraSubjectGeometry, MovementBspCacheMode, MovementCollisionBounds, PlacedM2Collision,
+    TerrainStreamingWindow, WorldViewDistanceRequest, project_object_fields,
+    resolve_camera_subject_height, resolve_player_camera_pose, resolve_world_view_distance,
 };
 use wow_adt::AdtVersion;
 use wow_adt::builder::AdtBuilder;
@@ -42,6 +43,125 @@ use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
 use crate::support::{ClientFixture, bootstrap_texture_blp};
+
+#[test]
+fn game_object_registration_retains_only_complete_current_terrain_destinations()
+-> Result<(), Box<dyn Error>> {
+    let first = TerrainTileIndex::new(21, 30).ok_or("bad tile")?;
+    let second = TerrainTileIndex::new(22, 30).ok_or("bad tile")?;
+    let mut manifest = WdtFile::new(WowVersion::WotLK);
+    manifest.mwmo = Some(MwmoChunk::new());
+    for tile in [first, second] {
+        manifest
+            .main
+            .get_mut(usize::from(tile.x()), usize::from(tile.y()))
+            .ok_or("bad tile")?
+            .set_has_adt(true);
+    }
+    let mut wdt = Vec::new();
+    WdtWriter::new(&mut wdt).write(&manifest)?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &map_table()),
+        ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
+        (
+            "World\\Maps\\Northrend\\Northrend_21_30.adt",
+            &streaming_adt(first, 10.)?,
+        ),
+        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+        ("World\\Fixture\\Collision.m2", &m2_collision_fixture()?),
+        ("World\\Fixture\\Collision00.skin", &skin_fixture()?),
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let model = std::sync::Arc::new(solarity_asset::DecodedM2Model::load(
+        &mut store,
+        &solarity_asset::AssetPath::new("World\\Fixture\\Collision.m2")?,
+    )?);
+    let mut placed = PlacedM2Collision::prepare_transform(
+        model,
+        glam::Mat4::from_translation(Vec3::new(999., 5799., 50.)),
+    )?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
+    let mut query = RuntimeMovementRegistrationQuery::new();
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::PendingMap
+    );
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "RegistrationFixture",
+        Vec3::new(1000., 5800., 50.),
+        0.,
+    ));
+    terrain.synchronize(Some(&world))?;
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(query.map_id(), Some(571));
+    assert!(!query.references().is_empty());
+    assert!(query.references().iter().all(|reference|
+        matches!(reference, RuntimeMovementReference::Terrain { tile, .. } if *tile == first)));
+    assert!(
+        query
+            .selection()
+            .ok_or("missing complete selection")?
+            .selected()
+            .is_none()
+    );
+    placed.set_transform(glam::Mat4::from_translation(Vec3::new(999., 5299., 50.)))?;
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::PendingTile { tile: second }
+    );
+    assert_eq!(query.map_id(), None);
+    assert!(query.references().is_empty());
+    assert!(query.selection().is_none());
+    placed.set_transform(glam::Mat4::from_translation(Vec3::new(999., 5799., -20.)))?;
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert!(
+        query.references().is_empty(),
+        "native chunk minimum Z rejects a buried model"
+    );
+    assert_eq!(
+        terrain.register_game_object_movement(
+            0,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::PendingMap
+    );
+    assert_eq!(query.map_id(), None);
+    Ok(())
+}
 
 /// Neighbor preparation survives ordinary movement, but never a retired world.
 #[test]
@@ -1286,6 +1406,10 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let maps = MapCatalog::load(&mut store)?;
+    let registration_model = std::sync::Arc::new(solarity_asset::DecodedM2Model::load(
+        &mut store,
+        &solarity_asset::AssetPath::new("World\\Fixture\\Collision.m2")?,
+    )?);
     let assets = AssetStoreHandle::new(store);
     let mut terrain = RuntimeTerrainCoordinator::new(assets, maps);
     let world = ActiveWorld::enter(WorldBootstrap::new(
@@ -1299,6 +1423,53 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
     assert_eq!(
         terrain.synchronize(Some(&world))?,
         RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id: 571 }
+    );
+    let mut registered_model = PlacedM2Collision::prepare_transform(
+        registration_model,
+        glam::Mat4::from_translation(Vec3::new(-1.25, -1.25, 0.)),
+    )?;
+    let mut registration = RuntimeMovementRegistrationQuery::new();
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &registered_model,
+            MovementBspCacheMode::Enabled,
+            &mut registration
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(
+        registration.references(),
+        &[RuntimeMovementReference::WorldModel {
+            unique_id: 7,
+            group: 0
+        }]
+    );
+    let selected = registration
+        .selection()
+        .and_then(|result| result.selected())
+        .ok_or("global WMO registration lost the interior floor")?;
+    assert_eq!(selected.owner(), 7);
+    assert!(selected.hit().is_interior());
+    assert_eq!(selected.hit().face(), Some(0));
+    registered_model.set_transform(glam::Mat4::from_translation(Vec3::new(
+        40_000., 40_000., 0.,
+    )))?;
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &registered_model,
+            MovementBspCacheMode::Enabled,
+            &mut registration
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert!(registration.references().is_empty());
+    assert!(
+        registration
+            .selection()
+            .and_then(|result| result.selected())
+            .is_none()
     );
     let mut movement = RuntimeStaticMovementQuery::new();
     let bounds = MovementCollisionBounds::new(Vec3::splat(-1.), Vec3::splat(1.))?;

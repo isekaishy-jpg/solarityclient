@@ -1,5 +1,9 @@
 //! Hole-aware ADT height-field collision independent of renderer resources.
 
+mod registration;
+
+pub use registration::TerrainRegistrationPoint;
+
 use glam::Vec3;
 use solarity_asset::{DecodedTerrainTile, TerrainChunk, TerrainChunkIndex};
 use thiserror::Error;
@@ -38,6 +42,12 @@ impl TerrainCollisionHit {
 /// Invalid decoded geometry or query input at the terrain collision boundary.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum TerrainCollisionError {
+    /// A point cannot be represented by the native signed square coordinates.
+    #[error("terrain registration point is outside the native grid")]
+    OutsideRegistrationGrid,
+    /// The supplied point belongs to a different resident ADT.
+    #[error("terrain registration point does not belong to this tile")]
+    WrongRegistrationTile,
     /// A decoded terrain vertex is NaN or infinite.
     #[error("terrain collision geometry is not finite")]
     NonFiniteGeometry,
