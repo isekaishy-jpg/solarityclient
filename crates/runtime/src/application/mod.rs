@@ -29,6 +29,7 @@ mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
 pub(crate) mod ui_frame;
+mod unit_animation;
 mod world_coordinator;
 mod world_transfer;
 mod world_ui;

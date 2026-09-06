@@ -16,6 +16,7 @@ mod movement_shared;
 mod movement_source;
 mod path;
 mod player;
+mod stance;
 
 pub use airborne::{
     MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy,
@@ -41,3 +42,8 @@ pub use interval_bounds::{
 };
 pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};
+pub use stance::{
+    UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
+    resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
+    resolve_unit_stand_completion, resolve_unit_stand_transition,
+};

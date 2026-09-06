@@ -3,6 +3,9 @@
 #[path = "game_object_world_model_scene.rs"]
 mod world_model;
 
+#[path = "unit_animation_scene.rs"]
+mod unit_animation;
+
 use super::{CrtRand, M2Frame, M2GpuPlacementOwner, M2Playback, ResidentM2Scene};
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use crate::configuration::{WindowConfiguration, WindowMode};

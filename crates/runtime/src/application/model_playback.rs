@@ -256,9 +256,39 @@ impl M2Playback {
         blend: bool,
         random: &mut CrtRand,
     ) -> Result<bool, RuntimeTerrainFrameError> {
+        self.apply_resolved_model_sequence_variation(
+            model,
+            animation_id,
+            None,
+            mode,
+            time_offset_ms,
+            scene_time_ms,
+            phase,
+            blend,
+            random,
+        )
+    }
+
+    /// Unit death callbacks explicitly retain the outgoing variation ordinal.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application) fn apply_resolved_model_sequence_variation(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_id: u16,
+        variation: Option<u16>,
+        mode: M2ModelAnimationMode,
+        time_offset_ms: i32,
+        scene_time_ms: u32,
+        phase: M2SequenceStartPhase,
+        blend: bool,
+        random: &mut CrtRand,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
         let animations = model.animations();
-        let sequence = animations
-            .select_model_sequence(animation_id, random.next_u15())
+        let explicit_sequence = variation
+            .and_then(|variation| animations.model_sequence_for_variation(animation_id, variation));
+        let automatic_variations = explicit_sequence.is_none();
+        let sequence = explicit_sequence
+            .or_else(|| animations.select_model_sequence(animation_id, random.next_u15()))
             .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
                 model: model.path().clone(),
                 animation_id,
@@ -299,8 +329,9 @@ impl M2Playback {
         self.sequence_duration_ms = animations.sequences()[sequence].duration_ms() as f32;
         self.cycle_count = timer.cycle_count();
         self.cycle_started_ms = timer.start_time_ms() as f32;
-        self.has_variations = animations.sequences()[sequence].variation_index() != 0
-            || animations.sequences()[sequence].variation_next().is_some();
+        self.has_variations = automatic_variations
+            && (animations.sequences()[sequence].variation_index() != 0
+                || animations.sequences()[sequence].variation_next().is_some());
         self.script_timer = Some(timer);
         self.script_finished = false;
         self.script_mode = mode;

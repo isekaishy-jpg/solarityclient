@@ -7,6 +7,7 @@ mod game_object_scene_tests;
 mod game_objects;
 mod playback;
 mod streaming;
+use crate::application::unit_animation::UnitAnimationBehavior;
 use playback::M2PlaybackStorage;
 
 use std::collections::{HashMap, VecDeque};
@@ -157,6 +158,7 @@ struct M2GpuPlacement {
     opacity: f32,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
+    unit_animation: Option<Rc<UnitAnimationBehavior>>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
 }
@@ -830,6 +832,7 @@ impl M2Frame {
                 opacity: 1.0,
                 particle_colors: None,
                 playback: Some(M2PlaybackStorage::Local(playback)),
+                unit_animation: None,
                 particles,
                 ribbons,
             }],
@@ -1168,6 +1171,7 @@ impl M2Frame {
             renderer,
             &input,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
+            self.animation_time_ms(),
             random,
         )?;
         self.remove_player();
@@ -1254,6 +1258,7 @@ impl M2Frame {
                 renderer,
                 input,
                 M2GpuPlacementOwner::RemotePlayerBody { guid: input.guid() },
+                self.animation_time_ms(),
                 random,
             )?);
         }
@@ -1324,6 +1329,12 @@ impl M2Frame {
         let Some(source) = self.sources[placement.source_index].as_ref() else {
             return Ok(());
         };
+        if let Some(animation) = input.unit_animation() {
+            animation.synchronize(animation_time_ms as u32, random)?;
+            placement.unit_animation = Some(Rc::clone(animation));
+            placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
+            return Ok(());
+        }
         if let Some(mut playback) = placement
             .playback
             .as_mut()
@@ -1723,6 +1734,13 @@ impl M2Frame {
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, global_time_ms, random)?;
         }
+        // Primary unit completion belongs to the scene update, including
+        // bodies subsequently rejected by the camera's visibility test.
+        for placement in &self.placements {
+            if let Some(animation) = &placement.unit_animation {
+                animation.advance_scene(animation_time_ms, global_time_ms, random)?;
+            }
+        }
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_elements.clear();
@@ -2012,12 +2030,20 @@ impl M2Frame {
                 && let Some(instance) = game_objects.get(identity)
                 && let Some(behavior) = instance.behavior()
             {
-                behavior.take_scene_sample()
+                behavior
+                    .take_scene_sample()
+                    .map(|sample| (sample.advance, sample.event_window))
             } else {
-                None
+                placement
+                    .unit_animation
+                    .as_ref()
+                    .and_then(|animation| animation.take_scene_sample())
+                    .map(|sample| (sample.advance, sample.event_window))
             };
-            let (advance, prepared_event_window) = if let Some(sample) = scene_sample {
-                (sample.advance, Some(sample.event_window))
+            let (advance, prepared_event_window) = if let Some((advance, event_window)) =
+                scene_sample
+            {
+                (advance, Some(event_window))
             } else {
                 let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
                     self.pending_glue_playback_advance.take().map_or_else(
@@ -2848,6 +2874,7 @@ fn prepare_character_gpu(
     renderer: &mut VulkanRenderer,
     input: &ResidentPlayerFrameInput<'_>,
     body_owner: M2GpuPlacementOwner,
+    scene_time_ms: f32,
     random: &mut CrtRand,
 ) -> Result<Vec<(M2GpuSource, M2GpuPlacement)>, RuntimeTerrainFrameError> {
     let mount = input.mount();
@@ -2923,15 +2950,29 @@ fn prepare_character_gpu(
         M2LocalLightCount::Zero,
         M2ModelOrientation::Authored,
     )?;
-    let body = unit_gpu_placement(
-        0,
-        world_transform,
-        body_owner,
-        input.model(),
-        input.animation().animation_id(),
-        input.particle_colors().cloned(),
-        random,
-    )?;
+    let body = if let Some(animation) = input.unit_animation() {
+        animation.synchronize(scene_time_ms as u32, random)?;
+        let mut body = m2_gpu_placement(
+            0,
+            world_transform,
+            body_owner,
+            input.model(),
+            Some(M2PlaybackStorage::Shared(animation.playback())),
+            input.particle_colors().cloned(),
+        )?;
+        body.unit_animation = Some(Rc::clone(animation));
+        body
+    } else {
+        unit_gpu_placement(
+            0,
+            world_transform,
+            body_owner,
+            input.model(),
+            input.animation().animation_id(),
+            input.particle_colors().cloned(),
+            random,
+        )?
+    };
     prepared.push((source, body));
     for attachment in input.attachments() {
         if input.model().attachment(attachment.point().id()).is_none() {
@@ -3078,6 +3119,7 @@ fn m2_gpu_placement(
         opacity: 1.0,
         particle_colors,
         playback,
+        unit_animation: None,
         particles,
         ribbons,
     })

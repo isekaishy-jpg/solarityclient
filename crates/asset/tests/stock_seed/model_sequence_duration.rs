@@ -55,8 +55,14 @@ fn model_animation_duration_uses_authored_head_after_fallback() -> Result<(), Bo
         let animations = model.animations();
         assert_eq!(animations.select_model_sequence(5, 0), Some(1));
         assert_eq!(animations.sequence_for_variation(5, 0), Some(1));
+        assert_eq!(animations.model_sequence_for_variation(5, 0), Some(0));
+        assert_eq!(animations.model_sequence_for_variation(5, 1), Some(1));
+        assert_eq!(animations.model_variation_ordinal(0), Some(0));
+        assert_eq!(animations.model_variation_ordinal(1), Some(1));
+        assert_eq!(animations.model_sequence_for_variation(5, 3), None);
         if flags == 0 {
             assert_eq!(animations.is_sequence_available(0), Some(false));
+            assert_eq!(animations.sequence_for_variation(5, 4), None);
         } else {
             assert_eq!(animations.resolve_sequence_alias(0), Some(1));
         }

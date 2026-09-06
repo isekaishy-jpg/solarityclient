@@ -80,8 +80,23 @@ prevents recovery in midair from leaving a stationary player suspended.
 replicated `UNIT_FIELD_BYTES_1` remains independent. Admitted local requests
 update the private state and queue `0x101`; movement that stands the player up
 queues that stance request before its movement snapshot. Server-directed
-standing refreshes held input, following `0x006E2B30`. The complete stance
-animation owner and cast/cinematic eligibility are still outstanding.
+standing refreshes held input, following `0x006E2B30`.
+
+The local player's `UnitAnimationBehavior` retains its primary M2 timer across
+character texture/equipment and GPU placement replacement. Posture changes
+follow `0x0073F060` before the ordinary selector at `0x0071E1F0`; completion
+at `0x0073B510` selects sit, sleep, kneel, submerged, and corpse successors from
+the actual resolved AnimationData behavior. The scene advances this owner
+before culling, and visible drawing consumes the prepared sample once.
+Captured native decisions cover 2,144 admitted selection, changed-stand, and
+completion cases. Archive-decoded runtime tests cover interruptions, missing
+poses, callback timing, variation rolls, and retained playback.
+
+This owner currently drives the local player. Remote players, creatures,
+health/flag/effect-based death admission beyond stand state 7, vehicle and
+cast/emote layering, the water-height death probe, and cast/cinematic stance
+eligibility still require integration. Offscreen animation-event/effect
+dispatch remains separate from the primary completion prepass.
 
 ## Evidence and limits
 

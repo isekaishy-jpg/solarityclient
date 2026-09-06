@@ -133,8 +133,46 @@ normalized linear key interpolation within a sequence (`0x00982630`). Its
 near-collinear threshold is the pinned float at `0x00AA2E58`, exactly 2^-21;
 below that sine magnitude it retains the primary quaternion.
 
-This integration applies to the native Model timer path. World playback and
-its equipment synchronization still need secondary timer ownership.
+This integration applies to the native Model timer path, including the local
+player's retained posture owner. Other world units and equipment secondary
+timer synchronization still require integration.
+
+## Unit primary posture ownership
+
+The runtime's `UnitAnimationBehavior` owns local-player playback independently
+of the GPU placement. Replacing equipment or character materials borrows the
+same primary timer. Scene update runs the primary completion callback before
+visibility checks and passes its clock and expired event tails to visible
+drawing, avoiding a second timer advance.
+
+Changed stand state follows `0x0073F060`, including death entry through
+`0x0073AF80`, submerged entry 201, and return from submerged through 127 or 224.
+Ordinary sit/sleep/kneel/chair selection follows `0x0071E1F0`. Primary completion
+uses the resolved clip's AnimationData behavior at `0x0073B510`: transitions
+select their hold or exit sequence against the current posture. Missing poses
+therefore retain their actual model fallback behavior.
+
+Death completion preserves the outgoing variation for 1→6, 131→132, and
+468→472. The first two requests enter CM2Model directly, where a missing corpse
+can use the death clip's endpoint; 472 first passes through unit tier resolution.
+Explicit Model variations follow `0x00832AB0`: an existing chain ordinal
+consumes only the cycle-count roll and disables automatic variation changes;
+a missing ordinal enters weighted selection. Chain position is independent of
+the sequence's variation metadata ID. Exact unavailable ordinals remain
+subject to payload admission rather than being replaced with another variant.
+Other primary requests preserve an identical active animation and its random
+state, following `0x00737EF0`.
+
+`unit_stance_oracle.py` executes 2,144 original selection, entry, and completion
+cases. Its hooks supply stand/model queries and intercept requests; they do
+not replace the branch logic. It admits the ordinary resident unit without a
+vehicle controller and does not prove spell/effect layers or the movement
+water-height death probe. Runtime archive fixtures test transition chains,
+interruption, fallback, random consumption, and timer retention. The local
+Vulkan scene test also verifies completion before culling and playback reuse
+across placement replacement. The owner is not yet the complete Unit_C animation system: other unit types,
+health/effect death admission, layering, and offscreen event/effect delivery
+remain outstanding.
 
 ## Property-typed key storage and sampling
 

@@ -1,5 +1,7 @@
 //! Local-player model residency and authored presentation measurements.
 
+use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use solarity_asset::{
@@ -376,6 +378,7 @@ pub struct RuntimePlayerPresentation {
     textures: BlpTextureCache,
     component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
+    local_animation: Option<Rc<UnitAnimationBehavior>>,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
@@ -413,6 +416,7 @@ impl RuntimePlayerPresentation {
             textures: BlpTextureCache::new(),
             component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
+            local_animation: None,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
@@ -1013,6 +1017,7 @@ impl RuntimePlayerPresentation {
     ) -> Result<RuntimePlayerPoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.resident = None;
+            self.local_animation = None;
             self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
@@ -1138,6 +1143,7 @@ impl RuntimePlayerPresentation {
                     camera_heights,
                 )?);
             }
+            self.synchronize_local_animation(world)?;
             return Ok(RuntimePlayerPoll::Current);
         }
 
@@ -1349,7 +1355,50 @@ impl RuntimePlayerPresentation {
         });
         self.models.collect_unused();
         self.textures.collect_unused();
+        self.synchronize_local_animation(world)?;
         Ok(RuntimePlayerPoll::ModelLoaded)
+    }
+
+    fn synchronize_local_animation(
+        &mut self,
+        world: &ActiveWorld,
+    ) -> Result<(), RuntimePlayerError> {
+        let Some(resident) = &self.resident else {
+            return Ok(());
+        };
+        let Some(identity) = world.object_identity(resident.guid) else {
+            self.local_animation = None;
+            return Ok(());
+        };
+        let input = UnitAnimationInput {
+            stand: world.local_player_stand_state()?,
+            locomotion: world.movement_state(resident.guid).map_or(
+                UnitLocomotionAnimation::STAND,
+                resolve_unit_locomotion_animation,
+            ),
+            tier: world
+                .local_player_presentation()
+                .map_or(UnitAnimationTier::Ground, |presentation| {
+                    presentation.animation_tier()
+                }),
+            movement_flags: world
+                .movement_state(resident.guid)
+                .map_or(0, |movement| movement.flags() as u32),
+            mounted: resident.mount.is_some(),
+        };
+        if let Some(animation) = &self.local_animation
+            && animation.matches(identity, &resident.model)
+        {
+            animation.set_input(input);
+        } else {
+            self.local_animation = Some(Rc::new(UnitAnimationBehavior::new(
+                identity,
+                Arc::clone(&resident.model),
+                Arc::clone(&self.animations),
+                input,
+            )));
+        }
+        Ok(())
     }
 
     /// Synchronizes every visible non-player unit into shared M2 residency.
@@ -1891,9 +1940,9 @@ impl RuntimePlayerPresentation {
 
     /// Returns the complete player-frame input without exposing mutable residency.
     pub(super) fn resident_frame_input(&self) -> Option<ResidentPlayerFrameInput<'_>> {
-        self.resident
-            .as_ref()
-            .map(ResidentPlayerFrameInput::from_resident)
+        let mut input = ResidentPlayerFrameInput::from_resident(self.resident.as_ref()?);
+        input.unit_animation = self.local_animation.as_ref();
+        Some(input)
     }
 
     /// Returns all visible creature inputs in deterministic GUID order.
@@ -2032,6 +2081,7 @@ fn prepare_glue_character_on_worker(
     };
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
+        local_animation: None,
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,
         creatures: catalogs.creatures,
@@ -2583,6 +2633,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
     geosets: &'a CharacterGeosetPlan,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
+    unit_animation: Option<&'a Rc<UnitAnimationBehavior>>,
     object_scale: f32,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     attachments: &'a [ResidentPlayerAttachment],
@@ -2599,6 +2650,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
             geosets: &resident.geosets,
             world_transform: resident.world_transform,
             animation: resident.animation,
+            unit_animation: None,
             object_scale: resident.object_scale,
             particle_colors: resident.particle_colors.as_ref(),
             attachments: &resident.attachments,
@@ -2611,6 +2663,10 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 
     pub(super) const fn guid(&self) -> u64 {
         self.guid
+    }
+
+    pub(super) const fn unit_animation(&self) -> Option<&Rc<UnitAnimationBehavior>> {
+        self.unit_animation
     }
 
     pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {

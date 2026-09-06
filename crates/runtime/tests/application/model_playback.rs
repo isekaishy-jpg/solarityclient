@@ -16,6 +16,35 @@ use super::M2Playback;
 use crate::random::CrtRand;
 use crate::test_support::ClientFixture;
 
+#[test]
+fn explicit_variation_retains_its_ordinal_across_loop_boundaries() -> Result<(), Box<dyn Error>> {
+    let (model, _) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut expected = random;
+    let _cycle = expected.next_u15();
+    let mut playback = M2Playback::unstarted(0);
+    playback.apply_resolved_model_sequence_variation(
+        &model,
+        0,
+        Some(1),
+        solarity_asset::M2ModelAnimationMode::Forward,
+        0,
+        100,
+        solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
+        true,
+        &mut random,
+    )?;
+    assert_eq!(playback.sequence, 1);
+    assert_eq!(random, expected);
+    playback.clock(&model, 5000.0, 5000.0, &mut random)?;
+    assert_eq!(playback.sequence, 1);
+    assert_eq!(
+        random, expected,
+        "832AB0's explicit variation disables automatic rolls"
+    );
+    Ok(())
+}
+
 /// A user completion replaces the timer before the automatic variation branch.
 #[test]
 fn primary_completion_runs_before_variation_and_starts_at_current_scene_tick()

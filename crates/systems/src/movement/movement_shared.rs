@@ -27,7 +27,9 @@ impl UnitLocomotionAnimation {
     /// The rider pose selected while a separate mount model owns locomotion.
     pub const MOUNT: Self = Self::new(91);
 
-    const fn new(animation_id: u16) -> Self {
+    /// Creates a base unit behavior request before tier and model fallback.
+    #[must_use]
+    pub const fn new(animation_id: u16) -> Self {
         Self { animation_id }
     }
 

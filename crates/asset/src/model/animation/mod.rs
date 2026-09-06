@@ -439,6 +439,45 @@ impl M2AnimationSet {
         selected
     }
 
+    /// Finds an explicit Model variation by chain ordinal before payload admission.
+    ///
+    /// `0x00832AB0` queues an unavailable exact variation; only a missing ordinal
+    /// enters weighted selection. Ordinal zero is the lookup head, independently
+    /// of its variation metadata ID. Callers must check `is_sequence_available`.
+    #[must_use]
+    pub fn model_sequence_for_variation(
+        &self,
+        animation_id: u16,
+        variation_ordinal: u16,
+    ) -> Option<usize> {
+        let first = self.lookup_sequence(animation_id)?;
+        let mut selected = None;
+        let mut ordinal = 0;
+        self.visit_variations(first, animation_id, |index, _sequence| {
+            if ordinal == usize::from(variation_ordinal) {
+                selected = Some(index);
+            }
+            ordinal += 1;
+        })?;
+        selected
+    }
+
+    /// Returns the selected sequence's Model variation chain ordinal.
+    #[must_use]
+    pub fn model_variation_ordinal(&self, sequence_index: usize) -> Option<u16> {
+        let animation_id = self.sequences.get(sequence_index)?.animation_id;
+        let first = self.lookup_sequence(animation_id)?;
+        let mut ordinal = 0;
+        let mut selected = None;
+        self.visit_variations(first, animation_id, |index, _sequence| {
+            if index == sequence_index {
+                selected = u16::try_from(ordinal).ok();
+            }
+            ordinal += 1;
+        })?;
+        selected
+    }
+
     /// Counts available records in one authored animation variation chain.
     #[must_use]
     pub fn available_variation_count(&self, animation_id: u16) -> Option<usize> {
