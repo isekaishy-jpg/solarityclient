@@ -409,9 +409,46 @@ for ordinary landing, turning, nonspline falling and jump completion. Runtime
 tests cover retained takeoff, both landings, landing interruption, short jumps,
 multiple notifications in one frame, and random-draw counts. These checks do
 not establish incoming remote movement-event handling, directional bone poses,
-movement-speed playback scaling, spline/vehicle controllers, or combat layers.
+spline/vehicle controllers, or combat layers.
 
 The opt-in `stock_character_movement_sequences_complete` runtime test exercises
 the real installed archives for both genders of all ten playable races. All 20
 models complete takeoff, airborne loop, stationary landing, both turns, running
-landing and the return to ordinary locomotion using their authored timers.
+landing and the return to ordinary locomotion using their authored timers. It
+also samples finite blended bone palettes through walking, slowed running,
+ordinary running, accelerated running and sprint fallback on every model.
+
+### Movement speed and stride phase
+
+The nonspline speed resolver executes the policy recovered from `987570`:
+flight precedes swimming, backward speeds are capped by their forward speed,
+and walking is capped by running. Translation or vertical movement is required;
+turning alone has zero movement speed. After backward/aquatic selection,
+`717050` selects sprint 143 at **11 yards/second or higher**, run 5 strictly above
+twice the walking speed, and walk 4 otherwise. The walking flag alone does not
+determine this selection.
+
+`7385C0` scales an admitted resolved animation ID by actual movement speed
+divided by the absolute authored speed of variation ordinal zero. Tiered IDs
+outside `714E80`'s whitelist retain rate one. When both old and new metadata
+have movement speed and nonzero durations, the new offset is
+`(old_phase.wrapping_mul(new_duration) / old_duration) % new_duration`.
+The old phase is queried at the current scene tick, before pose clamping or
+wrapping, and belongs to the actual outgoing variation. Identical primary
+requests update speed through `827000` with the native tolerance; they retain
+the variation and consume no random draws.
+
+Primary timers retain speed and the native stored reciprocal. Construction,
+rate changes, primary/secondary pose sampling, event keys, completion deadlines
+and automatic variation restart preserve the original integer/x87 rounding
+boundaries. In particular, completion cycle duration uses a float store and
+nearest-even rounding, while construction truncates the wider product. Blends
+retain the outgoing timer's speed independently of the incoming primary.
+
+`model_sequence_speed_oracle.py` captures 11,760 original timer cases;
+`unit_movement_speed_oracle.py` captures 700 speed/selector cases and 756
+speed/stride-policy cases. Runtime tests additionally exercise unchanged RNG
+on rate updates, ordinal-zero metadata versus the selected variation, fresh
+stride carry, scaled event deadlines, automatic variation remainder, and
+independently advancing blended poses. These captures supply model-accessor
+inputs where documented; they do not claim full native unit-controller replay.

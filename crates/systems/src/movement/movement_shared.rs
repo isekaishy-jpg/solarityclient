@@ -14,6 +14,35 @@ const TRANSLATION_MASK: u64 =
     MOVEMENT_FORWARD | MOVEMENT_BACKWARD | MOVEMENT_STRAFE_LEFT | MOVEMENT_STRAFE_RIGHT;
 const AQUATIC_MASK: u64 = MOVEMENT_SWIMMING | MOVEMENT_FLYING;
 
+/// Resolves `Movement::GetSpeed(0)` (`987570`) for nonspline movement.
+/// Ascending and descending count as motion; turning alone does not.
+#[must_use]
+pub const fn resolve_unit_movement_speed(movement: WorldMovementState) -> f32 {
+    let flags = movement.flags();
+    if flags & 0xc0000f == 0 {
+        return 0.0;
+    }
+    let speeds = movement.speeds();
+    let (forward, backward) = if flags & MOVEMENT_FLYING != 0 {
+        (speeds.flight(), speeds.flight_back())
+    } else if flags & MOVEMENT_SWIMMING != 0 {
+        (speeds.swim(), speeds.swim_back())
+    } else if flags & MOVEMENT_WALKING != 0 {
+        return if speeds.walk() < speeds.run() {
+            speeds.walk()
+        } else {
+            speeds.run()
+        };
+    } else {
+        (speeds.run(), speeds.run_back())
+    };
+    if flags & MOVEMENT_BACKWARD != 0 && backward <= forward {
+        backward
+    } else {
+        forward
+    }
+}
+
 /// One base `AnimationData.dbc` identifier selected from living movement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnitLocomotionAnimation {
@@ -85,9 +114,12 @@ pub const fn resolve_unit_locomotion_animation(
     if flags & MOVEMENT_BACKWARD != 0 {
         return UnitLocomotionAnimation::new(13);
     }
-    if flags & MOVEMENT_WALKING != 0 {
-        UnitLocomotionAnimation::new(4)
-    } else {
+    let speed = resolve_unit_movement_speed(movement);
+    if speed >= 11.0 {
+        UnitLocomotionAnimation::new(143)
+    } else if speed as f64 > movement.speeds().walk() as f64 * 2.0 {
         UnitLocomotionAnimation::new(5)
+    } else {
+        UnitLocomotionAnimation::new(4)
     }
 }

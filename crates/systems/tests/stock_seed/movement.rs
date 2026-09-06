@@ -8,13 +8,50 @@ use solarity_ecs::{
 };
 use solarity_systems::{
     UnitLocomotionAnimation, WorldEntryGroundContact, resolve_unit_locomotion_animation,
-    resolve_unit_model_animation,
+    resolve_unit_model_animation, resolve_unit_movement_speed,
 };
 
 use crate::support::{Fixture, FixtureFile};
 
 const SPEEDS: WorldMovementSpeeds =
     WorldMovementSpeeds::new([2.5, 7.0, 4.5, 4.72, 2.5, 7.0, 4.5, 3.0, 3.0]);
+
+#[test]
+fn movement_speed_and_locomotion_match_original_executable() -> Result<(), Box<dyn Error>> {
+    let mut cases = 0;
+    for line in include_str!("../fixtures/unit-movement-speed-native.txt").lines() {
+        let words: Vec<_> = line.split_whitespace().collect();
+        if !matches!(words.first(), Some(&"speed" | &"select")) {
+            continue;
+        }
+        let flags = u64::from_str_radix(words[1], 16)?;
+        let mut speeds = [0.; 9];
+        for (value, word) in speeds.iter_mut().zip(&words[2..11]) {
+            *value = f32::from_bits(u32::from_str_radix(word, 16)?);
+        }
+        let movement = WorldMovementState::new(
+            flags,
+            WorldMovementSpeeds::new(speeds),
+            WorldMovementContext::default(),
+        );
+        if words[0] == "speed" {
+            assert_eq!(
+                resolve_unit_movement_speed(movement).to_bits(),
+                u32::from_str_radix(words[11], 16)?,
+                "{line}"
+            );
+        } else {
+            assert_eq!(
+                resolve_unit_locomotion_animation(movement).animation_id(),
+                words[11].parse::<u16>()?,
+                "{line}"
+            );
+        }
+        cases += 1;
+    }
+    assert_eq!(cases, 700);
+    Ok(())
+}
 
 fn animation(flags: u64) -> u16 {
     resolve_unit_locomotion_animation(WorldMovementState::new(

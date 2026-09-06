@@ -18,6 +18,7 @@ fn input(stand: u8) -> UnitAnimationInput {
         locomotion: UnitLocomotionAnimation::STAND,
         tier: UnitAnimationTier::Ground,
         movement_flags: 0,
+        movement_speed: 0.0,
         secondary_flags: 0,
         airborne: false,
         mounted: false,
@@ -31,6 +32,14 @@ fn owner(ids: &[u16], stand: u8) -> Result<UnitAnimationBehavior, Box<dyn Error>
 fn owner_with_input(
     ids: &[u16],
     initial: UnitAnimationInput,
+) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
+    owner_with_sequence_metadata(ids, initial, |_, _, _| {})
+}
+
+fn owner_with_sequence_metadata(
+    ids: &[u16],
+    initial: UnitAnimationInput,
+    configure: impl Fn(usize, u16, &mut [u8]),
 ) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
     let mut bytes = models::model_with_animations(ids)?;
     let offset = u32::from_le_bytes(bytes[0x20..0x24].try_into()?) as usize;
@@ -82,6 +91,7 @@ fn owner_with_input(
             bytes[sequence + 60..sequence + 62]
                 .copy_from_slice(&((index + 1) as u16).to_le_bytes());
         }
+        configure(index, *id, &mut bytes[sequence..sequence + 64]);
     }
     let skin = models::skin()?;
     let mut dbc = b"WDBC".to_vec();
@@ -133,6 +143,95 @@ fn owner_with_input(
         Arc::new(AnimationDataCatalog::load(&mut store)?),
         initial,
     ))
+}
+
+#[test]
+fn movement_sequence_timing_matches_original_executable() -> Result<(), Box<dyn Error>> {
+    let mut cases = 0;
+    for line in
+        include_str!("../../../systems/tests/fixtures/unit-movement-speed-native.txt").lines()
+    {
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.first() != Some(&"timing") {
+            continue;
+        }
+        let hex = |index: usize| u32::from_str_radix(words[index], 16);
+        let (rate, offset) = unit_sequence_timing(
+            words[1].parse()?,
+            hex(2)?,
+            f32::from_bits(hex(3)?),
+            f32::from_bits(hex(4)?),
+            words[5].parse()?,
+            Some((f32::from_bits(hex(6)?), words[7].parse()?, hex(8)?)),
+        );
+        assert_eq!(
+            (rate.to_bits(), offset as u32),
+            (hex(9)?, hex(10)?),
+            "{line}"
+        );
+        cases += 1;
+    }
+    assert_eq!(cases, 756);
+    Ok(())
+}
+
+#[test]
+fn speed_changes_keep_variation_and_random_state_then_carry_fresh_stride_into_walk()
+-> Result<(), Box<dyn Error>> {
+    let owner = owner_with_sequence_metadata(
+        &[0, 4, 5, 5],
+        input(0).with_movement(movement(1, None)),
+        |index, id, bytes| {
+            let (speed, duration): (f32, u32) = match (id, index) {
+                (4, _) => (2.5, 1200),
+                (5, 2) => (7., 1000),
+                (5, 3) => (99., 800),
+                _ => (0., 1000),
+            };
+            bytes[4..8].copy_from_slice(&duration.to_le_bytes());
+            bytes[8..12].copy_from_slice(&speed.to_le_bytes());
+        },
+    )?;
+    let mut random = CrtRand::new();
+    owner.synchronize(100, &mut random)?;
+    let retained_random = random;
+    {
+        let playback = owner.playback.borrow();
+        assert_eq!(playback.sequence, 3);
+        assert_eq!(playback.script_timer.ok_or("timer")?.speed(), 1.);
+    }
+    let mut faster = owner.input.get();
+    faster.movement_speed = 10.5;
+    owner.set_input(faster);
+    owner.synchronize(301, &mut random)?;
+    let outgoing = {
+        let playback = owner.playback.borrow();
+        assert_eq!(playback.sequence, 3);
+        let timer = playback.script_timer.ok_or("timer")?;
+        assert_eq!(timer.speed(), 1.5);
+        assert_eq!(timer.start_time_ms(), 168);
+        assert_eq!(timer.unwrapped_time(301), 199);
+        timer
+    };
+    assert_eq!(random, retained_random);
+    owner.set_input(input(0).with_movement(movement(0x101, None)));
+    owner.synchronize(401, &mut random)?;
+    let playback = owner.playback.borrow();
+    assert_eq!(playback.animation_id, 4);
+    let timer = playback.script_timer.ok_or("walk timer")?;
+    assert_eq!(timer.speed(), 1.);
+    // Fresh outgoing phase is 349; the selected variation's 800ms duration
+    // maps this to 523ms in Walk. The native setup adds its one-tick delay.
+    assert_eq!(timer.unwrapped_time(401), 522);
+    assert_eq!(
+        playback.script_blend.ok_or("walk blend")?,
+        solarity_rendering::M2ModelSequenceBlend::new(3, outgoing, 401, 400)
+    );
+    let mut expected = retained_random;
+    let _variation = expected.next_u15();
+    let _cycles = expected.next_u15();
+    assert_eq!(random, expected);
+    Ok(())
 }
 
 fn movement(flags: u32, vertical: Option<f32>) -> WorldMovementState {
@@ -397,8 +496,12 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 187,
                 "{path} running landing"
             );
-            time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
-                .duration_ms() as f32
+            time = owner
+                .playback
+                .borrow()
+                .script_timer
+                .ok_or("landing timer")?
+                .end_time_ms() as f32
                 + 1.;
             owner.advance_scene(time, time, &mut random)?;
             assert_eq!(
@@ -406,11 +509,87 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 5,
                 "{path} run after landing"
             );
+            for (flags, run_speed, requested) in [
+                (0x101, 7., 4),
+                (1, 4., 4),
+                (1, 7., 5),
+                (1, 10.5, 5),
+                (1, 11., 143),
+            ] {
+                let mut speeds = movement(flags, None).speeds().values();
+                speeds[1] = run_speed;
+                let next = WorldMovementState::new(
+                    u64::from(flags),
+                    solarity_ecs::WorldMovementSpeeds::new(speeds),
+                    Default::default(),
+                );
+                let previous_random = random;
+                let previous_animation = owner.playback.borrow().animation_id;
+                owner.set_input(input(0).with_movement(next));
+                time += 100.;
+                owner.synchronize(time as u32, &mut random)?;
+                {
+                    let playback = owner.playback.borrow();
+                    let resolved = resolve_unit_model_animation(
+                        &animations,
+                        UnitLocomotionAnimation::new(requested),
+                        UnitAnimationTier::Ground,
+                        |id| {
+                            owner
+                                .model
+                                .animations()
+                                .available_variation_count(id)
+                                .is_some()
+                        },
+                    )
+                    .ok_or("resolved locomotion")?;
+                    assert_eq!(
+                        playback.animation_id,
+                        resolved.animation_id(),
+                        "{path} speed {run_speed}"
+                    );
+                    let index = owner
+                        .model
+                        .animations()
+                        .model_sequence_for_variation(playback.animation_id, 0)
+                        .ok_or("locomotion metadata")?;
+                    let authored = owner.model.animations().sequences()[index].movement_speed();
+                    if matches!(playback.animation_id, 4 | 5 | 143) && authored != 0. {
+                        let expected_rate = (f64::from(resolve_unit_movement_speed(next))
+                            / f64::from(authored).abs())
+                            as f32;
+                        assert_eq!(
+                            playback.script_timer.ok_or("locomotion timer")?.speed(),
+                            expected_rate,
+                            "{path}"
+                        );
+                    }
+                    if playback.animation_id == previous_animation {
+                        assert_eq!(
+                            random, previous_random,
+                            "{path} speed change rerolled variation"
+                        );
+                    }
+                }
+                owner.advance_scene(time, time, &mut random)?;
+                let sample = owner.take_scene_sample().ok_or("locomotion scene sample")?;
+                let pose = solarity_rendering::M2BonePose::compose_with_model_view(
+                    owner.model.animations(),
+                    sample.advance.clock,
+                    glam::Mat4::IDENTITY,
+                )?;
+                assert!(
+                    pose.transforms()
+                        .iter()
+                        .all(|transform| transform.is_finite()),
+                    "{path} speed {run_speed}"
+                );
+            }
             count += 1;
         }
     }
     println!(
-        "Validated jump, land, turn and running landing on {count} installed character models"
+        "Validated jump, land, turns, speed changes and blended bone poses on {count} installed character models"
     );
     Ok(())
 }

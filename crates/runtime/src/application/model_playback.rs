@@ -255,6 +255,7 @@ impl M2Playback {
             animation_id,
             None,
             mode,
+            1.0,
             time_offset_ms,
             scene_time_ms,
             phase,
@@ -271,6 +272,7 @@ impl M2Playback {
         animation_id: u16,
         variation: Option<u16>,
         mode: M2ModelAnimationMode,
+        speed: f32,
         time_offset_ms: i32,
         scene_time_ms: u32,
         phase: M2SequenceStartPhase,
@@ -292,9 +294,10 @@ impl M2Playback {
             // after consuming its variation roll. The previous timer survives.
             return Ok(false);
         }
-        let timer = M2ModelSequenceTimer::new(
+        let timer = M2ModelSequenceTimer::with_speed(
             &animations.sequences()[sequence],
             mode,
+            speed,
             // 0x00826B00 reads the owning scene clock at the request, even
             // when this model has not been sampled while its widget is hidden.
             scene_time_ms,
@@ -330,6 +333,18 @@ impl M2Playback {
         self.script_finished = false;
         self.script_mode = mode;
         Ok(true)
+    }
+
+    /// `737EF0` updates an identical primary only when the speed differs by
+    /// at least the native tolerance. Neither its variation nor RNG changes.
+    pub(in crate::application) fn set_sequence_speed(&mut self, speed: f32, scene_time_ms: u32) {
+        if let Some(timer) = &mut self.script_timer
+            && (f64::from(timer.speed()) - f64::from(speed)).abs()
+                >= f64::from(f32::from_bits(0x3480_0000))
+        {
+            timer.set_speed(speed, scene_time_ms);
+            self.cycle_started_ms = timer.start_time_ms() as f32;
+        }
     }
 
     /// Applies the native model pause marker without resetting a sequence.

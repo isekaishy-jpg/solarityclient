@@ -141,6 +141,7 @@ fn explicit_variation_retains_its_ordinal_across_loop_boundaries() -> Result<(),
         0,
         Some(1),
         solarity_asset::M2ModelAnimationMode::Forward,
+        1.0,
         0,
         100,
         solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
@@ -541,6 +542,65 @@ fn model_variation_callbacks_preserve_long_frame_remainder_and_event_tails()
     // original timer with full weight, so the second must not overwrite it.
     let pose = M2BonePose::compose(model.animations(), advance.clock)?;
     assert!((pose.transforms()[0].w_axis.x - 19.9).abs() < 0.0001);
+    Ok(())
+}
+
+#[test]
+fn accelerated_variations_preserve_native_remainder_blend_and_event_deadlines()
+-> Result<(), Box<dyn Error>> {
+    let (model, _) = playback_model()?;
+    let mut playback = M2Playback::unstarted(0);
+    let mut random = CrtRand::new();
+    playback.apply_resolved_model_sequence_variation(
+        &model,
+        0,
+        None,
+        solarity_asset::M2ModelAnimationMode::Forward,
+        2.0,
+        0,
+        0,
+        solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
+        true,
+        &mut random,
+    )?;
+    for (tick, expected_events) in [(50., vec![]), (51., vec![0])] {
+        playback.clock(&model, tick, tick, &mut random)?;
+        assert_eq!(
+            triggered_m2_event_indices(model.animations(), playback.event_window(tick, tick)),
+            expected_events
+        );
+    }
+    let mut expected_random = random;
+    let _variation = expected_random.next_u15();
+    let _cycles = expected_random.next_u15();
+    let advance = playback.clock(&model, 551., 551., &mut random)?;
+    assert_eq!(advance.expired_variations.len(), 1);
+    assert_eq!(
+        advance.expired_variations[0].clock.animation_time_ms(),
+        998.
+    );
+    assert_eq!(advance.clock.animation_time_ms(), 26.);
+    assert_eq!(
+        playback
+            .script_timer
+            .ok_or("accelerated timer")?
+            .start_time_ms(),
+        538
+    );
+    assert_eq!(
+        playback.script_timer.ok_or("accelerated timer")?.speed(),
+        2.
+    );
+    assert_eq!(random, expected_random);
+    let pose = M2BonePose::compose(model.animations(), advance.clock)?;
+    assert!((pose.transforms()[0].w_axis.x - 10.).abs() < 0.0001);
+    for (tick, expected_events) in [(551., vec![]), (587., vec![]), (588., vec![0])] {
+        playback.clock(&model, tick, tick, &mut random)?;
+        assert_eq!(
+            triggered_m2_event_indices(model.animations(), playback.event_window(tick, tick)),
+            expected_events
+        );
+    }
     Ok(())
 }
 

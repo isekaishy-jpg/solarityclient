@@ -6,6 +6,10 @@ use solarity_asset::{M2ModelAnimationMode, M2Sequence};
 #[path = "../../../tests/support/sequence_completion.rs"]
 mod completion_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/support/sequence_speed.rs"]
+mod speed_tests;
+
 /// Whether sequence setup runs inside the scene's current update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2SequenceStartPhase {
@@ -27,7 +31,8 @@ pub struct M2ModelSequenceTimer {
     duration_ms: u32,
     cycle_count: u32,
     initial_time_ms: u32,
-    direction: i32,
+    speed: f32,
+    inverse_speed: f32,
     loops: bool,
     secondary_clamps: bool,
 }
@@ -36,8 +41,8 @@ impl M2ModelSequenceTimer {
     /// Constructs the exact unit-speed timer used by Model Lua methods.
     ///
     /// The caller supplies the next raw CRT roll for the authored cycle range.
-    /// Float conversion before integer truncation and the optional one-tick
-    /// adjustment intentionally follow the native instruction sequence.
+    /// Integer truncation and the optional one-tick adjustment follow the
+    /// native instruction sequence, retaining wider arithmetic until stores.
     #[must_use]
     pub fn new(
         sequence: &M2Sequence,
@@ -47,13 +52,39 @@ impl M2ModelSequenceTimer {
         cycle_roll: u16,
         phase: M2SequenceStartPhase,
     ) -> Self {
-        Self::with_input_direction(
+        Self::with_speed(
             sequence,
             mode,
-            1,
+            1.0,
             scene_time_ms,
             time_offset_ms,
             cycle_roll,
+            phase,
+        )
+    }
+
+    /// Constructs a timer with the native primary sequence playback speed.
+    ///
+    /// Animation time advances by `speed` per scene millisecond. The native
+    /// inverse-speed threshold also controls cycle and event deadlines.
+    #[must_use]
+    pub fn with_speed(
+        sequence: &M2Sequence,
+        mode: M2ModelAnimationMode,
+        speed: f32,
+        scene_time_ms: u32,
+        time_offset_ms: i32,
+        cycle_roll: u16,
+        phase: M2SequenceStartPhase,
+    ) -> Self {
+        Self::with_timing(
+            sequence.duration_ms(),
+            sequence.cycle_count(cycle_roll),
+            sequence.flags(),
+            mode,
+            speed,
+            scene_time_ms,
+            time_offset_ms,
             phase,
         )
     }
@@ -73,11 +104,11 @@ impl M2ModelSequenceTimer {
         cycle_roll: u16,
     ) -> Self {
         let overdue = scene_time_ms.wrapping_sub(boundary_ms);
-        let offset = native_float_word(overdue as f32 * self.direction as f32) as i32;
-        Self::with_input_direction(
+        let offset = self.variation_time_offset(overdue);
+        Self::with_speed(
             sequence,
             mode,
-            self.direction,
+            self.speed,
             scene_time_ms,
             offset,
             cycle_roll,
@@ -85,57 +116,93 @@ impl M2ModelSequenceTimer {
         )
     }
 
-    /// Implements timer setup for the unit-speed Lua path and its variation callback.
-    fn with_input_direction(
-        sequence: &M2Sequence,
+    fn variation_time_offset(self, overdue: u32) -> i32 {
+        if (f64::from(self.speed) - 1.0).abs() < f64::from(f32::from_bits(0x3480_0000)) {
+            overdue as i32
+        } else {
+            native_nearest_word((f64::from(overdue) * f64::from(self.inverse_speed)) as f32) as i32
+        }
+    }
+
+    /// The timing stores shared by Model requests and automatic variations.
+    #[allow(clippy::too_many_arguments)]
+    fn with_timing(
+        duration_ms: u32,
+        cycle_count: u32,
+        flags: u32,
         mode: M2ModelAnimationMode,
-        input_direction: i32,
+        input_speed: f32,
         scene_time_ms: u32,
         time_offset_ms: i32,
-        cycle_roll: u16,
         phase: M2SequenceStartPhase,
     ) -> Self {
-        let cycle_count = sequence.cycle_count(cycle_roll);
-        let span = sequence.duration_ms().wrapping_mul(cycle_count);
-        let direction = if matches!(
+        let span = duration_ms.wrapping_mul(cycle_count);
+        let speed = if matches!(
             mode,
             M2ModelAnimationMode::Reverse | M2ModelAnimationMode::HoldEnd
         ) {
-            -input_direction
+            -input_speed
         } else {
-            input_direction
+            input_speed
         };
-        let initial_time_ms = if direction < 0 { span } else { 0 };
-        let direction = if matches!(
+        let initial_time_ms = if speed < 0.0 { span } else { 0 };
+        let speed = if matches!(
             mode,
             M2ModelAnimationMode::HoldStart | M2ModelAnimationMode::HoldEnd
         ) {
-            0
+            0.0
         } else {
-            direction
+            speed
         };
-        let offset = if direction == 0 {
-            0
-        } else {
-            native_float_word(time_offset_ms as f32)
-        };
+        let inverse_speed = native_inverse_speed(speed);
+        let offset = native_float_word(f64::from(time_offset_ms) * inverse_speed.abs());
         let start_ms = scene_time_ms
             .wrapping_sub(offset)
             .wrapping_add(u32::from(phase == M2SequenceStartPhase::BeforeSceneUpdate));
-        let end_ms = start_ms.wrapping_add(if direction == 0 {
-            0
-        } else {
-            native_float_word(span as f32)
-        });
+        let end_ms =
+            start_ms.wrapping_add(native_float_word(f64::from(span) * inverse_speed.abs()));
         Self {
             start_ms,
             end_ms,
-            duration_ms: sequence.duration_ms(),
+            duration_ms,
             cycle_count,
             initial_time_ms,
-            direction,
-            loops: sequence.flags() & 1 == 0,
-            secondary_clamps: sequence.flags() & 0x80 != 0,
+            speed,
+            inverse_speed: inverse_speed as f32,
+            loops: flags & 1 == 0,
+            secondary_clamps: flags & 0x80 != 0,
+        }
+    }
+
+    /// Changes speed without restarting the primary or its variation (`827000`).
+    pub fn set_speed(&mut self, speed: f32, scene_time_ms: u32) {
+        let elapsed = self.unwrapped_time(scene_time_ms) as i32;
+        let inverse_speed = native_inverse_speed(speed);
+        self.start_ms =
+            scene_time_ms.wrapping_sub(native_float_word(f64::from(elapsed) * inverse_speed.abs()));
+        self.end_ms = self.start_ms.wrapping_add(native_float_word(
+            f64::from(self.duration_ms.wrapping_mul(self.cycle_count)) * inverse_speed.abs(),
+        ));
+        self.speed = speed;
+        self.inverse_speed = inverse_speed as f32;
+    }
+
+    /// Returns the retained primary playback speed.
+    #[must_use]
+    pub const fn speed(self) -> f32 {
+        self.speed
+    }
+
+    /// Native completion scanning uses the stored reciprocal, with a unit-speed
+    /// tolerance, rather than recomputing it from the speed.
+    fn scene_cycle_duration_ms(self) -> u32 {
+        let inverse = f64::from(self.inverse_speed).abs();
+        if (inverse - 1.0).abs() < f64::from(f32::from_bits(0x3480_0000)) {
+            self.duration_ms
+        } else {
+            // 832260 stores the product to float, then uses FISTP without
+            // the timer constructor's truncation-mode control-word change.
+            native_nearest_word((f64::from(self.duration_ms) * inverse) as f32)
         }
     }
 
@@ -180,8 +247,7 @@ impl M2ModelSequenceTimer {
         if self.loops {
             self.next_loop_boundary_ms(previous_ms, current_ms)
         } else {
-            (self.direction != 0
-                && self.duration_ms != 0
+            (self.scene_cycle_duration_ms() != 0
                 && previous_ms != current_ms
                 && tick_at_or_after(current_ms, previous_ms)
                 && tick_at_or_after(current_ms, self.end_ms))
@@ -196,9 +262,9 @@ impl M2ModelSequenceTimer {
     /// Held and flag-`0x1` sequences do not automatically select variations.
     #[must_use]
     pub fn next_loop_boundary_ms(self, previous_ms: u32, current_ms: u32) -> Option<u32> {
+        let duration_ms = self.scene_cycle_duration_ms();
         if !self.loops
-            || self.direction == 0
-            || self.duration_ms == 0
+            || duration_ms == 0
             || previous_ms == current_ms
             || !tick_at_or_after(current_ms, previous_ms)
         {
@@ -211,7 +277,7 @@ impl M2ModelSequenceTimer {
         };
         let boundary = self
             .start_ms
-            .wrapping_add((elapsed / self.duration_ms + 1).wrapping_mul(self.duration_ms))
+            .wrapping_add((elapsed / duration_ms + 1).wrapping_mul(duration_ms))
             .wrapping_sub(1);
         (boundary != previous_ms
             && tick_at_or_after(boundary, previous_ms)
@@ -273,8 +339,8 @@ impl M2ModelSequenceTimer {
         } else {
             current_ms
         };
-        if self.direction == 0
-            || self.duration_ms == 0
+        let duration_ms = self.scene_cycle_duration_ms();
+        if duration_ms == 0
             || previous_ms == current_ms
             || !tick_at_or_after(current_ms, previous_ms)
         {
@@ -286,17 +352,13 @@ impl M2ModelSequenceTimer {
             0
         };
         let mut cycle_offset = if self.loops {
-            (elapsed / self.duration_ms) * self.duration_ms
+            (elapsed / duration_ms) * duration_ms
         } else {
             0
         };
         loop {
             for timestamp in timestamps {
-                let delta = timestamp.wrapping_sub(self.initial_time_ms) as i32;
-                let tick = self
-                    .start_ms
-                    .wrapping_add(cycle_offset)
-                    .wrapping_add(native_float_word(delta as f32 * self.direction as f32));
+                let tick = self.event_tick_ms(*timestamp, cycle_offset);
                 if tick != previous_ms
                     && tick_at_or_after(tick, previous_ms)
                     && tick_at_or_after(current_ms, tick)
@@ -307,17 +369,28 @@ impl M2ModelSequenceTimer {
             if !self.loops {
                 break;
             }
-            cycle_offset = cycle_offset.wrapping_add(self.duration_ms);
+            cycle_offset = cycle_offset.wrapping_add(duration_ms);
             if !tick_at_or_after(current_ms, self.start_ms.wrapping_add(cycle_offset)) {
                 break;
             }
         }
     }
 
-    /// Reproduces the signed scene delta, float product, and low-word addition.
-    fn unwrapped_time(self, scene_time_ms: u32) -> u32 {
+    fn event_tick_ms(self, timestamp: u32, cycle_offset: u32) -> u32 {
+        let delta = timestamp.wrapping_sub(self.initial_time_ms) as i32;
+        self.start_ms
+            .wrapping_add(cycle_offset)
+            .wrapping_add(native_float_word(
+                f64::from(delta) * f64::from(self.inverse_speed),
+            ))
+    }
+
+    /// Returns the fresh primary phase reported by `8266B0`, before wrapping
+    /// or pose clamping. Unit sequence changes use it to preserve stride phase.
+    #[must_use]
+    pub fn unwrapped_time(self, scene_time_ms: u32) -> u32 {
         native_float_word(
-            scene_time_ms.wrapping_sub(self.start_ms) as i32 as f32 * self.direction as f32,
+            f64::from(scene_time_ms.wrapping_sub(self.start_ms) as i32) * f64::from(self.speed),
         )
         .wrapping_add(self.initial_time_ms)
     }
@@ -328,7 +401,24 @@ fn tick_at_or_after(tick: u32, reference: u32) -> bool {
     tick.wrapping_sub(reference) as i32 >= 0
 }
 
-/// Every timer product is bounded by a u32 span; convert via i64 before EAX.
-fn native_float_word(value: f32) -> u32 {
+/// Native timer products truncate to a signed quadword before retaining EAX.
+fn native_float_word(value: f64) -> u32 {
     value as i64 as u32
+}
+
+fn native_inverse_speed(speed: f32) -> f64 {
+    if speed.abs() <= f32::from_bits(0x3727_c5ac) {
+        0.0
+    } else {
+        1.0 / f64::from(speed)
+    }
+}
+
+fn native_nearest_word(value: f32) -> u32 {
+    let rounded = value.round_ties_even();
+    if !(-2147483648.0..2147483648.0).contains(&rounded) {
+        0x8000_0000
+    } else {
+        rounded as i32 as u32
+    }
 }

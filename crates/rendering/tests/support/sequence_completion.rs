@@ -34,7 +34,8 @@ fn sequence_completion_matches_original_callback_scan() -> Result<(), Box<dyn st
             duration_ms: *duration as u32,
             cycle_count: 1,
             initial_time_ms: 0,
-            direction: *direction as i32,
+            speed: *direction as f32,
+            inverse_speed: *direction as f32,
             loops: flags & 1 == 0,
             secondary_clamps: flags & 0x80 != 0,
         };

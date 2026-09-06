@@ -16,21 +16,22 @@ use solarity_systems::{
     UnitLocomotionAnimation, UnitMovementAnimationDecision, UnitPrimaryAnimationCompletion,
     UnitStandAnimationDecision, resolve_unit_airborne_animation, resolve_unit_landing_animation,
     resolve_unit_locomotion_animation, resolve_unit_model_animation,
-    resolve_unit_movement_animation_completion, resolve_unit_primary_animation_completion,
-    resolve_unit_stand_animation, resolve_unit_stand_transition, resolve_unit_turn_animation,
-    unit_movement_is_airborne,
+    resolve_unit_movement_animation_completion, resolve_unit_movement_speed,
+    resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
+    resolve_unit_stand_transition, resolve_unit_turn_animation, unit_movement_is_airborne,
 };
 
 use super::model_playback::{M2Playback, M2PlaybackAdvance};
 use super::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct UnitAnimationInput {
     pub stand: u8,
     pub locomotion: UnitLocomotionAnimation,
     pub tier: UnitAnimationTier,
     pub movement_flags: u32,
+    pub movement_speed: f32,
     pub secondary_flags: u16,
     pub airborne: bool,
     pub mounted: bool,
@@ -49,6 +50,7 @@ impl UnitAnimationInput {
             mounted,
             locomotion: UnitLocomotionAnimation::STAND,
             movement_flags: 0,
+            movement_speed: 0.0,
             secondary_flags: 0,
             airborne: false,
         };
@@ -58,6 +60,7 @@ impl UnitAnimationInput {
     pub fn with_movement(mut self, movement: WorldMovementState) -> Self {
         self.locomotion = resolve_unit_locomotion_animation(movement);
         self.movement_flags = movement.flags() as u32;
+        self.movement_speed = resolve_unit_movement_speed(movement);
         self.secondary_flags = (movement.flags() >> 32) as u16;
         self.airborne = unit_movement_is_airborne(
             self.movement_flags,
@@ -365,11 +368,14 @@ impl UnitAnimationBehavior {
             };
             (animation.animation_id(), animation.mode())
         };
-        // 737EF0 leaves an identical primary and its variation roll untouched.
+        let (speed, offset) = self.sequence_timing(playback, animation_id, input, scene_time_ms);
+        // 737EF0 leaves an identical primary and its variation roll untouched,
+        // but changes its clock when the movement speed changes.
         if request.variation.is_none()
             && playback.script_timer.is_some()
             && playback.animation_id == animation_id
         {
+            playback.set_sequence_speed(speed, scene_time_ms);
             return Ok(());
         }
         playback.apply_resolved_model_sequence_variation(
@@ -377,7 +383,8 @@ impl UnitAnimationBehavior {
             animation_id,
             request.variation,
             mode,
-            0,
+            speed,
+            offset,
             scene_time_ms,
             phase,
             true,
@@ -385,6 +392,38 @@ impl UnitAnimationBehavior {
         )?;
         self.landing.set(self.behavior(playback) == 39);
         Ok(())
+    }
+
+    fn sequence_timing(
+        &self,
+        playback: &M2Playback,
+        animation_id: u16,
+        input: UnitAnimationInput,
+        scene_time_ms: u32,
+    ) -> (f32, i32) {
+        let animations = self.model.animations();
+        // 7385C0 queries ordinal zero before weighted selection. The whitelist
+        // in 714E80 tests the resolved ID, not its AnimationData behavior.
+        let Some(index) = animations.model_sequence_for_variation(animation_id, 0) else {
+            return (1.0, 0);
+        };
+        let sequence = animations.sequences()[index];
+        let previous = playback.script_timer.map(|timer| {
+            let sequence = animations.sequences()[playback.sequence];
+            (
+                sequence.movement_speed(),
+                sequence.duration_ms(),
+                timer.unwrapped_time(scene_time_ms),
+            )
+        });
+        unit_sequence_timing(
+            animation_id,
+            input.movement_flags,
+            input.movement_speed,
+            sequence.movement_speed(),
+            sequence.duration_ms(),
+            previous,
+        )
     }
 
     pub fn synchronize(
@@ -514,4 +553,35 @@ impl UnitAnimationBehavior {
         });
         Ok(())
     }
+}
+
+/// Native `7388B4..73898F` speed and phase policy for a resolved unit sequence.
+fn unit_sequence_timing(
+    animation_id: u16,
+    movement_flags: u32,
+    movement_speed: f32,
+    authored_speed: f32,
+    duration: u32,
+    previous: Option<(f32, u32, u32)>,
+) -> (f32, i32) {
+    if authored_speed == 0.0
+        || movement_flags & 0xc0000f == 0
+        || !matches!(
+            animation_id,
+            4 | 5 | 11 | 12 | 13 | 37 | 38 | 39 | 42 | 43 | 44 | 45 | 119 | 135 | 143 | 187 | 223
+        )
+    {
+        return (1.0, 0);
+    }
+    let speed = (f64::from(movement_speed) / f64::from(authored_speed).abs()) as f32;
+    let offset = match previous {
+        Some((old_speed, old_duration, old_phase))
+            if old_speed != 0.0 && old_duration != 0 && duration != 0 =>
+        {
+            // IMUL keeps the low 32 bits before both unsigned divisions.
+            (old_phase.wrapping_mul(duration) / old_duration) % duration
+        }
+        _ => 0,
+    };
+    (speed, offset as i32)
 }

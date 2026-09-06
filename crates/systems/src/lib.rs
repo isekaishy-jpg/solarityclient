@@ -82,9 +82,9 @@ pub use movement::{
     WorldEntryGroundContact, WorldEntryGroundContactError, resolve_unit_airborne_animation,
     resolve_unit_landing_animation, resolve_unit_locomotion_animation,
     resolve_unit_model_animation, resolve_unit_movement_animation_completion,
-    resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
-    resolve_unit_stand_completion, resolve_unit_stand_transition, resolve_unit_turn_animation,
-    unit_movement_is_airborne,
+    resolve_unit_movement_speed, resolve_unit_primary_animation_completion,
+    resolve_unit_stand_animation, resolve_unit_stand_completion, resolve_unit_stand_transition,
+    resolve_unit_turn_animation, unit_movement_is_airborne,
 };
 pub use object::{
     GameObjectAnimationRequest, GameObjectAnimationState, GameObjectPlacement,

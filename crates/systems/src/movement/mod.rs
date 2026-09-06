@@ -41,7 +41,9 @@ pub use interval_bounds::{
     MovementIntervalBounds, MovementIntervalBoundsError, MovementIntervalMode,
     MovementIntervalRequest,
 };
-pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
+pub use movement_shared::{
+    UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_movement_speed,
+};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};
 pub use stance::{
     UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
