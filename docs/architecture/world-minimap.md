@@ -26,7 +26,18 @@ setter `0x007F3AE0` clamps an unsigned index above four to five. Its distance qu
 and indoor radii `[150, 120, 90, 60, 40, 25]`. The ordinary outdoor path admits four
 tiles around the player (`0x007F5760`) and composites their texture and mask
 coordinates (`0x0057D5F0`, `0x0057E540`). The default mask is
-`Textures/MinimapMask`; stock FrameXML also names an M2 player arrow.
+`Textures/MinimapMask`. Although stock FrameXML names legacy player/arrow M2
+attributes, those attribute names are absent from the build-12340 executable.
+The native XML loader (`0x0057BEA0`) reads `minimapPlayerTexture`, defaults to
+`Interface/Minimap/MinimapArrow.tga`, and assigns an ordinary texture region through
+`0x004859E0`. Marker integration must follow that texture path. The width/height
+setters (`0x0057E280`, `0x0057E1C0`) resize that region; the executable does not
+register corresponding width/height getters.
+
+The shared zoom setter also writes the selected `minimapZoom` or
+`minimapInsideZoom` CVar through `0x00766940`. The Lua wrapper (`0x0057BFD0`)
+truncates its numeric argument toward zero before passing the low unsigned
+32-bit word to the clamping setter.
 
 The renderer also accepts an independent archive alpha mask on ordinary UI
 texture quads. `UiRenderMask` retains the image identity and its logical rectangle;
