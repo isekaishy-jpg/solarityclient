@@ -427,6 +427,35 @@ impl GeometryResolver<'_> {
         let authored_anchors = &authored_anchor_storage[..authored_anchor_count];
         let mut synthesized_anchors = [empty_anchor; 2];
         let mut synthesized_anchor_count = 0;
+        let bar_fill = parent_index
+            .and_then(|parent| self.live.objects()[parent].status_bar)
+            .filter(|(_, texture)| *texture == Some(index))
+            .and_then(|(bar, _)| {
+                bar.fill_fraction
+                    .map(|fraction| (bar.fill_vertical, fraction))
+            });
+        if let Some((vertical, fraction)) = bar_fill
+            && let Some(parent) = parent_index
+        {
+            let bounds = self.resolve(parent)?.public.logical_bounds;
+            synthesized_anchors[0] = UiRuntimeAnchor {
+                point: UiPoint::BottomLeft,
+                target: Some(parent),
+                relative_point: UiPoint::BottomLeft,
+                offset: (0.0, 0.0),
+            };
+            synthesized_anchors[1] = UiRuntimeAnchor {
+                point: UiPoint::TopRight,
+                target: Some(parent),
+                relative_point: UiPoint::TopRight,
+                offset: if vertical {
+                    (0.0, -(1.0 - fraction) * bounds.height())
+                } else {
+                    (-(1.0 - fraction) * bounds.width(), 0.0)
+                },
+            };
+            synthesized_anchor_count = 2;
+        }
         if authored_anchors.is_empty()
             && role == UiObjectRole::ThumbTexture
             && let Some(parent_index) = parent_index
@@ -498,7 +527,7 @@ impl GeometryResolver<'_> {
             }
         }
 
-        let anchors = if authored_anchors.is_empty() {
+        let anchors = if authored_anchors.is_empty() || bar_fill.is_some() {
             &synthesized_anchors[..synthesized_anchor_count]
         } else {
             authored_anchors

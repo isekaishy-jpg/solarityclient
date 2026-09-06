@@ -325,6 +325,12 @@ impl UiModelPresentation {
 }
 
 impl UiTexturePresentation {
+    /// Returns the frame that owns this texture's draw order and visibility.
+    #[must_use]
+    pub const fn owner_index(&self) -> usize {
+        self.owner_index
+    }
+
     pub(crate) const fn key(&self) -> UiPresentationPacketKey {
         self.key
     }
@@ -1426,7 +1432,8 @@ fn widget_role_is_active(
         UiObjectRole::Object
         | UiObjectRole::ScrollChild
         | UiObjectRole::ButtonText
-        | UiObjectRole::ThumbTexture => true,
+        | UiObjectRole::ThumbTexture
+        | UiObjectRole::BarTexture => true,
         UiObjectRole::NormalTexture => !pushed && (enabled || !has_disabled_texture),
         UiObjectRole::PushedTexture => enabled && pushed,
         UiObjectRole::DisabledTexture => !enabled && !checked,

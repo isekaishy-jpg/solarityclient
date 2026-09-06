@@ -141,6 +141,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             solarity_ui::UiEventArgument::Nil,
         ]),
     )?)?;
+    for (name, fraction) in [("PlayerFrameHealthBar", 1.0), ("PlayerFrameManaBar", 1.0)] {
+        check_player_bar(&manager, name, fraction)?;
+    }
+    world.set_player_vitals(UiPlayerVitalsState::new(
+        50,
+        100,
+        25,
+        100,
+        UiUnitPowerType::Mana,
+    ));
+    for event in ["UNIT_HEALTH", "UNIT_MANA"] {
+        manager.dispatch_event(
+            event,
+            &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(
+                "player".to_owned(),
+            )]),
+        )?;
+    }
+    check_player_bar(&manager, "PlayerFrameHealthBar", 0.5)?;
+    check_player_bar(&manager, "PlayerFrameManaBar", 0.25)?;
+    println!("Stock player health and mana textures rendered full and partial values");
     let chat_background = manager
         .presentation()
         .members_in_draw_order()
@@ -285,4 +306,39 @@ fn argument_error(message: &str) -> IoError {
         ErrorKind::InvalidInput,
         format!("{message}; usage: validate_frame_lifecycle <Data> <locale> [benchmark frames]"),
     )
+}
+
+fn check_player_bar(
+    manager: &FrameManager,
+    name: &str,
+    fraction: f64,
+) -> Result<(), Box<dyn Error>> {
+    let fill = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|member| manager.object_name(member.owner_index()) == Some(name))
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, format!("missing {name} fill")))?;
+    let owner = manager
+        .geometry()
+        .region(fill.owner_index())
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, format!("missing {name} geometry")))?;
+    let bounds = owner.presentation_bounds();
+    if fill.opacity() <= 0.0
+        || bounds.width() <= 0.0
+        || bounds.height() <= 0.0
+        || (fill.bounds().width() - bounds.width() * fraction).abs() > 0.01
+        || (fill.bounds().height() - bounds.height()).abs() > 0.01
+    {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            format!(
+                "incorrect {name} fill: {:?}, owner {bounds:?}, opacity {}",
+                fill.bounds(),
+                fill.opacity()
+            ),
+        )
+        .into());
+    }
+    Ok(())
 }

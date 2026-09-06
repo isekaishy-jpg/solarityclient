@@ -77,6 +77,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) scroll_range: Option<(f64, f64)>,
     pub(crate) scroll_child: Option<usize>,
     pub(crate) slider: Option<UiRuntimeSlider>,
+    pub(crate) status_bar: Option<(crate::widget::StatusBarState, Option<usize>)>,
     pub(crate) enabled: Option<bool>,
     pub(crate) click_action: Option<u64>,
     pub(crate) checked: Option<bool>,
@@ -211,6 +212,12 @@ impl UiRuntimeObjectPlan {
                 && object.animation_offset == transform.offset
                 && object.animation_active == transform.active
         })
+    }
+
+    pub(crate) fn replace_shown(&mut self, index: usize, shown: bool) {
+        if let Some(object) = self.objects.get_mut(index) {
+            object.shown = shown;
+        }
     }
 
     pub(crate) fn replace_slider(&mut self, object_index: usize, slider: UiRuntimeSlider) {
@@ -693,6 +700,10 @@ pub(super) fn snapshot_runtime_objects(
                 })
                 .transpose()?,
             scroll_child,
+            status_bar: (kind == UiObjectKind::StatusBar)
+                .then(|| super::simple_script::status_bars::snapshot(&table))
+                .transpose()
+                .map_err(|error| snapshot_error(format!("object {lua_index} status bar"), error))?,
             slider: (kind == UiObjectKind::Slider)
                 .then(|| snapshot_slider(lua_index, &table))
                 .transpose()?,
@@ -947,6 +958,13 @@ pub(super) fn refresh_runtime_dirty_objects(
                     Some(table.raw_get(enabled_key()).map_err(|error| {
                         snapshot_error(format!("object {lua_index} enabled"), error)
                     })?);
+            }
+            if kind == UiObjectKind::StatusBar {
+                live.objects[object_index].status_bar = Some(
+                    super::simple_script::status_bars::snapshot(&table).map_err(|error| {
+                        snapshot_error(format!("object {lua_index} status bar"), error)
+                    })?,
+                );
             }
             if kind == UiObjectKind::Slider {
                 live.objects[object_index].slider = Some(snapshot_slider(lua_index, &table)?);
@@ -1868,6 +1886,7 @@ fn parse_role(value: &str) -> Option<UiObjectRole> {
         "checked_texture" => Some(UiObjectRole::CheckedTexture),
         "disabled_checked_texture" => Some(UiObjectRole::DisabledCheckedTexture),
         "thumb_texture" => Some(UiObjectRole::ThumbTexture),
+        "bar_texture" => Some(UiObjectRole::BarTexture),
         _ => None,
     }
 }

@@ -18,6 +18,7 @@ mod slider;
 mod status_bar;
 mod texture;
 pub(crate) use message::{Message, MessageConfig, MessageHistory};
+pub(crate) use status_bar::{StatusBarConfig, StatusBarState, StatusBarXmlOperation};
 
 pub use texture::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

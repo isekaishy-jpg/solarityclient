@@ -47,6 +47,8 @@ pub enum UiObjectRole {
     DisabledCheckedTexture,
     /// Slider thumb texture.
     ThumbTexture,
+    /// Status-bar fill texture.
+    BarTexture,
 }
 
 /// One live-root construction batch aligned to an expanded bundle action.
@@ -687,6 +689,10 @@ fn classify_child(name: &str) -> Option<(UiObjectKind, UiObjectRole)> {
         (
             "DisabledCheckedTexture",
             (UiObjectKind::Texture, UiObjectRole::DisabledCheckedTexture),
+        ),
+        (
+            "BarTexture",
+            (UiObjectKind::Texture, UiObjectRole::BarTexture),
         ),
         (
             "ThumbTexture",

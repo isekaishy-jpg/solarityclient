@@ -574,3 +574,41 @@ replay exercises real FrameXML hover and stock font measurement. This text slice
 does not supply item/unit/spell tooltip data, native texture insertion, cursor
 tracking, or timed fading. The native 30-entry intermediate wrapping buffer and
 packed-color precision still need dedicated text-layout parity coverage.
+
+
+## Status-bar fill regions
+
+`CSimpleStatusBar` owns its XML `BarTexture` and script-assigned texture. Loading
+replays direct texture/color children and range, value, axis, and rotation
+properties in inherited source order (`0x00961E30`). A color before the first
+texture has no effect. XML color components default to black with opaque alpha
+(`0x00815C30`); script colors use packed, nearest-byte conversion (`0x0048BD20`).
+GetStatusBarColor reads the current texture, including external vertex-color
+changes, and returns white when no texture is assigned.
+
+The constructor has separate range/value validity bits and zero initial values
+(`0x00961A00`). SetValue does nothing until a range is initialized; the first
+valid value dispatches even when zero. SetMinMaxValues validates against the
+native double constant 1e12, stores float32 values, reduces an inverted range
+to its upper endpoint, dispatches OnMinMaxChanged, then reclamps an already
+valid value (`0x009713C0`, `0x00961800`, `0x00961890`). Callback reentry reads
+the latest state after the callback and holds no userdata borrow across Lua.
+
+Pending widget updates run before region publication. A positive fraction
+stretches the full texture horizontally from the left, or vertically from the
+bottom; it does not crop UVs. A zero fraction hides the texture and retains its
+last positive rectangle (`0x00961B80`). Four owner-relative anchors are exposed
+to Lua. The existing retained content publisher patches affected texture
+vertices without replacing index storage, rasterizing unrelated text, or
+copying the full Lua arena. Replacing a texture reparents the new region and
+retires the old region's artwork, visibility, parent, and global binding.
+
+The external status-bar regression covers static and dynamic template loading,
+callbacks, native range limits, source-order colors, fill geometry and getters,
+rotation, retained updates, and replacement/clearing. `validate_frame_lifecycle`
+checks real PlayerFrame health and mana fills at full and partial values.
+This does not prove every native region-lifetime edge: stale Lua references to
+retired regions, asset-failure admission, and arbitrary external edits to fill
+anchors still require their own native-region compatibility work. Resize and
+script-update ordering also need dedicated coverage beyond the normal stock
+player-frame path. These limits are not evidence of whole-FrameXML parity.

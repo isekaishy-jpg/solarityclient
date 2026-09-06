@@ -94,6 +94,7 @@ pub struct UiRuntimeTemplateNode {
     font_non_space_wrap: bool,
     font_max_lines: u32,
     message_config: Option<crate::widget::MessageConfig>,
+    status_bar_config: Option<crate::widget::StatusBarConfig>,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -321,6 +322,8 @@ impl UiRuntimeTemplatePlan {
                     font_word_wrap: font.word_wrap,
                     font_non_space_wrap: font.non_space_wrap,
                     font_max_lines: font.max_lines,
+                    status_bar_config: (object.kind() == UiObjectKind::StatusBar)
+                        .then(|| crate::widget::StatusBarConfig::from_node(object)),
                     message_config: (object.kind() == UiObjectKind::ScrollingMessageFrame)
                         .then(|| crate::widget::MessageConfig::from_node(object)),
                     edit_max_letters: font.edit_max_letters,
@@ -537,6 +540,9 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("font_word_wrap", node.font_word_wrap)?;
                 record.raw_set("font_non_space_wrap", node.font_non_space_wrap)?;
                 record.raw_set("font_max_lines", node.font_max_lines)?;
+                if let Some(config) = &node.status_bar_config {
+                    record.raw_set("status_bar_config", lua.create_userdata(config.clone())?)?;
+                }
                 if let Some(config) = &node.message_config {
                     record.raw_set("message_maximum", config.maximum)?;
                     record.raw_set("message_display_duration", config.display_duration)?;
@@ -1007,6 +1013,7 @@ fn object_role_name(role: crate::UiObjectRole) -> &'static str {
         crate::UiObjectRole::CheckedTexture => "checked_texture",
         crate::UiObjectRole::DisabledCheckedTexture => "disabled_checked_texture",
         crate::UiObjectRole::ThumbTexture => "thumb_texture",
+        crate::UiObjectRole::BarTexture => "bar_texture",
     }
 }
 

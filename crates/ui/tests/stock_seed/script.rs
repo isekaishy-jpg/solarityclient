@@ -929,7 +929,7 @@ fn script_runtime_registers_ordered_font_objects() -> Result<(), Box<dyn Error>>
   assert(minimum == 0 and maximum == 100)
   status:SetStatusBarColor(0.25, 0.5, 0.75, 0.8)
   local sr, sg, sb, sa = status:GetStatusBarColor()
-  assert(sr == 0.25 and sg == 0.5 and sb == 0.75 and sa == 0.8)
+  assert(sr == 1 and sg == 1 and sb == 1 and sa == 1) -- no texture: native setter has no effect
   status:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
   assert(status:GetStatusBarTexture():GetTexture() == "Interface\\TargetingFrame\\UI-StatusBar")
   local tooltip = CreateFrame("GameTooltip", "DynamicTooltip", self)

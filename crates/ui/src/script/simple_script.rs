@@ -5,6 +5,7 @@ mod buttons;
 mod cvars;
 mod globals;
 mod messages;
+pub(super) mod status_bars;
 mod tooltips;
 
 use std::cell::{Cell, RefCell};
@@ -136,7 +137,6 @@ static FONT_HEIGHT_TOKEN: u8 = 65;
 static FONT_FLAGS_TOKEN: u8 = 66;
 static MOUSE_ENABLED_TOKEN: u8 = 67;
 static ATTRIBUTES_TOKEN: u8 = 68;
-static STATUS_BAR_COLOR_TOKEN: u8 = 69;
 static STATUS_BAR_TEXTURE_TOKEN: u8 = 70;
 static TOOLTIP_OWNER_TOKEN: u8 = 71;
 static TOOLTIP_ANCHOR_TOKEN: u8 = 72;
@@ -1702,6 +1702,8 @@ impl UiScriptRuntime {
         let started = std::time::Instant::now();
         self.snapshot_count.set(self.snapshot_count.get() + 1);
         self.synchronize_auto_text_measurement(bundle.lua())?;
+        status_bars::flush_pending(bundle.lua(), self.ui_extent)
+            .map_err(|error| execution_error("status bar update", error))?;
         refresh_all_scroll_frame_ranges(
             bundle.lua(),
             self.registered_object_count(),
@@ -2028,7 +2030,35 @@ impl UiScriptRuntime {
     ) -> Result<Vec<usize>, UiScriptError> {
         let lua = bundle.lua();
         self.synchronize_auto_text_measurement(lua)?;
-        super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects)
+        let textures = status_bars::flush_pending(lua, self.ui_extent)
+            .map_err(|error| execution_error("status bar update", error))?;
+        if textures.is_empty() {
+            return super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects);
+        }
+        let objects: Table = lua
+            .named_registry_value(OBJECT_REGISTRY)
+            .map_err(|error| execution_error("status bar update", error))?;
+        let mut dirty_objects = dirty_objects.to_vec();
+        for index in textures {
+            if let Some((_, flags)) = dirty_objects
+                .iter_mut()
+                .find(|(object, _)| *object == index)
+            {
+                *flags |= DIRTY_LAYOUT;
+            } else {
+                dirty_objects.push((index, DIRTY_LAYOUT));
+            }
+            let texture: Table = objects
+                .raw_get(index + 1)
+                .map_err(|error| execution_error("status bar update", error))?;
+            live.replace_shown(
+                index,
+                texture
+                    .raw_get(shown_key())
+                    .map_err(|error| execution_error("status bar update", error))?,
+            );
+        }
+        super::runtime_state::refresh_runtime_dirty_objects(lua, live, &dirty_objects)
     }
 
     fn synchronize_auto_text_measurement(&self, lua: &Lua) -> Result<(), UiScriptError> {
@@ -2742,6 +2772,16 @@ impl UiScriptRuntime {
             tooltips::load_xml(lua, &tooltip)
                 .map_err(|error| execution_error("tooltip XML registration", error))?;
         }
+        if tree.nodes()[node_index].kind() == UiObjectKind::StatusBar {
+            let objects: Table = lua
+                .named_registry_value(OBJECT_REGISTRY)
+                .map_err(|error| execution_error("status bar XML", error))?;
+            let object: Table = objects
+                .raw_get(node_index + 1)
+                .map_err(|error| execution_error("status bar XML", error))?;
+            status_bars::load_xml(lua, &object)
+                .map_err(|error| execution_error("status bar XML", error))?;
+        }
         self.execute_load_handler(lua, tree, node_index)
     }
 
@@ -3128,10 +3168,7 @@ impl UiScriptRuntime {
                 .and_then(|()| table.raw_set(scroll_child_key(), Option::<Table>::None))
                 .map_err(|error| execution_error("object registration", error))?;
         }
-        if matches!(
-            object.kind(),
-            UiObjectKind::Slider | UiObjectKind::StatusBar
-        ) {
+        if object.kind() == UiObjectKind::Slider {
             table
                 .raw_set(slider_min_key(), 0.0)
                 .and_then(|()| table.raw_set(slider_max_key(), 0.0))
@@ -3150,14 +3187,12 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::StatusBar {
-            table
-                .raw_set(
-                    status_bar_color_key(),
-                    lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])
-                        .map_err(|error| execution_error("object registration", error))?,
-                )
-                .and_then(|()| table.raw_set(status_bar_texture_key(), Option::<Table>::None))
-                .map_err(|error| execution_error("object registration", error))?;
+            status_bars::initialize(
+                lua,
+                &table,
+                crate::widget::StatusBarConfig::from_node(object),
+            )
+            .map_err(|error| execution_error("status bar registration", error))?;
         }
         if object.kind() == UiObjectKind::GameTooltip {
             table
@@ -3340,6 +3375,15 @@ impl UiScriptRuntime {
             owner
                 .raw_set(key, table.clone())
                 .map_err(|error| execution_error("object registration", error))?;
+        }
+        if object.role() == UiObjectRole::BarTexture
+            && let Some(parent) = object.construction_parent()
+        {
+            let owner: Table = objects
+                .raw_get(parent + 1)
+                .map_err(|error| execution_error("status bar texture registration", error))?;
+            status_bars::collect_xml_texture(&owner, &table)
+                .map_err(|error| execution_error("status bar texture registration", error))?;
         }
         if let Some(key) = widget_region_key(object.role())
             && let Some(parent) = object.construction_parent()
@@ -3842,7 +3886,7 @@ fn create_dynamic_object(
         object.raw_set(vertical_scroll_range_key(), 0.0)?;
         object.raw_set(scroll_child_key(), Option::<Table>::None)?;
     }
-    if matches!(kind, "Slider" | "StatusBar") {
+    if kind == "Slider" {
         object.raw_set(slider_min_key(), 0.0)?;
         object.raw_set(slider_max_key(), 0.0)?;
         object.raw_set(slider_value_key(), 0.0)?;
@@ -3855,11 +3899,15 @@ fn create_dynamic_object(
         )?;
     }
     if kind == "StatusBar" {
-        object.raw_set(
-            status_bar_color_key(),
-            lua.create_sequence_from([1.0, 1.0, 1.0, 1.0])?,
-        )?;
-        object.raw_set(status_bar_texture_key(), Option::<Table>::None)?;
+        let config = record
+            .raw_get::<Option<mlua::AnyUserData>>("status_bar_config")?
+            .map(|data| {
+                data.borrow::<crate::widget::StatusBarConfig>()
+                    .map(|config| config.clone())
+            })
+            .transpose()?
+            .unwrap_or_default();
+        status_bars::initialize(lua, &object, config)?;
     }
     if kind == "GameTooltip" {
         object.raw_set(tooltip_owner_key(), Option::<usize>::None)?;
@@ -3993,6 +4041,11 @@ fn create_dynamic_object(
         let subscribed = object_has_script(&object, UiScriptHandler::Update)?;
         set_update_subscription(lua, &object, subscribed)?;
     }
+    if record.raw_get::<String>("role")? == "bar_texture"
+        && let Some(parent) = parent
+    {
+        status_bars::collect_xml_texture(parent, &object)?;
+    }
     if let Some(parent) = parent
         && let Some(key) = dynamic_widget_region_key(record.raw_get::<String>("role")?.as_str())
     {
@@ -4117,6 +4170,9 @@ fn run_dynamic_load(
         .get(local - 1)
         .cloned()
         .ok_or_else(|| mlua::Error::runtime("dynamic OnLoad object is outside its template"))?;
+    if object.raw_get::<String>(type_key())? == "StatusBar" {
+        status_bars::load_xml(lua, &object)?;
+    }
     if from_xml && object.raw_get::<String>(type_key())? == "GameTooltip" {
         tooltips::load_xml(lua, &object)?;
     }
@@ -4500,7 +4556,7 @@ fn create_object_metatable(
         register_slider_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::StatusBar {
-        register_status_bar_methods(lua, &methods, dynamic_arena)?;
+        status_bars::register(lua, &methods, dynamic_arena)?;
     }
     if kind == UiObjectKind::GameTooltip {
         tooltips::register_game_tooltip_methods(lua, &methods)?;
@@ -7569,7 +7625,7 @@ fn register_slider_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Registers the value/range contract shared by Slider and StatusBar.
+/// Registers the Slider value/range contract.
 fn register_range_value_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
     methods.raw_set(
         "GetValue",
@@ -7629,91 +7685,6 @@ fn set_range_value(lua: &Lua, object: Table, value: f64) -> mlua::Result<()> {
         call_number_object_handler(lua, &function, object, value)?;
     }
     Ok(())
-}
-
-/// Installs status-bar fill color and texture state on top of shared range state.
-fn register_status_bar_methods(
-    lua: &Lua,
-    methods: &Table,
-    dynamic_arena: DynamicArenaState,
-) -> mlua::Result<()> {
-    register_range_value_methods(lua, methods)?;
-    methods.raw_set(
-        "SetStatusBarColor",
-        lua.create_function(
-            |lua, (object, red, green, blue, alpha): (Table, f64, f64, f64, Option<f64>)| {
-                object.raw_set(
-                    status_bar_color_key(),
-                    lua.create_sequence_from(clamped_color(red, green, blue, alpha))?,
-                )?;
-                mark_live_state_changed(lua)
-            },
-        )?,
-    )?;
-    methods.raw_set(
-        "GetStatusBarColor",
-        lua.create_function(|_, object: Table| {
-            let color: Table = object.raw_get(status_bar_color_key())?;
-            Ok((
-                color.raw_get::<f64>(1)?,
-                color.raw_get::<f64>(2)?,
-                color.raw_get::<f64>(3)?,
-                color.raw_get::<f64>(4)?,
-            ))
-        })?,
-    )?;
-    methods.raw_set(
-        "SetStatusBarTexture",
-        lua.create_function(move |lua, (object, value): (Table, Value)| {
-            let texture = match value {
-                Value::Nil => {
-                    object.raw_set(status_bar_texture_key(), Option::<Table>::None)?;
-                    mark_live_state_changed(lua)?;
-                    return Ok(());
-                }
-                Value::Table(texture) => {
-                    if texture.raw_get::<String>(type_key())? != "Texture" {
-                        return Err(mlua::Error::runtime(
-                            "Usage: StatusBar:SetStatusBarTexture(\"filename\" or textureObject)",
-                        ));
-                    }
-                    texture
-                }
-                Value::String(path) => {
-                    let texture = match object.raw_get::<Option<Table>>(status_bar_texture_key())? {
-                        Some(texture) => texture,
-                        None => create_dynamic_region(
-                            lua,
-                            "Texture",
-                            object.clone(),
-                            None,
-                            "ARTWORK".into(),
-                            None,
-                            None,
-                            &dynamic_arena.counters(),
-                        )?,
-                    };
-                    let path = path.to_string_lossy();
-                    texture.raw_set(texture_file_key(), (!path.is_empty()).then_some(path))?;
-                    texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
-                    texture
-                }
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "Usage: StatusBar:SetStatusBarTexture(\"filename\" or textureObject)",
-                    ));
-                }
-            };
-            object.raw_set(status_bar_texture_key(), texture)?;
-            mark_live_state_changed(lua)
-        })?,
-    )?;
-    methods.raw_set(
-        "GetStatusBarTexture",
-        lua.create_function(|_, object: Table| {
-            object.raw_get::<Option<Table>>(status_bar_texture_key())
-        })?,
-    )
 }
 
 fn register_enabled_methods(lua: &Lua, methods: &Table, kind: UiObjectKind) -> mlua::Result<()> {
@@ -9299,6 +9270,7 @@ fn object_role_name(role: UiObjectRole) -> &'static str {
         UiObjectRole::CheckedTexture => "checked_texture",
         UiObjectRole::DisabledCheckedTexture => "disabled_checked_texture",
         UiObjectRole::ThumbTexture => "thumb_texture",
+        UiObjectRole::BarTexture => "bar_texture",
     }
 }
 
@@ -9892,10 +9864,6 @@ pub(super) fn mouse_wheel_enabled_key() -> LightUserData {
 
 fn attributes_key() -> LightUserData {
     hidden_key(&ATTRIBUTES_TOKEN)
-}
-
-fn status_bar_color_key() -> LightUserData {
-    hidden_key(&STATUS_BAR_COLOR_TOKEN)
 }
 
 fn status_bar_texture_key() -> LightUserData {
