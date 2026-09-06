@@ -315,7 +315,7 @@ pub(super) fn prepare_character_gpu(
                 M2LocalLightCount::Zero,
                 orientation,
             )?;
-            let mut placement = unit_gpu_placement(
+            let mut placement = default_gpu_placement(
                 scene_time_ms,
                 world_transform,
                 M2GpuPlacementOwner::PlayerItem {
@@ -323,7 +323,7 @@ pub(super) fn prepare_character_gpu(
                     point: attachment.point(),
                 },
                 attachment.model(),
-                0,
+                &frame.animations,
                 attachment.particle_colors().cloned(),
                 random,
             )?;
@@ -355,7 +355,7 @@ pub(super) fn prepare_character_gpu(
                 M2LocalLightCount::Zero,
                 orientation,
             )?;
-            let placement = unit_gpu_placement(
+            let placement = default_gpu_placement(
                 scene_time_ms,
                 world_transform,
                 M2GpuPlacementOwner::PlayerItemVisual {
@@ -364,7 +364,7 @@ pub(super) fn prepare_character_gpu(
                     effect_point: effect.point(),
                 },
                 effect.model(),
-                0,
+                &frame.animations,
                 None,
                 random,
             )?;

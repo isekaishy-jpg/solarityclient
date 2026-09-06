@@ -53,13 +53,25 @@ survives the request, including reverse and held endpoints; the emergency
 selection uses animation 147 or the first authored record when Stand is absent.
 A model without bones does not start a primary timer or consume either draw.
 
-Glue widget load completion, static MDDF/MODD placement admission, and replicated
-WMO doodad admission use this shared default initializer. Their integer timer
+Glue widget load completion, static MDDF/MODD placement admission, replicated
+WMO doodad admission, and equipped items and enchantments in Glue and the world
+use this shared default initializer. Their integer timer
 starts one tick after the current scene time, and retained owners keep that
 timer through GPU/material publication. An owner awaiting its first primary
-timer does not dispatch sequence-zero events. The remaining unit, equipment,
-and gameplay GameObject startup paths still need their default/request ordering
+timer does not dispatch sequence-zero events. The remaining unit body, mount,
+pet, and gameplay GameObject startup paths still need their default/request ordering
 reconciled; this change does not establish parity for those paths.
+
+Equipment creation (`0x004EAA70`) and enchantment creation (`0x004EA8F0`) call
+the ordinary factory at `0x0081F8F0`, which reaches load completion through
+`0x00834810` and `0x008359C0`. Neither equipment path adds a primary sequence
+request. Attachment binding at `0x00831630` retains the child's own timer.
+The Vulkan equipment regression uses a zero-weight first Stand variation and
+checks selection of the second, two random draws per new model, and a timer
+anchored to creation even when an item is equipped 20 seconds after entry.
+World material updates preserve the complete timer without consuming startup
+draws. Glue equipment retention across character reconstruction and admission
+timing before GPU publication remain separate ownership work.
 
 `tools/ghidra/model_default_sequence_oracle.py` executes eight original-code
 probes for weighted startup, variation metadata, fallback modes, and the

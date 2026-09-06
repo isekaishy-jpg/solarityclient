@@ -948,7 +948,7 @@ impl M2Frame {
                 cpu_sources,
                 orientation,
             )?;
-            let mut placement = unit_gpu_placement(
+            let mut placement = default_gpu_placement(
                 self.animation_time_ms(),
                 transform,
                 M2GpuPlacementOwner::PlayerItem {
@@ -956,7 +956,7 @@ impl M2Frame {
                     point: attachment.point(),
                 },
                 attachment.model(),
-                0,
+                &self.animations,
                 attachment.particle_colors().cloned(),
                 random,
             )?;
@@ -989,7 +989,7 @@ impl M2Frame {
                     cpu_sources,
                     orientation,
                 )?;
-                let placement = unit_gpu_placement(
+                let placement = default_gpu_placement(
                     self.animation_time_ms(),
                     transform,
                     M2GpuPlacementOwner::PlayerItemVisual {
@@ -998,7 +998,7 @@ impl M2Frame {
                         effect_point: effect.point(),
                     },
                     effect.model(),
-                    0,
+                    &self.animations,
                     None,
                     random,
                 )?;
@@ -2865,6 +2865,29 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::PlayerItem { .. }
         | M2GpuPlacementOwner::PlayerItemVisual { .. } => M2SceneLightBank::Environment,
     }
+}
+
+/// Equipment and enchantment constructors (4EAA70/4EA8F0) use the model's
+/// ordinary load-completion default, without a separate primary request.
+fn default_gpu_placement(
+    scene_time_ms: f32,
+    transform: Mat4,
+    owner: M2GpuPlacementOwner,
+    model: &DecodedM2Model,
+    animations: &AnimationDataCatalog,
+    particle_colors: Option<M2ParticleColorReplacement>,
+    random: &mut CrtRand,
+) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
+    let playback = M2Playback::default_sequence(model, animations, scene_time_ms as u32, random)?;
+    m2_gpu_placement(
+        0,
+        transform,
+        owner,
+        model,
+        Some(M2PlaybackStorage::Local(playback)),
+        particle_colors,
+        scene_time_ms as u32,
+    )
 }
 
 /// Creates placement-local animation and effect histories for one living M2.

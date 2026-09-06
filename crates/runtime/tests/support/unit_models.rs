@@ -132,7 +132,14 @@ fn append_equipment_files(
     files: &mut Vec<(String, Vec<u8>)>,
     ids: &[u16],
 ) -> Result<(), Box<dyn Error>> {
-    let mut model = game_object_models::model_with_animations(ids)?;
+    // Native default selection must skip zero-weight variation zero. Keep
+    // every component's tracks complete for both authored Stand variations.
+    let ids = [vec![0], ids.to_vec()].concat();
+    let mut model = game_object_models::model_with_animations(&ids)?;
+    let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
+    model[sequences + 16..sequences + 20].copy_from_slice(&0_u32.to_le_bytes());
+    model[sequences + 60..sequences + 62].copy_from_slice(&1_u16.to_le_bytes());
+    model[sequences + 66..sequences + 68].copy_from_slice(&1_u16.to_le_bytes());
     append_effects(&mut model, ids.len());
     append_attachments(&mut model, &[0], ids.len());
     for path in [

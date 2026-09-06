@@ -54,6 +54,30 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         &mut renderer,
         &mut random,
     )?;
+    for placement in &frame.placements {
+        if matches!(
+            placement.owner,
+            M2GpuPlacementOwner::PlayerItem { .. } | M2GpuPlacementOwner::PlayerItemVisual { .. }
+        ) {
+            let playback = placement
+                .playback
+                .as_ref()
+                .ok_or("component playback")?
+                .borrow();
+            assert_eq!(
+                playback.sequence, 1,
+                "zero-weight variation zero is not selected"
+            );
+            assert_eq!(
+                playback
+                    .script_timer
+                    .ok_or("component default timer")?
+                    .start_time_ms(),
+                placement.last_effect_time_ms.wrapping_add(1),
+            );
+            assert!(playback.script_blend.is_none());
+        }
+    }
     for time in [100.0, 300.0] {
         advance(&mut frame, &renderer, camera, time, &mut random)?;
     }
@@ -94,7 +118,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     for snapshot in &before {
         assert!(!snapshot.effects.particles.is_empty());
         assert!(snapshot.effects.ribbons.len() > 1);
-        assert!(snapshot.event_time > 0.0);
+        assert!(snapshot.event_time > 0);
     }
     presentation.set_component_texture_level(
         CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
@@ -139,7 +163,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     // A different weapon item recreates the component even at the same model path.
     let before = snapshots(&frame)?;
     fields(&mut world, 20, &[(313, 3001)])?;
-    let expected = rolls(random, 2);
+    let expected = rolls(random, 4); // One variation and cycle draw for item and effect.
     publish(
         &mut presentation,
         &world,
@@ -157,7 +181,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     // 902 selects the same effect model as 900: path equality cannot retain it.
     let before = snapshots(&frame)?;
     fields(&mut world, 20, &[(314, 902)])?;
-    let expected = rolls(random, 1);
+    let expected = rolls(random, 2);
     publish(
         &mut presentation,
         &world,
@@ -195,7 +219,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     // Changing either shoulder model replaces both members of the pair.
     let before = snapshots(&frame)?;
     fields(&mut world, 20, &[(287, 2002)])?;
-    let expected = rolls(random, 4);
+    let expected = rolls(random, 8); // Two shoulders and their two effects.
     publish(
         &mut presentation,
         &world,
@@ -279,6 +303,24 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     };
     let created = effects(&frame, owner)?.last_update_ms;
     assert!(created >= 20_000);
+    let placement = frame
+        .placements
+        .iter()
+        .find(|placement| placement.owner == owner)
+        .ok_or("new item")?;
+    let playback = placement
+        .playback
+        .as_ref()
+        .ok_or("new item playback")?
+        .borrow();
+    assert_eq!(
+        playback
+            .script_timer
+            .ok_or("new item timer")?
+            .start_time_ms(),
+        created + 1
+    );
+    drop(playback);
     advance(
         &mut frame,
         &renderer,
@@ -388,7 +430,8 @@ struct ComponentSnapshot {
     owner: M2GpuPlacementOwner,
     source: usize,
     effects: UnitEffectsSnapshot,
-    event_time: f32,
+    event_time: u32,
+    timer: solarity_rendering::M2ModelSequenceTimer,
     orientation: solarity_rendering::M2ModelOrientation,
 }
 
@@ -404,17 +447,17 @@ fn snapshots(frame: &M2Frame) -> Result<Vec<ComponentSnapshot>, Box<dyn Error>> 
             )
         })
         .map(|placement| {
-            let event_time = placement
+            let playback = placement
                 .playback
                 .as_ref()
                 .ok_or("component playback")?
-                .borrow()
-                .previous_event_elapsed_ms;
+                .borrow();
             Ok(ComponentSnapshot {
                 owner: placement.owner,
                 source: unit_source(frame, placement.owner)?,
                 effects: effects(frame, placement.owner)?,
-                event_time,
+                event_time: playback.previous_event_scene_time_ms,
+                timer: playback.script_timer.ok_or("component timer")?,
                 orientation: placement.orientation,
             })
         })
@@ -463,7 +506,11 @@ fn assert_replaced(
             assert!(frame.sources[previous.source].is_none());
             assert!(current.effects.particles.is_empty());
             assert!(current.effects.ribbons.is_empty());
-            assert_eq!(current.event_time, 0.0);
+            assert_eq!(current.event_time, current.effects.last_update_ms);
+            assert_eq!(
+                current.timer.start_time_ms(),
+                current.event_time.wrapping_add(1)
+            );
         } else {
             assert_eq!(current, previous);
         }
