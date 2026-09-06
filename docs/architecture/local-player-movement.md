@@ -217,3 +217,15 @@ CVars are registered, and the runtime only rebuilds its numeric policy after the
 shared CVar generation changes. The ordinary owner still lacks saved-view
 editing/gates, tracked-subject absolute-yaw modes, roll and cinematic policy;
 the native CVar rejection callbacks are not yet reproduced by the registry.
+
+`benchmark_world_camera` measures the real resident terrain/WMO/M2 obstruction
+and water queries without a window or server. It accepts a Data directory,
+locale, map, world X/Y/Z and sample count. The input position and synthetic
+subject marker are explicit; this single-tile diagnostic excludes rendering,
+FrameXML, nearby-tile streaming and replicated objects, so its results are not
+world FPS measurements. Its Orgrimmar sweep exposed terrain hits beyond the
+requested camera segment. Terrain trace selection now rejects a plane beyond
+the current maximum fraction before publishing a contact, rather than extending
+the cutoff with bounds tolerance or clamping a later plane to the endpoint.
+Archive-backed regressions cover both a shortened segment and a cutoff just
+before the surface.

@@ -335,8 +335,11 @@ impl TerrainCollisionChunk {
             );
             let horizontal_support = collision_radius * (normal.x.abs() + normal.y.abs());
             let fraction =
-                ((center_start_distance - horizontal_support) / -delta_into_plane).clamp(0.0, 1.0);
-            if fraction > *nearest_fraction + BOUNDS_TOLERANCE {
+                ((center_start_distance - horizontal_support) / -delta_into_plane).max(0.0);
+            // Broad-phase tolerance cannot extend the caller's segment or
+            // replace an earlier hit. Clamping a later plane to one would
+            // fabricate an endpoint contact for camera obstruction probes.
+            if fraction > *nearest_fraction {
                 continue;
             }
             let point = start + delta * fraction + footprint_offset;

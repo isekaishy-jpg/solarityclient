@@ -948,6 +948,23 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         .controlled_player_terrain_height(ray_start)?
         .ok_or("point-height query missed fixture terrain")?;
     assert!((sampled_height - traced_height).abs() < 0.001);
+    // Neither a shortened segment nor a cutoff just before the surface may
+    // report that later surface. Camera corner probes retain this upper bound.
+    assert!(
+        terrain
+            .trace_collision(ray_start, ray_end, 0.0, collision.fraction() - 0.000_05)?
+            .is_none()
+    );
+    assert!(
+        terrain
+            .trace_collision(
+                ray_start,
+                ray_start.lerp(ray_end, collision.fraction() * 0.5),
+                0.0,
+                1.0
+            )?
+            .is_none()
+    );
     assert!(
         terrain
             .trace_collision(ray_end, ray_start, 0.0, 1.0)?
