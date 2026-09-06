@@ -167,6 +167,68 @@ fn placed_m2_uses_dedicated_stock_collision_mesh() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// 7BDB10 registers collision-only M2s at their position without losing faces.
+#[test]
+fn inverted_render_bounds_keep_m2_collision_and_follow_placement_updates()
+-> Result<(), Box<dyn Error>> {
+    let mut model_bytes = m2_collision_fixture()?;
+    for (axis, value) in [f32::MAX; 3].into_iter().chain([-f32::MAX; 3]).enumerate() {
+        let offset = 0xa0 + axis * 4;
+        model_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    let skin_bytes = skin_fixture()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "World\\Fixture\\Collision.m2",
+            bytes: &model_bytes,
+        },
+        FixtureFile {
+            path: "World\\Fixture\\Collision00.skin",
+            bytes: &skin_bytes,
+        },
+    ])?;
+    let data_root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
+    let model = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("World\\Fixture\\Collision.m2")?,
+    )?);
+    let mut placement = PlacedM2Collision::prepare_transform(
+        model,
+        glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0)),
+    )?;
+    assert_eq!(
+        placement.render_bounds().minimum(),
+        Vec3::new(10.0, 20.0, 30.0)
+    );
+    assert_eq!(
+        placement.render_bounds().maximum(),
+        placement.render_bounds().minimum()
+    );
+    let position = Vec3::new(40.0, 50.0, 60.0);
+    placement.set_transform(glam::Mat4::from_translation(position))?;
+    assert_eq!(placement.render_bounds().minimum(), position);
+    assert_eq!(placement.render_bounds().maximum(), position);
+    let mut faces = Vec::new();
+    placement.append_movement(placement.collision_bounds(), &mut faces)?;
+    assert_eq!(
+        faces.len(),
+        1,
+        "the invisible model must retain its collision triangle"
+    );
+    let mut scene = M2CollisionScene::new();
+    scene.add(placement);
+    let hit = scene
+        .trace_camera(
+            position + Vec3::new(0.5, 0.5, 2.0),
+            position + Vec3::new(0.5, 0.5, -2.0),
+            1.0,
+        )?
+        .ok_or("invisible collision model lost its camera obstruction")?;
+    assert!((hit - 0.5).abs() < 0.0001);
+    Ok(())
+}
+
 pub(super) fn m2_collision_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),

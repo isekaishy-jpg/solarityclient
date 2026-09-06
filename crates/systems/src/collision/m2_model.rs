@@ -71,10 +71,12 @@ impl PlacedM2Collision {
     ) -> Result<Self, M2CollisionError> {
         let determinant = transform.determinant();
         if !transform.is_finite() || !determinant.is_finite() || determinant == 0.0 {
+            tracing::error!(model = %model.path(), ?transform, "invalid M2 collision transform");
             return Err(M2CollisionError::InvalidPlacement);
         }
         let inverse_transform = transform.inverse();
         if !inverse_transform.is_finite() {
+            tracing::error!(model = %model.path(), ?transform, "non-finite inverse M2 collision transform");
             return Err(M2CollisionError::InvalidPlacement);
         }
         let [collision_bounds, render_bounds] = placed_bounds(&model, transform)?;
@@ -211,9 +213,27 @@ fn placed_bounds(
     let resolve = |bounds: solarity_asset::M2ModelBounds| {
         MovementCollisionBounds::new(bounds.minimum(), bounds.maximum())
             .and_then(|bounds| bounds.transformed(transform))
-            .map_err(|_| M2CollisionError::InvalidPlacement)
+            .map_err(|source| {
+                tracing::error!(model = %model.path(), ?bounds, ?transform, %source, "invalid M2 collision bounds");
+                M2CollisionError::InvalidPlacement
+            })
     };
-    Ok([resolve(model.collision_bounds())?, resolve(model.bounds())?])
+    let render = model.bounds();
+    let render_bounds = if render.minimum().is_finite()
+        && render.maximum().is_finite()
+        && render.minimum().cmpgt(render.maximum()).all()
+    {
+        // 0x007BDB10 uses the placement position when all three render
+        // extents are inverted. Collision-only stock models (including
+        // Orgrimmar's auction house) use +/-FLT_MAX for this empty box.
+        // Their dedicated collision bounds and triangles remain active.
+        let position = transform.w_axis.truncate();
+        MovementCollisionBounds::new(position, position)
+            .map_err(|_| M2CollisionError::InvalidPlacement)?
+    } else {
+        resolve(render)?
+    };
+    Ok([resolve(model.collision_bounds())?, render_bounds])
 }
 
 /// Main-thread placed-M2 scene with allocation-free repeated traces.
