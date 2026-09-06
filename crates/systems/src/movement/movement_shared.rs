@@ -7,7 +7,6 @@ const MOVEMENT_BACKWARD: u64 = 0x0000_0000_0002;
 const MOVEMENT_STRAFE_LEFT: u64 = 0x0000_0000_0004;
 const MOVEMENT_STRAFE_RIGHT: u64 = 0x0000_0000_0008;
 const MOVEMENT_WALKING: u64 = 0x0000_0000_0100;
-const MOVEMENT_FALLING: u64 = 0x0000_0000_1000;
 const MOVEMENT_SWIMMING: u64 = 0x0000_0020_0000;
 const MOVEMENT_FLYING: u64 = 0x0000_0200_0000;
 
@@ -51,7 +50,11 @@ pub const fn resolve_unit_locomotion_animation(
     movement: WorldMovementState,
 ) -> UnitLocomotionAnimation {
     let flags = movement.flags();
-    if flags & MOVEMENT_FALLING != 0 {
+    let vertical_speed = match movement.context().falling {
+        Some(fall) => fall.vertical_speed,
+        None => 0.0,
+    };
+    if super::unit_animation::unit_movement_is_airborne(flags as u32, vertical_speed) {
         return UnitLocomotionAnimation::new(40);
     }
 

@@ -382,3 +382,36 @@ without duplicating large HD replacement assets or GPU resources.
 The asset crate is the sole production decoder and allocation owner for these
 arrays. An HD-sized model is neither cloned nor decoded into a redundant
 animation graph.
+
+## Unit movement requests
+
+The retained unit animation owner now receives local movement notifications
+before the final frame snapshot. A jump requests 37; completion selects 38.
+`724200` preserves behavior 37--40 or 467 while the nonspline falling gate at
+`723350` is active. A zero-launch support acquisition does not enter that gate
+until falling-far, so world entry does not manufacture a takeoff animation.
+
+Landing retains the old movement flags and nonzero launch-speed predicate
+before the movement owner clears them. The ordinary `73D2B0` rule selects 39
+when stationary, or 187 while running forward/sideways above twice walking
+speed. Walking/backward/aquatic landings resume the ordinary resolver. The
+39 primary blocks idle and turning until completion, but translation can
+interrupt it. Ground turn requests use 11/12 with native left precedence and
+movement-mode rejection from `71DE90`/`71E180`.
+
+The local event queue is independent of encrypted writer admission. Heartbeat,
+facing and pitch notifications do not rerun the primary resolver. Event order,
+model/tier fallback, existing sequence blends and the shared CRT variation/cycle
+stream remain owned by the CPU unit playback across GPU replacement.
+
+`tools/ghidra/unit_movement_animation_oracle.py` captures 438 original decisions
+for ordinary landing, turning, nonspline falling and jump completion. Runtime
+tests cover retained takeoff, both landings, landing interruption, short jumps,
+multiple notifications in one frame, and random-draw counts. These checks do
+not establish incoming remote movement-event handling, directional bone poses,
+movement-speed playback scaling, spline/vehicle controllers, or combat layers.
+
+The opt-in `stock_character_movement_sequences_complete` runtime test exercises
+the real installed archives for both genders of all ten playable races. All 20
+models complete takeoff, airborne loop, stationary landing, both turns, running
+landing and the return to ordinary locomotion using their authored timers.

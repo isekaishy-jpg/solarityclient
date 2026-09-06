@@ -674,6 +674,8 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             locomotion: UnitLocomotionAnimation::STAND,
             tier: UnitAnimationTier::Ground,
             movement_flags: 0,
+            secondary_flags: 0,
+            airborne: false,
             mounted: false,
         },
     ));

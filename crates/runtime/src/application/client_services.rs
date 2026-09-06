@@ -2167,6 +2167,9 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        while let Some(event) = self.player_movement.take_animation_event() {
+            self.player.notify_movement_animation(event);
+        }
         self.platform
             .set_mouse_free_look(self.player_movement.mouse_free_look())?;
         match self.player.synchronize(self.gameplay.world())? {

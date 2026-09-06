@@ -459,6 +459,25 @@ fn jump_retains_launch_until_landing_and_applies_released_forward() -> TestResul
     assert_eq!(owner.flags & 0x000f_f003, 0);
     assert_eq!(output.iter().filter(|event| matches!(event, PlayerMovementOutput::Movement(message) if message.kind() == WorldMovementKind::FallLand)).count(), 1);
     assert!(owner.snapshot().1.context().falling.is_none());
+    let events: Vec<_> = owner.animation_events.drain(..).collect();
+    let jump = events
+        .iter()
+        .position(|event| matches!(event.kind, UnitMovementAnimationEventKind::Jump))
+        .ok_or("jump animation notification")?;
+    let land = events
+        .iter()
+        .position(|event| matches!(event.kind, UnitMovementAnimationEventKind::Land { .. }))
+        .ok_or("landing animation notification")?;
+    assert!(jump < land);
+    assert_eq!(events[jump].movement.flags() & 0x1000, 0x1000);
+    assert_eq!(events[land].movement.flags() & 0x3000, 0);
+    assert!(
+        matches!(events[land].kind, UnitMovementAnimationEventKind::Land { previous_flags, forced: true, .. } if previous_flags & 0x1000 != 0)
+    );
+    assert!(
+        !output.is_empty(),
+        "animation events drain while wire events remain unadmitted"
+    );
     Ok(())
 }
 

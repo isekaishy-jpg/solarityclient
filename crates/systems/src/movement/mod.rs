@@ -17,6 +17,7 @@ mod movement_source;
 mod path;
 mod player;
 mod stance;
+mod unit_animation;
 
 pub use airborne::{
     MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy,
@@ -46,4 +47,9 @@ pub use stance::{
     UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
     resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
     resolve_unit_stand_completion, resolve_unit_stand_transition,
+};
+pub use unit_animation::{
+    UnitMovementAnimationDecision, resolve_unit_airborne_animation, resolve_unit_landing_animation,
+    resolve_unit_movement_animation_completion, resolve_unit_turn_animation,
+    unit_movement_is_airborne,
 };

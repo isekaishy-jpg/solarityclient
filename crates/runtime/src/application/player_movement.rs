@@ -7,6 +7,7 @@ use super::player_camera::{
     PlayerCameraZoomSettings,
 };
 use super::player_control::PlayerControlEvent;
+use super::unit_animation::{UnitMovementAnimationEvent, UnitMovementAnimationEventKind};
 use glam::{Vec2, Vec3};
 use solarity_ecs::{
     ActiveWorld, WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
@@ -116,6 +117,7 @@ pub(super) struct RuntimePlayerMovement {
 }
 
 struct LocalMovement {
+    animation_events: VecDeque<UnitMovementAnimationEvent>,
     camera: PlayerCameraInput,
     initial_contact_pending: bool,
     active: bool,
@@ -227,6 +229,10 @@ impl RuntimePlayerMovement {
 
     pub(super) fn push_control(&mut self, event: PlayerControlEvent) {
         self.commands.push_back(MovementCommand::Control(event));
+    }
+
+    pub(super) fn take_animation_event(&mut self) -> Option<UnitMovementAnimationEvent> {
+        self.owner.as_mut()?.animation_events.pop_front()
     }
 
     /// The composition root calls this before presentation samples ECS.
@@ -415,6 +421,7 @@ impl LocalMovement {
             MovementCommand::Input(command) => input.record_without_mover(command.action),
             MovementCommand::Control(PlayerControlEvent::StandState { state, .. }) => {
                 self.stand_state = state;
+                self.notify_animation(UnitMovementAnimationEventKind::Changed);
                 // Player_C::6E2B30 refreshes held input when standing up.
                 if state == 0 && self.active {
                     input.resolve(self.admission(world), &mut |effect| effects.push(effect));
@@ -522,6 +529,7 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            animation_events: VecDeque::new(),
             camera: PlayerCameraInput::new(
                 solarity_ecs::PlayerViewState::default(),
                 transform.orientation(),
@@ -676,6 +684,7 @@ impl LocalMovement {
             return;
         }
         self.stand_state = state;
+        self.notify_animation(UnitMovementAnimationEventKind::Changed);
         output.push_back(PlayerMovementOutput::StandState(u32::from(state)));
     }
 
@@ -717,9 +726,45 @@ impl LocalMovement {
                 spline_elevation: context.spline_elevation,
             },
         )?;
+        // Unit_C::73ED10 only resolves animation for these notifications.
+        // Heartbeats and facing/pitch packets must not interrupt a landing.
+        use WorldMovementKind as Kind;
+        let animation = match kind {
+            Kind::Jump => Some(UnitMovementAnimationEventKind::Jump),
+            Kind::StartForward
+            | Kind::StartBackward
+            | Kind::Stop
+            | Kind::StartStrafeLeft
+            | Kind::StartStrafeRight
+            | Kind::StopStrafe
+            | Kind::StartTurnLeft
+            | Kind::StartTurnRight
+            | Kind::StopTurn
+            | Kind::StartSwim
+            | Kind::StopSwim
+            | Kind::StartAscend
+            | Kind::StopAscend
+            | Kind::StartDescend => Some(UnitMovementAnimationEventKind::Changed),
+            Kind::SetRunMode | Kind::SetWalkMode if self.flags & 0xc0100f != 0 => {
+                Some(UnitMovementAnimationEventKind::Changed)
+            }
+            _ => None,
+        };
+        if let Some(animation) = animation {
+            self.notify_animation(animation);
+        }
         output.push_back(PlayerMovementOutput::Movement(packet));
         self.heartbeat_ms = self.time_ms.wrapping_add(500);
         Ok(())
+    }
+
+    fn notify_animation(&mut self, kind: UnitMovementAnimationEventKind) {
+        self.animation_events.push_back(UnitMovementAnimationEvent {
+            identity: self.identity,
+            movement: self.snapshot().1,
+            stand: self.stand_state,
+            kind,
+        });
     }
 
     fn snapshot(&self) -> (WorldTransform, WorldMovementState) {
@@ -957,6 +1002,7 @@ impl LocalMovement {
                             position,
                             fall_time_ms,
                         } => {
+                            let previous_flags = self.flags;
                             self.initial_contact_pending = false;
                             self.position = position;
                             self.context.fall_time_ms = fall_time_ms;
@@ -967,6 +1013,11 @@ impl LocalMovement {
                             let saved = self.time_ms;
                             self.time_ms =
                                 saved.wrapping_add(duration - remaining + result.consumed_ms);
+                            self.notify_animation(UnitMovementAnimationEventKind::Land {
+                                previous_flags,
+                                forced: state.initial_downward_speed != 0.0,
+                                slow: self.ground.speed() <= self.speeds.walk() * 2.0,
+                            });
                             self.emit(WorldMovementKind::FallLand, output)?;
                             self.time_ms = saved;
                         }

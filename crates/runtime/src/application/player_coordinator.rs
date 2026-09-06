@@ -1369,6 +1369,13 @@ impl RuntimePlayerPresentation {
         Ok(RuntimePlayerPoll::ModelLoaded)
     }
 
+    pub(super) fn notify_movement_animation(
+        &self,
+        event: super::unit_animation::UnitMovementAnimationEvent,
+    ) {
+        self.unit_animations.notify_movement(event);
+    }
+
     fn synchronize_local_animation(
         &mut self,
         world: &ActiveWorld,
@@ -1380,22 +1387,16 @@ impl RuntimePlayerPresentation {
             self.unit_animations.retain_world(world);
             return Ok(());
         };
-        let input = UnitAnimationInput {
-            stand: world.local_player_stand_state()?,
-            locomotion: world.movement_state(resident.guid).map_or(
-                UnitLocomotionAnimation::STAND,
-                resolve_unit_locomotion_animation,
-            ),
-            tier: world
+        let input = UnitAnimationInput::new(
+            world.local_player_stand_state()?,
+            world
                 .local_player_presentation()
                 .map_or(UnitAnimationTier::Ground, |presentation| {
                     presentation.animation_tier()
                 }),
-            movement_flags: world
-                .movement_state(resident.guid)
-                .map_or(0, |movement| movement.flags() as u32),
-            mounted: resident.mount.is_some(),
-        };
+            resident.mount.is_some(),
+            world.movement_state(resident.guid),
+        );
         self.unit_animations.retain_world(world);
         self.unit_animations
             .bind(identity, &resident.model, &self.animations, input);
@@ -1425,16 +1426,12 @@ impl RuntimePlayerPresentation {
                 identity,
                 model,
                 &self.animations,
-                UnitAnimationInput {
-                    stand: presentation.stand_state(),
-                    locomotion: movement.map_or(
-                        UnitLocomotionAnimation::STAND,
-                        resolve_unit_locomotion_animation,
-                    ),
-                    tier: presentation.animation_tier(),
-                    movement_flags: movement.map_or(0, |movement| movement.flags() as u32),
+                UnitAnimationInput::new(
+                    presentation.stand_state(),
+                    presentation.animation_tier(),
                     mounted,
-                },
+                    movement,
+                ),
             );
         }
     }

@@ -8,8 +8,8 @@ use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 use std::error::Error;
 
 const POSES: &[u16] = &[
-    0, 1, 4, 6, 91, 96, 97, 98, 99, 100, 101, 102, 103, 104, 114, 115, 116, 127, 131, 132, 201,
-    202, 224, 300, 301, 302, 304, 466, 468, 472,
+    0, 1, 4, 5, 6, 11, 12, 13, 37, 38, 39, 40, 91, 96, 97, 98, 99, 100, 101, 102, 103, 104, 114,
+    115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
 fn input(stand: u8) -> UnitAnimationInput {
@@ -18,6 +18,8 @@ fn input(stand: u8) -> UnitAnimationInput {
         locomotion: UnitLocomotionAnimation::STAND,
         tier: UnitAnimationTier::Ground,
         movement_flags: 0,
+        secondary_flags: 0,
+        airborne: false,
         mounted: false,
     }
 }
@@ -37,6 +39,9 @@ fn owner_with_input(
         let flags: u32 = if matches!(
             id,
             1 | 6
+                | 37
+                | 39
+                | 187
                 | 96
                 | 98
                 | 99
@@ -128,6 +133,286 @@ fn owner_with_input(
         Arc::new(AnimationDataCatalog::load(&mut store)?),
         initial,
     ))
+}
+
+fn movement(flags: u32, vertical: Option<f32>) -> WorldMovementState {
+    WorldMovementState::new(
+        u64::from(flags),
+        solarity_ecs::WorldMovementSpeeds::new([2.5, 7., 4.5, 4.72, 2.5, 7., 4.5, 3., 3.]),
+        solarity_ecs::WorldMovementContext {
+            falling: vertical.map(|vertical_speed| solarity_ecs::WorldMovementFall {
+                vertical_speed,
+                direction_sin: 0.,
+                direction_cos: 1.,
+                horizontal_speed: 0.,
+            }),
+            ..Default::default()
+        },
+    )
+}
+
+fn notify(
+    owner: &UnitAnimationBehavior,
+    movement: WorldMovementState,
+    kind: UnitMovementAnimationEventKind,
+) {
+    owner.notify_movement(UnitMovementAnimationEvent {
+        identity: owner.identity,
+        movement,
+        stand: 0,
+        kind,
+    });
+}
+
+#[test]
+fn jump_retains_takeoff_then_loops_and_lands_with_shared_random_and_blend()
+-> Result<(), Box<dyn Error>> {
+    let owner = owner(POSES, 0)?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(100., 100., &mut random)?;
+    notify(
+        &owner,
+        movement(0x1000, Some(-7.95555)),
+        UnitMovementAnimationEventKind::Jump,
+    );
+    owner.advance_scene(200., 200., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 37);
+    let mut expected = random;
+    owner.set_input(input(0).with_movement(movement(0x1001, Some(-7.95555))));
+    owner.advance_scene(300., 300., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 37);
+    assert_eq!(random, expected);
+    owner.advance_scene(1500., 1500., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 38);
+    let _variation = expected.next_u15();
+    let _cycle = expected.next_u15();
+    assert_eq!(random, expected);
+    notify(
+        &owner,
+        movement(0, None),
+        UnitMovementAnimationEventKind::Land {
+            previous_flags: 0x3000,
+            forced: false,
+            slow: true,
+        },
+    );
+    owner.set_input(input(0).with_movement(movement(0, None)));
+    owner.advance_scene(1700., 1700., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 39);
+    assert!(owner.playback.borrow().script_blend.is_some());
+    expected = random;
+    owner.advance_scene(1800., 1800., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 39);
+    assert_eq!(random, expected);
+    owner.advance_scene(3000., 3000., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 0);
+    Ok(())
+}
+
+#[test]
+fn running_landing_completes_and_new_movement_can_interrupt_stationary_landing()
+-> Result<(), Box<dyn Error>> {
+    let owner = owner(POSES, 0)?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(100., 100., &mut random)?;
+    notify(
+        &owner,
+        movement(1, None),
+        UnitMovementAnimationEventKind::Land {
+            previous_flags: 0x3001,
+            forced: false,
+            slow: false,
+        },
+    );
+    owner.advance_scene(200., 200., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 187);
+    owner.advance_scene(1500., 1500., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 5);
+    notify(
+        &owner,
+        movement(0, None),
+        UnitMovementAnimationEventKind::Land {
+            previous_flags: 0x3000,
+            forced: false,
+            slow: true,
+        },
+    );
+    owner.advance_scene(1600., 1600., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 39);
+    owner.set_input(input(0).with_movement(movement(1, None)));
+    owner.advance_scene(1700., 1700., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 5);
+    Ok(())
+}
+
+#[test]
+fn turn_directions_and_zero_launch_falls_use_distinct_requests() -> Result<(), Box<dyn Error>> {
+    let owner = owner(POSES, 0)?;
+    let mut random = CrtRand::new();
+    for (index, flags, vertical, expected) in [
+        (1, 0x10, None, 11),
+        (2, 0x20, None, 12),
+        (3, 0x11, None, 5),
+        (4, 0x1000, Some(0.), 0),
+        (5, 0x3000, Some(0.), 40),
+    ] {
+        owner.set_input(input(0).with_movement(movement(flags, vertical)));
+        owner.advance_scene(index as f32 * 100., index as f32 * 100., &mut random)?;
+        assert_eq!(owner.playback.borrow().animation_id, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn jump_and_landing_in_one_scene_preserve_both_ordered_requests() -> Result<(), Box<dyn Error>> {
+    let owner = owner(POSES, 0)?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(100., 100., &mut random)?;
+    let mut expected = random;
+    notify(
+        &owner,
+        movement(0x1000, Some(-7.95555)),
+        UnitMovementAnimationEventKind::Jump,
+    );
+    notify(
+        &owner,
+        movement(0, None),
+        UnitMovementAnimationEventKind::Land {
+            previous_flags: 0x1000,
+            forced: true,
+            slow: true,
+        },
+    );
+    owner.advance_scene(200., 200., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 39);
+    for _ in 0..4 {
+        let _ = expected.next_u15();
+    }
+    assert_eq!(
+        random, expected,
+        "both primary selections consume their own variation and cycle draws"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with the user's 3.3.5a archives"]
+fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    let identity = world.object_identity(7).ok_or("local identity")?;
+    let mut count = 0;
+    for race in [
+        "Human", "Orc", "Dwarf", "NightElf", "Scourge", "Tauren", "Gnome", "Troll", "BloodElf",
+        "Draenei",
+    ] {
+        for gender in ["Male", "Female"] {
+            let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
+            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            let owner =
+                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0));
+            let mut random = CrtRand::new();
+            let mut time = 100.;
+            owner.advance_scene(time, time, &mut random)?;
+            notify(
+                &owner,
+                movement(0x1000, Some(-7.95555)),
+                UnitMovementAnimationEventKind::Jump,
+            );
+            time += 100.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                37,
+                "{path} takeoff"
+            );
+            time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
+                .duration_ms() as f32
+                + 1.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                38,
+                "{path} jump loop"
+            );
+            notify(
+                &owner,
+                movement(0, None),
+                UnitMovementAnimationEventKind::Land {
+                    previous_flags: 0x1000,
+                    forced: true,
+                    slow: true,
+                },
+            );
+            time += 100.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                39,
+                "{path} landing"
+            );
+            time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
+                .duration_ms() as f32
+                + 1.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                0,
+                "{path} stand after landing"
+            );
+            for (flags, expected) in [(0x10, 11), (0x20, 12)] {
+                owner.set_input(input(0).with_movement(movement(flags, None)));
+                time += 100.;
+                owner.advance_scene(time, time, &mut random)?;
+                assert_eq!(
+                    owner.behavior(&owner.playback.borrow()),
+                    expected,
+                    "{path} turn"
+                );
+            }
+            notify(
+                &owner,
+                movement(1, None),
+                UnitMovementAnimationEventKind::Land {
+                    previous_flags: 0x3001,
+                    forced: false,
+                    slow: false,
+                },
+            );
+            time += 100.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                187,
+                "{path} running landing"
+            );
+            time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
+                .duration_ms() as f32
+                + 1.;
+            owner.advance_scene(time, time, &mut random)?;
+            assert_eq!(
+                owner.behavior(&owner.playback.borrow()),
+                5,
+                "{path} run after landing"
+            );
+            count += 1;
+        }
+    }
+    println!(
+        "Validated jump, land, turn and running landing on {count} installed character models"
+    );
+    Ok(())
 }
 
 #[test]

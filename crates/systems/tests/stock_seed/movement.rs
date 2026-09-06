@@ -55,7 +55,8 @@ fn ground_locomotion_uses_stock_selector_order() {
     assert_eq!(animation(0x0000_0000_0001), 5);
     assert_eq!(animation(0x0000_0000_0101), 4);
     assert_eq!(animation(0x0000_0000_0002), 13);
-    assert_eq!(animation(0x0000_0000_1001), 40);
+    assert_eq!(animation(0x0000_0000_1001), 5); // Zero launch, before falling-far.
+    assert_eq!(animation(0x0000_0000_3001), 40);
 }
 
 /// Swimming and flying share the base 41--45 family before tier remapping.
