@@ -24,6 +24,37 @@ buffer/fence, image acquisition, command-recording, submit, and present interval
 It also aggregates camera resolutions by terrain, placed WMO, placed M2, and
 terrain/WMO liquid provider. Each resolution retains all nine obstruction probes.
 
+`SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
+of each phase and at quarter turns of the orbit. This explicitly waits for GPU
+readback and writes images between frames, affecting both retirement and animation
+time. Use a separate run without this setting for timing comparisons.
+
 This replay does not exercise the network, movement solver, remote population,
 audio, or diagnostic overlays. Its frame times are evidence about the exercised
 production paths, not a substitute for measurements from a populated live world.
+
+## Resident camera bounds
+
+Camera traces retain conservative bounds over each immutable ADT's actual chunk
+positions and each append-only M2 collision scene. WMO placements retain the union
+of their camera group boxes and update it atomically with placement transforms.
+This union uses MOGP boxes; the separate MOHD/MOGI movement bounds cannot replace
+them. Input validation, per-chunk/per-instance tests, tolerance rules, triangle
+order, and all nine camera probes remain in the query path for admitted scenes.
+
+The 2026-09-06 replay at map 1, position `(1700, -4300, 35)`, used a GTX 1070,
+2560×1440 fullscreen-windowed presentation, and 600 frames per phase. Both runs
+retained 56 ADTs throughout the three settled phases. The measured mean frame
+times before and after scene bounds were:
+
+| Input phase | Before | After |
+| --- | ---: | ---: |
+| Stationary | 12.926 ms | 8.762 ms |
+| Orbit | 12.616 ms | 8.760 ms |
+| Pointer | 13.734 ms | 9.786 ms |
+
+Final camera resolution in the stationary phase fell from 2.769 ms to 0.738 ms;
+the streaming phase component also benefits from its separate camera resolution.
+These runs had captures disabled and profiling enabled. The initial hover rebuild
+still produces a large isolated stall, and this result does not establish the
+requested overall FPS target or performance under live movement/network load.

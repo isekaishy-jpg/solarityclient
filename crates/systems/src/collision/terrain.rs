@@ -69,6 +69,8 @@ pub enum TerrainCollisionError {
 pub struct TerrainCollisionMesh {
     chunks: Vec<TerrainCollisionChunk>,
     tile_square_origin: [i32; 2],
+    minimum: Vec3,
+    maximum: Vec3,
 }
 
 impl TerrainCollisionMesh {
@@ -84,8 +86,16 @@ impl TerrainCollisionMesh {
             .iter()
             .map(TerrainCollisionChunk::prepare)
             .collect::<Result<Vec<_>, _>>()?;
+        // Use the admitted geometry, including authored chunk positions. A tile
+        // index alone cannot prove that every chunk is outside a query.
+        let (minimum, maximum) = chunks.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(minimum, maximum), chunk| (minimum.min(chunk.minimum), maximum.max(chunk.maximum)),
+        );
         Ok(Self {
             chunks,
+            minimum,
+            maximum,
             tile_square_origin: [
                 i32::from(tile.index().y()) * 128,
                 i32::from(tile.index().x()) * 128,
@@ -168,6 +178,13 @@ impl TerrainCollisionMesh {
         let limited_end = start + delta * maximum_fraction;
         let query_minimum = start.min(limited_end) - Vec3::splat(collision_radius);
         let query_maximum = start.max(limited_end) + Vec3::splat(collision_radius);
+        if query_maximum.x < self.minimum.x - BOUNDS_TOLERANCE
+            || query_minimum.x > self.maximum.x + BOUNDS_TOLERANCE
+            || query_maximum.y < self.minimum.y - BOUNDS_TOLERANCE
+            || query_minimum.y > self.maximum.y + BOUNDS_TOLERANCE
+        {
+            return Ok(None);
+        }
         let mut nearest = None;
         let mut nearest_fraction = maximum_fraction;
         for chunk in &self.chunks {
@@ -206,6 +223,13 @@ impl TerrainCollisionMesh {
     ) -> Result<Option<f32>, TerrainCollisionError> {
         if !world_x.is_finite() || !world_y.is_finite() {
             return Err(TerrainCollisionError::NonFinitePoint);
+        }
+        if world_x < self.minimum.x - BOUNDS_TOLERANCE
+            || world_x > self.maximum.x + BOUNDS_TOLERANCE
+            || world_y < self.minimum.y - BOUNDS_TOLERANCE
+            || world_y > self.maximum.y + BOUNDS_TOLERANCE
+        {
+            return Ok(None);
         }
         let mut height: Option<f32> = None;
         for chunk in &self.chunks {

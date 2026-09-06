@@ -240,6 +240,7 @@ fn placed_bounds(
 #[derive(Default)]
 pub struct M2CollisionScene {
     instances: Vec<PlacedM2Collision>,
+    bounds: Option<[Vec3; 2]>,
 }
 
 impl M2CollisionScene {
@@ -248,11 +249,19 @@ impl M2CollisionScene {
     pub const fn new() -> Self {
         Self {
             instances: Vec::new(),
+            bounds: None,
         }
     }
 
     /// Adds one already validated placed M2 generation.
     pub fn add(&mut self, placement: PlacedM2Collision) {
+        let bounds = placement.collision_bounds();
+        self.bounds = Some(match self.bounds {
+            Some([minimum, maximum]) => {
+                [minimum.min(bounds.minimum()), maximum.max(bounds.maximum())]
+            }
+            None => [bounds.minimum(), bounds.maximum()],
+        });
         self.instances.push(placement);
     }
 
@@ -291,6 +300,14 @@ impl M2CollisionScene {
         }
         let limited_end = start + (end - start) * nearest;
         let query_bounds = [start.min(limited_end), start.max(limited_end)];
+        // Scene membership is append-only. The union remains conservative as
+        // neighboring ADTs publish placements that extend beyond their tile.
+        if self
+            .bounds
+            .is_none_or(|bounds| !bounds_intersect(query_bounds, bounds))
+        {
+            return Ok(None);
+        }
         let mut found = false;
         for instance in &self.instances {
             let collision_bounds = instance.collision_bounds;

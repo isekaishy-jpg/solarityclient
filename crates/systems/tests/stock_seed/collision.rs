@@ -167,6 +167,124 @@ fn placed_m2_uses_dedicated_stock_collision_mesh() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// Publishing another placement expands scene admission without changing the
+/// nearest contact, even when its collision box extends beyond its owner tile.
+#[test]
+fn m2_camera_scene_bounds_follow_incremental_placement_admission() -> Result<(), Box<dyn Error>> {
+    let model_bytes = m2_collision_fixture()?;
+    let skin_bytes = skin_fixture()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "World\\Fixture\\Collision.m2",
+            bytes: &model_bytes,
+        },
+        FixtureFile {
+            path: "World\\Fixture\\Collision00.skin",
+            bytes: &skin_bytes,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let model = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("World\\Fixture\\Collision.m2")?,
+    )?);
+    let mut scene = M2CollisionScene::new();
+    assert!(scene.trace_camera(Vec3::ZERO, Vec3::Z, 1.)?.is_none());
+    assert!(
+        scene
+            .trace_camera(Vec3::splat(f32::NAN), Vec3::Z, 1.)
+            .is_err()
+    );
+    for origin in [
+        Vec3::new(5_000., -5_000., 100.),
+        Vec3::new(-5_000., 5_000., 200.),
+    ] {
+        let transform = glam::Mat4::from_translation(origin)
+            * glam::Mat4::from_rotation_z(0.7)
+            * glam::Mat4::from_scale(Vec3::splat(4.));
+        let center = transform.transform_point3(Vec3::new(0.5, 0.5, 0.));
+        let start = center + Vec3::Z * 4.;
+        let end = center - Vec3::Z * 4.;
+        assert!(scene.trace_camera(start, end, 1.)?.is_none());
+        scene.add(PlacedM2Collision::prepare_transform(
+            Arc::clone(&model),
+            transform,
+        )?);
+        assert_eq!(scene.trace_camera(start, end, 1.)?, Some(0.5));
+        assert!(scene.trace_camera(start, end, 0.25)?.is_none());
+        let boundary = transform.transform_point3(Vec3::ZERO);
+        assert!(
+            scene
+                .trace_camera(boundary + Vec3::Z, boundary - Vec3::Z, 1.)?
+                .is_some()
+        );
+    }
+    assert_eq!(scene.instance_count(), 2);
+    assert!(scene.trace_camera(Vec3::ZERO, Vec3::Z, -1.).is_err());
+    Ok(())
+}
+
+/// Camera admission uses MOGP boxes independently of MOHD and follows successful
+/// transform changes; a failed transform keeps the previous queryable geometry.
+#[test]
+fn wmo_camera_bounds_follow_groups_and_retained_transform_updates() -> Result<(), Box<dyn Error>> {
+    let mut root = root_fixture();
+    set_vec3(&mut root, 20 + 36, [100., 100., 100.]);
+    set_vec3(&mut root, 20 + 48, [102., 102., 102.]);
+    let group = group_fixture(0x08);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "World\\Fixture\\Collision.wmo",
+            bytes: &root,
+        },
+        FixtureFile {
+            path: "World\\Fixture\\Collision_000.wmo",
+            bytes: &group,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let model = Arc::new(DecodedWorldModel::load(
+        &mut store,
+        &AssetPath::new("World\\Fixture\\Collision.wmo")?,
+    )?);
+    let mut scene = WorldModelCollisionScene::new();
+    scene.add(PlacedWorldModelCollision::prepare_transform(
+        model,
+        glam::Mat4::IDENTITY,
+    )?);
+    let start = Vec3::new(0.5, 0.5, 2.);
+    let end = Vec3::new(0.5, 0.5, -2.);
+    assert_eq!(scene.trace_camera(start, end, 1.)?, Some(0.5));
+    let offset = Vec3::new(5_000., -5_000., 30.);
+    scene
+        .instance_mut(0)
+        .ok_or("missing WMO placement")?
+        .set_transform(glam::Mat4::from_translation(offset))?;
+    assert!(scene.trace_camera(start, end, 1.)?.is_none());
+    assert_eq!(
+        scene.trace_camera(start + offset, end + offset, 1.)?,
+        Some(0.5)
+    );
+    assert!(
+        scene
+            .instance_mut(0)
+            .ok_or("missing WMO placement")?
+            .set_transform(glam::Mat4::from_scale(Vec3::ZERO))
+            .is_err()
+    );
+    assert_eq!(
+        scene.trace_camera(start + offset, end + offset, 1.)?,
+        Some(0.5)
+    );
+    Ok(())
+}
+
 /// 7BDB10 registers collision-only M2s at their position without losing faces.
 #[test]
 fn inverted_render_bounds_keep_m2_collision_and_follow_placement_updates()

@@ -41,6 +41,7 @@ pub struct PlacedWorldModelCollision {
     pub(super) inverse_transform: Mat4,
     pub(super) root_bounds: [Vec3; 2],
     group_bounds: Vec<[Vec3; 2]>,
+    camera_bounds: Option<[Vec3; 2]>,
     movement_group_bounds: Vec<[Vec3; 2]>,
     placement_bounds_scratch: Vec<[Vec3; 2]>,
     pub(super) movement_pending: Vec<MovementBspQuery>,
@@ -126,12 +127,14 @@ impl PlacedWorldModelCollision {
             .map(|group| transformed_bounds(group.bounds(), transform))
             .collect::<Result<Vec<_>, _>>()?;
         let movement_cached_leaves = model.groups().iter().map(cached_leaf_eligibility).collect();
+        let camera_bounds = union_bounds(&group_bounds);
         Ok(Self {
             model,
             transform,
             inverse_transform,
             root_bounds,
             group_bounds,
+            camera_bounds,
             movement_group_bounds,
             placement_bounds_scratch: Vec::new(),
             movement_pending: Vec::new(),
@@ -190,6 +193,7 @@ impl PlacedWorldModelCollision {
             .copy_from_slice(&self.placement_bounds_scratch[..groups]);
         self.group_bounds
             .copy_from_slice(&self.placement_bounds_scratch[groups..]);
+        self.camera_bounds = union_bounds(&self.group_bounds);
         self.root_bounds = root_bounds;
         self.transform = transform;
         self.inverse_transform = inverse_transform;
@@ -291,6 +295,14 @@ impl WorldModelCollisionScene {
         let mut found = false;
         for instance_index in 0..self.instances.len() {
             let instance = &self.instances[instance_index];
+            // MOGP group boxes define this union. The independently authored
+            // MOHD root box is not a substitute for camera group admission.
+            if instance
+                .camera_bounds
+                .is_none_or(|bounds| !bounds_intersect(query_bounds, bounds))
+            {
+                continue;
+            }
             let local_start = instance.inverse_transform.transform_point3(start);
             let local_end = instance.inverse_transform.transform_point3(end);
             for group_index in 0..instance.model.groups().len() {
@@ -482,4 +494,13 @@ pub(super) fn bounds_intersect(left: [Vec3; 2], right: [Vec3; 2]) -> bool {
         left[0][axis] <= right[1][axis] + COLLISION_TOLERANCE
             && right[0][axis] <= left[1][axis] + COLLISION_TOLERANCE
     })
+}
+
+fn union_bounds(bounds: &[[Vec3; 2]]) -> Option<[Vec3; 2]> {
+    bounds
+        .iter()
+        .copied()
+        .reduce(|[minimum, maximum], [next_minimum, next_maximum]| {
+            [minimum.min(next_minimum), maximum.max(next_maximum)]
+        })
 }
