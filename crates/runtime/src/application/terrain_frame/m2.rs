@@ -607,6 +607,20 @@ impl RuntimeMountCameraSample {
 }
 
 impl RuntimeM2Event {
+    pub(in crate::application) const fn new(
+        identifier: [u8; 4],
+        data: u32,
+        position: glam::Vec3,
+        owner_guid: Option<u64>,
+    ) -> Self {
+        Self {
+            identifier,
+            data,
+            position,
+            owner_guid,
+        }
+    }
+
     pub(in crate::application) const fn identifier(self) -> [u8; 4] {
         self.identifier
     }
@@ -2850,12 +2864,12 @@ fn append_triggered_events(
                 })?,
             None => Mat4::IDENTITY,
         };
-        destination.push(RuntimeM2Event {
-            identifier: event.identifier(),
-            data: event.data(),
-            position: (model_transform * bone).transform_point3(event.position()),
-            owner_guid: placement_owner_guid(owner),
-        });
+        destination.push(RuntimeM2Event::new(
+            event.identifier(),
+            event.data(),
+            (model_transform * bone).transform_point3(event.position()),
+            placement_owner_guid(owner),
+        ));
     }
     Ok(())
 }

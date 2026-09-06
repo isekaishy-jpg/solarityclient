@@ -12,6 +12,113 @@ const POSES: &[u16] = &[
     115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
+#[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with the user's 3.3.5a archives"]
+fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error>> {
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    let identity = world.object_identity(7).ok_or("local identity")?;
+    for race in [
+        "Human", "Orc", "Dwarf", "NightElf", "Scourge", "Tauren", "Gnome", "Troll", "BloodElf",
+        "Draenei",
+    ] {
+        for gender in ["Male", "Female"] {
+            let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
+            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            let owner =
+                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0));
+            let mut random = CrtRand::new();
+            let mut time = 100.;
+            let mut seen = BTreeMap::<u16, BTreeMap<usize, usize>>::new();
+            for _ in 0..128 {
+                owner.set_input(input(0));
+                owner.advance_scene(time, time, &mut random)?;
+                notify(
+                    &owner,
+                    movement(0x1000, Some(-7.95555)),
+                    UnitMovementAnimationEventKind::Jump,
+                );
+                time += 100.;
+                owner.advance_scene(time, time, &mut random)?;
+                for expected in [37, 38] {
+                    let playback = owner.playback.borrow();
+                    assert_eq!(owner.behavior(&playback), expected, "{path}");
+                    *seen
+                        .entry(expected)
+                        .or_default()
+                        .entry(playback.sequence)
+                        .or_default() += 1;
+                    time = playback.script_timer.ok_or("jump timer")?.end_time_ms() as f32 + 1.;
+                    drop(playback);
+                    owner.advance_scene(time, time, &mut random)?;
+                }
+                notify(
+                    &owner,
+                    movement(0, None),
+                    UnitMovementAnimationEventKind::Land {
+                        previous_flags: 0x1000,
+                        forced: true,
+                        slow: true,
+                    },
+                );
+                time += 100.;
+                owner.advance_scene(time, time, &mut random)?;
+                time = owner
+                    .playback
+                    .borrow()
+                    .script_timer
+                    .ok_or("land timer")?
+                    .end_time_ms() as f32
+                    + 1.;
+                owner.advance_scene(time, time, &mut random)?;
+                time += 100.;
+            }
+            let metadata = owner
+                .model
+                .animations()
+                .sequences()
+                .iter()
+                .enumerate()
+                .filter(|(_, sequence)| matches!(sequence.animation_id(), 37 | 38))
+                .map(|(index, sequence)| {
+                    (
+                        index,
+                        sequence.animation_id(),
+                        sequence.variation_index(),
+                        sequence.frequency(),
+                        sequence.variation_next(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let events = owner
+                .model
+                .animations()
+                .events()
+                .iter()
+                .map(|event| {
+                    (
+                        String::from_utf8_lossy(&event.identifier()).into_owned(),
+                        event.data(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            println!("{path}: authored={metadata:?} sampled={seen:?} events={events:?}");
+        }
+    }
+    Ok(())
+}
+
 fn input(stand: u8) -> UnitAnimationInput {
     UnitAnimationInput::new(stand, UnitAnimationTier::Ground, false, None)
 }

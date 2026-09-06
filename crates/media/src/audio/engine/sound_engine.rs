@@ -283,14 +283,7 @@ impl<'output> SoundEngine<'output> {
         emitter_position: glam::Vec3,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        let mix = {
-            let entry = self.catalog.sound_entry(request.entry_id()).ok_or(
-                SoundEngineError::MissingEntry {
-                    entry_id: request.entry_id(),
-                },
-            )?;
-            AdvancedSoundSpatialMix::evaluate_positioned(listener, emitter_position, entry)?
-        };
+        let mix = self.positioned_mix(request.entry_id(), listener, emitter_position)?;
         let playback = self.play(store, request, next_random_word)?;
         let SoundPlayback::Started(voice) = playback else {
             return Ok(playback);
@@ -298,6 +291,27 @@ impl<'output> SoundEngine<'output> {
         self.set_voice_runtime_gain(voice, mix.three_dimensional_gain())?;
         self.set_voice_spatial_position(voice, mix.backend_position())?;
         Ok(playback)
+    }
+
+    /// Resolves ordinary spatial gain before a nonblocking payload load starts.
+    ///
+    /// # Errors
+    /// Returns [`SoundEngineError`] for an absent entry or invalid spatial input.
+    pub fn positioned_mix(
+        &self,
+        entry_id: u32,
+        listener: AdvancedSoundListener,
+        emitter_position: glam::Vec3,
+    ) -> Result<AdvancedSoundSpatialMix, SoundEngineError> {
+        let entry = self
+            .catalog
+            .sound_entry(entry_id)
+            .ok_or(SoundEngineError::MissingEntry { entry_id })?;
+        Ok(AdvancedSoundSpatialMix::evaluate_positioned(
+            listener,
+            emitter_position,
+            entry,
+        )?)
     }
 
     /// Applies one validated CVar snapshot to every retained active voice.

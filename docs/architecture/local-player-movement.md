@@ -255,3 +255,20 @@ the current maximum fraction before publishing a contact, rather than extending
 the cutoff with bounds tolerance or clamping a later plane to the endpoint.
 Archive-backed regressions cover both a shortened segment and a cutoff just
 before the surface.
+
+Obstruction feedback now retains the requested zoom separately from the clipped
+distance. Native `0x006076C2` feeds a significant collision into the distance
+interpolation lane; `0x00603E7B` restores the requested distance with its two-second
+cosine curve. The camera still moves inward on contact. Repeated obstruction,
+wheel input during recovery, the original distance bias, and wrapping clocks
+are covered by `camera_obstruction_recovery_oracle.py` histories. Waterline
+correction is applied after the distance feedback and does not become a zoom
+request.
+
+The reported Blood Elf alternate jump has additional archive-backed coverage.
+Both standing and forward-running movement execute 128 complete jumps for each
+sex through the real local movement and retained animation owners. Both authored
+variants survive to distinct sampled bone palettes. This has not reproduced the
+reported missing visible twirl. The CRT stream and authored frequencies remain
+unchanged, and each live jump now records the model, selected sequence and
+variation, movement flags, and scene time for the next user test.

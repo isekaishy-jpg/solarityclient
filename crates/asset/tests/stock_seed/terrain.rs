@@ -20,6 +20,128 @@ use wow_wdt::{WdtFile, WdtWriter};
 
 use crate::support::{Fixture, FixtureFile};
 
+/// Original x87 execution covers boundaries, packed rows, and low-resolution holes.
+#[test]
+fn terrain_sound_cells_match_original_client_queries() -> Result<(), Box<dyn Error>> {
+    let bytes = AdtBuilder::new()
+        .with_version(AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .add_texture_flags(MtxfChunk { flags: vec![0] })
+        .build()?
+        .to_bytes()?;
+    let ParsedAdt::Root(mut root) = parse_adt(&mut Cursor::new(bytes))? else {
+        return Err("fixture root ADT".into());
+    };
+    root.texture_flags = Some(MtxfChunk { flags: vec![0] });
+    let holes = [0_u16, 1, 0x8000, 0xaaaa, 0xffff];
+    let packed = [
+        0xe4e4_u16, 0x1b1b, 0xaaaa, 0x5555, 0xffff, 0, 0xb1b1, 0x4e4e,
+    ]
+    .into_iter()
+    .flat_map(u16::to_le_bytes)
+    .collect::<Vec<_>>();
+    for (chunk, holes) in root.mcnk_chunks.iter_mut().zip(holes) {
+        chunk.header.holes_low_res = holes;
+        chunk.header.n_layers = 4;
+        chunk.header.pred_tex.copy_from_slice(&packed[..8]);
+        chunk.header.no_effect_doodad.copy_from_slice(&packed[8..]);
+        chunk.layers = Some(MclyChunk {
+            layers: (0..4)
+                .map(|layer| MclyLayer {
+                    effect_id: 100 + layer,
+                    flags: MclyFlags {
+                        value: if layer == 0 { 0 } else { 0x100 },
+                    },
+                    offset_in_mcal: layer.saturating_sub(1) * 4096,
+                    ..MclyLayer::default()
+                })
+                .collect(),
+        });
+        chunk.alpha = Some(McalChunk::new(vec![0; 3 * 4096]));
+    }
+    let adt = BuiltAdt::from_root_adt(*root, None).to_bytes()?;
+    let map_table = map_table();
+    let wdt = terrain_wdt(Some((32, 32, 1)), true)?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\Map.dbc",
+            bytes: &map_table,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend.wdt",
+            bytes: &wdt,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Maps\\Northrend\\Northrend_32_32.adt",
+            bytes: &adt,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let map = TerrainMap::load(&mut store, maps.map(571).ok_or("fixture map")?)?;
+    let tile = map.load_tile(
+        &mut store,
+        TerrainTileIndex::new(32, 32).ok_or("fixture tile")?,
+    )?;
+    let mut count = 0;
+    for line in include_str!("../fixtures/terrain-sound-address-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words = line
+            .split_whitespace()
+            .map(|word| u32::from_str_radix(word, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let actual = TerrainMap::sound_cell_at_world_position(
+            f32::from_bits(words[0]),
+            f32::from_bits(words[1]),
+        );
+        if words[3] == u32::MAX {
+            assert!(actual.is_none(), "{line}");
+        } else {
+            let (index, chunk, [x, y]) = actual.ok_or("missing native sound address")?;
+            assert_eq!(
+                [u32::from(index.x()), u32::from(index.y())],
+                [words[3], words[4]],
+                "{line}"
+            );
+            assert_eq!(
+                [
+                    u32::from(chunk.x()),
+                    u32::from(chunk.y()),
+                    u32::from(x),
+                    u32::from(y)
+                ],
+                [
+                    (words[5] >> 3) & 15,
+                    (words[6] >> 3) & 15,
+                    words[5] & 7,
+                    words[6] & 7
+                ],
+                "{line}"
+            );
+            let fixture_chunk = holes
+                .iter()
+                .position(|holes| u32::from(*holes) == words[2])
+                .ok_or("hole fixture")?;
+            let terrain = tile.chunks()[fixture_chunk]
+                .ground_effect_at(x, y)
+                .map(|effect| effect + 1000);
+            assert_eq!(terrain.is_some(), words[7] != 0, "{line}");
+            assert_eq!(terrain.unwrap_or(u32::MAX), words[8], "{line}");
+        }
+        count += 1;
+    }
+    assert_eq!(count, 1320);
+    Ok(())
+}
+
 /// WDT selection obeys archive precedence and preserves exact grid/path data.
 #[test]
 fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {

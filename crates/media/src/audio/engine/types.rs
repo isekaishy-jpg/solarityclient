@@ -54,6 +54,10 @@ pub struct SoundChannel(u8);
 impl SoundChannel {
     /// General sound-effects channel.
     pub const SFX: Self = Self(0);
+    /// Other units' footsteps (`SoundInterface::PlayFootstepSound`, channel 13).
+    pub const OTHER_FOOTSTEP: Self = Self(13);
+    /// Controlled player's footsteps (channel 17, at most four active voices).
+    pub const LOCAL_FOOTSTEP: Self = Self(17);
     /// Foreground music channel.
     pub const MUSIC: Self = Self(1);
     /// World ambience channel.

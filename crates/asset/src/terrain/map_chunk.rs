@@ -107,6 +107,7 @@ pub struct TerrainChunk {
     doodad_references: Vec<u32>,
     world_model_references: Vec<u32>,
     sound_emitters: Vec<TerrainSoundEmitter>,
+    texture_selection: [u16; 8],
 }
 
 impl TerrainChunk {
@@ -126,6 +127,7 @@ impl TerrainChunk {
         doodad_references: Vec<u32>,
         world_model_references: Vec<u32>,
         sound_emitters: Vec<TerrainSoundEmitter>,
+        texture_selection: [u16; 8],
     ) -> Self {
         Self {
             index,
@@ -142,6 +144,7 @@ impl TerrainChunk {
             doodad_references,
             world_model_references,
             sound_emitters,
+            texture_selection,
         }
     }
 
@@ -197,6 +200,21 @@ impl TerrainChunk {
     #[must_use]
     pub fn layers(&self) -> &[TerrainTextureLayer] {
         &self.layers
+    }
+
+    /// Returns the authored ground effect for an 8-by-8 MCNK cell.
+    ///
+    /// Native `0x007A0530` rejects holes, then selects a two-bit MCLY index
+    /// from each little-endian row at MCNK header offsets 0x40 through 0x4f.
+    #[must_use]
+    pub fn ground_effect_at(&self, x: u8, y: u8) -> Option<u32> {
+        if x >= 8 || y >= 8 || self.holes & (1 << (x / 2 + (y / 2) * 4)) != 0 {
+            return None;
+        }
+        let layer = (self.texture_selection[usize::from(y)] >> (x * 2)) & 3;
+        self.layers
+            .get(usize::from(layer))
+            .map(|layer| layer.effect_id())
     }
 
     /// Returns the optional decoded RGB blend planes in an RGBA8 upload map.

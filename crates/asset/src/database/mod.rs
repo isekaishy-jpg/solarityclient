@@ -24,6 +24,7 @@ mod loading_screen;
 mod localized;
 mod map;
 mod map_difficulty;
+mod movement_sound;
 mod paper_doll;
 mod particle_color;
 mod player_class;
@@ -69,6 +70,7 @@ pub use light::{
 pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};
 pub use map::{MapCatalog, MapDefinition, MapKind};
 pub use map_difficulty::MapDifficultyCatalog;
+pub use movement_sound::{CreatureMovementSounds, MovementSoundCatalog};
 pub use paper_doll::{PaperDollItemFrameCatalog, PaperDollItemFrameDefinition};
 pub use particle_color::{ParticleColorCatalog, ParticleColorDefinition};
 pub use player_class::{CharacterClassCatalog, CharacterClassDefinition};

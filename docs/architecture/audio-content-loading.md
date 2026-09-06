@@ -293,3 +293,40 @@ Normal creation/customization scenes ran around 3,400–3,500 FPS, confirmed in
 a subsequent 6,000-following-frame replay. These are local GTX 1070, 1280x720
 measurements; transition frames and heavier scenes are reported separately in
 [Glue completion](glue-completion.md).
+
+## Unit movement audio
+
+World presentation now dispatches authored `$FSD` callbacks and frozen local
+jump/landing notifications to UnitSound_C's movement routes. Display sound
+overrides precede model sound rows; mounted sound rows and authored child rows
+retain their precedence. `CreatureSoundData` supplies the footstep selector and
+optional jump/land entries. A zero entry remains silent: the ordinary Blood Elf
+player row has no jump/land vocal, while other authored displays do.
+
+Footsteps join `TerrainType` and `FootstepTerrainLookup`, including the original
+terrain-zero retry and first-authored-row precedence. ADT sound cells consume
+all sixteen packed selection bytes and MCLY's ground-effect key. The original
+`0x007A0530` instructions supply 1,320 boundary, hole, and packed-layer fixtures.
+WMO ground types use the existing native registration and fallback-face banks
+and the selected MOMT material. Wet entries consume liquid behavior flags,
+area/parent substitutions, foot height, and the water-walking exclusion through
+the resident static liquid providers. This does not complete registered interior
+group/area liquid selection, vehicle/passenger policy, or transport liquids.
+
+Armor foley uses the player's chest Item.dbc material or the creature model's
+foley material. Server item-cache material overrides remain outside this path.
+Hover, ghost, and the movement flight flag suppress ordinary footsteps/foley.
+`FootstepSounds` and both armor-foley CVars apply live alongside the world UI's
+master/category sound settings. Local footsteps use channel 17 and priority 115;
+other footsteps use channel 13. Local vocals/foley retain priority 110 and the
+0.65 gain when `Sound_ListenerAtCharacter` selects nonpositional playback.
+
+Movement requests retain native random mode 2 on the separate Blizzard stream.
+Selection and voice reservation occur in event order, then the existing audio
+worker extracts and decodes the selected resource without holding the render
+thread. World frames poll completions, and disconnect cancels pending movement
+loads and stops their admitted voices. Channel/exclusivity refusals and payload
+failures are contained at the unit callback boundary. The memory-output archive
+test checks decoded samples, live footstep suppression, hover/ghost admission,
+the local channel limit, and cancellation across disconnect. Remote jump/land
+notifications still depend on the remaining remote movement packet integration.

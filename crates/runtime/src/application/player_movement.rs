@@ -176,6 +176,13 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    /// The scene camera feeds collision distance back into its retained zoom lane.
+    pub(super) fn camera_obstructed(&mut self, distance: f32, time: u32) {
+        if let Some(owner) = &mut self.owner {
+            owner.camera.obstructed(distance, time);
+        }
+    }
+
     /// Initial zero-launch support resolution belongs behind the loading card.
     /// Server-authored airborne entry already has a valid presentation state.
     pub(super) fn initial_contact_ready(&self) -> bool {

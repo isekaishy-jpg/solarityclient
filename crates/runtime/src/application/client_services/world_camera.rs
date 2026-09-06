@@ -19,9 +19,14 @@ impl ClientServices {
         let (width, height) = self.platform.pixel_extent();
         let aspect_ratio = width as f32 / height as f32;
         // Registered camera collision defaults, pending the live settings owner.
-        let pose = self
-            .terrain
-            .resolve_player_camera(pose, aspect_ratio, true, true)?;
+        let now = crate::platform::client_milliseconds();
+        let pose = self.terrain.resolve_player_camera_with_feedback(
+            pose,
+            aspect_ratio,
+            true,
+            true,
+            |distance| self.player_movement.camera_obstructed(distance, now),
+        )?;
         Ok(Some(
             WorldCamera::stock_following(
                 pose.eye(),

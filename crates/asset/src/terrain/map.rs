@@ -4,7 +4,9 @@ use crate::archive::{ArchiveDescriptor, AssetError, AssetPath};
 use crate::database::MapDefinition;
 
 use super::map_area::{TERRAIN_MAP_WIDTH, TerrainTile, TerrainTileIndex};
-use super::map_chunk::{TerrainChunk, TerrainDoodadPlacement, TerrainWorldModelPlacement};
+use super::map_chunk::{
+    TerrainChunk, TerrainChunkIndex, TerrainDoodadPlacement, TerrainWorldModelPlacement,
+};
 use super::map_chunk_liquid::TerrainLiquidTable;
 
 const TERRAIN_TILE_COUNT: usize = 4_096;
@@ -136,6 +138,34 @@ impl DecodedTerrainTile {
 }
 
 impl TerrainMap {
+    /// Resolves build 12340's sound cell with `0x007A0530`'s x87 rounding.
+    /// Returns absence outside the stock map domain or for non-finite inputs.
+    #[must_use]
+    pub fn sound_cell_at_world_position(
+        world_x: f32,
+        world_y: f32,
+    ) -> Option<(TerrainTileIndex, TerrainChunkIndex, [u8; 2])> {
+        let origin = f64::from(17_066.666_f32);
+        let offsets = [origin - f64::from(world_y), origin - f64::from(world_x)];
+        if offsets
+            .iter()
+            .any(|value| !(0.0..f64::from(34_133.332_f32)).contains(value))
+        {
+            return None;
+        }
+        let grid = |value: f64| {
+            let scaled = (value * f64::from(0.24_f32)) as f32;
+            (f64::from(scaled) - 0.5).round_ties_even() as i32
+        };
+        // Native keeps Y's origin subtraction in x87, but spills X to float.
+        let [x, y] = [grid(offsets[0]), grid(f64::from(offsets[1] as f32))];
+        Some((
+            TerrainTileIndex::new(((x >> 7) & 63) as u8, ((y >> 7) & 63) as u8)?,
+            TerrainChunkIndex::new(((x >> 3) & 15) as u8, ((y >> 3) & 15) as u8)?,
+            [(x & 7) as u8, (y & 7) as u8],
+        ))
+    }
+
     pub(super) fn new(
         definition: &MapDefinition,
         source: ArchiveDescriptor,

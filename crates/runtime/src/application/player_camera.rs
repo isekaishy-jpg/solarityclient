@@ -27,6 +27,8 @@ impl Default for PlayerCameraZoomSettings {
 #[derive(Clone, Copy)]
 struct CameraZoom {
     distance: f32,
+    target: f32,
+    recovery: Option<(u32, f32)>,
     flags: u32,
     starts: [u32; 2],
     stops: [u32; 2],
@@ -37,6 +39,8 @@ impl CameraZoom {
     fn new(distance: f32) -> Self {
         Self {
             distance,
+            target: distance,
+            recovery: None,
             flags: 0,
             starts: [0; 2],
             stops: [0; 2],
@@ -103,12 +107,51 @@ impl CameraZoom {
                 elapsed as u32
             };
             let delta = f64::from(elapsed) * f64::from(settings.speed) * f64::from(0.001_f32);
-            self.distance = if direction == 0 {
-                (f64::from(self.distance) - delta).max(0.) as f32
+            self.target = if direction == 0 {
+                (f64::from(self.target) - delta).max(0.) as f32
             } else {
-                (f64::from(self.distance) + delta).min(maximum) as f32
+                (f64::from(self.target) + delta).min(maximum) as f32
             };
+            if self.recovery.is_none() {
+                self.distance = self.target;
+            }
         }
+        self.sample_recovery(time);
+    }
+
+    /// 606F90 retains the requested distance and restarts the 603D30 lane
+    /// after an obstruction removes more than one ninth of a world unit.
+    fn obstructed(&mut self, distance: f32, time: u32) {
+        if f64::from(self.distance) - f64::from(distance) > f64::from(0.111_111_11_f32) {
+            self.distance = distance + 0.111_112_066_f32;
+            self.recovery = Some((time, self.distance));
+        }
+    }
+
+    fn sample_recovery(&mut self, time: u32) {
+        if (f64::from(self.target) - f64::from(self.distance)).abs() < f64::from(f32::EPSILON * 2.)
+        {
+            self.target = self.distance;
+            self.recovery = None;
+            return;
+        }
+        let Some((start, anchor)) = self.recovery else {
+            return;
+        };
+        let elapsed = time.wrapping_sub(start);
+        if (elapsed as i32) < 0 {
+            return;
+        }
+        let fraction = f64::from(elapsed) * f64::from(0.001_f32) / 2.;
+        self.distance = if fraction < 1. {
+            let fraction = f64::from(fraction as f32);
+            ((1. - (fraction * f64::from(std::f32::consts::PI)).cos())
+                * 0.5
+                * (f64::from(self.target) - f64::from(anchor))
+                + f64::from(anchor)) as f32
+        } else {
+            self.target
+        };
     }
 }
 
@@ -156,6 +199,10 @@ impl PlayerCameraInput {
 
     pub(super) fn sample_zoom(&mut self, time: u32, settings: PlayerCameraZoomSettings) {
         self.zoom.sample(time, settings);
+    }
+
+    pub(super) fn obstructed(&mut self, distance: f32, time: u32) {
+        self.zoom.obstructed(distance, time);
     }
 
     pub(super) fn follow_input(
@@ -275,6 +322,54 @@ fn wrap_yaw(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collision_recovery_and_wheel_input_match_original_histories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for line in include_str!("../../tests/fixtures/camera-obstruction-recovery-native.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+        {
+            let groups = line
+                .split('|')
+                .map(|group| {
+                    group
+                        .split_whitespace()
+                        .map(|word| u32::from_str_radix(word, 16))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut zoom = CameraZoom::new(f32::from_bits(groups[0][0]));
+            for (action, expected) in groups[1]
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(groups[2].as_chunks::<5>().0)
+            {
+                match action[0] {
+                    0 | 1 => {
+                        zoom.request(action[0] == 0, f32::from_bits(action[2]), action[1], 8.33)
+                    }
+                    2 => zoom.sample(action[1], PlayerCameraZoomSettings::default()),
+                    3 => zoom.obstructed(f32::from_bits(action[2]), action[1]),
+                    _ => unreachable!(),
+                }
+                assert!(
+                    (zoom.distance - f32::from_bits(expected[0])).abs() < 0.000_01,
+                    "distance action={action:?} actual={} expected={}",
+                    zoom.distance,
+                    f32::from_bits(expected[0])
+                );
+                assert!((zoom.target - f32::from_bits(expected[1])).abs() < 0.000_01);
+                assert_eq!(zoom.recovery.is_some(), expected[2] != 0);
+                if let Some((start, anchor)) = zoom.recovery {
+                    assert_eq!(start, expected[3]);
+                    assert!((anchor - f32::from_bits(expected[4])).abs() < 0.000_01);
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn zoom_histories_match_original_requests_and_ticks() -> Result<(), Box<dyn std::error::Error>>

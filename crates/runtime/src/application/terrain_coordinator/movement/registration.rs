@@ -1,7 +1,7 @@
 //! GameObject model references over the current resident map (`0x007C2E70`).
 
 use glam::Vec3;
-use solarity_asset::{TerrainChunkIndex, TerrainTileIndex};
+use solarity_asset::{TerrainChunkIndex, TerrainMap, TerrainTileIndex};
 use solarity_systems::{
     MovementBspCacheMode, MovementCollectionError, MovementCollisionBounds, PlacedM2Collision,
     PlacedWorldModelCollision, TerrainCollisionError, TerrainRegistrationPoint,
@@ -295,6 +295,88 @@ impl ResidentTerrainMap {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Resolves Unit_C's ground sound type with native floor and texture selection.
+    pub(in crate::application) fn unit_ground_sound_type(
+        &mut self,
+        position: Vec3,
+        sounds: &solarity_asset::MovementSoundCatalog,
+    ) -> Result<u32, RuntimeMovementRegistrationError> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(u32::MAX);
+        };
+        let start = position + Vec3::Z * 0.1;
+        let end = position - Vec3::Z * 1000.0;
+        let address = TerrainRegistrationPoint::new(position.x, position.y)?;
+        let terrain_height = active
+            .tile_at(address.tile())
+            .map(|tile| tile.collision.registration_height_at(address))
+            .transpose()?
+            .flatten();
+        let terrain_fraction = terrain_height
+            .map(|height| ((f64::from(start.z) - f64::from(height)) * f64::from(0.001_f32)) as f32)
+            .filter(|fraction| *fraction >= 0.0);
+        let cache = MovementBspCacheMode::Enabled;
+        let mut selection = active.probe_registration_roots(start, end, start, cache)?;
+        if terrain_fraction.is_none() && selection.selected().is_none() {
+            selection = active.probe_registration_roots(
+                position,
+                position + Vec3::Z * 1000.0,
+                position,
+                cache,
+            )?;
+        }
+        if let Some(fraction) = terrain_fraction {
+            selection.occlude_by_terrain(fraction)?;
+        }
+        // 0x007C2A70 uses the corresponding fallback face, including its
+        // absent-face sentinel after portal-only registration.
+        if let Some(candidate) = selection.fallback().into_iter().flatten().next() {
+            let reference = active
+                .movement
+                .roots
+                .iter()
+                .find(|reference| reference.owner() == candidate.owner())
+                .copied()
+                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+            let placement = active.registration_root_mut(reference)?;
+            let hit = candidate.hit();
+            let material = hit
+                .face()
+                .and_then(|face| {
+                    placement
+                        .model()
+                        .groups()
+                        .get(hit.group_index())?
+                        .polygons()
+                        .get(usize::from(face))
+                })
+                .and_then(|polygon| {
+                    placement
+                        .model()
+                        .materials()
+                        .get(usize::from(polygon.material_id()))
+                });
+            return Ok(material.map_or(u32::MAX, |material| material.ground_type()));
+        }
+        let Some((index, chunk_index, [x, y])) =
+            TerrainMap::sound_cell_at_world_position(position.x, position.y)
+        else {
+            return Ok(u32::MAX);
+        };
+        let Some(tile) = active.tile_at(index) else {
+            return Ok(u32::MAX);
+        };
+        let effect = tile
+            .decoded
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.index() == chunk_index)
+            .and_then(|chunk| chunk.ground_effect_at(x, y));
+        Ok(effect
+            .and_then(|effect| sounds.ground_effect_terrain(effect))
+            .unwrap_or(u32::MAX))
+    }
+
     /// Resolves GameObject M2 destinations against the admitted map scene.
     ///
     /// Uses native floor/portal banks, upward retry, terrain occlusion, interior

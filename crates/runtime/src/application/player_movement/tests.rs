@@ -4,6 +4,131 @@ use solarity_systems::{MovementCollisionTriangle, MovementCollisionVolume, Movem
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with the user's 3.3.5a archives"]
+fn blood_elf_twirl_survives_live_movement_and_pose_sampling() -> TestResult {
+    use crate::application::unit_animation::{UnitAnimationInput, UnitAnimationScene};
+    use solarity_asset::{
+        AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot,
+        DecodedM2Model, Locale,
+    };
+    use solarity_rendering::{M2BonePose, M2BonePoseOverrides};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let catalog = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    for (gender, running) in [
+        ("Male", false),
+        ("Female", false),
+        ("Male", true),
+        ("Female", true),
+    ] {
+        let path = AssetPath::new(format!(
+            "Character\\BloodElf\\{gender}\\BloodElf{gender}.m2"
+        ))?;
+        let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+        let (world, mut mover) = owner()?;
+        let mut scene = UnitAnimationScene::default();
+        let initial = UnitAnimationInput::new(
+            0,
+            solarity_ecs::UnitAnimationTier::Ground,
+            false,
+            Some(mover.snapshot().1),
+        );
+        scene.bind(mover.identity, &model, &catalog, initial);
+        let animation = scene.get(1).ok_or("animation owner")?;
+        let mut floor = Floor::new()?;
+        let mut output = VecDeque::new();
+        let mut random = crate::random::CrtRand::new();
+        let mut poses = BTreeMap::new();
+        let mut selections = BTreeMap::<usize, usize>::new();
+        let mut pose = M2BonePose::default();
+        animation.advance_scene(0., 0., &mut random)?;
+        if running {
+            apply(
+                &mut mover,
+                &world,
+                PlayerInputEffect::Movement(WorldMovementKind::StartForward),
+                &mut output,
+            )?;
+        }
+        for _ in 0..128 {
+            apply(&mut mover, &world, PlayerInputEffect::Jump, &mut output)?;
+            let start = mover.time_ms;
+            let mut selected = None;
+            for elapsed in (0..=1600).step_by(8) {
+                let time = start + elapsed;
+                mover.advance_to(time, [0.5, 2., 1.], &mut floor, &mut output)?;
+                while let Some(event) = mover.animation_events.pop_front() {
+                    scene.notify_movement(event);
+                }
+                animation.set_input(initial.with_movement(mover.snapshot().1));
+                animation.advance_scene(time as f32, time as f32, &mut random)?;
+                let sample = animation.take_scene_sample().ok_or("scene sample")?;
+                let sequence = sample.advance.clock.sequence();
+                if elapsed == 0 {
+                    assert_eq!(model.animations().sequences()[sequence].animation_id(), 37);
+                    *selections.entry(sequence).or_default() += 1;
+                    selected = Some(sequence);
+                }
+                let body = animation.body_pose();
+                pose.recompose_with_overrides(
+                    model.animations(),
+                    sample.advance.clock,
+                    glam::Mat4::IDENTITY,
+                    M2BonePoseOverrides {
+                        bone_transforms: body.bone_transforms(),
+                        ..Default::default()
+                    },
+                )?;
+                if elapsed == 200 {
+                    assert_eq!(
+                        sequence,
+                        selected.ok_or("jump selection")?,
+                        "{path} jump replaced before twirl"
+                    );
+                    poses
+                        .entry(sequence)
+                        .or_insert_with(|| pose.transforms().to_vec());
+                }
+                output.clear();
+            }
+            assert_eq!(mover.flags & 0x1000, 0);
+        }
+        let variants = model
+            .animations()
+            .sequences()
+            .iter()
+            .enumerate()
+            .filter(|(_, sequence)| sequence.animation_id() == 37 && sequence.frequency() > 0)
+            .map(|(index, sequence)| {
+                (
+                    index,
+                    sequence.variation_index(),
+                    sequence.frequency(),
+                    sequence.duration_ms(),
+                    sequence.blend_time_ms(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(poses.len(), variants.len(), "{path}: {selections:?}");
+        let values = poses.values().collect::<Vec<_>>();
+        assert!(
+            values.windows(2).all(|pair| pair[0] != pair[1]),
+            "{path} distinct twirl pose"
+        );
+        println!(
+            "{path} running={running}: live selections={selections:?}, authored={variants:?}, distinct rendered palettes={}",
+            poses.len()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn standing_and_control_changes_reconcile_held_input_and_packet_order() -> TestResult {
     let (mut world, mut owner) = owner()?;
     let entity = world.local_player();
@@ -288,14 +413,14 @@ impl Floor {
         Ok(Self {
             triangles: vec![
                 MovementCollisionTriangle::new([
-                    Vec3::new(-100., -100., 0.),
-                    Vec3::new(100., -100., 0.),
-                    Vec3::new(100., 100., 0.),
+                    Vec3::new(-10000., -10000., 0.),
+                    Vec3::new(10000., -10000., 0.),
+                    Vec3::new(10000., 10000., 0.),
                 ])?,
                 MovementCollisionTriangle::new([
-                    Vec3::new(-100., -100., 0.),
-                    Vec3::new(100., 100., 0.),
-                    Vec3::new(-100., 100., 0.),
+                    Vec3::new(-10000., -10000., 0.),
+                    Vec3::new(10000., 10000., 0.),
+                    Vec3::new(-10000., 10000., 0.),
                 ])?,
             ],
             ready: true,

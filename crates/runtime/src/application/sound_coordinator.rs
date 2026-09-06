@@ -26,14 +26,44 @@ use super::frame_profile::RuntimeFrameProfile;
 use super::terrain_frame::RuntimeM2Event;
 
 mod loader;
+mod movement;
 
 use loader::RuntimeSoundLoader;
+pub(super) use movement::UnitSoundContext;
+
+pub(super) trait SoundCvarSource {
+    fn sound_cvar(&self, name: &str) -> Option<String>;
+}
+
+impl SoundCvarSource for GlueManager {
+    fn sound_cvar(&self, name: &str) -> Option<String> {
+        self.cvar_value(name)
+    }
+}
+
+impl SoundCvarSource for super::world_ui::RuntimeWorldUi {
+    fn sound_cvar(&self, name: &str) -> Option<String> {
+        self.cvar_value(name)
+    }
+}
 
 const M2_ONE_SHOT_SOUND_IDENTIFIERS: [[u8; 4]; 3] = [*b"$SND", *b"$CSD", *b"$DSO"];
 
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
 pub enum RuntimeSoundError {
+    /// A movement sound lookup table could not be decoded.
+    #[error(transparent)]
+    Asset(#[from] solarity_asset::AssetError),
+    /// A unit's authored terrain/WMO surface could not be resolved.
+    #[error(transparent)]
+    MovementSurface(#[from] super::terrain_coordinator::RuntimeMovementRegistrationError),
+    /// A terrain liquid query rejected its input.
+    #[error(transparent)]
+    TerrainLiquid(#[from] solarity_systems::TerrainLiquidError),
+    /// A world-model liquid query rejected its input.
+    #[error(transparent)]
+    WorldModelLiquid(#[from] solarity_systems::WorldModelLiquidError),
     /// The worker archive owner could not be initialized or accessed.
     #[error("sound archive worker is unavailable: {message}")]
     LoaderUnavailable {
@@ -105,6 +135,10 @@ pub(crate) struct RuntimeSoundCoordinator {
     resident_tile: Option<TerrainTileIndex>,
     staged_emitters: Option<Vec<StagedTerrainEmitter>>,
     last_update: Instant,
+    movement_sounds: solarity_asset::MovementSoundCatalog,
+    movement_events: std::collections::VecDeque<super::unit_animation::UnitMovementAnimationEvent>,
+    movement_loads: Vec<movement::UnitSoundLoad>,
+    movement_voices: Vec<SoundVoiceHandle>,
 }
 
 impl RuntimeSoundCoordinator {
@@ -123,6 +157,7 @@ impl RuntimeSoundCoordinator {
             software_channel_count,
             policy.settings,
         )?;
+        let movement_sounds = solarity_asset::MovementSoundCatalog::load(&mut assets.borrow_mut())?;
         Ok(Self {
             assets,
             engine,
@@ -133,6 +168,10 @@ impl RuntimeSoundCoordinator {
             resident_tile: None,
             staged_emitters: None,
             last_update: Instant::now(),
+            movement_sounds,
+            movement_events: std::collections::VecDeque::new(),
+            movement_loads: Vec::new(),
+            movement_voices: Vec::new(),
         })
     }
 
@@ -232,6 +271,13 @@ impl RuntimeSoundCoordinator {
             }
         }
         profile.mark("media actions");
+        self.poll_loads(cpu)?;
+        profile.mark("load completions and encoded retirement");
+        Ok(())
+    }
+
+    /// Advances already selected audio on either side of the Glue/world boundary.
+    pub(crate) fn poll_loads(&mut self, cpu: &CpuExecutor) -> Result<(), RuntimeSoundError> {
         if let Some(completion) = self
             .engine
             .with_engine_mut(|engine| self.loader.poll(cpu, engine))?
@@ -239,10 +285,11 @@ impl RuntimeSoundCoordinator {
             let playback = match completion.result {
                 Ok(playback) => playback,
                 Err(error) => {
-                    tracing::warn!(%error, "Glue audio resource was not admitted");
+                    tracing::warn!(%error, "audio resource was not admitted");
                     SoundPlayback::Suppressed
                 }
             };
+            self.complete_unit_load(completion.handle, playback)?;
             for voice in [&mut self.glue_music, &mut self.glue_ambience] {
                 if voice
                     .as_ref()
@@ -253,10 +300,8 @@ impl RuntimeSoundCoordinator {
                 }
             }
         }
-        profile.mark("load completions");
         self.engine
             .with_engine_mut(|engine| engine.collect_unused_encoded());
-        profile.mark("encoded retirement");
         Ok(())
     }
 
@@ -406,6 +451,7 @@ impl RuntimeSoundCoordinator {
 
     /// Cancels pending Glue reads and observes worker completion before pool shutdown.
     pub(crate) fn shutdown(&mut self) -> Result<(), RuntimeSoundError> {
+        self.clear_unit_sounds()?;
         self.stop_glue_music()?;
         self.stop_glue_ambience()?;
         self.engine
@@ -447,6 +493,8 @@ impl RuntimeSoundCoordinator {
 
     /// Stops all resident world sounds and releases their terrain identity.
     pub(crate) fn disconnect(&mut self) -> Result<(), RuntimeSoundError> {
+        self.movement_events.clear();
+        self.clear_unit_sounds()?;
         self.engine
             .with_engine_mut(|engine| self.advanced.clear(engine))?;
         self.resident_tile = None;
@@ -460,7 +508,7 @@ impl RuntimeSoundCoordinator {
     /// Applies live CVar policy and advances advanced sounds from camera/time.
     pub(crate) fn update(
         &mut self,
-        glue: &GlueManager,
+        glue: &dyn SoundCvarSource,
         clock: &RealmClock,
         camera: WorldCameraFrame,
         random: &mut BlizzardRand,
@@ -609,7 +657,7 @@ struct SoundPolicy {
 }
 
 impl SoundPolicy {
-    fn read(glue: &GlueManager) -> Result<Self, RuntimeSoundError> {
+    fn read(glue: &dyn SoundCvarSource) -> Result<Self, RuntimeSoundError> {
         let maximum_cacheable_size_text = cvar(glue, "Sound_MaxCacheableSizeInBytes")?;
         // The stock CVar is a signed integer, but SoundEngine.cpp reads its raw
         // 32-bit word and then applies an unsigned two-megabyte ceiling.
@@ -664,12 +712,12 @@ fn software_channel_count(
     Ok(SoundSoftwareChannelCount::new(configured))
 }
 
-fn cvar(glue: &GlueManager, name: &'static str) -> Result<String, RuntimeSoundError> {
-    glue.cvar_value(name)
+fn cvar(glue: &dyn SoundCvarSource, name: &'static str) -> Result<String, RuntimeSoundError> {
+    glue.sound_cvar(name)
         .ok_or(RuntimeSoundError::MissingCVar { name })
 }
 
-fn boolean(glue: &GlueManager, name: &'static str) -> Result<bool, RuntimeSoundError> {
+fn boolean(glue: &dyn SoundCvarSource, name: &'static str) -> Result<bool, RuntimeSoundError> {
     let value = cvar(glue, name)?;
     value
         .parse::<f32>()
@@ -679,7 +727,7 @@ fn boolean(glue: &GlueManager, name: &'static str) -> Result<bool, RuntimeSoundE
         .ok_or(RuntimeSoundError::InvalidBoolean { name, value })
 }
 
-fn gain(glue: &GlueManager, name: &'static str) -> Result<SoundGain, RuntimeSoundError> {
+fn gain(glue: &dyn SoundCvarSource, name: &'static str) -> Result<SoundGain, RuntimeSoundError> {
     let value = cvar(glue, name)?;
     let parsed = value
         .parse::<f32>()

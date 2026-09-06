@@ -462,6 +462,17 @@ fn decode_chunk(
             ),
         ));
     }
+    // wow-adt names the two halves separately; native 0x007A0530 reads all
+    // sixteen bytes at 0x40 as eight little-endian two-bit texture rows.
+    let texture_selection = std::array::from_fn(|row| {
+        let bytes = if row < 4 {
+            &chunk.header.pred_tex
+        } else {
+            &chunk.header.no_effect_doodad
+        };
+        let offset = (row % 4) * 2;
+        u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    });
     Ok(TerrainChunk::new(
         chunk_x,
         chunk.header.flags.value,
@@ -477,6 +488,7 @@ fn decode_chunk(
         doodad_references.to_vec(),
         world_model_references.to_vec(),
         sound_emitters,
+        texture_selection,
     ))
 }
 

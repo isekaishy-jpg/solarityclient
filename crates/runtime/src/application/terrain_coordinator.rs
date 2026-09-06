@@ -910,6 +910,54 @@ impl RuntimeTerrainCoordinator {
         liquid.sample(world_x, world_y, reference_height)
     }
 
+    /// Applies UnitSound_C's foot-height and water-walking admission to liquid sound flags.
+    pub(super) fn unit_wet_footstep(
+        &self,
+        position: glam::Vec3,
+        foot_height: f32,
+        movement_flags: u32,
+        sounds: &solarity_asset::MovementSoundCatalog,
+    ) -> Result<bool, super::sound_coordinator::RuntimeSoundError> {
+        if movement_flags & 0x0020_0000 != 0 {
+            return Ok(false);
+        }
+        let terrain = self
+            .sample_liquid(position.x, position.y, Some(position.z))?
+            .map(|sample| (sample.height(), u32::from(sample.liquid_type())));
+        let world_model = self
+            .sample_world_model_liquid(position.x, position.y, Some(position.z))?
+            .map(|sample| (sample.height(), sample.liquid_type()));
+        let liquid = world_model.or(terrain);
+        let Some((height, liquid)) = liquid else {
+            return Ok(false);
+        };
+        let area = self
+            .active
+            .as_ref()
+            .and_then(|active| {
+                if active.terrain.global_world_model().is_some() {
+                    active.terrain.global_area_id()
+                } else {
+                    active
+                        .tile_at(TerrainMap::tile_at_world_position(position.x, position.y))
+                        .and_then(|tile| {
+                            tile.decoded
+                                .area_id_at_world_position(position.x, position.y)
+                        })
+                }
+            })
+            .unwrap_or(0);
+        let Some(flags) = sounds.liquid_flags(area, liquid) else {
+            return Ok(false);
+        };
+        // 7A1BC0 publishes the material's bit 1 only below its admitted surface;
+        // 71A030 then compares the authored bone point and excludes water-walking.
+        Ok(flags & 2 != 0
+            && f64::from(position.z) < f64::from(height) + f64::from(0.01_f32)
+            && (flags & 4 != 0 || position.z < height)
+            && f64::from(foot_height) < f64::from(height) + f64::from(0.01_f32))
+    }
+
     /// Returns the number of unique, chunk-referenced MODF placements resident.
     #[must_use]
     pub fn resident_world_model_count(&self) -> usize {
@@ -1081,6 +1129,29 @@ impl RuntimeTerrainCoordinator {
         smart_pivot: bool,
         water_collision: bool,
     ) -> Result<PlayerCameraPose, RuntimeCameraError> {
+        self.resolve_player_camera_with_feedback(
+            pose,
+            aspect_ratio,
+            smart_pivot,
+            water_collision,
+            |_| {},
+        )
+    }
+
+    /// Reports the distance collision before the separate waterline correction.
+    pub(super) fn resolve_player_camera_with_feedback(
+        &mut self,
+        pose: PlayerCameraPose,
+        aspect_ratio: f32,
+        smart_pivot: bool,
+        water_collision: bool,
+        feedback: impl FnOnce(f32),
+    ) -> Result<PlayerCameraPose, RuntimeCameraError> {
+        let requested_distance = (pose.eye() - pose.orbit_pivot()).length();
+        // The flying-mount offset lies along camera up. Its contribution must
+        // not become ordinary zoom distance when feeding the collision back.
+        let orbit_distance =
+            (pose.orbit_pivot() - pose.eye()).dot((pose.target() - pose.eye()).normalize());
         let mut profile = self
             .camera_profile
             .as_ref()
@@ -1106,6 +1177,15 @@ impl RuntimeTerrainCoordinator {
                 ))
             },
         )?;
+        let resolved_distance = (pose.eye() - pose.orbit_pivot()).length();
+        feedback(
+            orbit_distance
+                * if requested_distance > 0. {
+                    (resolved_distance / requested_distance).min(1.)
+                } else {
+                    1.
+                },
+        );
         let pose = resolve_player_camera_water_collision(
             pose,
             water_collision,

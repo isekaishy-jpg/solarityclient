@@ -96,6 +96,10 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("Sound_EnableErrorSpeech", "1", 0.0, 1.0),
     ranged("Sound_EnableEmoteSounds", "1", 0.0, 1.0),
     ranged("Sound_EnablePetSounds", "1", 0.0, 1.0),
+    // 0x0074787E and 0x004D1828/0x004D184B register these with default "1".
+    ranged("FootstepSounds", "1", 0.0, 1.0),
+    ranged("Sound_EnableArmorFoleySoundForSelf", "1", 0.0, 1.0),
+    ranged("Sound_EnableArmorFoleySoundForOthers", "1", 0.0, 1.0),
     ranged("Sound_EnableDSPEffects", "1", 0.0, 1.0),
     ranged("Sound_EnableReverb", "0", 0.0, 1.0),
     ranged("Sound_EnableHardware", "0", 0.0, 1.0),

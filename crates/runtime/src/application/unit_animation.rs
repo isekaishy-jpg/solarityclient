@@ -620,6 +620,18 @@ impl UnitAnimationBehavior {
                     random,
                 )?;
             }
+            if matches!(pending.event, UnitMovementAnimationEventKind::Jump) {
+                tracing::info!(
+                    model = %self.model.path(),
+                    scene_time_ms,
+                    requested_animation = ?request,
+                    animation_id = playback.animation_id,
+                    sequence = playback.sequence,
+                    variation = self.model.animations().sequences().get(playback.sequence).map(|sequence| sequence.variation_index()),
+                    movement_flags = input.movement_flags,
+                    "unit jump animation selection"
+                );
+            }
             self.processed_stand.set(input.stand);
             self.pending.borrow_mut().pop_front();
         }

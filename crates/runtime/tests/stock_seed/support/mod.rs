@@ -124,6 +124,12 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");
         builder = builder.add_file_data(empty_wdbc(30), "DBFilesClient\\SoundEntries.dbc");
         builder = builder.add_file_data(empty_wdbc(24), "DBFilesClient\\SoundEntriesAdvanced.dbc");
+        builder = builder.add_file_data(empty_wdbc(38), "DBFilesClient\\CreatureSoundData.dbc");
+        builder = builder.add_file_data(empty_wdbc(6), "DBFilesClient\\TerrainType.dbc");
+        builder = builder.add_file_data(empty_wdbc(5), "DBFilesClient\\FootstepTerrainLookup.dbc");
+        builder = builder.add_file_data(empty_wdbc(5), "DBFilesClient\\ItemGroupSounds.dbc");
+        builder = builder.add_file_data(empty_wdbc(11), "DBFilesClient\\GroundEffectTexture.dbc");
+        builder = builder.add_file_data(empty_wdbc(45), "DBFilesClient\\LiquidType.dbc");
         builder = builder.add_file_data(empty_wdbc(9), "DBFilesClient\\LightParams.dbc");
         builder = builder.add_file_data(empty_wdbc(3), "DBFilesClient\\LightSkybox.dbc");
         builder = builder.add_file_data(empty_wdbc(34), "DBFilesClient\\LightIntBand.dbc");

@@ -1058,12 +1058,16 @@ impl ClientServices {
         profile.mark("world camera");
         if let Some(clock) = self.gameplay.realm_clock() {
             self.sound.update(
-                &self.glue,
+                self.world_ui.as_ref().map_or(
+                    &self.glue as &dyn super::sound_coordinator::SoundCvarSource,
+                    |ui| ui as &dyn super::sound_coordinator::SoundCvarSource,
+                ),
                 clock,
                 camera,
                 &mut self.blizzard_rand.borrow_mut(),
             )?;
         }
+        self.sound.poll_loads(&self.cpu)?;
         let plan = self.terrain.resident_mesh_plan();
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
@@ -1112,6 +1116,40 @@ impl ClientServices {
             .apply_mount_camera_sample(mount_camera, camera_time_ms)?;
         let m2_events = frame.drain_m2_events();
         let frame_errors = frame.drain_recoverable_errors();
+        if let Some(world) = self.gameplay.world() {
+            let (creatures, items) = self.player.sound_catalogs();
+            let context = super::sound_coordinator::UnitSoundContext {
+                world,
+                creatures,
+                items,
+                cvars: self.world_ui.as_ref().map_or(
+                    &self.glue as &dyn super::sound_coordinator::SoundCvarSource,
+                    |ui| ui as &dyn super::sound_coordinator::SoundCvarSource,
+                ),
+            };
+            self.sound.play_unit_events(
+                &m2_events,
+                camera,
+                context,
+                |guid, foot, sounds| {
+                    let Some(transform) = world.object_transform(guid) else {
+                        return Ok((u32::MAX, false));
+                    };
+                    let position = transform.position();
+                    let ground = self.terrain.unit_ground_sound_type(position, sounds)?;
+                    let wet = self.terrain.unit_wet_footstep(
+                        position,
+                        foot.z,
+                        world
+                            .movement_state(guid)
+                            .map_or(0, |state| state.flags() as u32),
+                        sounds,
+                    )?;
+                    Ok((ground, wet))
+                },
+                &mut self.blizzard_rand.borrow_mut(),
+            )?;
+        }
         self.sound
             .play_m2_events(&m2_events, camera, &mut self.blizzard_rand.borrow_mut())?;
         for message in frame_errors {
@@ -2168,6 +2206,7 @@ impl ClientServices {
         )?;
         profile.mark("player movement");
         while let Some(event) = self.player_movement.take_animation_event() {
+            self.sound.notify_unit_movement(event);
             self.player.notify_movement_animation(event);
         }
         self.platform
