@@ -10,6 +10,282 @@ use solarity_systems::UnitLocomotionAnimation;
 use std::rc::Rc;
 
 #[test]
+fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::player_coordinator::{
+        RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
+    };
+    use solarity_asset::{
+        CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
+        CreatureCatalog, CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog,
+        ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, ParticleColorCatalog,
+    };
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture()?;
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(archive)?;
+    let catalogs = RuntimePlayerCatalogs::new(
+        AnimationDataCatalog::load(&mut store)?,
+        CreatureCatalog::load(&mut store)?,
+        CreatureFamilyCatalog::default(),
+        CharacterAppearanceCatalog::load(&mut store)?,
+        CharacterRaceCatalog::load(&mut store)?,
+        HelmetGeosetVisibilityCatalog::load(&mut store)?,
+        CharacterStartOutfitCatalog::load(&mut store)?,
+        RuntimePlayerItemCatalogs::new(
+            ItemDefinitionCatalog::load(&mut store)?,
+            ItemDisplayCatalog::load(&mut store)?,
+            ItemVisualCatalog::load(&mut store)?,
+        ),
+        ParticleColorCatalog::load(&mut store)?,
+    );
+    let mut presentation = RuntimePlayerPresentation::new(AssetStoreHandle::new(store), catalogs);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_unit(&mut world, 20, ObjectKind::Player, 1)?;
+    add_unit(&mut world, 30, ObjectKind::Unit, 3)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    let remote = Rc::clone(
+        presentation.resident_remote_player_frame_inputs()[0]
+            .unit_animation()
+            .ok_or("remote owner")?,
+    );
+    let creature = Rc::clone(
+        presentation.resident_creature_frame_inputs()[0]
+            .unit_animation()
+            .ok_or("creature owner")?,
+    );
+    assert!(!Rc::ptr_eq(&remote, &creature));
+    let remote_generation = presentation.resident_remote_player_frame_inputs()[0]
+        .generation()
+        .clone();
+    let creature_generation = presentation.resident_creature_frame_inputs()[0]
+        .generation()
+        .clone();
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    frame.replace_remote_players(
+        &mut renderer,
+        &presentation.resident_remote_player_frame_inputs(),
+        &mut random,
+    )?;
+    assert_eq!(remote.playback().borrow().animation_id, 96);
+    assert_eq!(creature.playback().borrow().animation_id, 99);
+    let remote_source = unit_source(&frame, M2GpuPlacementOwner::RemotePlayerBody { guid: 20 })?;
+    let creature_source = unit_source(&frame, M2GpuPlacementOwner::CreatureBody { guid: 30 })?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8.0, 0.0, 0.0),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4.0, 4.0],
+        [-2.0, 2.0],
+        0.1,
+        100.0,
+    )
+    .frame(1.0)?;
+    frame.prepare_visible_draws(
+        &renderer,
+        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        camera,
+        Vec3::ZERO,
+        1500.0,
+        1500.0,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        &mut random,
+        None,
+    )?;
+    assert_eq!(remote.playback().borrow().animation_id, 97);
+    assert_eq!(creature.playback().borrow().animation_id, 100);
+    let mut expected = random;
+    for _ in 0..4 {
+        let _new_owner_roll = expected.next_u15();
+    }
+    add_unit(&mut world, 21, ObjectKind::Player, 1)?;
+    add_unit(&mut world, 31, ObjectKind::Unit, 3)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    assert!(
+        remote_generation
+            .matches(presentation.resident_remote_player_frame_inputs()[0].generation())
+    );
+    assert!(
+        creature_generation.matches(presentation.resident_creature_frame_inputs()[0].generation())
+    );
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    frame.replace_remote_players(
+        &mut renderer,
+        &presentation.resident_remote_player_frame_inputs(),
+        &mut random,
+    )?;
+    assert_eq!(
+        random, expected,
+        "arrivals roll only their own initial sequences"
+    );
+    assert_eq!(
+        unit_source(&frame, M2GpuPlacementOwner::RemotePlayerBody { guid: 20 })?,
+        remote_source
+    );
+    assert_eq!(
+        unit_source(&frame, M2GpuPlacementOwner::CreatureBody { guid: 30 })?,
+        creature_source
+    );
+    assert_eq!(remote.playback().borrow().animation_id, 97);
+    assert_eq!(creature.playback().borrow().animation_id, 100);
+
+    presentation.set_component_texture_level(
+        solarity_rendering::CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
+    );
+    presentation.synchronize_remote_players(Some(&world))?;
+    let rebuilt = presentation.resident_remote_player_frame_inputs();
+    assert!(!remote_generation.matches(rebuilt[0].generation()));
+    assert!(Rc::ptr_eq(
+        &remote,
+        rebuilt[0].unit_animation().ok_or("retained remote owner")?
+    ));
+    frame.replace_remote_players(&mut renderer, &rebuilt, &mut random)?;
+    assert_eq!(
+        random, expected,
+        "material replacement borrows the old timer"
+    );
+
+    for guid in [20, 30] {
+        world.update_fields(guid, [(74, 0)])?;
+        solarity_systems::project_object_fields(&mut world, guid, [(74, 0)])?;
+    }
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    frame.update_creature_states(
+        &presentation.resident_creature_frame_inputs(),
+        1700.0,
+        &mut random,
+    )?;
+    frame.update_remote_player_states(
+        &presentation.resident_remote_player_frame_inputs(),
+        1700.0,
+        &mut random,
+    )?;
+    assert_eq!(remote.playback().borrow().animation_id, 98);
+    assert_eq!(creature.playback().borrow().animation_id, 101);
+    frame.prepare_visible_draws(
+        &renderer,
+        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        camera,
+        Vec3::ZERO,
+        3000.0,
+        3000.0,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        &mut random,
+        None,
+    )?;
+    assert_eq!(remote.playback().borrow().animation_id, 0);
+    assert_eq!(creature.playback().borrow().animation_id, 0);
+
+    world.remove_object(20)?;
+    add_unit(&mut world, 20, ObjectKind::Player, 1)?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    let replaced = presentation.resident_remote_player_frame_inputs();
+    assert!(!Rc::ptr_eq(
+        &remote,
+        replaced[0].unit_animation().ok_or("replacement owner")?
+    ));
+    frame.replace_remote_players(&mut renderer, &replaced, &mut random)?;
+    assert_eq!(
+        replaced[0]
+            .unit_animation()
+            .ok_or("replacement owner")?
+            .playback()
+            .borrow()
+            .animation_id,
+        96
+    );
+    world.remove_object(30)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    assert!(
+        !frame
+            .placements
+            .iter()
+            .any(|placement| placement.owner == (M2GpuPlacementOwner::CreatureBody { guid: 30 }))
+    );
+    assert!(
+        frame.placements.iter().any(
+            |placement| placement.owner == (M2GpuPlacementOwner::RemotePlayerBody { guid: 20 })
+        )
+    );
+    Ok(())
+}
+
+fn add_unit(
+    world: &mut ActiveWorld,
+    guid: u64,
+    kind: ObjectKind,
+    stand: u8,
+) -> Result<(), Box<dyn Error>> {
+    let fields = [
+        (4, 1.0_f32.to_bits()),
+        (23, u32::from_le_bytes([1, 1, 0, 0])),
+        (67, 100),
+        (68, 100),
+        (69, 0),
+        (74, u32::from(stand)),
+        (122, 0),
+        (153, 0),
+        (154, 0),
+    ];
+    world.create_object(
+        guid,
+        kind,
+        Some(WorldTransform::new(Vec3::ZERO, 0.0)),
+        fields,
+    )?;
+    solarity_systems::project_object_fields(world, guid, fields)?;
+    Ok(())
+}
+
+fn unit_source(frame: &M2Frame, owner: M2GpuPlacementOwner) -> Result<usize, Box<dyn Error>> {
+    let placement = frame
+        .placements
+        .iter()
+        .find(|placement| placement.owner == owner)
+        .ok_or("unit placement")?;
+    assert!(
+        frame.sources[placement.source_index]
+            .as_ref()
+            .ok_or("unit source")?
+            .mesh
+            .is_some()
+    );
+    Ok(placement.source_index)
+}
+
+#[test]
 fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
 -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;

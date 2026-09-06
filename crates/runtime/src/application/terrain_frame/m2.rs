@@ -46,7 +46,7 @@ use crate::application::game_object_coordinator::{
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
     ResidentGlueCharacterFrameInput, ResidentPlayerAttachment, ResidentPlayerFrameInput,
-    ResidentPlayerTexture,
+    ResidentPlayerTexture, UnitPresentationGeneration,
 };
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
@@ -159,6 +159,7 @@ struct M2GpuPlacement {
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
+    unit_presentation: Option<UnitPresentationGeneration>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
 }
@@ -833,6 +834,7 @@ impl M2Frame {
                 particle_colors: None,
                 playback: Some(M2PlaybackStorage::Local(playback)),
                 unit_animation: None,
+                unit_presentation: None,
                 particles,
                 ribbons,
             }],
@@ -1195,7 +1197,18 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut prepared = Vec::with_capacity(inputs.len());
+        let mut retained = Vec::with_capacity(inputs.len());
         for input in inputs {
+            if self.placements.iter().any(|placement| {
+                placement.owner == (M2GpuPlacementOwner::CreatureBody { guid: input.guid() })
+                    && placement
+                        .unit_presentation
+                        .as_ref()
+                        .is_some_and(|generation| generation.matches(input.generation()))
+            }) {
+                retained.push(input.guid());
+                continue;
+            }
             let resolved = input
                 .textures()
                 .iter()
@@ -1220,19 +1233,34 @@ impl M2Frame {
             )?;
             let transform =
                 unit_placement_transform(input.world_transform(), input.object_scale())?;
-            let placement = unit_gpu_placement(
-                0,
-                transform,
-                M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
-                input.model(),
-                input.animation().animation_id(),
-                input.particle_colors().cloned(),
-                random,
-            )?;
+            let mut placement = if let Some(animation) = input.unit_animation() {
+                animation.synchronize(self.animation_time_ms() as u32, random)?;
+                let mut placement = m2_gpu_placement(
+                    0,
+                    transform,
+                    M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
+                    input.model(),
+                    Some(M2PlaybackStorage::Shared(animation.playback())),
+                    input.particle_colors().cloned(),
+                )?;
+                placement.unit_animation = Some(Rc::clone(animation));
+                placement
+            } else {
+                unit_gpu_placement(
+                    0,
+                    transform,
+                    M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
+                    input.model(),
+                    input.animation().animation_id(),
+                    input.particle_colors().cloned(),
+                    random,
+                )?
+            };
+            placement.unit_presentation = Some(input.generation().clone());
             prepared.push((source, placement));
         }
 
-        self.remove_creatures();
+        self.remove_creatures(&retained);
         for (source, placement) in prepared {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
@@ -1253,7 +1281,18 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut prepared = Vec::with_capacity(inputs.len());
+        let mut retained = Vec::with_capacity(inputs.len());
         for input in inputs {
+            if self.placements.iter().any(|placement| {
+                placement.owner == (M2GpuPlacementOwner::RemotePlayerBody { guid: input.guid() })
+                    && placement
+                        .unit_presentation
+                        .as_ref()
+                        .is_some_and(|generation| generation.matches(input.generation()))
+            }) {
+                retained.push(input.guid());
+                continue;
+            }
             prepared.push(prepare_character_gpu(
                 renderer,
                 input,
@@ -1262,7 +1301,7 @@ impl M2Frame {
                 random,
             )?);
         }
-        self.remove_remote_players();
+        self.remove_remote_players(&retained);
         for character in prepared {
             for (source, placement) in character {
                 let source_index = self.sources.len();
@@ -1374,6 +1413,12 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
+            if let Some(animation) = input.unit_animation() {
+                animation.synchronize(animation_time_ms as u32, random)?;
+                placement.unit_animation = Some(Rc::clone(animation));
+                placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
+                continue;
+            }
             if let Some(mut playback) = placement
                 .playback
                 .as_mut()
@@ -1449,6 +1494,12 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
+            if let Some(animation) = input.unit_animation() {
+                animation.synchronize(animation_time_ms as u32, random)?;
+                placement.unit_animation = Some(Rc::clone(animation));
+                placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
+                continue;
+            }
             if let Some(mut playback) = placement
                 .playback
                 .as_mut()
@@ -1504,11 +1555,13 @@ impl M2Frame {
     }
 
     /// Drops local references to the previous visible-creature generation.
-    fn remove_creatures(&mut self) {
+    fn remove_creatures(&mut self, retained: &[u64]) {
         self.placement_topology_dirty = true;
         let mut creature_sources = Vec::new();
         self.placements.retain(|placement| {
-            if matches!(placement.owner, M2GpuPlacementOwner::CreatureBody { .. }) {
+            if let M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
+                && !retained.contains(&guid)
+            {
                 creature_sources.push(placement.source_index);
                 false
             } else {
@@ -1523,21 +1576,23 @@ impl M2Frame {
     }
 
     /// Drops remote character bodies and every child placement they own.
-    fn remove_remote_players(&mut self) {
+    fn remove_remote_players(&mut self, retained: &[u64]) {
         self.placement_topology_dirty = true;
         let remote_guids = self
             .placements
             .iter()
             .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::RemotePlayerBody { guid } => Some(guid),
+                M2GpuPlacementOwner::RemotePlayerBody { guid } if !retained.contains(&guid) => {
+                    Some(guid)
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
         let mut remote_sources = Vec::new();
         self.placements.retain(|placement| {
             let owned = match placement.owner {
-                M2GpuPlacementOwner::RemotePlayerBody { .. }
-                | M2GpuPlacementOwner::RemotePlayerMount { .. } => true,
+                M2GpuPlacementOwner::RemotePlayerBody { guid }
+                | M2GpuPlacementOwner::RemotePlayerMount { guid } => !retained.contains(&guid),
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => {
                     remote_guids.contains(&guid)
@@ -2950,7 +3005,7 @@ fn prepare_character_gpu(
         M2LocalLightCount::Zero,
         M2ModelOrientation::Authored,
     )?;
-    let body = if let Some(animation) = input.unit_animation() {
+    let mut body = if let Some(animation) = input.unit_animation() {
         animation.synchronize(scene_time_ms as u32, random)?;
         let mut body = m2_gpu_placement(
             0,
@@ -2973,6 +3028,7 @@ fn prepare_character_gpu(
             random,
         )?
     };
+    body.unit_presentation = Some(input.generation().clone());
     prepared.push((source, body));
     for attachment in input.attachments() {
         if input.model().attachment(attachment.point().id()).is_none() {
@@ -3120,6 +3176,7 @@ fn m2_gpu_placement(
         particle_colors,
         playback,
         unit_animation: None,
+        unit_presentation: None,
         particles,
         ribbons,
     })

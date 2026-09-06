@@ -1,6 +1,6 @@
 //! Local-player model residency and authored presentation measurements.
 
-use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
+use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,8 @@ use solarity_asset::{
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
     ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
-    UnitAnimationTier, UnitSheathState, VisibleEquipmentItem, WorldStateError, WorldTransform,
+    UnitAnimationTier, UnitSheathState, VisibleEquipmentItem, WorldObjectIdentity, WorldStateError,
+    WorldTransform,
 };
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
@@ -378,7 +379,7 @@ pub struct RuntimePlayerPresentation {
     textures: BlpTextureCache,
     component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
-    local_animation: Option<Rc<UnitAnimationBehavior>>,
+    unit_animations: UnitAnimationScene,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
@@ -416,7 +417,7 @@ impl RuntimePlayerPresentation {
             textures: BlpTextureCache::new(),
             component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
-            local_animation: None,
+            unit_animations: UnitAnimationScene::default(),
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
@@ -1017,12 +1018,15 @@ impl RuntimePlayerPresentation {
     ) -> Result<RuntimePlayerPoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.resident = None;
-            self.local_animation = None;
+            self.unit_animations.clear();
             self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
         };
         let guid = world.local_player_guid()?;
+        let Some(identity) = world.object_identity(guid) else {
+            return Ok(RuntimePlayerPoll::Pending);
+        };
         let appearance = match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
             Ok(appearance) => appearance,
             Err(
@@ -1097,6 +1101,7 @@ impl RuntimePlayerPresentation {
         )?;
         if self.resident.as_ref().is_some_and(|resident| {
             resident.guid == guid
+                && resident.identity == identity
                 && resident.path() == &path
                 && resident.object_scale == scale
                 && resident.particle_color_id == particle_color_id
@@ -1216,6 +1221,8 @@ impl RuntimePlayerPresentation {
                 unit_presentation.animation_tier(),
             )?;
             self.resident = Some(ResidentPlayerModel {
+                generation: UnitPresentationGeneration::new(),
+                identity,
                 guid,
                 object_scale: scale,
                 collision_extent,
@@ -1247,6 +1254,7 @@ impl RuntimePlayerPresentation {
                 guid,
                 "transferred character-selection representation into active world"
             );
+            self.synchronize_local_animation(world)?;
             self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::ModelLoaded);
@@ -1326,6 +1334,8 @@ impl RuntimePlayerPresentation {
             unit_presentation.animation_tier(),
         )?;
         self.resident = Some(ResidentPlayerModel {
+            generation: UnitPresentationGeneration::new(),
+            identity,
             guid,
             object_scale: scale,
             collision_extent,
@@ -1367,7 +1377,7 @@ impl RuntimePlayerPresentation {
             return Ok(());
         };
         let Some(identity) = world.object_identity(resident.guid) else {
-            self.local_animation = None;
+            self.unit_animations.retain_world(world);
             return Ok(());
         };
         let input = UnitAnimationInput {
@@ -1386,19 +1396,47 @@ impl RuntimePlayerPresentation {
                 .map_or(0, |movement| movement.flags() as u32),
             mounted: resident.mount.is_some(),
         };
-        if let Some(animation) = &self.local_animation
-            && animation.matches(identity, &resident.model)
-        {
-            animation.set_input(input);
-        } else {
-            self.local_animation = Some(Rc::new(UnitAnimationBehavior::new(
-                identity,
-                Arc::clone(&resident.model),
-                Arc::clone(&self.animations),
-                input,
-            )));
-        }
+        self.unit_animations.retain_world(world);
+        self.unit_animations
+            .bind(identity, &resident.model, &self.animations, input);
         Ok(())
+    }
+
+    fn synchronize_replicated_animations(&mut self, world: &ActiveWorld) {
+        self.unit_animations.retain_world(world);
+        let bodies = self
+            .creatures_resident
+            .iter()
+            .map(|resident| (resident.key.guid, &resident.model, false))
+            .chain(
+                self.remote_players
+                    .iter()
+                    .map(|resident| (resident.guid, &resident.model, resident.mount.is_some())),
+            );
+        for (guid, model, mounted) in bodies {
+            let Some(identity) = world.object_identity(guid) else {
+                continue;
+            };
+            let Some(presentation) = world.unit_presentation(guid) else {
+                continue;
+            };
+            let movement = world.movement_state(guid);
+            self.unit_animations.bind(
+                identity,
+                model,
+                &self.animations,
+                UnitAnimationInput {
+                    stand: presentation.stand_state(),
+                    locomotion: movement.map_or(
+                        UnitLocomotionAnimation::STAND,
+                        resolve_unit_locomotion_animation,
+                    ),
+                    tier: presentation.animation_tier(),
+                    movement_flags: movement.map_or(0, |movement| movement.flags() as u32),
+                    mounted,
+                },
+            );
+        }
     }
 
     /// Synchronizes every visible non-player unit into shared M2 residency.
@@ -1412,6 +1450,7 @@ impl RuntimePlayerPresentation {
     ) -> Result<RuntimeCreaturePoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.creatures_resident.clear();
+            self.unit_animations.clear();
             self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimeCreaturePoll::Idle);
@@ -1422,6 +1461,9 @@ impl RuntimePlayerPresentation {
             if world.object_kind(guid) != Some(solarity_ecs::ObjectKind::Unit) {
                 continue;
             }
+            let Some(identity) = world.object_identity(guid) else {
+                continue;
+            };
             let Some(transform) = world.object_transform(guid) else {
                 continue;
             };
@@ -1443,6 +1485,7 @@ impl RuntimePlayerPresentation {
             );
             desired.push(DesiredCreatureModel {
                 key: CreatureModelKey {
+                    identity,
                     guid,
                     display_id: appearance.body().display().id(),
                     path: appearance.body().model_path().clone(),
@@ -1470,12 +1513,30 @@ impl RuntimePlayerPresentation {
                     desired.animation_tier,
                 )?;
             }
+            self.synchronize_replicated_animations(world);
             return Ok(RuntimeCreaturePoll::Current);
         }
 
         let mut assets = self.assets.borrow_mut();
         let mut residents = Vec::with_capacity(desired.len());
+        let mut retained = Vec::with_capacity(desired.len());
         for desired in desired {
+            if let Ok(index) = self
+                .creatures_resident
+                .binary_search_by_key(&desired.key.guid, |resident| resident.key.guid)
+                && self.creatures_resident[index].key == desired.key
+            {
+                let resident = &mut self.creatures_resident[index];
+                resident.world_transform = desired.transform;
+                resident.animation = resolve_resident_animation(
+                    &self.animations,
+                    &resident.model,
+                    desired.requested_animation,
+                    desired.animation_tier,
+                )?;
+                retained.push(desired.key.guid);
+                continue;
+            }
             let appearance = self
                 .creatures
                 .resolve_model(desired.key.display_id)
@@ -1534,6 +1595,7 @@ impl RuntimePlayerPresentation {
                 desired.animation_tier,
             )?;
             residents.push(ResidentCreatureModel {
+                generation: UnitPresentationGeneration::new(),
                 key: desired.key,
                 model,
                 textures,
@@ -1547,7 +1609,12 @@ impl RuntimePlayerPresentation {
             });
         }
         drop(assets);
-        self.creatures_resident = residents;
+        self.creatures_resident
+            .retain(|resident| retained.binary_search(&resident.key.guid).is_ok());
+        self.creatures_resident.extend(residents);
+        self.creatures_resident
+            .sort_unstable_by_key(|resident| resident.key.guid);
+        self.synchronize_replicated_animations(world);
         self.models.collect_unused();
         self.textures.collect_unused();
         Ok(RuntimeCreaturePoll::ModelsChanged)
@@ -1560,6 +1627,7 @@ impl RuntimePlayerPresentation {
     ) -> Result<RuntimeRemotePlayerPoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.remote_players.clear();
+            self.unit_animations.clear();
             self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimeRemotePlayerPoll::Idle);
@@ -1584,34 +1652,32 @@ impl RuntimePlayerPresentation {
                 .all(|(desired, resident)| resident.matches_remote(desired));
         if unchanged {
             for (desired, resident) in desired.iter().zip(&mut self.remote_players) {
-                resident.world_transform = desired.world_transform;
-                resident.animation = resolve_resident_animation(
-                    &self.animations,
-                    &resident.model,
-                    if resident.mount.is_some() {
-                        UnitLocomotionAnimation::MOUNT
-                    } else {
-                        desired.requested_animation
-                    },
-                    desired.animation_tier,
-                )?;
-                if let Some(mount) = resident.mount.as_mut() {
-                    mount.animation = resolve_resident_animation(
-                        &self.animations,
-                        &mount.model,
-                        desired.requested_animation,
-                        desired.animation_tier,
-                    )?;
-                }
+                resident.update_remote_motion(desired, &self.animations)?;
             }
+            self.synchronize_replicated_animations(world);
             return Ok(RuntimeRemotePlayerPoll::Current);
         }
 
         let mut residents = Vec::with_capacity(desired.len());
+        let mut retained = Vec::with_capacity(desired.len());
         for desired in desired {
+            if let Ok(index) = self
+                .remote_players
+                .binary_search_by_key(&desired.guid, |resident| resident.guid)
+                && self.remote_players[index].matches_remote(&desired)
+            {
+                self.remote_players[index].update_remote_motion(&desired, &self.animations)?;
+                retained.push(desired.guid);
+                continue;
+            }
             residents.push(self.load_remote_player(world, desired)?);
         }
-        self.remote_players = residents;
+        self.remote_players
+            .retain(|resident| retained.binary_search(&resident.guid).is_ok());
+        self.remote_players.extend(residents);
+        self.remote_players
+            .sort_unstable_by_key(|resident| resident.guid);
+        self.synchronize_replicated_animations(world);
         self.models.collect_unused();
         self.textures.collect_unused();
         Ok(RuntimeRemotePlayerPoll::ModelsChanged)
@@ -1622,6 +1688,9 @@ impl RuntimePlayerPresentation {
         world: &ActiveWorld,
         guid: u64,
     ) -> Result<Option<DesiredRemotePlayerModel>, RuntimePlayerError> {
+        let Some(identity) = world.object_identity(guid) else {
+            return Ok(None);
+        };
         let appearance = match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
             Ok(appearance) => appearance,
             Err(
@@ -1702,6 +1771,7 @@ impl RuntimePlayerPresentation {
             .collision_extent()
             .map(|extent| extent * collision_scale);
         Ok(Some(DesiredRemotePlayerModel {
+            identity,
             guid,
             object_scale: appearance.object_scale(),
             collision_extent,
@@ -1812,6 +1882,8 @@ impl RuntimePlayerPresentation {
             desired.animation_tier,
         )?;
         Ok(ResidentPlayerModel {
+            generation: UnitPresentationGeneration::new(),
+            identity: desired.identity,
             guid: desired.guid,
             object_scale: desired.object_scale,
             collision_extent: desired.collision_extent,
@@ -1941,7 +2013,7 @@ impl RuntimePlayerPresentation {
     /// Returns the complete player-frame input without exposing mutable residency.
     pub(super) fn resident_frame_input(&self) -> Option<ResidentPlayerFrameInput<'_>> {
         let mut input = ResidentPlayerFrameInput::from_resident(self.resident.as_ref()?);
-        input.unit_animation = self.local_animation.as_ref();
+        input.unit_animation = self.unit_animations.get(input.guid);
         Some(input)
     }
 
@@ -1949,7 +2021,11 @@ impl RuntimePlayerPresentation {
     pub(super) fn resident_creature_frame_inputs(&self) -> Vec<ResidentCreatureFrameInput<'_>> {
         self.creatures_resident
             .iter()
-            .map(ResidentCreatureFrameInput::from_resident)
+            .map(|resident| {
+                let mut input = ResidentCreatureFrameInput::from_resident(resident);
+                input.unit_animation = self.unit_animations.get(input.guid);
+                input
+            })
             .collect()
     }
 
@@ -1957,7 +2033,11 @@ impl RuntimePlayerPresentation {
     pub(super) fn resident_remote_player_frame_inputs(&self) -> Vec<ResidentPlayerFrameInput<'_>> {
         self.remote_players
             .iter()
-            .map(ResidentPlayerFrameInput::from_resident)
+            .map(|resident| {
+                let mut input = ResidentPlayerFrameInput::from_resident(resident);
+                input.unit_animation = self.unit_animations.get(input.guid);
+                input
+            })
             .collect()
     }
 
@@ -2048,6 +2128,7 @@ impl RuntimePlayerPresentation {
 
     /// Releases local-player residency on world disconnect.
     pub fn disconnect(&mut self) {
+        self.unit_animations.clear();
         self.resident = None;
         self.glue_character = None;
         self.requested_glue_character = None;
@@ -2081,7 +2162,7 @@ fn prepare_glue_character_on_worker(
     };
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
-        local_animation: None,
+        unit_animations: UnitAnimationScene::default(),
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,
         creatures: catalogs.creatures,
@@ -2422,7 +2503,23 @@ impl<'a> ResidentGluePetFrameInput<'a> {
     }
 }
 
+/// Identity of one completed material/equipment generation, retained by its GPU consumer.
+#[derive(Clone)]
+pub(super) struct UnitPresentationGeneration(Rc<()>);
+
+impl UnitPresentationGeneration {
+    fn new() -> Self {
+        Self(Rc::new(()))
+    }
+
+    pub(super) fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 struct ResidentPlayerModel {
+    generation: UnitPresentationGeneration,
+    identity: WorldObjectIdentity,
     guid: u64,
     object_scale: f32,
     collision_extent: [f32; 2],
@@ -2452,6 +2549,7 @@ struct ResidentPlayerModel {
 }
 
 struct DesiredRemotePlayerModel {
+    identity: WorldObjectIdentity,
     guid: u64,
     object_scale: f32,
     collision_extent: [f32; 2],
@@ -2488,6 +2586,7 @@ struct ResidentMountModel {
 
 #[derive(PartialEq)]
 struct CreatureModelKey {
+    identity: WorldObjectIdentity,
     guid: u64,
     display_id: u32,
     path: AssetPath,
@@ -2503,6 +2602,7 @@ struct DesiredCreatureModel {
 }
 
 struct ResidentCreatureModel {
+    generation: UnitPresentationGeneration,
     key: CreatureModelKey,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
@@ -2626,6 +2726,7 @@ impl ResidentPlayerItemVisualEffect {
 
 /// Borrowed immutable inputs required to publish the resident player M2.
 pub(super) struct ResidentPlayerFrameInput<'a> {
+    generation: &'a UnitPresentationGeneration,
     guid: u64,
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentPlayerTexture],
@@ -2643,6 +2744,7 @@ pub(super) struct ResidentPlayerFrameInput<'a> {
 impl<'a> ResidentPlayerFrameInput<'a> {
     fn from_resident(resident: &'a ResidentPlayerModel) -> Self {
         Self {
+            generation: &resident.generation,
             guid: resident.guid,
             model: &resident.model,
             textures: &resident.textures,
@@ -2659,6 +2761,10 @@ impl<'a> ResidentPlayerFrameInput<'a> {
                 .as_ref()
                 .map(ResidentMountFrameInput::from_resident),
         }
+    }
+
+    pub(super) const fn generation(&self) -> &UnitPresentationGeneration {
+        self.generation
     }
 
     pub(super) const fn guid(&self) -> u64 {
@@ -2754,6 +2860,7 @@ impl<'a> ResidentMountFrameInput<'a> {
 
 /// Borrowed immutable inputs required to publish one visible creature M2.
 pub(super) struct ResidentCreatureFrameInput<'a> {
+    generation: &'a UnitPresentationGeneration,
     guid: u64,
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
@@ -2762,11 +2869,13 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     object_scale: f32,
     animation: UnitModelAnimation,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
+    unit_animation: Option<&'a Rc<UnitAnimationBehavior>>,
 }
 
 impl<'a> ResidentCreatureFrameInput<'a> {
     fn from_resident(resident: &'a ResidentCreatureModel) -> Self {
         Self {
+            generation: &resident.generation,
             guid: resident.key.guid,
             model: &resident.model,
             textures: &resident.textures,
@@ -2775,11 +2884,20 @@ impl<'a> ResidentCreatureFrameInput<'a> {
             object_scale: resident.key.object_scale,
             animation: resident.animation,
             particle_colors: resident.particle_colors.as_ref(),
+            unit_animation: None,
         }
+    }
+
+    pub(super) const fn generation(&self) -> &UnitPresentationGeneration {
+        self.generation
     }
 
     pub(super) const fn guid(&self) -> u64 {
         self.guid
+    }
+
+    pub(super) const fn unit_animation(&self) -> Option<&Rc<UnitAnimationBehavior>> {
+        self.unit_animation
     }
 
     pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
@@ -3423,12 +3541,39 @@ fn prepare_attachment_textures(
 }
 
 impl ResidentPlayerModel {
+    fn update_remote_motion(
+        &mut self,
+        desired: &DesiredRemotePlayerModel,
+        animations: &AnimationDataCatalog,
+    ) -> Result<(), RuntimePlayerError> {
+        self.world_transform = desired.world_transform;
+        self.animation = resolve_resident_animation(
+            animations,
+            &self.model,
+            if self.mount.is_some() {
+                UnitLocomotionAnimation::MOUNT
+            } else {
+                desired.requested_animation
+            },
+            desired.animation_tier,
+        )?;
+        if let Some(mount) = self.mount.as_mut() {
+            mount.animation = resolve_resident_animation(
+                animations,
+                &mount.model,
+                desired.requested_animation,
+                desired.animation_tier,
+            )?;
+        }
+        Ok(())
+    }
     fn path(&self) -> &AssetPath {
         self.model.path()
     }
 
     fn matches_remote(&self, desired: &DesiredRemotePlayerModel) -> bool {
         self.guid == desired.guid
+            && self.identity == desired.identity
             && self.path() == &desired.path
             && self.object_scale == desired.object_scale
             && self.particle_color_id == desired.particle_color_id

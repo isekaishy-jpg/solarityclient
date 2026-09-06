@@ -92,8 +92,10 @@ Captured native decisions cover 2,144 admitted selection, changed-stand, and
 completion cases. Archive-decoded runtime tests cover interruptions, missing
 poses, callback timing, variation rolls, and retained playback.
 
-This owner currently drives the local player. Remote players, creatures,
-health/flag/effect-based death admission beyond stand state 7, vehicle and
+The same owner drives remote players and creatures from their replicated
+stand fields. Their world-object lifetimes retain playback across material
+changes; neighbor arrivals no longer recreate existing CPU/GPU representations.
+Health/flag/effect-based death admission beyond stand state 7, vehicle and
 cast/emote layering, the water-height death probe, and cast/cinematic stance
 eligibility still require integration. Offscreen animation-event/effect
 dispatch remains separate from the primary completion prepass.

@@ -5,12 +5,12 @@
 mod tests;
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode};
-use solarity_ecs::{UnitAnimationTier, WorldObjectIdentity};
+use solarity_ecs::{ActiveWorld, UnitAnimationTier, WorldObjectIdentity};
 use solarity_rendering::{M2EventTimeWindow, M2SequenceStartPhase};
 use solarity_systems::{
     UnitLocomotionAnimation, UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
@@ -29,6 +29,51 @@ pub(super) struct UnitAnimationInput {
     pub tier: UnitAnimationTier,
     pub movement_flags: u32,
     pub mounted: bool,
+}
+
+/// Playback lifetimes survive presentation and GPU resource replacement.
+#[derive(Default)]
+pub(super) struct UnitAnimationScene {
+    owners: BTreeMap<u64, Rc<UnitAnimationBehavior>>,
+}
+
+impl UnitAnimationScene {
+    pub fn clear(&mut self) {
+        self.owners.clear();
+    }
+
+    pub fn retain_world(&mut self, world: &ActiveWorld) {
+        self.owners
+            .retain(|guid, owner| world.object_identity(*guid) == Some(owner.identity));
+    }
+
+    pub fn bind(
+        &mut self,
+        identity: WorldObjectIdentity,
+        model: &Arc<DecodedM2Model>,
+        animations: &Arc<AnimationDataCatalog>,
+        input: UnitAnimationInput,
+    ) {
+        if let Some(owner) = self.owners.get(&identity.guid())
+            && owner.matches(identity, model)
+        {
+            owner.set_input(input);
+        } else {
+            self.owners.insert(
+                identity.guid(),
+                Rc::new(UnitAnimationBehavior::new(
+                    identity,
+                    Arc::clone(model),
+                    Arc::clone(animations),
+                    input,
+                )),
+            );
+        }
+    }
+
+    pub fn get(&self, guid: u64) -> Option<&Rc<UnitAnimationBehavior>> {
+        self.owners.get(&guid)
+    }
 }
 
 pub(super) struct UnitAnimationSceneSample {

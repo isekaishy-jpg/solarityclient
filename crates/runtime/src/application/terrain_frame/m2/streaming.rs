@@ -146,6 +146,7 @@ pub(super) fn static_gpu_placement(
         particle_colors: None,
         playback: playback.map(super::M2PlaybackStorage::Local),
         unit_animation: None,
+        unit_presentation: None,
         particles,
         ribbons,
     })
