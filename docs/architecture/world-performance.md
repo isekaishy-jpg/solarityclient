@@ -109,3 +109,22 @@ stage instrumentation before the change counted 28,077 resident placements and
 roughly 862–985 visible instances; bone sampling itself took about 0.35 ms, while
 the uncached placement scan and culling accounted for a larger share of the M2
 preparation cost. That temporary instrumentation is not in the runtime.
+
+## World graphics bindings
+
+World command recording retains the currently bound graphics pipeline, vertex
+buffer and offset, and index buffer, offset, and width across the terrain, WMO,
+M2, particle, and ribbon streams. It emits a new bind only when that state changes.
+The cache starts empty for every command buffer recording and ends before glow
+and UI composition. Draw order, draw calls, material descriptors, dynamic uniform
+offsets, and push constants retain their existing per-draw paths.
+
+The same uncaptured 1,800-frame-per-phase replay measured 7.269 ms stationary,
+7.074 ms orbit, and 7.621 ms pointer means after this change, compared with
+7.517, 7.362, and 7.967 ms respectively with compact visibility alone. The
+additional reduction is about 3–4%; these measurements still have the offline
+replay limitations described above.
+
+A separate profiled capture attributed about 1.04–1.13 ms to command recording,
+down from approximately 1.40 ms before the binding cache. These capture timings
+are component diagnostics; the frame means above come from uncaptured runs.

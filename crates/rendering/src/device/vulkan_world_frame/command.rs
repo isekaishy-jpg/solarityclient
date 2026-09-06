@@ -26,6 +26,9 @@ use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
 use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
 use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 
+mod bindings;
+use bindings::WorldCommandBindings;
+
 use super::WorldFrameContext;
 use super::resource::WorldFrameSlot;
 
@@ -158,13 +161,14 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
+    let mut bindings = WorldCommandBindings::default();
     for draw in context.terrain_draws.iter().copied() {
-        record_terrain(&context, draw)?;
+        record_terrain(&context, draw, &mut bindings)?;
     }
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
-        record_world_model(&context, index, draw)?;
+        record_world_model(&context, index, draw, &mut bindings)?;
     }
-    record_m2_scene_elements(&context)?;
+    record_m2_scene_elements(&context, &mut bindings)?;
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     if let Some((glow, settings)) = context.glow {
@@ -189,7 +193,10 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
 }
 
 /// Dispatches the typed streams in their one stock scene-element order.
-fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanError> {
+fn record_m2_scene_elements(
+    context: &RecordContext<'_>,
+    bindings: &mut WorldCommandBindings,
+) -> Result<(), VulkanError> {
     let mut next_m2 = 0;
     let mut next_particle = 0;
     let mut next_ribbon = 0;
@@ -221,7 +228,7 @@ fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanErr
                     .get(next_m2)
                     .copied()
                     .ok_or(VulkanError::WorldFrameCapacity)?;
-                record_m2(context, next_m2, draw)?;
+                record_m2(context, next_m2, draw, bindings)?;
                 next_m2 += 1;
             }
             Some(1) => {
@@ -230,7 +237,7 @@ fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanErr
                     .get(next_particle)
                     .copied()
                     .ok_or(VulkanError::WorldFrameCapacity)?;
-                record_particle(context, draw)?;
+                record_particle(context, draw, bindings)?;
                 next_particle += 1;
             }
             Some(2) => {
@@ -239,7 +246,7 @@ fn record_m2_scene_elements(context: &RecordContext<'_>) -> Result<(), VulkanErr
                     .get(next_ribbon)
                     .copied()
                     .ok_or(VulkanError::WorldFrameCapacity)?;
-                record_ribbon(context, draw)?;
+                record_ribbon(context, draw, bindings)?;
                 next_ribbon += 1;
             }
             Some(_) => return Err(VulkanError::WorldFrameCapacity),
@@ -282,6 +289,7 @@ fn transition_to_ui_overlay(context: &RecordContext<'_>) {
 fn record_particle(
     context: &RecordContext<'_>,
     draw: M2ParticlePreparedDraw,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .m2_particle_pipelines
@@ -295,21 +303,11 @@ fn record_particle(
     // SAFETY: The prepared packet proves compatible renderer-local handles;
     // frame validation proves every UINT32 index addresses the PNC0T0 stream.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context.device.cmd_bind_vertex_buffers(
-            context.command_buffer,
-            0,
-            &[context.particle_vertex_buffer.0],
-            &[context.particle_vertex_buffer.1],
-        );
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            context.particle_index_buffer.0,
-            context.particle_index_buffer.1,
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, context.particle_vertex_buffer);
+        bindings.bind_index(
+            context,
+            context.particle_index_buffer,
             vk::IndexType::UINT32,
         );
         context.device.cmd_bind_descriptor_sets(
@@ -335,6 +333,7 @@ fn record_particle(
 fn record_ribbon(
     context: &RecordContext<'_>,
     draw: M2RibbonPreparedDraw,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .m2_ribbon_pipelines
@@ -348,17 +347,8 @@ fn record_ribbon(
     // SAFETY: The prepared packet proves compatible renderer-local handles and
     // its range was checked against the slot's mapped PCT0 stream.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context.device.cmd_bind_vertex_buffers(
-            context.command_buffer,
-            0,
-            &[context.ribbon_vertex_buffer.0],
-            &[context.ribbon_vertex_buffer.1],
-        );
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, context.ribbon_vertex_buffer);
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -381,6 +371,7 @@ fn record_ribbon(
 fn record_terrain(
     context: &RecordContext<'_>,
     draw: TerrainPreparedDraw,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .terrain_pipelines
@@ -397,20 +388,9 @@ fn record_terrain(
     let sets = [context.frame_sets[0], texture];
     // SAFETY: Prepared draw proves compatible renderer-local resources.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            index,
-            0,
-            vk::IndexType::UINT16,
-        );
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, (vertex, 0));
+        bindings.bind_index(context, (index, 0), vk::IndexType::UINT16);
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -442,6 +422,7 @@ fn record_world_model(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: WorldModelPreparedDraw,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .world_model_pipelines
@@ -460,20 +441,9 @@ fn record_world_model(
     let range = draw.index_range();
     // SAFETY: Prepared draw proves compatible pipeline, UINT32 mesh, and set.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            index,
-            0,
-            vk::IndexType::UINT32,
-        );
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, (vertex, 0));
+        bindings.bind_index(context, (index, 0), vk::IndexType::UINT32);
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -493,6 +463,7 @@ fn record_m2(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: M2PreparedDraw,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
         .m2_pipelines
@@ -515,20 +486,9 @@ fn record_m2(
     ];
     // SAFETY: Prepared draw proves compatible resources and material range.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            index,
-            0,
-            vk::IndexType::UINT16,
-        );
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, (vertex, 0));
+        bindings.bind_index(context, (index, 0), vk::IndexType::UINT16);
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
