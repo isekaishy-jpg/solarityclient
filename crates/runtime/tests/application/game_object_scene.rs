@@ -339,3 +339,114 @@ fn renderer(platform: &SdlPlatform) -> Result<VulkanRenderer, Box<dyn Error>> {
     let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
     Ok(unsafe { bootstrap.attach_surface(surface, platform.pixel_extent(), 0) }?)
 }
+
+#[test]
+fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), Box<dyn Error>> {
+    use super::ResidentM2Owner;
+    use glam::Mat4;
+    use solarity_rendering::{M2CameraEffectScale, WorldCamera, WorldFrustum, WorldScreenWindow};
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let model = models::model_with_animations(&[0])?;
+    let skin = models::skin()?;
+    let displays = models::displays();
+    let fixture = ClientFixture::with_common_files(&[
+        ("World\\GameObject.m2", &model),
+        ("World\\GameObject00.skin", &skin),
+        ("DBFilesClient\\GameObjectDisplayInfo.dbc", &displays),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let mut objects =
+        RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_object(&mut world, 30, 42)?;
+    add_object(&mut world, 10, 43)?;
+    objects.synchronize(Some(&world))?;
+    assert_eq!(objects.resident_object_count(), 2);
+    assert_eq!(
+        objects.resident_resource_count(),
+        1,
+        "MDX/M2 aliases must share complete preparation"
+    );
+
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        Arc::clone(objects.frame_input(Some(&world)).animations()),
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    objects.synchronize_animations(Some(&world), &mut random)?;
+    frame.synchronize_game_objects(
+        &mut renderer,
+        objects.frame_input(Some(&world)),
+        &mut random,
+    )?;
+
+    // Two terrain-owned instances using the same admitted model generation.
+    // Keep the ordinary object fixture's independent playback owners.
+    for (index, placement) in frame.placements.iter_mut().enumerate() {
+        placement.owner = M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad {
+            unique_id: index as u32,
+        });
+        placement.transform = Mat4::from_translation(Vec3::Y * (index as f32 * 100.));
+        placement.local_transform = placement.transform;
+    }
+    let visible_count =
+        |frame: &mut M2Frame, random: &mut CrtRand, y: f32| -> Result<usize, Box<dyn Error>> {
+            let target = Vec3::Y * y;
+            let camera = WorldCamera::orthographic(
+                target + Vec3::X * 8.,
+                target,
+                Vec3::Z,
+                [-4., 4.],
+                [-2., 2.],
+                0.1,
+                100.,
+            )
+            .frame(1.)?;
+            Ok(frame
+                .prepare_visible_draws(
+                    &renderer,
+                    WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+                    camera,
+                    Vec3::ZERO,
+                    2500.,
+                    2500.,
+                    M2CameraEffectScale::EXTERNAL_CAMERA,
+                    random,
+                    None,
+                )?
+                .draws
+                .len())
+        };
+    assert_eq!(visible_count(&mut frame, &mut random, 0.)?, 1);
+    assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 1);
+    assert_eq!(visible_count(&mut frame, &mut random, 50.)?, 0);
+    // A tile leaving compacts placement indices. The remaining instance must
+    // carry its own bounds into slot zero rather than inheriting the old slot.
+    frame.placements.remove(0);
+    frame.placement_topology_dirty = true;
+    assert_eq!(visible_count(&mut frame, &mut random, 0.)?, 0);
+    assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 1);
+    // Dynamic transforms must remain live after the topology cache is built.
+    frame.placements[0].owner = M2GpuPlacementOwner::GluePet;
+    frame.placement_topology_dirty = true;
+    assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 1);
+    frame.placements[0].transform = Mat4::IDENTITY;
+    assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 0);
+    assert_eq!(visible_count(&mut frame, &mut random, 0.)?, 1);
+    Ok(())
+}

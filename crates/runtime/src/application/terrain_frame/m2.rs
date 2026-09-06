@@ -8,6 +8,7 @@ mod character_residency;
 mod game_objects;
 mod playback;
 mod streaming;
+mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{M2PlayerItemIdentity, prepare_character_gpu};
 use playback::M2PlaybackStorage;
@@ -635,6 +636,7 @@ pub(in crate::application) struct M2Frame {
     transparent_elements: Vec<M2TransparentElement>,
     model_distance_sort: Vec<bool>,
     placement_topology_dirty: bool,
+    placement_visibility: visibility::M2PlacementVisibility,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
     particle_sort_indices: Vec<usize>,
@@ -716,6 +718,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
+            placement_visibility: visibility::M2PlacementVisibility::default(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -835,6 +838,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
+            placement_visibility: visibility::M2PlacementVisibility::default(),
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -1788,13 +1792,6 @@ impl M2Frame {
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, global_time_ms, random)?;
         }
-        // Primary unit completion belongs to the scene update, including
-        // bodies subsequently rejected by the camera's visibility test.
-        for placement in &self.placements {
-            if let Some(animation) = &placement.unit_animation {
-                animation.advance_scene(animation_time_ms, global_time_ms, random)?;
-            }
-        }
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.transparent_elements.clear();
@@ -1878,7 +1875,17 @@ impl M2Frame {
                 &self.sources,
                 &mut self.model_distance_sort,
             );
+            self.placement_visibility
+                .rebuild(&self.placements, &self.sources);
             self.placement_topology_dirty = false;
+        }
+        // Primary unit completion belongs to the scene update, including
+        // bodies subsequently rejected by the camera's visibility test.
+        for &index in self.placement_visibility.dynamic_indices() {
+            let placement = &self.placements[index];
+            if let Some(animation) = &placement.unit_animation {
+                animation.advance_scene(animation_time_ms, global_time_ms, random)?;
+            }
         }
         self.rider_transforms.clear();
         self.rider_transforms.reserve(
@@ -1904,7 +1911,13 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
-        for (placement_index, placement) in self.placements.iter_mut().enumerate() {
+        for (placement_index, bounds) in self.placement_visibility.bounds().iter().enumerate() {
+            if let Some((center, radius)) = bounds
+                && !frustum.contains_sphere(*center, *radius)?
+            {
+                continue;
+            }
+            let placement = &mut self.placements[placement_index];
             if !placement.placement_valid {
                 continue;
             }
@@ -1998,17 +2011,18 @@ impl M2Frame {
                 continue;
             };
             let owner = placement.owner;
-            // Ordinary ADT/WMO placements have no animated parent transform.
-            // Cull them before advancing playback or recomposing bones, just
-            // as the stock/SolCL world renderer first builds a visible
-            // instance list. Large tiles commonly retain thousands of static
-            // placements while only tens intersect the camera frustum.
+            // ADT/WMO placements were culled from compact immutable bounds
+            // before touching instance state. Replicated WMO doodads can move
+            // with their parent and require their current transform here.
             let static_visibility_resolved = matches!(
                 owner,
                 M2GpuPlacementOwner::Static(_)
                     | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
             );
-            if static_visibility_resolved {
+            if matches!(
+                owner,
+                M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
+            ) {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
                 if !frustum.contains_sphere(center, radius)? {

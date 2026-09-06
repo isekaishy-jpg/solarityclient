@@ -76,3 +76,36 @@ screen-coordinate subtraction narrowed its measured field by about 1e-13 UI
 units. The shared wrapping routine now allows 1e-7 UI units of roundoff, with a
 regression proving that a real 1/64-unit deficit still wraps. This applies equally
 to word boundaries and enabled non-space wrapping.
+
+## Compact M2 visibility
+
+Terrain-owned MDDF/MODD instances retain their world-space bounding spheres in a
+compact array separate from animation, particle, and material state. Each frame
+tests that array before touching the much larger instance records. Placement
+publication, retirement, and compaction rebuild the array in placement order.
+Camera motion still tests every bound against the current frustum.
+
+Replicated WMO doodads, units, and animated attachments retain their live
+transform and visibility paths. Unit animation completion runs for every dynamic
+owner before visibility rejection, including offscreen units. Parent/child order,
+playback clocks, particle simulation, material sampling, and transparency order
+remain unchanged. The runtime regression covers camera changes, removal that
+rebases placement indices, and dynamic motion after the cache has been built;
+the existing unit and WMO tests cover offscreen completion and moving parents.
+
+On 2026-09-06, the same Drag scene at 2560 x 1440 with 1,800 frames per phase,
+captures and profiling disabled, measured the following mean frame times. No
+compiler workload ran during either replay.
+
+| Input phase | Before compact bounds | After compact bounds |
+| --- | ---: | ---: |
+| Stationary | 9.304 ms | 7.517 ms |
+| Orbit | 9.105 ms | 7.362 ms |
+| Pointer | 9.559 ms | 7.967 ms |
+
+This is a 17–19% reduction in the settled phase means, approximately 126–136 FPS
+after the change. It does not establish the requested 1,200 FPS target. Temporary
+stage instrumentation before the change counted 28,077 resident placements and
+roughly 862–985 visible instances; bone sampling itself took about 0.35 ms, while
+the uncached placement scan and culling accounted for a larger share of the M2
+preparation cost. That temporary instrumentation is not in the runtime.
