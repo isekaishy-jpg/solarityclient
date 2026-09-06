@@ -9,6 +9,9 @@ pub enum UiRenderBlend {
     Alpha,
     /// Source color added to the existing framebuffer color.
     Additive,
+    /// Replace destination alpha with texture alpha, preserving destination RGB.
+    /// Used by the stock portrait mask pass.
+    AlphaMask,
 }
 
 /// Texture addressing selected independently for each UI texture axis.
@@ -52,6 +55,8 @@ pub enum UiRenderSource {
     Texture(AssetPath),
     /// Process-local immutable coverage atlas generated from archive fonts.
     GlyphAtlas(u64),
+    /// A renderer-owned offscreen portrait for one canonical unit token.
+    UnitPortrait(String),
     /// No sampled image; the interpolated vertex color is the final source.
     VertexColor,
 }

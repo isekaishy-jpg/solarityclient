@@ -61,7 +61,7 @@ pub use vulkan_frame::CinematicFrameIdentity;
 pub use vulkan_glow::WorldFrameGlow;
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
-pub use vulkan_m2_frame::M2FrameReport;
+pub use vulkan_m2_frame::{M2FrameReport, UiPortraitTextureHandle};
 pub use vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 pub use vulkan_m2_particle_pipeline::{M2ParticlePipelineHandle, M2ParticlePipelineInfo};
 pub use vulkan_m2_pipeline::{M2PipelineHandle, M2PipelineInfo};

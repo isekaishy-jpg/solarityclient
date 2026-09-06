@@ -64,7 +64,7 @@ pub(super) fn register_base_globals(
     register_item_quality_color(lua, &globals)?;
     register_client_runtime_globals(lua, &globals, environment)?;
     register_sound_globals(lua, &globals, environment)?;
-    register_portrait_globals(lua, &globals)?;
+    register_portrait_globals(lua, &globals, environment)?;
     register_addon_globals(
         lua,
         &globals,
@@ -3231,10 +3231,15 @@ fn register_sound_globals(
     Ok(())
 }
 
-fn register_portrait_globals(lua: &Lua, globals: &Table) -> mlua::Result<()> {
+fn register_portrait_globals(
+    lua: &Lua,
+    globals: &Table,
+    environment: &UiScriptEnvironment,
+) -> mlua::Result<()> {
+    let world = environment.world_state();
     globals.raw_set(
         "SetPortraitTexture",
-        lua.create_function(|_, (texture, unit): (Table, String)| {
+        lua.create_function(move |lua, (texture, unit): (Table, String)| {
             if texture.raw_get::<String>(type_key())? != "Texture" {
                 return Err(mlua::Error::runtime(
                     "Usage: SetPortraitTexture(texture, \"unit\")",
@@ -3242,7 +3247,11 @@ fn register_portrait_globals(lua: &Lua, globals: &Table) -> mlua::Result<()> {
             }
             texture.raw_set(texture_file_key(), Option::<String>::None)?;
             texture.raw_set(texture_solid_color_key(), Option::<Table>::None)?;
-            texture.raw_set(portrait_unit_key(), Some(unit))
+            let unit = unit.to_ascii_lowercase();
+            let exists = unit == "player" && world.player().is_some();
+            texture.raw_set(portrait_unit_key(), exists.then_some(unit))?;
+            super::mark_object_state_changed(lua, &texture, super::DIRTY_TEXTURE)?;
+            Ok(exists)
         })?,
     )
 }

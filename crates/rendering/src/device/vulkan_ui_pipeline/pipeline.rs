@@ -125,6 +125,7 @@ pub(super) fn create_pipeline(
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
         ),
         UiRenderBlend::Additive => (vk::BlendFactor::SRC_ALPHA, vk::BlendFactor::ONE),
+        UiRenderBlend::AlphaMask => (vk::BlendFactor::ONE, vk::BlendFactor::ZERO),
     };
     let color_attachment = vk::PipelineColorBlendAttachmentState::default()
         .blend_enable(true)
@@ -134,7 +135,11 @@ pub(super) fn create_pipeline(
         .src_alpha_blend_factor(source_factor)
         .dst_alpha_blend_factor(destination_factor)
         .alpha_blend_op(vk::BlendOp::ADD)
-        .color_write_mask(vk::ColorComponentFlags::RGBA);
+        .color_write_mask(if blend == UiRenderBlend::AlphaMask {
+            vk::ColorComponentFlags::A
+        } else {
+            vk::ColorComponentFlags::RGBA
+        });
     let color_attachments = [color_attachment];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachments);

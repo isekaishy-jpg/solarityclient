@@ -1019,6 +1019,12 @@ impl ClientServices {
                     tracing::error!(error = %message, "contained failing FrameXML OnUpdate handler");
                     self.developer_console.record_error(&message);
                 }
+                if let (Some(terrain), Some(player)) = (
+                    self.terrain_frame.as_ref(),
+                    self.player.resident_frame_input(),
+                ) {
+                    world_ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+                }
                 world_ui.refresh(&mut self.renderer)?;
                 self.platform
                     .set_text_input_active(world_ui.has_focused_edit_box());
@@ -2238,6 +2244,16 @@ impl ClientServices {
             && let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world())
         {
             ui.enter_replacement_world(&self.character_metadata, active)?;
+        }
+        if self.loading_screen.is_some()
+            && let (Some(ui), Some(terrain), Some(player)) = (
+                self.world_ui.as_mut(),
+                self.terrain_frame.as_ref(),
+                self.player.resident_frame_input(),
+            )
+        {
+            ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+            ui.refresh(&mut self.renderer)?;
         }
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {

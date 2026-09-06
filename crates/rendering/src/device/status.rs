@@ -362,6 +362,9 @@ pub enum VulkanError {
     /// A UI descriptor references a glyph atlas from another renderer.
     #[error("UI texture set references an unknown glyph texture handle")]
     UnknownUiGlyphTextureHandle,
+    /// A UI descriptor references a portrait from another renderer or no ready image.
+    #[error("UI texture set references an unknown portrait texture handle")]
+    UnknownUiPortraitTextureHandle,
     /// The renderer cannot assign another stable 32-bit sampler handle.
     #[error("M2 sampler registry exhausted its 32-bit handle space")]
     M2SamplerCapacity,

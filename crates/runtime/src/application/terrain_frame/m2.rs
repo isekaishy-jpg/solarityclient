@@ -7,6 +7,7 @@ mod game_object_scene_tests;
 mod character_residency;
 mod game_objects;
 mod playback;
+mod portrait;
 mod streaming;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;

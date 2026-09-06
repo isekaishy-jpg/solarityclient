@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::vulkan_m2_frame::PortraitRegistry;
 use crate::device::vulkan_texture::BlpTextureRegistry;
 use crate::device::vulkan_ui_glyph_texture::UiGlyphTextureRegistry;
 use crate::device::vulkan_ui_sampler::UiSamplerRegistry;
@@ -50,10 +51,11 @@ impl UiTextureSetRegistry {
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
         glyphs: &UiGlyphTextureRegistry,
+        portraits: &PortraitRegistry,
         samplers: &UiSamplerRegistry,
         requested: &[UiSampledTexture],
     ) -> Result<Vec<UiTextureSetHandle>, VulkanError> {
-        validate_resources(textures, glyphs, samplers, requested)?;
+        validate_resources(textures, glyphs, portraits, samplers, requested)?;
         let mut seen = HashSet::new();
         let pending = requested
             .iter()
@@ -61,7 +63,9 @@ impl UiTextureSetRegistry {
             .filter(|pair| !self.handles.contains_key(pair) && seen.insert(*pair))
             .collect::<Vec<_>>();
         if !pending.is_empty() {
-            self.allocate_batch(device, layout, textures, glyphs, samplers, &pending)?;
+            self.allocate_batch(
+                device, layout, textures, glyphs, portraits, samplers, &pending,
+            )?;
         }
         requested
             .iter()
@@ -111,12 +115,14 @@ impl UiTextureSetRegistry {
     }
 
     /// Creates one pool sized to the exact unique sampled-pair batch.
+    #[allow(clippy::too_many_arguments)]
     fn allocate_batch(
         &mut self,
         device: &Device,
         layout: vk::DescriptorSetLayout,
         textures: &BlpTextureRegistry,
         glyphs: &UiGlyphTextureRegistry,
+        portraits: &PortraitRegistry,
         samplers: &UiSamplerRegistry,
         pending: &[UiSampledTexture],
     ) -> Result<(), VulkanError> {
@@ -153,7 +159,15 @@ impl UiTextureSetRegistry {
             }
         };
         for (pair, descriptor_set) in pending.iter().copied().zip(sets) {
-            write_set(device, descriptor_set, textures, glyphs, samplers, pair)?;
+            write_set(
+                device,
+                descriptor_set,
+                textures,
+                glyphs,
+                portraits,
+                samplers,
+                pair,
+            )?;
             let slot = u32::try_from(self.resources.len())
                 .map_err(|_source| VulkanError::UiTextureSetCapacity)?;
             let handle = UiTextureSetHandle {
@@ -175,6 +189,7 @@ impl UiTextureSetRegistry {
 fn validate_resources(
     textures: &BlpTextureRegistry,
     glyphs: &UiGlyphTextureRegistry,
+    portraits: &PortraitRegistry,
     samplers: &UiSamplerRegistry,
     requested: &[UiSampledTexture],
 ) -> Result<(), VulkanError> {
@@ -186,7 +201,12 @@ fn validate_resources(
             UiTextureImageHandle::Glyph(handle) if glyphs.view(handle).is_none() => {
                 return Err(VulkanError::UnknownUiGlyphTextureHandle);
             }
-            UiTextureImageHandle::Blp(_) | UiTextureImageHandle::Glyph(_) => {}
+            UiTextureImageHandle::Portrait(handle) if portraits.view(handle).is_none() => {
+                return Err(VulkanError::UnknownUiPortraitTextureHandle);
+            }
+            UiTextureImageHandle::Blp(_)
+            | UiTextureImageHandle::Glyph(_)
+            | UiTextureImageHandle::Portrait(_) => {}
         }
         if samplers.raw(pair.sampler()).is_none() {
             return Err(VulkanError::UnknownUiSamplerHandle);
@@ -201,6 +221,7 @@ fn write_set(
     descriptor_set: vk::DescriptorSet,
     textures: &BlpTextureRegistry,
     glyphs: &UiGlyphTextureRegistry,
+    portraits: &PortraitRegistry,
     samplers: &UiSamplerRegistry,
     pair: UiSampledTexture,
 ) -> Result<(), VulkanError> {
@@ -217,6 +238,9 @@ fn write_set(
             UiTextureImageHandle::Glyph(handle) => glyphs
                 .view(handle)
                 .ok_or(VulkanError::UnknownUiGlyphTextureHandle)?,
+            UiTextureImageHandle::Portrait(handle) => portraits
+                .view(handle)
+                .ok_or(VulkanError::UnknownUiPortraitTextureHandle)?,
         })
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     let image_infos = [image_info];

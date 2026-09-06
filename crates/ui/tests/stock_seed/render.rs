@@ -10,6 +10,127 @@ use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiPointerButton, UiTe
 
 use crate::support::{Fixture, FixtureFile};
 
+/// Portrait requests survive presentation and are replaced through ordinary texture APIs.
+#[test]
+fn portrait_requests_follow_lua_source_changes_and_missing_units() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::AssetStoreHandle;
+    use solarity_ui::{AddonCatalog, FrameManager, UiPlayerState, UiScriptEnvironment};
+    let table = |records: u32, fields: u32| {
+        let mut bytes = b"WDBC".to_vec();
+        for value in [records, fields, fields * 4, 1] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.resize(21 + records as usize * fields as usize * 4, 0);
+        bytes
+    };
+    let slots = table(0, 3);
+    let crit_base = table(11, 1);
+    let coefficients = table(1100, 1);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "DBFilesClient/gtChanceToMeleeCritBase.dbc",
+            bytes: &crit_base,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtChanceToSpellCritBase.dbc",
+            bytes: &crit_base,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtChanceToMeleeCrit.dbc",
+            bytes: &coefficients,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtChanceToSpellCrit.dbc",
+            bytes: &coefficients,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtOCTRegenHP.dbc",
+            bytes: &coefficients,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtRegenHPPerSpt.dbc",
+            bytes: &coefficients,
+        },
+        FixtureFile {
+            path: "DBFilesClient/gtRegenMPPerSpt.dbc",
+            bytes: &coefficients,
+        },
+        FixtureFile {
+            path: "DBFilesClient/PaperDollItemFrame.dbc",
+            bytes: &slots,
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\FrameXML.toc",
+            bytes: b"Portrait.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Portrait.xml",
+            bytes: br#"<Ui>
+<Frame name="Owner"><Size x="64" y="64"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Layers><Layer><Texture name="Portrait" setAllPoints="true"/></Layer></Layers>
+<Scripts><OnLoad>assert(SetPortraitTexture(Portrait, "PLAYER") == true)</OnLoad></Scripts>
+</Frame></Ui>"#,
+        },
+        FixtureFile {
+            path: "Interface\\FrameXML\\Bindings.xml",
+            bytes: br#"<Bindings>
+<Binding name="SOLID">Portrait:SetTexture(0.25, 0.5, 1, 0.75)</Binding>
+<Binding name="FILE">Portrait:SetTexture("Interface\\Icons\\Test")</Binding>
+<Binding name="PORTRAIT">assert(SetPortraitTexture(Portrait, "player") == true)</Binding>
+<Binding name="MISSING">assert(SetPortraitTexture(Portrait, "missing") == false)</Binding>
+</Bindings>"#,
+        },
+        FixtureFile {
+            path: "WTF\\DefaultBindings.wtf",
+            bytes: b"",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let environment = UiScriptEnvironment::new(800, 600, false)?;
+    environment
+        .world_state()
+        .enter_player(UiPlayerState::new(0));
+    let mut manager = FrameManager::start_shared(
+        AssetStoreHandle::new(AssetStore::mount(catalog)?),
+        environment,
+        &[],
+        &AddonCatalog::default(),
+    )?;
+    let source = |manager: &FrameManager| {
+        manager
+            .render_plan()
+            .mesh()
+            .batches()
+            .first()
+            .map(|batch| batch.source().clone())
+    };
+    assert_eq!(
+        source(&manager),
+        Some(UiRenderSource::UnitPortrait("player".to_owned()))
+    );
+    assert!(manager.render_plan().texture_assets().requests().is_empty());
+    manager.invoke_binding("SOLID", true)?;
+    assert_eq!(source(&manager), Some(UiRenderSource::VertexColor));
+    manager.invoke_binding("PORTRAIT", true)?;
+    assert_eq!(
+        source(&manager),
+        Some(UiRenderSource::UnitPortrait("player".to_owned()))
+    );
+    manager.invoke_binding("FILE", true)?;
+    assert!(
+        matches!(source(&manager), Some(UiRenderSource::Texture(path)) if path.as_str() == "INTERFACE\\ICONS\\TEST.BLP")
+    );
+    manager.invoke_binding("MISSING", true)?;
+    assert_eq!(source(&manager), None);
+    manager.invoke_binding("PORTRAIT", true)?;
+    assert_eq!(
+        source(&manager),
+        Some(UiRenderSource::UnitPortrait("player".to_owned()))
+    );
+    Ok(())
+}
+
 /// XML color sources and file tints survive inheritance and dynamic templates.
 #[test]
 fn xml_color_sources_follow_stock_file_precedence_and_dynamic_templates()

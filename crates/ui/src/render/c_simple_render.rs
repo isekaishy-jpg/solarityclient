@@ -343,6 +343,9 @@ impl UiRenderPlan {
                     let source = match member.source() {
                         UiTextureSource::Asset(path) => UiRenderSource::Texture(path.clone()),
                         UiTextureSource::SolidColor(_) => UiRenderSource::VertexColor,
+                        UiTextureSource::UnitPortrait(unit) => {
+                            UiRenderSource::UnitPortrait(unit.clone())
+                        }
                     };
                     render_quad_with_scroll(member, geometry, scroll_frames)
                         .map(|quad| (source, quad))
@@ -627,6 +630,7 @@ fn render_quad_parts(
     let (source, solid_color) = match texture.source() {
         UiTextureSource::Asset(path) => (UiRenderSource::Texture(path.clone()), None),
         UiTextureSource::SolidColor(color) => (UiRenderSource::VertexColor, Some(*color)),
+        UiTextureSource::UnitPortrait(unit) => (UiRenderSource::UnitPortrait(unit.clone()), None),
     };
     let colors = colors.map(|color| {
         solid_color.map_or(color, |solid| {

@@ -66,9 +66,9 @@ impl PreparedUiFrame {
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
             let source = match batch.source() {
-                UiRenderSource::Texture(_) | UiRenderSource::GlyphAtlas(_) => {
-                    UiShaderSource::Texture
-                }
+                UiRenderSource::Texture(_)
+                | UiRenderSource::GlyphAtlas(_)
+                | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
                 UiRenderSource::VertexColor => UiShaderSource::VertexColor,
             };
             let pipeline = renderer.prepare_ui_pipeline(source, batch.blend())?;
@@ -100,6 +100,18 @@ impl PreparedUiFrame {
                     ))?;
                     let index = sampled_textures.len();
                     sampled_textures.push(UiSampledTexture::glyph(texture, sampler));
+                    Some(index)
+                }
+                UiRenderSource::UnitPortrait(unit) => {
+                    let Some(texture) = renderer.unit_portrait_texture(unit) else {
+                        continue;
+                    };
+                    let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
+                        batch.horizontal_address(),
+                        batch.vertical_address(),
+                    ))?;
+                    let index = sampled_textures.len();
+                    sampled_textures.push(UiSampledTexture::portrait(texture, sampler));
                     Some(index)
                 }
                 UiRenderSource::VertexColor => None,
@@ -217,6 +229,14 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
     ) -> Result<bool, ApplicationError> {
+        // A newly rendered portrait must join a previously unresolved batch,
+        // even when its geometry and unit token have not changed.
+        if self.draw_batches.len() < self.materials.len() && self.materials.iter().enumerate().any(|(index, batch)| {
+            matches!(batch.source(), UiRenderSource::UnitPortrait(unit)
+                if !self.draw_batches.contains(&index) && renderer.unit_portrait_texture(unit).is_some())
+        }) {
+            return Ok(false);
+        }
         if self.refresh_retained_draw_state(plan)? {
             return Ok(true);
         }

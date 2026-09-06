@@ -1,6 +1,8 @@
 //! Validated UI sampled-texture pairs and renderer-local descriptor identities.
 
-use crate::device::{BlpTextureHandle, UiGlyphTextureHandle, UiSamplerHandle};
+use crate::device::{
+    BlpTextureHandle, UiGlyphTextureHandle, UiPortraitTextureHandle, UiSamplerHandle,
+};
 
 /// One typed sampled image accepted by the stock UI texture pipeline.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -9,6 +11,8 @@ pub enum UiTextureImageHandle {
     Blp(BlpTextureHandle),
     /// Runtime-composed archive-font coverage atlas.
     Glyph(UiGlyphTextureHandle),
+    /// GPU-rendered model portrait.
+    Portrait(UiPortraitTextureHandle),
 }
 
 /// One uploaded BLP paired with its independently cached UI sampler.
@@ -19,6 +23,15 @@ pub struct UiSampledTexture {
 }
 
 impl UiSampledTexture {
+    /// Joins one offscreen portrait to an independently cached sampler.
+    #[must_use]
+    pub const fn portrait(texture: UiPortraitTextureHandle, sampler: UiSamplerHandle) -> Self {
+        Self {
+            texture: UiTextureImageHandle::Portrait(texture),
+            sampler,
+        }
+    }
+
     /// Joins image and sampler identities without exposing Vulkan handles.
     #[must_use]
     pub const fn new(texture: BlpTextureHandle, sampler: UiSamplerHandle) -> Self {

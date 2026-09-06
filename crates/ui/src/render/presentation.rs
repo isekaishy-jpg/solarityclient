@@ -21,6 +21,8 @@ pub enum UiTextureSource {
     Asset(AssetPath),
     /// A source-less quad carrying a uniform RGBA value.
     SolidColor([f32; 4]),
+    /// A frozen model portrait requested by stock `SetPortraitTexture`.
+    UnitPortrait(String),
 }
 
 /// Exact back-to-front packet ordering recovered from stock presentation state.
@@ -799,7 +801,9 @@ impl UiPresentationPlan {
             {
                 continue;
             }
-            let source = if let Some(path) = &texture.file {
+            let source = if let Some(unit) = &texture.portrait_unit {
+                UiTextureSource::UnitPortrait(unit.clone())
+            } else if let Some(path) = &texture.file {
                 UiTextureSource::Asset(path.clone())
             } else if let Some(color) = texture.solid_color {
                 UiTextureSource::SolidColor(color.map(|value| value as f32))

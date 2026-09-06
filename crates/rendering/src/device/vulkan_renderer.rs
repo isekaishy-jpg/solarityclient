@@ -2,8 +2,11 @@
 
 #![allow(unsafe_code)]
 
+mod portrait;
 mod terrain_retirement;
 
+use crate::device::vulkan_m2_frame::PortraitRegistry;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ash::{Device, vk};
@@ -190,6 +193,8 @@ pub struct VulkanRenderer {
     m2_particle_pipelines: M2ParticlePipelineRegistry,
     m2_ribbon_pipelines: M2RibbonPipelineRegistry,
     m2_frames: M2FrameRenderer,
+    portraits: PortraitRegistry,
+    portrait_masks: HashMap<BlpTextureHandle, UiPreparedDraw>,
     m2_meshes: M2MeshRegistry,
     world_model_meshes: WorldModelMeshRegistry,
     world_model_pipelines: WorldModelPipelineRegistry,
@@ -270,6 +275,8 @@ impl VulkanRenderer {
             m2_particle_pipelines: M2ParticlePipelineRegistry::default(),
             m2_ribbon_pipelines: M2RibbonPipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
+            portraits: PortraitRegistry::default(),
+            portrait_masks: HashMap::new(),
             m2_meshes: M2MeshRegistry::default(),
             world_model_meshes: WorldModelMeshRegistry::default(),
             world_model_pipelines: WorldModelPipelineRegistry::default(),
@@ -1307,6 +1314,7 @@ impl VulkanRenderer {
             layout,
             &self.blp_textures,
             &self.ui_glyph_textures,
+            &self.portraits,
             &self.ui_samplers,
             requested,
         )
@@ -1338,6 +1346,7 @@ impl VulkanRenderer {
             &self.ui_texture_sets,
             &self.blp_textures,
             &self.ui_glyph_textures,
+            &self.portraits,
             &self.ui_samplers,
             mesh,
             pipeline,
@@ -2511,6 +2520,8 @@ impl Drop for VulkanRenderer {
             self.character_atlas_textures
                 .destroy(&self.device, allocator);
             self.ui_glyph_textures.destroy(&self.device, allocator);
+            self.portraits.destroy(&self.device, allocator);
+            self.portrait_masks.clear();
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);

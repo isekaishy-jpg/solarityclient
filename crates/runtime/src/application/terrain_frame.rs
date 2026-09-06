@@ -95,6 +95,9 @@ pub enum RuntimeTerrainFrameError {
     /// One visible M2 could not form its bone palette.
     #[error(transparent)]
     M2BonePose(#[from] M2BonePoseError),
+    /// A portrait's authored camera or fallback frame could not be sampled.
+    #[error(transparent)]
+    M2Camera(#[from] solarity_rendering::M2CameraFrameError),
     /// One visible M2 material could not sample its authored animation tracks.
     #[error(transparent)]
     M2MaterialPose(#[from] M2MaterialPoseError),
@@ -494,6 +497,16 @@ pub(super) struct TerrainFrame {
 }
 
 impl TerrainFrame {
+    /// Captures the published player appearance without changing its live pose.
+    pub(super) fn render_player_portrait(
+        &self,
+        renderer: &mut VulkanRenderer,
+        player: &ResidentPlayerFrameInput<'_>,
+        mask: solarity_rendering::BlpTextureHandle,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        self.m2.render_player_portrait(renderer, player, mask)
+    }
+
     /// Uploads and validates every resource referenced by one admitted ADT.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(

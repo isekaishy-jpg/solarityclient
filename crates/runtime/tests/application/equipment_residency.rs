@@ -120,6 +120,20 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         assert!(snapshot.effects.ribbons.len() > 1);
         assert!(snapshot.event_time > 0);
     }
+    let mask = renderer.upload_stock_m2_white()?;
+    let player = presentation
+        .resident_frame_input()
+        .ok_or("portrait player")?;
+    assert!(frame.render_player_portrait(&mut renderer, &player, mask)?);
+    let portrait = renderer
+        .unit_portrait_texture("player")
+        .ok_or("portrait image")?;
+    assert_visible_portrait(&mut renderer, portrait)?;
+    assert_eq!(
+        snapshots(&frame)?,
+        before,
+        "portrait sampling preserves live equipment timers and effects"
+    );
     presentation.set_component_texture_level(
         CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
     );
@@ -136,6 +150,17 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         "material changes consume no component initialization rolls"
     );
     assert_eq!(snapshots(&frame)?, before);
+    let player = presentation
+        .resident_frame_input()
+        .ok_or("updated portrait player")?;
+    assert!(frame.render_player_portrait(&mut renderer, &player, mask)?);
+    assert_eq!(renderer.unit_portrait_texture("player"), Some(portrait));
+    assert_visible_portrait(&mut renderer, portrait)?;
+    assert_eq!(
+        snapshots(&frame)?,
+        before,
+        "appearance recapture leaves retained equipment untouched"
+    );
     advance(&mut frame, &renderer, camera, 350.0, &mut random)?;
 
     // A later component with a missing authored body link must not detach
@@ -515,5 +540,57 @@ fn assert_replaced(
             assert_eq!(current, previous);
         }
     }
+    Ok(())
+}
+
+fn assert_visible_portrait(
+    renderer: &mut VulkanRenderer,
+    portrait: solarity_rendering::UiPortraitTextureHandle,
+) -> Result<(), Box<dyn Error>> {
+    use solarity_rendering::{
+        UiMeshPlan, UiRenderBlend, UiRenderQuad, UiRenderSource, UiSampledTexture, UiSamplerInfo,
+        UiShaderSource, UiTextureAddressMode, UiTextureResidency,
+    };
+    let plan = UiMeshPlan::prepare(
+        [128.0, 128.0],
+        [UiRenderQuad::new(
+            0,
+            UiRenderSource::UnitPortrait("player".to_owned()),
+            UiRenderBlend::Alpha,
+            UiTextureAddressMode::Clamp,
+            UiTextureAddressMode::Clamp,
+            UiTextureResidency::Blocking,
+            false,
+            [0.0, 0.0, 128.0, 128.0],
+            [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
+            [[1.0; 4]; 4],
+        )]
+        .into_iter(),
+    )?;
+    let mesh = renderer.upload_ui_mesh(&plan)?;
+    let pipeline = renderer.prepare_ui_pipeline(UiShaderSource::Texture, UiRenderBlend::Alpha)?;
+    let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
+        UiTextureAddressMode::Clamp,
+        UiTextureAddressMode::Clamp,
+    ))?;
+    let set =
+        renderer.prepare_ui_texture_sets(&[UiSampledTexture::portrait(portrait, sampler)])?[0];
+    let draw = renderer.prepare_ui_draw(mesh, pipeline, Some(set), &plan, 0)?;
+    renderer.request_frame_capture()?;
+    renderer.present_ui([128.0, 128.0], &[draw])?;
+    let captured = renderer
+        .take_captured_frame()?
+        .ok_or("missing portrait pixels")?;
+    let visible = captured
+        .rgba8()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[..3].iter().any(|channel| *channel > 32))
+        .count();
+    assert!(
+        visible > 100,
+        "frozen equipped geometry must remain visible without world fog: {visible} pixels"
+    );
     Ok(())
 }

@@ -21,11 +21,12 @@ use super::simple_script::{
     model_rotation_key, model_scale_key, model_sequence_key, model_sequence_time_key,
     model_sequence_time_sequence_key, model_unit_key, motion_scripts_while_disabled_key,
     mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key,
-    normal_font_key, parent_key, parse_point, role_key, scale_key, scroll_child_key, shown_key,
-    slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
-    spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
-    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
-    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
+    normal_font_key, parent_key, parse_point, portrait_unit_key, role_key, scale_key,
+    scroll_child_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key,
+    slider_step_key, slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key,
+    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
+    vertex_color_set_key, vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key,
+    width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transforms;
 use crate::{
@@ -173,6 +174,7 @@ pub(crate) struct UiRuntimeModelLightSets {
 /// Post-Lua texture source and presentation properties.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiRuntimeTexture {
+    pub(crate) portrait_unit: Option<String>,
     pub(crate) file: Option<AssetPath>,
     pub(crate) solid_color: Option<[f64; 4]>,
     pub(crate) blend_mode: UiBlendMode,
@@ -1666,6 +1668,9 @@ fn snapshot_texture(lua_index: usize, table: &Table) -> Result<UiRuntimeTexture,
         .map_err(|error| snapshot_error(format!("object {lua_index} vertex colors"), error))?;
     let flat_colors = numeric_array::<16>(&colors, lua_index, "vertex colors")?;
     Ok(UiRuntimeTexture {
+        portrait_unit: table
+            .raw_get(portrait_unit_key())
+            .map_err(|error| snapshot_error(format!("object {lua_index} portrait unit"), error))?,
         file,
         solid_color,
         blend_mode: parse_blend_mode(&blend_mode).ok_or_else(|| UiScriptError::Plan {

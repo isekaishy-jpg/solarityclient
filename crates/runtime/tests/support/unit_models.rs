@@ -20,6 +20,14 @@ fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dy
     let mut model = game_object_models::model_with_animations(&ids)?;
     let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
     for (index, id) in ids.iter().enumerate() {
+        // The visible triangle's Stand bounds also define camera-less portraits.
+        for (axis, value) in [0.0_f32, -1.0, -1.0, 0.0, 1.0, 1.0, 2.0]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = sequences + index * 64 + 32 + axis * 4;
+            model[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
         if matches!(id, 96 | 98 | 99 | 101) {
             model[sequences + index * 64 + 12..sequences + index * 64 + 16]
                 .copy_from_slice(&0x21_u32.to_le_bytes());

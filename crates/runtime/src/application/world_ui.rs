@@ -15,6 +15,8 @@ use thiserror::Error;
 use super::ApplicationError;
 use super::character_directory::RuntimeCharacterMetadata;
 use super::login_ui::{RuntimeUiFrame, RuntimeUiResidency};
+use super::player_coordinator::{ResidentPlayerFrameInput, UnitPresentationGeneration};
+use super::terrain_frame::TerrainFrame;
 use crate::time::RealmClock;
 
 /// A world UI could not be formed from authoritative entry state.
@@ -41,6 +43,10 @@ pub(super) struct RuntimeWorldUi {
     frame: RuntimeUiFrame,
     texture_cache: BlpTextureCache,
     texture_residency: RuntimeUiResidency,
+    assets: AssetStoreHandle,
+    portrait_mask: Option<solarity_rendering::BlpTextureHandle>,
+    portrait_generation: Option<UnitPresentationGeneration>,
+    player_portrait_requested: bool,
     world: solarity_ui::UiWorldState,
     zone: UiZoneState,
     action_bar: UiActionBarState,
@@ -203,7 +209,7 @@ impl RuntimeWorldUi {
             )]);
 
         let mut manager =
-            FrameManager::start_shared(assets, environment, cvar_values, addon_catalog)?;
+            FrameManager::start_shared(assets.clone(), environment, cvar_values, addon_catalog)?;
         let mut startup_errors = Vec::new();
         for event in [
             "VARIABLES_LOADED",
@@ -226,6 +232,7 @@ impl RuntimeWorldUi {
             &mut texture_cache,
             &mut texture_residency,
         )?;
+        let player_portrait_requested = requests_player_portrait(&manager);
         Ok((
             Self {
                 manager,
@@ -233,6 +240,10 @@ impl RuntimeWorldUi {
                 frame,
                 texture_cache,
                 texture_residency,
+                assets,
+                portrait_mask: None,
+                portrait_generation: None,
+                player_portrait_requested,
                 world,
                 zone,
                 action_bar,
@@ -335,6 +346,44 @@ impl RuntimeWorldUi {
     /// Takes one authored FrameXML update fault contained by the UI runtime.
     pub(super) fn take_update_failure(&mut self) -> Option<String> {
         self.manager.take_update_failure()
+    }
+
+    /// Updates a requested portrait only when the resident appearance changes.
+    pub(super) fn synchronize_portrait(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        terrain: &TerrainFrame,
+        player: &ResidentPlayerFrameInput<'_>,
+    ) -> Result<(), ApplicationError> {
+        if self.dirty {
+            self.player_portrait_requested = requests_player_portrait(&self.manager);
+        }
+        if !self.player_portrait_requested
+            || self
+                .portrait_generation
+                .as_ref()
+                .is_some_and(|generation| generation.matches(player.generation()))
+        {
+            return Ok(());
+        }
+        let mask = if let Some(mask) = self.portrait_mask {
+            mask
+        } else {
+            let path = solarity_asset::AssetPath::new(
+                "Interface\\CharacterFrame\\TempPortraitAlphaMask.blp",
+            )?;
+            let source =
+                solarity_asset::BlpTextureSource::load(&mut self.assets.borrow_mut(), &path)?;
+            let mask =
+                renderer.upload_blp_texture(&source, solarity_rendering::BlpColorSpace::Linear)?;
+            self.portrait_mask = Some(mask);
+            mask
+        };
+        if terrain.render_player_portrait(renderer, player, mask)? {
+            self.portrait_generation = Some(player.generation().clone());
+            self.dirty = true;
+        }
+        Ok(())
     }
 
     /// Rebuilds renderer resources after an event or update mutated live UI.
@@ -520,6 +569,12 @@ fn format_transfer_message(format: &str, map_name: &str) -> Result<String, Runti
 /// Publishes either the realm clock or the native BSS values visible before
 /// SMSG_LOGIN_SETTIMESPEED. GetGameTime at 0x00608230 reads zero hour/minute;
 /// CalendarGetDate at 0x005B8160 adds one to zero-based fields and 2000 to year.
+fn requests_player_portrait(manager: &FrameManager) -> bool {
+    manager.render_plan().mesh().batches().iter().any(|batch| {
+        matches!(batch.source(), solarity_rendering::UiRenderSource::UnitPortrait(unit) if unit == "player")
+    })
+}
+
 fn publish_realm_clock(
     world: &solarity_ui::UiWorldState,
     realm_clock: Option<&RealmClock>,

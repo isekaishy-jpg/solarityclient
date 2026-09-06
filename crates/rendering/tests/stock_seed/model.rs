@@ -6,6 +6,8 @@ mod mesh_transfer;
 mod particle_fog;
 #[path = "model/particle_frame.rs"]
 mod particle_frame;
+#[path = "model/portrait.rs"]
+mod portrait;
 #[path = "model/sequence_blend.rs"]
 mod sequence_blend;
 #[path = "model/sequence_timer.rs"]

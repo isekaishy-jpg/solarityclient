@@ -11,6 +11,7 @@ use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2PipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
+use crate::device::vulkan_ui_frame::{UiOverlayRecordContext, record_loaded_overlay};
 
 use super::M2FrameContext;
 use super::resource::M2FrameSlot;
@@ -31,6 +32,8 @@ pub(super) struct RecordContext<'a> {
     pub(super) meshes: &'a M2MeshRegistry,
     pub(super) texture_sets: &'a M2TextureSetRegistry,
     pub(super) draws: &'a [M2PreparedDraw],
+    pub(super) sampled_output: bool,
+    pub(super) mask: Option<UiOverlayRecordContext<'a>>,
 }
 
 #[derive(Default)]
@@ -122,6 +125,23 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
     }
     // SAFETY: A matching dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    if let Some(mask) = context.mask {
+        let barriers = [vk::MemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(
+                vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            )];
+        let dependency = vk::DependencyInfo::default().memory_barriers(&barriers);
+        // SAFETY: The mask loads the color attachment written by the ended M2 scope.
+        unsafe {
+            context
+                .device
+                .cmd_pipeline_barrier2(context.command_buffer, &dependency)
+        };
+        record_loaded_overlay(mask)?;
+    }
     transition_to_present(&context);
     // SAFETY: Every referenced resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
@@ -281,7 +301,11 @@ fn transition_attachments(context: &RecordContext<'_>) {
         .layer_count(1);
     let barriers = [
         vk::ImageMemoryBarrier2::default()
-            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+            .src_stage_mask(if context.sampled_output {
+                vk::PipelineStageFlags2::FRAGMENT_SHADER
+            } else {
+                vk::PipelineStageFlags2::NONE
+            })
             .src_access_mask(vk::AccessFlags2::NONE)
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -332,10 +356,22 @@ fn transition_to_present(context: &RecordContext<'_>) {
     let barrier = vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
-        .dst_access_mask(vk::AccessFlags2::NONE)
+        .dst_stage_mask(if context.sampled_output {
+            vk::PipelineStageFlags2::FRAGMENT_SHADER
+        } else {
+            vk::PipelineStageFlags2::NONE
+        })
+        .dst_access_mask(if context.sampled_output {
+            vk::AccessFlags2::SHADER_SAMPLED_READ
+        } else {
+            vk::AccessFlags2::NONE
+        })
         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .new_layout(if context.sampled_output {
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        } else {
+            vk::ImageLayout::PRESENT_SRC_KHR
+        })
         .image(context.image)
         .subresource_range(range);
     let barriers = [barrier];

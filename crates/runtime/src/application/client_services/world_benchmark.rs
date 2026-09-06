@@ -277,6 +277,12 @@ impl ClientServices {
         if let Some(error) = ui.take_update_failure() {
             return Err(WorldBenchmarkError::Ui(error));
         }
+        if let (Some(terrain), Some(player)) = (
+            self.terrain_frame.as_ref(),
+            self.player.resident_frame_input(),
+        ) {
+            ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+        }
         ui.refresh(&mut self.renderer)?;
         let ui_duration = start.elapsed();
         let start = Instant::now();

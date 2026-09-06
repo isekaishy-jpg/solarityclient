@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 mod command;
+mod portrait;
 mod resource;
 mod types;
 
@@ -21,6 +22,8 @@ use crate::model::M2SceneUniform;
 use command::{RecordContext, record_draws, submit_and_present};
 use resource::{FrameCreateContext, M2FrameResources};
 
+pub use portrait::UiPortraitTextureHandle;
+pub(in crate::device) use portrait::{PortraitRegistry, PortraitRenderContext};
 pub use types::M2FrameReport;
 
 /// Borrowed renderer graph required to present one M2 scene snapshot.
@@ -145,6 +148,8 @@ impl M2FrameRenderer {
             meshes: context.meshes,
             texture_sets: context.texture_sets,
             draws,
+            sampled_output: false,
+            mask: None,
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
         Ok(M2FrameReport::new(draws.len(), bone_transforms.len()))

@@ -1,5 +1,6 @@
 //! Validation preventing CPU plans and renderer-local resources from skewing.
 
+use crate::device::vulkan_m2_frame::PortraitRegistry;
 use crate::device::vulkan_texture::BlpTextureRegistry;
 use crate::device::vulkan_ui_glyph_texture::UiGlyphTextureRegistry;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
@@ -19,6 +20,7 @@ pub(in crate::device) fn prepare_draw(
     texture_sets: &UiTextureSetRegistry,
     textures: &BlpTextureRegistry,
     glyphs: &UiGlyphTextureRegistry,
+    portraits: &PortraitRegistry,
     samplers: &UiSamplerRegistry,
     mesh: UiMeshHandle,
     pipeline: UiPipelineHandle,
@@ -52,7 +54,9 @@ pub(in crate::device) fn prepare_draw(
         .info(pipeline)
         .ok_or(VulkanError::UnknownUiPipelineHandle)?;
     let expected_source = match batch.source() {
-        UiRenderSource::Texture(_) | UiRenderSource::GlyphAtlas(_) => UiShaderSource::Texture,
+        UiRenderSource::Texture(_)
+        | UiRenderSource::GlyphAtlas(_)
+        | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
         UiRenderSource::VertexColor => UiShaderSource::VertexColor,
     };
     if pipeline_info.source() != expected_source || pipeline_info.blend() != batch.blend() {
@@ -97,6 +101,27 @@ pub(in crate::device) fn prepare_draw(
             let expected_sampler =
                 UiSamplerInfo::new(batch.horizontal_address(), batch.vertical_address());
             if texture.identity() != *identity || sampler != expected_sampler {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            }
+        }
+        (UiRenderSource::UnitPortrait(unit), Some(handle)) => {
+            let set = texture_sets
+                .info(handle)
+                .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
+            let sampled = set.sampled_texture();
+            let UiTextureImageHandle::Portrait(texture_handle) = sampled.texture() else {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            };
+            let actual_unit = portraits
+                .unit(texture_handle)
+                .ok_or(VulkanError::UnknownUiPortraitTextureHandle)?;
+            let sampler = samplers
+                .info(sampled.sampler())
+                .ok_or(VulkanError::UnknownUiSamplerHandle)?;
+            if actual_unit != unit
+                || sampler
+                    != UiSamplerInfo::new(batch.horizontal_address(), batch.vertical_address())
+            {
                 return Err(VulkanError::UiDrawTextureMismatch);
             }
         }
