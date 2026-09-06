@@ -71,6 +71,36 @@ present, and retried it roughly every 50 ms. That produced a false 20 FPS
 "renderer" failure and stale/disappearing UI even though no rendering work was
 the cause.
 
+World FrameXML requires its own measurement; the Glue results above do not
+establish World throughput. The `validate_frame_lifecycle <Data> <locale>
+[benchmark frames]` example runs the installed FrameXML with a fixture player,
+warms up 32 updates, and reports CPU update percentiles and requested presentation
+uploads. It excludes GPU upload, World simulation, and rendering. The initial
+1,000-update run averaged 20.406 ms, with every update requesting publication.
+The typed journal identified `BuffFrame` clearing and restoring the same anchors
+on each update, causing global layout, presentation, mesh, and pointer rebuilds.
+
+Topology-stable layout journals now compare their final width, height, scale,
+and complete anchor slices with the published state before invalidating native
+plans. Lua still observes every setter and every intermediate anchor state.
+Pending automatic text measurement and mixed content journals use their normal
+publisher. Changed anchor targets still invalidate dependent regions. A layout
+transaction that ends unchanged reports no presentation change, while concurrent
+visual mutations still publish independently.
+
+Animation clocks likewise advance and deliver callbacks before their composed
+contributions are compared with retained values. Timing-only groups such as
+FrameXML's `AnimTimerFrame` no longer republish identical transforms every tick.
+Visual journals also reuse pointer target facts: hit testing already consults
+updated geometry for visibility, alpha, and transformed bounds. These changes
+preserve real fades, movement, timer completion, and pointer eligibility.
+
+With these changes, a 10,000-update run averaged 0.401 ms (0.309 ms median,
+0.765 ms p95, 1.637 ms p99, 3.873 ms maximum), with 227 requested publications.
+Both runs used elapsed wall time as the authored update interval; this is a
+windowless CPU measurement, not an equal-duration replay or proof of complete
+World FPS. Full World performance remains to be measured after installation.
+
 ## Permanent ownership model
 
 The build-12340 executable and archived GlueXML/FrameXML remain the behavioral

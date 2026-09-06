@@ -849,7 +849,7 @@ impl GlueManager {
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
         let update = self
             .runtime
-            .dispatch_updates(&self.bundle, elapsed_seconds)?;
+            .dispatch_updates(&self.bundle, &self.live, elapsed_seconds)?;
         let _handler_count = update.handler_count;
         if !self.retained_object_topology_matches_runtime() {
             self.refresh_live_state()?;
@@ -859,7 +859,8 @@ impl GlueManager {
             if update.texture_vertex_colors_only() {
                 self.refresh_texture_vertex_colors(&update.dirty_objects, &update.visual_objects)?;
             } else {
-                self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
+                return self
+                    .refresh_targeted_objects(&update.dirty_objects, &update.visual_objects);
             }
         } else if update.targeted_visual && self.incremental_visual_updates {
             self.runtime
@@ -894,6 +895,7 @@ impl GlueManager {
                 )
             } else {
                 self.refresh_targeted_objects(&dispatch.dirty_objects, &dispatch.visual_objects)
+                    .map(|_| ())
             }
         } else if dispatch.targeted_visual && self.incremental_visual_updates {
             self.refresh_targeted_visual_objects(&dispatch.visual_objects)
@@ -941,7 +943,9 @@ impl GlueManager {
                 .refresh_texture_vertex_colors(&self.presentation, object_index)?;
         }
         if !retained {
-            return self.refresh_targeted_objects(dirty_objects, visual_objects);
+            return self
+                .refresh_targeted_objects(dirty_objects, visual_objects)
+                .map(|_| ());
         }
         if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
             eprintln!(
@@ -962,10 +966,36 @@ impl GlueManager {
         &mut self,
         dirty_objects: &[(usize, u32)],
         visual_objects: &[usize],
-    ) -> Result<(), UiEventError> {
+    ) -> Result<bool, UiEventError> {
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
         self.deferred_slider_refresh = None;
+        if self
+            .runtime
+            .layout_journal_is_unchanged(&self.bundle, &self.live, dirty_objects)?
+        {
+            if !visual_objects.is_empty() {
+                self.refresh_targeted_visual_objects(visual_objects)?;
+            }
+            if timings {
+                let visuals = visual_objects
+                    .iter()
+                    .map(|&index| {
+                        self.live.objects()[index]
+                            .name
+                            .as_deref()
+                            .unwrap_or("<anonymous>")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                eprintln!(
+                    "UI unchanged layout: objects={} visuals=[{visuals}] total={:.3}ms",
+                    dirty_objects.len(),
+                    started.elapsed().as_secs_f64() * 1000.
+                );
+            }
+            return Ok(!visual_objects.is_empty());
+        }
         if timings {
             let journal = dirty_objects
                 .iter()
@@ -992,7 +1022,7 @@ impl GlueManager {
                 started,
             )?
         {
-            return Ok(());
+            return Ok(true);
         }
         let mut visual_objects_refreshed = false;
         if edit_box_text_journal {
@@ -1009,7 +1039,7 @@ impl GlueManager {
                         started.elapsed().as_secs_f64() * 1_000.0,
                     );
                 }
-                return Ok(());
+                return Ok(true);
             }
         }
         if self
@@ -1017,7 +1047,7 @@ impl GlueManager {
             .is_retained_content_journal(&self.live, dirty_objects)
             && self.refresh_retained_content(dirty_objects, visual_objects, started)?
         {
-            return Ok(());
+            return Ok(true);
         }
         if !visual_objects_refreshed && !visual_objects.is_empty() {
             self.runtime
@@ -1111,7 +1141,7 @@ impl GlueManager {
                 started.elapsed().as_secs_f64() * 1_000.0,
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Reuses content and texture-layout slots while material, packet order,
@@ -1449,7 +1479,8 @@ impl GlueManager {
         if !self.try_refresh_targeted_visual_objects(visual_objects)? {
             self.rebuild_visual_topology_from_live()?;
         }
-        self.pointer = UiPointerPlan::from_live(&self.live);
+        // Hit testing reads current visibility, alpha, and transformed bounds
+        // from geometry. Visual journals do not alter the retained target facts.
         Ok(())
     }
 

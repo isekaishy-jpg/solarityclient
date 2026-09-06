@@ -201,6 +201,18 @@ impl UiRuntimeObjectPlan {
         &self.anchors[object.first_anchor..object.first_anchor + object.anchor_count]
     }
 
+    pub(crate) fn animation_transform_matches(
+        &self,
+        object_index: usize,
+        transform: crate::animation::UiAnimationTransform,
+    ) -> bool {
+        self.objects.get(object_index).is_some_and(|object| {
+            object.animation_alpha_delta == transform.alpha_delta
+                && object.animation_offset == transform.offset
+                && object.animation_active == transform.active
+        })
+    }
+
     pub(crate) fn replace_slider(&mut self, object_index: usize, slider: UiRuntimeSlider) {
         if let Some(object) = self.objects.get_mut(object_index) {
             object.slider = Some(slider);
@@ -780,6 +792,53 @@ pub(super) fn refresh_runtime_visual_objects(
     Ok(())
 }
 
+/// Tests final layout state after the complete authored callback transaction.
+/// Clearing and restoring anchors must remain visible to Lua, but does not
+/// invalidate retained geometry when every layout input ends unchanged.
+pub(super) fn runtime_layout_journal_is_unchanged(
+    lua: &Lua,
+    live: &UiRuntimeObjectPlan,
+    dirty_objects: &[(usize, u32)],
+) -> Result<bool, UiScriptError> {
+    let registry: Table = lua
+        .named_registry_value(OBJECT_REGISTRY)
+        .map_err(|error| snapshot_error("object registry", error))?;
+    for &(object_index, _) in dirty_objects {
+        let lua_index = object_index + 1;
+        let table: Table = registry
+            .raw_get(lua_index)
+            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
+        let current = live
+            .objects
+            .get(object_index)
+            .ok_or_else(|| UiScriptError::Plan {
+                message: format!("dirty UI object {lua_index} is outside the retained arena"),
+            })?;
+        let layout = snapshot_layout(lua_index, &table, live.objects.len())?;
+        if current.width != layout.0
+            || current.height != layout.1
+            || current.scale != layout.2
+            || live.anchors_for(current) != layout.3
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn snapshot_layout(
+    lua_index: usize,
+    table: &Table,
+    object_count: usize,
+) -> Result<(f64, f64, f64, Vec<UiRuntimeAnchor>), UiScriptError> {
+    let width = finite_region_number(table, width_key(), lua_index, "width")?;
+    let height = finite_region_number(table, height_key(), lua_index, "height")?;
+    let scale = positive_region_number(table, scale_key(), lua_index, "scale")?;
+    let mut anchors = Vec::new();
+    snapshot_anchors(lua_index, table, object_count, &mut anchors)?;
+    Ok((width, height, scale, anchors))
+}
+
 /// Copies only fields named by the per-object mutation journal.
 ///
 /// Object identity and arena topology are validated by the dispatcher before
@@ -811,11 +870,7 @@ pub(super) fn refresh_runtime_dirty_objects(
         let (kind, role, parent) = (current.kind, current.role, current.parent);
 
         if flags & DIRTY_LAYOUT != 0 {
-            let width = finite_region_number(&table, width_key(), lua_index, "width")?;
-            let height = finite_region_number(&table, height_key(), lua_index, "height")?;
-            let scale = positive_region_number(&table, scale_key(), lua_index, "scale")?;
-            let mut anchors = Vec::new();
-            snapshot_anchors(lua_index, &table, object_count, &mut anchors)?;
+            let (width, height, scale, anchors) = snapshot_layout(lua_index, &table, object_count)?;
             live.objects[object_index].width = width;
             live.objects[object_index].height = height;
             live.objects[object_index].scale = scale;

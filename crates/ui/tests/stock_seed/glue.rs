@@ -2381,6 +2381,157 @@ fn glue_manager_advances_visible_on_update_handlers_once() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Authored anchor transactions stay observable to Lua, while unchanged final
+/// layout reuses the mesh and real changes propagate through anchor dependencies.
+#[test]
+fn glue_manager_retains_unchanged_layout_transactions() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Layout.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Layout.xml",
+            bytes: br#"<Ui>
+<Frame name="LayoutRoot" enableMouse="true"><Size x="100" y="50"/>
+  <Anchors><Anchor point="BOTTOMLEFT"><Offset x="20" y="30"/></Anchor></Anchors>
+  <Scripts><OnLoad>
+    CALLS = 0 OFFSET_X = 20 ROOT_WIDTH = 100 ROOT_HEIGHT = 50 ROOT_SCALE = 1 ROOT_ALPHA = 1
+    self:RegisterEvent("SET_GLUE_SCREEN")
+  </OnLoad><OnUpdate>
+    CALLS = CALLS + 1
+    self:ClearAllPoints()
+    assert(self:GetNumPoints() == 0)
+    self:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", OFFSET_X, 30)
+    assert(self:GetNumPoints() == 1)
+    self:SetSize(ROOT_WIDTH, ROOT_HEIGHT)
+    self:SetScale(ROOT_SCALE)
+    self:SetAlpha(ROOT_ALPHA)
+  </OnUpdate><OnEvent>
+    self:ClearAllPoints()
+    self:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", OFFSET_X, 30)
+  </OnEvent></Scripts>
+</Frame>
+<Frame name="LayoutDependent"><Anchors>
+  <Anchor point="BOTTOMLEFT" relativeTo="LayoutRoot"/>
+  <Anchor point="TOPRIGHT" relativeTo="LayoutRoot"/>
+</Anchors><Layers><Layer level="ARTWORK">
+  <Texture name="LayoutTexture" file="Interface\Glues\Layout"/>
+</Layer></Layers><Scripts><OnUpdate>
+  self:ClearAllPoints()
+  self:SetPoint("BOTTOMLEFT", LayoutRoot, "BOTTOMLEFT", 0, 0)
+  self:SetPoint("TOPRIGHT", LayoutRoot, "TOPRIGHT", 0, 0)
+</OnUpdate></Scripts></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let root = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("LayoutRoot"))
+        .ok_or("missing layout root")?;
+    let dependent = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("LayoutDependent"))
+        .ok_or("missing layout dependent")?;
+    let globals = manager.bundle().lua().globals();
+    let mesh_identity = manager.render_plan().mesh().geometry_identity();
+    let vertex_bytes = manager.render_plan().mesh().vertex_bytes().to_vec();
+    let snapshot_count = manager.runtime_snapshot_count();
+    for _ in 0..3 {
+        assert!(
+            !manager.update(0.016)?,
+            "unchanged layout requested presentation upload"
+        );
+        assert_eq!(
+            manager.render_plan().mesh().geometry_identity(),
+            mesh_identity
+        );
+        assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
+    }
+    assert_eq!(globals.get::<u32>("CALLS")?, 3);
+    assert!(manager.take_update_failure().is_none());
+    manager.dispatch_event("SET_GLUE_SCREEN", &UiEventPayload::empty())?;
+    assert_eq!(
+        manager.render_plan().mesh().geometry_identity(),
+        mesh_identity
+    );
+
+    globals.set("OFFSET_X", 75)?;
+    assert!(manager.update(0.016)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(root)
+            .ok_or("missing root geometry")?
+            .logical_bounds()
+            .left(),
+        75.0,
+    );
+    assert_close(
+        manager
+            .geometry()
+            .region(dependent)
+            .ok_or("missing dependent geometry")?
+            .logical_bounds()
+            .left(),
+        75.0,
+    );
+    assert!(!manager.update(0.016)?);
+
+    globals.set("ROOT_WIDTH", 180)?;
+    globals.set("ROOT_HEIGHT", 80)?;
+    assert!(manager.update(0.016)?);
+    let bounds = manager
+        .geometry()
+        .region(dependent)
+        .ok_or("missing resized dependent")?
+        .logical_bounds();
+    assert_close(bounds.width(), 180.0);
+    assert_close(bounds.height(), 80.0);
+    assert!(!manager.update(0.016)?);
+    assert_eq!(manager.runtime_snapshot_count(), snapshot_count);
+
+    // A simultaneous visual journal must still publish when layout is unchanged.
+    globals.set("ROOT_ALPHA", 0.5)?;
+    assert!(manager.update(0.016)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(root)
+            .ok_or("missing faded root")?
+            .effective_alpha(),
+        0.5,
+    );
+    assert!(!manager.update(0.016)?);
+
+    for (alpha, expected) in [(0.0, None), (0.5, Some(root))] {
+        globals.set("ROOT_ALPHA", alpha)?;
+        assert!(manager.update(0.016)?);
+        let hit = manager.pointer_button((90.0, 40.0), UiPointerButton::Left, true)?;
+        assert_eq!(hit.object_index(), expected);
+        manager.pointer_button((90.0, 40.0), UiPointerButton::Left, false)?;
+    }
+
+    globals.set("ROOT_SCALE", 0.5)?;
+    assert!(manager.update(0.016)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(root)
+            .ok_or("missing scaled root")?
+            .effective_scale(),
+        0.5,
+    );
+    assert!(!manager.update(0.016)?);
+    assert!(manager.take_update_failure().is_none());
+    Ok(())
+}
+
 /// One broken authored handler is retired without preventing healthy handlers
 /// or the retained presentation transaction from advancing.
 #[test]

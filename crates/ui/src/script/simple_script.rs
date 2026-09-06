@@ -1830,6 +1830,7 @@ impl UiScriptRuntime {
     pub(crate) fn dispatch_updates(
         &mut self,
         bundle: &UiBundle,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
         elapsed_seconds: f64,
     ) -> Result<UiUpdateDispatch, UiScriptError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
@@ -1852,8 +1853,12 @@ impl UiScriptRuntime {
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
-        let animation_updates = advance_animations(lua, elapsed_seconds)
+        let mut animation_updates = advance_animations(lua, elapsed_seconds)
             .map_err(|error| execution_error("FrameXML animation update", error))?;
+        // Timer-only animation groups must advance and run their callbacks,
+        // but identical contributions do not invalidate native presentation.
+        animation_updates
+            .retain(|&(index, transform)| !live.animation_transform_matches(index, transform));
         advance_edit_box_caret(lua, &objects, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
         let update_objects: Table = lua
@@ -2004,6 +2009,32 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("automatic FontString extent", error))?;
         }
         super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects)
+    }
+
+    /// Recognizes layout writes whose final inputs match the published state.
+    pub(crate) fn layout_journal_is_unchanged(
+        &self,
+        bundle: &UiBundle,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
+        dirty_objects: &[(usize, u32)],
+    ) -> Result<bool, UiScriptError> {
+        if dirty_objects.is_empty()
+            || dirty_objects
+                .iter()
+                .any(|&(_, flags)| flags != DIRTY_LAYOUT)
+        {
+            return Ok(false);
+        }
+        // Automatic text measurement may still change layout inputs when the
+        // journal is copied. Let that transaction complete before comparing.
+        let auto_text_dirty: bool = bundle
+            .lua()
+            .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
+            .map_err(|error| execution_error("automatic FontString extent", error))?;
+        if auto_text_dirty {
+            return Ok(false);
+        }
+        super::runtime_state::runtime_layout_journal_is_unchanged(bundle.lua(), live, dirty_objects)
     }
 
     /// Reports whether a journal can use the fixed-slot EditBox glyph path.

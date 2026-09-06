@@ -1,4 +1,4 @@
-//! Executes the stock FrameXML startup and first update without a renderer.
+//! Checks stock FrameXML and optionally measures steady updates without a renderer.
 
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
@@ -24,6 +24,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(|value| value.into_string().ok())
         .ok_or_else(|| argument_error("missing locale"))?
         .parse::<Locale>()?;
+    let benchmark_frames = arguments
+        .next()
+        .map(|value| value.to_string_lossy().parse::<std::num::NonZeroUsize>())
+        .transpose()?;
     if arguments.next().is_some() {
         return Err(argument_error("unexpected extra argument").into());
     }
@@ -170,12 +174,47 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     println!("Stock wheel zoom bindings emitted both timed distance requests");
+    if let Some(count) = benchmark_frames {
+        manager.set_modifier_keys(solarity_ui::UiModifierKeys::new(
+            false, false, false, false, false, false,
+        ));
+        let mut durations = Vec::with_capacity(count.get());
+        let mut dirty_frames = 0;
+        let mut previous = std::time::Instant::now();
+        for index in 0..count.get() + 32 {
+            let started = std::time::Instant::now();
+            let elapsed = started.duration_since(previous).as_secs_f64();
+            previous = started;
+            let changed = manager.update(elapsed)?;
+            let duration = started.elapsed();
+            if let Some(error) = manager.take_update_failure() {
+                return Err(IoError::other(error).into());
+            }
+            if index >= 32 {
+                durations.push(duration);
+                dirty_frames += usize::from(changed);
+            }
+        }
+        let total: std::time::Duration = durations.iter().sum();
+        durations.sort_unstable();
+        let percentile =
+            |percent: usize| durations[(durations.len() - 1) * percent / 100].as_secs_f64() * 1000.;
+        println!(
+            "FrameXML update samples={} dirty_frames={dirty_frames} mean_ms={:.6} p50_ms={:.6} p95_ms={:.6} p99_ms={:.6} max_ms={:.6}; fixture player, no GPU upload or rendering",
+            count.get(),
+            total.as_secs_f64() * 1000. / count.get() as f64,
+            percentile(50),
+            percentile(95),
+            percentile(99),
+            percentile(100)
+        );
+    }
     Ok(())
 }
 
 fn argument_error(message: &str) -> IoError {
     IoError::new(
         ErrorKind::InvalidInput,
-        format!("{message}; usage: validate_frame_lifecycle <Data> <locale>"),
+        format!("{message}; usage: validate_frame_lifecycle <Data> <locale> [benchmark frames]"),
     )
 }

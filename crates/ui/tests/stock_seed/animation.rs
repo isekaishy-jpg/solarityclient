@@ -284,6 +284,75 @@ fn animation_groups_apply_parallel_bands_to_live_geometry() -> Result<(), Box<dy
     Ok(())
 }
 
+/// Timer groups keep time and callbacks without repeatedly publishing identical
+/// transforms; independent visual writes on the same owner still reach the mesh.
+#[test]
+fn timing_only_animation_retains_presentation_and_delivers_completion() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Timer.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Timer.xml",
+            bytes: br#"<Ui><Frame name="TimerRoot"><Size x="100" y="100"/>
+  <Layers><Layer><Texture name="$parentTexture" file="Interface\Glues\Timer"/></Layer></Layers>
+  <Animations><AnimationGroup parentKey="timer"><Animation duration=".5"/>
+    <Scripts><OnLoad>self:Play()</OnLoad><OnFinished>
+      TIMER_FINISHED = true
+      self:GetParent():SetAlpha(.5)
+    </OnFinished></Scripts>
+  </AnimationGroup></Animations>
+  <Scripts><OnUpdate>if FADE_TIMER then self:SetAlpha(.8) FADE_TIMER = false end</OnUpdate></Scripts>
+</Frame></Ui>"#,
+        },
+    ])?;
+    let mut manager = GlueManager::start(mount(&fixture)?, (1024, 768), false)?;
+    let root = manager
+        .objects()
+        .iter()
+        .position(|object| object.name() == Some("TimerRoot"))
+        .ok_or("missing timer root")?;
+    let identity = manager.render_plan().mesh().geometry_identity();
+    assert!(!manager.update(0.125)?);
+    manager
+        .bundle()
+        .lua()
+        .load("assert(TimerRoot.timer:GetProgress() == .25)")
+        .exec()?;
+    assert_eq!(manager.render_plan().mesh().geometry_identity(), identity);
+    manager.bundle().lua().globals().set("FADE_TIMER", true)?;
+    assert!(manager.update(0.125)?);
+    assert_close(
+        manager
+            .geometry()
+            .region(root)
+            .ok_or("missing timer geometry")?
+            .effective_alpha(),
+        0.8,
+    );
+    assert!(manager.update(0.25)?);
+    assert!(
+        manager
+            .bundle()
+            .lua()
+            .globals()
+            .get::<bool>("TIMER_FINISHED")?
+    );
+    assert_close(
+        manager
+            .geometry()
+            .region(root)
+            .ok_or("missing completed timer geometry")?
+            .effective_alpha(),
+        0.5,
+    );
+    assert!(!manager.update(0.25)?);
+    assert!(manager.take_update_failure().is_none());
+    Ok(())
+}
+
 fn assert_bounds(bounds: solarity_ui::UiScreenRect, expected: [f64; 4]) {
     for (actual, expected) in [bounds.left(), bounds.bottom(), bounds.right(), bounds.top()]
         .into_iter()
