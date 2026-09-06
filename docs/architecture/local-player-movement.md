@@ -268,7 +268,8 @@ request.
 The reported Blood Elf alternate jump has additional archive-backed coverage.
 Both standing and forward-running movement execute 128 complete jumps for each
 sex through the real local movement and retained animation owners. Both authored
-variants survive to distinct sampled bone palettes. This has not reproduced the
-reported missing visible twirl. The CRT stream and authored frequencies remain
-unchanged, and each live jump now records the model, selected sequence and
+variants survive to distinct sampled bone palettes. User testing of Build 000020
+confirmed the alternate jump, with the female model's sequences 108 and 109
+both present in the session log. The CRT stream and authored frequencies remain
+unchanged, and each live jump records the model, selected sequence and
 variation, movement flags, and scene time for the next user test.

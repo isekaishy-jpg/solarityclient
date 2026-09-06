@@ -313,8 +313,12 @@ area/parent substitutions, foot height, and the water-walking exclusion through
 the resident static liquid providers. This does not complete registered interior
 group/area liquid selection, vehicle/passenger policy, or transport liquids.
 
-Armor foley uses the player's chest Item.dbc material or the creature model's
-foley material. Server item-cache material overrides remain outside this path.
+Armor foley joins the player's chest Item.dbc material or the creature model's
+foley material to `Material.dbc`'s third column. The original `0x004CFC10` table
+owner at `0x00AD41A8` resolves through its vtable and loader to `Material.dbc`;
+`ItemGroupSounds.dbc` supplies unrelated inventory pickup/putdown cues. Authored
+zero foley entries remain silent. Server item-cache material overrides remain
+outside this path.
 Hover, ghost, and the movement flight flag suppress ordinary footsteps/foley.
 `FootstepSounds` and both armor-foley CVars apply live alongside the world UI's
 master/category sound settings. Local footsteps use channel 17 and priority 115;
@@ -330,3 +334,10 @@ failures are contained at the unit callback boundary. The memory-output archive
 test checks decoded samples, live footstep suppression, hover/ghost admission,
 the local channel limit, and cancellation across disconnect. Remote jump/land
 notifications still depend on the remaining remote movement packet integration.
+
+SDL slot admission reports every replaced voice generation, including a voice
+that finished naturally while the next payload was loading. The engine retires
+that generation and releases its decoded reference before publishing the new
+voice. A memory-output regression completes a sample between load reservation
+and completion, then applies live settings; the old behavior retained a stale
+backend handle and terminated the world event loop on the following update.

@@ -97,11 +97,11 @@ impl SoundVoicePriority {
     }
 }
 
-/// Result of admitting one backend voice, including a hard-pool replacement.
+/// Result of admitting one backend voice, including any retired slot generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SoundBackendPlayback {
     pub(super) voice: SoundVoiceHandle,
-    pub(super) stolen: Option<SoundVoiceHandle>,
+    pub(super) replaced: Option<SoundVoiceHandle>,
 }
 
 impl SoundBackendPlayback {
@@ -111,10 +111,14 @@ impl SoundBackendPlayback {
         self.voice
     }
 
-    /// Returns the generation replaced at the hard virtual-voice limit.
+    /// Returns the previous generation of the reused slot, playing or stopped.
+    ///
+    /// A naturally stopped voice may still be retained by the engine while
+    /// another sound is loading. Admission invalidates it just as it does a
+    /// playing voice replaced at the hard virtual-voice limit.
     #[must_use]
-    pub const fn stolen(self) -> Option<SoundVoiceHandle> {
-        self.stolen
+    pub const fn replaced(self) -> Option<SoundVoiceHandle> {
+        self.replaced
     }
 }
 

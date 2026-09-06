@@ -391,14 +391,14 @@ impl SoundEngine<'_> {
                 return Err(error.into());
             }
         };
-        if let Some(stolen) = playback.stolen()
+        if let Some(replaced) = playback.replaced()
             && let Some(index) = self
                 .active_voices
                 .iter()
-                .position(|voice| voice.handle == stolen)
+                .position(|voice| voice.handle == replaced)
         {
-            let stolen_voice = self.active_voices.remove(index);
-            self.decoder.release(stolen_voice.sound);
+            let replaced_voice = self.active_voices.remove(index);
+            self.decoder.release(replaced_voice.sound);
         }
         let voice = playback.voice();
         self.active_voices.push(ActiveVoice {

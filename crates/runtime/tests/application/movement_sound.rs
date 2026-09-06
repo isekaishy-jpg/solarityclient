@@ -54,7 +54,23 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         movement_sounds.footstep(8, u32::MAX, false),
         movement_sounds.footstep(8, 0, false)
     );
-    assert_eq!(movement_sounds.armor(1), 274);
+    assert_eq!(movement_sounds.armor(1), 0);
+    let entries = solarity_asset::SoundEntryCatalog::load(&mut store)?;
+    for (material, id, name) in [
+        (5, 1005, "FoleySoundChain"),
+        (6, 1004, "FoleySoundPlate"),
+        (8, 1003, "FoleySoundLeather"),
+    ] {
+        assert_eq!(movement_sounds.armor(material), id);
+        let entry = entries.entry(id).ok_or("material foley sound entry")?;
+        assert_eq!(entry.internal_name(), name);
+        assert!(entry.assets().iter().all(|asset| {
+            asset
+                .path()
+                .as_str()
+                .starts_with("SOUND\\ITEM\\FOLEYSOUNDS\\")
+        }));
+    }
     let cvars = Cvars {
         footsteps: Cell::new(true),
         armor: Cell::new(false),

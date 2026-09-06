@@ -16,6 +16,8 @@ mod database;
 mod database_creature_family;
 #[path = "stock_seed/database_game_object.rs"]
 mod database_game_object;
+#[path = "stock_seed/database_movement_sound.rs"]
+mod database_movement_sound;
 #[path = "stock_seed/database_sound_environment.rs"]
 mod database_sound_environment;
 #[path = "stock_seed/database_ui_sound.rs"]

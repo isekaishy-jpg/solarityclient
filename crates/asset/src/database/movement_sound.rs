@@ -84,7 +84,9 @@ impl MovementSoundCatalog {
                 footsteps.insert((row[1], row[2]), [row[3], row[4]]);
             }
         }
-        let armor = rows::<5>(store, "ItemGroupSounds")?
+        // 4CFC10's AD41A8 table uses vtable A283C0 -> loader 6489C0 ->
+        // filename getter 8B47D0 (Material.dbc), with foley at row +8.
+        let armor = rows::<5>(store, "Material")?
             .into_iter()
             .map(|row| (row[0], row[2]))
             .collect();
@@ -127,10 +129,10 @@ impl MovementSoundCatalog {
         if sound == 0 { lookup(0) } else { sound }
     }
 
-    /// Returns ItemGroupSounds' movement column selected by native `0x004CFC10`.
+    /// Returns Material's foley column selected by native `0x004CFC10`.
     #[must_use]
-    pub fn armor(&self, item_sound_group: u32) -> u32 {
-        self.armor.get(&item_sound_group).copied().unwrap_or(0)
+    pub fn armor(&self, material: u32) -> u32 {
+        self.armor.get(&material).copied().unwrap_or(0)
     }
 
     /// Resolves MCLY's effect to TerrainType via native `0x007A0530`.

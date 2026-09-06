@@ -162,7 +162,7 @@ fn reused_voice_rejects_stale_and_foreign_handles() -> Result<(), Box<dyn Error>
         Err(SoundBackendError::UnknownVoice)
     ));
     let replacement = backend.play(&decoder, sound, 1.0, false, SoundVoicePriority::new(100))?;
-    assert_eq!(replacement.stolen(), Some(first));
+    assert_eq!(replacement.replaced(), Some(first));
     let second = replacement.voice();
     assert_ne!(second, first);
     assert!(matches!(

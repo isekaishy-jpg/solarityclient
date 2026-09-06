@@ -340,9 +340,11 @@ impl<'output> SoundBackend<'output> {
         let slot_index = stopped_slot
             .or_else(|| self.weakest_voice_index())
             .ok_or(SoundBackendError::VoiceCapacity)?;
-        let stolen = stopped_slot
-            .is_none()
-            .then(|| self.handle_for_slot(slot_index));
+        // Output playback can finish after the engine's last collection pass.
+        // Reusing that stopped slot still invalidates its previous generation;
+        // report it so the engine releases the old voice and decoded reference.
+        let replaced =
+            (self.voices[slot_index].generation != 0).then(|| self.handle_for_slot(slot_index));
         let admission_sequence = self
             .next_admission_sequence
             .checked_add(1)
@@ -353,7 +355,7 @@ impl<'output> SoundBackend<'output> {
             .checked_add(1)
             .ok_or(SoundBackendError::GenerationCapacity)?;
 
-        if stolen.is_some() {
+        if replaced.is_some() {
             slot.track
                 .stop(0)
                 .and_then(|()| slot.track.clear_audio())
@@ -389,7 +391,7 @@ impl<'output> SoundBackend<'output> {
             generation,
         };
         self.rebalance()?;
-        Ok(SoundBackendPlayback { voice, stolen })
+        Ok(SoundBackendPlayback { voice, replaced })
     }
 
     /// Returns the current state of one live voice generation.

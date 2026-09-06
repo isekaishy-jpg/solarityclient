@@ -128,6 +128,54 @@ fn cancelled_foreign_and_duplicate_completions_cannot_start_voices() -> Result<(
     Ok(())
 }
 
+/// A voice can finish on the output while its replacement is still decoding.
+#[test]
+fn completion_retires_a_voice_that_stopped_after_load_reservation() -> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let path = AssetPath::new("Sound/Test/Tone.wav")?;
+    let encoded = SoundCache::new().load(&mut store, &path)?;
+    let first = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Once)
+    })?)?;
+    let SoundPlayback::Started(first) =
+        engine.with_engine_mut(|engine| engine.complete_load(first.handle(), &encoded))?
+    else {
+        return Err("first voice was suppressed".into());
+    };
+    let next = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Once)
+    })?)?;
+    // The fixture is one second long. Do not collect it between reservation
+    // and completion: a device can finish the sample during any worker load.
+    engine.with_engine(|engine| engine.generate(&mut vec![0; 44_100 * 4 * 2]))?;
+    assert_eq!(
+        engine.with_engine(|engine| engine.voice_state(first))?,
+        solarity_media::SoundVoiceState::Stopped
+    );
+    let SoundPlayback::Started(next) =
+        engine.with_engine_mut(|engine| engine.complete_load(next.handle(), &encoded))?
+    else {
+        return Err("replacement voice was suppressed".into());
+    };
+    // This previously reached the retired backend generation and terminated
+    // the client's next world sound-settings update with UnknownVoice.
+    let live_settings = settings(true)?;
+    engine.with_engine_mut(|engine| engine.set_settings(live_settings))?;
+    assert_eq!(engine.with_engine(|engine| engine.active_voice_count()), 1);
+    assert!(matches!(
+        engine.with_engine(|engine| engine.voice_state(first)),
+        Err(SoundEngineError::UnknownVoice)
+    ));
+    assert_eq!(
+        engine.with_engine(|engine| engine.voice_state(next))?,
+        solarity_media::SoundVoiceState::Playing
+    );
+    engine.with_engine_mut(|engine| engine.stop(next))?;
+    Ok(())
+}
+
 /// Completion consumes every failing reservation instead of keeping an exclusive ghost.
 #[test]
 fn failed_or_mismatched_loads_release_admission() -> Result<(), Box<dyn Error>> {
