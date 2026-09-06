@@ -1220,6 +1220,10 @@ pub(crate) fn wrap_line<T: Copy>(
     if items.is_empty() || !max_width.is_finite() || max_width <= 0.0 {
         return vec![items.to_vec()];
     }
+    // Extents and screen-coordinate subtraction can round the same glyph
+    // width differently. Keep an exact-fit line intact; this allowance is
+    // far smaller than a 26.6 font unit at supported presentation scales.
+    let wrap_limit = max_width + 1.0e-7;
     let mut lines = Vec::new();
     let mut current = Vec::new();
     let mut current_width = 0.0;
@@ -1247,17 +1251,17 @@ pub(crate) fn wrap_line<T: Copy>(
                 whitespace_width
             }
             + word_width;
-        if !current.is_empty() && joined_width > max_width {
+        if !current.is_empty() && joined_width > wrap_limit {
             lines.push(std::mem::take(&mut current));
             current_width = 0.0;
         } else if !current.is_empty() {
             current.extend_from_slice(whitespace);
             current_width += whitespace_width;
         }
-        if non_space_wrap && word_width > max_width {
+        if non_space_wrap && word_width > wrap_limit {
             for item in word {
                 let item_width = advance(item);
-                if !current.is_empty() && current_width + item_width > max_width {
+                if !current.is_empty() && current_width + item_width > wrap_limit {
                     lines.push(std::mem::take(&mut current));
                     current_width = 0.0;
                 }

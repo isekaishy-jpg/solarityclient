@@ -44,6 +44,8 @@ const METATABLE_REGISTRY: &str = "solarity.ui.object_metatables";
 const LIVE_STATE_GENERATION_REGISTRY: &str = "solarity.ui.live_state_generation";
 const FALLBACK_STATE_GENERATION_REGISTRY: &str = "solarity.ui.fallback_state_generation";
 const AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY: &str = "solarity.ui.auto_text_measurement_dirty";
+const AUTO_TEXT_MEASUREMENT_ALL_REGISTRY: &str = "solarity.ui.auto_text_measurement_all";
+const AUTO_TEXT_MEASUREMENT_OBJECTS_REGISTRY: &str = "solarity.ui.auto_text_measurement_objects";
 const OBJECT_STATE_GENERATION_REGISTRY: &str = "solarity.ui.object_state_generation";
 const DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.dirty_objects";
 const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generation";
@@ -1101,6 +1103,13 @@ impl UiScriptRuntime {
         lua.set_named_registry_value(LIVE_STATE_GENERATION_REGISTRY, 0_u64)
             .and_then(|()| lua.set_named_registry_value(FALLBACK_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true))
+            .and_then(|()| lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_ALL_REGISTRY, true))
+            .and_then(|()| {
+                lua.set_named_registry_value(
+                    AUTO_TEXT_MEASUREMENT_OBJECTS_REGISTRY,
+                    lua.create_table()?,
+                )
+            })
             .and_then(|()| lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| lua.set_named_registry_value(OBJECT_STATE_GENERATION_REGISTRY, 0_u64))
             .and_then(|()| {
@@ -1660,19 +1669,7 @@ impl UiScriptRuntime {
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
         let started = std::time::Instant::now();
         self.snapshot_count.set(self.snapshot_count.get() + 1);
-        let auto_text_dirty: bool = bundle
-            .lua()
-            .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
-            .map_err(|error| execution_error("automatic FontString extent", error))?;
-        if auto_text_dirty {
-            self.text_measurement
-                .synchronize_auto_font_strings(bundle.lua(), self.registered_object_count())
-                .map_err(|error| execution_error("automatic FontString extent", error))?;
-            bundle
-                .lua()
-                .set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
-                .map_err(|error| execution_error("automatic FontString extent", error))?;
-        }
+        self.synchronize_auto_text_measurement(bundle.lua())?;
         refresh_all_scroll_frame_ranges(
             bundle.lua(),
             self.registered_object_count(),
@@ -1998,17 +1995,33 @@ impl UiScriptRuntime {
         dirty_objects: &[(usize, u32)],
     ) -> Result<Vec<usize>, UiScriptError> {
         let lua = bundle.lua();
-        let auto_text_dirty: bool = lua
-            .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
-            .map_err(|error| execution_error("automatic FontString extent", error))?;
-        if auto_text_dirty {
-            self.text_measurement
-                .synchronize_auto_font_strings(lua, self.registered_object_count())
-                .map_err(|error| execution_error("automatic FontString extent", error))?;
-            lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
-                .map_err(|error| execution_error("automatic FontString extent", error))?;
-        }
+        self.synchronize_auto_text_measurement(lua)?;
         super::runtime_state::refresh_runtime_dirty_objects(lua, live, dirty_objects)
+    }
+
+    fn synchronize_auto_text_measurement(&self, lua: &Lua) -> Result<(), UiScriptError> {
+        let synchronize = || -> mlua::Result<()> {
+            if !lua.named_registry_value::<bool>(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)? {
+                return Ok(());
+            }
+            let pending: Table =
+                lua.named_registry_value(AUTO_TEXT_MEASUREMENT_OBJECTS_REGISTRY)?;
+            if lua.named_registry_value::<bool>(AUTO_TEXT_MEASUREMENT_ALL_REGISTRY)? {
+                self.text_measurement
+                    .synchronize_auto_font_strings(lua, self.registered_object_count())?;
+            } else {
+                let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+                for entry in pending.clone().pairs::<usize, bool>() {
+                    let (index, _) = entry?;
+                    self.text_measurement
+                        .update_auto_font_string_size(&objects.raw_get::<Table>(index)?)?;
+                }
+            }
+            pending.clear()?;
+            lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_ALL_REGISTRY, false)?;
+            lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, false)
+        };
+        synchronize().map_err(|error| execution_error("automatic FontString extent", error))
     }
 
     /// Recognizes layout writes whose final inputs match the published state.
@@ -9909,6 +9922,14 @@ fn mark_text_object_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()>
 
 fn mark_auto_text_measurement_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
     lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY, true)?;
+    if let Some(index) = object.raw_get::<Option<usize>>(index_key())? {
+        let pending: Table = lua.named_registry_value(AUTO_TEXT_MEASUREMENT_OBJECTS_REGISTRY)?;
+        pending.raw_set(index, true)?;
+    } else {
+        // Shared Font objects have no region index; preserve the full pass for
+        // changes that can affect multiple FontStrings, and for initial load.
+        lua.set_named_registry_value(AUTO_TEXT_MEASUREMENT_ALL_REGISTRY, true)?;
+    }
     mark_text_object_state_changed(lua, object)
 }
 

@@ -58,3 +58,21 @@ the streaming phase component also benefits from its separate camera resolution.
 These runs had captures disabled and profiling enabled. The initial hover rebuild
 still produces a large isolated stall, and this result does not establish the
 requested overall FPS target or performance under live movement/network load.
+
+## Tooltip text measurement
+
+Size, spacing, and shadow-offset writes now queue individual FontStrings for
+automatic extent updates. Initial loading and unindexed shared-Font writes retain
+the complete pass. Both full snapshots and retained journal publication consume
+the same queue; failed measurement leaves it pending.
+
+In the same installed 1440p replay, retained tooltip copy/measurement fell from
+roughly 22 ms to 0.06?0.69 ms. Geometry and glyph publication still cost several
+milliseconds, and the first tooltip appearance still requires a broader rebuild.
+This is a component-level result, not a claim that every hover stall is resolved.
+
+The capture also exposed an exact-fit title wrapping onto two lines because
+screen-coordinate subtraction narrowed its measured field by about 1e-13 UI
+units. The shared wrapping routine now allows 1e-7 UI units of roundoff, with a
+regression proving that a real 1/64-unit deficit still wraps. This applies equally
+to word boundaries and enabled non-space wrapping.

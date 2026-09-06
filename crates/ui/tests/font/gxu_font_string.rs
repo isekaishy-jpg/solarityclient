@@ -157,3 +157,40 @@ fn atlas_reserves_opaque_padding_texel_for_text_primitives() -> Result<(), FontE
     assert_eq!(pixels, [255; 4]);
     Ok(())
 }
+
+/// A natural-width title must survive translation into resolved screen bounds.
+#[test]
+fn word_wrap_preserves_exact_fit_after_screen_coordinate_subtraction() {
+    // Installed FRIZQT at 26px, rendered at 1440/768 pixels per UI unit.
+    let text = "Party Options"
+        .chars()
+        .zip([
+            16., 15., 10., 10., 15., 7., 23., 17., 10., 7., 17., 16., 13.,
+        ])
+        .map(|(c, pixels)| (c, pixels / 1.875))
+        .collect::<Vec<_>>();
+    let natural: f64 = text.iter().map(|(_, advance)| advance).sum();
+    let left = 1115.7200004577637;
+    let resolved_width = (left + natural) - left;
+    assert!(resolved_width < natural);
+    let wrap = |items: &[(char, f64)], width, non_space| {
+        super::wrap_line(items, width, non_space, |item| item.0, |item| item.1)
+    };
+    assert_eq!(
+        wrap(&text, resolved_width, false),
+        std::slice::from_ref(&text)
+    );
+    assert_eq!(wrap(&text, resolved_width - 1. / 64., false).len(), 2);
+    let word = text
+        .iter()
+        .copied()
+        .filter(|(c, _)| *c != ' ')
+        .collect::<Vec<_>>();
+    let natural: f64 = word.iter().map(|(_, advance)| advance).sum();
+    let resolved_width = (left + natural) - left;
+    assert_eq!(
+        wrap(&word, resolved_width, true),
+        std::slice::from_ref(&word)
+    );
+    assert_eq!(wrap(&word, resolved_width - 1. / 64., true).len(), 2);
+}
