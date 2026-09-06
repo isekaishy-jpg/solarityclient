@@ -113,6 +113,14 @@ impl DecodedWorldModel {
         &self.spatial.references
     }
 
+    /// Returns optional MCVP convex-volume planes in authored order.
+    /// Each record contains the unnormalized coefficients `[A, B, C, D]`.
+    /// Native build 12340 retains these independently of group BSP geometry.
+    #[must_use]
+    pub fn convex_volume_planes(&self) -> &[[f32; 4]] {
+        &self.spatial.convex_volume_planes
+    }
+
     /// Returns every MOMT material in authored table order.
     #[must_use]
     pub fn materials(&self) -> &[WorldModelMaterial] {

@@ -792,7 +792,6 @@ fn validate_root(path: &AssetPath, root: &wow_wmo::root_parser::WmoRoot) -> Resu
     // The client sizes the placement table from MODD and MODS selects ranges
     // within that decoded table, so MOHD is not authoritative for this field.
     if root.num_lod != 0
-        || !root.convex_volume_planes.is_empty()
         || !root.uv_transforms.is_empty()
         || !root.portal_extras.is_empty()
         || !root.light_extensions.is_empty()
@@ -963,9 +962,9 @@ fn validate_group(
 }
 
 fn validate_root_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), AssetError> {
-    const ALLOWED: [[u8; 4]; 17] = [
+    const ALLOWED: [[u8; 4]; 18] = [
         *b"REVM", *b"DHOM", *b"XTOM", *b"TMOM", *b"NGOM", *b"IGOM", *b"BSOM", *b"VPOM", *b"TPOM",
-        *b"RPOM", *b"VVOM", *b"BVOM", *b"TLOM", *b"SDOM", *b"NDOM", *b"DDOM", *b"GOFM",
+        *b"RPOM", *b"VVOM", *b"BVOM", *b"TLOM", *b"SDOM", *b"NDOM", *b"DDOM", *b"GOFM", *b"PVCM",
     ];
     let chunks = scan_chunks(path, bytes, "WMO root")?;
     validate_unique_chunks(path, &chunks, &ALLOWED, "WMO root", &[])?;
@@ -976,6 +975,7 @@ fn validate_root_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), Asse
         (*b"VPOM", 12),
         (*b"TPOM", 20),
         (*b"RPOM", 8),
+        (*b"PVCM", 16),
     ] {
         if chunks.iter().any(|chunk| {
             chunk.magic == magic && !(chunk.payload_end - chunk.payload_start).is_multiple_of(size)

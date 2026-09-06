@@ -100,6 +100,7 @@ pub(super) struct WorldModelSpatialData {
     pub vertices: Vec<[f32; 3]>,
     pub portals: Vec<WorldModelPortal>,
     pub references: Vec<WorldModelPortalReference>,
+    pub convex_volume_planes: Vec<[f32; 4]>,
 }
 
 impl WorldModelSpatialData {
@@ -112,6 +113,21 @@ impl WorldModelSpatialData {
             path: path.clone(),
             message: message.to_owned(),
         };
+        // Build 12340's 0x007D7470 stores MCVP's byte count divided by 16.
+        // The dependency labels this chunk Cataclysm+, but its four-float
+        // records are already present in stock Wrath transport roots.
+        let convex_volume_planes = root
+            .convex_volume_planes
+            .iter()
+            .map(|entry| entry.plane)
+            .collect::<Vec<_>>();
+        if convex_volume_planes
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite())
+        {
+            return Err(invalid("MCVP contains a non-finite plane"));
+        }
         let vertices = root
             .portal_vertices
             .iter()
@@ -178,6 +194,7 @@ impl WorldModelSpatialData {
             vertices,
             portals,
             references,
+            convex_volume_planes,
         })
     }
 }

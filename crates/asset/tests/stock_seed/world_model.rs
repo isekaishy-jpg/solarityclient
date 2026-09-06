@@ -376,6 +376,67 @@ fn world_model_accepts_stock_inflated_mohd_doodad_count() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Build-12340 transport roots retain complete, finite MCVP plane records.
+#[test]
+fn world_model_retains_stock_transport_convex_volume_planes() -> Result<(), Box<dyn Error>> {
+    let planes = [[2.0_f32, 0.0, 0.0, -4.0], [0.0, -3.0, 1.0, 8.0]];
+    let valid = planes
+        .into_iter()
+        .flatten()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let mut non_finite = valid.clone();
+    non_finite[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+    for (payload, duplicate, expected_error) in [
+        (&valid[..], false, None),
+        (&[][..], false, None),
+        (
+            &valid[..15],
+            false,
+            Some("MCVP requires complete 16-byte records"),
+        ),
+        (
+            &non_finite[..],
+            false,
+            Some("MCVP contains a non-finite plane"),
+        ),
+        (&valid[..], true, Some("WMO root repeats chunk MCVP")),
+    ] {
+        let mut root_wmo = root_fixture(0);
+        push_chunk(&mut root_wmo, *b"PVCM", payload);
+        if duplicate {
+            push_chunk(&mut root_wmo, *b"PVCM", payload);
+        }
+        let fixture = Fixture::new(&[FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Wmo\\Fixture.wmo",
+            bytes: &root_wmo,
+        }])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let result =
+            DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Fixture.wmo")?);
+        if let Some(expected_error) = expected_error {
+            assert!(
+                matches!(result, Err(AssetError::WorldModelDecode { message, .. }) if message.contains(expected_error))
+            );
+        } else {
+            let model = result?;
+            assert_eq!(
+                model.convex_volume_planes(),
+                if payload.is_empty() {
+                    &[][..]
+                } else {
+                    &planes[..]
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Post-build chunks fail before the dependency can silently skip them.
 #[test]
 fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {
