@@ -185,6 +185,14 @@ pub enum AssetError {
         /// Parser or build-12340 structural validation context.
         message: String,
     },
+    /// A minimap translation entry cannot name an archive-relative texture.
+    #[error("failed to decode minimap translation {path}: {message}")]
+    MinimapDecode {
+        /// Normalized translation-table path.
+        path: AssetPath,
+        /// Entry or text-decoding context.
+        message: String,
+    },
     /// A resolved stock WMO root or group is malformed.
     #[error("failed to decode client world model {path}: {message}")]
     WorldModelDecode {

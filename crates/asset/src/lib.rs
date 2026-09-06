@@ -60,6 +60,7 @@ pub use terrain::{
     TerrainTile, TerrainTileIndex, TerrainWorldModelPlacement,
 };
 pub use texture::{BlpBlockCompression, BlpBlockMip, BlpTextureSource, DecodedBlpTexture};
+pub use world::MinimapTextureCatalog;
 pub use world_model::{
     DecodedWorldModel, DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass,
     WorldModelBlendMode, WorldModelBspNode, WorldModelDoodad, WorldModelDoodadSet,
