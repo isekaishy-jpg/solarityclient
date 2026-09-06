@@ -21,6 +21,7 @@ pub struct FrameManager {
     binding_catalog: UiBindingCatalog,
     binding_assignments: Rc<RefCell<UiBindingAssignments>>,
     binding_functions: HashMap<String, mlua::Function>,
+    movement_input: crate::script::UiMovementInput,
 }
 
 impl FrameManager {
@@ -77,6 +78,7 @@ impl FrameManager {
                     label: "FrameXML bindings".to_owned(),
                     message: "missing attached binding assignments".to_owned(),
                 })?;
+        let movement_input = environment.movement_input();
         let owner = GlueManager::start_shared_frame(assets, environment)?;
         let mut binding_functions = HashMap::new();
         for binding in catalog.bindings() {
@@ -100,6 +102,7 @@ impl FrameManager {
             binding_catalog: catalog,
             binding_assignments,
             binding_functions,
+            movement_input,
         })
     }
 
@@ -110,6 +113,16 @@ impl FrameManager {
         resolve: impl FnOnce(&UiBindingAssignments, &UiBindingCatalog) -> T,
     ) -> T {
         resolve(&self.binding_assignments.borrow(), &self.binding_catalog)
+    }
+
+    /// Publishes the source input clock before any focused handlers or bindings.
+    pub fn set_input_event_time(&self, timestamp_ms: u32) {
+        self.movement_input.set_event_time(timestamp_ms);
+    }
+
+    /// Takes the oldest native movement request, preserving its Lua-call time.
+    pub fn take_movement_command(&self) -> Option<crate::UiMovementCommand> {
+        self.movement_input.take()
     }
 
     /// Executes a stock command in the retained FrameXML Lua state and refreshes

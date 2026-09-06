@@ -9,6 +9,7 @@ mod clock;
 mod contact;
 mod fall;
 mod geometry;
+mod ground_trajectory;
 mod grounded;
 mod interval_bounds;
 mod movement_shared;
@@ -25,6 +26,10 @@ pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
 pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
 pub use geometry::MovementGeometry;
+pub use ground_trajectory::{
+    MovementGroundSample, MovementGroundTrajectory, MovementGroundTrajectoryError,
+    MovementYawTrajectory, MovementYawTrajectoryError,
+};
 pub use grounded::{
     MovementFallAdmission, MovementGroundAdvance, MovementGroundAdvanceError,
     MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,

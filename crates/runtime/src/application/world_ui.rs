@@ -51,6 +51,14 @@ pub(super) struct RuntimeWorldUi {
 }
 
 impl RuntimeWorldUi {
+    pub(super) fn set_input_event_time(&self, timestamp_ms: u32) {
+        self.manager.set_input_event_time(timestamp_ms);
+    }
+
+    pub(super) fn take_movement_command(&self) -> Option<solarity_ui::UiMovementCommand> {
+        self.manager.take_movement_command()
+    }
+
     /// Delivers the transfer handler's localized system chat event before card dismissal.
     pub(super) fn transfer_aborted(
         &mut self,
@@ -146,7 +154,10 @@ impl RuntimeWorldUi {
         general_tab_name: String,
     ) -> Result<(Self, Vec<ApplicationError>), ApplicationError> {
         let environment = UiScriptEnvironment::new(logical_extent.0, logical_extent.1, false)
-            .map_err(GlueError::from)?;
+            .map_err(GlueError::from)?
+            .with_client_clock(solarity_ui::UiClientClock::from_source(
+                crate::platform::client_milliseconds,
+            ));
         let world = environment.world_state();
         metadata.publish_active_player(active, &world)?;
 

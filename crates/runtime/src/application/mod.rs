@@ -21,6 +21,7 @@ mod login_ui;
 mod model_playback;
 mod performance_overlay;
 mod player_coordinator;
+mod player_movement;
 mod realm_directory;
 mod run;
 mod sound_coordinator;
@@ -55,6 +56,7 @@ pub use player_coordinator::{
     RuntimeCreaturePoll, RuntimePlayerCatalogs, RuntimePlayerError, RuntimePlayerItemCatalogs,
     RuntimePlayerPoll, RuntimePlayerPresentation, RuntimeRemotePlayerPoll,
 };
+pub use player_movement::RuntimePlayerMovementError;
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;
 pub use terrain_coordinator::{

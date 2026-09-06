@@ -144,6 +144,27 @@ impl MovementFallTrajectory {
         self.distance_at_seconds(seconds)
     }
 
+    /// Samples signed vertical travel from the current height (`0x009870D0`).
+    /// The curve and height offset stay extended until the collision vector is
+    /// stored. Positive results rise; negative results descend.
+    ///
+    /// # Errors
+    /// Rejects non-finite heights or an unrepresentable displacement.
+    pub fn vertical_displacement(
+        self,
+        elapsed_ms: u32,
+        current_height: f32,
+        launch_height: f32,
+    ) -> Result<f32, MovementFallError> {
+        if !current_height.is_finite() || !launch_height.is_finite() {
+            return Err(MovementFallError::NonFiniteDistance);
+        }
+        finite_result(
+            -((f64::from(current_height) - f64::from(launch_height))
+                + self.distance_at_millis_extended(elapsed_ms)?),
+        )
+    }
+
     /// The interval collector keeps the curve result in x87 through subtraction.
     pub(super) fn distance_at_millis_extended(
         self,

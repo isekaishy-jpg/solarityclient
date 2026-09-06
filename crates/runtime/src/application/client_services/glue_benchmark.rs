@@ -304,7 +304,7 @@ impl ClientServices {
             let Some(event) = self.poll_platform_event() else {
                 break;
             };
-            if run::exit_reason(&event, self.platform.window_id().value()).is_some() {
+            if run::exit_reason(&event.event, self.platform.window_id().value()).is_some() {
                 return Err(GlueBenchmarkError::Cancelled);
             }
             // SDL retains native window state during polling. Diagnostic

@@ -6,11 +6,18 @@ use sdl3::mouse::{MouseButton as SdlMouseButton, MouseWheelDirection as SdlWheel
 use crate::platform::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
     MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformEvent, ScanCode,
-    TextEditingEvent, TextInputEvent, WindowEvent, WindowId,
+    TextEditingEvent, TextInputEvent, TimedPlatformEvent, WindowEvent, WindowId,
 };
 
 /// Converts one SDL event without exposing SDL vocabulary to runtime consumers.
-pub(super) fn translate(event: SdlEvent) -> Option<PlatformEvent> {
+pub(super) fn translate(event: SdlEvent) -> Option<TimedPlatformEvent> {
+    // SDL3 timestamps use SDL_GetTicksNS. Convert before truncating so the
+    // stock 32-bit millisecond wrap occurs after 49.7 days, not 4.3 seconds.
+    let timestamp_ms = (event.get_timestamp() / 1_000_000) as u32;
+    translate_payload(event).map(|event| TimedPlatformEvent::new(event, timestamp_ms))
+}
+
+fn translate_payload(event: SdlEvent) -> Option<PlatformEvent> {
     match event {
         SdlEvent::Quit { .. } => Some(PlatformEvent::QuitRequested),
         SdlEvent::AppTerminating { .. } => Some(PlatformEvent::ApplicationTerminating),

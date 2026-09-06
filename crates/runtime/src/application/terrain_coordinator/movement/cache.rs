@@ -155,6 +155,12 @@ impl<'a> RuntimeMovementGeometry<'a> {
     pub const fn failure(&self) -> Option<&RuntimeMovementGeometryFailure> {
         self.failure.as_ref()
     }
+
+    /// Consumes this interval's failure after the solver returns. Coverage stays
+    /// invalid until the caller begins a new interval.
+    pub fn take_failure(&mut self) -> Option<RuntimeMovementGeometryFailure> {
+        self.failure.take()
+    }
 }
 
 impl MovementGeometry for RuntimeMovementGeometry<'_> {

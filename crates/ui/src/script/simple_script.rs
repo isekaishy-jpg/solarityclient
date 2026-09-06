@@ -590,6 +590,7 @@ pub struct UiScriptEnvironment {
     model_intent: Rc<RefCell<UiModelBridge>>,
     network: Rc<RefCell<UiGlueNetworkBridge>>,
     process: Rc<RefCell<crate::script::UiProcessBridge>>,
+    movement_input: crate::script::UiMovementInput,
     current_screen: Rc<RefCell<String>>,
     cursor_visible: Rc<Cell<bool>>,
     cursor_position: Rc<Cell<(f64, f64)>>,
@@ -668,6 +669,7 @@ impl UiScriptEnvironment {
             model_intent: Rc::new(RefCell::new(UiModelBridge::default())),
             network: Rc::new(RefCell::new(UiGlueNetworkBridge::default())),
             process: Rc::new(RefCell::new(crate::script::UiProcessBridge::default())),
+            movement_input: crate::script::UiMovementInput::default(),
             current_screen: Rc::new(RefCell::new(String::new())),
             cursor_visible: Rc::new(Cell::new(true)),
             cursor_position: Rc::new(Cell::new((0.0, 0.0))),
@@ -731,6 +733,17 @@ impl UiScriptEnvironment {
     #[must_use]
     pub const fn client_clock(&self) -> crate::UiClientClock {
         self.client_clock
+    }
+
+    /// Shares the application's input and packet clock with native Lua queries.
+    #[must_use]
+    pub fn with_client_clock(mut self, clock: crate::UiClientClock) -> Self {
+        self.client_clock = clock;
+        self
+    }
+
+    pub(crate) fn movement_input(&self) -> crate::script::UiMovementInput {
+        self.movement_input.clone()
     }
 
     /// Returns one registered console variable's current script-visible text.

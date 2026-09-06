@@ -134,6 +134,7 @@ pub(crate) struct ClientServices {
     world_transfer: RuntimeWorldTransferCoordinator,
     environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
+    player_movement: super::player_movement::RuntimePlayerMovement,
     game_objects: RuntimeGameObjectPresentation,
     terrain: RuntimeTerrainCoordinator,
     terrain_frame: Option<TerrainFrame>,
@@ -450,6 +451,7 @@ impl ClientServices {
                 gameplay: RuntimeGameplayCoordinator::new(),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
+                player_movement: super::player_movement::RuntimePlayerMovement::default(),
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
                     RuntimePlayerCatalogs::new(
@@ -521,9 +523,9 @@ impl ClientServices {
     }
 
     /// Polls one translated main-thread platform event without allocating a batch.
-    pub(crate) fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
+    pub(crate) fn poll_platform_event(&mut self) -> Option<crate::TimedPlatformEvent> {
         let event = self.platform.poll_event()?;
-        self.input.admit(&event);
+        self.input.admit(&event.event);
         Some(event)
     }
 
@@ -552,7 +554,11 @@ impl ClientServices {
     pub(crate) fn service_platform_event(
         &mut self,
         event: &PlatformEvent,
+        timestamp_ms: u32,
     ) -> Result<(), ApplicationError> {
+        if let Some(world_ui) = self.world_ui.as_mut() {
+            world_ui.set_input_event_time(timestamp_ms);
+        }
         if self.developer_console.service_event(
             event,
             self.platform.window_id(),
@@ -1899,6 +1905,18 @@ impl ClientServices {
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.synchronize_component_texture_level();
+        if let Some(ui) = &self.world_ui {
+            while let Some(command) = ui.take_movement_command() {
+                self.player_movement.push(command);
+            }
+        }
+        self.player_movement.service(
+            &mut self.gameplay,
+            &mut self.terrain,
+            &self.game_objects,
+            self.player.movement_dimensions(),
+            crate::platform::client_milliseconds(),
+        )?;
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (

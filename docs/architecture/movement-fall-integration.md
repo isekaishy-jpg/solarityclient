@@ -142,8 +142,8 @@ original response code with a controlled `0x0075F0A0` false return. State,
 notifications, consumed time, and deferred time are checked against those
 outputs. These captures test response to failure, not collection internals.
 
-The interval is ready for the local movement owner. It does not yet update an
-ECS living transform or send a movement packet from keyboard input. Runtime
+The [initial local movement owner](local-player-movement.md) now applies this
+interval to living ECS state and emits frozen keyboard-event snapshots. Runtime
 `collect_movement_interval` now generates candidates over the native expanded
 fall region and rejects incomplete residency. An archive-backed integration
 test advances directly through `RuntimeMovementGeometry` and verifies terrain landing

@@ -40,16 +40,16 @@ pub use application::{
     RuntimeLoginState, RuntimeMovementGeometry, RuntimeMovementGeometryFailure,
     RuntimeMovementOwner, RuntimeMovementQuery, RuntimeMovementReference,
     RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery, RuntimePlayerCatalogs,
-    RuntimePlayerError, RuntimePlayerItemCatalogs, RuntimePlayerPoll, RuntimePlayerPresentation,
-    RuntimeRemotePlayerPoll, RuntimeSoundError, RuntimeStaticMovementError,
-    RuntimeStaticMovementOwner, RuntimeStaticMovementQuery, RuntimeStaticMovementResidency,
-    RuntimeTerrainCoordinator, RuntimeTerrainError, RuntimeTerrainFrameError, RuntimeTerrainPoll,
-    RuntimeTerrainStreamPoll, RuntimeTransportPoll, RuntimeWorldCoordinator, RuntimeWorldEntry,
-    RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
-    RuntimeWorldError, RuntimeWorldModelMovementOwner, RuntimeWorldPoll, RuntimeWorldReplacement,
-    RuntimeWorldState, RuntimeWorldTransferCoordinator, RuntimeWorldTransferEffect,
-    RuntimeWorldTransferError, RuntimeWorldUiError, StartupReport,
-    world_model_environment_emissive,
+    RuntimePlayerError, RuntimePlayerItemCatalogs, RuntimePlayerMovementError, RuntimePlayerPoll,
+    RuntimePlayerPresentation, RuntimeRemotePlayerPoll, RuntimeSoundError,
+    RuntimeStaticMovementError, RuntimeStaticMovementOwner, RuntimeStaticMovementQuery,
+    RuntimeStaticMovementResidency, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimeTerrainFrameError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll, RuntimeTransportPoll,
+    RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldEnvironment,
+    RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame, RuntimeWorldError,
+    RuntimeWorldModelMovementOwner, RuntimeWorldPoll, RuntimeWorldReplacement, RuntimeWorldState,
+    RuntimeWorldTransferCoordinator, RuntimeWorldTransferEffect, RuntimeWorldTransferError,
+    RuntimeWorldUiError, StartupReport, world_model_environment_emissive,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, StartupProfile,
@@ -63,5 +63,5 @@ pub use performance::FrameRateCounter;
 pub use platform::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
     MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformError, PlatformEvent, ScanCode,
-    TextEditingEvent, TextInputEvent, WindowEvent, WindowId,
+    TextEditingEvent, TextInputEvent, TimedPlatformEvent, WindowEvent, WindowId,
 };

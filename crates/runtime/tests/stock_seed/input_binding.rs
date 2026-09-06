@@ -495,6 +495,13 @@ fn live_binding_frame() -> Result<(ClientFixture, solarity_ui::FrameManager), Bo
   end
 </Binding>
 <Binding name="DEBUGONLY" debug="true">error("debug command executed")</Binding>
+<Binding name="TIMEDMOVEMENT" runOnUp="true">
+  if keystate == "down" then
+    MoveForwardStart(777); TurnLeftStart("ignored"); JumpOrAscendStart()
+  else
+    MoveForwardStop(999); TurnLeftStop(); AscendStop()
+  end
+</Binding>
 </Bindings>"#,
         ),
         (
@@ -513,6 +520,64 @@ fn live_binding_frame() -> Result<(ClientFixture, solarity_ui::FrameManager), Bo
         &solarity_ui::AddonCatalog::default(),
     )?;
     Ok((fixture, frame))
+}
+
+#[test]
+fn movement_lua_captures_input_clock_and_keeps_release_order() -> Result<(), Box<dyn Error>> {
+    use solarity_ui::{UiMovementAction as Action, UiMovementControl as Control};
+    let (_fixture, mut frame) = live_binding_frame()?;
+    frame.set_input_event_time(u32::MAX - 2);
+    frame.invoke_binding("TIMEDMOVEMENT", true)?;
+    frame.set_input_event_time(4);
+    frame.invoke_binding("TIMEDMOVEMENT", false)?;
+    for (action, timestamp_ms) in [
+        (
+            Action::Hold {
+                control: Control::Forward,
+                pressed: true,
+            },
+            u32::MAX - 2,
+        ),
+        (
+            Action::Hold {
+                control: Control::TurnLeft,
+                pressed: true,
+            },
+            u32::MAX - 2,
+        ),
+        (Action::JumpOrAscend, u32::MAX - 2),
+        (
+            Action::Hold {
+                control: Control::Forward,
+                pressed: false,
+            },
+            4,
+        ),
+        (
+            Action::Hold {
+                control: Control::TurnLeft,
+                pressed: false,
+            },
+            4,
+        ),
+        (
+            Action::Hold {
+                control: Control::Ascend,
+                pressed: false,
+            },
+            4,
+        ),
+    ] {
+        assert_eq!(
+            frame.take_movement_command(),
+            Some(solarity_ui::UiMovementCommand {
+                action,
+                timestamp_ms
+            })
+        );
+    }
+    assert_eq!(frame.take_movement_command(), None);
+    Ok(())
 }
 
 fn binding_fixture_dbc(rows: u32, fields: u32) -> Vec<u8> {

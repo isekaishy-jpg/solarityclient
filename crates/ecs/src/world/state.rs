@@ -288,6 +288,16 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns the retained native unit flag words for input admission.
+    #[must_use]
+    pub fn unit_flags(&self, guid: u64) -> Option<crate::unit::UnitFlags> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&crate::unit::UnitFlags>(entity)
+            .map(|flags| **flags)
+            .ok()
+    }
+
     /// Returns the display identity projected for one visible game object.
     #[must_use]
     pub fn game_object_presentation(&self, guid: u64) -> Option<GameObjectPresentation> {
@@ -476,6 +486,26 @@ impl ActiveWorld {
     ) -> Result<(), WorldStateError> {
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (movement,));
+        Ok(())
+    }
+
+    /// Publishes one local movement result atomically to its original lifetime.
+    ///
+    /// # Errors
+    /// Rejects a missing/replaced object before either component is changed.
+    pub fn update_local_movement(
+        &mut self,
+        identity: WorldObjectIdentity,
+        transform: WorldTransform,
+        movement: WorldMovementState,
+    ) -> Result<(), WorldStateError> {
+        if self.object_identity(identity.guid()) != Some(identity) {
+            return Err(WorldStateError::UnknownObject {
+                guid: identity.guid(),
+            });
+        }
+        let entity = self.require_entity(identity.guid())?;
+        self.storage.add_component(entity, (transform, movement));
         Ok(())
     }
 

@@ -362,6 +362,44 @@ impl RuntimeGameplayCoordinator {
         self.world.as_ref()
     }
 
+    pub(super) fn apply_local_movement(
+        &mut self,
+        identity: solarity_ecs::WorldObjectIdentity,
+        transform: solarity_ecs::WorldTransform,
+        movement: solarity_ecs::WorldMovementState,
+    ) -> Result<(), RuntimeGameplayError> {
+        self.world
+            .as_mut()
+            .ok_or(RuntimeGameplayError::TaskEnded)?
+            .update_local_movement(identity, transform, movement)?;
+        Ok(())
+    }
+
+    pub(super) fn send_player_movement(
+        &self,
+        output: super::player_movement::PlayerMovementOutput,
+    ) -> Result<bool, RuntimeGameplayError> {
+        use super::player_movement::PlayerMovementOutput as Output;
+        let command = match output {
+            Output::Movement(message) => return self.send_movement(message),
+            Output::SkippedTime { guid, milliseconds } => {
+                WorldWriterCommand::MovementTimeSkipped { guid, milliseconds }
+            }
+            Output::StandState(state) => WorldWriterCommand::StandState(state),
+        };
+        match self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?
+            .commands
+            .try_send(command)
+        {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns whether initial resident-world support still needs resolution.
     #[must_use]
     pub const fn world_entry_ground_contact_pending(&self) -> bool {
@@ -537,7 +575,7 @@ where
                         writer
                             .send_time_sync_response(
                                 counter,
-                                duration_millis_u32(process_start.elapsed()),
+                                crate::platform::client_milliseconds(),
                             )
                             .await?;
                     }
@@ -546,6 +584,12 @@ where
                     }
                     WorldWriterCommand::Movement(message) => {
                         writer.send_movement(&message).await?;
+                    }
+                    WorldWriterCommand::MovementTimeSkipped { guid, milliseconds } => {
+                        writer.send_movement_time_skipped(guid, milliseconds).await?;
+                    }
+                    WorldWriterCommand::StandState(state) => {
+                        writer.send_stand_state(state).await?;
                     }
                 }
             }
@@ -566,6 +610,8 @@ enum WorldWriterCommand {
     TimeSync(u32),
     WorldportAcknowledgement,
     Movement(WorldMovementMessage),
+    MovementTimeSkipped { guid: u64, milliseconds: u32 },
+    StandState(u32),
 }
 
 fn dispatch_setup_packet<S>(

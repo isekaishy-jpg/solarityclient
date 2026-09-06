@@ -1,5 +1,25 @@
 //! SDL-independent platform event vocabulary.
 
+/// One platform event paired with its source time, before queueing and dispatch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimedPlatformEvent {
+    /// Translated payload, independent of SDL types.
+    pub event: PlatformEvent,
+    /// Low 32 bits of source milliseconds in the platform client-clock epoch.
+    pub timestamp_ms: u32,
+}
+
+impl TimedPlatformEvent {
+    /// Retains an event and its original wrapping millisecond timestamp.
+    #[must_use]
+    pub const fn new(event: PlatformEvent, timestamp_ms: u32) -> Self {
+        Self {
+            event,
+            timestamp_ms,
+        }
+    }
+}
+
 /// Stable identifier for an SDL-created client window.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WindowId(u32);

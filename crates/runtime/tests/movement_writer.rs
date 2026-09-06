@@ -13,6 +13,43 @@ use solarity_runtime::RuntimeGameplayCoordinator;
 
 use transfer_world_server::{TestError, WorldServer};
 
+#[test]
+fn skipped_time_and_stance_preserve_encrypted_movement_framing() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let (server, session) = WorldServer::connect().await?;
+                let (_reader, mut writer) = session.split();
+                let responses = server.exchange_raw(Vec::new(), 5).await?;
+                writer
+                    .send_movement_time_skipped(0x1200_3400_5600_7800, u32::MAX)
+                    .await?;
+                writer.send_stand_state(1).await?;
+                writer.send_movement_time_skipped(0, 7).await?;
+                writer.send_stand_state(0).await?;
+                writer
+                    .send_movement(&full_message(WorldMovementKind::Heartbeat, 0xFFFF_FFF0)?)
+                    .await?;
+                let responses = responses.await??;
+                assert_eq!(
+                    responses[0],
+                    (
+                        0x2CE,
+                        vec![0xaa, 0x78, 0x56, 0x34, 0x12, 0xff, 0xff, 0xff, 0xff]
+                    )
+                );
+                assert_eq!(responses[1], (0x101, vec![1, 0, 0, 0]));
+                assert_eq!(responses[2], (0x2CE, vec![0, 7, 0, 0, 0]));
+                assert_eq!(responses[3], (0x101, vec![0, 0, 0, 0]));
+                assert_eq!(responses[4], (0xEE, FULL_BODY.to_vec()));
+                Ok::<(), TestError>(())
+            })
+            .await?
+        })
+}
+
 /// Every ordinary movement envelope shares its native snapshot layout with
 /// time sync and a map ACK while retaining application admission order.
 #[test]

@@ -15,20 +15,22 @@ pub(super) const MAX_PLATFORM_EVENTS_PER_FRAME: usize = 256;
 /// boundary. Motion is never merged across windows or across a non-motion
 /// event, so pointer-button and focus ordering remains identical to SDL order.
 pub(super) fn coalesce_mouse_motion(
-    pending: &mut Option<MouseMotionEvent>,
+    pending: &mut Option<(u32, MouseMotionEvent)>,
+    timestamp_ms: u32,
     next: MouseMotionEvent,
-) -> Option<MouseMotionEvent> {
-    let Some(current) = pending.as_mut() else {
-        *pending = Some(next);
+) -> Option<(u32, MouseMotionEvent)> {
+    let Some((current_time, current)) = pending.as_mut() else {
+        *pending = Some((timestamp_ms, next));
         return None;
     };
     if current.window_id != next.window_id {
-        return pending.replace(next);
+        return pending.replace((timestamp_ms, next));
     }
     current.x = next.x;
     current.y = next.y;
     current.delta_x += next.delta_x;
     current.delta_y += next.delta_y;
+    *current_time = timestamp_ms;
     None
 }
 
@@ -103,27 +105,27 @@ mod tests {
     fn consecutive_motion_retains_last_position_and_total_delta() {
         let mut pending = None;
         assert_eq!(
-            coalesce_mouse_motion(&mut pending, motion(7, 10.0, 20.0, 2.0, -1.0)),
+            coalesce_mouse_motion(&mut pending, u32::MAX, motion(7, 10.0, 20.0, 2.0, -1.0)),
             None
         );
         assert_eq!(
-            coalesce_mouse_motion(&mut pending, motion(7, 14.0, 25.0, 4.0, 5.0)),
+            coalesce_mouse_motion(&mut pending, 2, motion(7, 14.0, 25.0, 4.0, 5.0)),
             None
         );
 
-        assert_eq!(pending, Some(motion(7, 14.0, 25.0, 6.0, 4.0)));
+        assert_eq!(pending, Some((2, motion(7, 14.0, 25.0, 6.0, 4.0))));
     }
 
     #[test]
     fn motion_from_another_window_flushes_before_replacement() {
-        let mut pending = Some(motion(7, 10.0, 20.0, 2.0, -1.0));
+        let mut pending = Some((93, motion(7, 10.0, 20.0, 2.0, -1.0)));
         let next = motion(8, 30.0, 40.0, 5.0, 6.0);
 
         assert_eq!(
-            coalesce_mouse_motion(&mut pending, next),
-            Some(motion(7, 10.0, 20.0, 2.0, -1.0))
+            coalesce_mouse_motion(&mut pending, 99, next),
+            Some((93, motion(7, 10.0, 20.0, 2.0, -1.0)))
         );
-        assert_eq!(pending, Some(next));
+        assert_eq!(pending, Some((99, next)));
     }
 
     const fn motion(

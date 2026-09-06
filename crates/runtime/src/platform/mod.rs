@@ -7,6 +7,7 @@
 mod lcd;
 
 mod blizzard_cursor;
+mod clock;
 mod cursor;
 mod event;
 mod event_translation;
@@ -21,10 +22,11 @@ mod status;
 mod thread_clock;
 mod window_identity;
 
+pub(crate) use clock::client_milliseconds;
 pub use event::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
     MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformEvent, ScanCode,
-    TextEditingEvent, TextInputEvent, WindowEvent, WindowId,
+    TextEditingEvent, TextInputEvent, TimedPlatformEvent, WindowEvent, WindowId,
 };
 pub(crate) use sdl_platform::SdlPlatform;
 pub use status::PlatformError;

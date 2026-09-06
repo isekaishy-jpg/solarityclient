@@ -1036,7 +1036,7 @@ impl RuntimePlayerPresentation {
         let authored_scale = body_display.model_scale() * body_model.model_scale();
         // CGUnit_C multiplies the authored display/model scale by the live
         // OBJECT_FIELD_SCALE_X before publishing its collision dimensions.
-        let collision_scale = authored_scale * scale.max(0.001);
+        let collision_scale = authored_scale * scale.max(1.0);
         let collision_extent = body_model
             .collision_extent()
             .map(|extent| extent * collision_scale);
@@ -1926,6 +1926,17 @@ impl RuntimePlayerPresentation {
         self.resident
             .as_ref()
             .map(|resident| resident.collision_extent)
+    }
+
+    /// Native radius, height, and step scale for the resident controlled player.
+    pub(super) fn movement_dimensions(&self) -> Option<[f32; 3]> {
+        self.resident.as_ref().map(|resident| {
+            [
+                resident.collision_extent[0] * 0.5,
+                resident.collision_extent[1],
+                resident.object_scale.max(1.0),
+            ]
+        })
     }
 
     /// Returns the current pre-collision camera orbit for the resident player.

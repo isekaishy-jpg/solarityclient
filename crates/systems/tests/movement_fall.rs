@@ -6,6 +6,29 @@ use solarity_systems::{
     MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory,
 };
 
+#[test]
+fn collision_vertical_displacement_matches_original_extended_curve() -> Result<(), Box<dyn Error>> {
+    for line in include_str!("fixtures/movement-vertical-native.txt").lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.split_whitespace().collect();
+        let mode = if fields[0] == "0" {
+            MovementFallMode::Normal
+        } else {
+            MovementFallMode::Slow
+        };
+        let curve = MovementFallTrajectory::new(mode, scalar(fields[1])?)?;
+        let actual = curve.vertical_displacement(
+            fields[2].parse()?,
+            scalar(fields[3])?,
+            scalar(fields[4])?,
+        )?;
+        assert_eq!(actual.to_bits(), scalar(fields[5])?.to_bits(), "{line}");
+    }
+    Ok(())
+}
+
 /// The golden scalar images were produced without calling the Rust code.
 #[test]
 fn fall_distance_and_contact_time_match_native_curves() -> Result<(), Box<dyn Error>> {

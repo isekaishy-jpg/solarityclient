@@ -103,7 +103,7 @@ impl SdlPlatform {
     }
 
     /// Polls until it finds one admitted client event or exhausts SDL's queue.
-    pub(crate) fn poll_event(&mut self) -> Option<PlatformEvent> {
+    pub(crate) fn poll_event(&mut self) -> Option<super::TimedPlatformEvent> {
         static PROFILE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let profile = *PROFILE.get_or_init(|| std::env::var_os("SOLARITY_FRAME_TIMINGS").is_some());
         loop {
@@ -131,7 +131,7 @@ impl SdlPlatform {
                 if let PlatformEvent::Window {
                     window_id,
                     event: window_event,
-                } = &event
+                } = &event.event
                     && *window_id == self.window_id()
                 {
                     tracing::info!(

@@ -309,6 +309,7 @@ native-verified placement provider used by transport M2/WMO presentation; see
 now drive admitted collision owners; animated transport paths remain separate.
 
 The owner also needs authored static placement-matrix verification, specialized map-M2 GameObject owners,
-destructible WMO states and alternative doodad sets, liquid/WDL modes,
-timestamped input, and landing/ground/fall application to ECS state. None of the
+destructible WMO states and alternative doodad sets, and liquid/WDL modes.
+The [initial local movement owner](local-player-movement.md) now connects
+timestamped input and ground/fall application to ECS state. None of the
 collector tests establishes live player movement or frame-rate parity.

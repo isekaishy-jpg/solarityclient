@@ -297,6 +297,58 @@ impl<W> WorldPacketWriter<W>
 where
     W: AsyncWrite + Unpin + Send,
 {
+    /// Sends native `0x00717D90`'s packed mover and unsigned skipped interval.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_movement_time_skipped(
+        &mut self,
+        guid: u64,
+        milliseconds: u32,
+    ) -> Result<(), WorldSessionError> {
+        let mut body = [0_u8; 13];
+        let mut length = 1;
+        for (index, byte) in guid.to_le_bytes().into_iter().enumerate() {
+            if byte != 0 {
+                body[0] |= 1 << index;
+                body[length] = byte;
+                length += 1;
+            }
+        }
+        body[length..length + 4].copy_from_slice(&milliseconds.to_le_bytes());
+        self.send_local_movement_auxiliary(0x2ce, &body[..length + 4])
+            .await
+    }
+
+    /// Sends the local player's requested stand state (`CMSG_STANDSTATECHANGE`).
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_stand_state(&mut self, state: u32) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x101, &state.to_le_bytes())
+            .await
+    }
+
+    async fn send_local_movement_auxiliary(
+        &mut self,
+        opcode: u32,
+        body: &[u8],
+    ) -> Result<(), WorldSessionError> {
+        let mut packet = [0_u8; 19];
+        let header = self
+            .encrypter
+            .encrypt_client_header((body.len() + 4) as u16, opcode);
+        packet[..6].copy_from_slice(&header);
+        packet[6..6 + body.len()].copy_from_slice(body);
+        self.stream
+            .write_all(&packet[..6 + body.len()])
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
+    }
+
     /// Sends a validated event-time movement image through this cipher owner.
     ///
     /// As with other encrypted writes, the session owner must keep the future

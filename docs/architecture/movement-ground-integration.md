@@ -4,8 +4,9 @@
 ordered collision candidates. It follows admitted surfaces, slides against
 walls, tests steps, and returns either updated ground state or a new analytic
 fall. It accepts an already-generated horizontal direction/distance and interval.
-Runtime collection supplies the native initial candidate region; timestamped
-input and per-sweep cache refresh still require the outer movement owner.
+Runtime collection supplies the native initial candidate region. The
+[initial local movement owner](local-player-movement.md) supplies timestamped
+input and drives per-sweep refresh through the mutable provider.
 
 The implementation lives in `movement/grounded`. Collision owns body sweeps,
 ground-contact classification, and combined foot-plane normals. Movement owns
@@ -139,12 +140,13 @@ original fixture and require exact skipped time.
 
 ## Runtime work remaining
 
-The ground and fall interval cores are ready for a local movement owner.
-`collect_movement_interval` now assembles the implemented
+The [initial local movement owner](local-player-movement.md) now drives these
+intervals from timestamped FrameXML commands and publishes living ECS state.
+`collect_movement_interval` assembles the implemented
 [terrain/WMO/M2 face collectors](movement-world-geometry.md) over native expanded
-bounds, including private step/fall probes. The outer owner still needs to
-consume keyboard timestamps, resolve collection modes and transport coordinates,
-apply landing input resets, and update a living ECS transform.
+bounds, including private step/fall probes. Collection modes, transport
+coordinates, full controlled-unit admission and contact side effects remain
+incomplete at the outer boundary.
 Swimming/flying modes require their own native response owners.
 No runtime movement, camera, or frame-rate parity claim follows from these
 isolated interval tests.

@@ -68,6 +68,9 @@ pub enum ApplicationError {
     /// Local-player model residency or authored measurements failed.
     #[error(transparent)]
     Player(#[from] RuntimePlayerError),
+    /// Local movement, collision continuation, or movement notification failed.
+    #[error(transparent)]
+    PlayerMovement(#[from] super::RuntimePlayerMovementError),
     /// Active-map or player-tile terrain residency failed.
     #[error(transparent)]
     Terrain(#[from] RuntimeTerrainError),
@@ -269,6 +272,12 @@ impl ClientApplication {
     /// Returns the next stock-relevant platform event currently queued by SDL.
     #[must_use]
     pub fn poll_platform_event(&mut self) -> Option<PlatformEvent> {
+        self.services.poll_platform_event().map(|event| event.event)
+    }
+
+    /// Returns a platform event with the time recorded at its source.
+    #[must_use]
+    pub fn poll_timed_platform_event(&mut self) -> Option<crate::TimedPlatformEvent> {
         self.services.poll_platform_event()
     }
 
@@ -296,37 +305,47 @@ impl ClientApplication {
         let mut admitted_event_count = 0_u64;
         let mut frame_limiter = FrameLimiter::new();
         loop {
-            let mut pending_mouse_motion: Option<MouseMotionEvent> = None;
+            let mut pending_mouse_motion: Option<(u32, MouseMotionEvent)> = None;
             for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
                 let Some(event) = self.services.poll_platform_event() else {
                     break;
                 };
                 admitted_event_count = admitted_event_count.saturating_add(1);
-                if let PlatformEvent::MouseMotion(motion) = event {
-                    if let Some(flushed) =
-                        run::coalesce_mouse_motion(&mut pending_mouse_motion, motion)
-                        && let Some(exit_reason) = self.dispatch_run_event(
-                            &PlatformEvent::MouseMotion(flushed),
-                            primary_window,
-                        )?
-                    {
+                if let PlatformEvent::MouseMotion(motion) = event.event {
+                    if let Some((timestamp_ms, flushed)) = run::coalesce_mouse_motion(
+                        &mut pending_mouse_motion,
+                        event.timestamp_ms,
+                        motion,
+                    ) && let Some(exit_reason) = self.dispatch_run_event(
+                        &PlatformEvent::MouseMotion(flushed),
+                        timestamp_ms,
+                        primary_window,
+                    )? {
                         return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                     }
                     continue;
                 }
-                if let Some(motion) = pending_mouse_motion.take()
-                    && let Some(exit_reason) = self
-                        .dispatch_run_event(&PlatformEvent::MouseMotion(motion), primary_window)?
+                if let Some((timestamp_ms, motion)) = pending_mouse_motion.take()
+                    && let Some(exit_reason) = self.dispatch_run_event(
+                        &PlatformEvent::MouseMotion(motion),
+                        timestamp_ms,
+                        primary_window,
+                    )?
                 {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
-                if let Some(exit_reason) = self.dispatch_run_event(&event, primary_window)? {
+                if let Some(exit_reason) =
+                    self.dispatch_run_event(&event.event, event.timestamp_ms, primary_window)?
+                {
                     return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
                 }
             }
-            if let Some(motion) = pending_mouse_motion
-                && let Some(exit_reason) =
-                    self.dispatch_run_event(&PlatformEvent::MouseMotion(motion), primary_window)?
+            if let Some((timestamp_ms, motion)) = pending_mouse_motion
+                && let Some(exit_reason) = self.dispatch_run_event(
+                    &PlatformEvent::MouseMotion(motion),
+                    timestamp_ms,
+                    primary_window,
+                )?
             {
                 return Ok(ApplicationRunReport::new(exit_reason, admitted_event_count));
             }
@@ -382,12 +401,13 @@ impl ClientApplication {
     fn dispatch_run_event(
         &mut self,
         event: &PlatformEvent,
+        timestamp_ms: u32,
         primary_window: u32,
     ) -> Result<Option<ApplicationExitReason>, ApplicationError> {
         if let Some(exit_reason) = run::exit_reason(event, primary_window) {
             return Ok(Some(exit_reason));
         }
-        if let Err(error) = self.services.service_platform_event(event)
+        if let Err(error) = self.services.service_platform_event(event, timestamp_ms)
             && !self.services.record_recoverable_error(&error)
         {
             return Err(error);

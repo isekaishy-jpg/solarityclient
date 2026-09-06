@@ -172,10 +172,10 @@ the existing 69 contact/order comparisons still pass.
 ## Remaining movement ownership
 
 This query implements the narrow phase after candidate collection. The movement
-owner still needs residency admission and ordered assembly of the implemented
-terrain/WMO/M2 face collectors, transport-space
-conversion, application of fall/ground transitions,
-and timestamped input integration. Native `0x0075FF90` and `0x0075F0A0` own
+owner now uses residency admission and ordered assembly of the implemented
+terrain/WMO/M2 face collectors. The initial local owner applies ground/fall
+transitions from timestamped input; transport-space conversion and specialized
+response modes remain incomplete. Native `0x0075FF90` and `0x0075F0A0` own
 candidate collection and transport conversion; `0x007620F0`, `0x00761B00`, and
 related `Collide.cpp` callers own movement response. Ground/step and fall
 intervals now implement their respective response cores. Runtime operations must not
@@ -189,5 +189,6 @@ The [runtime geometry cache](movement-world-geometry.md#per-sweep-cache-refresh)
 now implements native endpoint coverage and union recollection within one
 borrowed world context. Ground/fall `advance_with_geometry` now refreshes through
 that provider on each probe and preserves native partial state, deferred clocks,
-and copied contact identity on failure. The local timestamped input/ECS movement
-owner still needs to apply those outcomes.
+and copied contact identity on failure. The [local timestamped input/ECS movement
+owner](local-player-movement.md) applies the motion and clock outcomes; complete
+contact side effects remain open.

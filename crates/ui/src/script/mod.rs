@@ -7,6 +7,7 @@
 mod clock;
 mod handlers;
 mod model_intent;
+mod movement_intent;
 mod network_intent;
 mod process_intent;
 mod runtime_state;
@@ -17,6 +18,8 @@ mod templates;
 pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use model_intent::{UiModelAction, UiModelInstance};
+pub(crate) use movement_intent::UiMovementInput;
+pub use movement_intent::{UiMovementAction, UiMovementCommand, UiMovementControl};
 pub use network_intent::{
     UiCharacterDirectory, UiCharacterEquipment, UiCharacterInfo, UiCharacterPetPreview,
     UiCharacterSelectionPreview, UiGlueNetworkAction, UiGlueNetworkStatus, UiLoginRequest,

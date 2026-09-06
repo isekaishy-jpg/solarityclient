@@ -169,6 +169,7 @@ fn register_frame_globals(
         environment.world_state_ui_state(),
     )?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
+    crate::script::movement_intent::register_globals(lua, globals, environment.movement_input())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();

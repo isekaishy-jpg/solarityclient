@@ -6,10 +6,12 @@
 
 mod binding;
 mod input_control;
+mod player;
 mod state;
 mod types;
 
 pub(crate) use binding::keyboard_name as stock_keyboard_name;
 pub use binding::{InputBindingInvocation, InputBindingPhase, InputBindingRouter};
 pub use input_control::InputControl;
+pub(crate) use player::{PlayerInputAdmission, PlayerInputEffect, PlayerInputState};
 pub use types::{InputFrameMotion, PointerPosition};

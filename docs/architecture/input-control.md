@@ -73,9 +73,9 @@ No Windows fallback is substituted for them.
 
 Physical binding delivery now executes commands in the retained FrameXML Lua
 state. Focused UI and console capture suppress new presses while preserving
-the release of previously admitted bindings. Player locomotion and camera
-command consumers are still absent. The following build-12340 executable evidence
-bounds the next implementation. These addresses come from the original Lua
+the release of previously admitted bindings. The initial ground/fall locomotion
+consumer is connected; camera commands still need their input owner. The following
+build-12340 executable evidence bounds this implementation. These addresses come from the original Lua
 registration tables and their native callees, not the C++ client's controller.
 
 | Authored Lua call | Native entry | Immediate owner |
@@ -87,17 +87,22 @@ registration tables and their native callees, not the C++ client's controller.
 
 `0x005FA170` and `0x005FA450` admit held-bit edges and suppress repeated
 starts/stops. Their camera, cursor, and autorun side effects are part of that
-boundary. Movement Lua entries first pass the native protected-action check
-at `0x005191C0`; arbitrary script execution must not acquire hardware-input
-authority merely because it calls the same function.
+boundary. Movement Lua entries pass class zero to `0x005191C0`. That branch
+rejects a tainted execution context regardless of hardware provenance; an
+untainted call clears the hardware-event marker and succeeds. Trusted FrameXML
+can therefore request movement from an `OnUpdate`, using the retained last
+input-event time. Future execution of untrusted AddOns must add the matching
+taint admission rather than treating a hardware event as authorization.
 
 The ordinary movement Lua wrappers ignore Lua arguments and read the input
 event clock at `0x00B499A4`. Native input dispatch writes that clock from the
 incoming event before calling the UI: keyboard paths `0x004943C0` and
 `0x00494490` copy event word 3, and mouse paths `0x004947A0` and `0x00494890`
-copy event offset `0x20`. The future timed movement bridge must retain that
-event time through dispatch; substituting the render time or an optional Lua
-timestamp would change input ordering.
+copy event offset `0x20`. The SDL bridge now retains its source timestamp through
+dispatch, including coalesced mouse motion. The movement mailbox captures this
+clock at each Lua native call. `GetTime` in world FrameXML and time-sync responses
+use the same SDL millisecond epoch; render time and Lua arguments do not replace
+the event time.
 
 `0x005FBBC0` resolves the current controlled unit and separately gates
 translation and turning. The ordinary forward/back resolver at `0x005FAE70`
@@ -124,11 +129,11 @@ the camera speed CVar. `0x005FE580` retains direction, start, deadline, and
 rate. Directly incrementing the saved distance per wheel event would omit
 that native behavior.
 
-Remaining recovery and implementation work includes the movement event
-consumer and wire snapshot ordering, local displacement/collision and falling,
-server corrections and control changes, timed camera input, and the unit
-animation consumer. None of those capabilities is implied by successful
-binding dispatch or the now-available world-transfer pipeline.
+The initial movement event consumer now applies ground/fall displacement and
+retains wire snapshot ordering. Remaining work includes full unit admission,
+server corrections and control changes, timed camera input, and complete unit
+animation side effects. Successful binding dispatch or world transfer does not
+establish those remaining capabilities.
 
 ### Retained movement snapshot
 
@@ -194,9 +199,10 @@ retains the rejected event, admits it once capacity returns, and checks every
 timestamp and the following ACK. Minimal and maximum body sizes and every
 optional-field mismatch are covered separately.
 
-The remaining input/simulation owner must still resolve controlled-unit gates,
-integrate displacement and collision at event timestamps, apply server changes,
-and generate these events. Received wire flags cannot simply be reused as
+The [initial input/simulation owner](local-player-movement.md) now integrates
+ordinary ground/fall collision at event timestamps and generates these events.
+Complete controlled-unit gates and server-event reconciliation remain open.
+Received wire flags cannot simply be reused as
 local control flags: full admission at `0x006EB730` merges through mask
 `0x77FFFDFF`, while its selective path uses `0x77E00DFF`. `0x006E90E0` and
 `0x00987140` rebuild transport/spline wire state from its local owners.
@@ -205,5 +211,5 @@ Those are distinct state boundaries.
 The first local collision dependency is now present: the native nine-plane
 body sweep is implemented and checked against 69 calls to the original x86
 routine. [Movement collision](movement-collision.md) records its exact scope,
-evidence, arithmetic, and remaining response/world-provider work. Player input
-still has no displacement consumer.
+evidence, arithmetic, and remaining response/world-provider work. The local
+movement document records the production consumer and its remaining limits.
