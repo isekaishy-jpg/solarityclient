@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 pub(super) mod glue_benchmark;
+pub(super) mod world_benchmark;
 mod world_camera;
 mod world_transfer;
 

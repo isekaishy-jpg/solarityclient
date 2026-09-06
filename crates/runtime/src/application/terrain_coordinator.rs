@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+mod camera_profile;
 pub(in crate::application) mod m2_residency;
 mod movement;
 mod streaming;
@@ -205,6 +206,7 @@ pub struct RuntimeTerrainCoordinator {
     streaming: Option<TerrainStreamingDemand>,
     pending_stream: Option<PendingTerrainGeneration>,
     failed_stream: std::collections::HashSet<TerrainTileIndex>,
+    camera_profile: Option<camera_profile::CameraProfile>,
 }
 
 impl RuntimeTerrainCoordinator {
@@ -238,6 +240,7 @@ impl RuntimeTerrainCoordinator {
             streaming: None,
             pending_stream: None,
             failed_stream: std::collections::HashSet::new(),
+            camera_profile: camera_profile::CameraProfile::from_environment(),
         }
     }
 
@@ -1078,40 +1081,55 @@ impl RuntimeTerrainCoordinator {
         smart_pivot: bool,
         water_collision: bool,
     ) -> Result<PlayerCameraPose, RuntimeCameraError> {
+        let mut profile = self
+            .camera_profile
+            .as_ref()
+            .map(|_| [std::time::Duration::ZERO; 5]);
         let pose = resolve_player_camera_obstruction(
             pose,
             aspect_ratio,
             smart_pivot,
             |start, end, maximum_fraction| {
-                let terrain = self
-                    .trace_collision(start, end, 0.0, maximum_fraction)?
-                    .map(|hit| hit.fraction());
-                let world_model = self.trace_world_model_camera(start, end, maximum_fraction)?;
-                let m2 = self.trace_m2_camera(start, end, maximum_fraction)?;
+                let terrain = camera_profile::measure(&mut profile, 0, || {
+                    self.trace_collision(start, end, 0.0, maximum_fraction)
+                })?
+                .map(|hit| hit.fraction());
+                let world_model = camera_profile::measure(&mut profile, 1, || {
+                    self.trace_world_model_camera(start, end, maximum_fraction)
+                })?;
+                let m2 = camera_profile::measure(&mut profile, 2, || {
+                    self.trace_m2_camera(start, end, maximum_fraction)
+                })?;
                 Ok::<_, RuntimeCameraSceneError>(nearest_fraction(
                     nearest_fraction(terrain, world_model),
                     m2,
                 ))
             },
         )?;
-        Ok(resolve_player_camera_water_collision(
+        let pose = resolve_player_camera_water_collision(
             pose,
             water_collision,
             smart_pivot,
             |world_x, world_y, reference_height| {
-                let terrain = self
-                    .sample_liquid(world_x, world_y, Some(reference_height))?
-                    .map(TerrainLiquidSample::height);
-                let world_model = self
-                    .sample_world_model_liquid(world_x, world_y, Some(reference_height))?
-                    .map(WorldModelLiquidSample::height);
+                let terrain = camera_profile::measure(&mut profile, 3, || {
+                    self.sample_liquid(world_x, world_y, Some(reference_height))
+                })?
+                .map(TerrainLiquidSample::height);
+                let world_model = camera_profile::measure(&mut profile, 4, || {
+                    self.sample_world_model_liquid(world_x, world_y, Some(reference_height))
+                })?
+                .map(WorldModelLiquidSample::height);
                 Ok::<_, RuntimeCameraSceneError>(preferred_surface(
                     terrain,
                     world_model,
                     reference_height,
                 ))
             },
-        )?)
+        )?;
+        if let (Some(profiler), Some(profile)) = (&mut self.camera_profile, profile) {
+            profiler.record(profile);
+        }
+        Ok(pose)
     }
 
     /// Releases map and tile residency on world disconnect.

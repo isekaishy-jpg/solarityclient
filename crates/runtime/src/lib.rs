@@ -49,7 +49,8 @@ pub use application::{
     RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame, RuntimeWorldError,
     RuntimeWorldModelMovementOwner, RuntimeWorldPoll, RuntimeWorldReplacement, RuntimeWorldState,
     RuntimeWorldTransferCoordinator, RuntimeWorldTransferEffect, RuntimeWorldTransferError,
-    RuntimeWorldUiError, StartupReport, world_model_environment_emissive,
+    RuntimeWorldUiError, StartupReport, WorldBenchmarkError, WorldBenchmarkSample,
+    world_model_environment_emissive,
 };
 pub use configuration::{
     ConfigurationError, LoginConfiguration, RuntimeConfiguration, StartupProfile,

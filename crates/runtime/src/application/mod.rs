@@ -41,6 +41,7 @@ pub use client_services::glue_benchmark::{
     GlueBenchmarkAction, GlueBenchmarkError, GlueBenchmarkResult, GlueBenchmarkScreen,
     GlueBenchmarkStep,
 };
+pub use client_services::world_benchmark::{WorldBenchmarkError, WorldBenchmarkSample};
 pub use environment_coordinator::{
     RuntimeWorldEnvironment, RuntimeWorldEnvironmentError, RuntimeWorldEnvironmentFrame,
     world_model_environment_emissive,

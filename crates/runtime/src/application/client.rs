@@ -397,6 +397,27 @@ impl ClientApplication {
             .benchmark_glue_steps(steps, following_frame_count, timeout, capture_directory)
     }
 
+    /// Replays offline World presentation with caller-supplied ECS and realm time.
+    ///
+    /// Uses a fresh diagnostic application and real terrain streaming, player,
+    /// camera, FrameXML and Vulkan paths. Four equal phases cover initial
+    /// streaming, stationary presentation, camera orbit, and pointer motion.
+    /// It performs no server operations or movement simulation; it does not
+    /// represent live remote-unit or network load. Shut down after this replay.
+    ///
+    /// # Errors
+    /// Returns a diagnostic failure for missing fixture facts, cancelled window,
+    /// or any production subsystem failure.
+    pub fn benchmark_world(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        clock: &crate::RealmClock,
+        frames_per_phase: std::num::NonZeroUsize,
+    ) -> Result<Vec<super::WorldBenchmarkSample>, super::WorldBenchmarkError> {
+        self.services
+            .benchmark_world(world, clock, frames_per_phase)
+    }
+
     /// Routes one event after any preceding motion run has been flushed.
     fn dispatch_run_event(
         &mut self,
