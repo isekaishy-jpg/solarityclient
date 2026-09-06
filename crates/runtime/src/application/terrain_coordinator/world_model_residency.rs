@@ -247,7 +247,7 @@ fn prepare_world_model_placements<'placement>(
         });
         for doodad_index in source
             .model()
-            .active_doodad_indices(placement.doodad_set())?
+            .referenced_active_doodad_indices(placement.doodad_set())?
         {
             // The active-index resolver and root admission jointly prove that
             // this table lookup is in range.

@@ -4,11 +4,13 @@
 #[path = "../../../tests/application/game_object_scene.rs"]
 mod game_object_scene_tests;
 
+mod game_objects;
 mod playback;
 mod streaming;
 use playback::M2PlaybackStorage;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::application::model_playback::{
@@ -37,7 +39,9 @@ use solarity_rendering::{
     m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
 
-use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
+use crate::application::game_object_coordinator::{
+    GameObjectFrameInput, GameObjectWorldModelState,
+};
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
     ResidentGlueCharacterFrameInput, ResidentPlayerAttachment, ResidentPlayerFrameInput,
@@ -136,6 +140,7 @@ enum M2TransparentDrawIndex {
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
     placement_valid: bool,
+    world_model_state: Option<Rc<GameObjectWorldModelState>>,
     source_index: usize,
     /// Placement-local transform retained across animated parent resolution.
     local_transform: Mat4,
@@ -248,6 +253,12 @@ enum M2GpuPlacementOwner {
         guid: u64,
         identity: WorldObjectIdentity,
         display_id: u32,
+    },
+    /// One default-set MODD attached to a replicated WMO lifetime.
+    GameObjectWorldModelDoodad {
+        identity: WorldObjectIdentity,
+        display_id: u32,
+        doodad_index: usize,
     },
     /// One equipment M2 driven by an animated player attachment point.
     PlayerItem {
@@ -740,156 +751,6 @@ impl M2Frame {
         })
     }
 
-    /// Reconciles GameObject lifetimes while preserving retained animation/effects.
-    pub(super) fn synchronize_game_objects(
-        &mut self,
-        renderer: &mut VulkanRenderer,
-        game_objects: GameObjectFrameInput<'_>,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        let sources = &self.sources;
-        self.placements.retain(|placement| {
-            let M2GpuPlacementOwner::GameObject {
-                identity,
-                display_id,
-                ..
-            } = placement.owner
-            else {
-                return true;
-            };
-            game_objects.get(identity).is_some_and(|instance| {
-                instance.display_id() == display_id
-                    && match (
-                        instance.resource(),
-                        sources.get(placement.source_index).and_then(Option::as_ref),
-                    ) {
-                        (Some(GameObjectResource::M2(cpu)), Some(gpu)) => {
-                            Arc::ptr_eq(cpu.model(), &gpu.model)
-                        }
-                        _ => false,
-                    }
-            })
-        });
-        let retained = self
-            .placements
-            .iter()
-            .filter_map(|placement| match placement.owner {
-                M2GpuPlacementOwner::GameObject {
-                    identity,
-                    display_id,
-                    ..
-                } => Some((identity, display_id)),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
-        let mut sources = self
-            .sources
-            .iter()
-            .enumerate()
-            .filter_map(|(index, source)| {
-                source
-                    .as_ref()
-                    .map(|source| (Arc::as_ptr(&source.model), index))
-            })
-            .collect::<HashMap<_, _>>();
-        let scene_time_ms = self.animation_time_ms();
-        for instance in game_objects.instances() {
-            if retained.contains(&(instance.identity(), instance.display_id())) {
-                continue;
-            }
-            let (Some(GameObjectResource::M2(cpu)), Some(resolved)) =
-                (instance.resource(), instance.placement())
-            else {
-                continue;
-            };
-            let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
-                *index
-            } else {
-                let Some(gpu) = prepare_source(renderer, cpu)? else {
-                    continue;
-                };
-                let index = self.sources.len();
-                sources.insert(Arc::as_ptr(&gpu.model), index);
-                self.sources.push(Some(gpu));
-                index
-            };
-            let playback = if let Some(behavior) = instance.behavior() {
-                let Some(playback) = behavior.playback() else {
-                    continue;
-                };
-                M2PlaybackStorage::Shared(playback)
-            } else {
-                let mut playback = M2Playback::unstarted(0);
-                playback.scene_time_ms = scene_time_ms as u32;
-                playback.previous_event_scene_time_ms = scene_time_ms as u32;
-                playback.select_game_object_state(
-                    cpu.model(),
-                    game_objects.animations(),
-                    instance.state(),
-                    scene_time_ms as u32,
-                    random,
-                )?;
-                M2PlaybackStorage::Local(playback)
-            };
-            let placement = m2_gpu_placement(
-                source_index,
-                resolved.matrix(),
-                M2GpuPlacementOwner::GameObject {
-                    guid: instance.guid(),
-                    identity: instance.identity(),
-                    display_id: instance.display_id(),
-                },
-                cpu.model(),
-                Some(playback),
-                None,
-            )?;
-            self.placements.push(placement);
-        }
-        self.placement_topology_dirty = true;
-        self.compact_sources();
-        Ok(())
-    }
-
-    /// Refreshes current GameObject placements with indexed lifetime lookup.
-    pub(super) fn update_game_object_states(
-        &mut self,
-        game_objects: GameObjectFrameInput<'_>,
-        animation_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        for placement in &mut self.placements {
-            let M2GpuPlacementOwner::GameObject { identity, .. } = placement.owner else {
-                continue;
-            };
-            let Some(instance) = game_objects.get(identity) else {
-                placement.placement_valid = false;
-                continue;
-            };
-            let resolved = instance.placement();
-            placement.placement_valid = resolved.is_some();
-            if let Some(resolved) = resolved {
-                placement.local_transform = resolved.matrix();
-                placement.transform = resolved.matrix();
-            }
-            if instance.behavior().is_none()
-                && let Some(source) = self.sources[placement.source_index].as_ref()
-                && let Some(mut playback) = placement
-                    .playback
-                    .as_mut()
-                    .map(M2PlaybackStorage::borrow_mut)
-            {
-                playback.select_game_object_state(
-                    &source.model,
-                    game_objects.animations(),
-                    instance.state(),
-                    animation_time_ms as u32,
-                    random,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
     /// Uploads one immutable Glue model generation without starting playback.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare_glue_gpu_source(
@@ -956,6 +817,7 @@ impl M2Frame {
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
                 placement_valid: true,
+                world_model_state: None,
                 source_index: 0,
                 local_transform: transform,
                 transform,
@@ -1611,6 +1473,7 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => local_guid == Some(guid),
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                 | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
@@ -1669,6 +1532,7 @@ impl M2Frame {
                     remote_guids.contains(&guid)
                 }
                 M2GpuPlacementOwner::Static(_)
+                | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                 | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::GluePet
                 | M2GpuPlacementOwner::PlayerBody { .. }
@@ -1891,6 +1755,7 @@ impl M2Frame {
                         .filter_map(|placement| match placement.owner {
                             M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
                             M2GpuPlacementOwner::Static(_)
+                            | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                             | M2GpuPlacementOwner::GlueModel { .. }
                             | M2GpuPlacementOwner::GluePet
                             | M2GpuPlacementOwner::PlayerBody { .. }
@@ -1914,6 +1779,7 @@ impl M2Frame {
                                 effect_point,
                             } => Some((guid, item_point, effect_point)),
                             M2GpuPlacementOwner::Static(_)
+                            | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                             | M2GpuPlacementOwner::GlueModel { .. }
                             | M2GpuPlacementOwner::GluePet
                             | M2GpuPlacementOwner::PlayerBody { .. }
@@ -2098,7 +1964,11 @@ impl M2Frame {
             // as the stock/SolCL world renderer first builds a visible
             // instance list. Large tiles commonly retain thousands of static
             // placements while only tens intersect the camera frustum.
-            let static_visibility_resolved = matches!(owner, M2GpuPlacementOwner::Static(_));
+            let static_visibility_resolved = matches!(
+                owner,
+                M2GpuPlacementOwner::Static(_)
+                    | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
+            );
             if static_visibility_resolved {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
@@ -2846,6 +2716,7 @@ fn placement_parent_index(
                 }
         }),
         M2GpuPlacementOwner::Static(_)
+        | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
         | M2GpuPlacementOwner::GlueModel { .. }
         | M2GpuPlacementOwner::GluePet
         | M2GpuPlacementOwner::PlayerMount { .. }
@@ -2937,6 +2808,7 @@ fn append_triggered_events(
 const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
     match owner {
         M2GpuPlacementOwner::Static(_)
+        | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
         | M2GpuPlacementOwner::GlueModel { .. }
         | M2GpuPlacementOwner::GluePet => None,
         M2GpuPlacementOwner::PlayerBody { guid }
@@ -2958,6 +2830,7 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
         M2GpuPlacementOwner::GluePet => M2SceneLightBank::Pet,
         M2GpuPlacementOwner::Static(_)
+        | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
         | M2GpuPlacementOwner::GlueModel { .. }
         | M2GpuPlacementOwner::PlayerBody { .. }
         | M2GpuPlacementOwner::PlayerMount { .. }
@@ -3192,6 +3065,7 @@ fn m2_gpu_placement(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
         placement_valid: true,
+        world_model_state: None,
         source_index,
         local_transform: transform,
         transform,

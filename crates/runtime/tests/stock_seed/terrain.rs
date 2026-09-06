@@ -448,7 +448,10 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
             ),
             ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
             ("World\\Wmo\\Fixture.wmo", &root_wmo_fixture()),
-            ("World\\Wmo\\Fixture_000.wmo", &group_wmo_fixture()),
+            (
+                "World\\Wmo\\Fixture_000.wmo",
+                &movement_reference_group_wmo()?,
+            ),
             ("World\\Fixture\\Collision.m2", &m2_collision_fixture()?),
             ("World\\Fixture\\Collision00.skin", &skin_fixture()?),
             ("World\\Fixture\\Collision.blp", &bootstrap_texture_blp()),
@@ -1313,7 +1316,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         &[0],
     )?;
     let root_wmo = root_wmo_fixture();
-    let group_wmo = group_wmo_fixture();
+    let group_wmo = movement_reference_group_wmo()?;
     let m2 = m2_collision_fixture()?;
     let skin = skin_fixture()?;
     let fixture = ClientFixture::with_common_files(&[
@@ -1394,7 +1397,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
 #[test]
 fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Error>> {
     let root_wmo = root_wmo_fixture();
-    let group_wmo = group_wmo_fixture();
+    let group_wmo = movement_reference_group_wmo()?;
     let m2 = m2_collision_fixture()?;
     let skin = skin_fixture()?;
     let fixture = ClientFixture::with_common_files(&[

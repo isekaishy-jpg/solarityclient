@@ -132,6 +132,7 @@ pub(super) fn static_gpu_placement(
     };
     Ok(M2GpuPlacement {
         placement_valid: true,
+        world_model_state: None,
         source_index,
         local_transform: placement.transform(),
         transform: placement.transform(),

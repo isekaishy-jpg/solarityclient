@@ -236,6 +236,14 @@ share append order with MODF roots and retain attached default-set doodads.
 Alternative/destructible resources and specialized map-M2 owners remain work
 for their behavior providers.
 
+Referenced default-set attachments of replicated WMO roots also retain separate
+CPU `M2Playback` owners, created in first group-MODR reference order when the
+resource is admitted. Rendering borrows those timers through parent changes and
+GPU admission. These attached props use the existing culled M2 playback path;
+they do not inherit the root's generic Open/Close state requests or completion
+callbacks. See [GameObject placement](game-object-placement.md) for rendering
+coverage and the remaining group-visibility and interior-lighting work.
+
 ## Spatial registration
 
 GameObject map-owner creation uses flags `0xB` at `0x00781A10`, selecting the

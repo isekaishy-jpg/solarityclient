@@ -80,6 +80,22 @@ effect histories. Parent arrival restores those owners without restarting
 neighbors. Removing and recreating an object establishes fresh playback.
 Resource readiness remains separate from collision placement and eligibility.
 
+Replicated WMO roots render their referenced default-set MODD attachments through
+the shared M2 pipeline. Each root lifetime retains independent child playback
+from CPU resource admission, even while its passenger parent is unresolved.
+GPU admission borrows those timers and shares authored mesh/material sources.
+Parent updates compose the resolved root matrix with each MODD local matrix in
+place; they preserve child animation, particles, and ribbons. Display/resource
+replacement retires the previous root's child owners. MODD BGRA tint and flags
+follow the same path as terrain WMO attachments.
+
+Both static and replicated WMO loaders select active doodads in first loaded
+group MODR reference order (`0x007BF740`). Duplicate references retain one
+root-local owner; unused MODD records do not load models or consume animation
+randomness. Replicated roots currently select the default set. Group portal
+visibility and interior-specific attachment lighting remain incomplete; these
+attachments use the existing M2 frustum and environment-lighting path.
+
 Generic M2 GameObjects now attach a shared behavior timer when CPU preparation
 completes. Ordered packet handlers and scene callbacks mutate that same owner;
 GPU placement consumes its scene sample. Missing placement therefore no longer
@@ -116,6 +132,11 @@ Renderer tests verify that moved bounds change visibility and can be restored.
 Vulkan tests upload real triangle meshes, check shared GPU handles, preserve
 neighbor timers and random-stream position, and retire/recreate exact lifetimes.
 They also cover ordinary models with only a Stand animation.
+The WMO attachment Vulkan fixture captures distinct authored red/blue tints,
+moves the parent and checks the new pixels, verifies an unresolved parent emits
+no mesh/effect draws, and restores it without replacing timers or mesh handles.
+It checks repeated MODR references and an unreferenced missing model, CPU timer
+startup before GPU placement, random consumption, GUID reuse, and disconnect.
 
 This implements replicated base placement, not animated transport trajectories.
 GameObject type 7/11 animation/path clocks, other parent categories, destructible

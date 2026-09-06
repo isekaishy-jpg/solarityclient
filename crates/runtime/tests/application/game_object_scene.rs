@@ -1,5 +1,8 @@
 //! Actual Vulkan resource admission preserves independent object playback.
 
+#[path = "game_object_world_model_scene.rs"]
+mod world_model;
+
 use super::{CrtRand, M2Frame, M2GpuPlacementOwner, M2Playback, ResidentM2Scene};
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use crate::configuration::{WindowConfiguration, WindowMode};
@@ -17,6 +20,9 @@ use solarity_ecs::{
 use solarity_rendering::{M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer};
 use std::error::Error;
 use std::sync::Arc;
+
+// SDL owns one process-wide main thread and event pump until its context drops.
+static SDL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn game_object_fallback_timers_preserve_state_and_random_order() -> Result<(), Box<dyn Error>> {
@@ -104,6 +110,7 @@ fn game_object_fallback_timers_preserve_state_and_random_order() -> Result<(), B
 #[test]
 fn game_object_gpu_resources_and_playback_follow_independent_lifetimes()
 -> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     verify_independent_lifetimes(models::model()?)?;
     // Ordinary props frequently have only Stand; they must still own geometry,
     // a valid native sequence timer, and independent effect/playback histories.

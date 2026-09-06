@@ -61,6 +61,12 @@ ownership. GameObjects share canonical CPU/GPU model sources and retain each
 world/entity lifetime's playback independently of terrain membership.
 New static M2 local sequences start against the existing scene clock rather
 than aging from world entry time zero (`0x00826B00`).
+WMO attachment admission additionally follows loaded group MODR references in
+first-reference order (`0x007BF740`), filtered by the active MODS sets. Repeated
+references create one root-local owner, while unreferenced MODD records create
+no CPU model, animation timer, or GPU placement. Replicated WMO attachments use
+the same selection rule and retain CPU timers independently of GPU admission;
+see [GameObject placement](game-object-placement.md).
 
 Terrain buffers, material atlases, and terrain descriptor handles invalidate
 immediately on retirement. An empty graphics submission fences their earlier

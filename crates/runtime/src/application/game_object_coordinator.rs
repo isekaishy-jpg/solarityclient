@@ -7,7 +7,7 @@ mod world_model;
 #[path = "../../tests/application/game_object_jobs.rs"]
 mod tests;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
@@ -33,7 +33,9 @@ use crate::random::CrtRand;
 use worker::{
     GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState, prepare_on_worker,
 };
-pub(in crate::application) use world_model::GameObjectWorldModelSource;
+pub(in crate::application) use world_model::{
+    GameObjectWorldModelSource, GameObjectWorldModelState,
+};
 
 /// Failure while admitting the exact display resource owned by a GameObject.
 #[derive(Debug, Error)]
@@ -136,6 +138,7 @@ pub(in crate::application) struct GameObjectInstance {
     resource: Option<Arc<GameObjectResource>>,
     failed: bool,
     behavior: Option<Rc<GameObjectBehavior>>,
+    world_model_state: RefCell<Option<Rc<GameObjectWorldModelState>>>,
 }
 
 /// Borrowed object order and lifetime lookup for one renderer publication/update.
@@ -182,6 +185,11 @@ impl<'a> GameObjectFrameInput<'a> {
 }
 
 impl GameObjectInstance {
+    pub(in crate::application) fn world_model_state(
+        &self,
+    ) -> Option<Rc<GameObjectWorldModelState>> {
+        self.world_model_state.borrow().clone()
+    }
     pub(in crate::application) fn behavior(&self) -> Option<&GameObjectBehavior> {
         self.behavior.as_deref()
     }
@@ -417,6 +425,7 @@ impl RuntimeGameObjectPresentation {
             if let Some(index) = index {
                 let instance = &mut self.instances[index];
                 if display_changed {
+                    instance.world_model_state.borrow_mut().take();
                     if let Some(behavior) = instance.behavior() {
                         behavior.detach_model();
                     }
@@ -452,6 +461,7 @@ impl RuntimeGameObjectPresentation {
                     resource,
                     failed: false,
                     behavior,
+                    world_model_state: RefCell::new(None),
                 });
                 self.scene_revision = self.scene_revision.wrapping_add(1);
             }
@@ -530,6 +540,22 @@ impl RuntimeGameObjectPresentation {
             return Ok(());
         };
         for instance in &self.instances {
+            if let Some(GameObjectResource::WorldModel(source)) = instance.resource() {
+                let mut state = instance.world_model_state.borrow_mut();
+                if state
+                    .as_ref()
+                    .is_none_or(|state| !state.matches(source, instance.display_id()))
+                {
+                    *state = Some(Rc::new(GameObjectWorldModelState::new(
+                        source,
+                        instance.display_id(),
+                        self.scene_time_ms.get(),
+                        random,
+                    )?));
+                }
+            } else {
+                instance.world_model_state.borrow_mut().take();
+            }
             if let (Some(behavior), Some(GameObjectResource::M2(source))) =
                 (instance.behavior(), instance.resource())
             {

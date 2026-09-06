@@ -167,6 +167,34 @@ impl DecodedWorldModel {
         Ok(indices)
     }
 
+    /// Returns active MODD owners in first group-MODR reference order.
+    ///
+    /// Native `0x007BF740` constructs an owner only when a loaded group names
+    /// it. Unreferenced records do not create models, timers, or emitters;
+    /// repeated references resolve the same root-local MODD lifetime.
+    ///
+    /// # Errors
+    /// Returns [`WorldModelDoodadSetError`] for an invalid MODS selector.
+    pub fn referenced_active_doodad_indices(
+        &self,
+        selector: u16,
+    ) -> Result<Vec<usize>, WorldModelDoodadSetError> {
+        let mut active = vec![false; self.doodads.len()];
+        for index in self.active_doodad_indices(selector)? {
+            active[index] = true;
+        }
+        let mut indices = Vec::new();
+        for group in &self.groups {
+            for &index in group.doodad_references() {
+                let index = usize::from(index);
+                if std::mem::take(&mut active[index]) {
+                    indices.push(index);
+                }
+            }
+        }
+        Ok(indices)
+    }
+
     /// Returns every group in exact numeric file order.
     #[must_use]
     pub fn groups(&self) -> &[DecodedWorldModelGroup] {

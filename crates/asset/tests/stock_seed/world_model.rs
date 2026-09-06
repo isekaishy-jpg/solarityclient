@@ -121,6 +121,8 @@ fn world_model_decodes_and_validates_nested_group_references() -> Result<(), Box
         } else {
             let model = loaded?;
             assert_eq!(model.groups()[0].doodad_references(), &[1, 0, 1]);
+            assert_eq!(model.referenced_active_doodad_indices(0)?, [0]);
+            assert_eq!(model.referenced_active_doodad_indices(1)?, [1, 0]);
             assert_eq!(model.groups()[0].light_references(), &[0, 0]);
         }
     }
@@ -344,6 +346,7 @@ fn world_model_decodes_stock_doodad_sets() -> Result<(), Box<dyn Error>> {
     assert_eq!(lamp.orientation(), [0.0, 0.0, 1.0, 0.0]);
     assert_eq!(model.active_doodad_indices(0)?, [0]);
     assert_eq!(model.active_doodad_indices(1)?, [0, 1]);
+    assert!(model.referenced_active_doodad_indices(1)?.is_empty());
     let error = match model.active_doodad_indices(2) {
         Ok(_) => return Err("selector outside MODS was accepted".into()),
         Err(error) => error,
