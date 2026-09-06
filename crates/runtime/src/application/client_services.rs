@@ -1987,14 +1987,8 @@ impl ClientServices {
         )?;
         profile.mark("game object residency and collision registry");
         if let Some(ui) = &self.world_ui {
-            let scalar = |name: &str, fallback| ui.cvar_number(name).unwrap_or(fallback);
-            self.player_movement.set_camera_zoom_settings(
-                super::player_camera::PlayerCameraZoomSettings {
-                    speed: scalar("cameradistancemovespeed", 8.33),
-                    maximum: scalar("cameradistancemax", 15.),
-                    maximum_factor: scalar("cameradistancemaxfactor", 1.),
-                },
-            );
+            self.player_movement
+                .refresh_camera_settings(ui.cvar_revision(), |name| ui.cvar_number(name));
         }
         self.player_movement.service(
             &mut self.gameplay,

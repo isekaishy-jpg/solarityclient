@@ -314,6 +314,10 @@ impl RuntimeWorldUi {
         self.manager.cvar_number(name)
     }
 
+    pub(super) fn cvar_revision(&self) -> u64 {
+        self.manager.cvar_revision()
+    }
+
     /// Takes profile-backed CVars changed by built-in FrameXML Lua.
     pub(super) fn take_changed_cvars(&self) -> Vec<(String, String)> {
         self.manager.take_changed_cvars()

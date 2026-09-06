@@ -1,6 +1,9 @@
-//! Ordered ordinary-player mouse orbit state from build-12340 Camera.cpp.
+//! Ordinary-player orbit, timed zoom and camera follow from build-12340.
 
 use solarity_ecs::PlayerViewState;
+
+mod follow;
+pub(super) use follow::FollowSettings as PlayerCameraFollowSettings;
 
 #[derive(Clone, Copy)]
 pub(super) struct PlayerCameraZoomSettings {
@@ -120,19 +123,24 @@ pub(super) struct PlayerCameraMouseSettings {
 /// Free look retains a world-space yaw while the subject can turn independently.
 #[derive(Clone, Copy)]
 pub(super) struct PlayerCameraInput {
-    view: PlayerViewState,
+    view_slot: u8,
     zoom: CameraZoom,
     flags: u32,
     world_yaw: f32,
+    follow: [follow::FollowAngle; 2],
 }
 
 impl PlayerCameraInput {
     pub(super) fn new(view: PlayerViewState, facing: f32) -> Self {
         Self {
-            view,
+            view_slot: view.view(),
             zoom: CameraZoom::new(view.distance()),
             flags: 0,
             world_yaw: wrap_yaw(facing + view.yaw_offset_radians()),
+            follow: [
+                follow::FollowAngle::new(view.pitch_radians()),
+                follow::FollowAngle::new(view.yaw_offset_radians()),
+            ],
         }
     }
 
@@ -150,6 +158,37 @@ impl PlayerCameraInput {
         self.zoom.sample(time, settings);
     }
 
+    pub(super) fn follow_input(
+        &mut self,
+        previous: u32,
+        held: u32,
+        time: u32,
+        settings: &PlayerCameraFollowSettings,
+        movement_flags: u32,
+    ) {
+        // 5FA170/5FA450 notify the camera at ordinary held-control edges,
+        // including button release. Active-axis bookkeeping is not an edge.
+        if (previous ^ held) & 0x13f3 == 0 {
+            return;
+        }
+        follow::request(
+            &mut self.follow,
+            self.flags,
+            held,
+            !follow::idle(previous) && follow::idle(held),
+            time,
+            settings,
+            movement_flags & 0x0220_0000 != 0,
+        );
+    }
+
+    pub(super) fn sample_follow(&mut self, time: u32) {
+        self.follow[0].sample(time);
+        if !self.free_look() {
+            self.follow[1].sample(time);
+        }
+    }
+
     pub(super) fn free_look(&self) -> bool {
         self.flags & 1 != 0
     }
@@ -159,9 +198,15 @@ impl PlayerCameraInput {
             return;
         }
         if enabled {
-            self.world_yaw = wrap_yaw(facing + self.view.yaw_offset_radians());
+            self.world_yaw = wrap_yaw(facing + self.follow[1].current);
+            for angle in &mut self.follow {
+                angle.cancel();
+            }
         } else {
-            self.view = self.view(facing);
+            self.follow[1].current = self.world_yaw - facing;
+            for angle in &mut self.follow {
+                angle.cancel();
+            }
         }
         self.flags = self.flags & !1 | u32::from(enabled);
     }
@@ -177,13 +222,13 @@ impl PlayerCameraInput {
     pub(super) fn view(&self, facing: f32) -> PlayerViewState {
         PlayerViewState::new(
             self.zoom.distance,
-            self.view.pitch_radians(),
+            self.follow[0].current,
             if self.free_look() {
                 self.world_yaw - facing
             } else {
-                self.view.yaw_offset_radians()
+                self.follow[1].current
             },
-            self.view.view(),
+            self.view_slot,
         )
     }
 
@@ -196,13 +241,7 @@ impl PlayerCameraInput {
         self.flags |= 0x40;
         let [yaw, pitch] = mouse_angles(delta, settings);
         self.world_yaw = wrap_yaw(self.world_yaw - yaw);
-        let pitch = (self.view.pitch_radians() + pitch).clamp(-1.553_343, 1.553_343);
-        self.view = PlayerViewState::new(
-            self.view.distance(),
-            pitch,
-            self.view.yaw_offset_radians(),
-            self.view.view(),
-        );
+        self.follow[0].current = (self.follow[0].current + pitch).clamp(-1.553_343, 1.553_343);
     }
 }
 

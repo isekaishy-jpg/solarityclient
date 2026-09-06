@@ -3,7 +3,8 @@
 use std::collections::VecDeque;
 
 use super::player_camera::{
-    PlayerCameraInput, PlayerCameraMouseSettings, PlayerCameraZoomSettings,
+    PlayerCameraFollowSettings, PlayerCameraInput, PlayerCameraMouseSettings,
+    PlayerCameraZoomSettings,
 };
 use super::player_control::PlayerControlEvent;
 use glam::{Vec2, Vec3};
@@ -105,6 +106,8 @@ impl MovementCommand {
 #[derive(Default)]
 pub(super) struct RuntimePlayerMovement {
     camera_zoom_settings: PlayerCameraZoomSettings,
+    camera_follow_settings: PlayerCameraFollowSettings,
+    camera_cvar_revision: Option<u64>,
     owner: Option<LocalMovement>,
     input: PlayerInputState,
     commands: VecDeque<MovementCommand>,
@@ -170,6 +173,23 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    pub(super) fn refresh_camera_settings(
+        &mut self,
+        revision: u64,
+        number: impl Fn(&str) -> Option<f32>,
+    ) {
+        if self.camera_cvar_revision == Some(revision) {
+            return;
+        }
+        self.camera_cvar_revision = Some(revision);
+        self.camera_follow_settings = PlayerCameraFollowSettings::read(&number);
+        self.set_camera_zoom_settings(PlayerCameraZoomSettings {
+            speed: number("cameradistancemovespeed").unwrap_or(8.33),
+            maximum: number("cameradistancemax").unwrap_or(15.),
+            maximum_factor: number("cameradistancemaxfactor").unwrap_or(1.),
+        });
+    }
+
     pub(super) fn set_camera_zoom_settings(&mut self, settings: PlayerCameraZoomSettings) {
         self.camera_zoom_settings = settings;
     }
@@ -320,10 +340,19 @@ impl RuntimePlayerMovement {
                     .camera
                     .zoom(inward, amount, timestamp_ms, self.camera_zoom_settings);
             } else {
+                let previous = self.input.held_bits();
                 owner.command(command, &mut self.input, world, &mut self.output)?;
+                owner.camera.follow_input(
+                    previous,
+                    self.input.held_bits(),
+                    now_ms,
+                    &self.camera_follow_settings,
+                    owner.flags,
+                );
             }
         }
         owner.camera.sample_zoom(now_ms, self.camera_zoom_settings);
+        owner.camera.sample_follow(now_ms);
         let (transform, movement) = owner.snapshot();
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.orientation))?;
@@ -342,6 +371,7 @@ impl RuntimePlayerMovement {
         self.input = PlayerInputState::default();
         self.commands.clear();
         self.output.clear();
+        self.camera_cvar_revision = None;
     }
 }
 

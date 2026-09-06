@@ -1,6 +1,6 @@
 //! Case-insensitive CVar storage shared by native and Lua-facing UI paths.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -22,9 +22,14 @@ struct UiCVar {
 pub(in crate::script::simple_script) struct UiCVarRegistry {
     entries: Rc<RefCell<HashMap<String, UiCVar>>>,
     changed: Rc<RefCell<HashSet<String>>>,
+    revision: Rc<Cell<u64>>,
 }
 
 impl UiCVarRegistry {
+    pub(in crate::script::simple_script) fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+
     /// Registers every evidenced native default needed by built-in UI code.
     pub(in crate::script::simple_script) fn stock_initial() -> Self {
         let registry = Self::default();
@@ -102,6 +107,7 @@ impl UiCVarRegistry {
         }
         if entry.value != value {
             entry.value = value;
+            self.revision.set(self.revision.get().wrapping_add(1));
             self.changed.borrow_mut().insert(canonical_name(name));
         }
         Ok(())
@@ -109,8 +115,11 @@ impl UiCVarRegistry {
 
     /// Applies one profile value without reporting it as a runtime mutation.
     pub(in crate::script::simple_script) fn load(&self, name: &str, value: String) {
-        if let Some(entry) = self.entries.borrow_mut().get_mut(&canonical_name(name)) {
+        if let Some(entry) = self.entries.borrow_mut().get_mut(&canonical_name(name))
+            && entry.value != value
+        {
             entry.value = value;
+            self.revision.set(self.revision.get().wrapping_add(1));
         }
     }
 

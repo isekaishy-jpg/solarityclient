@@ -357,6 +357,12 @@ impl FrameManager {
         self.owner.cvar_number(name)
     }
 
+    /// Returns the retained CVar generation for native policy caches.
+    #[must_use]
+    pub fn cvar_revision(&self) -> u64 {
+        self.owner.cvar_revision()
+    }
+
     /// Takes profile-backed CVars changed by built-in FrameXML Lua.
     #[must_use]
     pub fn take_changed_cvars(&self) -> Vec<(String, String)> {

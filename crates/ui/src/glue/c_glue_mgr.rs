@@ -629,6 +629,12 @@ impl GlueManager {
         self.environment.cvar_number(name)
     }
 
+    /// Returns the retained CVar generation for native policy caches.
+    #[must_use]
+    pub fn cvar_revision(&self) -> u64 {
+        self.environment.cvar_revision()
+    }
+
     /// Applies stock's numeric truth test to one live console variable.
     #[must_use]
     pub fn cvar_boolean(&self, name: &str) -> bool {

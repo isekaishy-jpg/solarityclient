@@ -551,6 +551,10 @@ fn script_runtime_executes_stock_bootstrap_order() -> Result<(), Box<dyn Error>>
   assert(GetCVarBool("gxVSync"))
   assert(GetCVar("rotateMinimap") == "0")
   assert(GetCVarDefault("cameraSmoothStyle") == "4")
+  assert(GetCVarDefault("cameraSmoothSmarterMoveFactor") == "1.0")
+  assert(GetCVarDefault("cameraSmoothSmarterIdleFactor") == "0.0")
+  assert(GetCVarDefault("cameraSmoothViewDataSmartPitchFactor") == "0.0")
+  assert(GetCVarDefault("cameraSmoothViewDataSmarterPitchFactor") == "1.0")
   assert(GetCVarDefault("cameraDistanceMaxFactor") == "1.0")
   assert(GetCVarDefault("mouseInvertPitch") == "0")
   assert(GetCVarDefault("mouseSpeed") == "1.0")
@@ -645,6 +649,7 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
     let textures = UiTexturePlan::from_tree(&tree)?;
     let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
     let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    let cvar_observer = environment.clone();
     let animations = UiAnimationPlan::from_tree(&tree)?;
     let runtime_plan = UiScriptRuntimePlan::new(
         &tree,
@@ -696,6 +701,18 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
         bundle.lua().globals().get::<String>("RESULT")?,
         "First:FirstChild;First;DynamicLabel;Dynamic;Later;"
     );
+    let revision = cvar_observer.cvar_revision();
+    bundle
+        .lua()
+        .load("SetCVar('cameraSmoothStyle', '4')")
+        .exec()?;
+    assert_eq!(cvar_observer.cvar_revision(), revision);
+    bundle
+        .lua()
+        .load("SetCVar('CAMERASMOOTHSTYLE', '0')")
+        .exec()?;
+    assert_eq!(cvar_observer.cvar_revision(), revision + 1);
+    assert_eq!(cvar_observer.cvar_number("camerasmoothstyle"), Some(0.));
     Ok(())
 }
 

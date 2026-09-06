@@ -171,10 +171,9 @@ including the default Ctrl sticky-camera argument on release. Idle spell/target
 cancellation queries allow the stock Escape chain to reach the menu; active
 cast, channel, targeting, and selected-target owners still require integration.
 
-Camera follow/recentering, special controlled subjects, and
-full sticky-camera behavior remain incomplete. The release argument is retained
-for the future follow owner. These checks do not establish live camera parity
-or resolve the reported world frame rate. The Testing installer can enable
+Special controlled subjects and tracking camera modes remain incomplete.
+These checks do not establish live camera parity or resolve the reported world
+frame rate. The Testing installer can enable
 `SOLARITY_FRAME_TIMINGS` with `-FrameTimings` to attribute slow world frames.
 
 Ordinary wheel zoom now runs the native timed distance banks rather than an
@@ -195,3 +194,26 @@ scrolls, direction reversal, clamping, and clock wrap. Production service tests
 check zoom publication without changing pitch/yaw; the real FrameXML example
 checks both stock wheel bindings. Special-subject distance scaling and saved-view
 interpolation remain outside this ordinary zoom owner.
+
+Ordinary relative-yaw follow now uses `0x00602760` profile selection on held
+control changes. Idle, Stop, Move, Strafe and Turn select the highest applicable
+condition in the active Never/Smart/Always/Spline/Smarter table. Native axis
+delay and factor composition, pitch/yaw admission bounds, shortest-angle
+normalization, shared duration, and repeated-request retention drive separate
+pitch and yaw lanes. Entering mouse look cancels the lanes; sticky release
+suppresses subsequent follow requests until an ordinary mouse release clears it.
+The follow request uses the service clock, as the original samples `0x0086AE20`
+at the input edge, while wheel requests retain their input timestamp.
+
+The frame update preserves the original cosine interpolation, fraction float
+store, delayed start, wrapping clock comparison and next-sample completion.
+`tools/ghidra/camera_follow_oracle.py` executes original profile selection,
+request helpers and interpolation instructions for 900 histories. Tests compare
+every captured angle bit and retained lane word after each action; only object
+lookup and the clock are supplied externally. Production service coverage checks
+idle orbit retention, movement recentering without subject steering, stop
+cancellation, and live selection of Never. All native condition/axis profile
+CVars are registered, and the runtime only rebuilds its numeric policy after the
+shared CVar generation changes. The ordinary owner still lacks saved-view
+editing/gates, tracked-subject absolute-yaw modes, roll and cinematic policy;
+the native CVar rejection callbacks are not yet reproduced by the registry.

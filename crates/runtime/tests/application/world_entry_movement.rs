@@ -264,6 +264,88 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         zoomed_view.yaw_offset_radians(),
         original_view.yaw_offset_radians()
     );
+
+    // An idle left orbit persists. Starting movement then follows on both
+    // axes; stopping cancels the default Smarter transition at its current view.
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, true, 1520));
+    movement.push_mouse_motion([100., 300.], settings, 1520);
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, false, 1520));
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1520,
+    )?;
+    let orbit = gameplay.world().ok_or("world")?.local_player_view()?;
+    let facing = gameplay
+        .world()
+        .ok_or("world")?
+        .local_player_transform()?
+        .orientation();
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1800,
+    )?;
+    assert_eq!(gameplay.world().ok_or("world")?.local_player_view()?, orbit);
+    movement.push(hold(UiMovementControl::Forward, true, 1800));
+    for now in [1800, 1900, 2000] {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+    }
+    let following = gameplay.world().ok_or("world")?.local_player_view()?;
+    assert!(following.yaw_offset_radians().abs() < orbit.yaw_offset_radians().abs());
+    assert!(following.yaw_offset_radians().abs() > 0.01);
+    assert!(following.pitch_radians() < orbit.pitch_radians());
+    assert!(following.pitch_radians() > 0.6);
+    assert_eq!(
+        gameplay
+            .world()
+            .ok_or("world")?
+            .local_player_transform()?
+            .orientation(),
+        facing
+    );
+    movement.push(hold(UiMovementControl::Forward, false, 2000));
+    for now in [2000, 2100, 2400] {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+    }
+    assert_eq!(
+        gameplay.world().ok_or("world")?.local_player_view()?,
+        following
+    );
+    // A changed script policy is read once, while identical revisions avoid
+    // every numeric lookup. Never disables recentering on the next input edge.
+    movement.refresh_camera_settings(7, |name| (name == "camerasmoothstyle").then_some(0.));
+    movement.refresh_camera_settings(7, |_| panic!("unchanged camera settings were reread"));
+    movement.push(hold(UiMovementControl::Forward, true, 2400));
+    for now in [2400, 2500, 2800] {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+    }
+    assert_eq!(
+        gameplay.world().ok_or("world")?.local_player_view()?,
+        following
+    );
     Ok(())
 }
 

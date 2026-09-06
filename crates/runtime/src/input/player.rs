@@ -29,6 +29,10 @@ pub(crate) struct PlayerInputState {
 }
 
 impl PlayerInputState {
+    pub(crate) fn held_bits(&self) -> u32 {
+        self.bits
+    }
+
     pub(crate) fn mouse_free_look(&self) -> bool {
         self.bits & 3 != 0
     }

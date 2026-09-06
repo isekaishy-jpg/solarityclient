@@ -760,6 +760,12 @@ impl UiScriptEnvironment {
         self.cvars.number(name)
     }
 
+    /// Changes whenever a retained CVar value changes, including profile loads.
+    #[must_use]
+    pub fn cvar_revision(&self) -> u64 {
+        self.cvars.revision()
+    }
+
     /// Applies stock's numeric truth test to one registered console variable.
     #[must_use]
     pub fn cvar_boolean(&self, name: &str) -> bool {
