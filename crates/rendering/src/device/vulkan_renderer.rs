@@ -1340,6 +1340,24 @@ impl VulkanRenderer {
         plan: &UiMeshPlan,
         batch_index: usize,
     ) -> Result<UiPreparedDraw, VulkanError> {
+        self.prepare_ui_draw_with_mask(mesh, pipeline, texture_set, None, plan, batch_index)
+    }
+
+    /// Joins an ordered UI batch and its independent alpha-mask descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Rejects incompatible resources, including a missing or mismatched mask.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_ui_draw_with_mask(
+        &self,
+        mesh: UiMeshHandle,
+        pipeline: UiPipelineHandle,
+        texture_set: Option<UiTextureSetHandle>,
+        mask_set: Option<UiTextureSetHandle>,
+        plan: &UiMeshPlan,
+        batch_index: usize,
+    ) -> Result<UiPreparedDraw, VulkanError> {
         prepare_ui_draw(
             &self.ui_meshes,
             &self.ui_pipelines,
@@ -1351,6 +1369,7 @@ impl VulkanRenderer {
             mesh,
             pipeline,
             texture_set,
+            mask_set,
             plan,
             batch_index,
         )

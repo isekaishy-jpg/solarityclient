@@ -96,6 +96,7 @@ pub use terrain::{
     TerrainTileMeshPlanError,
 };
 pub use ui::{
-    UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderQuad, UiRenderSource,
-    UiRenderState, UiRenderTransform, UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
+    UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderMask, UiRenderQuad,
+    UiRenderSource, UiRenderState, UiRenderTransform, UiRenderVertex, UiTextureAddressMode,
+    UiTextureResidency,
 };

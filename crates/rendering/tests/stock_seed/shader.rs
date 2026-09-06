@@ -90,11 +90,15 @@ fn glow_shader_passes_compile_for_pinned_target() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Both simple-render source paths compile for the pinned SPIR-V 1.6 target.
+/// All simple-render source paths compile for the pinned SPIR-V 1.6 target.
 #[test]
 fn ui_shader_variants_compile_for_pinned_target() -> Result<(), Box<dyn Error>> {
     let compiler = UiSpirvCompiler::new()?;
-    for source in [UiShaderSource::Texture, UiShaderSource::VertexColor] {
+    for source in [
+        UiShaderSource::Texture,
+        UiShaderSource::MaskedTexture,
+        UiShaderSource::VertexColor,
+    ] {
         let program = compiler.compile(source)?;
         assert_eq!(program.source(), source);
         assert_eq!(program.vertex_words()[0], SPIRV_MAGIC);

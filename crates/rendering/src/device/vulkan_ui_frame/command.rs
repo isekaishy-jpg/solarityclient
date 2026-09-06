@@ -55,6 +55,7 @@ struct UiCommandBindings {
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     descriptor_set: vk::DescriptorSet,
+    mask_set: vk::DescriptorSet,
     scissor: vk::Rect2D,
 }
 
@@ -66,6 +67,7 @@ impl UiCommandBindings {
             vertex_buffer: vk::Buffer::null(),
             index_buffer: vk::Buffer::null(),
             descriptor_set: vk::DescriptorSet::null(),
+            mask_set: vk::DescriptorSet::null(),
             scissor,
         }
     }
@@ -384,6 +386,7 @@ fn record_draw(
             bindings.pipeline = pipeline;
             bindings.layout = layout;
             bindings.descriptor_set = vk::DescriptorSet::null();
+            bindings.mask_set = vk::DescriptorSet::null();
         }
         if bindings.vertex_buffer != vertex_buffer {
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
@@ -410,12 +413,33 @@ fn record_draw(
                 bindings.layout = layout;
             }
         }
+        if let Some((mask_set, _)) = draw.mask() {
+            let descriptor = texture_sets
+                .raw(mask_set)
+                .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
+            if bindings.mask_set != descriptor {
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    1,
+                    &[descriptor],
+                    &[],
+                );
+                bindings.mask_set = descriptor;
+            }
+        }
         device.cmd_push_constants(
             command_buffer,
             layout,
             vk::ShaderStageFlags::VERTEX,
             0,
-            &draw_state_bytes(logical_extent, draw.translation(), draw.opacity()),
+            &draw_state_bytes(
+                logical_extent,
+                draw.translation(),
+                draw.opacity(),
+                draw.mask().map(|(_, bounds)| bounds),
+            ),
         );
         // Every UI quad has the same six-index pattern. Reuse the mesh's
         // canonical prefix for each batch and select its contiguous vertices
@@ -440,12 +464,21 @@ fn same_rect(left: vk::Rect2D, right: vk::Rect2D) -> bool {
 }
 
 /// Serializes canvas, retained translation, and inherited opacity draw state.
-fn draw_state_bytes(extent: [f32; 2], translation: [f32; 2], opacity: f32) -> [u8; 20] {
-    let mut bytes = [0; 20];
+fn draw_state_bytes(
+    extent: [f32; 2],
+    translation: [f32; 2],
+    opacity: f32,
+    mask: Option<[f32; 4]>,
+) -> [u8; 36] {
+    let mut bytes = [0; 36];
+    let mask_transform = mask.map_or([0.0; 4], |[left, bottom, right, top]| {
+        [left, top, 1.0 / (right - left), 1.0 / (top - bottom)]
+    });
     for (index, value) in extent
         .into_iter()
         .chain(translation)
         .chain([opacity])
+        .chain(mask_transform)
         .enumerate()
     {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());

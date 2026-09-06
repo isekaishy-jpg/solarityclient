@@ -19,7 +19,7 @@ struct GpuUiPipeline {
     info: UiPipelineInfo,
 }
 
-/// Owns the common layout and at most four UI pipeline variants.
+/// Owns the common layout and closed UI source/blend pipeline variants.
 pub(in crate::device) struct UiPipelineRegistry {
     registry_id: u64,
     compiler: Option<UiSpirvCompiler>,

@@ -1,5 +1,8 @@
 //! External tests for the renderer-owned UI mesh and batching boundary.
 
+#[path = "ui/mask.rs"]
+mod mask;
+
 use std::error::Error;
 
 use solarity_asset::AssetPath;

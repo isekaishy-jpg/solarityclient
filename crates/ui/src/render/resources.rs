@@ -34,6 +34,7 @@ impl UiTextureAssetRequest {
 pub struct UiTextureAssetPlan {
     requests: Vec<UiTextureAssetRequest>,
     batch_requests: Vec<Option<u32>>,
+    mask_requests: Vec<Option<u32>>,
 }
 
 impl UiTextureAssetPlan {
@@ -51,31 +52,40 @@ impl UiTextureAssetPlan {
         let mut requests = Vec::<UiTextureAssetRequest>::new();
         let mut indices = HashMap::<AssetPath, u32>::new();
         let mut batch_requests = Vec::with_capacity(mesh.batches().len());
-        for batch in mesh.batches() {
-            let UiRenderSource::Texture(path) = batch.source() else {
-                batch_requests.push(None);
-                continue;
-            };
-            let request_index = if let Some(index) = indices.get(path).copied() {
-                if batch.residency() == UiTextureResidency::Blocking {
+        let mut mask_requests = Vec::with_capacity(mesh.batches().len());
+        let mut request = |path: &AssetPath, residency| -> Result<u32, UiRenderError> {
+            if let Some(index) = indices.get(path).copied() {
+                if residency == UiTextureResidency::Blocking {
                     requests[index as usize].residency = UiTextureResidency::Blocking;
                 }
-                index
+                Ok(index)
             } else {
                 let index = u32::try_from(requests.len())
                     .map_err(|_source| UiRenderError::TextureRequestCapacity)?;
                 requests.push(UiTextureAssetRequest {
                     path: path.clone(),
-                    residency: batch.residency(),
+                    residency,
                 });
                 indices.insert(path.clone(), index);
-                index
-            };
-            batch_requests.push(Some(request_index));
+                Ok(index)
+            }
+        };
+        for batch in mesh.batches() {
+            batch_requests.push(match batch.source() {
+                UiRenderSource::Texture(path) => Some(request(path, batch.residency())?),
+                _ => None,
+            });
+            mask_requests.push(
+                batch
+                    .mask()
+                    .map(|mask| request(mask.path(), batch.residency()))
+                    .transpose()?,
+            );
         }
         Ok(Self {
             requests,
             batch_requests,
+            mask_requests,
         })
     }
 
@@ -89,6 +99,13 @@ impl UiTextureAssetPlan {
     #[must_use]
     pub fn request_for_batch(&self, batch_index: usize) -> Option<&UiTextureAssetRequest> {
         let request = self.batch_requests.get(batch_index).copied().flatten()?;
+        self.requests.get(request as usize)
+    }
+
+    /// Returns the independent mask request for a material batch, if present.
+    #[must_use]
+    pub fn mask_request_for_batch(&self, batch_index: usize) -> Option<&UiTextureAssetRequest> {
+        let request = self.mask_requests.get(batch_index).copied().flatten()?;
         self.requests.get(request as usize)
     }
 

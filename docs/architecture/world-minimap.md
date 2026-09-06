@@ -28,7 +28,19 @@ tiles around the player (`0x007F5760`) and composites their texture and mask
 coordinates (`0x0057D5F0`, `0x0057E540`). The default mask is
 `Textures/MinimapMask`; stock FrameXML also names an M2 player arrow.
 
-Only the asset lookup is implemented here. The retained Minimap widget snapshot,
-runtime tile residency, masked rendering, indoor group selection, player arrow,
-rotation, tracking, and pings still need their rendering integration. The existing
-Lua zoom setter also needs to be joined to the recovered shared zoom state.
+The renderer also accepts an independent archive alpha mask on ordinary UI
+texture quads. `UiRenderMask` retains the image identity and its logical rectangle;
+each tile keeps its own source UVs while the vertex shader derives mask UVs from
+that rectangle. Two compatible sampled-image descriptor sets share the ordinary
+UI pass. This requires neither a composed CPU image nor another offscreen pass.
+Retained draw translation carries both geometry and mask; mask changes split
+material batches and invalidate incompatible retained resources. UI asset plans
+deduplicate source and mask requests, including promotion to blocking residency.
+GPU capture tests verify adjacent tiles sharing an asymmetric mask, transparent
+and half-alpha regions, unchanged source RGB, movement, and a subsequent ordinary
+UI draw. Validation rejects missing/mismatched masks and degenerate rectangles.
+
+The visible minimap is still incomplete. The retained Minimap widget snapshot,
+runtime tile residency and projection, indoor group selection, player arrow,
+rotation, tracking, and pings still need integration. The existing Lua zoom setter
+also needs to be joined to the recovered shared zoom state.

@@ -7,7 +7,7 @@ use ash::{Device, vk};
 use crate::device::VulkanError;
 use crate::{UiRenderBlend, UiRenderVertex, UiSpirvProgram};
 
-const CANVAS_PUSH_CONSTANT_BYTES: u32 = 20;
+const CANVAS_PUSH_CONSTANT_BYTES: u32 = 36;
 
 /// Common sampled-image and canvas-transform ABI for every UI variant.
 #[derive(Default)]
@@ -38,7 +38,7 @@ impl UiPipelineLayout {
             .stage_flags(vk::ShaderStageFlags::VERTEX)
             .offset(0)
             .size(CANVAS_PUSH_CONSTANT_BYTES);
-        let sets = [self.texture_set];
+        let sets = [self.texture_set; 2];
         let push_ranges = [push_range];
         let layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)

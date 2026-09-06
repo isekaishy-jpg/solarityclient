@@ -55,18 +55,22 @@ fn main() {
         &output.join("m2-ribbon.frag.spv"),
         &[],
     );
-    for (name, textured) in [("texture", "1"), ("color", "0")] {
+    for (name, textured, masked) in [
+        ("texture", "1", "0"),
+        ("color", "0", "0"),
+        ("masked", "1", "1"),
+    ] {
         compile(
             "src/shader/ui_spirv/source/ui.vert.glsl",
             ShaderKind::Vertex,
             &output.join(format!("ui-{name}.vert.spv")),
-            &[("UI_TEXTURED", textured)],
+            &[("UI_TEXTURED", textured), ("UI_MASKED", masked)],
         );
         compile(
             "src/shader/ui_spirv/source/ui.frag.glsl",
             ShaderKind::Fragment,
             &output.join(format!("ui-{name}.frag.spv")),
-            &[("UI_TEXTURED", textured)],
+            &[("UI_TEXTURED", textured), ("UI_MASKED", masked)],
         );
     }
     for layer_count in 1..=4 {

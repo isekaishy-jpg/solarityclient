@@ -8,6 +8,7 @@ pub struct UiPreparedDraw {
     mesh: UiMeshHandle,
     pipeline: UiPipelineHandle,
     texture_set: Option<UiTextureSetHandle>,
+    mask: Option<(UiTextureSetHandle, [f32; 4])>,
     first_index: u32,
     index_count: u32,
     base_vertex: i32,
@@ -23,6 +24,7 @@ impl UiPreparedDraw {
         mesh: UiMeshHandle,
         pipeline: UiPipelineHandle,
         texture_set: Option<UiTextureSetHandle>,
+        mask: Option<(UiTextureSetHandle, [f32; 4])>,
         first_index: u32,
         index_count: u32,
         base_vertex: i32,
@@ -34,6 +36,7 @@ impl UiPreparedDraw {
             mesh,
             pipeline,
             texture_set,
+            mask,
             first_index,
             index_count,
             base_vertex,
@@ -59,6 +62,12 @@ impl UiPreparedDraw {
     #[must_use]
     pub const fn texture_set(self) -> Option<UiTextureSetHandle> {
         self.texture_set
+    }
+
+    /// Returns the mask descriptor and its untranslated logical rectangle.
+    #[must_use]
+    pub const fn mask(self) -> Option<(UiTextureSetHandle, [f32; 4])> {
+        self.mask
     }
 
     /// Returns the batch's first index in the source mesh plan.

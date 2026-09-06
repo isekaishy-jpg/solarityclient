@@ -10,6 +10,52 @@ use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiPointerButton, UiTe
 
 use crate::support::{Fixture, FixtureFile};
 
+#[test]
+fn ui_mask_requests_deduplicate_and_promote_shared_residency() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::AssetPath;
+    use solarity_rendering::{UiMeshPlan, UiRenderMask, UiRenderQuad};
+    use solarity_ui::UiTextureAssetPlan;
+    let tile = AssetPath::new("Tile.blp")?;
+    let mask = AssetPath::new("Mask.blp")?;
+    let quad = |source, residency| {
+        UiRenderQuad::new(
+            0,
+            UiRenderSource::Texture(source),
+            UiRenderBlend::Alpha,
+            UiTextureAddressMode::Clamp,
+            UiTextureAddressMode::Clamp,
+            residency,
+            false,
+            [0.0, 0.0, 32.0, 32.0],
+            [[0.0; 2]; 4],
+            [[1.0; 4]; 4],
+        )
+    };
+    let plan = UiMeshPlan::prepare(
+        [64.0; 2],
+        [
+            quad(tile.clone(), UiTextureResidency::NonBlocking)
+                .with_mask(UiRenderMask::new(mask.clone(), [0.0, 0.0, 64.0, 64.0])),
+            quad(mask.clone(), UiTextureResidency::Blocking),
+        ]
+        .into_iter(),
+    )?;
+    let requests = UiTextureAssetPlan::prepare(&plan)?;
+    assert_eq!(requests.requests().len(), 2);
+    assert_eq!(
+        requests.request_for_batch(0).map(|request| request.path()),
+        Some(&tile)
+    );
+    let shared_mask = requests
+        .mask_request_for_batch(0)
+        .ok_or("missing mask request")?;
+    assert_eq!(shared_mask.path(), &mask);
+    assert_eq!(shared_mask.residency(), UiTextureResidency::Blocking);
+    assert_eq!(Some(shared_mask), requests.request_for_batch(1));
+    assert!(requests.mask_request_for_batch(1).is_none());
+    Ok(())
+}
+
 /// Portrait requests survive presentation and are replaced through ordinary texture APIs.
 #[test]
 fn portrait_requests_follow_lua_source_changes_and_missing_units() -> Result<(), Box<dyn Error>> {

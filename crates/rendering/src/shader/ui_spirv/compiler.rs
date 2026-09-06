@@ -6,6 +6,8 @@ const TEXTURE_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-textu
 const TEXTURE_FRAGMENT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-texture.frag.spv"));
 const COLOR_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-color.vert.spv"));
 const COLOR_FRAGMENT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-color.frag.spv"));
+const MASKED_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-masked.vert.spv"));
+const MASKED_FRAGMENT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-masked.frag.spv"));
 
 /// Selector for immutable UI bytecode generated during the Cargo build.
 pub struct UiSpirvCompiler;
@@ -20,6 +22,7 @@ impl UiSpirvCompiler {
     pub fn compile(&self, source: UiShaderSource) -> Result<UiSpirvProgram, UiSpirvError> {
         let (vertex, fragment) = match source {
             UiShaderSource::Texture => (TEXTURE_VERTEX, TEXTURE_FRAGMENT),
+            UiShaderSource::MaskedTexture => (MASKED_VERTEX, MASKED_FRAGMENT),
             UiShaderSource::VertexColor => (COLOR_VERTEX, COLOR_FRAGMENT),
         };
         Ok(UiSpirvProgram::new(

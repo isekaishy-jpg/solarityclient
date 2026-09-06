@@ -65,11 +65,15 @@ impl PreparedUiFrame {
         let mut batch_resources = Vec::with_capacity(plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
-            let source = match batch.source() {
-                UiRenderSource::Texture(_)
-                | UiRenderSource::GlyphAtlas(_)
-                | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
-                UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+            let source = if batch.mask().is_some() {
+                UiShaderSource::MaskedTexture
+            } else {
+                match batch.source() {
+                    UiRenderSource::Texture(_)
+                    | UiRenderSource::GlyphAtlas(_)
+                    | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
+                    UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+                }
             };
             let pipeline = renderer.prepare_ui_pipeline(source, batch.blend())?;
             let sampled_index = match batch.source() {
@@ -116,21 +120,39 @@ impl PreparedUiFrame {
                 }
                 UiRenderSource::VertexColor => None,
             };
-            batch_resources.push((batch_index, pipeline, sampled_index));
+            let mask_index = if let Some(mask) = batch.mask() {
+                let Some(texture) = textures.get(mask.path()).copied() else {
+                    if batch.residency() == UiTextureResidency::NonBlocking {
+                        continue;
+                    }
+                    return Err(VulkanError::UiDrawTextureMismatch.into());
+                };
+                let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
+                    solarity_rendering::UiTextureAddressMode::Clamp,
+                    solarity_rendering::UiTextureAddressMode::Clamp,
+                ))?;
+                let index = sampled_textures.len();
+                sampled_textures.push(UiSampledTexture::new(texture, sampler));
+                Some(index)
+            } else {
+                None
+            };
+            batch_resources.push((batch_index, pipeline, sampled_index, mask_index));
         }
         let texture_sets = renderer.prepare_ui_texture_sets(&sampled_textures)?;
         let draw_batches = batch_resources
             .iter()
-            .map(|(batch_index, _pipeline, _sampled)| *batch_index)
+            .map(|(batch_index, _pipeline, _sampled, _mask)| *batch_index)
             .collect();
         let resident_draws = batch_resources
             .into_iter()
             .map(
-                |(batch_index, pipeline, sampled_index)| -> Result<_, ApplicationError> {
-                    let mut draw = renderer.prepare_ui_draw(
+                |(batch_index, pipeline, sampled_index, mask_index)| -> Result<_, ApplicationError> {
+                    let mut draw = renderer.prepare_ui_draw_with_mask(
                         mesh,
                         pipeline,
                         sampled_index.map(|index| texture_sets[index]),
+                        mask_index.map(|index| texture_sets[index]),
                         plan,
                         batch_index,
                     )?;
@@ -204,10 +226,11 @@ impl PreparedUiFrame {
             }
         } else {
             for (draw, batch_index) in self.resident_draws.iter_mut().zip(&self.draw_batches) {
-                *draw = renderer.prepare_ui_draw(
+                *draw = renderer.prepare_ui_draw_with_mask(
                     mesh,
                     draw.pipeline(),
                     draw.texture_set(),
+                    draw.mask().map(|(handle, _)| handle),
                     plan,
                     *batch_index,
                 )?;
@@ -320,6 +343,7 @@ fn apply_clipped_batch_range(
 
 fn same_ui_material(left: &UiRenderBatch, right: &UiRenderBatch) -> bool {
     left.source() == right.source()
+        && left.mask() == right.mask()
         && left.blend() == right.blend()
         && left.horizontal_address() == right.horizontal_address()
         && left.vertical_address() == right.vertical_address()

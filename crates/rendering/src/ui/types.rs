@@ -61,10 +61,39 @@ pub enum UiRenderSource {
     VertexColor,
 }
 
+/// A second archive image whose alpha masks a logical rectangle independently
+/// of the source image's UVs. Translation moves the mask with its geometry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiRenderMask {
+    path: AssetPath,
+    bounds: [f32; 4],
+}
+
+impl UiRenderMask {
+    /// Selects the mask and its left, bottom, right, top logical edges.
+    #[must_use]
+    pub const fn new(path: AssetPath, bounds: [f32; 4]) -> Self {
+        Self { path, bounds }
+    }
+
+    /// Returns the mask's archive identity.
+    #[must_use]
+    pub const fn path(&self) -> &AssetPath {
+        &self.path
+    }
+
+    /// Returns the mask rectangle before retained draw translation.
+    #[must_use]
+    pub const fn bounds(&self) -> [f32; 4] {
+        self.bounds
+    }
+}
+
 /// One post-layout quad supplied to renderer-side mesh preparation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderQuad {
     object_index: usize,
+    mask: Option<UiRenderMask>,
     source: UiRenderSource,
     blend: UiRenderBlend,
     horizontal_address: UiTextureAddressMode,
@@ -99,6 +128,7 @@ impl UiRenderQuad {
     ) -> Self {
         Self {
             object_index,
+            mask: None,
             source,
             blend,
             horizontal_address,
@@ -114,6 +144,19 @@ impl UiRenderQuad {
             translation: [0.0, 0.0],
             clip: None,
         }
+    }
+
+    /// Multiplies the source alpha by a separately sampled archive mask.
+    #[must_use]
+    pub fn with_mask(mut self, mask: UiRenderMask) -> Self {
+        self.mask = Some(mask);
+        self
+    }
+
+    /// Returns the optional second-image mask.
+    #[must_use]
+    pub const fn mask(&self) -> Option<&UiRenderMask> {
+        self.mask.as_ref()
     }
 
     /// Applies inherited region alpha as retained draw state.
@@ -264,6 +307,7 @@ impl UiRenderVertex {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderBatch {
     object_index: usize,
+    mask: Option<UiRenderMask>,
     source: UiRenderSource,
     blend: UiRenderBlend,
     horizontal_address: UiTextureAddressMode,
@@ -286,6 +330,7 @@ impl UiRenderBatch {
     pub(super) fn from_quad(quad: &UiRenderQuad, first_index: u32, first_quad: u32) -> Self {
         Self {
             object_index: quad.object_index(),
+            mask: quad.mask().cloned(),
             source: quad.source().clone(),
             blend: quad.blend(),
             horizontal_address: quad.horizontal_address(),
@@ -307,6 +352,7 @@ impl UiRenderBatch {
 
     pub(super) fn can_append(&self, quad: &UiRenderQuad) -> bool {
         self.object_index == quad.object_index()
+            && self.mask.as_ref() == quad.mask()
             && self.source == *quad.source()
             && self.blend == quad.blend()
             && self.horizontal_address == quad.horizontal_address()
@@ -327,6 +373,7 @@ impl UiRenderBatch {
     /// its text geometry changes.
     pub(super) fn can_replace(&self, quad: &UiRenderQuad) -> bool {
         self.object_index == quad.object_index()
+            && self.mask.as_ref() == quad.mask()
             && self.source == *quad.source()
             && self.blend == quad.blend()
             && self.horizontal_address == quad.horizontal_address()
@@ -352,6 +399,12 @@ impl UiRenderBatch {
     #[must_use]
     pub const fn source(&self) -> &UiRenderSource {
         &self.source
+    }
+
+    /// Returns the independently sampled alpha mask shared by this batch.
+    #[must_use]
+    pub const fn mask(&self) -> Option<&UiRenderMask> {
+        self.mask.as_ref()
     }
 
     /// Returns the fixed framebuffer blend operation.
@@ -418,6 +471,7 @@ impl UiRenderBatch {
     ) -> Self {
         Self {
             object_index: 0,
+            mask: None,
             source,
             blend: UiRenderBlend::Alpha,
             horizontal_address: UiTextureAddressMode::Clamp,

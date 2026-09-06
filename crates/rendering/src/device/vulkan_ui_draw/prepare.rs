@@ -25,6 +25,7 @@ pub(in crate::device) fn prepare_draw(
     mesh: UiMeshHandle,
     pipeline: UiPipelineHandle,
     texture_set: Option<UiTextureSetHandle>,
+    mask_set: Option<UiTextureSetHandle>,
     plan: &UiMeshPlan,
     batch_index: usize,
 ) -> Result<UiPreparedDraw, VulkanError> {
@@ -53,11 +54,15 @@ pub(in crate::device) fn prepare_draw(
     let pipeline_info = pipelines
         .info(pipeline)
         .ok_or(VulkanError::UnknownUiPipelineHandle)?;
-    let expected_source = match batch.source() {
-        UiRenderSource::Texture(_)
-        | UiRenderSource::GlyphAtlas(_)
-        | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
-        UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+    let expected_source = if batch.mask().is_some() {
+        UiShaderSource::MaskedTexture
+    } else {
+        match batch.source() {
+            UiRenderSource::Texture(_)
+            | UiRenderSource::GlyphAtlas(_)
+            | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
+            UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+        }
     };
     if pipeline_info.source() != expected_source || pipeline_info.blend() != batch.blend() {
         return Err(VulkanError::UiDrawPipelineMismatch);
@@ -127,12 +132,42 @@ pub(in crate::device) fn prepare_draw(
         }
         _ => return Err(VulkanError::UiDrawTextureMismatch),
     }
+    let mask = match (batch.mask(), mask_set) {
+        (None, None) => None,
+        (Some(mask), Some(handle)) if matches!(batch.source(), UiRenderSource::Texture(_)) => {
+            let set = texture_sets
+                .info(handle)
+                .ok_or(VulkanError::UnknownUiTextureSetHandle)?;
+            let sampled = set.sampled_texture();
+            let UiTextureImageHandle::Blp(texture_handle) = sampled.texture() else {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            };
+            let texture = textures
+                .info(texture_handle)
+                .ok_or(VulkanError::UnknownBlpTextureHandle)?;
+            let sampler = samplers
+                .info(sampled.sampler())
+                .ok_or(VulkanError::UnknownUiSamplerHandle)?;
+            if texture.path() != mask.path()
+                || sampler
+                    != UiSamplerInfo::new(
+                        crate::UiTextureAddressMode::Clamp,
+                        crate::UiTextureAddressMode::Clamp,
+                    )
+            {
+                return Err(VulkanError::UiDrawTextureMismatch);
+            }
+            Some((handle, mask.bounds()))
+        }
+        _ => return Err(VulkanError::UiDrawTextureMismatch),
+    };
     let base_vertex = i32::try_from(u64::from(batch.first_quad()) * 4)
         .map_err(|_source| VulkanError::UiDrawIndexRange)?;
     Ok(UiPreparedDraw::new(
         mesh,
         pipeline,
         texture_set,
+        mask,
         batch.first_index(),
         batch.index_count(),
         base_vertex,

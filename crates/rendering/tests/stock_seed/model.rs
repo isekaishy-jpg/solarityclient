@@ -5597,7 +5597,7 @@ fn solid_raw3_blp(width: u32, height: u32, colors: &[u32]) -> Vec<u8> {
 }
 
 /// Builds a one-mip BLP2/RAW3 image from exact row-major BGRA words.
-fn raw3_blp_pixels(width: u32, height: u32, pixels: &[u32]) -> Vec<u8> {
+pub(crate) fn raw3_blp_pixels(width: u32, height: u32, pixels: &[u32]) -> Vec<u8> {
     const HEADER_SIZE: u32 = 148;
     const PALETTE_SIZE: u32 = 256 * 4;
     const PIXEL_OFFSET: u32 = HEADER_SIZE + PALETTE_SIZE;
@@ -5622,7 +5622,7 @@ fn raw3_blp_pixels(width: u32, height: u32, pixels: &[u32]) -> Vec<u8> {
 }
 
 /// Reads one tightly packed RGBA8 fixture pixel.
-fn rgba8_pixel(rgba8: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+pub(crate) fn rgba8_pixel(rgba8: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let index = ((y * width + x) * 4) as usize;
     [
         rgba8[index],

@@ -853,6 +853,25 @@ fn validate_extent(extent: [f32; 2]) -> Result<(), UiMeshPlanError> {
 
 /// Checks all caller-supplied floats before they enter persistent GPU data.
 fn validate_quad(quad: &UiRenderQuad) -> Result<(), UiMeshPlanError> {
+    if let Some(mask) = quad.mask() {
+        let bounds = mask.bounds();
+        validate_components(quad.object_index(), "mask bounds", &bounds)?;
+        if bounds[2] <= bounds[0] || bounds[3] <= bounds[1] {
+            return Err(UiMeshPlanError::InvertedBounds {
+                object_index: quad.object_index(),
+            });
+        }
+        validate_components(
+            quad.object_index(),
+            "mask scale",
+            &[
+                bounds[2] - bounds[0],
+                bounds[3] - bounds[1],
+                1.0 / (bounds[2] - bounds[0]),
+                1.0 / (bounds[3] - bounds[1]),
+            ],
+        )?;
+    }
     let bounds = quad.bounds();
     validate_components(quad.object_index(), "bounds", &bounds)?;
     validate_components(quad.object_index(), "translation", &quad.translation())?;

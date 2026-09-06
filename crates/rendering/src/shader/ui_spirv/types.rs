@@ -5,6 +5,8 @@
 pub enum UiShaderSource {
     /// Sample one bound BLP and multiply it by the interpolated corner color.
     Texture,
+    /// Sample a source image and an independently positioned alpha mask.
+    MaskedTexture,
     /// Emit interpolated corner color without requiring an image descriptor.
     VertexColor,
 }
