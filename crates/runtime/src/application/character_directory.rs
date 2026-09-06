@@ -197,8 +197,12 @@ impl RuntimeCharacterMetadata {
         let power_index = usize::from(identity.power_type_id());
         let powers = vitals.powers();
         let max_powers = vitals.max_powers();
+        let guid = active
+            .local_player_guid()
+            .map_err(|_| CharacterProjectionError::MissingActiveIdentity)?;
 
         target.enter_player(UiPlayerState::new(money.copper()));
+        target.set_player_guid(guid);
         target.set_player_identity(UiPlayerIdentityState::new(player.name(), level));
         target.set_player_class(UiPlayerClassState::new(
             class.display_name(identity.gender_id()),

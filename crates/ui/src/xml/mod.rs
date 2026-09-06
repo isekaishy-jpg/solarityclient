@@ -14,3 +14,5 @@ pub use manifest::{
 };
 pub use status::UiLoadError;
 pub use xml_tree::{XmlAttribute, XmlContent, XmlDocument, XmlElement};
+
+pub(crate) use manifest::UiSourceImage;

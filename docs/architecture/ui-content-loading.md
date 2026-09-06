@@ -1,8 +1,8 @@
 # Build-12340 UI content loading
 
-The initial `solarity-ui` content boundary follows the built-in manifests from
-the local 3.3.5a client. It does not generalize addon discovery or construct UI
-objects yet; those layers build on this ordered source representation.
+The `solarity-ui` content boundary follows the built-in manifests and AddOn
+catalog from the local 3.3.5a client. Sources, live object construction, and
+load-on-demand declarations share one Lua state and object registry.
 
 ## Manifest behavior
 
@@ -27,10 +27,65 @@ invalid extensions, and missing files are explicit errors. Nested `On*` event
 handlers are compiled for Lua 5.1 syntax and retained in their XML object; they
 are not mistaken for global scripts.
 
-The loader therefore rejects unsupported extensions, absolute paths, and path
-traversal. It does not search loose directories or try a second base path when
-an entry is missing. All files pass through `AssetStore`, so ordinary patch and
-HD archive precedence applies to UI files without a separate override system.
+The loader rejects unsupported extensions, absolute paths, and traversal outside
+the archive root. Built-in files use ordinary `AssetStore` archive precedence.
+AddOn files use its distinct AddOn source reader, which honors install-relative
+loose files before archived copies.
+
+## Load-on-demand AddOns
+
+`LoadAddOn` follows the build-12340 wrapper at `0x00528920` and loader at
+`0x005F80B0`. It validates character enablement, interface versions, and required
+dependencies, returning the native numeric `1, nil` on success or `nil, reason`
+on an admission failure. It marks loading before optional and required dependency
+execution, so a recursive request for that same AddOn does not execute it twice.
+The finished flag is published before `ADDON_LOADED`; legacy event globals are
+restored after the nested callback transaction.
+
+The loader reads the new module's sources, then publishes each XML declaration
+when execution reaches it. Nested loads can inherit earlier declarations but
+cannot see a later template in the outer AddOn. Live roots use the existing
+dynamic object factory and retain their authored ID, frame level/strata, and
+input flags. New global fonts extend the shared measurement catalog. An empty
+new FontString still requires line metrics before retained glyph layout can run.
+
+The external AddOn regression covers loose-file precedence, dependency and
+callback order, private Lua namespaces, recursive loads, template visibility,
+parent identity, and declared saved variables. Persisted saved-variable values,
+Bindings.xml admission, security provenance, LoadWith dependencies, native
+recovery from individual script failures, and the remaining dynamic XML widget
+properties still require implementation. This is not a claim of full AddOn
+compatibility.
+
+## Combat history and localized formatting
+
+`UiCombatLogState` retains resolved gameplay records separately from script
+filters. The native wrappers implement OR filters, event-name lists, exact GUID
+selection, grouped object masks, spell selection, signed history navigation,
+and complete event tuples with explicit nil slots. Source evidence is
+`0x0074FF70`, `0x0074E050`, `0x0074E1A0`, `0x0074FAE0`, `0x0074FC20`, and
+`0x0074E290`. Spell-name matching uses the native restricted character folding
+at `0x0076E8D0`, rather than a different Unicode folding policy.
+
+Retention defaults to the shared `combatLogRetentionTime` CVar's 300 seconds.
+Admission at `0x00750400` reuses one expired oldest entry when there is no cleared
+slot available; there is no timer that erases otherwise idle history. Deleting
+the current entry advances its cursor to the next retained entry. Regressions
+exercise nonempty filtered records, signed traversal, exact argument counts,
+retention at a wrapping clock boundary, and clear/reuse behavior.
+
+`FrameManager::append_combat_log` is the resolved-event boundary for history and
+filtered/unfiltered UI notification. Combat packet decoding and gameplay outcome
+projection are still absent; this API does not manufacture those outcomes.
+`CombatTextSetActiveUnit` captures the currently resolved local-player GUID;
+additional unit-token projections and floating-text event delivery remain work.
+
+Stock localized combat messages also require positional Lua format arguments.
+The `string.format` extension follows `0x00853C50`: one- and two-digit `%n$`
+selectors reset the subsequent sequential argument position, while ordinary
+conversion formatting remains in Lua. Regression cases cover reordering,
+repetition, mixed sequential arguments, widths/precision, and literal percent
+and dollar characters. Native `%F` localization remains outside this extension.
 
 ## XML ownership
 

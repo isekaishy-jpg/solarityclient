@@ -1,5 +1,6 @@
 //! Ordered Lua source execution and stock object identity methods.
 
+mod addons;
 mod buttons;
 mod cvars;
 mod globals;
@@ -604,6 +605,7 @@ pub struct UiScriptEnvironment {
     action_bar: crate::UiActionBarState,
     battlefield: crate::UiBattlefieldQueueState,
     chat_windows: crate::UiChatWindowState,
+    combat_log: crate::UiCombatLogState,
     channels: crate::UiChannelState,
     companions: crate::UiCompanionState,
     loot: crate::UiLootState,
@@ -684,6 +686,7 @@ impl UiScriptEnvironment {
             action_bar: crate::UiActionBarState::new(),
             battlefield: crate::UiBattlefieldQueueState::new(),
             chat_windows: crate::UiChatWindowState::new(),
+            combat_log: crate::UiCombatLogState::new(),
             channels: crate::UiChannelState::new(),
             companions: crate::UiCompanionState::new(),
             loot: crate::UiLootState::new(),
@@ -939,6 +942,20 @@ impl UiScriptEnvironment {
         self.chat_windows.clone()
     }
 
+    /// Returns the shared combat history consumed by the stock combat log.
+    #[must_use]
+    pub fn combat_log_state(&self) -> crate::UiCombatLogState {
+        self.combat_log.clone()
+    }
+
+    pub(crate) fn append_combat_log(&self, entry: crate::UiCombatLogEntry) -> bool {
+        self.combat_log.append(
+            entry,
+            self.client_clock.milliseconds(),
+            self.cvars.number("combatLogRetentionTime").unwrap_or(300.0) as i32,
+        )
+    }
+
     /// Returns the shared joined-channel display and roster state.
     #[must_use]
     pub fn channel_state(&self) -> crate::UiChannelState {
@@ -1130,14 +1147,14 @@ impl UiScriptRuntime {
             registered_objects: registered_objects.clone(),
             dynamic_objects,
         };
-        let font_definitions = Rc::new(
+        let font_definitions = Rc::new(RefCell::new(
             plan.fonts
                 .definitions()
                 .iter()
                 .cloned()
                 .map(|definition| (definition.name().to_owned(), definition))
                 .collect::<HashMap<_, _>>(),
-        );
+        ));
         let text_measurement = buttons::TextMeasurement::new(
             environment.assets(),
             font_definitions.clone(),
@@ -1175,6 +1192,16 @@ impl UiScriptRuntime {
         let font_metatable = create_font_metatable(lua)
             .and_then(|metatable| lua.create_registry_value(metatable))
             .map_err(|error| execution_error("font metatable", error))?;
+        addons::install(
+            lua,
+            bundle.source_image(),
+            &environment,
+            dynamic_arena.clone(),
+            font_definitions.clone(),
+            lua.registry_value(&font_metatable)
+                .map_err(|error| execution_error("AddOn font metatable", error))?,
+        )
+        .map_err(|error| execution_error("AddOn loader", error))?;
         let animation_metatables = create_animation_metatables(lua)
             .map_err(|error| execution_error("animation metatables", error))?;
         let mut font_actions = vec![None; bundle.actions().len()];
@@ -1403,7 +1430,11 @@ impl UiScriptRuntime {
                     .get(self.next_action)
                     .and_then(Option::as_ref)
                 {
-                    register_font(bundle.lua(), &self.font_metatable, definition)?;
+                    let metatable = bundle
+                        .lua()
+                        .registry_value(&self.font_metatable)
+                        .map_err(|error| execution_error("font registration", error))?;
+                    register_font(bundle.lua(), &metatable, definition)?;
                 }
                 if let Some(batch) = tree.batch_for_action(self.next_action) {
                     self.execute_batch(bundle.lua(), tree, scripts, batch)?;
@@ -3662,21 +3693,41 @@ fn create_dynamic_object(
     if !matches!(kind, "Texture" | "FontString") {
         object.raw_set(events_key(), lua.create_table()?)?;
         object.raw_set(all_events_key(), false)?;
-        object.raw_set(id_key(), 0)?;
+        object.raw_set(
+            id_key(),
+            record.raw_get::<Option<i32>>("frame_id")?.unwrap_or(0),
+        )?;
         let level = parent
             .map(|parent| parent.raw_get::<i32>(frame_level_key()))
             .transpose()?
             .map_or(0, |level| level.saturating_add(1));
-        object.raw_set(frame_level_key(), level)?;
+        object.raw_set(
+            frame_level_key(),
+            record
+                .raw_get::<Option<i32>>("frame_level")?
+                .unwrap_or(level),
+        )?;
         let strata = parent
             .map(|parent| parent.raw_get::<String>(frame_strata_key()))
             .transpose()?
             .unwrap_or_else(|| "MEDIUM".to_owned());
-        object.raw_set(frame_strata_key(), strata)?;
-        object.raw_set(keyboard_enabled_key(), false)?;
+        object.raw_set(
+            frame_strata_key(),
+            record
+                .raw_get::<Option<String>>("frame_strata")?
+                .unwrap_or(strata),
+        )?;
+        object.raw_set(
+            keyboard_enabled_key(),
+            record
+                .raw_get::<Option<bool>>("keyboard_enabled")?
+                .unwrap_or(false),
+        )?;
         object.raw_set(
             mouse_enabled_key(),
-            matches!(kind, "Button" | "CheckButton" | "EditBox"),
+            record
+                .raw_get::<Option<bool>>("mouse_enabled")?
+                .unwrap_or(matches!(kind, "Button" | "CheckButton" | "EditBox")),
         )?;
         object.raw_set(mouse_wheel_enabled_key(), kind == "ScrollFrame")?;
         object.raw_set(
@@ -3936,6 +3987,7 @@ fn create_dynamic_object(
     {
         lua.globals().raw_set(name, object.clone())?;
     }
+    mark_live_state_changed(lua)?;
     Ok(object)
 }
 
@@ -4130,7 +4182,11 @@ fn dispatch_subscribers(
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     let mut dispatched = 0;
     for index in 1..=object_count {
-        let object: Table = objects.raw_get(index)?;
+        // Startup may have dynamic objects above still-unconstructed static
+        // slots. These slots are not event subscribers.
+        let Some(object) = objects.raw_get::<Option<Table>>(index)? else {
+            continue;
+        };
         let all_events = object
             .raw_get::<Option<bool>>(all_events_key())?
             .unwrap_or(false);
@@ -4199,7 +4255,7 @@ fn restore_event_globals(lua: &Lua, event: Value, arguments: Vec<Value>) -> mlua
 
 fn register_font(
     lua: &Lua,
-    metatable_key: &RegistryKey,
+    metatable: &Table,
     definition: &FontDefinition,
 ) -> Result<(), UiScriptError> {
     let table = lua
@@ -4255,11 +4311,8 @@ fn register_font(
             )
         })
         .map_err(|error| execution_error("font registration", error))?;
-    let metatable: Table = lua
-        .registry_value(metatable_key)
-        .map_err(|error| execution_error("font registration", error))?;
     table
-        .set_metatable(Some(metatable))
+        .set_metatable(Some(metatable.clone()))
         .map_err(|error| execution_error("font registration", error))?;
 
     // FrameScript_Object registers a named object only when that global is
@@ -7653,7 +7706,37 @@ fn register_region_methods(
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetParent",
-        lua.create_function(|lua, (object, requested): (Table, Option<Table>)| {
+        lua.create_function(|lua, (object, requested): (Table, Value)| {
+            // ScriptRegion:SetParent at 0x0049CBD0 accepts a frame name as
+            // well as an object. Resolve it before changing either hierarchy.
+            let requested = match requested {
+                Value::Nil => None,
+                Value::Table(parent) => Some(parent),
+                value => {
+                    let name = lua.coerce_string(value)?.ok_or_else(|| {
+                        mlua::Error::runtime("SetParent(): expected a frame, frame name, or nil")
+                    })?;
+                    Some(
+                        lua.globals()
+                            .raw_get::<Table>(name.to_str()?.as_ref())
+                            .map_err(|_| {
+                                mlua::Error::runtime(format!(
+                                    "SetParent(): frame {} is unavailable",
+                                    name.to_string_lossy()
+                                ))
+                            })?,
+                    )
+                }
+            };
+            if let Some(parent) = &requested {
+                let parent_type = parent.raw_get::<Option<String>>(type_key())?;
+                if !parent_type
+                    .as_deref()
+                    .is_some_and(|kind| is_object_type(kind, "Frame"))
+                {
+                    return Err(mlua::Error::runtime("SetParent(): parent must be a frame"));
+                }
+            }
             let object_index = object.raw_get::<usize>(index_key())?;
             let previous_index = object.raw_get::<Option<usize>>(parent_key())?;
             let requested_index = requested
@@ -9041,7 +9124,7 @@ fn draw_layer_name(value: UiDrawLayer) -> &'static str {
     }
 }
 
-fn frame_strata_name(value: UiFrameStrata) -> &'static str {
+pub(super) fn frame_strata_name(value: UiFrameStrata) -> &'static str {
     match value {
         UiFrameStrata::Background => "BACKGROUND",
         UiFrameStrata::Low => "LOW",

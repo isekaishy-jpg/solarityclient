@@ -219,6 +219,18 @@ impl FrameManager {
         self.owner.dispatch_frame_event(name, payload)
     }
 
+    /// Retains a resolved gameplay combat event and delivers filtered and
+    /// unfiltered notifications using the same positional argument image.
+    ///
+    /// # Errors
+    /// Returns an event error when authored Lua or resulting presentation fails.
+    pub fn append_combat_log(
+        &mut self,
+        entry: crate::UiCombatLogEntry,
+    ) -> Result<(), UiEventError> {
+        self.owner.append_combat_log(entry)
+    }
+
     /// Advances visible FrameXML `OnUpdate` handlers.
     ///
     /// # Errors

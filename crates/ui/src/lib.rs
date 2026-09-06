@@ -99,6 +99,7 @@ pub use widget::{
     UiTextureNode, UiTexturePlan, UiTextureState, UiTextureStatePlan,
 };
 pub use world::{
+    UiCombatLogEntry, UiCombatLogEventError, UiCombatLogObject, UiCombatLogSpell, UiCombatLogState,
     UiFactionGroup, UiFriendCounts, UiInstanceType, UiPlayerClassState, UiPlayerFactionState,
     UiPlayerIdentityState, UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState,
     UiPlayerState, UiPlayerStatsState, UiPlayerVitalsState, UiRealmDate, UiRealmDateError,

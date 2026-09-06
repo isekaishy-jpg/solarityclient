@@ -282,6 +282,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("combatHealing", "1", 0.0, 1.0),
     ranged("combatLogPeriodicSpells", "1", 0.0, 1.0),
     ranged("combatLogOn", "1", 0.0, 1.0),
+    value("combatLogRetentionTime", "300"),
     ranged("consolidateBuffs", "0", 0.0, 1.0),
     value("conversationMode", "popout"),
     ranged("deselectOnClick", "1", 0.0, 1.0),

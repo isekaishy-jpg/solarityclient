@@ -73,7 +73,7 @@ pub(super) fn dispatch_click(
 #[derive(Clone)]
 pub(super) struct TextMeasurement {
     assets: Option<AssetStoreHandle>,
-    fonts: Rc<HashMap<String, FontDefinition>>,
+    fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
     system: Rc<RefCell<FontSystem>>,
     pixels_per_ui_unit: f64,
 }
@@ -81,7 +81,7 @@ pub(super) struct TextMeasurement {
 impl TextMeasurement {
     pub(super) fn new(
         assets: Option<AssetStoreHandle>,
-        fonts: Rc<HashMap<String, FontDefinition>>,
+        fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
         logical_height: u32,
     ) -> Result<Self, crate::FontError> {
         Ok(Self {
@@ -159,7 +159,8 @@ impl TextMeasurement {
             return Ok(self.one_pixel());
         };
         let name = font.raw_get::<String>(name_key())?;
-        let Some(definition) = self.fonts.get(&name) else {
+        let fonts = self.fonts.borrow();
+        let Some(definition) = fonts.get(&name) else {
             return Err(mlua::Error::runtime(format!(
                 "{operation} font object {name} has no stock definition"
             )));
@@ -212,7 +213,8 @@ impl TextMeasurement {
             return Ok(self.one_pixel());
         };
         let name = font.raw_get::<String>(name_key())?;
-        let Some(definition) = self.fonts.get(&name) else {
+        let fonts = self.fonts.borrow();
+        let Some(definition) = fonts.get(&name) else {
             return Err(mlua::Error::runtime(format!(
                 "Button:GetTextHeight font object {name} has no stock definition"
             )));
@@ -244,7 +246,8 @@ impl TextMeasurement {
             return Ok((self.one_pixel(), self.one_pixel()));
         };
         let name = font.raw_get::<String>(name_key())?;
-        let Some(definition) = self.fonts.get(&name) else {
+        let fonts = self.fonts.borrow();
+        let Some(definition) = fonts.get(&name) else {
             return Err(mlua::Error::runtime(format!(
                 "FontString extent font object {name} has no stock definition"
             )));

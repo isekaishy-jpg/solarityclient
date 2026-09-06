@@ -573,6 +573,7 @@ pub struct UiWorldState {
 #[derive(Debug, Default)]
 struct UiWorldStateInner {
     player: Cell<Option<UiPlayerState>>,
+    player_guid: Cell<Option<u64>>,
     player_identity: RefCell<Option<UiPlayerIdentityState>>,
     player_class: RefCell<Option<UiPlayerClassState>>,
     player_race: RefCell<Option<UiPlayerRaceState>>,
@@ -616,6 +617,17 @@ impl UiWorldState {
     /// Publishes the latest complete player projection.
     pub fn enter_player(&self, player: UiPlayerState) {
         self.inner.player.set(Some(player));
+    }
+
+    /// Publishes the authoritative local-player world object identity.
+    pub fn set_player_guid(&self, guid: u64) {
+        self.inner.player_guid.set((guid != 0).then_some(guid));
+    }
+
+    /// Returns local-player identity while the world has an active player.
+    #[must_use]
+    pub fn player_guid(&self) -> Option<u64> {
+        self.player().and(self.inner.player_guid.get())
     }
 
     /// Publishes the latest local-player experience projection.
@@ -692,6 +704,7 @@ impl UiWorldState {
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         self.inner.player.set(None);
+        self.inner.player_guid.set(None);
         *self.inner.player_identity.borrow_mut() = None;
         *self.inner.player_class.borrow_mut() = None;
         *self.inner.player_race.borrow_mut() = None;

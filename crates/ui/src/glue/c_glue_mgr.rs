@@ -821,6 +821,18 @@ impl GlueManager {
         Ok(UiEventDispatch::new(dispatch.subscriber_count))
     }
 
+    pub(super) fn append_combat_log(
+        &mut self,
+        entry: crate::UiCombatLogEntry,
+    ) -> Result<(), UiEventError> {
+        let payload = entry.payload();
+        if self.environment.append_combat_log(entry) {
+            self.dispatch_frame_event("COMBAT_LOG_EVENT", &payload)?;
+        }
+        self.dispatch_frame_event("COMBAT_LOG_EVENT_UNFILTERED", &payload)?;
+        Ok(())
+    }
+
     pub(super) fn dispatch_binding(
         &mut self,
         name: &str,

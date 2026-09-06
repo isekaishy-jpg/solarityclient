@@ -203,10 +203,16 @@ pub enum UiLoadAction {
 
 /// A completely resolved built-in UI manifest and its ordered resources.
 pub struct UiBundle {
+    sources: std::rc::Rc<UiSourceImage>,
+    lua: Lua,
+}
+
+/// Retained declarations without a Lua-state ownership cycle in loader callbacks.
+#[derive(Clone)]
+pub(crate) struct UiSourceImage {
     manifest: UiManifest,
     resources: Vec<UiResource>,
     actions: Vec<UiLoadAction>,
-    lua: Lua,
 }
 
 impl UiBundle {
@@ -228,41 +234,111 @@ impl UiBundle {
         }
         let (resources, actions, lua) = loader.finish();
         Ok(Self {
-            manifest,
-            resources,
-            actions,
+            sources: std::rc::Rc::new(UiSourceImage {
+                manifest,
+                resources,
+                actions,
+            }),
             lua,
         })
     }
 
     /// Returns the parsed manifest.
     #[must_use]
-    pub const fn manifest(&self) -> &UiManifest {
-        &self.manifest
+    pub fn manifest(&self) -> &UiManifest {
+        &self.sources.manifest
     }
 
     /// Returns resources in exact manifest order.
     #[must_use]
     pub fn resources(&self) -> &[UiResource] {
-        &self.resources
+        &self.sources.resources
     }
 
     /// Returns the expanded XML and Lua operations in exact load order.
     #[must_use]
     pub fn actions(&self) -> &[UiLoadAction] {
-        &self.actions
+        &self.sources.actions
     }
 
     /// Returns one loaded resource by action index.
     #[must_use]
     pub fn resource(&self, index: usize) -> Option<&UiResource> {
-        self.resources.get(index)
+        self.sources.resources.get(index)
     }
 
     /// Returns the owned Lua state reserved for stock API registration.
     #[must_use]
     pub const fn lua(&self) -> &Lua {
         &self.lua
+    }
+    pub(crate) fn source_image(&self) -> std::rc::Rc<UiSourceImage> {
+        self.sources.clone()
+    }
+
+    pub(crate) fn from_source_image(lua: &Lua, sources: std::rc::Rc<UiSourceImage>) -> Self {
+        Self {
+            sources,
+            lua: lua.clone(),
+        }
+    }
+}
+
+impl UiSourceImage {
+    pub(crate) fn append_declaration(&self, resource: &UiResource, element_index: usize) -> Self {
+        let mut next = self.clone();
+        let resource_index = next
+            .resources
+            .iter()
+            .position(|existing| existing == resource)
+            .unwrap_or_else(|| {
+                next.resources.push(resource.clone());
+                next.resources.len() - 1
+            });
+        next.actions.push(UiLoadAction::XmlElement {
+            resource_index,
+            element_index,
+        });
+        next
+    }
+
+    pub(crate) fn load_addon(
+        &self,
+        store: &mut AssetStore,
+        lua: &Lua,
+        addon: &crate::AddonDefinition,
+    ) -> Result<Self, UiLoadError> {
+        let toc = AssetPath::new(format!("Interface/AddOns/{0}/{0}.toc", addon.name()))?;
+        let mut loader = UiBundleLoader {
+            store,
+            resources: Vec::new(),
+            actions: Vec::new(),
+            include_stack: Vec::new(),
+            lua: lua.clone(),
+            addon_source: true,
+        };
+        for entry in addon.entrypoints() {
+            let extension = if entry.ends_with_ignore_ascii_case(".xml") {
+                ".xml"
+            } else {
+                ".lua"
+            };
+            let path = resolve_directive_path(&toc, entry, extension)?;
+            loader.load_entry(
+                &path,
+                if extension == ".xml" {
+                    UiManifestEntryKind::Xml
+                } else {
+                    UiManifestEntryKind::Lua
+                },
+            )?;
+        }
+        let (resources, actions, _) = loader.finish();
+        Ok(Self {
+            manifest: self.manifest.clone(),
+            resources,
+            actions,
+        })
     }
 }
 
@@ -272,6 +348,7 @@ struct UiBundleLoader<'a> {
     actions: Vec<UiLoadAction>,
     include_stack: Vec<AssetPath>,
     lua: Lua,
+    addon_source: bool,
 }
 
 impl<'a> UiBundleLoader<'a> {
@@ -282,6 +359,7 @@ impl<'a> UiBundleLoader<'a> {
             actions: Vec::with_capacity(manifest_entries),
             include_stack: Vec::new(),
             lua: Lua::new(),
+            addon_source: false,
         }
     }
 
@@ -296,8 +374,16 @@ impl<'a> UiBundleLoader<'a> {
         }
     }
 
+    fn read_source(&mut self, path: &AssetPath) -> Result<Vec<u8>, UiLoadError> {
+        if self.addon_source && path.as_str().starts_with("INTERFACE\\ADDONS\\") {
+            Ok(self.store.read_addon_file(path)?)
+        } else {
+            Ok(self.store.read(path)?.into_bytes())
+        }
+    }
+
     fn load_lua(&mut self, path: &AssetPath) -> Result<(), UiLoadError> {
-        let bytes = self.store.read(path)?.into_bytes();
+        let bytes = self.read_source(path)?;
         let source = decode_text(path, bytes)?;
         compile_lua(&self.lua, path, path.as_str(), &source)?;
         let resource_index = self.resources.len();
@@ -318,7 +404,7 @@ impl<'a> UiBundleLoader<'a> {
             });
         }
 
-        let bytes = self.store.read(path)?.into_bytes();
+        let bytes = self.read_source(path)?;
         let source = decode_text(path, bytes)?;
         let document = XmlDocument::parse(path, &source)?;
         let directives = analyze_root(path, &document)?;

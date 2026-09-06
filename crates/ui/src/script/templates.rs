@@ -114,6 +114,11 @@ pub struct UiRuntimeTemplateNode {
     non_blocking: bool,
     draw_layer: &'static str,
     draw_sub_level: i16,
+    frame_id: i32,
+    frame_level: Option<i32>,
+    frame_strata: Option<&'static str>,
+    keyboard_enabled: bool,
+    mouse_enabled: bool,
     clamped_to_screen: bool,
     movable: bool,
     resizable: bool,
@@ -204,13 +209,39 @@ impl UiRuntimeTemplatePlan {
         fonts: &FontCatalog,
         lua: &Lua,
     ) -> Result<Self, UiScriptError> {
+        Self::from_selected(catalog, fonts, lua, |definition| {
+            definition.virtual_object()
+        })
+    }
+
+    pub(crate) fn for_action(
+        catalog: &UiObjectCatalog<'_>,
+        fonts: &FontCatalog,
+        lua: &Lua,
+        action_index: usize,
+    ) -> Result<Self, UiScriptError> {
+        Self::from_selected(catalog, fonts, lua, |definition| {
+            definition.action_index() == action_index
+        })
+    }
+
+    fn from_selected(
+        catalog: &UiObjectCatalog<'_>,
+        fonts: &FontCatalog,
+        lua: &Lua,
+        selected: impl Fn(&crate::UiObjectDefinition<'_>) -> bool,
+    ) -> Result<Self, UiScriptError> {
         let mut plan = Self {
             templates: Vec::new(),
             deferred_templates: Vec::new(),
             nodes: Vec::new(),
             functions: Vec::new(),
         };
-        for definition in catalog.templates() {
+        for definition in catalog
+            .definitions()
+            .iter()
+            .filter(|definition| selected(definition))
+        {
             let template_name = definition.name();
             let tree = match UiObjectTree::from_definition(catalog, fonts, definition) {
                 Ok(tree) => tree,
@@ -231,8 +262,10 @@ impl UiRuntimeTemplatePlan {
                 .map_err(|error| template_error(template_name, error))?;
             let texture_states = UiTextureStatePlan::resolve(&tree, &textures)
                 .map_err(|error| template_error(template_name, error))?;
-            let frame_states = crate::UiFramePlan::from_tree(&tree)
-                .and_then(|frames| frames.resolve(&tree))
+            let frame_plan = crate::UiFramePlan::from_tree(&tree)
+                .map_err(|error| template_error(template_name, error))?;
+            let frame_states = frame_plan
+                .resolve(&tree)
                 .map_err(|error| template_error(template_name, error))?;
             let first_node = plan.nodes.len();
             for (local_index, object) in tree.nodes().iter().enumerate() {
@@ -308,6 +341,32 @@ impl UiRuntimeTemplatePlan {
                     non_blocking: texture.non_blocking,
                     draw_layer: texture.draw_layer,
                     draw_sub_level: texture.draw_sub_level,
+                    frame_id: frame_states
+                        .state(local_index)
+                        .map_or(0, crate::UiFrameState::id),
+                    frame_level: frame_plan.node(local_index).and_then(|node| {
+                        frame_plan
+                            .layers_for(node)
+                            .iter()
+                            .filter_map(|layer| layer.level())
+                            .next_back()
+                    }),
+                    frame_strata: frame_plan
+                        .node(local_index)
+                        .and_then(|node| {
+                            frame_plan
+                                .layers_for(node)
+                                .iter()
+                                .filter_map(|layer| layer.strata())
+                                .next_back()
+                        })
+                        .map(super::simple_script::frame_strata_name),
+                    keyboard_enabled: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::keyboard_enabled),
+                    mouse_enabled: frame_states
+                        .state(local_index)
+                        .is_some_and(crate::UiFrameState::mouse_enabled),
                     clamped_to_screen: frame_states
                         .state(local_index)
                         .is_some_and(crate::UiFrameState::clamped_to_screen),
@@ -372,6 +431,10 @@ impl UiRuntimeTemplatePlan {
     }
 
     pub(super) fn install(&self, lua: &Lua) -> mlua::Result<()> {
+        lua.set_named_registry_value(TEMPLATE_REGISTRY, self.descriptors(lua)?)
+    }
+
+    pub(crate) fn descriptors(&self, lua: &Lua) -> mlua::Result<mlua::Table> {
         let templates = lua.create_table()?;
         for template in &self.templates {
             let descriptor = lua.create_table()?;
@@ -512,6 +575,11 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("non_blocking", node.non_blocking)?;
                 record.raw_set("draw_layer", node.draw_layer)?;
                 record.raw_set("draw_sub_level", node.draw_sub_level)?;
+                record.raw_set("frame_id", node.frame_id)?;
+                record.raw_set("frame_level", node.frame_level)?;
+                record.raw_set("frame_strata", node.frame_strata)?;
+                record.raw_set("keyboard_enabled", node.keyboard_enabled)?;
+                record.raw_set("mouse_enabled", node.mouse_enabled)?;
                 record.raw_set("clamped_to_screen", node.clamped_to_screen)?;
                 record.raw_set("movable", node.movable)?;
                 record.raw_set("resizable", node.resizable)?;
@@ -545,7 +613,7 @@ impl UiRuntimeTemplatePlan {
             descriptor.raw_set("deferred_dependency", template.dependency.as_str())?;
             templates.raw_set(template.name.as_str(), descriptor)?;
         }
-        lua.set_named_registry_value(TEMPLATE_REGISTRY, templates)
+        Ok(templates)
     }
 }
 

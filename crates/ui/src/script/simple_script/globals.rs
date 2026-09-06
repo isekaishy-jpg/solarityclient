@@ -13,9 +13,11 @@ use super::UiScriptEnvironment;
 use super::cvars::UiCVarSetError;
 use super::{portrait_unit_key, texture_file_key, texture_solid_color_key, type_key};
 
+mod combat_log;
 mod credits;
 mod legal_agreement;
 mod scan_dll;
+mod string_format;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
 const CHARACTER_SELECT_MODEL_REGISTRY: &str = "solarity.ui.character_select_model";
@@ -90,6 +92,7 @@ pub(super) fn register_base_globals(
         })?,
     )?;
     register_table_wipe(lua)?;
+    string_format::register(lua)?;
     lua.load(COMPATIBILITY_SOURCE)
         .set_name("compat.lua")
         .exec()?;
@@ -132,6 +135,7 @@ fn register_frame_globals(
     globals: &Table,
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    combat_log::register(lua, globals, environment)?;
     crate::feature::register_account_globals(lua, globals, environment.account_state())?;
     crate::feature::register_action_bar_globals(lua, globals, environment.action_bar_state())?;
     crate::feature::register_battlefield_globals(lua, globals, environment.battlefield_state())?;
@@ -1208,7 +1212,7 @@ fn unit_vitals(world: &crate::UiWorldState, unit: &str) -> Option<crate::UiPlaye
         .flatten()
 }
 
-fn addon_index_from_value(
+pub(super) fn addon_index_from_value(
     addons: &crate::UiAddonLoadState,
     identifier: &Value,
     usage: &'static str,
@@ -1526,22 +1530,7 @@ fn register_addon_globals(
             Ok(())
         })?,
     )?;
-    globals.raw_set(
-        "LoadAddOn",
-        lua.create_function(move |_, name: String| {
-            let Some((loaded, finished)) = addons.status_by_name(&name) else {
-                return Ok((None::<bool>, Some("MISSING")));
-            };
-            if loaded && finished {
-                Ok((Some(true), None::<&'static str>))
-            } else {
-                // The catalog is authoritative even before the execution host
-                // gains load-on-demand publication. Report a contained stock
-                // failure tuple so callers continue their event transaction.
-                Ok((None, Some("DISABLED")))
-            }
-        })?,
-    )
+    Ok(())
 }
 
 fn register_modifier_globals(

@@ -501,13 +501,16 @@ impl UiGlyphAtlasPlan {
             };
             object.text.as_ref().is_none_or(|text| {
                 runtime_font_key(text, pixels_per_ui_unit).is_ok_and(|font| {
-                    presented_characters(text)
-                        .into_iter()
-                        .filter(|presented| !presented.character.is_control())
-                        .all(|presented| {
-                            self.glyphs
-                                .contains_key(&GlyphKey::new(&font, presented.character))
-                        })
+                    // An empty newly loaded FontString still needs line metrics
+                    // when layout reserves its retained presentation slot.
+                    self.metrics.contains_key(&font)
+                        && presented_characters(text)
+                            .into_iter()
+                            .filter(|presented| !presented.character.is_control())
+                            .all(|presented| {
+                                self.glyphs
+                                    .contains_key(&GlyphKey::new(&font, presented.character))
+                            })
                 })
             })
         })
