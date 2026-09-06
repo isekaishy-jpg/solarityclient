@@ -1123,6 +1123,27 @@ fn resolve_local_region(
             scale = f64::from(value);
         }
     }
+    let object = &tree.nodes()[node_index];
+    if object.kind() == UiObjectKind::Texture
+        && object.role() == crate::UiObjectRole::Object
+        && anchors.iter().all(Option::is_none)
+    {
+        // Match the XML texture loader's final SetAllPoints(parent), including
+        // templates whose parent is supplied only at instantiation time.
+        let target = object
+            .parent()
+            .map_or(UiRuntimeAnchorTarget::Parent, |index| {
+                UiRuntimeAnchorTarget::Object(first_node + index)
+            });
+        for point in [UiPoint::TopLeft, UiPoint::BottomRight] {
+            anchors[point.index()] = Some(UiRuntimeAnchorPrototype {
+                point,
+                target: target.clone(),
+                relative_point: point,
+                offset: (0.0, 0.0),
+            });
+        }
+    }
     Ok(ResolvedLocalRegion {
         dimensions: (width, height),
         shown,

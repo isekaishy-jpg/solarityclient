@@ -177,6 +177,78 @@ fn portrait_requests_follow_lua_source_changes_and_missing_units() -> Result<(),
     Ok(())
 }
 
+/// File-only XML textures fill their parent until Lua changes their anchors.
+#[test]
+fn xml_texture_default_parent_anchors_survive_templates_and_clear_in_lua()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"Anchors.xml\n" },
+        FixtureFile { path: "Interface\\GlueXML\\Anchors.xml", bytes: br#"<Ui>
+<Texture name="SizedTemplate" virtual="true"><Size x="17" y="19"/></Texture>
+<Texture name="AnchoredTemplate" virtual="true"><Size x="23" y="29"/><Anchors><Anchor point="CENTER"/></Anchors></Texture>
+<Frame name="DefaultTemplate" virtual="true"><Size x="90" y="50"/>
+  <Layers><Layer><Texture name="$parentTexture" file="Interface\Minimap\UI-Minimap-Border"/></Layer></Layers>
+</Frame>
+<Frame name="Owner"><Size x="192" y="192"/><Anchors><Anchor point="CENTER"/></Anchors>
+  <Layers><Layer>
+    <Texture name="Border" file="Interface\Minimap\UI-Minimap-Border"/>
+    <Texture name="Sized" inherits="SizedTemplate"><Color r="1" g="0" b="0"/></Texture>
+    <Texture name="Explicit" inherits="AnchoredTemplate"><Color r="0" g="1" b="0"/></Texture>
+    <Texture name="Cleared"><Color r="0" g="0" b="1"/></Texture>
+    <Texture name="Reanchored"/>
+  </Layer></Layers>
+  <Scripts><OnLoad>
+    assert(Border:GetNumPoints() == 2 and Sized:GetNumPoints() == 2)
+    local p, relative, rp, x, y = Border:GetPoint(1)
+    assert(p == "TOPLEFT" and relative == self and rp == p and x == 0 and y == 0)
+    assert(Border:GetPoint(2) == "BOTTOMRIGHT")
+    assert(Explicit:GetNumPoints() == 1 and Explicit:GetPoint() == "CENTER")
+    Cleared:ClearAllPoints()
+    assert(Cleared:GetNumPoints() == 0)
+    Reanchored:SetPoint("TOPLEFT", self, "TOPLEFT", 5, -7)
+    assert(Reanchored:GetNumPoints() == 2) -- the other initial anchor remains
+    local t = self:CreateTexture("LuaTexture")
+    assert(t:GetNumPoints() == 0)
+    local f = CreateFrame("Frame", "Dynamic", self, "DefaultTemplate")
+    f:SetPoint("CENTER")
+    assert(DynamicTexture:GetNumPoints() == 2)
+    local _, parent = DynamicTexture:GetPoint()
+    assert(parent == f)
+    local cleared = CreateFrame("Frame", "DynamicCleared", self, "DefaultTemplate")
+    DynamicClearedTexture:ClearAllPoints()
+    assert(DynamicClearedTexture:GetNumPoints() == 0)
+  </OnLoad></Scripts>
+</Frame></Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (800, 600), false)?;
+    let bounds = |name| {
+        let index = manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))
+            .ok_or("missing object")?;
+        manager
+            .geometry()
+            .region(index)
+            .map(|region| region.logical_bounds())
+            .ok_or("missing geometry")
+    };
+    assert_eq!(bounds("Border")?, bounds("Owner")?);
+    assert_eq!(bounds("Sized")?, bounds("Owner")?);
+    assert_eq!(bounds("DynamicTexture")?, bounds("Dynamic")?);
+    assert_eq!(bounds("Explicit")?.width(), 23.0);
+    assert_eq!(bounds("Explicit")?.height(), 29.0);
+    for name in ["Cleared", "DynamicClearedTexture", "LuaTexture"] {
+        assert_eq!(bounds(name)?.width(), 0.0);
+        assert_eq!(bounds(name)?.height(), 0.0);
+    }
+    assert_eq!(bounds("Reanchored")?.width(), 187.0);
+    assert_eq!(bounds("Reanchored")?.height(), 185.0);
+    Ok(())
+}
+
 /// XML color sources and file tints survive inheritance and dynamic templates.
 #[test]
 fn xml_color_sources_follow_stock_file_precedence_and_dynamic_templates()

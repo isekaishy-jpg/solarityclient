@@ -126,8 +126,15 @@ inside the stock circular mask. Unrelated UI revisions retain the minimap mesh
 without uploading it again. An uncaptured 1,800-frame-per-phase 2560-by-1440
 offline run measured 7.44 ms stationary, 7.00 ms orbiting, and 7.81 ms with pointer
 activity. These measurements do not establish live-server performance or the
-1,200 FPS target. The capture also exposed the missing default parent anchors
-for file-only XML textures, including `MinimapBorder`; that layout work remains.
+1,200 FPS target.
+
+File-only XML textures such as `MinimapBorder` receive the parent-filling anchors
+created by stock `0x00815F40` / `0x004830E0`. Initial region resolution and dynamic
+XML templates both retain these as ordinary TOPLEFT/BOTTOMRIGHT constraints,
+including when a texture declares Size without anchors. Inherited explicit
+anchors are preserved. Lua `ClearAllPoints` removes the defaults; `CreateTexture`
+without XML starts unanchored. The regression covers these cases and resulting
+render geometry.
 
 Indoor group selection, compass-ring rotation, native tinting, tracking, and
 network pings still need integration. Runtime geometry must drive the retained

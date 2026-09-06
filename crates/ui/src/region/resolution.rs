@@ -1,6 +1,6 @@
 //! Resolved stock region state after XML inheritance and ownership.
 
-use crate::{UiLayoutError, UiLayoutPlan, UiObjectTree, UiPoint};
+use crate::{UiLayoutError, UiLayoutPlan, UiObjectKind, UiObjectRole, UiObjectTree, UiPoint};
 
 const POINT_COUNT: usize = 9;
 
@@ -220,6 +220,24 @@ impl UiRegionStatePlan {
                 }
             }
 
+            // The ordinary XML texture loader (0x00815F40 -> 0x004830E0)
+            // finishes an unanchored texture with SetAllPoints(parent), even
+            // when Size was authored. These are real initial anchors, so Lua
+            // ClearAllPoints must be able to remove them permanently.
+            if object.kind() == UiObjectKind::Texture
+                && object.role() == UiObjectRole::Object
+                && points.iter().all(Option::is_none)
+                && let Some(parent) = object.parent()
+            {
+                for point in [UiPoint::TopLeft, UiPoint::BottomRight] {
+                    points[point.index()] = Some(UiRegionAnchor {
+                        point,
+                        target: UiAnchorTarget::Object(parent),
+                        relative_point: point,
+                        offset: (0.0, 0.0),
+                    });
+                }
+            }
             let first_anchor = anchors.len();
             anchors.extend(points.into_iter().flatten());
             local.push(UiRegionState {
