@@ -51,6 +51,9 @@ pub(super) struct RuntimeWorldUi {
 }
 
 impl RuntimeWorldUi {
+    pub(super) fn set_modifier_keys(&self, keys: solarity_ui::UiModifierKeys) {
+        self.manager.set_modifier_keys(keys);
+    }
     pub(super) fn player_control_changed(&mut self, enabled: bool) -> Result<(), ApplicationError> {
         self.dirty = true;
         self.manager.dispatch_event(

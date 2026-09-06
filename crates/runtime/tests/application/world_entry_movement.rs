@@ -158,6 +158,88 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     }
     assert!(kinds.contains(&WorldMovementKind::FallLand));
     assert!(kinds.contains(&WorldMovementKind::StartForward));
+
+    // One pump can contain press, motion, and release. Left drag changes the
+    // durable ECS camera without turning the body; right drag turns both.
+    let hold = |control, pressed, timestamp_ms| UiMovementCommand {
+        action: UiMovementAction::Hold { control, pressed },
+        timestamp_ms,
+    };
+    let settings = crate::application::player_camera::PlayerCameraMouseSettings {
+        yaw_speed: 180.,
+        pitch_speed: 90.,
+        invert_yaw: false,
+        invert_pitch: false,
+    };
+    movement.push(hold(UiMovementControl::Forward, false, 1200));
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, true, 1200));
+    movement.push_mouse_motion([100., 50.], settings, 1200);
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, false, 1200));
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1200,
+    )?;
+    let world = gameplay.world().ok_or("world")?;
+    assert_eq!(world.local_player_transform()?.orientation(), 0.);
+    assert!(world.local_player_view()?.yaw_offset_radians().abs() > 0.3);
+    assert!(world.local_player_view()?.pitch_radians() > 0.2);
+    assert!(!movement.mouse_free_look());
+
+    movement.push(hold(UiMovementControl::TurnOrAction, true, 1200));
+    movement.push_mouse_motion([20., 0.], settings, 1200);
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1200,
+    )?;
+    let world = gameplay.world().ok_or("world")?;
+    assert!(world.local_player_transform()?.orientation() > 5.5);
+    assert_eq!(world.local_player_view()?.yaw_offset_radians(), 0.);
+    assert!(movement.mouse_free_look());
+    while writer.try_recv().is_ok() {}
+
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, true, 1200));
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1400,
+    )?;
+    let paired = gameplay
+        .world()
+        .ok_or("world")?
+        .local_player_transform()?
+        .position();
+    assert!(
+        ((paired - moved).length() - 1.4).abs() < 0.001,
+        "{moved:?} -> {paired:?}"
+    );
+    assert!(paired.y < moved.y);
+    // Native pair acquisition aligns facing before resolving forward input.
+    for kind in [
+        WorldMovementKind::SetFacing,
+        WorldMovementKind::StartForward,
+    ] {
+        assert!(
+            matches!(writer.try_recv()?, WorldWriterCommand::Movement(message) if message.kind() == kind)
+        );
+    }
+    movement.push(hold(UiMovementControl::TurnOrAction, false, 1400));
+    movement.push(hold(UiMovementControl::CameraOrSelectOrMove, false, 1400));
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        1400,
+    )?;
+    assert!(!movement.mouse_free_look());
     Ok(())
 }
 

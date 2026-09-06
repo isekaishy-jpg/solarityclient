@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use super::player_camera::{PlayerCameraInput, PlayerCameraMouseSettings};
 use super::player_control::PlayerControlEvent;
 use glam::{Vec2, Vec3};
 use solarity_ecs::{
@@ -78,11 +79,17 @@ pub(super) enum PlayerMovementOutput {
 enum MovementCommand {
     Input(UiMovementCommand),
     Control(PlayerControlEvent),
+    MouseMotion {
+        delta: [f32; 2],
+        settings: PlayerCameraMouseSettings,
+        timestamp_ms: u32,
+    },
 }
 
 impl MovementCommand {
     fn timestamp_ms(self) -> u32 {
         match self {
+            Self::MouseMotion { timestamp_ms, .. } => timestamp_ms,
             Self::Input(command) => command.timestamp_ms,
             Self::Control(
                 PlayerControlEvent::StandState { timestamp_ms, .. }
@@ -103,6 +110,7 @@ pub(super) struct RuntimePlayerMovement {
 }
 
 struct LocalMovement {
+    camera: PlayerCameraInput,
     active: bool,
     client_control: bool,
     stand_state: u8,
@@ -159,6 +167,25 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    pub(super) fn mouse_free_look(&self) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.camera.free_look())
+    }
+
+    pub(super) fn push_mouse_motion(
+        &mut self,
+        delta: [f32; 2],
+        settings: PlayerCameraMouseSettings,
+        timestamp_ms: u32,
+    ) {
+        self.commands.push_back(MovementCommand::MouseMotion {
+            delta,
+            settings,
+            timestamp_ms,
+        });
+    }
+
     pub(super) fn push(&mut self, command: UiMovementCommand) {
         self.commands.push_back(MovementCommand::Input(command));
     }
@@ -201,6 +228,8 @@ impl RuntimePlayerMovement {
         let transform = world.local_player_transform()?;
         if self.owner.is_none() {
             let mut owner = LocalMovement::new(identity, transform, movement, now_ms)?;
+            owner.camera =
+                PlayerCameraInput::new(world.local_player_view()?, transform.orientation());
             self.output
                 .push_back(PlayerMovementOutput::ActiveMover(guid));
             // Initial selection uses the same acquire response as later
@@ -215,12 +244,16 @@ impl RuntimePlayerMovement {
         {
             // A received transform/movement block supersedes the last local
             // publication. Never integrate from a stale private position.
-            let retained_control = self
-                .owner
-                .as_ref()
-                .map(|owner| (owner.active, owner.client_control, owner.stand_state));
+            let retained_control = self.owner.as_ref().map(|owner| {
+                (
+                    owner.active,
+                    owner.client_control,
+                    owner.stand_state,
+                    owner.camera,
+                )
+            });
             self.owner = Some(LocalMovement::new(identity, transform, movement, now_ms)?);
-            if let (Some(owner), Some((active, client_control, stand_state))) =
+            if let (Some(owner), Some((active, client_control, stand_state, camera))) =
                 (self.owner.as_mut(), retained_control)
             {
                 // Control and stance updates have their own ordered commands.
@@ -229,6 +262,7 @@ impl RuntimePlayerMovement {
                 owner.active = active;
                 owner.client_control = client_control;
                 owner.stand_state = stand_state;
+                owner.camera = camera;
             }
         }
         let Some(owner) = self.owner.as_mut() else {
@@ -275,6 +309,7 @@ impl RuntimePlayerMovement {
         }
         let (transform, movement) = owner.snapshot();
         owner.published = (transform, movement);
+        world.set_local_player_view(owner.camera.view(owner.orientation))?;
         gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
         while let Some(output) = self.output.front().copied() {
             if !gameplay.send_player_movement(output)? {
@@ -304,7 +339,16 @@ impl LocalMovement {
         let guid = self.identity.guid();
         let admission = self.admission(world);
         let mut effects = Vec::with_capacity(5);
+        let was_paired = input.paired_mouse_buttons();
         match command {
+            MovementCommand::MouseMotion {
+                delta, settings, ..
+            } => {
+                self.camera.motion(delta, settings);
+                if self.camera.free_look() && input.mouse_turning() && admission.turning {
+                    self.set_mouse_facing(input, output)?;
+                }
+            }
             MovementCommand::Input(command) if self.active => {
                 input.apply(command.action, admission, &mut |effect| {
                     effects.push(effect)
@@ -339,10 +383,42 @@ impl LocalMovement {
             }
         }
         let admission = self.admission(world);
+        if self.camera.free_look() && !input.mouse_free_look() {
+            self.camera.set_sticky_camera(matches!(
+                command,
+                MovementCommand::Input(UiMovementCommand {
+                    action: solarity_ui::UiMovementAction::CameraOrbitStop {
+                        sticky_camera: true
+                    },
+                    ..
+                })
+            ));
+        }
+        self.camera
+            .set_free_look(input.mouse_free_look(), self.orientation);
+        if !was_paired && input.paired_mouse_buttons() && admission.turning {
+            self.set_mouse_facing(input, output)?;
+        }
         for effect in effects {
             self.apply(effect, admission, world, output)?;
         }
         Ok(())
+    }
+
+    fn set_mouse_facing(
+        &mut self,
+        input: &mut PlayerInputState,
+        output: &mut VecDeque<PlayerMovementOutput>,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        // 6EE3A0 event 19 -> 989B70 -> MSG_MOVE_SET_FACING. The fall
+        // snapshot retains its launch direction when the body turns in air.
+        if (self.orientation - self.camera.yaw()).abs() >= 0.000_000_953_674_3 {
+            self.orientation = self.camera.yaw();
+        }
+        self.flags &= !0x30;
+        input.clear_active_turn();
+        self.reanchor()?;
+        self.emit(WorldMovementKind::SetFacing, output)
     }
 
     fn new(
@@ -388,6 +464,10 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            camera: PlayerCameraInput::new(
+                solarity_ecs::PlayerViewState::default(),
+                transform.orientation(),
+            ),
             active: true,
             client_control: true,
             stand_state: 0,

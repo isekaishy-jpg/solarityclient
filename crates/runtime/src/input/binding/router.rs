@@ -68,10 +68,25 @@ impl InputBindingRouter {
             })
         });
         let mut first_error = None;
+        let button = match event {
+            PlatformEvent::MouseButton(event) => match event.button {
+                MouseButton::Left => Some(solarity_ui::UiPointerButton::Left),
+                MouseButton::Right => Some(solarity_ui::UiPointerButton::Right),
+                MouseButton::Middle => Some(solarity_ui::UiPointerButton::Middle),
+                MouseButton::AuxiliaryOne => Some(solarity_ui::UiPointerButton::Button4),
+                MouseButton::AuxiliaryTwo => Some(solarity_ui::UiPointerButton::Button5),
+                MouseButton::Unknown => None,
+            },
+            _ => None,
+        };
         for (action, phase) in commands {
             let result = match action {
                 UiBindingAction::Command(name) => frame
-                    .invoke_binding(&name, phase == InputBindingPhase::Down)
+                    .invoke_binding_with_mouse_button(
+                        &name,
+                        phase == InputBindingPhase::Down,
+                        button,
+                    )
                     .map(|_| ()),
                 action => Err(solarity_ui::UiScriptError::Execution {
                     label: "dynamic binding action".to_owned(),

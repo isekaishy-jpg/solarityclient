@@ -169,6 +169,25 @@ fn register_frame_globals(
         environment.world_state_ui_state(),
     )?;
     register_modifier_globals(lua, globals, environment.modifier_key_state())?;
+    let click_keys = environment.modifier_key_state();
+    let click_button = environment.mouse_button_context();
+    let click_bindings = environment.binding_assignments();
+    globals.raw_set(
+        "IsModifiedClick",
+        lua.create_function(move |lua, value: Value| {
+            let query = lua
+                .coerce_string(value)?
+                .map(|value| value.to_string_lossy());
+            let bindings = click_bindings.as_ref().map(|bindings| bindings.borrow());
+            Ok(crate::binding::is_modified_click(
+                query.as_deref(),
+                bindings.as_deref(),
+                click_keys.keys(),
+                click_button.get(),
+            )
+            .then_some(1_u8))
+        })?,
+    )?;
     crate::script::movement_intent::register_globals(lua, globals, environment.movement_input())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
@@ -983,6 +1002,15 @@ fn register_unit_relation_globals(
             name,
             lua.create_function(|_, _unit: String| Ok(MultiValue::new()))?,
         )?;
+    }
+    // Initial world state has no admitted cast/channel, targeting spell, or
+    // selected target. Native 809EA0, 809E30, and 525FC0 each return one nil
+    // when there is no work to cancel. UIParent's Escape chain depends on
+    // these initial-state branches to reach ShowUIPanel(GameMenuFrame).
+    // Casting and selection owners must replace these branches when their
+    // nonempty state is admitted, alongside UnitCastingInfo/UnitChannelInfo.
+    for name in ["SpellStopCasting", "SpellStopTargeting", "ClearTarget"] {
+        globals.raw_set(name, lua.create_function(|_, ()| Ok(Option::<u8>::None))?)?;
     }
     globals.raw_set(
         "GetRestState",

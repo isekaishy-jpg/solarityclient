@@ -25,6 +25,24 @@ pub struct FrameManager {
 }
 
 impl FrameManager {
+    /// Publishes the physical modifier snapshot before native Lua queries.
+    pub fn set_modifier_keys(&self, keys: crate::UiModifierKeys) {
+        self.owner.set_modifier_keys(keys);
+    }
+
+    /// Executes a binding with its current pointer-button context.
+    ///
+    /// # Errors
+    /// Returns the same command and presentation failures as [`Self::invoke_binding`].
+    pub fn invoke_binding_with_mouse_button(
+        &mut self,
+        name: &str,
+        pressed: bool,
+        button: Option<UiPointerButton>,
+    ) -> Result<bool, UiEventError> {
+        let _button_context = self.owner.mouse_button_scope(button);
+        self.invoke_binding(name, pressed)
+    }
     /// Resolves a native message token, preserving missing or empty stock text.
     ///
     /// # Errors
@@ -152,6 +170,21 @@ impl FrameManager {
     #[must_use]
     pub const fn render_plan(&self) -> &UiRenderPlan {
         self.owner.render_plan()
+    }
+
+    /// Returns effective visibility of a named region, including its parents.
+    /// Missing names or regions have no visibility result.
+    #[must_use]
+    pub fn region_is_shown(&self, name: &str) -> Option<bool> {
+        let index = self
+            .owner
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))?;
+        self.owner
+            .geometry()
+            .region(index)
+            .map(crate::UiRegionGeometry::effectively_shown)
     }
 
     /// Returns the archive-font atlas retained across world frames.

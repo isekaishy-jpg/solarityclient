@@ -43,6 +43,7 @@ param(
 
     [string] $InstallRoot = (Join-Path $env:LOCALAPPDATA "SolarityClient\testing"),
     [string] $ShortcutPath = (Join-Path ([Environment]::GetFolderPath("Desktop")) "Solarity Client (Testing).lnk"),
+    [switch] $FrameTimings,
     [switch] $SkipBuild
 )
 
@@ -141,6 +142,9 @@ $logDirectory = Join-Path $PSScriptRoot "logs"
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $logPath = Join-Path $logDirectory ("solarity-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
 $timezoneMinutes = [int][TimeZoneInfo]::Local.GetUtcOffset([DateTime]::Now).TotalMinutes
+if ('__FRAME_TIMINGS__' -eq '1') {
+    $env:SOLARITY_FRAME_TIMINGS = '1'
+}
 $arguments = @(
     "--data-root", '__DATA_ROOT__',
     "--profile-root", $PSScriptRoot,
@@ -222,6 +226,7 @@ function Reset-TestingFirstRunProfile([string] $ProfileRoot) {
 }
 
 $launcher = $launcherTemplate
+$launcher = $launcher.Replace("__FRAME_TIMINGS__", ([int]$FrameTimings.IsPresent).ToString())
 $launcher = $launcher.Replace("__DATA_ROOT__", (ConvertTo-SingleQuotedPowerShellLiteral $resolvedDataRoot))
 $launcher = $launcher.Replace("__LOCALE__", (ConvertTo-SingleQuotedPowerShellLiteral $Locale))
 $launcher = $launcher.Replace("__CPU_WORKERS__", $CpuWorkers.ToString([Globalization.CultureInfo]::InvariantCulture))

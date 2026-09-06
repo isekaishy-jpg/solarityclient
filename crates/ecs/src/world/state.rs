@@ -111,6 +111,20 @@ impl ActiveWorld {
             .map_err(|_| WorldStateError::MissingLocalPlayerView)
     }
 
+    /// Publishes the camera input owner's durable local-player view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldStateError::MissingLocalPlayerView`] if the view component
+    /// no longer belongs to the active world's local player.
+    pub fn set_local_player_view(&self, view: PlayerViewState) -> Result<(), WorldStateError> {
+        **self
+            .storage
+            .get::<&mut PlayerViewState>(self.local_player)
+            .map_err(|_| WorldStateError::MissingLocalPlayerView)? = view;
+        Ok(())
+    }
+
     /// Returns projected presentation fields after the create update arrives.
     #[must_use]
     pub fn local_player_presentation(&self) -> Option<UnitPresentation> {

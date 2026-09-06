@@ -5,6 +5,27 @@ use crate::{UiFrameStrata, UiObjectKind, UiObjectRole, UiRegionGeometryPlan};
 
 use super::UiPointerButton;
 
+pub(super) struct UiPointerButtonScope {
+    state: std::rc::Rc<std::cell::Cell<Option<UiPointerButton>>>,
+    previous: Option<UiPointerButton>,
+}
+
+impl UiPointerButtonScope {
+    pub(super) fn new(
+        state: std::rc::Rc<std::cell::Cell<Option<UiPointerButton>>>,
+        button: Option<UiPointerButton>,
+    ) -> Self {
+        let previous = state.replace(button);
+        Self { state, previous }
+    }
+}
+
+impl Drop for UiPointerButtonScope {
+    fn drop(&mut self) {
+        self.state.set(self.previous);
+    }
+}
+
 /// Live interaction facts parallel to frame-capable objects.
 pub(super) struct UiPointerPlan {
     targets: Vec<Option<UiPointerTarget>>,

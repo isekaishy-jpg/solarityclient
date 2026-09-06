@@ -89,7 +89,71 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !errors.is_empty() {
         return Err(IoError::new(ErrorKind::InvalidData, errors.join("\n\n")).into());
     }
-    println!("FrameXML startup events and first updates completed without errors");
+    for expected in [true, false, true, false] {
+        manager.invoke_binding("TOGGLEGAMEMENU", true)?;
+        if manager.region_is_shown("GameMenuFrame") != Some(expected) {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "Escape did not toggle the actual stock game menu",
+            )
+            .into());
+        }
+    }
+    manager.set_input_event_time(1234);
+    for (binding, control) in [
+        ("TURNORACTION", solarity_ui::UiMovementControl::TurnOrAction),
+        (
+            "CAMERAORSELECTORMOVE",
+            solarity_ui::UiMovementControl::CameraOrSelectOrMove,
+        ),
+    ] {
+        for pressed in [true, false] {
+            manager.invoke_binding(binding, pressed)?;
+            let expected = solarity_ui::UiMovementCommand {
+                action: if control == solarity_ui::UiMovementControl::CameraOrSelectOrMove
+                    && !pressed
+                {
+                    solarity_ui::UiMovementAction::CameraOrbitStop {
+                        sticky_camera: false,
+                    }
+                } else {
+                    solarity_ui::UiMovementAction::Hold { control, pressed }
+                },
+                timestamp_ms: 1234,
+            };
+            if manager.take_movement_command() != Some(expected) {
+                return Err(IoError::new(
+                    ErrorKind::InvalidData,
+                    "stock mouse binding lost its native command",
+                )
+                .into());
+            }
+        }
+    }
+    manager.set_modifier_keys(solarity_ui::UiModifierKeys::new(
+        false, false, true, false, false, false,
+    ));
+    manager.invoke_binding("CAMERAORSELECTORMOVE", true)?;
+    let _press = manager.take_movement_command();
+    manager.invoke_binding("CAMERAORSELECTORMOVE", false)?;
+    if !matches!(
+        manager.take_movement_command(),
+        Some(solarity_ui::UiMovementCommand {
+            action: solarity_ui::UiMovementAction::CameraOrbitStop {
+                sticky_camera: true
+            },
+            ..
+        })
+    ) {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "Ctrl did not reach the stock sticky-camera release",
+        )
+        .into());
+    }
+    println!(
+        "FrameXML startup, first updates, Escape menu toggles, and mouse bindings completed without errors"
+    );
     Ok(())
 }
 

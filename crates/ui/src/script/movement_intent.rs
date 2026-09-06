@@ -25,11 +25,22 @@ pub enum UiMovementControl {
     Ascend,
     /// Descending input, also held by SitStandOrDescendStart.
     Descend,
+    /// Right-button camera turning and world action gesture.
+    TurnOrAction,
+    /// Left-button camera orbit and world selection gesture.
+    CameraOrSelectOrMove,
+    /// Explicit mouselook, sharing the native right-button held bit.
+    Mouselook,
 }
 
 /// InputControl action; unit mode and eligibility are resolved by its owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiMovementAction {
+    /// Releases left-button orbit with the event's sticky-camera modifier.
+    CameraOrbitStop {
+        /// Preserve native camera flag 0x20 on the final mouse release.
+        sticky_camera: bool,
+    },
     /// Starts or stops a named held control.
     Hold {
         /// Logical control selected by the Lua native.
@@ -118,6 +129,15 @@ pub(crate) fn register_globals(
         ("VehicleAimDownStop", Control::PitchDown, false),
         ("AscendStop", Control::Ascend, false),
         ("DescendStop", Control::Descend, false),
+        ("TurnOrActionStart", Control::TurnOrAction, true),
+        ("TurnOrActionStop", Control::TurnOrAction, false),
+        (
+            "CameraOrSelectOrMoveStart",
+            Control::CameraOrSelectOrMove,
+            true,
+        ),
+        ("MouselookStart", Control::Mouselook, true),
+        ("MouselookStop", Control::Mouselook, false),
     ] {
         let input = input.clone();
         globals.raw_set(
@@ -128,6 +148,16 @@ pub(crate) fn register_globals(
             })?,
         )?;
     }
+    let camera_input = input.clone();
+    globals.raw_set(
+        "CameraOrSelectOrMoveStop",
+        lua.create_function(move |_, value: mlua::Value| {
+            camera_input.request(UiMovementAction::CameraOrbitStop {
+                sticky_camera: !matches!(value, mlua::Value::Nil | mlua::Value::Boolean(false)),
+            });
+            Ok(())
+        })?,
+    )?;
     for (name, action) in [
         ("JumpOrAscendStart", UiMovementAction::JumpOrAscend),
         (

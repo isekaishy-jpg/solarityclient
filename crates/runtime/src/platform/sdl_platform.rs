@@ -18,8 +18,9 @@ pub(crate) struct SdlPlatform {
     window: Window,
     total_physical_memory_bytes: u64,
     text_input_active: bool,
+    mouse_free_look: bool,
     video: VideoSubsystem,
-    _sdl: Sdl,
+    sdl: Sdl,
 }
 
 impl SdlPlatform {
@@ -97,8 +98,9 @@ impl SdlPlatform {
             window,
             total_physical_memory_bytes,
             text_input_active: false,
+            mouse_free_look: false,
             video,
-            _sdl: sdl,
+            sdl,
         })
     }
 
@@ -230,5 +232,22 @@ impl SdlPlatform {
             text_input.stop(&self.window);
         }
         self.text_input_active = active;
+    }
+
+    /// Relative mode hides and confines the cursor during an admitted camera
+    /// gesture; SDL releases confinement when this window loses focus.
+    pub(crate) fn set_mouse_free_look(&mut self, enabled: bool) -> Result<(), PlatformError> {
+        if enabled == self.mouse_free_look {
+            return Ok(());
+        }
+        let mouse = self.sdl.mouse();
+        mouse.set_relative_mouse_mode(&self.window, enabled);
+        if mouse.relative_mouse_mode(&self.window) != enabled {
+            return Err(PlatformError::RelativeMouse {
+                message: sdl3::get_error().to_string(),
+            });
+        }
+        self.mouse_free_look = enabled;
+        Ok(())
     }
 }

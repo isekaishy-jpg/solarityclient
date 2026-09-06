@@ -5,6 +5,12 @@ use thiserror::Error;
 /// A failure while owning the primary SDL window and event source.
 #[derive(Debug, Error)]
 pub enum PlatformError {
+    /// SDL rejected the active camera gesture's relative mouse mode.
+    #[error("failed to update camera mouse capture: {message}")]
+    RelativeMouse {
+        /// SDL's diagnostic text.
+        message: String,
+    },
     /// Windows rejected the process identity that isolates taskbar and Snap grouping.
     #[error("failed to establish standalone Windows application identity: HRESULT {code:#010x}")]
     ApplicationIdentity {

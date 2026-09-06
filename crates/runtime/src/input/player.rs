@@ -29,11 +29,30 @@ pub(crate) struct PlayerInputState {
 }
 
 impl PlayerInputState {
+    pub(crate) fn mouse_free_look(&self) -> bool {
+        self.bits & 3 != 0
+    }
+
+    pub(crate) fn mouse_turning(&self) -> bool {
+        self.bits & 1 != 0
+    }
+
+    pub(crate) fn paired_mouse_buttons(&self) -> bool {
+        self.bits & 3 == 3
+    }
+
+    pub(crate) fn clear_active_turn(&mut self) {
+        // Camera steering supersedes the keyboard yaw axis (5FB260).
+        self.bits &= !0x40000;
+    }
+
     /// Ordinary held edges still enter InputControl when no mover is selected;
     /// native 5FBBC0 then returns without resolving active axes.
     pub(crate) fn record_without_mover(&mut self, action: UiMovementAction) {
         if let UiMovementAction::Hold { control, pressed } = action {
             self.hold(control_bit(control), pressed);
+        } else if matches!(action, UiMovementAction::CameraOrbitStop { .. }) {
+            self.hold(2, false);
         }
     }
 
@@ -45,6 +64,11 @@ impl PlayerInputState {
     ) {
         use UiMovementAction as Action;
         match action {
+            Action::CameraOrbitStop { .. } => {
+                if self.hold(2, false) {
+                    self.resolve(admission, emit);
+                }
+            }
             Action::Hold { control, pressed } => {
                 if !self.hold(control_bit(control), pressed) {
                     return;
@@ -83,7 +107,7 @@ impl PlayerInputState {
         }
         if pressed {
             self.bits |= bit;
-            if bit & 0x30 != 0 {
+            if bit & 0x30 != 0 || (bit & 3 != 0 && self.bits & 3 == 3) {
                 self.bits &= !0x1000;
             }
         } else {
@@ -288,6 +312,8 @@ const fn control_bit(control: UiMovementControl) -> u32 {
         Control::PitchDown => 0x800,
         Control::Ascend => 0x2000,
         Control::Descend => 0x4000,
+        Control::TurnOrAction | Control::Mouselook => 1,
+        Control::CameraOrSelectOrMove => 2,
     }
 }
 

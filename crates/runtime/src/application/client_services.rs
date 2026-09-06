@@ -526,7 +526,24 @@ impl ClientServices {
     pub(crate) fn poll_platform_event(&mut self) -> Option<crate::TimedPlatformEvent> {
         let event = self.platform.poll_event()?;
         self.input.admit(&event.event);
+        self.publish_ui_modifier_keys();
         Some(event)
+    }
+
+    fn publish_ui_modifier_keys(&self) {
+        let bits = self.input.modifiers().bits();
+        let keys = solarity_ui::UiModifierKeys::new(
+            bits & 1 != 0,
+            bits & 2 != 0,
+            bits & 0x40 != 0,
+            bits & 0x80 != 0,
+            bits & 0x100 != 0,
+            bits & 0x200 != 0,
+        );
+        self.glue.set_modifier_keys(keys);
+        if let Some(ui) = &self.world_ui {
+            ui.set_modifier_keys(keys);
+        }
     }
 
     /// Returns the retained raw input state committed during event polling.
@@ -578,7 +595,7 @@ impl ClientServices {
             return Ok(());
         }
         if self.gameplay.world().is_some() {
-            return self.service_world_platform_event(event);
+            return self.service_world_platform_event(event, timestamp_ms);
         }
         if !matches!(event, PlatformEvent::MouseMotion(_)) && self.glue.flush_deferred_refresh()? {
             self.glue_ui_dirty = true;
@@ -726,10 +743,12 @@ impl ClientServices {
     fn service_world_platform_event(
         &mut self,
         event: &PlatformEvent,
+        timestamp_ms: u32,
     ) -> Result<(), ApplicationError> {
         let window_id = self.platform.window_id();
         let logical_extent = self.platform.logical_extent();
         let pointer_position = self.input.pointer_position();
+        let mouse_free_look = self.player_movement.mouse_free_look();
         let Some(world_ui) = self.world_ui.as_mut() else {
             return Ok(());
         };
@@ -783,7 +802,9 @@ impl ClientServices {
                         .object_index()
                         .is_some();
                 }
-                PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {
+                PlatformEvent::MouseMotion(pointer)
+                    if pointer.window_id == window_id && !mouse_free_look =>
+                {
                     world_ui.pointer_motion(project_pointer(pointer.x, pointer.y))?;
                 }
                 PlatformEvent::MouseWheel(wheel) if wheel.window_id == window_id => {
@@ -810,6 +831,33 @@ impl ClientServices {
             self.input.modifiers(),
             captured || ui_result.is_err(),
         );
+        // Preserve the Lua edge / relative motion / Lua release order even
+        // when all three arrive in a single platform pump.
+        while let Some(command) = world_ui.take_movement_command() {
+            self.player_movement.push(command);
+        }
+        if let PlatformEvent::MouseMotion(pointer) = event
+            && pointer.window_id == window_id
+        {
+            let scalar = |name: &str, default: f32| {
+                world_ui
+                    .cvar_value(name)
+                    .and_then(|value| value.parse::<f32>().ok())
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(default)
+            };
+            let settings = super::player_camera::PlayerCameraMouseSettings {
+                yaw_speed: scalar("cameraYawMoveSpeed", 180.),
+                pitch_speed: scalar("cameraPitchMoveSpeed", 90.),
+                invert_yaw: scalar("mouseInvertYaw", 0.) != 0.,
+                invert_pitch: scalar("mouseInvertPitch", 0.) != 0.,
+            };
+            self.player_movement.push_mouse_motion(
+                [pointer.delta_x, pointer.delta_y],
+                settings,
+                timestamp_ms,
+            );
+        }
         self.platform
             .set_text_input_active(world_ui.has_focused_edit_box());
         ui_result.and(binding_result)
@@ -1952,6 +2000,8 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        self.platform
+            .set_mouse_free_look(self.player_movement.mouse_free_look())?;
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
@@ -2252,6 +2302,7 @@ impl ClientServices {
             "loaded stock FrameXML and published world-entry events"
         );
         self.world_ui = Some(world_ui);
+        self.publish_ui_modifier_keys();
         Ok(())
     }
 

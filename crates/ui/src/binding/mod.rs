@@ -3,6 +3,9 @@
 mod assignments;
 mod error;
 mod key;
+mod modified_click;
+
+pub(crate) use modified_click::is_modified_click;
 mod types;
 mod ui_bindings;
 mod ui_macro_options;

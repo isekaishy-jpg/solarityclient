@@ -596,6 +596,7 @@ pub struct UiScriptEnvironment {
     cursor_position: Rc<Cell<(f64, f64)>>,
     mouse_focus: Rc<Cell<Option<usize>>>,
     modifiers: crate::UiModifierKeyState,
+    mouse_button_context: Rc<Cell<Option<crate::UiPointerButton>>>,
     world: crate::UiWorldState,
     account: crate::UiAccountState,
     action_bar: crate::UiActionBarState,
@@ -675,6 +676,7 @@ impl UiScriptEnvironment {
             cursor_position: Rc::new(Cell::new((0.0, 0.0))),
             mouse_focus: Rc::new(Cell::new(None)),
             modifiers: crate::UiModifierKeyState::new(),
+            mouse_button_context: Rc::default(),
             world: crate::UiWorldState::new(),
             account: crate::UiAccountState::new(),
             action_bar: crate::UiActionBarState::new(),
@@ -899,6 +901,10 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn modifier_key_state(&self) -> crate::UiModifierKeyState {
         self.modifiers.clone()
+    }
+
+    pub(crate) fn mouse_button_context(&self) -> Rc<Cell<Option<crate::UiPointerButton>>> {
+        self.mouse_button_context.clone()
     }
 
     /// Returns the shared client-owned primary action-bar state.

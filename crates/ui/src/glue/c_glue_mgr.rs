@@ -74,6 +74,17 @@ struct PointerHoverUpdate {
 }
 
 impl GlueManager {
+    /// Publishes the runtime's complete modifier image before UI dispatch.
+    pub fn set_modifier_keys(&self, keys: crate::UiModifierKeys) {
+        self.environment.modifier_key_state().set(keys);
+    }
+
+    pub(super) fn mouse_button_scope(
+        &self,
+        button: Option<UiPointerButton>,
+    ) -> super::pointer::UiPointerButtonScope {
+        super::pointer::UiPointerButtonScope::new(self.environment.mouse_button_context(), button)
+    }
     /// Loads, plans, and executes the stock GlueXML manifest in source order.
     ///
     /// The supplied archive stack becomes the single persistent asset source
@@ -1583,6 +1594,7 @@ impl GlueManager {
         click_count: u8,
         modifiers: UiKeyboardModifiers,
     ) -> Result<UiPointerDispatch, UiEventError> {
+        let _button_context = self.mouse_button_scope(Some(button));
         let hover_hit = self.pointer.hover_hit_test(&self.geometry, position);
         let hit = self.pointer.hit_test(&self.geometry, position);
         self.update_cursor_position(position);

@@ -140,18 +140,19 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     // FUN_0051D9B0 registers the type-5 value at 0x009E1340, whose
     // initialized build-12340 bytes are the exact string "1.0".
     value("cameraDistanceMaxFactor", "1.0"),
-    value("cameraPitchMoveSpeed", "90"),
+    ranged("cameraPitchMoveSpeed", "90", 0.1, 360.0),
     value("cameraPitchSmoothSpeed", "45"),
     value("cameraPivot", "1"),
     value("cameraSmoothStyle", "4"),
     value("cameraSmoothTrackingStyle", "4"),
     value("cameraTerrainTilt", "0"),
     value("cameraWaterCollision", "1"),
-    value("cameraYawMoveSpeed", "180"),
+    ranged("cameraYawMoveSpeed", "180", 0.1, 360.0),
     value("cameraYawSmoothSpeed", "180"),
     // FUN_0051D9B0 registers both inversion toggles against the stock false
     // scalar at 0x009E14A0.
     ranged("mouseInvertPitch", "0", 0.0, 1.0),
+    ranged("mouseInvertYaw", "0", 0.0, 1.0),
     // FUN_00401B60 formats the platform default with `%1.1f` before
     // registering this process-level sensitivity value.
     value("mouseSpeed", "1.0"),
