@@ -1023,9 +1023,6 @@ impl M2Frame {
                     }
                     ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
                     ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                    ResidentCreatureTexture::Unresolved(kind) => {
-                        M2ResolvedTexture::Unresolved(*kind)
-                    }
                 })
                 .collect::<Vec<_>>();
             let source = prepare_glue_character_gpu_source(
@@ -1200,9 +1197,6 @@ impl M2Frame {
                     }
                     ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
                     ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                    ResidentCreatureTexture::Unresolved(kind) => {
-                        M2ResolvedTexture::Unresolved(*kind)
-                    }
                 })
                 .collect::<Vec<_>>();
             let source = prepare_gpu_source(

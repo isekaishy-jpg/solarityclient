@@ -2635,12 +2635,10 @@ impl ResidentCreatureGeosets {
 pub(super) enum ResidentCreatureTexture {
     /// A concrete hardcoded or monster-skin BLP.
     Authored(Arc<BlpTextureSource>),
-    /// Stock's generated white image for an empty hardcoded filename.
+    /// Stock's white image for an empty filename or an unbound texture stage.
     StockWhite,
     /// Stock's generated green image for a failed hardcoded texture request.
     StockFailure,
-    /// An unsupported replacement category remains explicitly unresolved.
-    Unresolved(M2TextureKind),
 }
 
 /// One player M2 texture declaration after customization resolution.
@@ -3224,21 +3222,23 @@ fn prepare_creature_textures(
                     }
                 }
             }
-            kind
-            @ (M2TextureKind::Monster1 | M2TextureKind::Monster2 | M2TextureKind::Monster3) => {
-                appearance.texture_for(kind).map_or_else(
-                    || Ok(ResidentCreatureTexture::Unresolved(kind)),
-                    |path| {
-                        textures
-                            .load(assets, path)
-                            .map(ResidentCreatureTexture::Authored)
-                            .map_err(RuntimePlayerError::from)
-                    },
-                )
-            }
-            kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
+            kind => prepare_creature_replacement(kind, appearance, assets, textures),
         })
         .collect()
+}
+
+/// 4F20C0 supplies the three authored monster skins independently of the NPC
+/// body atlas. Empty display names leave a zero handle; 81F450 admits that
+/// unbound stage as neutral. A named but absent texture uses the failure image.
+fn prepare_creature_replacement(
+    kind: M2TextureKind,
+    appearance: &CreatureModelAppearance<'_>,
+    assets: &mut solarity_asset::AssetStore,
+    textures: &mut BlpTextureCache,
+) -> Result<ResidentCreatureTexture, RuntimePlayerError> {
+    let path = appearance.texture_for(kind);
+    let resident = load_optional_texture(path, assets, textures)?;
+    Ok(OptionalTextureBinding::new(path, resident.as_ref()).creature_texture())
 }
 
 /// Resolves the eleven display-only armor slots carried by an NPC appearance.
@@ -3305,7 +3305,7 @@ fn prepare_npc_character_textures(
             M2TextureKind::Environment => Ok(hair.creature_texture()),
             M2TextureKind::SkinExtra => Ok(extra_skin.creature_texture()),
             M2TextureKind::Item => Ok(cape.creature_texture()),
-            kind => Ok(ResidentCreatureTexture::Unresolved(kind)),
+            kind => prepare_creature_replacement(kind, appearance, assets, textures),
         })
         .collect()
 }

@@ -62,7 +62,16 @@ fn build_fixture(
     display[0] = 102;
     display[1] = 8;
     display[3] = u32::from(npc_race.is_some());
+    if npc_race.is_some() {
+        display[7] = 1;
+        display[8] = 13;
+    }
     displays.extend_from_slice(&display);
+    if npc_race.is_some() {
+        display[0] = 103;
+        display[3] = 0;
+        displays.extend_from_slice(&display);
+    }
     let mut model_data = [0; 28];
     model_data[0] = 7;
     model_data[2] = 1;
@@ -138,6 +147,42 @@ fn build_fixture(
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
     if let Some(race) = npc_race {
+        // Body plus three independent monster stages: empty, resident, missing.
+        // Every slot has a visible batch, so GPU preparation must resolve all.
+        let mut npc_model = model.clone();
+        let texture_offset = npc_model.len() as u32;
+        for kind in [1_u32, 11, 12, 13] {
+            npc_model.extend_from_slice(&kind.to_le_bytes());
+            npc_model.extend_from_slice(&[0; 12]);
+        }
+        npc_model[0x50..0x54].copy_from_slice(&4_u32.to_le_bytes());
+        npc_model[0x54..0x58].copy_from_slice(&texture_offset.to_le_bytes());
+        let lookup_offset = npc_model.len() as u32;
+        for index in 0_u16..4 {
+            npc_model.extend_from_slice(&index.to_le_bytes());
+        }
+        npc_model[0x80..0x84].copy_from_slice(&4_u32.to_le_bytes());
+        npc_model[0x84..0x88].copy_from_slice(&lookup_offset.to_le_bytes());
+        let mut npc_skin = game_object_models::skin()?;
+        let batch_start = npc_skin.len() - 24;
+        let batch = npc_skin[batch_start..].to_vec();
+        for index in 1_u16..4 {
+            let mut next = batch.clone();
+            next[16..18].copy_from_slice(&index.to_le_bytes());
+            npc_skin.extend_from_slice(&next);
+        }
+        npc_skin[36..40].copy_from_slice(&4_u32.to_le_bytes());
+        for (path, bytes) in &mut files {
+            match path.as_str() {
+                "Creature\\Alternate.m2" => *bytes = npc_model.clone(),
+                "Creature\\Alternate00.skin" => *bytes = npc_skin.clone(),
+                "DBFilesClient\\CreatureDisplayInfo.dbc" => {
+                    *bytes = dbc(16, &displays, b"\0MonsterSkin\0MissingSkin\0");
+                }
+                _ => {}
+            }
+        }
+        files.push(("Creature\\MonsterSkin.blp".to_owned(), skin_texture()));
         let mut extra = [0; 21];
         extra[0] = 1;
         extra[1] = race;

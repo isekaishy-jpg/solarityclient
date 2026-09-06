@@ -3,6 +3,9 @@
 #[path = "equipment_residency.rs"]
 mod equipment_residency;
 
+#[path = "stock_npc_residency.rs"]
+mod stock_npc_residency;
+
 use super::super::{M2PlaybackStorage, m2_gpu_placement};
 use super::*;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
@@ -14,6 +17,8 @@ use std::rc::Rc;
 
 #[test]
 fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dyn Error>> {
+    use crate::application::player_coordinator::ResidentCreatureTexture;
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let fixture = crate::test_support::unit_models::fixture_with_hairless_npc()?;
     let mut presentation = unit_presentation(&fixture)?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
@@ -30,18 +35,65 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
         .clone();
     add_unit(&mut world, 31, ObjectKind::Unit, 0)?;
     solarity_systems::project_object_fields(&mut world, 31, [(67, 102), (68, 102)])?;
+    add_unit(&mut world, 32, ObjectKind::Unit, 0)?;
+    solarity_systems::project_object_fields(&mut world, 32, [(67, 103), (68, 103)])?;
     assert!(matches!(
         presentation.synchronize_creatures(Some(&world))?,
         crate::application::RuntimeCreaturePoll::ModelsChanged
     ));
     let inputs = presentation.resident_creature_frame_inputs();
-    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs.len(), 3);
     assert!(retained.matches(inputs[0].generation()));
+    for (index, input) in inputs[1..].iter().enumerate() {
+        let textures = input.textures();
+        assert_eq!(textures.len(), 4);
+        assert_eq!(
+            matches!(textures[0], ResidentCreatureTexture::Authored(_)),
+            index == 0
+        );
+        assert!(matches!(textures[1], ResidentCreatureTexture::StockWhite));
+        assert!(matches!(textures[2], ResidentCreatureTexture::Authored(_)));
+        assert!(matches!(textures[3], ResidentCreatureTexture::StockFailure));
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.replace_creatures(&mut renderer, &inputs, &mut random)?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 0.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4., 4.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let draws = frame.prepare_visible_draws(
+        &renderer,
+        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        camera,
+        Vec3::ZERO,
+        100.,
+        100.,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        &mut random,
+        None,
+    )?;
+    assert_eq!(draws.draws.len(), 9);
     assert!(matches!(
         presentation.synchronize_creatures(Some(&world))?,
         crate::application::RuntimeCreaturePoll::Current
     ));
     world.remove_object(31)?;
+    world.remove_object(32)?;
     presentation.synchronize_creatures(Some(&world))?;
     assert_eq!(presentation.resident_creature_frame_inputs().len(), 1);
     assert!(retained.matches(presentation.resident_creature_frame_inputs()[0].generation()));
@@ -468,6 +520,14 @@ fn fixture_animations(
 fn unit_presentation(
     fixture: &ClientFixture,
 ) -> Result<crate::application::player_coordinator::RuntimePlayerPresentation, Box<dyn Error>> {
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    unit_presentation_from_store(AssetStore::mount(archive)?)
+}
+
+fn unit_presentation_from_store(
+    mut store: AssetStore,
+) -> Result<crate::application::player_coordinator::RuntimePlayerPresentation, Box<dyn Error>> {
     use crate::application::player_coordinator::{
         RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
     };
@@ -476,9 +536,6 @@ fn unit_presentation(
         CreatureCatalog, CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog,
         ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, ParticleColorCatalog,
     };
-    let archive =
-        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut store = AssetStore::mount(archive)?;
     let catalogs = RuntimePlayerCatalogs::new(
         AnimationDataCatalog::load(&mut store)?,
         CreatureCatalog::load(&mut store)?,
