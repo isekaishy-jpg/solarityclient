@@ -247,9 +247,39 @@ WMO BSP faces, and portal crossings; camera ray eligibility is a different query
 two flag sources must remain distinct. The latter samples BSP faces through
 `0x007CB260`, then tests interior portals through `0x007AF520`; a qualifying
 portal can choose a neighboring group even when there is no floor face. The
-current asset boundary retains MOGI boxes and MOGP flags but discards MOGI
-flags and the root MOPV/MOPT/MOPR tables. Those tables must be retained before
-this registration probe can be implemented completely.
+asset boundary now retains distinct MOGI flags/boxes, MOGP flags, and complete
+MOPV/MOPT/MOPR tables. It validates record sizes, reference ranges, and finite
+portal geometry without normalizing planes or discarding unused vertices.
+
+`PlacedWorldModelCollision::probe_registration` implements placed-root and
+MOGI segment-box admission, native point containment, dual BSP floor results,
+and portal precedence. Eligible cached leaves use the original expanded
+segment outcodes; uncached leaves can hit beyond the endpoint up to the
+supplied maxima. The two floor channels select MOPY `0x08/0x20` and `0x04/0x20`
+respectively, excluding `0x82`. Equal-distance faces replace earlier results.
+Selected-face capacity is 8,192, including faces with no result-channel bits;
+excluded and already visited faces do not consume it. Query storage is retained
+on the placement, and selected invalid/cyclic BSP paths return an error.
+
+Interior portals independently start at fraction 1.05. A portal replaces the
+primary result if its fraction minus the current primary fraction is strictly
+less than float 0.0001, including a slightly farther crossing. The selected
+source group supplies the MOGP interior bit, and the face becomes absent.
+Portal polygon edges preserve the native projected crossing test, including
+its asymmetric boundary inclusion. Fallback floor results remain independent.
+
+Native root flag `0x400` is set by transform update `0x007B64F0`; it is not the
+WDT global-WMO flag. `WorldModelRegistrationKind` keeps this distinction
+explicit. Transformed roots require point containment for exterior groups too.
+Initial group-list construction `0x007BDE50` appends groups in root index order.
+
+`tools/ghidra/wmo_registration_oracle.py` supplies original-executable fixtures
+for 138 portal, 468 floor, 208 combined root-registration, and 298 segment-box
+cases. Portable tests decode matching MPQ fixtures and compare face/group
+selection and exact fraction bits. Cached leaf records and allocation are
+controlled inputs to the native harness; the query and group-list routines
+execute original instructions. These checks do not establish runtime residency,
+cross-root bank/terrain resolution, or dynamic-reference insertion parity.
 
 An interior result registers the chosen group first and overlapping eligible
 interior groups in the same root (`0x007C2D30`), without terrain references.

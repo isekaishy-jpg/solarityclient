@@ -3,6 +3,9 @@
 use crate::{ArchiveDescriptor, AssetPath};
 
 use super::map_obj_group::DecodedWorldModelGroup;
+use super::map_obj_spatial::{
+    WorldModelGroupInfo, WorldModelPortal, WorldModelPortalReference, WorldModelSpatialData,
+};
 use super::{WorldModelDoodad, WorldModelDoodadSet, WorldModelDoodadSetError};
 
 /// One completely admitted WMO root and its independently resolved groups.
@@ -13,7 +16,7 @@ pub struct DecodedWorldModel {
     ambient_color: [u8; 4],
     world_model_id: u32,
     bounds: [[f32; 3]; 2],
-    group_selection_bounds: Vec<[[f32; 3]; 2]>,
+    spatial: WorldModelSpatialData,
     materials: Vec<WorldModelMaterial>,
     doodad_sets: Vec<WorldModelDoodadSet>,
     doodads: Vec<WorldModelDoodad>,
@@ -29,7 +32,7 @@ impl DecodedWorldModel {
         ambient_color: [u8; 4],
         world_model_id: u32,
         bounds: [[f32; 3]; 2],
-        group_selection_bounds: Vec<[[f32; 3]; 2]>,
+        spatial: WorldModelSpatialData,
         materials: Vec<WorldModelMaterial>,
         doodad_sets: Vec<WorldModelDoodadSet>,
         doodads: Vec<WorldModelDoodad>,
@@ -42,7 +45,7 @@ impl DecodedWorldModel {
             ambient_color,
             world_model_id,
             bounds,
-            group_selection_bounds,
+            spatial,
             materials,
             doodad_sets,
             doodads,
@@ -86,11 +89,28 @@ impl DecodedWorldModel {
         self.bounds
     }
 
-    /// Returns root MOGI bounds in group order, independently of MOGP bounds.
-    /// Stock uses these to select groups before traversing each group's BSP.
+    /// Returns root MOGI flags and bounds in group order, independently of MOGP.
     #[must_use]
-    pub fn group_selection_bounds(&self) -> &[[[f32; 3]; 2]] {
-        &self.group_selection_bounds
+    pub fn group_info(&self) -> &[WorldModelGroupInfo] {
+        &self.spatial.groups
+    }
+
+    /// Returns the complete root MOPV table, preserving shared and unused vertices.
+    #[must_use]
+    pub fn portal_vertices(&self) -> &[[f32; 3]] {
+        &self.spatial.vertices
+    }
+
+    /// Returns the MOPT polygons and planes in authored table order.
+    #[must_use]
+    pub fn portals(&self) -> &[WorldModelPortal] {
+        &self.spatial.portals
+    }
+
+    /// Returns MOPR edges addressed by each group's retained portal range.
+    #[must_use]
+    pub fn portal_references(&self) -> &[WorldModelPortalReference] {
+        &self.spatial.references
     }
 
     /// Returns every MOMT material in authored table order.

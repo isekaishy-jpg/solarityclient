@@ -14,6 +14,15 @@ const DETERMINANT_TOLERANCE: f32 = 0.000_001;
 /// Invalid WMO placement or camera-ray input.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum WorldModelCollisionError {
+    /// A selected BSP has a cycle, invalid axis, or invalid child.
+    #[error("world-model collision BSP is invalid")]
+    InvalidBsp,
+    /// The query names a group outside the complete admitted WMO generation.
+    #[error("world-model collision group {group_index} is outside the admitted model")]
+    InvalidGroup {
+        /// Invalid root group index.
+        group_index: usize,
+    },
     /// Placement position, rotation, or scale is invalid.
     #[error("world-model collision placement is invalid")]
     InvalidPlacement,
@@ -30,12 +39,13 @@ pub struct PlacedWorldModelCollision {
     pub(super) model: Arc<DecodedWorldModel>,
     pub(super) transform: Mat4,
     pub(super) inverse_transform: Mat4,
-    root_bounds: [Vec3; 2],
+    pub(super) root_bounds: [Vec3; 2],
     group_bounds: Vec<[Vec3; 2]>,
     movement_group_bounds: Vec<[Vec3; 2]>,
     pub(super) movement_pending: Vec<MovementBspQuery>,
     pub(super) movement_faces: Vec<bool>,
     pub(super) movement_cached_leaves: Vec<Vec<bool>>,
+    pub(super) floor_probe: super::world_model_floor::FloorProbeScratch,
 }
 
 impl PlacedWorldModelCollision {
@@ -105,9 +115,9 @@ impl PlacedWorldModelCollision {
         // 0x007BDE50 / 0x007AE720 transform root MOGI boxes for the placed
         // group-reference list, independently of the group's MOGP BSP region.
         let movement_group_bounds = model
-            .group_selection_bounds()
+            .group_info()
             .iter()
-            .map(|&bounds| transformed_bounds(bounds, transform))
+            .map(|group| transformed_bounds(group.bounds(), transform))
             .collect::<Result<Vec<_>, _>>()?;
         let group_bounds = model
             .groups()
@@ -125,6 +135,7 @@ impl PlacedWorldModelCollision {
             movement_pending: Vec::new(),
             movement_faces: Vec::new(),
             movement_cached_leaves,
+            floor_probe: super::world_model_floor::FloorProbeScratch::default(),
         })
     }
 

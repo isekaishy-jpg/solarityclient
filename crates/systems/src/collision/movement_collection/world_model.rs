@@ -84,7 +84,7 @@ impl PlacedWorldModelCollision {
                 Vec3::from_array(group.bounds()[0]),
                 Vec3::from_array(group.bounds()[1]),
             )?;
-            let selection = self.model.group_selection_bounds()[group_index];
+            let selection = self.model.group_info()[group_index].bounds();
             if (0..3).any(|axis| {
                 local.minimum[axis] > selection[1][axis] || local.maximum[axis] < selection[0][axis]
             }) {

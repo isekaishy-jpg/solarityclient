@@ -36,6 +36,7 @@ fn world_model_loads_stock_group_geometry_and_bsp() -> Result<(), Box<dyn Error>
     assert_eq!(model.world_model_id(), 42);
     assert_eq!(model.flags(), 0x8);
     assert_eq!(model.bounds(), [[-2.0, -3.0, -4.0], [2.0, 3.0, 4.0]]);
+    assert_eq!(model.group_info()[0].flags(), 0);
     assert_eq!(model.groups().len(), 1);
     let group = &model.groups()[0];
     assert_eq!(group.index(), 0);
@@ -454,7 +455,41 @@ fn presentation_root_fixture() -> Vec<u8> {
     set_vec3(&mut group, 16, [1.0, 1.0, 1.0]);
     set_u32(&mut group, 28, u32::MAX);
     push_chunk(&mut bytes, *b"IGOM", &group);
+    append_portals(&mut bytes, &[[0, 0, 1, 0]; 5]);
     bytes
+}
+
+fn append_portals(bytes: &mut Vec<u8>, references: &[[u16; 4]]) -> [usize; 3] {
+    set_u32(bytes, 20 + 8, 1);
+    let mut vertices = Vec::new();
+    for vertex in [
+        [91., 92., 93.],
+        [-1., -1., 3.],
+        [1., -1., 3.],
+        [1., 1., 3.],
+        [-1., 1., 3.],
+    ] {
+        for value in vertex {
+            vertices.extend_from_slice(&f32::to_le_bytes(value));
+        }
+    }
+    let vertex_offset = bytes.len() + 8;
+    push_chunk(bytes, *b"VPOM", &vertices);
+    let mut portal = vec![0; 20];
+    set_u16(&mut portal, 0, 1);
+    set_u16(&mut portal, 2, 4);
+    set_vec3(&mut portal, 4, [0., 0., 2.]);
+    portal[16..20].copy_from_slice(&(-6.0_f32).to_le_bytes());
+    let portal_offset = bytes.len() + 8;
+    push_chunk(bytes, *b"TPOM", &portal);
+    let edges = references
+        .iter()
+        .flatten()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    let reference_offset = bytes.len() + 8;
+    push_chunk(bytes, *b"RPOM", &edges);
+    [vertex_offset, portal_offset, reference_offset]
 }
 
 fn doodad_root_fixture() -> Vec<u8> {
@@ -687,4 +722,120 @@ fn set_vec3(bytes: &mut [u8], offset: usize, value: [f32; 3]) {
     for (axis, value) in value.into_iter().enumerate() {
         bytes[offset + axis * 4..offset + axis * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
+}
+
+#[test]
+fn world_model_preserves_distinct_group_flags_and_portal_topology() -> Result<(), Box<dyn Error>> {
+    let mut root = root_fixture(2);
+    // MOGI is independent of the flags in each separately decoded group.
+    set_u32(&mut root, 92, 0x0041_0088);
+    append_portals(&mut root, &[[0, 1, u16::MAX, 0xbeef], [0, 0, 1, 0xabcd]]);
+    let mut first = group_fixture(8);
+    let mut second = group_fixture(8);
+    set_u16(&mut first, 20 + 38, 1);
+    set_u16(&mut second, 20 + 36, 1);
+    set_u16(&mut second, 20 + 38, 1);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Portals.wmo",
+            bytes: &root,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World\\Portals_000.wmo",
+            bytes: &first,
+        },
+        FixtureFile {
+            archive: "patch-2.MPQ",
+            path: "World\\Portals_001.wmo",
+            bytes: &second,
+        },
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Portals.wmo")?)?;
+    assert_eq!(model.group_info()[0].flags(), 0x0041_0088);
+    assert_eq!(model.groups()[0].flags(), 0);
+    assert_eq!(model.group_info()[0].bounds(), [[-1.; 3], [1.; 3]]);
+    assert_eq!(model.portal_vertices().len(), 5);
+    assert_eq!(model.portal_vertices()[0], [91., 92., 93.]);
+    let portal = model.portals()[0];
+    assert_eq!((portal.vertex_start(), portal.vertex_count()), (1, 4));
+    assert_eq!(portal.normal(), [0., 0., 2.]);
+    assert_eq!(portal.distance(), -6.);
+    let references = model.portal_references();
+    assert_eq!(
+        (references[0].portal_index(), references[0].group_index()),
+        (0, 1)
+    );
+    assert_eq!(
+        (references[0].side(), references[0].padding()),
+        (-1, 0xbeef)
+    );
+    assert_eq!((references[1].side(), references[1].padding()), (1, 0xabcd));
+    assert_eq!(model.groups()[0].portal_reference_start(), 0);
+    assert_eq!(model.groups()[1].portal_reference_start(), 1);
+    assert_eq!(model.groups()[1].portal_reference_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn world_model_rejects_broken_portal_tables_before_spatial_queries() -> Result<(), Box<dyn Error>> {
+    for (case, expected) in [
+        (0, "MOPT vertex range exceeds MOPV"),
+        (1, "MOPR references a portal outside MOPT"),
+        (2, "MOPR references a group outside MOGI"),
+        (3, "MOGP portal range exceeds root MOPR"),
+        (4, "MOPV contains a non-finite vertex"),
+        (5, "MOPT contains a non-finite plane"),
+        (6, "MOPV requires complete 12-byte records"),
+        (7, "MOPT requires complete 20-byte records"),
+        (8, "MOPR requires complete 8-byte records"),
+    ] {
+        let mut root = root_fixture(1);
+        let [vertices, portal, edges] = append_portals(&mut root, &[[0, 0, u16::MAX, 0]]);
+        let mut group = group_fixture(8);
+        set_u16(&mut group, 20 + 38, 1);
+        match case {
+            0 => set_u16(&mut root, portal, 2),
+            1 => set_u16(&mut root, edges, 1),
+            2 => set_u16(&mut root, edges + 2, 1),
+            3 => set_u16(&mut group, 20 + 36, 1),
+            4 => set_u32(&mut root, vertices, f32::NAN.to_bits()),
+            5 => set_u32(&mut root, portal + 16, f32::INFINITY.to_bits()),
+            6..=8 => {
+                let (offset, size) = [(vertices, 60), (portal, 20), (edges, 8)][case - 6];
+                set_u32(&mut root, offset - 4, size - 1);
+                root.remove(offset + size as usize - 1);
+            }
+            _ => unreachable!(),
+        }
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Portals.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Portals_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        assert!(
+            matches!(
+                DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Portals.wmo")?),
+                Err(AssetError::WorldModelDecode { message, .. }) if message.contains(expected)
+            ),
+            "portal case {case}"
+        );
+    }
+    Ok(())
 }

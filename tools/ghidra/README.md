@@ -88,3 +88,24 @@ original numeric results behind `model/track_sampling.rs` regression cases,
 including non-unit quaternion matrices and all four interpolation selectors.
 Unicorn is a research-tool dependency; normal Cargo tests require neither it
 nor a stock executable.
+
+## Isolated WMO registration oracle
+
+`wmo_registration_oracle.py` executes original portal, BSP floor, segment-box,
+and combined root/group registration routines from the same fingerprinted PE.
+Portal and uncached floor queries have no hooks. Cached queries receive
+equivalent predecoded leaf records through the cache-provider boundary. Root
+group creation receives allocated object/reference records; its list insertion,
+group indices, flags, and bounds still execute original instructions. Whole
+resident groups are inputs, so the harness does not test asynchronous loading,
+cross-root/terrain resolution, or dynamic-object reference insertion.
+
+```text
+python tools/ghidra/wmo_registration_oracle.py <path-to-Wow.exe> --portal-output target/wmo-portal-probe-native.txt --floor-output target/wmo-bsp-probe-native.txt --registration-output target/wmo-root-registration-native.txt --box-output target/wmo-segment-box-native.txt
+```
+
+The committed numeric fixtures in `crates/systems/tests/fixtures` run without
+Unicorn or the executable. They cover portal sides and edges, plane proximity,
+primary/fallback face flags, equal-distance replacement, float-spill precision,
+BSP clipping/order, cache outcodes, the 8,192-face selection limit, group flags,
+point containment, and floor-versus-portal precedence.

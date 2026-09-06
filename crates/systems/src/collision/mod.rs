@@ -7,7 +7,10 @@ mod m2_model;
 mod movement_collection;
 mod terrain;
 mod world_model;
+mod world_model_floor;
 mod world_model_liquid;
+mod world_model_portal;
+mod world_model_registration;
 
 pub use collide::{
     MovementCollisionPlane, MovementCollisionTriangle, MovementCollisionVolume,
@@ -22,6 +25,11 @@ pub use terrain::{TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMe
 pub use world_model::{
     PlacedWorldModelCollision, WorldModelCollisionError, WorldModelCollisionScene,
 };
+pub use world_model_floor::{WorldModelFloorHit, WorldModelFloorHits};
 pub use world_model_liquid::{
     PlacedWorldModelLiquid, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
+};
+pub use world_model_portal::{WorldModelPortalHit, probe_world_model_portals};
+pub use world_model_registration::{
+    WorldModelRegistrationHit, WorldModelRegistrationHits, WorldModelRegistrationKind,
 };

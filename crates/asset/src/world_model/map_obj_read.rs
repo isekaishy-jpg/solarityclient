@@ -13,6 +13,7 @@ use super::map_obj_group::{
     DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass, WorldModelBspNode,
     WorldModelLiquid, WorldModelLiquidVertex, WorldModelPolygon,
 };
+use super::map_obj_spatial::WorldModelSpatialData;
 use super::{WorldModelDoodad, WorldModelDoodadSet};
 
 const BUILD_12340_WMO_VERSION: u32 = 17;
@@ -63,6 +64,7 @@ impl DecodedWorldModel {
                 root.doodad_defs.len(),
             )?);
         }
+        let spatial = WorldModelSpatialData::decode(path, &root, &groups)?;
         Ok(Self::new(
             path.clone(),
             read.source().clone(),
@@ -70,10 +72,7 @@ impl DecodedWorldModel {
             root.ambient_color,
             root.wmo_id,
             bounds,
-            root.group_info
-                .iter()
-                .map(|group| [group.bounding_box_min, group.bounding_box_max])
-                .collect(),
+            spatial,
             materials,
             doodad_sets,
             doodads,
@@ -972,6 +971,24 @@ fn validate_root_chunk_layout(path: &AssetPath, bytes: &[u8]) -> Result<(), Asse
     validate_unique_chunks(path, &chunks, &ALLOWED, "WMO root", &[])?;
     require_chunk(path, &chunks, *b"REVM", "MVER")?;
     require_chunk(path, &chunks, *b"DHOM", "MOHD")?;
+    for (magic, size) in [
+        (*b"IGOM", 32),
+        (*b"VPOM", 12),
+        (*b"TPOM", 20),
+        (*b"RPOM", 8),
+    ] {
+        if chunks.iter().any(|chunk| {
+            chunk.magic == magic && !(chunk.payload_end - chunk.payload_start).is_multiple_of(size)
+        }) {
+            return Err(world_model_message(
+                path,
+                format!(
+                    "{} requires complete {size}-byte records",
+                    chunk_name(magic)
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 

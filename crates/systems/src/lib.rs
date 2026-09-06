@@ -57,7 +57,9 @@ pub use collision::{
     MovementSweepError, MovementTerrainChunks, PlacedM2Collision, PlacedWorldModelCollision,
     PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
     TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
-    WorldModelCollisionScene, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
+    WorldModelCollisionScene, WorldModelFloorHit, WorldModelFloorHits, WorldModelLiquidError,
+    WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit, WorldModelRegistrationHit,
+    WorldModelRegistrationHits, WorldModelRegistrationKind, probe_world_model_portals,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,

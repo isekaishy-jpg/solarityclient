@@ -63,6 +63,7 @@ pub use texture::{BlpBlockCompression, BlpBlockMip, BlpTextureSource, DecodedBlp
 pub use world_model::{
     DecodedWorldModel, DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass,
     WorldModelBlendMode, WorldModelBspNode, WorldModelDoodad, WorldModelDoodadSet,
-    WorldModelDoodadSetError, WorldModelLiquid, WorldModelLiquidVertex, WorldModelMaterial,
-    WorldModelPolygon, WorldModelShader,
+    WorldModelDoodadSetError, WorldModelGroupInfo, WorldModelLiquid, WorldModelLiquidVertex,
+    WorldModelMaterial, WorldModelPolygon, WorldModelPortal, WorldModelPortalReference,
+    WorldModelShader,
 };
