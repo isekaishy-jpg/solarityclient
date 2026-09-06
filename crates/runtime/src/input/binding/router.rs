@@ -37,6 +37,55 @@ pub struct InputBindingRouter {
 }
 
 impl InputBindingRouter {
+    /// Routes a physical transition into the retained FrameXML command state.
+    /// UI capture suppresses new presses, while releases and focus loss always
+    /// drain commands already admitted by this router. Every release is attempted
+    /// even if an earlier command fails.
+    ///
+    /// # Errors
+    /// Returns the first authored command or presentation error after dispatching
+    /// the complete batch. Dynamic secure actions require their separate owner.
+    pub fn route_to_frame(
+        &mut self,
+        event: &PlatformEvent,
+        modifiers: KeyModifiers,
+        captured: bool,
+        frame: &mut solarity_ui::FrameManager,
+    ) -> Result<usize, solarity_ui::UiEventError> {
+        let new_press = match event {
+            PlatformEvent::Key(event) => event.state == ButtonState::Pressed,
+            PlatformEvent::MouseButton(event) => event.state == ButtonState::Pressed,
+            PlatformEvent::MouseWheel(_) => true,
+            _ => false,
+        };
+        if captured && new_press {
+            return Ok(0);
+        }
+        let mut commands = Vec::new();
+        let count = frame.with_bindings(|assignments, catalog| {
+            self.route(event, modifiers, assignments, catalog, |invocation| {
+                commands.push((invocation.assignment().action().clone(), invocation.phase()));
+            })
+        });
+        let mut first_error = None;
+        for (action, phase) in commands {
+            let result = match action {
+                UiBindingAction::Command(name) => frame
+                    .invoke_binding(&name, phase == InputBindingPhase::Down)
+                    .map(|_| ()),
+                action => Err(solarity_ui::UiScriptError::Execution {
+                    label: "dynamic binding action".to_owned(),
+                    message: format!("secure action execution is unavailable: {action:?}"),
+                }
+                .into()),
+            };
+            if let Err(error) = result {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(count), Err)
+    }
+
     /// Creates an empty router for the process's primary client window.
     #[must_use]
     pub fn new(primary_window: WindowId) -> Self {
@@ -268,7 +317,7 @@ fn admitted_definition<'a>(
     let UiBindingAction::Command(name) = assignment.action() else {
         return None;
     };
-    catalog
-        .binding(name)
-        .filter(|definition| definition.is_available_on(UiBindingPlatform::Windows))
+    catalog.binding(name).filter(|definition| {
+        !definition.is_debug() && definition.is_available_on(UiBindingPlatform::Windows)
+    })
 }

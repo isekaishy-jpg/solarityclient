@@ -798,6 +798,20 @@ impl GlueManager {
         Ok(UiEventDispatch::new(dispatch.subscriber_count))
     }
 
+    pub(super) fn dispatch_binding(
+        &mut self,
+        name: &str,
+        function: &mlua::Function,
+        pressed: bool,
+    ) -> Result<bool, UiEventError> {
+        let (dispatch, result) =
+            self.runtime
+                .dispatch_binding(&self.bundle, name, function, pressed)?;
+        self.refresh_event_mutations(&dispatch)?;
+        result?;
+        Ok(dispatch.changed)
+    }
+
     /// Advances visible Glue `OnUpdate` handlers by one rendered-frame interval.
     ///
     /// Live geometry and renderer packets rebuild only when a handler mutates

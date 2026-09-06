@@ -1,5 +1,7 @@
 //! Persistent ownership of the built-in active-world interface.
 
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use solarity_asset::{AssetStoreHandle, BlpTextureCache};
 
 use super::{GlueError, GlueManager};
@@ -16,6 +18,9 @@ use crate::{
 /// facade deliberately exposes only the operations owned by an active world.
 pub struct FrameManager {
     owner: GlueManager,
+    binding_catalog: UiBindingCatalog,
+    binding_assignments: Rc<RefCell<UiBindingAssignments>>,
+    binding_functions: HashMap<String, mlua::Function>,
 }
 
 impl FrameManager {
@@ -54,19 +59,80 @@ impl FrameManager {
         cvar_values: &[(String, String)],
         addon_catalog: &AddonCatalog,
     ) -> Result<Self, GlueError> {
-        let bindings = {
+        let (catalog, bindings) = {
             let mut store = assets.borrow_mut();
             let catalog = UiBindingCatalog::load_builtin(&mut store)?;
-            UiBindingAssignments::load_defaults(&mut store, &catalog)?
+            let bindings = UiBindingAssignments::load_defaults(&mut store, &catalog)?;
+            (catalog, bindings)
         };
         let environment = environment
             .with_shared_asset_store(assets.clone())
             .with_cvar_values(cvar_values)
             .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog))
             .with_binding_assignments(bindings);
+        let binding_assignments =
+            environment
+                .binding_assignments()
+                .ok_or_else(|| crate::UiScriptError::Execution {
+                    label: "FrameXML bindings".to_owned(),
+                    message: "missing attached binding assignments".to_owned(),
+                })?;
+        let owner = GlueManager::start_shared_frame(assets, environment)?;
+        let mut binding_functions = HashMap::new();
+        for binding in catalog.bindings() {
+            let function = owner
+                .bundle()
+                .lua()
+                .load(format!(
+                    "return function(keystate, pressure, angle, precision)\n{}\nend",
+                    binding.body()
+                ))
+                .set_name(binding.name())
+                .eval::<mlua::Function>()
+                .map_err(|error| crate::UiScriptError::Execution {
+                    label: binding.name().to_owned(),
+                    message: error.to_string(),
+                })?;
+            binding_functions.insert(binding.name().to_owned(), function);
+        }
         Ok(Self {
-            owner: GlueManager::start_shared_frame(assets, environment)?,
+            owner,
+            binding_catalog: catalog,
+            binding_assignments,
+            binding_functions,
         })
+    }
+
+    /// Resolves physical input against the same assignment image used by Lua.
+    /// The callback must finish before any resulting Lua command is executed.
+    pub fn with_bindings<T>(
+        &self,
+        resolve: impl FnOnce(&UiBindingAssignments, &UiBindingCatalog) -> T,
+    ) -> T {
+        resolve(&self.binding_assignments.borrow(), &self.binding_catalog)
+    }
+
+    /// Executes a stock command in the retained FrameXML Lua state and refreshes
+    /// its presentation mutations. Returns whether presentation changed.
+    ///
+    /// # Errors
+    /// Returns an error for an unavailable command, authored Lua failure, or
+    /// invalid resulting presentation. Partial Lua mutations are retained.
+    pub fn invoke_binding(&mut self, name: &str, pressed: bool) -> Result<bool, UiEventError> {
+        let Some(definition) = self.binding_catalog.binding(name).filter(|definition| {
+            !definition.is_debug() && definition.is_available_on(crate::UiBindingPlatform::Windows)
+        }) else {
+            return Err(crate::UiScriptError::Execution {
+                label: name.to_owned(),
+                message: "unavailable binding command".to_owned(),
+            }
+            .into());
+        };
+        if !pressed && !definition.runs_on_up() {
+            return Ok(false);
+        }
+        let function = &self.binding_functions[name];
+        self.owner.dispatch_binding(name, function, pressed)
     }
 
     /// Returns the upload-ready mesh rebuilt after each delivered event.

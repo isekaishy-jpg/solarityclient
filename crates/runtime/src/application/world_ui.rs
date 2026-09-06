@@ -37,6 +37,7 @@ pub enum RuntimeWorldUiError {
 /// Retained FrameXML runtime paired with its current renderer generation.
 pub(super) struct RuntimeWorldUi {
     manager: FrameManager,
+    bindings: crate::InputBindingRouter,
     frame: RuntimeUiFrame,
     texture_cache: BlpTextureCache,
     texture_residency: RuntimeUiResidency,
@@ -101,9 +102,17 @@ impl RuntimeWorldUi {
     /// Delivers the live-world exit event without reconstructing FrameXML.
     pub(super) fn leave_world(&mut self) -> Result<(), ApplicationError> {
         self.dirty = true;
-        self.manager
-            .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())?;
-        Ok(())
+        let release = self.route_binding(
+            &crate::PlatformEvent::ApplicationDidEnterBackground,
+            crate::KeyModifiers::NONE,
+            true,
+        );
+        let leave = self
+            .manager
+            .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())
+            .map(|_| ())
+            .map_err(ApplicationError::from);
+        release.and(leave)
     }
 
     /// Refreshes the new replicated player before the repeatable entry event.
@@ -124,6 +133,7 @@ impl RuntimeWorldUi {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
+        window_id: crate::WindowId,
         assets: AssetStoreHandle,
         logical_extent: (u32, u32),
         cvar_values: &[(String, String)],
@@ -189,6 +199,7 @@ impl RuntimeWorldUi {
         Ok((
             Self {
                 manager,
+                bindings: crate::InputBindingRouter::new(window_id),
                 frame,
                 texture_cache,
                 texture_residency,
@@ -303,6 +314,30 @@ impl RuntimeWorldUi {
             self.dirty = false;
         }
         Ok(())
+    }
+
+    /// Executes unclaimed bindings and preserves release delivery across UI capture.
+    pub(super) fn route_binding(
+        &mut self,
+        event: &crate::PlatformEvent,
+        modifiers: crate::KeyModifiers,
+        captured: bool,
+    ) -> Result<(), ApplicationError> {
+        // An authored error may still leave valid presentation mutations.
+        // Refresh the renderer after every dispatched batch, including errors.
+        match self
+            .bindings
+            .route_to_frame(event, modifiers, captured, &mut self.manager)
+        {
+            Ok(count) => {
+                self.dirty |= count != 0;
+                Ok(())
+            }
+            Err(error) => {
+                self.dirty = true;
+                Err(error.into())
+            }
+        }
     }
 
     /// Routes a pointer button and marks an addressed frame generation dirty.

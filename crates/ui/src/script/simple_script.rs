@@ -816,7 +816,7 @@ impl UiScriptEnvironment {
         self.character_creation.clone()
     }
 
-    fn binding_assignments(&self) -> Option<Rc<RefCell<UiBindingAssignments>>> {
+    pub(crate) fn binding_assignments(&self) -> Option<Rc<RefCell<UiBindingAssignments>>> {
         self.bindings.clone()
     }
 
@@ -2366,6 +2366,33 @@ impl UiScriptRuntime {
         call_string_object_handler(lua, &function, object, text)
             .map_err(|error| execution_error(&label, error))?;
         finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
+    }
+
+    /// Runs a compiled binding and journals even mutations preceding a Lua fault.
+    pub(crate) fn dispatch_binding(
+        &mut self,
+        bundle: &UiBundle,
+        name: &str,
+        function: &mlua::Function,
+        pressed: bool,
+    ) -> Result<(UiScriptEventDispatch, Result<(), UiScriptError>), UiScriptError> {
+        let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), name)?;
+        let result = function
+            // Native 0x00563150 -> 0x0055F860 supplies all four keyboard/
+            // mouse arguments: state, binary pressure, angle -1, precision 0.
+            .call::<()>((
+                if pressed { "down" } else { "up" },
+                if pressed { 1.0 } else { 0.0 },
+                -1.0,
+                0.0,
+            ))
+            .map_err(|error| execution_error(name, error));
+        // Lua may mutate frames before failing. Publish those mutations before
+        // the caller reports the authored error, just as successful bindings do.
+        let dispatch =
+            finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, name)?;
+        Ok((dispatch, result))
     }
 
     /// Delivers one key transition to a focused EditBox or keyboard frame.

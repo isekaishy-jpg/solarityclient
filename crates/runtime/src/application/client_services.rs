@@ -560,9 +560,15 @@ impl ClientServices {
         ) {
             self.platform
                 .set_text_input_active(self.developer_console.is_visible());
+            if let Some(world_ui) = self.world_ui.as_mut() {
+                world_ui.route_binding(event, self.input.modifiers(), true)?;
+            }
             return Ok(());
         }
         if self.loading_screen.is_some() || self.world_transfer.is_entering_world() {
+            if let Some(world_ui) = self.world_ui.as_mut() {
+                world_ui.route_binding(event, self.input.modifiers(), true)?;
+            }
             return Ok(());
         }
         if self.gameplay.world().is_some() {
@@ -729,64 +735,78 @@ impl ClientServices {
                     - f64::from(y) / f64::from(logical_extent.1) * f64::from(ui_extent[1]),
             )
         };
-        match event {
-            PlatformEvent::Key(key_event) if key_event.window_id == window_id => {
-                let Some(scan_code) = key_event.scan_code else {
-                    return Ok(());
-                };
-                let Some(key) = stock_keyboard_name(scan_code) else {
-                    return Ok(());
-                };
-                let modifiers = UiKeyboardModifiers::new(
-                    key_event.modifiers.has_shift(),
-                    key_event.modifiers.has_control(),
-                    key_event.modifiers.has_alt(),
-                );
-                world_ui.keyboard_key(key, key_event.state == ButtonState::Pressed, modifiers)?;
-            }
-            PlatformEvent::TextInput(input) if input.window_id == window_id => {
-                world_ui.text_input(&input.text)?;
-            }
-            PlatformEvent::TextEditing(composition) if composition.window_id == window_id => {
-                world_ui.text_composition(&composition.text)?;
-            }
-            PlatformEvent::MouseButton(pointer) if pointer.window_id == window_id => {
-                let Some(button) = glue_pointer_button(pointer.button) else {
-                    return Ok(());
-                };
-                world_ui.pointer_button(
-                    project_pointer(pointer.x, pointer.y),
-                    button,
-                    pointer.state == ButtonState::Pressed,
-                    pointer.click_count,
-                    UiKeyboardModifiers::new(
-                        self.input.modifiers().has_shift(),
-                        self.input.modifiers().has_control(),
-                        self.input.modifiers().has_alt(),
-                    ),
-                )?;
-            }
-            PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {
-                world_ui.pointer_motion(project_pointer(pointer.x, pointer.y))?;
-            }
-            PlatformEvent::MouseWheel(wheel) if wheel.window_id == window_id => {
-                let delta = match wheel.direction {
-                    MouseWheelDirection::Normal => wheel.y,
-                    MouseWheelDirection::Flipped => -wheel.y,
-                    MouseWheelDirection::Unknown => return Ok(()),
-                };
-                if let Some(pointer) = pointer_position {
-                    world_ui.pointer_wheel(
-                        project_pointer(pointer.x(), pointer.y()),
-                        f64::from(delta),
-                    )?;
+        let mut captured = false;
+        let ui_result = (|| -> Result<(), ApplicationError> {
+            match event {
+                PlatformEvent::Key(key_event) if key_event.window_id == window_id => {
+                    captured = world_ui.has_focused_edit_box();
+                    let Some(key) = key_event.scan_code.and_then(stock_keyboard_name) else {
+                        return Ok(());
+                    };
+                    let modifiers = UiKeyboardModifiers::new(
+                        key_event.modifiers.has_shift(),
+                        key_event.modifiers.has_control(),
+                        key_event.modifiers.has_alt(),
+                    );
+                    captured |= world_ui
+                        .keyboard_key(key, key_event.state == ButtonState::Pressed, modifiers)?
+                        .is_some();
                 }
+                PlatformEvent::TextInput(input) if input.window_id == window_id => {
+                    world_ui.text_input(&input.text)?;
+                }
+                PlatformEvent::TextEditing(composition) if composition.window_id == window_id => {
+                    world_ui.text_composition(&composition.text)?;
+                }
+                PlatformEvent::MouseButton(pointer) if pointer.window_id == window_id => {
+                    let Some(button) = glue_pointer_button(pointer.button) else {
+                        return Ok(());
+                    };
+                    captured = world_ui
+                        .pointer_button(
+                            project_pointer(pointer.x, pointer.y),
+                            button,
+                            pointer.state == ButtonState::Pressed,
+                            pointer.click_count,
+                            UiKeyboardModifiers::new(
+                                self.input.modifiers().has_shift(),
+                                self.input.modifiers().has_control(),
+                                self.input.modifiers().has_alt(),
+                            ),
+                        )?
+                        .object_index()
+                        .is_some();
+                }
+                PlatformEvent::MouseMotion(pointer) if pointer.window_id == window_id => {
+                    world_ui.pointer_motion(project_pointer(pointer.x, pointer.y))?;
+                }
+                PlatformEvent::MouseWheel(wheel) if wheel.window_id == window_id => {
+                    let delta = match wheel.direction {
+                        MouseWheelDirection::Normal => wheel.y,
+                        MouseWheelDirection::Flipped => -wheel.y,
+                        MouseWheelDirection::Unknown => return Ok(()),
+                    };
+                    if let Some(pointer) = pointer_position {
+                        captured = world_ui
+                            .pointer_wheel(
+                                project_pointer(pointer.x(), pointer.y()),
+                                f64::from(delta),
+                            )?
+                            .is_some();
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        }
+            Ok(())
+        })();
+        let binding_result = world_ui.route_binding(
+            event,
+            self.input.modifiers(),
+            captured || ui_result.is_err(),
+        );
         self.platform
             .set_text_input_active(world_ui.has_focused_edit_box());
-        Ok(())
+        ui_result.and(binding_result)
     }
 
     /// Takes one process-level action emitted by the currently owned built-in UI.
@@ -2165,6 +2185,7 @@ impl ClientServices {
             .map_err(GlueError::from)?;
         let (world_ui, startup_errors) = RuntimeWorldUi::prepare(
             &mut self.renderer,
+            self.platform.window_id(),
             self.assets.clone(),
             self.platform.logical_extent(),
             self.startup_profile.cvar_values(),

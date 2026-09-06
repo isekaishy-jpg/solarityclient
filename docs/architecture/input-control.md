@@ -71,8 +71,10 @@ No Windows fallback is substituted for them.
 
 ## Gameplay command boundary under implementation
 
-Physical binding delivery is present; player locomotion and camera command
-consumers are still absent. The following build-12340 executable evidence
+Physical binding delivery now executes commands in the retained FrameXML Lua
+state. Focused UI and console capture suppress new presses while preserving
+the release of previously admitted bindings. Player locomotion and camera
+command consumers are still absent. The following build-12340 executable evidence
 bounds the next implementation. These addresses come from the original Lua
 registration tables and their native callees, not the C++ client's controller.
 
@@ -88,6 +90,14 @@ starts/stops. Their camera, cursor, and autorun side effects are part of that
 boundary. Movement Lua entries first pass the native protected-action check
 at `0x005191C0`; arbitrary script execution must not acquire hardware-input
 authority merely because it calls the same function.
+
+The ordinary movement Lua wrappers ignore Lua arguments and read the input
+event clock at `0x00B499A4`. Native input dispatch writes that clock from the
+incoming event before calling the UI: keyboard paths `0x004943C0` and
+`0x00494490` copy event word 3, and mouse paths `0x004947A0` and `0x00494890`
+copy event offset `0x20`. The future timed movement bridge must retain that
+event time through dispatch; substituting the render time or an optional Lua
+timestamp would change input ordering.
 
 `0x005FBBC0` resolves the current controlled unit and separately gates
 translation and turning. The ordinary forward/back resolver at `0x005FAE70`

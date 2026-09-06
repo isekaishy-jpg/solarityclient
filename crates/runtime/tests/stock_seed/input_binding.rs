@@ -337,6 +337,193 @@ fn binding_state() -> Result<(ClientFixture, UiBindingCatalog, UiBindingAssignme
     Ok((fixture, catalog, assignments))
 }
 
+/// The production dispatch boundary uses FrameXML's Lua state, respects UI
+/// capture, publishes rendering changes, and preserves modifier-independent up.
+#[test]
+fn live_frame_binding_executes_and_releases_through_ui_capture() -> Result<(), Box<dyn Error>> {
+    let (_fixture, mut frame) = live_binding_frame()?;
+    let mut router = InputBindingRouter::new(PRIMARY_WINDOW);
+    let down = key_event(
+        PRIMARY_WINDOW,
+        SdlScanCode::W,
+        ButtonState::Pressed,
+        KeyModifiers::NONE,
+        false,
+    );
+    assert_eq!(
+        router.route_to_frame(&down, KeyModifiers::NONE, true, &mut frame)?,
+        0
+    );
+    assert_eq!(
+        frame.localized_text("BINDING_LOG")?.as_deref(),
+        Some("ready;")
+    );
+    assert_eq!(
+        router.route_to_frame(&down, KeyModifiers::NONE, false, &mut frame)?,
+        1
+    );
+    assert_eq!(frame.render_plan().mesh().batches()[0].opacity(), 0.0);
+    let repeat = key_event(
+        PRIMARY_WINDOW,
+        SdlScanCode::W,
+        ButtonState::Pressed,
+        KeyModifiers::NONE,
+        true,
+    );
+    assert_eq!(
+        router.route_to_frame(&repeat, KeyModifiers::NONE, false, &mut frame)?,
+        0
+    );
+    let up = key_event(
+        PRIMARY_WINDOW,
+        SdlScanCode::W,
+        ButtonState::Released,
+        KeyModifiers::from_bits(LEFT_SHIFT),
+        false,
+    );
+    assert_eq!(
+        router.route_to_frame(&up, KeyModifiers::NONE, true, &mut frame)?,
+        1
+    );
+    assert_eq!(
+        frame.localized_text("BINDING_LOG")?.as_deref(),
+        Some("ready;down;up;")
+    );
+    assert_eq!(
+        frame.localized_text("keystate")?.as_deref(),
+        Some("sentinel")
+    );
+    for parameter in ["pressure", "angle", "precision"] {
+        assert_eq!(frame.localized_text(parameter)?.as_deref(), Some("global"));
+    }
+    let debug = key_event(
+        PRIMARY_WINDOW,
+        SdlScanCode::F2,
+        ButtonState::Pressed,
+        KeyModifiers::NONE,
+        false,
+    );
+    assert_eq!(
+        router.route_to_frame(&debug, KeyModifiers::NONE, false, &mut frame)?,
+        0
+    );
+    assert!(frame.invoke_binding("DEBUGONLY", true).is_err());
+    assert_eq!(frame.render_plan().mesh().batches()[0].opacity(), 1.0);
+    assert_eq!(router.active_release_count(), 0);
+    Ok(())
+}
+
+/// A failing release must not swallow later releases in the same focus-loss
+/// batch, and changes made before the error must reach retained presentation.
+#[test]
+fn live_frame_binding_error_preserves_mutations_and_drains_all_releases()
+-> Result<(), Box<dyn Error>> {
+    let (_fixture, mut frame) = live_binding_frame()?;
+    let mut router = InputBindingRouter::new(PRIMARY_WINDOW);
+    for key in [SdlScanCode::D, SdlScanCode::W] {
+        router.route_to_frame(
+            &key_event(
+                PRIMARY_WINDOW,
+                key,
+                ButtonState::Pressed,
+                KeyModifiers::NONE,
+                false,
+            ),
+            KeyModifiers::NONE,
+            false,
+            &mut frame,
+        )?;
+    }
+    let background = PlatformEvent::ApplicationDidEnterBackground;
+    let error = router
+        .route_to_frame(&background, KeyModifiers::NONE, true, &mut frame)
+        .err()
+        .ok_or("missing authored failure")?;
+    assert!(error.to_string().contains("release fault"));
+    assert_eq!(router.active_release_count(), 0);
+    assert_eq!(
+        frame.localized_text("BINDING_LOG")?.as_deref(),
+        Some("ready;down;fault;up;")
+    );
+    assert_eq!(frame.render_plan().mesh().batches()[0].opacity(), 0.25);
+    assert_eq!(
+        router.route_to_frame(&background, KeyModifiers::NONE, true, &mut frame)?,
+        0
+    );
+    Ok(())
+}
+
+fn live_binding_frame() -> Result<(ClientFixture, solarity_ui::FrameManager), Box<dyn Error>> {
+    let empty_slots = binding_fixture_dbc(0, 3);
+    let crit_base = binding_fixture_dbc(11, 1);
+    let crit_ratio = binding_fixture_dbc(1100, 1);
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\PaperDollItemFrame.dbc", &empty_slots),
+        ("DBFilesClient\\gtChanceToMeleeCritBase.dbc", &crit_base),
+        ("DBFilesClient\\gtChanceToMeleeCrit.dbc", &crit_ratio),
+        ("DBFilesClient\\gtChanceToSpellCritBase.dbc", &crit_base),
+        ("DBFilesClient\\gtChanceToSpellCrit.dbc", &crit_ratio),
+        ("DBFilesClient\\gtOCTRegenHP.dbc", &crit_ratio),
+        ("DBFilesClient\\gtRegenHPPerSpt.dbc", &crit_ratio),
+        ("DBFilesClient\\gtRegenMPPerSpt.dbc", &crit_ratio),
+        ("Interface\\FrameXML\\FrameXML.toc", b"LiveBindings.xml\n"),
+        (
+            "Interface\\FrameXML\\LiveBindings.xml",
+            br#"<Ui>
+<Frame name="BindingTarget"><Size x="40" y="20"/><Anchors><Anchor point="TOPLEFT"/></Anchors>
+  <Scripts><OnLoad>
+    BINDING_LOG = "ready;"; keystate = "sentinel"
+    pressure = "global"; angle = "global"; precision = "global"
+  </OnLoad></Scripts>
+  <Layers><Layer level="ARTWORK"><Texture file="Interface\Glues\BindingFixture"/></Layer></Layers>
+</Frame></Ui>"#,
+        ),
+        (
+            "Interface\\FrameXML\\Bindings.xml",
+            br#"<Bindings>
+<Binding name="HOLD" runOnUp="true">
+  assert(pressure == (keystate == "down" and 1 or 0))
+  assert(angle == -1 and precision == 0)
+  BINDING_LOG = BINDING_LOG .. keystate .. ";"
+  if keystate == "down" then BindingTarget:Hide() else BindingTarget:Show() end
+</Binding>
+<Binding name="FAULT" runOnUp="true">
+  if keystate == "up" then
+    BindingTarget:SetAlpha(0.25)
+    BINDING_LOG = BINDING_LOG .. "fault;"
+    error("release fault")
+  end
+</Binding>
+<Binding name="DEBUGONLY" debug="true">error("debug command executed")</Binding>
+</Bindings>"#,
+        ),
+        (
+            "WTF\\DefaultBindings.wtf",
+            b"bind W HOLD\nbind D FAULT\nbind F2 DEBUGONLY\n",
+        ),
+    ])?;
+    let assets = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let frame = solarity_ui::FrameManager::start_shared(
+        solarity_asset::AssetStoreHandle::new(assets),
+        solarity_ui::UiScriptEnvironment::new(1280, 720, false)?,
+        &[],
+        &solarity_ui::AddonCatalog::default(),
+    )?;
+    Ok((fixture, frame))
+}
+
+fn binding_fixture_dbc(rows: u32, fields: u32) -> Vec<u8> {
+    let mut bytes = b"WDBC".to_vec();
+    for value in [rows, fields, fields * 4, 1] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.resize(20 + (rows * fields * 4) as usize + 1, 0);
+    bytes
+}
+
 fn key_event(
     window_id: WindowId,
     scan_code: SdlScanCode,

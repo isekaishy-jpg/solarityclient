@@ -39,6 +39,26 @@ movement and camera systems will therefore receive authored Lua API calls such
 as `MoveForwardStart` and `CameraZoomIn`; SDL key values do not become gameplay
 policy directly.
 
+The active-world owner now retains the catalog and the exact assignment image
+shared with Lua. It compiles each command once in its retained FrameXML state,
+with the local `keystate`, `pressure`, `angle`, and `precision` parameters
+authored by native `0x00564470`. Debug and foreign-platform declarations are
+not executable. The keyboard/mouse caller `0x00563150` and invocation at
+`0x0055F860` supply pressure 1 on down or 0 on up, angle -1, and precision 0.
+These remain function locals and do not overwrite globals with the same names.
+Platform events reach that state through
+`InputBindingRouter::route_to_frame` after focused UI input has been delivered.
+Claimed presses do not start bindings; releases and focus loss still drain
+previously admitted commands, including while the developer console or loading
+card captures input. World departure drains outstanding releases before its
+FrameXML event. Lua executes after the assignment borrow ends.
+
+Binding mutations use the existing object and visual journals, including
+mutations made before an authored error. One failing release does not prevent
+the rest of the release batch from executing. Dynamic secure-action execution
+and native movement/camera command consumers remain separate unfinished owners;
+successful dispatch does not establish locomotion or camera-input parity.
+
 ## Assignment streams
 
 The same archive stack exposes `WTF\DefaultBindings.wtf`. The installed
