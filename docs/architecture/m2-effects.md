@@ -311,7 +311,7 @@ card geometry through rotated attachments and multiple camera directions.
 
 Each placed simulation owns the exact table-driven `CParticleEmitter` random
 stream seeded from the composition root's two Visual C++ `rand()` results. Its
-pool grows, but never shrinks, to the executable's nearest-even estimate of
+pool grows, but never shrinks, to the executable's truncated estimate of
 `(rate + rate variation) * (lifetime + lifetime variation) * 1.15`. The planar
 and spherical-shell paths retain stock's fractional emission remainder,
 randomized in-frame age, signed lifetime word, swap-removal, half-step gravity,
@@ -321,6 +321,22 @@ call order. Model-space particles retain local coordinates; ordinary particles
 receive their emitter matrix. Recovered but not-yet-implemented spline,
 collision, inherited-velocity, and follow paths return typed errors rather than
 falling through to another generator.
+
+The shared planar/sphere emission-rate setter at `0x0097BD80` clamps the
+sampled base rate to zero. Signed authored keys remain intact so interpolation
+across zero is preserved; clamping keys during decoding changes activation
+timing. `GoldPileLarge01.M2` has fifty negative-rate emitters that exposed the
+missing setter as a fatal capacity error. Pool sizing at `0x0097EDF0` sets the
+x87 rounding-control bits to truncate before `FISTP`; the decompiler's `ROUND`
+pseudocode does not mean nearest-even here. Regression coverage checks both
+emitter types, negative-to-positive interpolation, fractional pool estimates,
+and continued aging of existing particles when the rate falls to zero.
+
+`validate_world_particles` replays sequence zero for sixty seconds at 60 Hz
+across the selected ADT's 3-by-3 neighborhood, including active WMO doodad sets.
+It uses fixed seeds, identity emitter matrices, and full density to exercise
+installed emission data without a window or server. It does not measure live
+world performance or reproduce placement visibility and process random history.
 
 The spherical spawn path at `0x00981950` retains its sampled angular direction
 before multiplying it by the shell radius. Zero-radius emitters therefore

@@ -51,7 +51,10 @@ impl M2ParticlePose {
                 }
             },
             lifespan: scalar(emitter.lifespan(), 0.0),
-            emission_rate: scalar(emitter.emission_rate(), 0.0),
+            // The planar/sphere vtable rate setter at 0x0097BD80 stores
+            // max(sample, 0). Clamp after interpolation, retaining signed
+            // authored keys such as GoldPileLarge01's dormant sparkles.
+            emission_rate: scalar(emitter.emission_rate(), 0.0).max(0.0),
             emission_area_width: scalar(emitter.emission_area_width(), 0.0),
             emission_area_length: scalar(emitter.emission_area_length(), 0.0),
             z_source: scalar(emitter.z_source(), 0.0),

@@ -2265,14 +2265,14 @@ impl M2Frame {
                         effect_delta_seconds,
                         emitter_transform,
                         particle_density,
-                    )?,
+                    ),
                     2 => simulation.advance_sphere_bounded(
                         emitter,
                         pose,
                         effect_delta_seconds,
                         emitter_transform,
                         particle_density,
-                    )?,
+                    ),
                     emitter_type => {
                         return Err(RuntimeTerrainFrameError::M2ParticleEmitterType {
                             model: source.model.path().clone(),
@@ -2280,7 +2280,15 @@ impl M2Frame {
                             emitter_type,
                         });
                     }
-                };
+                }
+                .map_err(|source_error| {
+                    RuntimeTerrainFrameError::M2PlacedParticleSimulation {
+                        model: source.model.path().clone(),
+                        particle_index,
+                        time_ms: clock.animation_time_ms(),
+                        source: source_error,
+                    }
+                })?;
                 let (emitter_vertex_capacity, emitter_index_capacity) =
                     M2ParticleMeshPlan::buffer_capacity(emitter, simulation.capacity())?;
                 particle_vertex_capacity = particle_vertex_capacity

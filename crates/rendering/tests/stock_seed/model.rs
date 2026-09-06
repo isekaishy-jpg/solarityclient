@@ -1467,6 +1467,94 @@ fn m2_particle_rotation_retains_authored_angular_speed() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// Native rate setter clamps the sampled value, preserving interpolation and live particles.
+#[test]
+fn m2_particle_rate_clamps_after_sampling_and_capacity_truncates() -> Result<(), Box<dyn Error>> {
+    for emitter_type in [1_u8, 2] {
+        let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+        let offset = m2_array_offset(&bytes, 0x128)?;
+        bytes[offset + 0x29] = emitter_type;
+        append_render_track(
+            &mut bytes,
+            offset + 0x0b0,
+            &[0, 1_000],
+            &render_f32_values(&[-1.2, 2.4]),
+            4,
+        )?;
+        append_render_track(
+            &mut bytes,
+            offset + 0x098,
+            &[0, 1_000],
+            &render_f32_values(&[1.0, 1.0]),
+            4,
+        )?;
+        let skin = render_skin_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "Creature\\Solarity\\SignedParticle.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\SignedParticle00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model = DecodedM2Model::load(
+            &mut store,
+            &AssetPath::new("Creature\\Solarity\\SignedParticle.m2")?,
+        )?;
+        let emitter = model
+            .animations()
+            .particles()
+            .first()
+            .ok_or("missing emitter")?;
+        let sample = |time| {
+            M2ParticlePose::sample(
+                model.animations(),
+                emitter,
+                M2AnimationClock::new(0, time, 0.0),
+            )
+        };
+        let negative = sample(0.0)?;
+        assert_eq!(emitter.emission_rate().channels()[0].values()[0], -1.2);
+        assert_eq!(negative.emission_rate(), 0.0);
+        assert_eq!(sample(250.0)?.emission_rate(), 0.0);
+        assert!((sample(500.0)?.emission_rate() - 0.6).abs() < 0.000_001);
+        let positive = sample(750.0)?;
+        assert!((positive.emission_rate() - 1.5).abs() < 0.000_001);
+        let advance = |simulation: &mut M2ParticleSimulation, pose| {
+            if emitter_type == 1 {
+                simulation.advance_planar_bounded(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)
+            } else {
+                simulation.advance_sphere_bounded(emitter, pose, 0.1, Mat4::IDENTITY, 1.0)
+            }
+        };
+        let mut simulation = M2ParticleSimulation::new(0);
+        assert_eq!(advance(&mut simulation, negative)?.live(), 0);
+        assert_eq!(simulation.capacity(), 0);
+        // 1.5 * 1.0 * 1.15 = 1.725: FISTP with RC=truncate yields one slot.
+        for _ in 0..4 {
+            advance(&mut simulation, positive)?;
+        }
+        assert_eq!(simulation.capacity(), 1);
+        let particle = simulation
+            .particles()
+            .first()
+            .ok_or("positive rate did not emit")?;
+        let age = particle.age_seconds();
+        let report = advance(&mut simulation, negative)?;
+        assert_eq!(report.emitted(), 0);
+        assert_eq!(report.live(), 1);
+        assert_eq!(simulation.capacity(), 1);
+        assert!(simulation.particles()[0].age_seconds() > age);
+    }
+    Ok(())
+}
+
 /// Planar emission grows its placement-local pool from the stock estimate.
 #[test]
 fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Error>> {
@@ -1513,8 +1601,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let mut simulation = M2ParticleSimulation::new(0x0029_4823);
     let initial = simulation.advance_planar(emitter, initial_pose, 0.0, Mat4::IDENTITY, 1.0)?;
     assert_eq!(initial.live(), 0);
-    // The executable constant is the float immediately below 1.15, so the
-    // nominal 11.5 estimate rounds down after extended-precision evaluation.
+    // The executable truncates its extended-precision capacity estimate.
     assert_eq!(simulation.capacity(), 11);
     let report = simulation.advance_planar(
         emitter,

@@ -101,6 +101,19 @@ pub enum RuntimeTerrainFrameError {
     /// One placed emitter could not advance its recovered ordinary path.
     #[error(transparent)]
     M2ParticleSimulation(#[from] M2ParticleSimulationError),
+    /// One visible placement failed with its model and emitter identity retained.
+    #[error("M2 model {model} particle {particle_index} failed at {time_ms} ms: {source}")]
+    M2PlacedParticleSimulation {
+        /// Authored model containing the emitter.
+        model: AssetPath,
+        /// Zero-based emitter index in the model.
+        particle_index: usize,
+        /// Placement animation sample time.
+        time_ms: f32,
+        /// Simulation failure from the recovered ordinary path.
+        #[source]
+        source: M2ParticleSimulationError,
+    },
     /// Live ordinary particles could not enter the dynamic PNC0T0 mesh.
     #[error(transparent)]
     M2ParticleMesh(#[from] M2ParticleMeshPlanError),

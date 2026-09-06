@@ -596,8 +596,9 @@ impl M2ParticleSimulation {
 
     /// Grows the particle pool using build 12340's current-rate estimate.
     ///
-    /// The original evaluates the float inputs in x87 extended precision,
-    /// rounds to nearest-even, and only reallocates when the estimate grows.
+    /// `0x0097EDF0` evaluates the float inputs in x87 extended precision,
+    /// sets the control word's RC bits to truncate before FISTP, and only
+    /// reallocates when the estimate grows.
     fn grow_stock_capacity(
         &mut self,
         emitter: &M2ParticleEmitter,
@@ -617,7 +618,7 @@ impl M2ParticleSimulation {
         if !estimate.is_finite() || estimate < 0.0 || estimate > usize::MAX as f64 {
             return Err(M2ParticleSimulationError::Capacity);
         }
-        let required = estimate.round_ties_even() as usize;
+        let required = estimate.trunc() as usize;
         if required > self.capacity {
             self.reserve_particle_storage(required)?;
         }
@@ -625,7 +626,7 @@ impl M2ParticleSimulation {
     }
 
     /// Reserves a conservative prewarm bound without changing stock's live
-    /// nearest-even growth rule.
+    /// truncating growth rule.
     fn reserve_capacity_upper_bound(
         &mut self,
         estimate: f64,
