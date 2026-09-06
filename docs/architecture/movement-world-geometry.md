@@ -209,6 +209,45 @@ references, and a prop registered inside a moving WMO. Separate placement
 updates compare retained cached/uncached geometry to fresh transformed instances
 and verify that invalid matrix updates preserve the last valid placement.
 
+## Interval collection bounds
+
+`MovementIntervalRequest::collection_bounds` implements `0x0075FF90`'s body
+and candidate boxes in the already-resolved collection coordinate space.
+Ground bounds include the forward support reach, radial step region, raised
+step trial, and downward support probe. These probes remain present at zero
+requested distance. Airborne bounds use the absolute normal/slow fall curve at
+the wrapping end clock, retain the launch-height offset, and expand horizontally
+for descending contact correction. Swimming/flying bounds have their separate
+radial/vertical branch; this does not implement those modes' collision response.
+All branches add the original contact tolerance after their native float stores.
+
+The ground radial calculation retains the X center in x87 while reloading Y/Z
+from floats. The fall curve stays wide through height subtraction and candidate
+translation. Premature float conversion would change query boundaries.
+
+`collect_movement_interval` supplies the expanded box to the retained runtime
+collector. `RuntimeMovementQuery::interval_bounds` publishes body/candidate
+bounds only with a complete result. Invalid inputs, pending residency, and
+failed geometry clear the bounds, candidates, and provenance together.
+
+`movement-interval-bounds-native.txt` contains 1,408 captures from original
+`0x0075FF90` entry through `0x00760515`, immediately before world-query mask
+selection. No native callee is replaced. Tests compare all body and query float
+bits, including both unit step profiles, stationary travel, falling modes,
+large/wrapping clocks, and translated coordinates. Runtime MPQ fixtures also
+show a body-only query missing a lower floor, the expanded query supplying it
+to a successful fall landing, and a private step region reaching an unloaded
+neighbor and invalidating the whole result.
+
+These captures use no passenger parent. Transport conversion, native query-mask
+selection, and relaxed residency policy for mask `0x80000000` still require
+their outer movement providers. The ordinary collector requires every declared
+generation intersecting the expanded region to be resident.
+The initial region also does not replace native per-sweep cache-miss recollection
+at `0x0075F0A0`. The pure ground/fall cores currently take a fixed candidate
+slice; exposing refresh and its failure through the outer interval owner remains
+work before claiming arbitrary live movement parity.
+
 ## Runtime work remaining
 
 Residency still admits whole ADTs atomically. New roots use first MCRF reference
@@ -221,8 +260,7 @@ native-verified placement provider used by transport M2/WMO presentation; see
 [`game-object-placement.md`](game-object-placement.md). Those current matrices
 now drive admitted collision owners; animated transport paths remain separate.
 
-The owner also needs authored static placement-matrix verification, collision-query
-cache bounds covering step trials, specialized map-M2 GameObject owners,
+The owner also needs authored static placement-matrix verification, specialized map-M2 GameObject owners,
 destructible WMO states and alternative doodad sets, liquid/WDL modes,
 timestamped input, and landing/ground/fall application to ECS state. None of the
 collector tests establishes live player movement or frame-rate parity.

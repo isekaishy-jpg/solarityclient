@@ -74,9 +74,10 @@ pub use movement::{
     MovementFallInterval, MovementFallMode, MovementFallPhase, MovementFallSnapshot,
     MovementFallState, MovementFallTrajectory, MovementGroundAdvance, MovementGroundAdvanceError,
     MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,
-    MovementGroundSnapshot, MovementGroundState, UnitLocomotionAnimation, UnitModelAnimation,
-    WorldEntryGroundContact, WorldEntryGroundContactError, resolve_unit_locomotion_animation,
-    resolve_unit_model_animation,
+    MovementGroundSnapshot, MovementGroundState, MovementIntervalBounds,
+    MovementIntervalBoundsError, MovementIntervalMode, MovementIntervalRequest,
+    UnitLocomotionAnimation, UnitModelAnimation, WorldEntryGroundContact,
+    WorldEntryGroundContactError, resolve_unit_locomotion_animation, resolve_unit_model_animation,
 };
 pub use object::{
     GameObjectAnimationRequest, GameObjectAnimationState, GameObjectPlacement,

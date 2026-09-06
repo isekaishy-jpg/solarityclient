@@ -115,5 +115,8 @@ exactly. Ground direction/speed rebuilt after native end-fall belong to the
 ground continuation owner and are not claimed as implemented by these tests.
 
 The interval is ready for the local movement owner. It does not yet update an
-ECS living transform, generate missing world candidates, or send a movement
-packet from keyboard input.
+ECS living transform or send a movement packet from keyboard input. Runtime
+`collect_movement_interval` now generates candidates over the native expanded
+fall region and rejects incomplete residency. An archive-backed integration
+test feeds those candidates into this interval and verifies terrain landing
+and selected terrain provenance; see [world geometry](movement-world-geometry.md).

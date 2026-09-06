@@ -106,6 +106,10 @@ impl MovementFallTrajectory {
     /// # Errors
     /// Returns [`MovementFallError`] for invalid time or a non-finite result.
     pub fn distance_at_seconds(self, elapsed_seconds: f32) -> Result<f32, MovementFallError> {
+        finite_result(self.distance_at_seconds_extended(elapsed_seconds)?)
+    }
+
+    fn distance_at_seconds_extended(self, elapsed_seconds: f32) -> Result<f64, MovementFallError> {
         if !elapsed_seconds.is_finite() || elapsed_seconds < 0.0 {
             return Err(MovementFallError::InvalidElapsedTime);
         }
@@ -119,7 +123,11 @@ impl MovementFallTrajectory {
         } else {
             (elapsed * f64::from(HALF_GRAVITY) + launch) * elapsed
         };
-        finite_result(distance)
+        if distance.is_finite() {
+            Ok(distance)
+        } else {
+            Err(MovementFallError::NonFiniteResult)
+        }
     }
 
     /// Samples a native unsigned millisecond clock (`0x00987050`).
@@ -134,6 +142,14 @@ impl MovementFallTrajectory {
     pub fn distance_at_millis(self, elapsed_ms: u32) -> Result<f32, MovementFallError> {
         let seconds = super::clock::seconds_from_millis(elapsed_ms);
         self.distance_at_seconds(seconds)
+    }
+
+    /// The interval collector keeps the curve result in x87 through subtraction.
+    pub(super) fn distance_at_millis_extended(
+        self,
+        elapsed_ms: u32,
+    ) -> Result<f64, MovementFallError> {
+        self.distance_at_seconds_extended(super::clock::seconds_from_millis(elapsed_ms))
     }
 
     /// Finds the native time for a downward distance (`0x00988220`/`0x00988280`).

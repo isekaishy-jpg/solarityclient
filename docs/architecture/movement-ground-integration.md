@@ -3,8 +3,9 @@
 `MovementGroundState::advance` implements native `0x007620F0` over complete,
 ordered collision candidates. It follows admitted surfaces, slides against
 walls, tests steps, and returns either updated ground state or a new analytic
-fall. It accepts an already-generated horizontal direction/distance and interval;
-timestamped input and resident-world collection still require runtime owners.
+fall. It accepts an already-generated horizontal direction/distance and interval.
+Runtime collection supplies the native initial candidate region; timestamped
+input and per-sweep cache refresh still require the outer movement owner.
 
 The implementation lives in `movement/grounded`. Collision owns body sweeps,
 ground-contact classification, and combined foot-plane normals. Movement owns
@@ -112,10 +113,12 @@ generated travel/step height, and invalid body dimensions.
 
 ## Runtime work remaining
 
-The ground and fall interval cores are ready for a local movement owner. They
-do not yet consume keyboard timestamps, assemble the implemented
-[terrain/WMO/M2 face collectors](movement-world-geometry.md) across resident owners,
-transform transport coordinates, apply landing input resets, or update a living
-ECS transform. Swimming/flying modes require their own native response owners.
+The ground and fall interval cores are ready for a local movement owner.
+`collect_movement_interval` now assembles the implemented
+[terrain/WMO/M2 face collectors](movement-world-geometry.md) over native expanded
+bounds, including private step/fall probes. The outer owner still needs to
+consume keyboard timestamps, resolve collection modes and transport coordinates,
+apply landing input resets, and update a living ECS transform.
+Swimming/flying modes require their own native response owners.
 No runtime movement, camera, or frame-rate parity claim follows from these
 isolated interval tests.

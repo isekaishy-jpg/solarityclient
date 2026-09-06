@@ -89,6 +89,9 @@ pub enum RuntimeStaticMovementResidency {
 /// Invalid geometry or a broken reference in an admitted static generation.
 #[derive(Debug, Error)]
 pub enum RuntimeStaticMovementError {
+    /// The movement owner supplied an invalid interval or generated query bounds.
+    #[error(transparent)]
+    IntervalBounds(#[from] solarity_systems::MovementIntervalBoundsError),
     /// A collector rejected the bounds or selected source geometry.
     #[error(transparent)]
     Collection(#[from] MovementCollectionError),

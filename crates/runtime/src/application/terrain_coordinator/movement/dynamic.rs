@@ -6,7 +6,10 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
-use solarity_systems::{MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle};
+use solarity_systems::{
+    MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle,
+    MovementIntervalBounds, MovementIntervalRequest,
+};
 
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 
@@ -49,6 +52,7 @@ pub enum RuntimeMovementOwner {
 #[derive(Default)]
 pub struct RuntimeMovementQuery {
     inner: RuntimeStaticMovementQuery,
+    interval_bounds: Option<MovementIntervalBounds>,
 }
 
 impl RuntimeMovementQuery {
@@ -74,6 +78,18 @@ impl RuntimeMovementQuery {
     #[must_use]
     pub fn owner(&self, triangle: usize) -> Option<RuntimeMovementOwner> {
         self.inner.owners.get(triangle).copied()
+    }
+
+    /// Returns the body and probe bounds from the last complete interval query.
+    /// Explicit-box queries, pending residency, and errors clear this value.
+    #[must_use]
+    pub const fn interval_bounds(&self) -> Option<MovementIntervalBounds> {
+        self.interval_bounds
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+        self.interval_bounds = None;
     }
 }
 
@@ -298,6 +314,34 @@ impl ResidentDynamicMovement {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Collects one movement interval's complete expanded candidate region.
+    ///
+    /// The request must already be in world coordinates. Ground queries include
+    /// private step/fall probes, even at zero travel. Current collection uses
+    /// ordinary terrain/WMO/M2 material policy; liquid/WDL and transport-space
+    /// conversion still belong to their respective movement providers.
+    ///
+    /// # Errors
+    /// Invalid interval inputs, geometry, or stale references clear all output.
+    pub fn collect_movement_interval(
+        &mut self,
+        world: &ActiveWorld,
+        objects: &RuntimeGameObjectPresentation,
+        request: MovementIntervalRequest,
+        flags: u32,
+        cache: MovementBspCacheMode,
+        output: &mut RuntimeMovementQuery,
+    ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
+        output.clear();
+        let bounds = request.collection_bounds()?;
+        let residency =
+            self.collect_movement(world, objects, bounds.query(), flags, cache, output)?;
+        if residency == RuntimeStaticMovementResidency::Ready {
+            output.interval_bounds = Some(bounds);
+        }
+        Ok(residency)
+    }
+
     /// Updates persistent generic GameObject references after CPU model and
     /// behavior synchronization. Unchanged frames retain their allocations.
     ///
@@ -350,7 +394,7 @@ impl RuntimeTerrainCoordinator {
         cache: MovementBspCacheMode,
         output: &mut RuntimeMovementQuery,
     ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
-        output.inner.clear();
+        output.clear();
         let Some(map) = self
             .active
             .as_mut()

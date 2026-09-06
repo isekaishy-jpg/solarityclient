@@ -1,5 +1,8 @@
 //! Current replicated collision uses the same resident traversal as static geometry.
 
+#[path = "movement_interval.rs"]
+mod interval;
+
 use super::*;
 use solarity_asset::GameObjectDisplayCatalog;
 use solarity_ecs::{

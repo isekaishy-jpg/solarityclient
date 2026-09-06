@@ -9,6 +9,7 @@ mod clock;
 mod contact;
 mod fall;
 mod grounded;
+mod interval_bounds;
 mod movement_shared;
 mod movement_source;
 mod path;
@@ -26,6 +27,10 @@ pub use grounded::{
     MovementFallAdmission, MovementGroundAdvance, MovementGroundAdvanceError,
     MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,
     MovementGroundSnapshot, MovementGroundState,
+};
+pub use interval_bounds::{
+    MovementIntervalBounds, MovementIntervalBoundsError, MovementIntervalMode,
+    MovementIntervalRequest,
 };
 pub use movement_shared::{UnitLocomotionAnimation, resolve_unit_locomotion_animation};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};
