@@ -121,3 +121,61 @@ fn mount(fixture: &Fixture) -> Result<AssetStore, Box<dyn Error>> {
     let catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
     Ok(AssetStore::mount(catalog)?)
 }
+
+/// Zero dimensions restore the native automatic extent before the next update.
+/// A face-less font uses the native one-pixel minimum; the stock FrameXML
+/// lifecycle validator additionally covers actual General/Combat Log glyphs.
+#[test]
+fn font_string_zero_dimensions_restore_immediate_automatic_extents() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"AutoSize.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\AutoSize.xml",
+            bytes: br#"<Ui>
+<Font name="SizeFont" virtual="true"><FontHeight><AbsValue val="12"/></FontHeight></Font>
+<Frame name="Owner"><Size x="200" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Layers><Layer><FontString name="Label" inherits="SizeFont" text="General">
+<Size x="50" y="8"/><Anchors><Anchor point="LEFT"/></Anchors>
+</FontString></Layer></Layers></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let mut manager = solarity_ui::GlueManager::start(mount(&fixture)?, (1024, 768), false)?;
+    manager
+        .bundle()
+        .lua()
+        .load(
+            r#"
+        assert(Label:GetWidth() == 50 and Label:GetHeight() == 8)
+        Label:SetWidth(0)
+        assert(Label:GetWidth() == 1 and Label:GetHeight() == 8)
+        Label:SetHeight(0)
+        assert(Label:GetHeight() == 1)
+        Label:SetSize(50, 8)
+        assert(Label:GetWidth() == 50 and Label:GetHeight() == 8)
+        Label:SetSize(0, 0)
+        assert(Label:GetWidth() == 1 and Label:GetHeight() == 1)
+        Label:SetText("")
+        assert(Label:GetWidth() == 0 and Label:GetHeight() == 0)
+        Label:SetText("Combat Log")
+        assert(Label:GetWidth() == 1 and Label:GetHeight() == 1)
+        Owner:SetSize(0, 0)
+        assert(Owner:GetWidth() == 0 and Owner:GetHeight() == 0)
+    "#,
+        )
+        .exec()?;
+    manager.update(0.01)?;
+    manager
+        .bundle()
+        .lua()
+        .load("assert(Label:GetWidth() == 1 and Label:GetHeight() == 1); Label:SetWidth(0); Label:SetHeight(0); Label:SetSize(0, 0)")
+        .exec()?;
+    assert!(
+        !manager.update(0.01)?,
+        "unchanged automatic extents rebuilt presentation"
+    );
+    Ok(())
+}

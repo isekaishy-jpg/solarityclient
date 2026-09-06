@@ -182,6 +182,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     println!("Stock chat background retained its 430x120 content size and black tint");
+    check_chat_tabs(&manager)?;
+    println!("Stock General and Combat Log tabs fit their labels without overlap");
     for expected in [true, false, true, false] {
         manager.invoke_binding("TOGGLEGAMEMENU", true)?;
         if manager.region_is_shown("GameMenuFrame") != Some(expected) {
@@ -339,6 +341,34 @@ fn check_player_bar(
             ),
         )
         .into());
+    }
+    Ok(())
+}
+
+fn check_chat_tabs(manager: &FrameManager) -> Result<(), Box<dyn Error>> {
+    let bounds = |name: &str| {
+        (0..manager.geometry().region_count())
+            .find(|&index| manager.object_name(index) == Some(name))
+            .and_then(|index| manager.geometry().region(index))
+            .map(solarity_ui::UiRegionGeometry::presentation_bounds)
+            .ok_or_else(|| IoError::new(ErrorKind::InvalidData, format!("missing {name} geometry")))
+    };
+    let mut previous_right = None;
+    for name in ["ChatFrame1Tab", "ChatFrame2Tab"] {
+        let tab = bounds(name)?;
+        let text = bounds(&format!("{name}Text"))?;
+        if text.width() <= 1.0
+            || text.left() < tab.left() - 0.01
+            || text.right() > tab.right() + 0.01
+            || previous_right.is_some_and(|right| tab.left() < right - 0.01)
+        {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                format!("{name} does not fit its label: tab={tab:?}, text={text:?}"),
+            )
+            .into());
+        }
+        previous_right = Some(tab.right());
     }
     Ok(())
 }

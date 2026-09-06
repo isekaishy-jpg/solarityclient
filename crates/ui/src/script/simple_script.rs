@@ -4497,6 +4497,7 @@ fn create_object_metatable(
         logical_extent,
         ui_extent,
         cursor_position,
+        text_measurement.clone(),
     )?;
     if is_frame_object(kind) {
         register_frame_event_methods(lua, &methods, manifest_kind)?;
@@ -7733,6 +7734,7 @@ fn register_region_methods(
     logical_extent: (u32, u32),
     ui_extent: (f64, f64),
     cursor_position: Rc<Cell<(f64, f64)>>,
+    text_measurement: Option<buttons::TextMeasurement>,
 ) -> mlua::Result<()> {
     methods.raw_set(
         "SetParent",
@@ -7801,34 +7803,50 @@ fn register_region_methods(
             Ok(live_region_dimensions(lua, &object, ui_extent)?.1)
         })?,
     )?;
+    // Stock PanelTemplates_TabResize clears the label width, then immediately
+    // reads it to size the tab. Zero restores automatic FontString dimensions.
+    let width_measurement = text_measurement.clone();
     methods.raw_set(
         "SetWidth",
         lua.create_function(move |lua, (object, width): (Table, f64)| {
-            let auto_size_changed =
-                kind == UiObjectKind::FontString && object.raw_get::<bool>(auto_text_width_key())?;
-            if object.raw_get::<f64>(width_key())? == width && !auto_size_changed {
+            let auto_size_changed = kind == UiObjectKind::FontString
+                && (object.raw_get::<bool>(auto_text_width_key())? != (width == 0.0));
+            if (object.raw_get::<f64>(width_key())? == width
+                || (kind == UiObjectKind::FontString && width == 0.0))
+                && !auto_size_changed
+            {
                 return Ok(());
             }
             object.raw_set(width_key(), width)?;
             if kind == UiObjectKind::FontString {
-                object.raw_set(auto_text_width_key(), false)?;
+                object.raw_set(auto_text_width_key(), width == 0.0)?;
+                if let Some(measurement) = &width_measurement {
+                    measurement.update_auto_font_string_size(&object)?;
+                }
                 mark_auto_text_measurement_changed(lua, &object)
             } else {
                 mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
             }
         })?,
     )?;
+    let height_measurement = text_measurement.clone();
     methods.raw_set(
         "SetHeight",
         lua.create_function(move |lua, (object, height): (Table, f64)| {
             let auto_size_changed = kind == UiObjectKind::FontString
-                && object.raw_get::<bool>(auto_text_height_key())?;
-            if object.raw_get::<f64>(height_key())? == height && !auto_size_changed {
+                && (object.raw_get::<bool>(auto_text_height_key())? != (height == 0.0));
+            if (object.raw_get::<f64>(height_key())? == height
+                || (kind == UiObjectKind::FontString && height == 0.0))
+                && !auto_size_changed
+            {
                 return Ok(());
             }
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
-                object.raw_set(auto_text_height_key(), false)?;
+                object.raw_set(auto_text_height_key(), height == 0.0)?;
+                if let Some(measurement) = &height_measurement {
+                    measurement.update_auto_font_string_size(&object)?;
+                }
                 mark_auto_text_measurement_changed(lua, &object)
             } else {
                 mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
@@ -7839,10 +7857,12 @@ fn register_region_methods(
         "SetSize",
         lua.create_function(move |lua, (object, width, height): (Table, f64, f64)| {
             let auto_size_changed = kind == UiObjectKind::FontString
-                && (object.raw_get::<bool>(auto_text_width_key())?
-                    || object.raw_get::<bool>(auto_text_height_key())?);
-            if object.raw_get::<f64>(width_key())? == width
-                && object.raw_get::<f64>(height_key())? == height
+                && (object.raw_get::<bool>(auto_text_width_key())? != (width == 0.0)
+                    || object.raw_get::<bool>(auto_text_height_key())? != (height == 0.0));
+            if (object.raw_get::<f64>(width_key())? == width
+                || (kind == UiObjectKind::FontString && width == 0.0))
+                && (object.raw_get::<f64>(height_key())? == height
+                    || (kind == UiObjectKind::FontString && height == 0.0))
                 && !auto_size_changed
             {
                 return Ok(());
@@ -7850,8 +7870,11 @@ fn register_region_methods(
             object.raw_set(width_key(), width)?;
             object.raw_set(height_key(), height)?;
             if kind == UiObjectKind::FontString {
-                object.raw_set(auto_text_width_key(), false)?;
-                object.raw_set(auto_text_height_key(), false)?;
+                object.raw_set(auto_text_width_key(), width == 0.0)?;
+                object.raw_set(auto_text_height_key(), height == 0.0)?;
+                if let Some(measurement) = &text_measurement {
+                    measurement.update_auto_font_string_size(&object)?;
+                }
                 mark_auto_text_measurement_changed(lua, &object)
             } else {
                 mark_object_state_changed(lua, &object, DIRTY_LAYOUT)

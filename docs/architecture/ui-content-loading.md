@@ -612,3 +612,14 @@ retired regions, asset-failure admission, and arbitrary external edits to fill
 anchors still require their own native-region compatibility work. Resize and
 script-update ordering also need dedicated coverage beyond the normal stock
 player-frame path. These limits are not evidence of whole-FrameXML parity.
+
+
+FontString dimension setters treat zero as automatic sizing, matching the
+`PanelTemplates_TabResize` contract in the stock `UIPanelTemplates.lua`. Clearing
+an explicit width or height makes the new text extent available to the next Lua
+call. Repeated zero setters retain the measured extent without dirtying the
+presentation. Previously, the General and Combat Log labels reported zero width,
+so both stock tabs collapsed to their 32-unit side caps and their text overlapped.
+The stock FrameXML lifecycle validator now checks that both labels have positive
+width, fit inside their tabs, and that the tabs do not overlap; an external UI
+fixture covers immediate dimension resets and unchanged automatic-size updates.
