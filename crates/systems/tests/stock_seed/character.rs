@@ -81,7 +81,7 @@ fn player_model_resolution_joins_stock_ecs_and_dbc_keys() -> Result<(), Box<dyn 
     let character = resolved.character().ok_or("player composition is absent")?;
     assert_eq!(character.skin().id(), 10);
     assert_eq!(character.face().map(|section| section.id()), Some(11));
-    assert_eq!(character.hair().id(), 13);
+    assert_eq!(character.hair().map(|section| section.id()), Some(13));
     assert_eq!(character.geosets().hair(), 12);
     assert_eq!(
         resolved

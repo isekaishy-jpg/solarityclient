@@ -4,18 +4,26 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false)
+    build_fixture(false, false, None)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false)
+    build_fixture(true, false, None)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true)
+    build_fixture(false, true, None)
 }
 
-fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dyn Error>> {
+pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(false, false, Some(9))
+}
+
+fn build_fixture(
+    effects: bool,
+    equipment: bool,
+    npc_race: Option<u32>,
+) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
     let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
@@ -53,6 +61,7 @@ fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dy
     displays.extend_from_slice(&display);
     display[0] = 102;
     display[1] = 8;
+    display[3] = u32::from(npc_race.is_some());
     displays.extend_from_slice(&display);
     let mut model_data = [0; 28];
     model_data[0] = 7;
@@ -64,7 +73,7 @@ fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dy
     model_data[2] = model_paths.len() as u32;
     models.extend_from_slice(&model_data);
     model_paths.extend_from_slice(b"Creature\\Alternate.m2\0");
-    let sections: Vec<_> = (0..5)
+    let mut sections: Vec<_> = (0..5)
         .flat_map(|section| {
             [
                 10 + section,
@@ -80,6 +89,9 @@ fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dy
             ]
         })
         .collect();
+    if let Some(race) = npc_race {
+        sections.extend_from_slice(&[20, race, 0, 0, 1, 0, 0, 8, 0, 0]);
+    }
     let mut race = [0; 69];
     race[0] = 1;
     race[4] = 100;
@@ -125,6 +137,20 @@ fn build_fixture(effects: bool, equipment: bool) -> Result<ClientFixture, Box<dy
     .into_iter()
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
+    if let Some(race) = npc_race {
+        let mut extra = [0; 21];
+        extra[0] = 1;
+        extra[1] = race;
+        extra[20] = 1;
+        files.push((
+            "DBFilesClient\\CreatureDisplayInfoExtra.dbc".to_owned(),
+            dbc(21, &extra, b"\0HairlessNpc\0"),
+        ));
+        files.push((
+            "Textures\\BakedNpcTextures\\HairlessNpc.blp".to_owned(),
+            skin_texture(),
+        ));
+    }
     if equipment {
         append_equipment_files(&mut files, &ids)?;
     }

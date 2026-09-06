@@ -13,6 +13,42 @@ use solarity_systems::UnitLocomotionAnimation;
 use std::rc::Rc;
 
 #[test]
+fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dyn Error>> {
+    let fixture = crate::test_support::unit_models::fixture_with_hairless_npc()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    let retained = presentation.resident_creature_frame_inputs()[0]
+        .generation()
+        .clone();
+    add_unit(&mut world, 31, ObjectKind::Unit, 0)?;
+    solarity_systems::project_object_fields(&mut world, 31, [(67, 102), (68, 102)])?;
+    assert!(matches!(
+        presentation.synchronize_creatures(Some(&world))?,
+        crate::application::RuntimeCreaturePoll::ModelsChanged
+    ));
+    let inputs = presentation.resident_creature_frame_inputs();
+    assert_eq!(inputs.len(), 2);
+    assert!(retained.matches(inputs[0].generation()));
+    assert!(matches!(
+        presentation.synchronize_creatures(Some(&world))?,
+        crate::application::RuntimeCreaturePoll::Current
+    ));
+    world.remove_object(31)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    assert_eq!(presentation.resident_creature_frame_inputs().len(), 1);
+    assert!(retained.matches(presentation.resident_creature_frame_inputs()[0].generation()));
+    Ok(())
+}
+
+#[test]
 fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
 -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;

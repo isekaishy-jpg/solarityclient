@@ -136,7 +136,7 @@ pub struct CharacterModelAppearance<'catalog> {
     skin: &'catalog CharacterSection,
     face: Option<&'catalog CharacterSection>,
     facial_hair: Option<&'catalog CharacterSection>,
-    hair: &'catalog CharacterSection,
+    hair: Option<&'catalog CharacterSection>,
     underwear: Option<&'catalog CharacterSection>,
     hair_geoset: Option<&'catalog CharacterHairGeoset>,
     facial_hair_style: Option<&'catalog CharacterFacialHairStyle>,
@@ -174,9 +174,9 @@ impl CharacterModelAppearance<'_> {
         self.facial_hair
     }
 
-    /// Returns hair and head-overlay textures.
+    /// Returns hair and head-overlay textures when the model authors a section.
     #[must_use]
-    pub const fn hair(&self) -> &CharacterSection {
+    pub const fn hair(&self) -> Option<&CharacterSection> {
         self.hair
     }
 
@@ -280,14 +280,17 @@ impl CharacterAppearanceCatalog {
             customization.hair_color_id,
             class_id,
         );
-        let hair = self.require_section(
+        // 0x004EA150 / 0x004EA1F0 admit only existing section rows. NPC
+        // models such as GoblinMale have no hair section for their baked skin;
+        // absence leaves these optional bindings empty, not a failed model.
+        let hair = self.select_section(
             race_id,
             gender_id,
-            CharacterSectionKind::Hair,
+            CharacterSectionKind::Hair.value(),
             customization.hair_style_id,
             customization.hair_color_id,
             class_id,
-        )?;
+        );
         let underwear = if is_npc_skin {
             None
         } else {

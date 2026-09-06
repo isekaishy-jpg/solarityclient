@@ -117,6 +117,7 @@ pub(super) struct RuntimePlayerMovement {
 
 struct LocalMovement {
     camera: PlayerCameraInput,
+    initial_contact_pending: bool,
     active: bool,
     client_control: bool,
     stand_state: u8,
@@ -173,6 +174,14 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    /// Initial zero-launch support resolution belongs behind the loading card.
+    /// Server-authored airborne entry already has a valid presentation state.
+    pub(super) fn initial_contact_ready(&self) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| !owner.initial_contact_pending)
+    }
+
     pub(super) fn refresh_camera_settings(
         &mut self,
         revision: u64,
@@ -262,6 +271,8 @@ impl RuntimePlayerMovement {
             // control recovery. Its zero-launch fall resolves resident support;
             // waiting for a separate pre-grounding callback deadlocks entry.
             owner.acquire_mover(&mut self.output)?;
+            owner.initial_contact_pending = movement.context().falling.is_none()
+                && matches!(owner.phase, MovementPhase::Fall(_));
             self.owner = Some(owner);
         } else if self
             .owner
@@ -515,6 +526,7 @@ impl LocalMovement {
                 solarity_ecs::PlayerViewState::default(),
                 transform.orientation(),
             ),
+            initial_contact_pending: false,
             active: true,
             client_control: true,
             stand_state: 0,
@@ -945,6 +957,7 @@ impl LocalMovement {
                             position,
                             fall_time_ms,
                         } => {
+                            self.initial_contact_pending = false;
                             self.position = position;
                             self.context.fall_time_ms = fall_time_ms;
                             self.phase = MovementPhase::Ground { step_anchor: None };

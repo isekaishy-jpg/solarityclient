@@ -736,7 +736,7 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
         appearance.facial_hair().map(|section| section.id()),
         Some(12)
     );
-    assert_eq!(appearance.hair().id(), 13);
+    assert_eq!(appearance.hair().map(|section| section.id()), Some(13));
     assert_eq!(appearance.underwear().map(|section| section.id()), Some(14));
     assert_eq!(appearance.hair_geoset().map(|row| row.id()), Some(90));
     assert!(appearance.facial_hair_style().is_some());
@@ -756,7 +756,47 @@ fn character_appearance_resolves_stock_component_keys() -> Result<(), Box<dyn Er
     Ok(())
 }
 
-/// Missing customization rows remain a typed failure instead of selecting a neighbor.
+/// Baked NPC skins can omit hair without selecting an unrelated section.
+#[test]
+fn character_appearance_keeps_hairless_npc_sections_absent() -> Result<(), Box<dyn Error>> {
+    let sections = create_wdbc(
+        1,
+        10,
+        &[1, 9, 0, 0, 1, 0, 0, 8, 0, 0],
+        b"\0GoblinSkin.blp\0",
+    );
+    let hair = create_wdbc(0, 6, &[], b"\0");
+    let facial = create_wdbc(0, 8, &[], b"\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharSections.dbc",
+            bytes: &sections,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharHairGeosets.dbc",
+            bytes: &hair,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\CharacterFacialHairStyles.dbc",
+            bytes: &facial,
+        },
+    ])?;
+    let root = ClientDataRoot::new(fixture.data_root())?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = CharacterAppearanceCatalog::load(&mut store)?;
+    let appearance = catalog.resolve_player(9, 0, CharacterCustomization::new(0, 0, 0, 0, 0))?;
+    assert_eq!(appearance.skin().texture_names()[0], "GoblinSkin.blp");
+    assert!(appearance.hair().is_none());
+    assert!(appearance.face().is_none());
+    assert!(appearance.underwear().is_none());
+    assert_eq!(appearance.geosets().hair(), 1);
+    Ok(())
+}
+
+/// Missing skin colors remain a typed failure instead of selecting a neighbor.
 #[test]
 fn character_appearance_does_not_fallback_to_another_color() -> Result<(), Box<dyn Error>> {
     let mut strings = vec![0];

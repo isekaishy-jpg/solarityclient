@@ -71,6 +71,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     // Model readiness arrives after entry. No independent ground-ready flag
     // or direct position write is supplied to this production service.
     movement.service(&mut gameplay, &mut terrain, &objects, None, 0)?;
+    assert!(!movement.initial_contact_ready());
     assert!(writer.try_recv().is_err());
     for time in [0, 100] {
         movement.service(
@@ -98,6 +99,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             .z,
         11.
     );
+    assert!(!movement.initial_contact_ready());
     terrain.synchronize(gameplay.world())?;
     terrain.synchronize_game_object_movement(
         gameplay.world(),
@@ -119,6 +121,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         .local_player_transform()?
         .position();
     assert!((landed.z - 10.).abs() < 0.01, "{landed:?}");
+    assert!(movement.initial_contact_ready());
     movement.push(UiMovementCommand {
         action: UiMovementAction::Hold {
             control: UiMovementControl::Forward,
@@ -345,6 +348,40 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     assert_eq!(
         gameplay.world().ok_or("world")?.local_player_view()?,
         following
+    );
+
+    // An explicitly airborne entry is already presentable. It must not wait
+    // behind the loading card until its eventual landing.
+    let world = gameplay.world.as_mut().ok_or("world")?;
+    let state = world.movement_state(1).ok_or("movement")?;
+    let context = WorldMovementContext {
+        falling: Some(solarity_ecs::WorldMovementFall {
+            vertical_speed: 0.,
+            direction_sin: 0.,
+            direction_cos: 1.,
+            horizontal_speed: 0.,
+        }),
+        ..WorldMovementContext::default()
+    };
+    world.update_movement(1, WorldMovementState::new(0x1000, state.speeds(), context))?;
+    movement = RuntimePlayerMovement::default();
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        Some([0.5, 2., 1.]),
+        2800,
+    )?;
+    assert!(movement.initial_contact_ready());
+    assert!(
+        gameplay
+            .world()
+            .ok_or("world")?
+            .movement_state(1)
+            .ok_or("movement")?
+            .context()
+            .falling
+            .is_some()
     );
     Ok(())
 }

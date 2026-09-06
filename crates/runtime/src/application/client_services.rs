@@ -7,6 +7,10 @@ pub(super) mod world_benchmark;
 mod world_camera;
 mod world_transfer;
 
+#[cfg(test)]
+#[path = "../../tests/application/terrain_publication.rs"]
+mod terrain_publication_tests;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -1960,144 +1964,9 @@ impl ClientServices {
             .terrain
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
         profile.mark("terrain residency");
-        self.prepare_world_ui_if_ready()?;
-        if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
-        {
-            world_ui.synchronize_realm_clock(clock)?;
-        }
-        if let (Some(world_ui), Some(buttons)) =
-            (self.world_ui.as_mut(), self.gameplay.action_buttons())
-        {
-            world_ui.synchronize_action_buttons(buttons)?;
-        }
-        self.environment
-            .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
-        self.synchronize_component_texture_level();
-        profile.mark("world UI and environment");
-        if let Some(ui) = &self.world_ui {
-            while let Some(command) = ui.take_movement_command() {
-                self.player_movement.push(command);
-            }
-        }
-        while let Some(event) = self.gameplay.take_player_control_event() {
-            self.player_movement.push_control(event);
-            if let super::player_control::PlayerControlEvent::PlayerControl { enabled, .. } = event
-                && let Some(ui) = self.world_ui.as_mut()
-            {
-                ui.player_control_changed(enabled)?;
-                while let Some(command) = ui.take_movement_command() {
-                    self.player_movement.push(command);
-                }
-            }
-        }
-        // Publish current map/object collision references before the movement
-        // owner queries them, including the first admitted terrain generation.
-        let previous_game_object_revision = self.game_objects.scene_revision();
-        let transport_poll = self
-            .game_objects
-            .synchronize_async(self.gameplay.world(), &self.cpu)?;
-        self.game_objects
-            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
-        self.terrain.synchronize_game_object_movement(
-            self.gameplay.world(),
-            &self.game_objects,
-            solarity_systems::MovementBspCacheMode::Enabled,
-        )?;
-        profile.mark("game object residency and collision registry");
-        if let Some(ui) = &self.world_ui {
-            self.player_movement
-                .refresh_camera_settings(ui.cvar_revision(), |name| ui.cvar_number(name));
-        }
-        self.player_movement.service(
-            &mut self.gameplay,
-            &mut self.terrain,
-            &self.game_objects,
-            self.player.movement_dimensions(),
-            crate::platform::client_milliseconds(),
-        )?;
-        profile.mark("player movement");
-        self.platform
-            .set_mouse_free_look(self.player_movement.mouse_free_look())?;
-        match self.player.synchronize(self.gameplay.world())? {
-            RuntimePlayerPoll::ModelLoaded => {
-                if let (Some(model), Some(height)) = (
-                    self.player.resident_model(),
-                    self.player.camera_subject_height(),
-                ) {
-                    tracing::debug!(
-                        path = %model.path(),
-                        camera_height = height.value(),
-                        camera_height_source = ?height.source(),
-                        "local player model became resident"
-                    );
-                }
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_player(
-                        &mut self.renderer,
-                        self.player.resident_frame_input(),
-                        &mut self.crt_rand,
-                    )?;
-                }
-            }
-            RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_player(&mut self.renderer, None, &mut self.crt_rand)?;
-                }
-            }
-            RuntimePlayerPoll::Current => {}
-        }
-        profile.mark("local player residency");
-        match self.player.synchronize_creatures(self.gameplay.world())? {
-            RuntimeCreaturePoll::ModelsChanged => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    let creatures = self.player.resident_creature_frame_inputs();
-                    frame.replace_creatures(&mut self.renderer, &creatures, &mut self.crt_rand)?;
-                }
-            }
-            RuntimeCreaturePoll::Idle => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_creatures(&mut self.renderer, &[], &mut self.crt_rand)?;
-                }
-            }
-            RuntimeCreaturePoll::Current => {}
-        }
-        match self
-            .player
-            .synchronize_remote_players(self.gameplay.world())?
-        {
-            RuntimeRemotePlayerPoll::ModelsChanged => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    let players = self.player.resident_remote_player_frame_inputs();
-                    frame.replace_remote_players(
-                        &mut self.renderer,
-                        &players,
-                        &mut self.crt_rand,
-                    )?;
-                }
-            }
-            RuntimeRemotePlayerPoll::Idle => {
-                if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_remote_players(&mut self.renderer, &[], &mut self.crt_rand)?;
-                }
-            }
-            RuntimeRemotePlayerPoll::Current => {}
-        }
-        profile.mark("creature and remote player residency");
-        if self.game_objects.scene_revision() != previous_game_object_revision
-            && let Some(frame) = self.terrain_frame.as_mut()
-        {
-            frame.synchronize_game_objects(
-                &mut self.renderer,
-                self.game_objects.frame_input(self.gameplay.world()),
-                &mut self.crt_rand,
-            )?;
-        }
-        if let RuntimeTransportPoll::ResourceLoaded { guid, kind }
-        | RuntimeTransportPoll::PlacementChanged { guid, kind } = transport_poll
-        {
-            tracing::debug!(transport_guid = guid, resource_kind = ?kind,
-                "updated local player transport readiness");
-        }
+        // The coordinator has already committed this terrain generation.
+        // Publish it before any recoverable UI or unit appearance failure can
+        // return to the event loop and present against the new CPU scene.
         match terrain_poll {
             RuntimeTerrainPoll::TileLoaded { map_id, tile } => {
                 let resident_tile = self.terrain.resident_tile().ok_or(
@@ -2242,6 +2111,144 @@ impl ClientServices {
             }
         }
         profile.mark("scene GPU publication");
+        self.prepare_world_ui_if_ready()?;
+        if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
+        {
+            world_ui.synchronize_realm_clock(clock)?;
+        }
+        if let (Some(world_ui), Some(buttons)) =
+            (self.world_ui.as_mut(), self.gameplay.action_buttons())
+        {
+            world_ui.synchronize_action_buttons(buttons)?;
+        }
+        self.environment
+            .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
+        self.synchronize_component_texture_level();
+        profile.mark("world UI and environment");
+        if let Some(ui) = &self.world_ui {
+            while let Some(command) = ui.take_movement_command() {
+                self.player_movement.push(command);
+            }
+        }
+        while let Some(event) = self.gameplay.take_player_control_event() {
+            self.player_movement.push_control(event);
+            if let super::player_control::PlayerControlEvent::PlayerControl { enabled, .. } = event
+                && let Some(ui) = self.world_ui.as_mut()
+            {
+                ui.player_control_changed(enabled)?;
+                while let Some(command) = ui.take_movement_command() {
+                    self.player_movement.push(command);
+                }
+            }
+        }
+        // Publish current map/object collision references before the movement
+        // owner queries them, including the first admitted terrain generation.
+        let previous_game_object_revision = self.game_objects.scene_revision();
+        let transport_poll = self
+            .game_objects
+            .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        self.game_objects
+            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
+        self.terrain.synchronize_game_object_movement(
+            self.gameplay.world(),
+            &self.game_objects,
+            solarity_systems::MovementBspCacheMode::Enabled,
+        )?;
+        profile.mark("game object residency and collision registry");
+        if let Some(ui) = &self.world_ui {
+            self.player_movement
+                .refresh_camera_settings(ui.cvar_revision(), |name| ui.cvar_number(name));
+        }
+        self.player_movement.service(
+            &mut self.gameplay,
+            &mut self.terrain,
+            &self.game_objects,
+            self.player.movement_dimensions(),
+            crate::platform::client_milliseconds(),
+        )?;
+        profile.mark("player movement");
+        self.platform
+            .set_mouse_free_look(self.player_movement.mouse_free_look())?;
+        match self.player.synchronize(self.gameplay.world())? {
+            RuntimePlayerPoll::ModelLoaded => {
+                if let (Some(model), Some(height)) = (
+                    self.player.resident_model(),
+                    self.player.camera_subject_height(),
+                ) {
+                    tracing::debug!(
+                        path = %model.path(),
+                        camera_height = height.value(),
+                        camera_height_source = ?height.source(),
+                        "local player model became resident"
+                    );
+                }
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_player(
+                        &mut self.renderer,
+                        self.player.resident_frame_input(),
+                        &mut self.crt_rand,
+                    )?;
+                }
+            }
+            RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_player(&mut self.renderer, None, &mut self.crt_rand)?;
+                }
+            }
+            RuntimePlayerPoll::Current => {}
+        }
+        profile.mark("local player residency");
+        match self.player.synchronize_creatures(self.gameplay.world())? {
+            RuntimeCreaturePoll::ModelsChanged => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    let creatures = self.player.resident_creature_frame_inputs();
+                    frame.replace_creatures(&mut self.renderer, &creatures, &mut self.crt_rand)?;
+                }
+            }
+            RuntimeCreaturePoll::Idle => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_creatures(&mut self.renderer, &[], &mut self.crt_rand)?;
+                }
+            }
+            RuntimeCreaturePoll::Current => {}
+        }
+        match self
+            .player
+            .synchronize_remote_players(self.gameplay.world())?
+        {
+            RuntimeRemotePlayerPoll::ModelsChanged => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    let players = self.player.resident_remote_player_frame_inputs();
+                    frame.replace_remote_players(
+                        &mut self.renderer,
+                        &players,
+                        &mut self.crt_rand,
+                    )?;
+                }
+            }
+            RuntimeRemotePlayerPoll::Idle => {
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    frame.replace_remote_players(&mut self.renderer, &[], &mut self.crt_rand)?;
+                }
+            }
+            RuntimeRemotePlayerPoll::Current => {}
+        }
+        profile.mark("creature and remote player residency");
+        if self.game_objects.scene_revision() != previous_game_object_revision
+            && let Some(frame) = self.terrain_frame.as_mut()
+        {
+            frame.synchronize_game_objects(
+                &mut self.renderer,
+                self.game_objects.frame_input(self.gameplay.world()),
+                &mut self.crt_rand,
+            )?;
+        }
+        if let RuntimeTransportPoll::ResourceLoaded { guid, kind }
+        | RuntimeTransportPoll::PlacementChanged { guid, kind } = transport_poll
+        {
+            tracing::debug!(transport_guid = guid, resource_kind = ?kind,
+                "updated local player transport readiness");
+        }
         self.service_terrain_streaming()?;
         profile.mark("terrain streaming");
         self.synchronize_world_ui_zone()?;
@@ -2277,7 +2284,8 @@ impl ClientServices {
                 world_accepted: self.gameplay.world().is_some()
                     && !self.world_transfer.is_awaiting_destination(),
                 environment_ready: self.environment.current().is_some(),
-                player_ready: self.player.resident_frame_input().is_some(),
+                player_ready: self.player.resident_frame_input().is_some()
+                    && self.player_movement.initial_contact_ready(),
                 scene_ready: self.terrain_frame.is_some()
                     && !self.world_transfer.holds_loading_card(),
                 ui_ready: self

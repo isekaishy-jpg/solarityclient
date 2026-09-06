@@ -104,6 +104,13 @@ pub struct RuntimeGameplayCoordinator {
 }
 
 impl RuntimeGameplayCoordinator {
+    #[cfg(test)]
+    pub(super) fn with_test_world(world: ActiveWorld) -> Self {
+        let mut coordinator = Self::new();
+        coordinator.world = Some(world);
+        coordinator
+    }
+
     /// Creates an empty gameplay boundary.
     #[must_use]
     pub const fn new() -> Self {

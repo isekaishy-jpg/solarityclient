@@ -181,7 +181,11 @@ impl CharacterTexturePlan {
 
         Ok(Self {
             atlas_layers,
-            hair: optional_path(appearance.hair(), 0)?,
+            hair: appearance
+                .hair()
+                .map(|hair| optional_path(hair, 0))
+                .transpose()?
+                .flatten(),
             extra_skin: optional_path(appearance.skin(), 1)?,
             cape: None,
         })
@@ -376,13 +380,15 @@ fn push_head_layers(
             face_slot,
         )?;
     }
-    push_optional_layer(
-        layers,
-        CharacterAtlasLayerKind::Hair,
-        region,
-        appearance.hair(),
-        hair_slot,
-    )?;
+    if let Some(hair) = appearance.hair() {
+        push_optional_layer(
+            layers,
+            CharacterAtlasLayerKind::Hair,
+            region,
+            hair,
+            hair_slot,
+        )?;
+    }
     Ok(())
 }
 
