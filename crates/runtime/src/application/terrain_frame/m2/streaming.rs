@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use solarity_asset::AnimationDataCatalog;
 use solarity_rendering::{M2ModelOrientation, M2RibbonTrail, VulkanRenderer};
 
 use crate::application::terrain_coordinator::m2_residency::{ResidentM2Placement, ResidentM2Scene};
@@ -68,6 +69,7 @@ impl M2Frame {
                     placement,
                     source_index,
                     self.sources[source_index].as_ref(),
+                    &self.animations,
                     self.animation_time_ms(),
                     random,
                 )?);
@@ -113,12 +115,18 @@ pub(super) fn static_gpu_placement(
     placement: &ResidentM2Placement,
     source_index: usize,
     source: Option<&M2GpuSource>,
+    animations: &AnimationDataCatalog,
     scene_time_ms: f32,
     random: &mut CrtRand,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let (playback, particles, ribbons) = match source {
         Some(source) => (
-            M2Playback::new_at(&source.model, 0, scene_time_ms, random)?,
+            Some(M2Playback::default_sequence(
+                &source.model,
+                animations,
+                scene_time_ms as u32,
+                random,
+            )?),
             stock_particle_simulations(&source.model),
             source
                 .model

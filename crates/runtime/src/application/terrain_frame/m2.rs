@@ -624,6 +624,7 @@ impl RuntimeM2Event {
 
 /// All resident M2 geometry and transforms owned by one terrain generation.
 pub(in crate::application) struct M2Frame {
+    animations: Arc<AnimationDataCatalog>,
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
@@ -677,6 +678,7 @@ impl M2Frame {
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
         scene: &ResidentM2Scene,
+        animations: Arc<AnimationDataCatalog>,
         random: &mut CrtRand,
         particle_twinkle: Arc<M2ParticleTwinkleTable>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
@@ -697,11 +699,13 @@ impl M2Frame {
                 placement,
                 placement.source_index(),
                 source.as_ref(),
+                &animations,
                 0.0,
                 random,
             )?);
         }
         Ok(Self {
+            animations,
             sources,
             placements,
             particle_twinkle,
@@ -768,6 +772,7 @@ impl M2Frame {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn activate_glue_gpu_source(
         gpu_source: M2GlueGpuSource,
+        animations: Arc<AnimationDataCatalog>,
         object_index: usize,
         playback: M2Playback,
         model_scale: f32,
@@ -798,6 +803,7 @@ impl M2Frame {
             .map(M2RibbonTrail::new)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
+            animations,
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
                 placement_valid: true,

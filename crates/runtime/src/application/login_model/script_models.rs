@@ -9,7 +9,6 @@ use solarity_cpu::CpuExecutor;
 use solarity_ui::{GlueManager, UiModelAction, UiModelInstance};
 
 use crate::application::model_playback::M2Playback;
-use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 
 use super::{GlueModelKey, RuntimeGlueModelError, RuntimeGlueModelScene};
@@ -109,19 +108,12 @@ impl RuntimeGlueModelScene {
             else {
                 return Ok(());
             };
-            let animation_id = loaded
-                .model
-                .animations()
-                .resolve_model_animation(&self.animations, 0)
-                .map_or(0, |resolved| resolved.animation_id());
-            entry.playback = Some(
-                M2Playback::new(&loaded.model, animation_id, random)?.ok_or_else(|| {
-                    RuntimeTerrainFrameError::M2AnimationSelection {
-                        model: entry.path.clone(),
-                        animation_id,
-                    }
-                })?,
-            );
+            entry.playback = Some(M2Playback::default_sequence(
+                &loaded.model,
+                &self.animations,
+                0,
+                random,
+            )?);
             entry.model = Some(Arc::clone(&loaded.model));
             entry.started_at = Instant::now();
         }

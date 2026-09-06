@@ -62,24 +62,25 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     let first = state.playback(1).ok_or("referenced doodad timer missing")?;
     let second = state.playback(0).ok_or("referenced doodad timer missing")?;
     assert!(!std::rc::Rc::ptr_eq(&first, &second));
-    assert_eq!(first.borrow().cycle_started_ms, 2000.);
+    assert_eq!(first.borrow().cycle_started_ms, 2001.);
     assert!(
         state.playback(2).is_none(),
         "unreferenced missing M2 must not load or start a timer"
     );
     let mut expected_random = CrtRand::new();
-    for _ in 0..2 {
+    for _ in 0..4 {
         let _ = expected_random.next_u15();
     }
     assert_eq!(
         random, expected_random,
-        "one cycle roll per referenced owner with variation zero, before GPU placement"
+        "one variation and one cycle roll per referenced owner, before GPU placement"
     );
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        Arc::clone(objects.frame_input(Some(&world)).animations()),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
@@ -160,8 +161,8 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     }
     assert_color(&initial, camera, Vec3::new(0., 2., 0.), 2)?;
     assert_color(&initial, camera, Vec3::new(0., -2., 0.), 0)?;
-    let elapsed = first.borrow().previous_event_elapsed_ms;
-    assert!(elapsed > 0.);
+    let event_scene_time = first.borrow().previous_event_scene_time_ms;
+    assert_eq!(event_scene_time, 2500);
     let random_before_motion = random;
     world.update_transform(99, WorldTransform::new(Vec3::Y * 0.5, 0.))?;
     objects.synchronize(Some(&world))?;
@@ -177,7 +178,10 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         Mat4::from_translation(Vec3::Y * 0.5) * child_transform
     );
     assert_eq!(frame.sources[0].as_ref().ok_or("source")?.mesh, Some(mesh));
-    assert_eq!(first.borrow().previous_event_elapsed_ms, elapsed);
+    assert_eq!(
+        first.borrow().previous_event_scene_time_ms,
+        event_scene_time
+    );
     assert_eq!(random, random_before_motion);
     let moved = capture(
         &mut frame,
@@ -256,7 +260,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         .frame_input(Some(&world))
         .advance_scene(3300., 3300., &mut random)?;
     let neighbor_random = random;
-    let retained_elapsed = first.borrow().previous_event_elapsed_ms;
+    let retained_event_scene_time = first.borrow().previous_event_scene_time_ms;
     add_root(&mut world, 91)?;
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
@@ -268,11 +272,14 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     assert!(!std::rc::Rc::ptr_eq(&state, &neighbor));
     let neighbor_timer = neighbor.playback(1).ok_or("neighbor timer")?;
     assert!(!std::rc::Rc::ptr_eq(&first, &neighbor_timer));
-    assert_eq!(neighbor_timer.borrow().cycle_started_ms, 3300.);
-    assert_eq!(first.borrow().cycle_started_ms, 2000.);
-    assert_eq!(first.borrow().previous_event_elapsed_ms, retained_elapsed);
+    assert_eq!(neighbor_timer.borrow().cycle_started_ms, 3301.);
+    assert_eq!(first.borrow().cycle_started_ms, 2001.);
+    assert_eq!(
+        first.borrow().previous_event_scene_time_ms,
+        retained_event_scene_time
+    );
     let mut expected_neighbor_random = neighbor_random;
-    for _ in 0..2 {
+    for _ in 0..4 {
         let _ = expected_neighbor_random.next_u15();
     }
     assert_eq!(random, expected_neighbor_random);

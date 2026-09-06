@@ -17,6 +17,119 @@ use crate::random::CrtRand;
 use crate::test_support::ClientFixture;
 
 #[test]
+fn unstarted_model_does_not_dispatch_sequence_zero_events() -> Result<(), Box<dyn Error>> {
+    let (model, _) = playback_model()?;
+    let mut playback = M2Playback::unstarted(0);
+    let mut random = CrtRand::new();
+    let original_random = random;
+    playback.clock(&model, 20_000.0, 20_000.0, &mut random)?;
+    assert!(
+        triggered_m2_event_indices(
+            model.animations(),
+            playback.event_window(20_000.0, 20_000.0)
+        )
+        .is_empty()
+    );
+    assert_eq!(random, original_random);
+    Ok(())
+}
+
+/// Original 834540 -> 832AB0 probes, including a zero-weight variation zero.
+#[test]
+fn default_sequence_matches_native_selection_fallbacks_and_random_draws()
+-> Result<(), Box<dyn Error>> {
+    use solarity_asset::M2ModelAnimationMode::{Forward, HoldEnd, HoldStart, Reverse};
+    for (ids, fallback, flags, bone_count, selected, mode) in [
+        (&[0, 0, 7][..], 0, 0, 1, Some(1), Forward),
+        (&[7, 147][..], 0, 0, 1, Some(1), Forward),
+        (&[7][..], 0, 0, 1, Some(0), Forward),
+        (&[7][..], 7, 0x10, 1, Some(0), Reverse),
+        (&[7][..], 7, 0x20, 1, Some(0), HoldEnd),
+        (&[7][..], 7, 0x30, 1, Some(0), HoldStart),
+        (&[0][..], 0, 0, 0, None, Forward),
+        (&[][..], 0, 0, 1, None, Forward),
+    ] {
+        let (model, catalog) = default_sequence_model(ids, fallback, flags, bone_count)?;
+        let mut random = CrtRand::new();
+        let mut playback = M2Playback::default_sequence(&model, &catalog, 20_000, &mut random)?;
+        let mut expected_random = CrtRand::new();
+        if let Some(selected) = selected {
+            let _variation = expected_random.next_u15();
+            let _cycles = expected_random.next_u15();
+            assert_eq!(playback.sequence, selected, "{ids:?}");
+            assert_eq!(playback.animation_id, ids[selected]);
+            assert_eq!(playback.script_mode, mode);
+            let timer = playback
+                .script_timer
+                .ok_or("missing native default timer")?;
+            assert_eq!(timer.start_time_ms(), 20_001);
+            assert_eq!(timer.cycle_count(), 2);
+            assert_eq!(
+                timer.end_time_ms(),
+                if matches!(mode, HoldStart | HoldEnd) {
+                    20_001
+                } else {
+                    22_001
+                }
+            );
+            assert!(playback.script_blend.is_none());
+            let advance = playback.clock(&model, 20_101.0, 20_101.0, &mut random)?;
+            assert_eq!(
+                advance.clock.animation_time_ms(),
+                match mode {
+                    Forward => 100.0,
+                    Reverse => 900.0,
+                    // These authored clips loop: an exact endpoint wraps to zero.
+                    HoldEnd | HoldStart => 0.0,
+                }
+            );
+        } else {
+            assert!(playback.script_timer.is_none());
+        }
+        assert_eq!(random, expected_random, "{ids:?}, bones={bone_count}");
+    }
+    Ok(())
+}
+
+fn default_sequence_model(
+    ids: &[u16],
+    fallback: u32,
+    flags: u32,
+    bone_count: u32,
+) -> Result<(DecodedM2Model, AnimationDataCatalog), Box<dyn Error>> {
+    use crate::test_support::game_object_models as models;
+    let mut bytes = models::model_with_animations(ids)?;
+    let sequences = u32::from_le_bytes(bytes[0x20..0x24].try_into()?) as usize;
+    for index in 0..ids.len() {
+        let record = sequences + index * 64;
+        bytes[record + 2..record + 4].copy_from_slice(&(index as u16).to_le_bytes());
+        bytes[record + 24..record + 28].copy_from_slice(&3_u32.to_le_bytes());
+        if ids.starts_with(&[0, 0]) && index == 0 {
+            bytes[record + 16..record + 20].copy_from_slice(&0_u32.to_le_bytes());
+            bytes[record + 60..record + 62].copy_from_slice(&1_u16.to_le_bytes());
+        }
+    }
+    bytes[0x2c..0x30].copy_from_slice(&bone_count.to_le_bytes());
+    let mut dbc = b"WDBC".to_vec();
+    for value in [1_u32, 8, 32, 1, 0, 0, 0, 0, flags, fallback, 0, 0] {
+        dbc.extend_from_slice(&value.to_le_bytes());
+    }
+    dbc.push(0);
+    let fixture = ClientFixture::with_common_files(&[
+        ("World\\GameObject.m2", &bytes),
+        ("World\\GameObject00.skin", &models::skin()?),
+        ("DBFilesClient\\AnimationData.dbc", &dbc),
+    ])?;
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(archive)?;
+    Ok((
+        DecodedM2Model::load(&mut store, &AssetPath::new("World\\GameObject.m2")?)?,
+        AnimationDataCatalog::load(&mut store)?,
+    ))
+}
+
+#[test]
 fn explicit_variation_retains_its_ordinal_across_loop_boundaries() -> Result<(), Box<dyn Error>> {
     let (model, _) = playback_model()?;
     let mut random = CrtRand::new();
@@ -288,27 +401,26 @@ fn append_playback_sound_event(bytes: &mut Vec<u8>) {
 /// 0x00826B00 anchors a new sequence without aging it through earlier world time.
 #[test]
 fn newly_streamed_world_model_starts_at_its_admission_time() -> Result<(), Box<dyn Error>> {
-    let (model, _) = playback_model()?;
+    let (model, catalog) = playback_model()?;
     let mut random = CrtRand::new();
-    let mut playback =
-        M2Playback::new_at(&model, 0, 60_000.0, &mut random)?.ok_or("missing playback")?;
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 60_000, &mut random)?;
     let mut expected_random = random;
-    let advance = playback.clock(&model, 60_000.0, 60_000.0, &mut random)?;
+    let advance = playback.clock(&model, 60_001.0, 60_001.0, &mut random)?;
     assert_eq!(advance.clock.animation_time_ms(), 0.0);
     assert!(advance.expired_variations.is_empty());
     assert!(
         triggered_m2_event_indices(
             model.animations(),
-            playback.event_window(60_000.0, 60_000.0)
+            playback.event_window(60_001.0, 60_001.0)
         )
         .is_empty()
     );
-    let advance = playback.clock(&model, 60_100.0, 60_100.0, &mut random)?;
+    let advance = playback.clock(&model, 60_101.0, 60_101.0, &mut random)?;
     assert_eq!(advance.clock.animation_time_ms(), 100.0);
     assert_eq!(
         triggered_m2_event_indices(
             model.animations(),
-            playback.event_window(60_100.0, 60_100.0)
+            playback.event_window(60_101.0, 60_101.0)
         ),
         vec![0]
     );
@@ -322,7 +434,7 @@ fn model_show_restarts_after_hidden_time_without_replaying_sound_or_variations()
 -> Result<(), Box<dyn Error>> {
     let (model, catalog) = playback_model()?;
     let mut random = CrtRand::new();
-    let mut playback = M2Playback::new(&model, 0, &mut random)?.ok_or("missing playback")?;
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
     playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
     playback.clock(&model, 250.0, 250.0, &mut random)?;
     playback.event_window(250.0, 250.0);
@@ -357,10 +469,10 @@ fn model_requests_restart_seek_and_preserve_the_native_random_stream() -> Result
 {
     let (model, catalog) = playback_model()?;
     let mut random = CrtRand::new();
-    let mut playback = M2Playback::new(&model, 0, &mut random)?.ok_or("missing playback")?;
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
     playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
     let first = playback.clock(&model, 250.0, 250.0, &mut random)?.clock;
-    assert_eq!((first.sequence(), first.animation_time_ms()), (1, 249.0));
+    assert_eq!((first.sequence(), first.animation_time_ms()), (0, 249.0));
     playback.event_window(250.0, 250.0);
     playback.apply_model_sequence(&model, &catalog, 0, 0, 250, &mut random)?;
     assert_eq!(
@@ -374,7 +486,7 @@ fn model_requests_restart_seek_and_preserve_the_native_random_stream() -> Result
     let seek = playback.clock(&model, 252.0, 252.0, &mut random)?.clock;
     assert_eq!((seek.sequence(), seek.animation_time_ms()), (0, 450.0));
     let mut next = random;
-    assert_eq!(next.next_u15(), 29_358);
+    assert_eq!(next.next_u15(), 26_962);
     playback.apply_model_sequence(&model, &catalog, u32::MAX, 0, 252, &mut random)?;
     assert_eq!(
         playback
@@ -383,7 +495,7 @@ fn model_requests_restart_seek_and_preserve_the_native_random_stream() -> Result
             .animation_time_ms(),
         451.0
     );
-    assert_eq!(random.next_u15(), 29_358);
+    assert_eq!(random.next_u15(), 26_962);
     playback.apply_model_sequence(&model, &catalog, 6, 200, 253, &mut random)?;
     let reverse = playback.clock(&model, 254.0, 254.0, &mut random)?.clock;
     assert_eq!(
@@ -414,7 +526,7 @@ fn model_variation_callbacks_preserve_long_frame_remainder_and_event_tails()
 -> Result<(), Box<dyn Error>> {
     let (model, catalog) = playback_model()?;
     let mut random = CrtRand::new();
-    let mut playback = M2Playback::new(&model, 0, &mut random)?.ok_or("missing playback")?;
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
     playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
     playback.clock(&model, 250.0, 250.0, &mut random)?;
     playback.event_window(250.0, 250.0);
@@ -424,11 +536,11 @@ fn model_variation_callbacks_preserve_long_frame_remainder_and_event_tails()
         (advance.clock.sequence(), advance.clock.animation_time_ms()),
         (0, 201.0)
     );
-    assert_eq!(random.next_u15(), 29_358);
-    // Both callbacks run at scene tick 2200. The first retains sequence 1's
+    assert_eq!(random.next_u15(), 26_962);
+    // Both callbacks run at scene tick 2200. The first retains sequence 0's
     // original timer with full weight, so the second must not overwrite it.
     let pose = M2BonePose::compose(model.animations(), advance.clock)?;
-    assert!((pose.transforms()[0].w_axis.x - 119.9).abs() < 0.0001);
+    assert!((pose.transforms()[0].w_axis.x - 19.9).abs() < 0.0001);
     Ok(())
 }
 
@@ -438,7 +550,7 @@ fn model_variations_blend_then_explicit_sequence_calls_replace_the_timer()
 -> Result<(), Box<dyn Error>> {
     let (model, catalog) = playback_model()?;
     let mut random = CrtRand::new();
-    let mut playback = M2Playback::new(&model, 0, &mut random)?.ok_or("missing playback")?;
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
     playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
     for tick in [250.0, 1_000.0, 1_400.0] {
         playback.clock(&model, tick, tick, &mut random)?;
@@ -465,10 +577,10 @@ fn model_variations_blend_then_explicit_sequence_calls_replace_the_timer()
 #[test]
 fn model_variation_blend_replaces_the_secondary_at_exactly_half_weight()
 -> Result<(), Box<dyn Error>> {
-    for (duration, expected_x) in [(1_998, 199.9_f32), (1_999, 199.8)] {
+    for (duration, expected_x) in [(1_998, 199.9_f32), (1_999, 99.8)] {
         let (model, catalog) = playback_model_with_blend(duration)?;
         let mut random = CrtRand::new();
-        let mut playback = M2Playback::new(&model, 0, &mut random)?.ok_or("missing playback")?;
+        let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
         playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
         for tick in [250.0, 1_000.0] {
             playback.clock(&model, tick, tick, &mut random)?;

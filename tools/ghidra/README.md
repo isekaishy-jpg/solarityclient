@@ -122,3 +122,16 @@ They do not test the particle simulator or model visibility admission.
 ```text
 python tools/ghidra/model_effect_clock_oracle.py <path-to-Wow.exe> target/model-effect-clock-native.txt
 ```
+
+## Default model sequence oracle
+
+`model_default_sequence_oracle.py` executes `0x00834540` through its original
+fallback, weighted selection, and timer constructors. Only old-scene removal
+and CRT `rand` are replaced. Eight probes cover zero-weight variation zero,
+nonzero variation metadata, animation 147 and first-record fallback, reverse
+and held modes, and absent bones. Resources are already resident; asynchronous
+load completion and gameplay request ordering are outside this probe.
+
+```text
+python tools/ghidra/model_default_sequence_oracle.py <path-to-Wow.exe> target/model-default-sequence-native.txt
+```

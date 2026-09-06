@@ -791,7 +791,13 @@ fn prepare_scene_models(
     remote_players: &[ResidentPlayerFrameInput<'_>],
     game_objects: GameObjectFrameInput<'_>,
 ) -> Result<(M2Frame, WorldModelFrame), RuntimeTerrainFrameError> {
-    let mut m2 = M2Frame::prepare(renderer, m2_scene, random, particle_twinkle)?;
+    let mut m2 = M2Frame::prepare(
+        renderer,
+        m2_scene,
+        Arc::clone(game_objects.animations()),
+        random,
+        particle_twinkle,
+    )?;
     m2.replace_player(renderer, player, random)?;
     m2.replace_creatures(renderer, creatures, random)?;
     m2.replace_remote_players(renderer, remote_players, random)?;

@@ -144,7 +144,7 @@ pub(in crate::application) struct GameObjectInstance {
 /// Borrowed object order and lifetime lookup for one renderer publication/update.
 #[derive(Clone, Copy)]
 pub(in crate::application) struct GameObjectFrameInput<'a> {
-    animations: &'a AnimationDataCatalog,
+    animations: &'a Arc<AnimationDataCatalog>,
     instances: &'a [GameObjectInstance],
     indices: &'a HashMap<WorldObjectIdentity, usize>,
     world: Option<&'a ActiveWorld>,
@@ -168,7 +168,7 @@ impl<'a> GameObjectFrameInput<'a> {
         }
         Ok(())
     }
-    pub(in crate::application) const fn animations(self) -> &'a AnimationDataCatalog {
+    pub(in crate::application) const fn animations(self) -> &'a Arc<AnimationDataCatalog> {
         self.animations
     }
     pub(in crate::application) const fn instances(self) -> &'a [GameObjectInstance] {
@@ -548,6 +548,7 @@ impl RuntimeGameObjectPresentation {
                 {
                     *state = Some(Rc::new(GameObjectWorldModelState::new(
                         source,
+                        &self.animations,
                         instance.display_id(),
                         self.scene_time_ms.get(),
                         random,

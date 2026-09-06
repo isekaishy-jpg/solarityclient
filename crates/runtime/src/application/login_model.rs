@@ -1228,6 +1228,7 @@ impl RuntimeGlueModelScene {
         let source = prepared.source.instantiate();
         let mut frame = M2Frame::activate_glue_gpu_source(
             source,
+            Arc::clone(&self.animations),
             key.object_index,
             playback,
             environment.model_scale,

@@ -52,6 +52,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
@@ -248,6 +249,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
@@ -418,6 +420,15 @@ fn effects(
     })
 }
 
+fn fixture_animations(
+    fixture: &ClientFixture,
+) -> Result<Arc<AnimationDataCatalog>, Box<dyn Error>> {
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(archive)?;
+    Ok(Arc::new(AnimationDataCatalog::load(&mut store)?))
+}
+
 fn unit_presentation(
     fixture: &ClientFixture,
 ) -> Result<crate::application::player_coordinator::RuntimePlayerPresentation, Box<dyn Error>> {
@@ -551,6 +562,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;

@@ -42,6 +42,32 @@ snapshots also include the effect timestamp. Full frame-retirement retention
 and the wider runtime's floating-point scene-clock precision remain separate
 ownership and clock work.
 
+## Default model sequence
+
+Native load completion (`0x00832EA0`) and scene binding (`0x00834540`)
+request Stand through `0x00832AB0` with automatic variation selection, zero
+offset, speed one, and no blend. This consumes a weighted variation draw and
+a cycle-count draw even when only one variation exists. It does not force
+the record whose variation metadata is zero. The AnimationData fallback mode
+survives the request, including reverse and held endpoints; the emergency
+selection uses animation 147 or the first authored record when Stand is absent.
+A model without bones does not start a primary timer or consume either draw.
+
+Glue widget load completion, static MDDF/MODD placement admission, and replicated
+WMO doodad admission use this shared default initializer. Their integer timer
+starts one tick after the current scene time, and retained owners keep that
+timer through GPU/material publication. An owner awaiting its first primary
+timer does not dispatch sequence-zero events. The remaining unit, equipment,
+and gameplay GameObject startup paths still need their default/request ordering
+reconciled; this change does not establish parity for those paths.
+
+`tools/ghidra/model_default_sequence_oracle.py` executes eight original-code
+probes for weighted startup, variation metadata, fallback modes, and the
+zero-bone guard. Hooks suppress old-scene removal and supply the CRT generator;
+the harness does not exercise asynchronous resource loading or queued gameplay
+requests. Archive-decoded runtime tests check the captured sequence choices,
+draw counts, scene deadlines, and preservation across WMO parent changes.
+
 ## Model attachments
 
 One build-12340 attachment is exactly 40 bytes. It retains the identifier,

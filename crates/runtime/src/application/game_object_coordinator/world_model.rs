@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_asset::{
-    AssetPath, AssetStore, BlpTextureCache, DecodedWorldModel, M2ModelCache, WmoModelCache,
+    AnimationDataCatalog, AssetPath, AssetStore, BlpTextureCache, DecodedWorldModel, M2ModelCache,
+    WmoModelCache,
 };
 
 use crate::application::model_playback::M2Playback;
@@ -89,6 +90,7 @@ pub(in crate::application) struct GameObjectWorldModelState {
 impl GameObjectWorldModelState {
     pub(super) fn new(
         source: &GameObjectWorldModelSource,
+        animations: &AnimationDataCatalog,
         display_id: u32,
         scene_time_ms: u32,
         random: &mut CrtRand,
@@ -97,8 +99,12 @@ impl GameObjectWorldModelState {
         for doodad in source.doodads() {
             playback.insert(
                 doodad.index,
-                M2Playback::new_at(doodad.source.model(), 0, scene_time_ms as f32, random)?
-                    .map(|playback| Rc::new(RefCell::new(playback))),
+                Some(Rc::new(RefCell::new(M2Playback::default_sequence(
+                    doodad.source.model(),
+                    animations,
+                    scene_time_ms,
+                    random,
+                )?))),
             );
         }
         Ok(Self {

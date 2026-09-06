@@ -33,6 +33,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;

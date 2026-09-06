@@ -158,6 +158,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     let mut frame = M2Frame::prepare(
         &mut renderer,
         &ResidentM2Scene::default(),
+        Arc::clone(objects.frame_input(Some(&world)).animations()),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;

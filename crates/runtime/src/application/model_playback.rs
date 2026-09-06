@@ -53,6 +53,28 @@ pub(in crate::application) struct M2ExpiredVariation {
 }
 
 impl M2Playback {
+    /// Native load completion and scene binding (0x00832EA0/0x00834540)
+    /// request weighted Stand, retaining its fallback mode. If neither Stand
+    /// nor its fallback exists, they request the first authored animation.
+    pub(in crate::application) fn default_sequence(
+        model: &DecodedM2Model,
+        catalog: &AnimationDataCatalog,
+        scene_time_ms: u32,
+        random: &mut CrtRand,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
+        let mut playback = Self::unstarted(0);
+        playback.scene_time_ms = scene_time_ms;
+        playback.previous_event_scene_time_ms = scene_time_ms;
+        let animations = model.animations();
+        if animations.bones().is_empty() || animations.sequences().is_empty() {
+            return Ok(playback);
+        }
+        // The shared resolver includes native's 147/first-record emergency
+        // fallback while preserving the mode of a successful DBC chain.
+        playback.apply_model_sequence(model, catalog, 0, 0, scene_time_ms, random)?;
+        Ok(playback)
+    }
+
     /// Keeps static geometry and effects alive before a primary sequence exists.
     pub(in crate::application) fn unstarted(animation_id: u16) -> Self {
         Self {
@@ -75,24 +97,6 @@ impl M2Playback {
             script_finished: false,
             paused_scene_time_ms: 0,
         }
-    }
-
-    /// Starts a newly resident world owner against the existing scene clock.
-    /// Native 0x00826B00 anchors sequence construction to that clock; loading a
-    /// neighbor must not age its new local sequence from world entry time zero.
-    pub(in crate::application) fn new_at(
-        model: &DecodedM2Model,
-        animation_id: u16,
-        scene_time_ms: f32,
-        random: &mut CrtRand,
-    ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
-        let mut playback = Self::new(model, animation_id, random)?;
-        if let Some(playback) = playback.as_mut() {
-            playback.cycle_started_ms = scene_time_ms;
-            playback.scene_time_ms = scene_time_ms as u32;
-            playback.previous_event_scene_time_ms = scene_time_ms as u32;
-        }
-        Ok(playback)
     }
 
     /// Selects one base animation and consumes its authored cycle-count roll.
@@ -581,6 +585,11 @@ impl M2Playback {
             return window;
         }
         self.previous_event_scene_time_ms = animation_time_ms as u32;
+        if self.sequence_duration_ms == 0.0 {
+            // No primary timer exists for a bone-less model or a pending
+            // sequence. Static geometry must not replay sequence-zero events.
+            return M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false);
+        }
         let current_event_elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
         let window = M2EventTimeWindow::new(
             self.sequence,
