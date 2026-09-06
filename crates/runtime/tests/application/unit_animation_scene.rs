@@ -12,35 +12,9 @@ use std::rc::Rc;
 #[test]
 fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
 -> Result<(), Box<dyn Error>> {
-    use crate::application::player_coordinator::{
-        RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
-    };
-    use solarity_asset::{
-        CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
-        CreatureCatalog, CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog,
-        ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, ParticleColorCatalog,
-    };
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let fixture = crate::test_support::unit_models::fixture()?;
-    let archive =
-        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut store = AssetStore::mount(archive)?;
-    let catalogs = RuntimePlayerCatalogs::new(
-        AnimationDataCatalog::load(&mut store)?,
-        CreatureCatalog::load(&mut store)?,
-        CreatureFamilyCatalog::default(),
-        CharacterAppearanceCatalog::load(&mut store)?,
-        CharacterRaceCatalog::load(&mut store)?,
-        HelmetGeosetVisibilityCatalog::load(&mut store)?,
-        CharacterStartOutfitCatalog::load(&mut store)?,
-        RuntimePlayerItemCatalogs::new(
-            ItemDefinitionCatalog::load(&mut store)?,
-            ItemDisplayCatalog::load(&mut store)?,
-            ItemVisualCatalog::load(&mut store)?,
-        ),
-        ParticleColorCatalog::load(&mut store)?,
-    );
-    let mut presentation = RuntimePlayerPresentation::new(AssetStoreHandle::new(store), catalogs);
+    let mut presentation = unit_presentation(&fixture)?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),
         7,
@@ -240,6 +214,238 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         )
     );
     Ok(())
+}
+
+#[test]
+fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty()
+-> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_effects()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    for (guid, kind) in [
+        (7, ObjectKind::Player),
+        (20, ObjectKind::Player),
+        (30, ObjectKind::Unit),
+    ] {
+        add_unit(&mut world, guid, kind, 0)?;
+    }
+    presentation.synchronize(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let publish =
+        |frame: &mut M2Frame,
+         renderer: &mut VulkanRenderer,
+         presentation: &crate::application::player_coordinator::RuntimePlayerPresentation,
+         random: &mut CrtRand|
+         -> Result<(), Box<dyn Error>> {
+            frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+            frame.replace_creatures(
+                renderer,
+                &presentation.resident_creature_frame_inputs(),
+                random,
+            )?;
+            frame.replace_remote_players(
+                renderer,
+                &presentation.resident_remote_player_frame_inputs(),
+                random,
+            )?;
+            Ok(())
+        };
+    publish(&mut frame, &mut renderer, &presentation, &mut random)?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8.0, 0.0, 0.0),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4.0, 4.0],
+        [-2.0, 2.0],
+        0.1,
+        100.0,
+    )
+    .frame(1.0)?;
+    for time in [100.0, 300.0] {
+        frame.prepare_visible_draws(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            Vec3::ZERO,
+            time,
+            time,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+        )?;
+    }
+    let owners = [
+        M2GpuPlacementOwner::PlayerBody { guid: 7 },
+        M2GpuPlacementOwner::RemotePlayerBody { guid: 20 },
+        M2GpuPlacementOwner::CreatureBody { guid: 30 },
+    ];
+    let before = owners
+        .map(|owner| effects(&frame, owner))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    for state in &before {
+        assert!(
+            !state.particles.is_empty(),
+            "fixture must emit live particles"
+        );
+        assert!(
+            state.ribbons.len() > 1,
+            "fixture must accumulate ribbon history"
+        );
+    }
+    let sources = owners
+        .map(|owner| unit_source(&frame, owner))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected_random = random;
+
+    // Texture quality changes rebuild both player atlases. A display alias
+    // changes the creature's material generation while retaining its model.
+    presentation.set_component_texture_level(
+        solarity_rendering::CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
+    );
+    world.update_fields(30, [(67, 101)])?;
+    solarity_systems::project_object_fields(&mut world, 30, [(67, 101)])?;
+    presentation.synchronize(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    publish(&mut frame, &mut renderer, &presentation, &mut random)?;
+    assert_eq!(random, expected_random);
+    for (index, owner) in owners.into_iter().enumerate() {
+        assert_ne!(
+            unit_source(&frame, owner)?,
+            sources[index],
+            "actual GPU replacement"
+        );
+        assert_eq!(effects(&frame, owner)?, before[index], "{owner:?}");
+    }
+    frame.prepare_visible_draws(
+        &renderer,
+        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        camera,
+        Vec3::ZERO,
+        350.0,
+        350.0,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        &mut random,
+        None,
+    )?;
+    for (index, owner) in owners.into_iter().enumerate() {
+        let after = effects(&frame, owner)?;
+        assert_eq!(after.particle_allocation, before[index].particle_allocation);
+        assert!(after.particles[0].age_seconds() > before[index].particles[0].age_seconds());
+        assert!(after.ribbons[0].age_seconds() > before[index].ribbons[0].age_seconds());
+    }
+
+    // Reusing a GUID or changing model must not inherit these live histories.
+    world.remove_object(20)?;
+    add_unit(&mut world, 20, ObjectKind::Player, 0)?;
+    world.update_fields(30, [(67, 102)])?;
+    solarity_systems::project_object_fields(&mut world, 30, [(67, 102)])?;
+    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    publish(&mut frame, &mut renderer, &presentation, &mut random)?;
+    for owner in [owners[1], owners[2]] {
+        let state = effects(&frame, owner)?;
+        assert!(state.particles.is_empty());
+        assert!(state.ribbons.is_empty());
+    }
+    assert!(!effects(&frame, owners[0])?.particles.is_empty());
+
+    world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_unit(&mut world, 7, ObjectKind::Player, 0)?;
+    presentation.synchronize(Some(&world))?;
+    frame.replace_player(
+        &mut renderer,
+        presentation.resident_frame_input(),
+        &mut random,
+    )?;
+    let state = effects(&frame, owners[0])?;
+    assert!(state.particles.is_empty());
+    assert!(state.ribbons.is_empty());
+    Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct UnitEffectsSnapshot {
+    particles: Vec<solarity_rendering::M2ParticleState>,
+    particle_allocation: usize,
+    ribbons: Vec<solarity_rendering::M2RibbonSection>,
+}
+
+fn effects(
+    frame: &M2Frame,
+    owner: M2GpuPlacementOwner,
+) -> Result<UnitEffectsSnapshot, Box<dyn Error>> {
+    let placement = frame
+        .placements
+        .iter()
+        .find(|placement| placement.owner == owner)
+        .ok_or("unit placement")?;
+    let particles = placement.particles[0].simulation.particles();
+    Ok(UnitEffectsSnapshot {
+        particles: particles.to_vec(),
+        particle_allocation: particles.as_ptr().addr(),
+        ribbons: placement.ribbons[0].sections().copied().collect(),
+    })
+}
+
+fn unit_presentation(
+    fixture: &ClientFixture,
+) -> Result<crate::application::player_coordinator::RuntimePlayerPresentation, Box<dyn Error>> {
+    use crate::application::player_coordinator::{
+        RuntimePlayerCatalogs, RuntimePlayerItemCatalogs, RuntimePlayerPresentation,
+    };
+    use solarity_asset::{
+        CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
+        CreatureCatalog, CreatureFamilyCatalog, HelmetGeosetVisibilityCatalog,
+        ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, ParticleColorCatalog,
+    };
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(archive)?;
+    let catalogs = RuntimePlayerCatalogs::new(
+        AnimationDataCatalog::load(&mut store)?,
+        CreatureCatalog::load(&mut store)?,
+        CreatureFamilyCatalog::default(),
+        CharacterAppearanceCatalog::load(&mut store)?,
+        CharacterRaceCatalog::load(&mut store)?,
+        HelmetGeosetVisibilityCatalog::load(&mut store)?,
+        CharacterStartOutfitCatalog::load(&mut store)?,
+        RuntimePlayerItemCatalogs::new(
+            ItemDefinitionCatalog::load(&mut store)?,
+            ItemDisplayCatalog::load(&mut store)?,
+            ItemVisualCatalog::load(&mut store)?,
+        ),
+        ParticleColorCatalog::load(&mut store)?,
+    );
+    Ok(RuntimePlayerPresentation::new(
+        AssetStoreHandle::new(store),
+        catalogs,
+    ))
 }
 
 fn add_unit(

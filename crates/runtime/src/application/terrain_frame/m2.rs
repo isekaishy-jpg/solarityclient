@@ -1169,13 +1169,14 @@ impl M2Frame {
             self.remove_player();
             return Ok(());
         };
-        let prepared = prepare_character_gpu(
+        let mut prepared = prepare_character_gpu(
             renderer,
             &input,
             M2GpuPlacementOwner::PlayerBody { guid: input.guid() },
             self.animation_time_ms(),
             random,
         )?;
+        self.retain_unit_effects(&mut prepared);
         self.remove_player();
         for (source, placement) in prepared {
             let source_index = self.sources.len();
@@ -1260,6 +1261,7 @@ impl M2Frame {
             prepared.push((source, placement));
         }
 
+        self.retain_unit_effects(&mut prepared);
         self.remove_creatures(&retained);
         for (source, placement) in prepared {
             let source_index = self.sources.len();
@@ -1301,6 +1303,9 @@ impl M2Frame {
                 random,
             )?);
         }
+        for character in &mut prepared {
+            self.retain_unit_effects(character);
+        }
         self.remove_remote_players(&retained);
         for character in prepared {
             for (source, placement) in character {
@@ -1314,6 +1319,28 @@ impl M2Frame {
             }
         }
         Ok(())
+    }
+
+    /// A material rebuild changes GPU resources, not the living model's
+    /// emitter histories. Transfer them only after every replacement has
+    /// prepared successfully, and only within the same unit/model lifetime.
+    fn retain_unit_effects(&mut self, prepared: &mut [(M2GpuSource, M2GpuPlacement)]) {
+        for (_, replacement) in prepared {
+            let Some(animation) = &replacement.unit_animation else {
+                continue;
+            };
+            let Some(previous) = self.placements.iter_mut().find(|previous| {
+                previous.owner == replacement.owner
+                    && previous
+                        .unit_animation
+                        .as_ref()
+                        .is_some_and(|previous| Rc::ptr_eq(previous, animation))
+            }) else {
+                continue;
+            };
+            std::mem::swap(&mut previous.particles, &mut replacement.particles);
+            std::mem::swap(&mut previous.ribbons, &mut replacement.ribbons);
+        }
     }
 
     /// Updates authoritative player movement and base animation in place.

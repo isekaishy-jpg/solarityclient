@@ -160,6 +160,24 @@ borrowing the same unit timer. A different model path starts a new playback owne
 A different world-object lifetime invalidates both the resident generation
 and playback, even when its GUID and appearance match the retired object.
 
+Unit body particles and ribbon trails also survive material replacement.
+The renderer transfers their existing simulation allocations after all new
+resources have prepared successfully, using the retained animation owner's
+identity to require the same unit and model lifetime. New textures and particle
+color replacements belong to the new material generation; live particle ages,
+positions, pool phases, and ribbon history belong to the continuing model.
+
+This follows the native texture mutation boundary: character atlas creation
+at `0x004EFF10` calls `0x00825260` on the existing model. That setter updates
+texture references, including ribbon `0x0097FAD0` and particle `0x00978C40`
+references, without reconstructing either effect history. The Vulkan residency
+test emits live particles and ribbon sections for local players, remote players,
+and creatures, replaces their material resources, and verifies retained state
+and continued aging. GUID reuse, model replacement, and world replacement
+start empty. Disabling the transfer reproduces the test's material-change
+failure. Equipped child effects and effects across complete frame retirement
+still require retained ownership; this transfer covers the unit body only.
+
 Changed stand state follows `0x0073F060`, including death entry through
 `0x0073AF80`, submerged entry 201, and return from submerged through 127 or 224.
 Ordinary sit/sleep/kneel/chair selection follows `0x0071E1F0`. Primary completion
