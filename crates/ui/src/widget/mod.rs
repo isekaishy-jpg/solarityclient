@@ -17,6 +17,7 @@ mod scroll_frame;
 mod slider;
 mod status_bar;
 mod texture;
+pub(crate) use message::{Message, MessageConfig, MessageHistory};
 
 pub use texture::{
     UiBlendMode, UiGradientOrientation, UiTexCoords, UiTextureColor, UiTextureError, UiTextureFile,

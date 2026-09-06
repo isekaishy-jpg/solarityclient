@@ -87,6 +87,35 @@ conversion formatting remains in Lua. Regression cases cover reordering,
 repetition, mixed sequential arguments, widths/precision, and literal percent
 and dollar characters. Native `%F` localization remains outside this extension.
 
+## Chat initialization and message history
+
+The world startup sequence now delivers `UPDATE_CHAT_WINDOWS` once the retained
+default settings are available. Stock `ChatFrame_ConfigEventHandler` registers
+each tab's message groups and channels, and `FloatingChatFrame_Update` applies
+the saved color, alpha, lock, and interaction settings. Without this event the
+chat background remained opaque white and ordinary chat events had no tab
+subscriptions. Default saved dimensions are 430 by 120, from `0x00501800` and
+constants `0x009FC414` / `0x009FC410`; zero dimensions collapsed the initialized
+frame. Disk chat-cache hydration remains separate work.
+
+`GetChatWindowMessages` and its add/remove operations retain the native 46-group
+table and enumeration order from `0x009FB7C0`; the initial first and second tab
+subscriptions follow `0x0050EDD0`. Channel queries expose retained pairs of names
+and channel-definition IDs. The channel state publication boundary does not
+yet implement joined-channel packet handling or the channel mutation wrappers.
+
+`ScrollingMessageFrame` owns bounded message history with native insertion order,
+access/color/type IDs, reset-on-resize, and four-value `GetMessageInfo` results.
+XML and dynamic templates configure the embedded message font without creating
+an extra child FontString. Text is presented through the shared glyph renderer
+with per-message colors and the configured top/bottom insertion direction.
+Link enablement retains the native optional-boolean contract.
+
+This is an initial message presentation slice. Per-message visible fitting,
+scroll offsets, timed fading, hyperlink hit regions, inline textures, and the
+remaining font mutation APIs are not implemented. The existing empty-history
+`AtTop`/`AtBottom` methods still need replacement with real scroll state.
+
 ## XML ownership
 
 `quick-xml` performs UTF-8 tokenization and XML well-formedness checks. The UI

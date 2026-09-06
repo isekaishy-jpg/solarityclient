@@ -207,6 +207,9 @@ impl RuntimeWorldUi {
         let mut startup_errors = Vec::new();
         for event in [
             "VARIABLES_LOADED",
+            // Chat settings are available before the world becomes visible.
+            // Stock applies colors and subscribes each tab on this event.
+            "UPDATE_CHAT_WINDOWS",
             "PLAYER_LOGIN",
             "UPDATE_BINDINGS",
             "PLAYER_ENTERING_WORLD",

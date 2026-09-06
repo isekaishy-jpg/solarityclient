@@ -170,18 +170,6 @@ fn required_integer(lua: &Lua, value: Value, usage: &str) -> mlua::Result<i32> {
         .ok_or_else(|| mlua::Error::runtime(usage))
 }
 
-// Native optional boolean helper 0x00815500 and string helper 0x00815400.
 fn native_bool(value: &Value) -> bool {
-    match value {
-        Value::Boolean(value) => *value,
-        Value::Integer(value) => *value != 0,
-        Value::Number(value) => *value as i32 != 0,
-        Value::String(value) => {
-            let bytes = value.as_bytes();
-            matches!(bytes.first(), Some(b'1'..=b'9' | b'T' | b'Y' | b't' | b'y'))
-                || bytes.eq_ignore_ascii_case(b"on")
-                || bytes.eq_ignore_ascii_case(b"enabled")
-        }
-        _ => false,
-    }
+    super::super::native_optional_bool(Some(value), false)
 }

@@ -172,6 +172,27 @@ impl FrameManager {
         self.owner.render_plan()
     }
 
+    /// Returns the current object name for a retained presentation index.
+    #[must_use]
+    pub fn object_name(&self, index: usize) -> Option<&str> {
+        self.owner
+            .objects()
+            .get(index)
+            .and_then(super::GlueObject::name)
+    }
+
+    /// Returns current resolved region geometry for the active interface.
+    #[must_use]
+    pub const fn geometry(&self) -> &crate::UiRegionGeometryPlan {
+        self.owner.geometry()
+    }
+
+    /// Returns the active interface's source-preserving presentation packets.
+    #[must_use]
+    pub const fn presentation(&self) -> &crate::UiPresentationPlan {
+        self.owner.presentation()
+    }
+
     /// Returns effective visibility of a named region, including its parents.
     /// Missing names or regions have no visibility result.
     #[must_use]

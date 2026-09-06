@@ -93,6 +93,7 @@ pub struct UiRuntimeTemplateNode {
     font_word_wrap: bool,
     font_non_space_wrap: bool,
     font_max_lines: u32,
+    message_config: Option<crate::widget::MessageConfig>,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -320,6 +321,8 @@ impl UiRuntimeTemplatePlan {
                     font_word_wrap: font.word_wrap,
                     font_non_space_wrap: font.non_space_wrap,
                     font_max_lines: font.max_lines,
+                    message_config: (object.kind() == UiObjectKind::ScrollingMessageFrame)
+                        .then(|| crate::widget::MessageConfig::from_node(object)),
                     edit_max_letters: font.edit_max_letters,
                     edit_password: font.edit_password,
                     edit_multiline: font.edit_multiline,
@@ -534,6 +537,13 @@ impl UiRuntimeTemplatePlan {
                 record.raw_set("font_word_wrap", node.font_word_wrap)?;
                 record.raw_set("font_non_space_wrap", node.font_non_space_wrap)?;
                 record.raw_set("font_max_lines", node.font_max_lines)?;
+                if let Some(config) = &node.message_config {
+                    record.raw_set("message_maximum", config.maximum)?;
+                    record.raw_set("message_display_duration", config.display_duration)?;
+                    record.raw_set("message_fade_duration", config.fade_duration)?;
+                    record.raw_set("message_fading", config.fading)?;
+                    record.raw_set("message_insert_at_top", config.insert_at_top)?;
+                }
                 record.raw_set("edit_max_letters", node.edit_max_letters)?;
                 record.raw_set("edit_password", node.edit_password)?;
                 record.raw_set("edit_multiline", node.edit_multiline)?;
@@ -658,7 +668,7 @@ impl Default for InitialFont {
 fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialFont {
     if !matches!(
         node.kind(),
-        UiObjectKind::FontString | UiObjectKind::EditBox
+        UiObjectKind::FontString | UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
     ) {
         return InitialFont {
             justify_h: "CENTER".to_owned(),
@@ -678,9 +688,15 @@ fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialF
     };
     for layer in node.layers() {
         apply_initial_font_element(&mut initial, fonts, layer.element());
-        if node.kind() == UiObjectKind::EditBox {
+        if matches!(
+            node.kind(),
+            UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
+        ) {
             apply_initial_edit_box_element(&mut initial, fonts, layer.document(), layer.element());
         }
+    }
+    if node.kind() == UiObjectKind::ScrollingMessageFrame {
+        initial.max_lines = 0;
     }
     initial
 }

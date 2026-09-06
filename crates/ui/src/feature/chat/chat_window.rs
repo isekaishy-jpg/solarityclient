@@ -8,6 +8,56 @@ use mlua::{Lua, MultiValue, Table, Value};
 /// Number of persistent chat windows in build 12340.
 pub const UI_CHAT_WINDOW_COUNT: usize = 10;
 
+// Wow.exe 009FB7C0: these are subscription groups, not chat event IDs.
+const MESSAGE_GROUPS: [&str; 46] = [
+    "SYSTEM",
+    "SYSTEM_NOMENU",
+    "SAY",
+    "EMOTE",
+    "YELL",
+    "WHISPER",
+    "PARTY",
+    "PARTY_LEADER",
+    "RAID",
+    "RAID_LEADER",
+    "RAID_WARNING",
+    "BATTLEGROUND",
+    "BATTLEGROUND_LEADER",
+    "GUILD",
+    "OFFICER",
+    "MONSTER_SAY",
+    "MONSTER_YELL",
+    "MONSTER_EMOTE",
+    "MONSTER_WHISPER",
+    "MONSTER_BOSS_EMOTE",
+    "MONSTER_BOSS_WHISPER",
+    "ERRORS",
+    "AFK",
+    "DND",
+    "IGNORED",
+    "BG_HORDE",
+    "BG_ALLIANCE",
+    "BG_NEUTRAL",
+    "COMBAT_FACTION_CHANGE",
+    "SKILL",
+    "LOOT",
+    "MONEY",
+    "CHANNEL",
+    "ACHIEVEMENT",
+    "GUILD_ACHIEVEMENT",
+    "TARGETICONS",
+    "BN_WHISPER",
+    "BN_WHISPER_INFORM",
+    "BN_CONVERSATION",
+    "BN_INLINE_TOAST_ALERT",
+    "OPENING",
+    "TRADESKILLS",
+    "PET_INFO",
+    "COMBAT_XP_GAIN",
+    "COMBAT_HONOR_GAIN",
+    "COMBAT_MISC_INFO",
+];
+
 /// Script-visible settings for one persistent chat window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiChatWindow {
@@ -20,6 +70,8 @@ pub struct UiChatWindow {
     uninteractable: bool,
     saved_position: Option<(&'static str, f32, f32)>,
     saved_dimensions: (f32, f32),
+    message_groups: [bool; MESSAGE_GROUPS.len()],
+    channels: Vec<(String, i32)>,
 }
 
 impl UiChatWindow {
@@ -33,7 +85,16 @@ impl UiChatWindow {
             dock_position: (index <= 2).then_some(index as u32),
             uninteractable: false,
             saved_position: None,
-            saved_dimensions: (0.0, 0.0),
+            // FUN_00501800 copies 009FC414 / 009FC410 before cache loading.
+            saved_dimensions: (430.0, 120.0),
+            // FUN_0050EDD0 initializes the first forty groups on General
+            // and the final six on Combat Log before reading chat-cache.
+            message_groups: std::array::from_fn(|group| match index {
+                1 => group < 40,
+                2 => group >= 40,
+                _ => false,
+            }),
+            channels: Vec::new(),
         }
     }
 
@@ -125,6 +186,13 @@ impl UiChatWindowState {
         self.windows.borrow().get(index.wrapping_sub(1)).cloned()
     }
 
+    /// Publishes configured channel names and native channel-definition IDs.
+    ///
+    /// These IDs are distinct from the joined channels' chat message numbers.
+    pub fn set_window_channels(&self, index: usize, channels: Vec<(String, i32)>) {
+        self.update(index, |window| window.channels = channels);
+    }
+
     fn update(&self, index: usize, update: impl FnOnce(&mut UiChatWindow)) {
         if let Some(window) = self.windows.borrow_mut().get_mut(index.wrapping_sub(1)) {
             update(window);
@@ -163,7 +231,77 @@ pub(crate) fn register_globals(
         })?,
     )?;
     register_saved_layout_globals(lua, globals, state.clone())?;
+    register_subscription_globals(lua, globals, state.clone())?;
     register_mutators(lua, globals, state)?;
+    Ok(())
+}
+
+fn register_subscription_globals(
+    lua: &Lua,
+    globals: &Table,
+    state: UiChatWindowState,
+) -> mlua::Result<()> {
+    let messages = state.clone();
+    globals.raw_set(
+        "GetChatWindowMessages",
+        lua.create_function(move |lua, index: Value| {
+            let index = chat_window_index_for(index, "GetChatWindowMessages(index)")?;
+            let windows = messages.windows.borrow();
+            let Some(window) = windows.get(index.wrapping_sub(1)) else {
+                return Ok(MultiValue::new());
+            };
+            let mut values = MultiValue::new();
+            for (name, enabled) in MESSAGE_GROUPS.iter().zip(window.message_groups) {
+                if enabled {
+                    values.push_back(Value::String(lua.create_string(*name)?));
+                }
+            }
+            Ok(values)
+        })?,
+    )?;
+    let channels = state.clone();
+    globals.raw_set(
+        "GetChatWindowChannels",
+        lua.create_function(move |lua, index: Value| {
+            let index = chat_window_index_for(index, "GetChatWindowChannels(index)")?;
+            let windows = channels.windows.borrow();
+            let Some(window) = windows.get(index.wrapping_sub(1)) else {
+                return Ok(MultiValue::new());
+            };
+            let mut values = MultiValue::new();
+            for (name, id) in &window.channels {
+                values.push_back(Value::String(lua.create_string(name)?));
+                values.push_back(Value::Number(f64::from(*id)));
+            }
+            Ok(values)
+        })?,
+    )?;
+    for (name, enabled) in [
+        ("AddChatWindowMessages", true),
+        ("RemoveChatWindowMessages", false),
+    ] {
+        let messages = state.clone();
+        globals.raw_set(
+            name,
+            lua.create_function(move |lua, (index, group): (Value, Value)| {
+                let usage = format!("Usage: {name}(index, messageGroup)");
+                let index =
+                    chat_window_index(index).map_err(|_| mlua::Error::runtime(usage.clone()))?;
+                let group = lua
+                    .coerce_string(group)?
+                    .ok_or_else(|| mlua::Error::runtime(usage))?;
+                let bytes = group.as_bytes();
+                let bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
+                if let Some(group) = MESSAGE_GROUPS
+                    .iter()
+                    .position(|name| name.as_bytes().eq_ignore_ascii_case(bytes))
+                {
+                    messages.update(index, |window| window.message_groups[group] = enabled);
+                }
+                Ok(())
+            })?,
+        )?;
+    }
     Ok(())
 }
 
@@ -377,7 +515,8 @@ fn chat_window_index(value: Value) -> mlua::Result<usize> {
     if !number.is_finite() {
         return Err(usage_error());
     }
-    Ok(number.round() as usize)
+    // Native wrappers set x87 rounding control to truncate before FISTP.
+    Ok(number as usize)
 }
 
 fn chat_window_index_for(value: Value, usage: &'static str) -> mlua::Result<usize> {

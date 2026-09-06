@@ -537,6 +537,14 @@ impl<'bundle> UiObjectTree<'bundle> {
             let child = layer.document.element(*index).ok_or_else(|| {
                 object_error(layer.source_path, "XML child index is outside the arena")
             })?;
+            // The direct FontString element configures the native message
+            // font. It is not a separately registered child region.
+            if self.nodes[parent].kind == UiObjectKind::ScrollingMessageFrame
+                && std::ptr::eq(element, layer.element)
+                && child.name() == "FontString"
+            {
+                continue;
+            }
             if let Some((kind, role)) = classify_child(child.name()) {
                 self.instantiate_element(
                     catalog,

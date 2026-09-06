@@ -2,3 +2,4 @@
 
 mod c_simple_message_frame;
 mod c_simple_message_scroll_frame;
+pub(crate) use c_simple_message_scroll_frame::{Message, MessageConfig, MessageHistory};

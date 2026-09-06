@@ -1129,6 +1129,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     let skill_lines = environment.skill_line_state();
     let spell_book = environment.spell_book_state();
     let modifiers = environment.modifier_key_state();
+    let chat_windows = environment.chat_window_state();
     action_bar.set_slots([0; 144]);
     account.set_expansion(UiAccountExpansion::WrathOfTheLichKing);
     world.enter_player(UiPlayerState::new(12_345_678));
@@ -1552,6 +1553,36 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(size, 0);
     assert_eq!((red, green, blue), (0.0, 0.0, 0.0));
     assert_eq!(alpha, 40.0 / 255.0);
+    chat_windows.set_window_channels(
+        4,
+        vec![("General".to_owned(), 1), ("GuildEvents".to_owned(), 0)],
+    );
+    bundle
+        .lua()
+        .load(
+            r#"
+        local general, combat = {GetChatWindowMessages(1)}, {GetChatWindowMessages(2)}
+        assert(#general == 40 and general[1] == 'SYSTEM' and general[40] == 'BN_INLINE_TOAST_ALERT')
+        assert(#combat == 6 and combat[1] == 'OPENING' and combat[6] == 'COMBAT_MISC_INFO')
+        assert(select('#', GetChatWindowMessages(3)) == 0)
+        assert(select('#', GetChatWindowMessages(11)) == 0)
+        RemoveChatWindowMessages('1.9', 'sYsTeM')
+        assert(GetChatWindowMessages(1) == 'SYSTEM_NOMENU')
+        AddChatWindowMessages(3, 'whisper')
+        AddChatWindowMessages(3, 'SAY')
+        AddChatWindowMessages(3, 'whisper')
+        AddChatWindowMessages(3, 'WHISPER_INFORM') -- event name is not a subscription group
+        local third = {GetChatWindowMessages(3)}
+        assert(#third == 2 and third[1] == 'SAY' and third[2] == 'WHISPER')
+        assert(select('#', GetChatWindowChannels(1)) == 0)
+        local channel, definition, custom, customDefinition = GetChatWindowChannels(4)
+        assert(channel == 'General' and definition == 1 and custom == 'GuildEvents' and customDefinition == 0)
+        assert(select('#', GetChatWindowChannels(4)) == 4)
+        assert(not pcall(AddChatWindowMessages, 3, false))
+        AddChatWindowMessages(1, 'SYSTEM')
+    "#,
+        )
+        .exec()?;
     assert_eq!(
         (shown, locked, docked, uninteractable),
         (Some(1), Some(1), Some(1), None)
@@ -1596,7 +1627,7 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
             .lua()
             .load("local width, height = GetChatWindowSavedDimensions(2); return select('#', GetChatWindowSavedPosition(2)), width, height, select('#', GetChatWindowSavedDimensions(11))")
             .eval::<(u32, f64, f64, u32)>()?,
-        (0, 0.0, 0.0, 0)
+        (0, 430.0, 120.0, 0)
     );
     assert_eq!(
         bundle

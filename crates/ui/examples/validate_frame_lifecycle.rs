@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let environment = solarity_ui::UiScriptEnvironment::new(1920, 1080, false)?;
     let world = environment.world_state();
     world.enter_player(UiPlayerState::new(0));
+    world.set_player_guid(1);
     world.set_player_identity(UiPlayerIdentityState::new("SolarityTester", 80));
     world.set_player_class(UiPlayerClassState::new("Warrior", "WARRIOR", 1));
     world.set_player_race(UiPlayerRaceState::new("Human", "Human", 1));
@@ -77,6 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut errors = Vec::new();
     for event in [
         "VARIABLES_LOADED",
+        "UPDATE_CHAT_WINDOWS",
         "PLAYER_LOGIN",
         "UPDATE_BINDINGS",
         "PLAYER_ENTERING_WORLD",
@@ -93,6 +95,72 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !errors.is_empty() {
         return Err(IoError::new(ErrorKind::InvalidData, errors.join("\n\n")).into());
     }
+    manager.dispatch_event(
+        "CHAT_MSG_SYSTEM",
+        &solarity_ui::UiEventPayload::new([
+            solarity_ui::UiEventArgument::String("World chat initialized".to_owned()),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::Integer(0),
+            solarity_ui::UiEventArgument::Integer(0),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::Integer(0),
+            solarity_ui::UiEventArgument::Integer(1),
+            solarity_ui::UiEventArgument::String(String::new()),
+            solarity_ui::UiEventArgument::Integer(0),
+        ]),
+    )?;
+    // Exercise the actual stock handlers with a resolved fixture combat event,
+    // not just the empty history used during bootstrap.
+    manager.append_combat_log(solarity_ui::UiCombatLogEntry::new(
+        1.0,
+        "SWING_DAMAGE",
+        solarity_ui::UiCombatLogObject {
+            guid: 1,
+            name: Some("SolarityTester".to_owned()),
+            flags: 0x511,
+        },
+        solarity_ui::UiCombatLogObject {
+            guid: 0xf130_0000_0000_0007,
+            name: Some("Training Dummy".to_owned()),
+            flags: 0xa48,
+        },
+        None,
+        solarity_ui::UiEventPayload::new([
+            solarity_ui::UiEventArgument::Integer(87),
+            solarity_ui::UiEventArgument::Integer(-1),
+            solarity_ui::UiEventArgument::Integer(1),
+            solarity_ui::UiEventArgument::Nil,
+            solarity_ui::UiEventArgument::Nil,
+            solarity_ui::UiEventArgument::Nil,
+            solarity_ui::UiEventArgument::Nil,
+            solarity_ui::UiEventArgument::Nil,
+            solarity_ui::UiEventArgument::Nil,
+        ]),
+    )?)?;
+    let chat_background = manager
+        .presentation()
+        .members_in_draw_order()
+        .iter()
+        .find(|texture| manager.object_name(texture.object_index()) == Some("ChatFrame1Background"))
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "stock chat background missing"))?;
+    if (chat_background.bounds().width() - 434.0).abs() > 0.01
+        || (chat_background.bounds().height() - 129.0).abs() > 0.01
+        || chat_background
+            .vertex_colors()
+            .iter()
+            .any(|color| color[..3] != [0.0, 0.0, 0.0])
+    {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "stock chat background dimensions or tint were not initialized",
+        )
+        .into());
+    }
+    println!("Stock chat background retained its 430x120 content size and black tint");
     for expected in [true, false, true, false] {
         manager.invoke_binding("TOGGLEGAMEMENU", true)?;
         if manager.region_is_shown("GameMenuFrame") != Some(expected) {

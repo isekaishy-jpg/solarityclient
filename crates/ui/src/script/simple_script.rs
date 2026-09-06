@@ -4,6 +4,7 @@ mod addons;
 mod buttons;
 mod cvars;
 mod globals;
+mod messages;
 mod tooltips;
 
 use std::cell::{Cell, RefCell};
@@ -3177,7 +3178,7 @@ impl UiScriptRuntime {
         }
         if matches!(
             object.kind(),
-            UiObjectKind::FontString | UiObjectKind::EditBox
+            UiObjectKind::FontString | UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
         ) {
             let font = self
                 .font_strings
@@ -3253,6 +3254,10 @@ impl UiScriptRuntime {
                     .and_then(|()| table.raw_set(font_shadow_color_key(), shadow_color))
                     .map_err(|error| execution_error("object registration", error))?;
             }
+        }
+        if object.kind() == UiObjectKind::ScrollingMessageFrame {
+            messages::initialize(lua, &table, crate::widget::MessageConfig::from_node(object))
+                .map_err(|error| execution_error("message frame registration", error))?;
         }
         if object.kind() == UiObjectKind::Texture {
             let texture = self
@@ -3869,7 +3874,7 @@ fn create_dynamic_object(
     ) {
         initialize_model_runtime_state(lua, &object)?;
     }
-    if matches!(kind, "FontString" | "EditBox") {
+    if matches!(kind, "FontString" | "EditBox" | "ScrollingMessageFrame") {
         if kind == "FontString" {
             object.raw_set(
                 auto_text_width_key(),
@@ -3920,6 +3925,29 @@ fn create_dynamic_object(
             object.raw_set(font_shadow_offset_key(), shadow_offset)?;
             object.raw_set(font_shadow_color_key(), shadow_color)?;
         }
+    }
+    if kind == "ScrollingMessageFrame" {
+        messages::initialize(
+            lua,
+            &object,
+            crate::widget::MessageConfig {
+                maximum: record
+                    .raw_get::<Option<usize>>("message_maximum")?
+                    .unwrap_or(8),
+                display_duration: record
+                    .raw_get::<Option<f64>>("message_display_duration")?
+                    .unwrap_or(10.0),
+                fade_duration: record
+                    .raw_get::<Option<f64>>("message_fade_duration")?
+                    .unwrap_or(3.0),
+                fading: record
+                    .raw_get::<Option<bool>>("message_fading")?
+                    .unwrap_or(true),
+                insert_at_top: record
+                    .raw_get::<Option<bool>>("message_insert_at_top")?
+                    .unwrap_or(false),
+            },
+        )?;
     }
     if kind == "Texture" {
         object.raw_set(tex_coord_key(), record.raw_get::<Table>("texture_coords")?)?;
@@ -4448,6 +4476,7 @@ fn create_object_metatable(
     }
     if kind == UiObjectKind::ScrollingMessageFrame {
         register_scrolling_message_frame_methods(lua, &methods)?;
+        messages::register(lua, &methods)?;
     }
     if kind == UiObjectKind::Texture {
         register_texture_methods(lua, &methods)?;
@@ -4497,6 +4526,36 @@ fn register_scrolling_message_frame_methods(lua: &Lua, methods: &Table) -> mlua:
         "AtTop",
         lua.create_function(|_, _object: Table| Ok(Some(1_u8)))?,
     )
+}
+
+/// Build 12340's optional boolean conversion (00815500 / 00815400).
+fn native_optional_bool(value: Option<&Value>, default: bool) -> bool {
+    match value {
+        Some(Value::Nil) => false,
+        Some(Value::Boolean(value)) => *value,
+        Some(Value::Integer(value)) => *value != 0,
+        Some(Value::Number(value)) => *value as i32 != 0,
+        Some(Value::String(value)) => {
+            let bytes = value.as_bytes();
+            let bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
+            match bytes.first() {
+                Some(b'1'..=b'9' | b'T' | b'Y' | b't' | b'y') => true,
+                Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
+                _ if bytes.eq_ignore_ascii_case(b"on")
+                    || bytes.eq_ignore_ascii_case(b"enabled") =>
+                {
+                    true
+                }
+                _ if bytes.eq_ignore_ascii_case(b"off")
+                    || bytes.eq_ignore_ascii_case(b"disabled") =>
+                {
+                    false
+                }
+                _ => default,
+            }
+        }
+        _ => default,
+    }
 }
 
 /// Installs the per-frame secure attribute store and wildcard lookup order.
@@ -8843,7 +8902,9 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
         .map(|node| {
             if !matches!(
                 node.kind(),
-                UiObjectKind::FontString | UiObjectKind::EditBox
+                UiObjectKind::FontString
+                    | UiObjectKind::EditBox
+                    | UiObjectKind::ScrollingMessageFrame
             ) {
                 return InitialFont::default();
             }
@@ -8855,7 +8916,10 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
             }
             for layer in node.layers() {
                 apply_initial_font_element(&mut initial, fonts, layer.element());
-                if node.kind() == UiObjectKind::EditBox {
+                if matches!(
+                    node.kind(),
+                    UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
+                ) {
                     apply_initial_edit_box_element(
                         &mut initial,
                         fonts,
@@ -8863,6 +8927,9 @@ fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<Initia
                         layer.element(),
                     );
                 }
+            }
+            if node.kind() == UiObjectKind::ScrollingMessageFrame {
+                initial.max_lines = 0;
             }
             initial
         })

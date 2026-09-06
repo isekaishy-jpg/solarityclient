@@ -492,7 +492,10 @@ pub(super) fn snapshot_runtime_objects(
         let texture = (kind == UiObjectKind::Texture)
             .then(|| snapshot_texture(lua_index, &table))
             .transpose()?;
-        let text = if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
+        let text = if matches!(
+            kind,
+            UiObjectKind::FontString | UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
+        ) {
             let (presentation_font, presentation_color) =
                 button_presentation_font(&registry, role, parent)?;
             snapshot_text(
@@ -979,7 +982,12 @@ pub(super) fn refresh_runtime_dirty_objects(
             }
         }
         if flags & DIRTY_TEXT != 0 {
-            if matches!(kind, UiObjectKind::FontString | UiObjectKind::EditBox) {
+            if matches!(
+                kind,
+                UiObjectKind::FontString
+                    | UiObjectKind::EditBox
+                    | UiObjectKind::ScrollingMessageFrame
+            ) {
                 let (presentation_font, presentation_color) =
                     button_presentation_font(&registry, role, parent)?;
                 live.objects[object_index].width =

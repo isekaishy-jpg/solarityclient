@@ -1461,8 +1461,10 @@ fn layout_live_quads_for_objects(
         // FontString begins with CSimpleFontString's ordinary wrap default.
         // Stock clips a long label to the button instead of creating a second
         // line; CharSelectCreateCharacterButton exposes the distinction.
-        if object.kind == UiObjectKind::FontString
-            && object.role != UiObjectRole::ButtonText
+        if matches!(
+            object.kind,
+            UiObjectKind::FontString | UiObjectKind::ScrollingMessageFrame
+        ) && object.role != UiObjectRole::ButtonText
             && text.word_wrap
         {
             lines = lines
@@ -1502,7 +1504,10 @@ fn layout_live_quads_for_objects(
         // CSimpleScrollFrame clips every region beneath its assigned child,
         // not only SimpleHTML. CharacterCreate's race and class descriptions
         // are ordinary FontStrings and depend on this viewport inheritance.
-        let clip_object = if object.kind == UiObjectKind::EditBox {
+        let clip_object = if matches!(
+            object.kind,
+            UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
+        ) {
             Some(object_index)
         } else {
             nearest_owning_scroll_frame(live, object_index)
