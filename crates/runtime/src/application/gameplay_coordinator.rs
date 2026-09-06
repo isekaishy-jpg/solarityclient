@@ -22,6 +22,7 @@ use tokio::sync::mpsc::{
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use super::player_control::{PlayerControlEvent, RuntimePlayerControl};
 use crate::application::game_object_behavior::GameObjectNotification;
 use crate::application::gameplay_session::{
     GameplaySession, GameplayUpdateError, apply_object_updates_with,
@@ -66,6 +67,9 @@ pub enum RuntimeGameplayError {
     /// An authoritative action-button image was malformed.
     #[error(transparent)]
     ActionButtons(#[from] WorldActionButtonPacketError),
+    /// A native unit-control or local stand-state packet was malformed.
+    #[error(transparent)]
+    PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
     /// The network task ended without publishing its terminal result.
     #[error("active-world network task ended unexpectedly")]
     TaskEnded,
@@ -93,6 +97,7 @@ pub struct RuntimeGameplayCoordinator {
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
     action_buttons: Option<WorldActionButtons>,
+    player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     world_entry_grounded: bool,
     /// Packet dispatch yields to the composition root at each transfer packet.
@@ -108,6 +113,7 @@ impl RuntimeGameplayCoordinator {
             world: None,
             realm_clock: None,
             action_buttons: None,
+            player_control: None,
             unhandled_packets: VecDeque::new(),
             world_entry_grounded: false,
             transfer: None,
@@ -141,6 +147,11 @@ impl RuntimeGameplayCoordinator {
         }
         let setup_packet_count = setup_packets.len();
         let mut gameplay = GameplaySession::enter(network);
+        let player_identity = gameplay
+            .world()
+            .object_identity(gameplay.world().local_player_guid()?)
+            .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?;
+        let mut player_control = RuntimePlayerControl::new(player_identity);
         let mut retained = VecDeque::new();
         let mut realm_clock = None;
         let mut action_buttons = None;
@@ -150,6 +161,7 @@ impl RuntimeGameplayCoordinator {
                 packet,
                 &mut realm_clock,
                 &mut action_buttons,
+                &mut player_control,
                 &mut retained,
                 notify,
             )?;
@@ -172,6 +184,7 @@ impl RuntimeGameplayCoordinator {
         self.world = Some(world);
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
+        self.player_control = Some(player_control);
         self.unhandled_packets = retained;
         self.world_entry_grounded = false;
         tracing::info!(
@@ -230,6 +243,9 @@ impl RuntimeGameplayCoordinator {
                         packet,
                         &mut self.realm_clock,
                         &mut self.action_buttons,
+                        self.player_control
+                            .as_mut()
+                            .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?,
                         &mut self.unhandled_packets,
                         notify,
                     ) {
@@ -302,6 +318,15 @@ impl RuntimeGameplayCoordinator {
             bootstrap,
             world.local_player_view()?,
         ));
+        let replacement = self
+            .world
+            .as_ref()
+            .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?;
+        self.player_control = Some(RuntimePlayerControl::new(
+            replacement
+                .object_identity(replacement.local_player_guid()?)
+                .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?,
+        ));
         self.world_entry_grounded = false;
         Ok(())
     }
@@ -362,16 +387,44 @@ impl RuntimeGameplayCoordinator {
         self.world.as_ref()
     }
 
+    /// Returns the native selected movement subject, including an explicit zero.
+    #[must_use]
+    pub fn active_mover_guid(&self) -> Option<u64> {
+        self.world.as_ref()?;
+        self.player_control
+            .as_ref()
+            .map(RuntimePlayerControl::active_mover)
+    }
+
+    /// Returns the entering player's current native client-control bit.
+    #[must_use]
+    pub fn player_control_enabled(&self) -> Option<bool> {
+        self.world.as_ref()?;
+        self.player_control
+            .as_ref()
+            .map(RuntimePlayerControl::player_enabled)
+    }
+
+    pub(super) fn take_player_control_event(&mut self) -> Option<PlayerControlEvent> {
+        self.world.as_ref()?;
+        self.player_control.as_mut()?.take_event()
+    }
+
     pub(super) fn apply_local_movement(
         &mut self,
         identity: solarity_ecs::WorldObjectIdentity,
         transform: solarity_ecs::WorldTransform,
         movement: solarity_ecs::WorldMovementState,
+        stand_state: u8,
     ) -> Result<(), RuntimeGameplayError> {
         self.world
             .as_mut()
             .ok_or(RuntimeGameplayError::TaskEnded)?
             .update_local_movement(identity, transform, movement)?;
+        self.world
+            .as_mut()
+            .ok_or(RuntimeGameplayError::TaskEnded)?
+            .set_local_player_stand_state(stand_state);
         Ok(())
     }
 
@@ -386,6 +439,7 @@ impl RuntimeGameplayCoordinator {
                 WorldWriterCommand::MovementTimeSkipped { guid, milliseconds }
             }
             Output::StandState(state) => WorldWriterCommand::StandState(state),
+            Output::ActiveMover(guid) => WorldWriterCommand::ActiveMover(guid),
         };
         match self
             .active
@@ -460,6 +514,7 @@ impl RuntimeGameplayCoordinator {
             active.task.abort();
         }
         self.world = None;
+        self.player_control = None;
         self.realm_clock = None;
         self.action_buttons = None;
         self.unhandled_packets.clear();
@@ -591,6 +646,9 @@ where
                     WorldWriterCommand::StandState(state) => {
                         writer.send_stand_state(state).await?;
                     }
+                    WorldWriterCommand::ActiveMover(guid) => {
+                        writer.send_active_mover(guid).await?;
+                    }
                 }
             }
         }
@@ -612,6 +670,7 @@ enum WorldWriterCommand {
     Movement(WorldMovementMessage),
     MovementTimeSkipped { guid: u64, milliseconds: u32 },
     StandState(u32),
+    ActiveMover(u64),
 }
 
 fn dispatch_setup_packet<S>(
@@ -619,9 +678,22 @@ fn dispatch_setup_packet<S>(
     packet: WorldServerPacket,
     realm_clock: &mut Option<RealmClock>,
     action_buttons: &mut Option<WorldActionButtons>,
+    player_control: &mut RuntimePlayerControl,
     unhandled: &mut VecDeque<WorldServerPacket>,
     notify: &mut GameObjectObserver<'_>,
 ) -> Result<(), RuntimeGameplayError> {
+    let timestamp_ms = crate::platform::client_milliseconds();
+    if let Some(update) = packet.client_control_update()? {
+        player_control.receive(gameplay.world(), update, timestamp_ms);
+        return Ok(());
+    }
+    if let Some(state) = packet.stand_state_update()? {
+        if gameplay.world().local_player_stand_state()? != state {
+            player_control.stand_state(state, timestamp_ms);
+        }
+        gameplay.world_mut().set_local_player_stand_state(state);
+        return Ok(());
+    }
     if let Some(source) = packet.world_time_speed()? {
         tracing::info!(
             hour = source.hour(),
@@ -637,6 +709,7 @@ fn dispatch_setup_packet<S>(
             &updates,
             &mut |world, identity, event| notify(world, identity, event),
         )?;
+        player_control.synchronize(gameplay.world(), timestamp_ms);
         return Ok(());
     }
     if let Some(buttons) = packet.action_buttons()? {
@@ -653,9 +726,22 @@ fn dispatch_world_packet(
     packet: WorldServerPacket,
     realm_clock: &mut Option<RealmClock>,
     action_buttons: &mut Option<WorldActionButtons>,
+    player_control: &mut RuntimePlayerControl,
     unhandled: &mut VecDeque<WorldServerPacket>,
     notify: &mut GameObjectObserver<'_>,
 ) -> Result<bool, RuntimeGameplayError> {
+    let timestamp_ms = crate::platform::client_milliseconds();
+    if let Some(update) = packet.client_control_update()? {
+        player_control.receive(world, update, timestamp_ms);
+        return Ok(false);
+    }
+    if let Some(state) = packet.stand_state_update()? {
+        if world.local_player_stand_state()? != state {
+            player_control.stand_state(state, timestamp_ms);
+        }
+        world.set_local_player_stand_state(state);
+        return Ok(true);
+    }
     if let Some(source) = packet.world_time_speed()? {
         tracing::info!(
             hour = source.hour(),
@@ -669,6 +755,7 @@ fn dispatch_world_packet(
         apply_object_updates_with(world, &updates, &mut |world, identity, event| {
             notify(world, identity, event)
         })?;
+        player_control.synchronize(world, timestamp_ms);
         return Ok(true);
     }
     if let Some(buttons) = packet.action_buttons()? {

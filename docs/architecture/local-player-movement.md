@@ -52,6 +52,37 @@ its order. The same writer now supports `0x02CE` (packed mover GUID and skipped
 milliseconds) and `0x0101` (stand-state request) alongside movement and time-sync
 traffic. The wire methods do not establish unit eligibility themselves.
 
+## Client control and local stance
+
+`SMSG_CLIENT_CONTROL_UPDATE` (`0x159`) updates a unit's client-control bit and
+the selected movement subject. The native packet uses a packed GUID and a
+nonzero Boolean byte. Unknown subjects share the single pending slot from
+`0x00716060`; a different disabled subject cannot displace an enabled pending
+subject. Object creation resolves this slot, and world replacement resets it.
+
+Player control notifications precede selected-mover changes. The composition
+root queues the control change, dispatches `PLAYER_CONTROL_LOST` or
+`PLAYER_CONTROL_GAINED` in the live FrameXML state, and collects any movement
+commands from that callback before queuing the following mover change. The
+original `0x00520FE0` suppresses duplicate notifications; its cursor-item cleanup
+does not release physical keyboard bindings.
+
+The movement owner stops a retired local subject, freezes `0x2D1`, and sends
+`0x26A` when selecting a nonzero subject. These two envelopes differ: `0x26A`
+contains a full eight-byte GUID, while the original `0x0071EF80` writes a packed
+GUID before the retired mover's MovementInfo. On local control recovery,
+`0x006EE870` queues event 9; `0x0098B710` starts a zero-launch fall where admitted
+and sends a heartbeat. The next geometry interval resolves support. This also
+prevents recovery in midair from leaving a stationary player suspended.
+
+`SMSG_STANDSTATE_UPDATE` (`0x29D`) retains its raw byte in
+`PlayerLocalStandState`. This component represents Player_C's `+0x1920` value;
+replicated `UNIT_FIELD_BYTES_1` remains independent. Admitted local requests
+update the private state and queue `0x101`; movement that stands the player up
+queues that stance request before its movement snapshot. Server-directed
+standing refreshes held input, following `0x006E2B30`. The complete stance
+animation owner and cast/cinematic eligibility are still outstanding.
+
 ## Evidence and limits
 
 Original executable captures cover 3,456 ground-trajectory combinations,
@@ -64,21 +95,35 @@ queued unit callbacks; it does not validate the complete admission owner.
 The deferred fixture excludes selected-input camera callbacks and intercepts
 only the unrelated `0x005EEB70` observer.
 
+Additional control fixtures capture 144 original pending-slot decisions, eight
+original outgoing GUID envelopes, 76 original acquire-fall flag responses, and
+288 original release responses. Acquire captures execute the original callees
+with no active spline. Release captures substitute the TLS clock accessor and
+suppress unit notifications; they verify movement flags, not those notification
+side effects. Runtime continuation tests cover the supported ground/fall modes;
+pitched motion is checked only at the captured flag-response boundary.
+
 Runtime tests exercise fine/coarse ground frames, jump release through landing,
 and unavailable geometry with heartbeat postponement. Live FrameXML tests
 verify ordered command capture across clock wrap and ignored Lua arguments.
 Encrypted TCP tests verify sparse/zero packed GUIDs, integer skipped time,
 stand-state requests, and continued decoding of a subsequent movement packet.
+Control regressions also cover encrypted active/retired mover ordering,
+pending control before player creation, duplicate notifications, independent
+local/replicated stance, and control recovery through landing.
 Existing archive-backed geometry and native ground/fall response fixtures
 remain separate evidence for those boundaries.
 
 This is an initial production ground/fall owner, not complete world movement
 parity. Attached transport, swimming, flight, spline and other response modes
 still require their owners and currently return an explicit unsupported-mode
-error. Client-control updates, cinematic/vehicle admission, authoritative event
-reconciliation, stance eligibility and immediate presentation, physical mouse
+error. Remote controlled-subject selection, spline/effect queues during control
+changes, cinematic/vehicle admission, authoritative event reconciliation,
+stance eligibility and immediate presentation, physical mouse
 steering, ceiling/contact side effects, landing notification suppression, and
 body-height retention across model changes remain incomplete. The ordinary
-query mask assumes the client control enabled by native player entry. These
+query mask assumes the client control enabled by native player entry. Initial
+`0x26A` currently waits for movement-owner readiness; native entry sends it
+earlier. These
 tests do not establish an end-to-end live-server movement pass, camera parity,
 or the requested frame-rate target.

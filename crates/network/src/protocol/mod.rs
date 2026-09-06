@@ -15,6 +15,7 @@ mod liveness;
 mod movement;
 mod movement_message;
 mod object_update;
+mod player_control;
 mod server_packet;
 mod world_entry;
 mod world_time;
@@ -46,6 +47,7 @@ pub use object_update::{
     ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectPositionTransport,
     ObjectUpdateError, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
 };
+pub use player_control::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use server_packet::WorldServerPacket;
 pub use world_entry::{
     CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,

@@ -20,6 +20,7 @@ mod login_model;
 mod login_ui;
 mod model_playback;
 mod performance_overlay;
+mod player_control;
 mod player_coordinator;
 mod player_movement;
 mod realm_directory;

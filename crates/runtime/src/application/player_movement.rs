@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use super::player_control::PlayerControlEvent;
 use glam::{Vec2, Vec3};
 use solarity_ecs::{
     ActiveWorld, WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
@@ -70,18 +71,41 @@ pub(super) enum PlayerMovementOutput {
     Movement(WorldMovementMessage),
     SkippedTime { guid: u64, milliseconds: u32 },
     StandState(u32),
+    ActiveMover(u64),
+}
+
+#[derive(Clone, Copy)]
+enum MovementCommand {
+    Input(UiMovementCommand),
+    Control(PlayerControlEvent),
+}
+
+impl MovementCommand {
+    fn timestamp_ms(self) -> u32 {
+        match self {
+            Self::Input(command) => command.timestamp_ms,
+            Self::Control(
+                PlayerControlEvent::StandState { timestamp_ms, .. }
+                | PlayerControlEvent::PlayerControl { timestamp_ms, .. }
+                | PlayerControlEvent::ActiveMover { timestamp_ms, .. },
+            ) => timestamp_ms,
+        }
+    }
 }
 
 #[derive(Default)]
 pub(super) struct RuntimePlayerMovement {
     owner: Option<LocalMovement>,
     input: PlayerInputState,
-    commands: VecDeque<UiMovementCommand>,
+    commands: VecDeque<MovementCommand>,
     output: VecDeque<PlayerMovementOutput>,
     geometry: RuntimeMovementQuery,
 }
 
 struct LocalMovement {
+    active: bool,
+    client_control: bool,
+    stand_state: u8,
     identity: WorldObjectIdentity,
     position: Vec3,
     orientation: f32,
@@ -136,7 +160,11 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 
 impl RuntimePlayerMovement {
     pub(super) fn push(&mut self, command: UiMovementCommand) {
-        self.commands.push_back(command);
+        self.commands.push_back(MovementCommand::Input(command));
+    }
+
+    pub(super) fn push_control(&mut self, event: PlayerControlEvent) {
+        self.commands.push_back(MovementCommand::Control(event));
     }
 
     /// The composition root calls this before presentation samples ECS.
@@ -176,6 +204,8 @@ impl RuntimePlayerMovement {
         let transform = world.local_player_transform()?;
         if self.owner.is_none() {
             self.owner = Some(LocalMovement::new(identity, transform, movement, now_ms)?);
+            self.output
+                .push_back(PlayerMovementOutput::ActiveMover(guid));
         } else if self
             .owner
             .as_ref()
@@ -183,7 +213,21 @@ impl RuntimePlayerMovement {
         {
             // A received transform/movement block supersedes the last local
             // publication. Never integrate from a stale private position.
+            let retained_control = self
+                .owner
+                .as_ref()
+                .map(|owner| (owner.active, owner.client_control, owner.stand_state));
             self.owner = Some(LocalMovement::new(identity, transform, movement, now_ms)?);
+            if let (Some(owner), Some((active, client_control, stand_state))) =
+                (self.owner.as_mut(), retained_control)
+            {
+                // Control and stance updates have their own ordered commands.
+                // Reading the final packet-pump state here would apply them
+                // before older input waiting in the same queue.
+                owner.active = active;
+                owner.client_control = client_control;
+                owner.stand_state = stand_state;
+            }
         }
         let Some(owner) = self.owner.as_mut() else {
             return Ok(());
@@ -207,10 +251,10 @@ impl RuntimePlayerMovement {
         loop {
             let next = self.commands.front().copied();
             let command_time = next.map(|command| {
-                if (command.timestamp_ms.wrapping_sub(owner.time_ms) as i32) < 0 {
+                if (command.timestamp_ms().wrapping_sub(owner.time_ms) as i32) < 0 {
                     owner.time_ms
                 } else {
-                    command.timestamp_ms
+                    command.timestamp_ms()
                 }
             });
             let end = command_time
@@ -225,18 +269,11 @@ impl RuntimePlayerMovement {
             let Some(command) = self.commands.pop_front() else {
                 break;
             };
-            let admission = owner.admission(world);
-            let mut effects = Vec::with_capacity(5);
-            self.input.apply(command.action, admission, &mut |effect| {
-                effects.push(effect)
-            });
-            for effect in effects {
-                owner.apply(effect, admission, world, &mut self.output)?;
-            }
+            owner.command(command, &mut self.input, world, &mut self.output)?;
         }
         let (transform, movement) = owner.snapshot();
         owner.published = (transform, movement);
-        gameplay.apply_local_movement(owner.identity, transform, movement)?;
+        gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
         while let Some(output) = self.output.front().copied() {
             if !gameplay.send_player_movement(output)? {
                 break;
@@ -255,6 +292,57 @@ impl RuntimePlayerMovement {
 }
 
 impl LocalMovement {
+    fn command(
+        &mut self,
+        command: MovementCommand,
+        input: &mut PlayerInputState,
+        world: &ActiveWorld,
+        output: &mut VecDeque<PlayerMovementOutput>,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        let guid = self.identity.guid();
+        let admission = self.admission(world);
+        let mut effects = Vec::with_capacity(5);
+        match command {
+            MovementCommand::Input(command) if self.active => {
+                input.apply(command.action, admission, &mut |effect| {
+                    effects.push(effect)
+                });
+            }
+            MovementCommand::Input(command) => input.record_without_mover(command.action),
+            MovementCommand::Control(PlayerControlEvent::StandState { state, .. }) => {
+                self.stand_state = state;
+                // Player_C::6E2B30 refreshes held input when standing up.
+                if state == 0 && self.active {
+                    input.resolve(self.admission(world), &mut |effect| effects.push(effect));
+                }
+            }
+            MovementCommand::Control(PlayerControlEvent::PlayerControl { enabled, .. }) => {
+                self.client_control = enabled;
+            }
+            MovementCommand::Control(PlayerControlEvent::ActiveMover {
+                previous, next, ..
+            }) => {
+                if previous == guid {
+                    self.release_mover()?;
+                    self.emit(WorldMovementKind::NotActiveMover, output)?;
+                }
+                self.active = next == guid;
+                if next != 0 {
+                    output.push_back(PlayerMovementOutput::ActiveMover(next));
+                }
+                if self.active {
+                    self.acquire_mover(output)?;
+                    input.resolve(self.admission(world), &mut |effect| effects.push(effect));
+                }
+            }
+        }
+        let admission = self.admission(world);
+        for effect in effects {
+            self.apply(effect, admission, world, output)?;
+        }
+        Ok(())
+    }
+
     fn new(
         identity: WorldObjectIdentity,
         transform: WorldTransform,
@@ -298,6 +386,9 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            active: true,
+            client_control: true,
+            stand_state: 0,
             identity,
             position: transform.position(),
             orientation: transform.orientation(),
@@ -331,12 +422,12 @@ impl LocalMovement {
             .local_player_vitals()
             .is_some_and(|vitals| vitals.health() > 0);
         let flags = world.unit_flags(self.identity.guid()).unwrap_or_default();
-        let stand = world
-            .unit_presentation(self.identity.guid())
-            .map_or(0, |p| p.stand_state());
         PlayerInputAdmission {
-            translation: alive && self.flags & 0x100a00 == 0 && stand != 7,
-            turning: alive && flags.primary() & 0x40000 == 0,
+            translation: self.active
+                && alive
+                && self.flags & 0x100a00 == 0
+                && self.stand_state != 7,
+            turning: self.active && alive && flags.primary() & 0x40000 == 0,
             forced_forward: flags.secondary() & 0x40 != 0,
             yaw_during_mouselook: false,
             movement_flags: self.flags,
@@ -362,8 +453,93 @@ impl LocalMovement {
         Ok(())
     }
 
+    fn release_mover(&mut self) -> Result<(), RuntimePlayerMovementError> {
+        // 6EE920 -> 6ED7E0 -> 6E9980 stops the previous subject without
+        // ordinary movement packets, preserving walking and effect state.
+        if self.flags & 0x1000 != 0 {
+            self.flags &= !0x3000;
+        }
+        if self.flags & 0x100000 != 0 {
+            self.flags = self.flags & 0xff203f00 | 0x800;
+        }
+        self.flags &= 0xfb303fff;
+        self.flags &= !0x0000_f0ff;
+        self.secondary &= 0xe3ff;
+        if let MovementPhase::Fall(fall) = self.phase {
+            self.context.fall_time_ms = fall.snapshot().fall_time_ms;
+        }
+        self.phase = MovementPhase::Ground { step_anchor: None };
+        self.active = false;
+        self.reanchor()
+    }
+
+    fn acquire_mover(
+        &mut self,
+        output: &mut VecDeque<PlayerMovementOutput>,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        // 6EE870 queues event 9. Its 6EF860 admission and 98B710 ->
+        // 988370 response start a zero-launch fall, even on level ground.
+        // The next collision interval determines support beneath the mover.
+        let Some(flags) = self.acquired_fall_flags() else {
+            return Ok(());
+        };
+        self.reanchor()?;
+        self.phase = MovementPhase::Fall(MovementFallState::new(MovementFallSnapshot {
+            position: self.position,
+            fall_time_ms: 0,
+            launch_height: self.position.z,
+            initial_downward_speed: 0.,
+            horizontal_direction: self.ground.direction(),
+            horizontal_speed: self.ground.speed(),
+            direction: self.ground.direction().extend(0.),
+            mode: fall_mode(self.flags),
+            phase: MovementFallPhase::Falling,
+        })?);
+        self.flags = flags;
+        self.retained_launch_height = self.position.z;
+        self.retained_downward_speed = 0.;
+        self.reanchor()?;
+        self.emit(WorldMovementKind::Heartbeat, output)
+    }
+
+    fn acquired_fall_flags(&self) -> Option<u32> {
+        if self.flags & 0x0230_1e00 != 0 || self.secondary & 4 != 0 {
+            return None;
+        }
+        let mut flags = self.flags & 0xf91f_ffff | 0x1000;
+        if self.secondary & 0x20 == 0 {
+            flags &= !0xc0;
+        }
+        Some(flags)
+    }
+
+    fn request_stand(
+        &mut self,
+        state: u8,
+        world: &ActiveWorld,
+        output: &mut VecDeque<PlayerMovementOutput>,
+    ) {
+        let alive = world
+            .local_player_vitals()
+            .is_some_and(|vitals| vitals.health() > 0);
+        let flags = world.unit_flags(self.identity.guid()).unwrap_or_default();
+        // 6DCB40's unit-field and movement gates. Cast, mount-spell and
+        // cinematic ownership still need their complete runtime projections.
+        if !alive
+            || !self.client_control
+            || flags.primary() & 0x100000 != 0
+            || flags.secondary() & 1 != 0
+            || (matches!(state, 1 | 3) && self.flags & 0x30 != 0)
+            || (state != 0 && self.flags & 0x02e0_100f != 0)
+        {
+            return;
+        }
+        self.stand_state = state;
+        output.push_back(PlayerMovementOutput::StandState(u32::from(state)));
+    }
+
     fn skip(&mut self, milliseconds: u32, output: &mut VecDeque<PlayerMovementOutput>) {
-        if milliseconds == 0 {
+        if milliseconds == 0 || !self.active {
             return;
         }
         self.heartbeat_ms = self.heartbeat_ms.wrapping_add(milliseconds);
@@ -468,6 +644,9 @@ impl LocalMovement {
         geometry: &mut G,
         output: &mut VecDeque<PlayerMovementOutput>,
     ) -> Result<(), RuntimePlayerMovementError> {
+        if !self.active {
+            return Ok(());
+        }
         if self.flags & 0x800 != 0 {
             self.heartbeat_ms = self.heartbeat_ms.wrapping_add(duration);
             return Ok(());
@@ -711,10 +890,7 @@ impl LocalMovement {
                 }
             }
             PlayerInputEffect::SitStand => {
-                let state = world
-                    .unit_presentation(self.identity.guid())
-                    .map_or(0, |p| p.stand_state());
-                output.push_back(PlayerMovementOutput::StandState(u32::from(state == 0)));
+                self.request_stand(u8::from(self.stand_state == 0), world, output);
                 return Ok(());
             }
             PlayerInputEffect::Jump => {
@@ -740,6 +916,9 @@ impl LocalMovement {
                 self.retained_launch_height = self.position.z;
                 self.retained_downward_speed = f32::from_bits(0xc0fe_93d8);
                 self.reanchor()?;
+                if self.stand_state != 0 {
+                    self.request_stand(0, world, output);
+                }
                 return self.emit(Kind::Jump, output);
             }
         };
@@ -822,6 +1001,17 @@ impl LocalMovement {
                     self.phase = MovementPhase::Fall(MovementFallState::new(fall)?);
                 }
             }
+        }
+        if self.stand_state != 0
+            && matches!(
+                kind,
+                Kind::StartForward
+                    | Kind::StartBackward
+                    | Kind::StartStrafeLeft
+                    | Kind::StartStrafeRight
+            )
+        {
+            self.request_stand(0, world, output);
         }
         self.emit(kind, output)
     }

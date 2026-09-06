@@ -329,6 +329,15 @@ where
             .await
     }
 
+    /// Selects a client-owned mover using `0x026A`'s full, unpacked GUID.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_active_mover(&mut self, guid: u64) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x26a, &guid.to_le_bytes())
+            .await
+    }
+
     async fn send_local_movement_auxiliary(
         &mut self,
         opcode: u32,

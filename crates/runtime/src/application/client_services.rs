@@ -1910,6 +1910,17 @@ impl ClientServices {
                 self.player_movement.push(command);
             }
         }
+        while let Some(event) = self.gameplay.take_player_control_event() {
+            self.player_movement.push_control(event);
+            if let super::player_control::PlayerControlEvent::PlayerControl { enabled, .. } = event
+                && let Some(ui) = self.world_ui.as_mut()
+            {
+                ui.player_control_changed(enabled)?;
+                while let Some(command) = ui.take_movement_command() {
+                    self.player_movement.push(command);
+                }
+            }
+        }
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,

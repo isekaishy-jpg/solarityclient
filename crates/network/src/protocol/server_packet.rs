@@ -59,6 +59,8 @@ impl WorldServerPacket {
             SMSG_ACTION_BUTTONS => Some("SMSG_ACTION_BUTTONS"),
             SMSG_ADDON_INFO => Some("SMSG_ADDON_INFO"),
             SMSG_TIME_SYNC_REQ => Some("SMSG_TIME_SYNC_REQ"),
+            0x159 => Some("SMSG_CLIENT_CONTROL_UPDATE"),
+            0x29d => Some("SMSG_STANDSTATE_UPDATE"),
             _ => None,
         }
     }
@@ -67,6 +69,31 @@ impl WorldServerPacket {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Decodes the native packed-GUID client-control update.
+    ///
+    /// # Errors
+    /// Rejects truncated or trailing fields for this opcode.
+    pub fn client_control_update(
+        &self,
+    ) -> Result<Option<super::WorldClientControlUpdate>, super::WorldPlayerControlPacketError> {
+        if self.opcode != 0x159 {
+            return Ok(None);
+        }
+        super::WorldClientControlUpdate::decode(&self.payload).map(Some)
+    }
+
+    /// Decodes the local player's authoritative stand-state byte.
+    /// The native receiver retains the byte without enum coercion.
+    ///
+    /// # Errors
+    /// Rejects bodies other than the exact one-byte native representation.
+    pub fn stand_state_update(&self) -> Result<Option<u8>, super::WorldPlayerControlPacketError> {
+        if self.opcode != 0x29d {
+            return Ok(None);
+        }
+        super::player_control::decode_stand_state(&self.payload).map(Some)
     }
 
     /// Decodes an active-world transfer or returns `None` for another opcode.

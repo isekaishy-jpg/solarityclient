@@ -29,6 +29,14 @@ pub(crate) struct PlayerInputState {
 }
 
 impl PlayerInputState {
+    /// Ordinary held edges still enter InputControl when no mover is selected;
+    /// native 5FBBC0 then returns without resolving active axes.
+    pub(crate) fn record_without_mover(&mut self, action: UiMovementAction) {
+        if let UiMovementAction::Hold { control, pressed } = action {
+            self.hold(control_bit(control), pressed);
+        }
+    }
+
     pub(crate) fn apply(
         &mut self,
         action: UiMovementAction,

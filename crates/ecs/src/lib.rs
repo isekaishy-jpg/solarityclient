@@ -26,7 +26,8 @@ pub use movement::{
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 pub use player::{
     LocalPlayer, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerAppearance, PlayerEquipment,
-    PlayerEquipmentSlot, PlayerIdentity, PlayerMoney, PlayerProgression, VisibleEquipmentItem,
+    PlayerEquipmentSlot, PlayerIdentity, PlayerLocalStandState, PlayerMoney, PlayerProgression,
+    VisibleEquipmentItem,
 };
 pub use unit::{
     UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,

@@ -14,6 +14,59 @@ use solarity_runtime::RuntimeGameplayCoordinator;
 use transfer_world_server::{TestError, WorldServer};
 
 #[test]
+fn active_and_retired_movers_preserve_original_guid_envelopes() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let (server, session) = WorldServer::connect().await?;
+                let (_reader, mut writer) = session.split();
+                let rows: Vec<_> = include_str!("fixtures/player-control-envelope-native.txt")
+                    .lines()
+                    .filter(|line| !line.starts_with('#'))
+                    .collect();
+                let responses = server.exchange_raw(Vec::new(), rows.len() * 2 + 1).await?;
+                let mut expected = Vec::new();
+                for row in rows {
+                    let fields: Vec<_> = row.split_whitespace().collect();
+                    let opcode = u32::from_str_radix(fields[0], 16)?;
+                    let guid = u64::from_str_radix(fields[1], 16)?;
+                    let prefix = (0..fields[2].len())
+                        .step_by(2)
+                        .map(|offset| u8::from_str_radix(&fields[2][offset..offset + 2], 16))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    assert_eq!(&prefix[..4], opcode.to_le_bytes());
+                    writer.send_active_mover(guid).await?;
+                    expected.push((0x26a, guid.to_le_bytes().to_vec()));
+                    writer
+                        .send_movement(&WorldMovementMessage::new(
+                            if opcode == 0x2d1 {
+                                WorldMovementKind::NotActiveMover
+                            } else {
+                                WorldMovementKind::Heartbeat
+                            },
+                            guid,
+                            FULL_FLAGS,
+                            [-1.5, 2.25, -0.0],
+                            0.75,
+                            full_context(0xFFFF_FFF0),
+                        )?)
+                        .await?;
+                    let mut body = prefix[4..].to_vec();
+                    body.extend_from_slice(&FULL_BODY[9..]);
+                    expected.push((opcode, body));
+                }
+                writer.send_stand_state(1).await?;
+                expected.push((0x101, vec![1, 0, 0, 0]));
+                assert_eq!(responses.await??, expected);
+                Ok::<(), TestError>(())
+            })
+            .await?
+        })
+}
+
+#[test]
 fn skipped_time_and_stance_preserve_encrypted_movement_framing() -> Result<(), TestError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

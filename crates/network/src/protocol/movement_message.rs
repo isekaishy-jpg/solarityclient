@@ -53,6 +53,8 @@ pub enum WorldMovementKind {
     SetPitch = 0xDB,
     /// Publish the periodic movement snapshot.
     Heartbeat = 0xEE,
+    /// Retire the previous local mover; native `0x00729010` / `0x0071EF80`.
+    NotActiveMover = 0x2D1,
     /// Begin upward swimming/flying translation.
     StartAscend = 0x359,
     /// Stop upward/downward translation.

@@ -51,6 +51,19 @@ pub(super) struct RuntimeWorldUi {
 }
 
 impl RuntimeWorldUi {
+    pub(super) fn player_control_changed(&mut self, enabled: bool) -> Result<(), ApplicationError> {
+        self.dirty = true;
+        self.manager.dispatch_event(
+            if enabled {
+                "PLAYER_CONTROL_GAINED"
+            } else {
+                "PLAYER_CONTROL_LOST"
+            },
+            &UiEventPayload::empty(),
+        )?;
+        Ok(())
+    }
+
     pub(super) fn set_input_event_time(&self, timestamp_ms: u32) {
         self.manager.set_input_event_time(timestamp_ms);
     }

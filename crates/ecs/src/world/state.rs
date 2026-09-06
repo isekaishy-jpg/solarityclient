@@ -44,6 +44,7 @@ impl ActiveWorld {
             ObjectGuid::new(player_guid),
             PlayerIdentity::new(player_name),
             LocalPlayer,
+            crate::PlayerLocalStandState::default(),
             WorldTransform::new(position, orientation),
             view,
             ObjectFields::default(),
@@ -298,6 +299,25 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns Player_C's immediate local stand state, independent of unit bytes.
+    ///
+    /// # Errors
+    /// Rejects loss of the local-player state seeded during world entry.
+    pub fn local_player_stand_state(&self) -> Result<u8, WorldStateError> {
+        self.storage
+            .get::<&crate::PlayerLocalStandState>(self.local_player)
+            .map(|state| state.value())
+            .map_err(|_| WorldStateError::MissingLocalPlayerStandState)
+    }
+
+    /// Publishes a local request or authoritative stand-state packet.
+    pub fn set_local_player_stand_state(&mut self, state: u8) {
+        self.storage.add_component(
+            self.local_player,
+            (crate::PlayerLocalStandState::new(state),),
+        );
+    }
+
     /// Returns the display identity projected for one visible game object.
     #[must_use]
     pub fn game_object_presentation(&self, guid: u64) -> Option<GameObjectPresentation> {
@@ -537,6 +557,9 @@ impl ActiveWorld {
 /// Invalid application of an authoritative object update.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum WorldStateError {
+    /// The controlled player lost its immediate local stand state.
+    #[error("active world's local player has no local stand state")]
+    MissingLocalPlayerStandState,
     /// A GameObject sequence consumer lacks its projected presentation fields.
     #[error("world object {guid:#018X} has no GameObject presentation")]
     MissingGameObjectPresentation {
