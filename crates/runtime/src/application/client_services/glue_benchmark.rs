@@ -328,7 +328,10 @@ impl ClientServices {
 }
 
 /// Writes the final opaque display RGB bytes without scaling or recompression.
-fn write_capture(path: &Path, frame: &solarity_rendering::CapturedFrame) -> std::io::Result<()> {
+pub(super) fn write_capture(
+    path: &Path,
+    frame: &solarity_rendering::CapturedFrame,
+) -> std::io::Result<()> {
     let mut writer = BufWriter::new(File::create(path)?);
     let (width, height) = frame.extent();
     writeln!(writer, "P6\n{width} {height}\n255")?;

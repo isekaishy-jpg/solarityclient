@@ -96,7 +96,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         application.vulkan_report().device_name(),
         application.vulkan_report().extent()
     );
-    let result = application.benchmark_world(&world, &clock, frames);
+    let capture_directory = std::env::var_os("SOLARITY_WORLD_CAPTURE_DIR").map(PathBuf::from);
+    if capture_directory.is_some() {
+        println!(
+            "framebuffer capture enabled; use a separate uncaptured run for performance measurements"
+        );
+    }
+    let result = application.benchmark_world(&world, &clock, frames, capture_directory.as_deref());
     let shutdown = application.shutdown();
     let samples = result?;
     shutdown?;

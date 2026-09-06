@@ -601,6 +601,8 @@ impl TerrainFrame {
         ui_draws: &[UiPreparedDraw],
         ui_overlay_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
+        let mut profile =
+            crate::application::frame_profile::RuntimeFrameProfile::new("World scene preparation");
         match (self.tile, plan.map(TerrainTileMeshPlan::tile)) {
             (Some(frame), Some(plan)) if frame != plan => {
                 return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -619,6 +621,7 @@ impl TerrainFrame {
         self.m2
             .update_game_object_states(game_objects, local_animation_time_ms, random)?;
         self.world_models.update_game_object_states(game_objects)?;
+        profile.mark("object states");
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         self.visible_draws.clear();
         for tile in &self.tiles {
@@ -628,6 +631,7 @@ impl TerrainFrame {
                 }
             }
         }
+        profile.mark("terrain culling");
         let light = environment.light();
         let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
@@ -663,12 +667,14 @@ impl TerrainFrame {
             environment.world_model_emissive(),
             light.fog_color(),
         )?;
+        profile.mark("WMO packets");
         self.m2
             .update_player_state(player, local_animation_time_ms, random)?;
         self.m2
             .update_creature_states(creatures, local_animation_time_ms, random)?;
         self.m2
             .update_remote_player_states(remote_players, local_animation_time_ms, random)?;
+        profile.mark("unit states");
         let m2 = self.m2.prepare_visible_draws(
             renderer,
             frustum,
@@ -680,9 +686,10 @@ impl TerrainFrame {
             random,
             Some(game_objects),
         )?;
+        profile.mark("M2 packets");
         let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
-        Ok(renderer.present_world_frame_with_ui_layers(
+        let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,
             &self.visible_draws,
@@ -697,7 +704,9 @@ impl TerrainFrame {
             ui_extent,
             ui_draws,
             ui_overlay_draws,
-        )?)
+        )?;
+        profile.mark("Vulkan presentation");
+        Ok(report)
     }
 
     /// Rebuilds only the player-owned source after appearance customization.

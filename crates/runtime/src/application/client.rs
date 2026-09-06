@@ -404,6 +404,8 @@ impl ClientApplication {
     /// streaming, stationary presentation, camera orbit, and pointer motion.
     /// It performs no server operations or movement simulation; it does not
     /// represent live remote-unit or network load. Shut down after this replay.
+    /// Optional framebuffer captures synchronize GPU completion; use a separate
+    /// run without captures for performance measurements.
     ///
     /// # Errors
     /// Returns a diagnostic failure for missing fixture facts, cancelled window,
@@ -413,9 +415,10 @@ impl ClientApplication {
         world: &solarity_ecs::ActiveWorld,
         clock: &crate::RealmClock,
         frames_per_phase: std::num::NonZeroUsize,
+        capture_directory: Option<&std::path::Path>,
     ) -> Result<Vec<super::WorldBenchmarkSample>, super::WorldBenchmarkError> {
         self.services
-            .benchmark_world(world, clock, frames_per_phase)
+            .benchmark_world(world, clock, frames_per_phase, capture_directory)
     }
 
     /// Routes one event after any preceding motion run has been flushed.

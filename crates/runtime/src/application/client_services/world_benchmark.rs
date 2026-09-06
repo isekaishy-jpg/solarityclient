@@ -1,6 +1,7 @@
 //! Offline measurements through the retained production World presentation owners.
 
 use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,6 +59,15 @@ pub enum WorldBenchmarkError {
     /// A recoverable World presentation error occurred during the replay.
     #[error("offline World presentation failed: {0}")]
     Presentation(String),
+    /// Explicit framebuffer output could not be written.
+    #[error("could not write World benchmark capture {path}")]
+    CaptureIo {
+        /// Requested capture path.
+        path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
     /// The user closed or minimized the diagnostic window.
     #[error("offline World benchmark window was closed or minimized")]
     Cancelled,
@@ -69,6 +79,7 @@ impl ClientServices {
         world: &ActiveWorld,
         clock: &RealmClock,
         frames_per_phase: NonZeroUsize,
+        capture_directory: Option<&Path>,
     ) -> Result<Vec<WorldBenchmarkSample>, WorldBenchmarkError> {
         if self.gameplay.world().is_some()
             || self.terrain_frame.is_some()
@@ -151,6 +162,14 @@ impl ClientServices {
             initialization_ms = start.elapsed().as_secs_f64() * 1000.,
             "initialized offline World benchmark"
         );
+        if let Some(directory) = capture_directory {
+            std::fs::create_dir_all(directory).map_err(|source| {
+                WorldBenchmarkError::CaptureIo {
+                    path: directory.to_owned(),
+                    source,
+                }
+            })?;
+        }
         let initial_view = world.local_player_view()?;
         let mut samples = Vec::new();
         let mut previous = Instant::now();
@@ -183,9 +202,37 @@ impl ClientServices {
                     initial_view
                 };
                 world.set_local_player_view(view)?;
+                let capture = capture_directory.filter(|_| {
+                    index == 0
+                        || index + 1 == frames_per_phase.get()
+                        || (phase == "orbit"
+                            && index.is_multiple_of((frames_per_phase.get() / 4).max(1)))
+                });
+                if capture.is_some() {
+                    self.renderer
+                        .request_frame_capture()
+                        .map_err(ApplicationError::from)?;
+                }
                 let sample =
                     self.benchmark_world_frame(world, clock, phase, index, elapsed, frame_start)?;
                 samples.push(sample);
+                if let Some(directory) = capture {
+                    let frame = self
+                        .renderer
+                        .take_captured_frame()
+                        .map_err(ApplicationError::from)?
+                        .ok_or(WorldBenchmarkError::State(
+                            "requested capture was not presented",
+                        ))?;
+                    let path = directory.join(format!("{phase}-{index:04}.ppm"));
+                    super::glue_benchmark::write_capture(&path, &frame).map_err(|source| {
+                        WorldBenchmarkError::CaptureIo {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?;
+                    tracing::info!(path = %path.display(), "wrote World framebuffer capture");
+                }
             }
         }
         world.set_local_player_view(initial_view)?;
